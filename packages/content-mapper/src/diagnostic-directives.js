@@ -58,10 +58,10 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 			: typeof error.end === 'number' && error.end > error.pos
 				? error.end
 				: error.pos + 1;
-		// With nothing holding an unclosed tag, only its own code is covered, and
-		// its anchor isn't that: it sits on whatever else is on its generated line.
-		const skip_anchors = !holder && error.code === DIAGNOSTIC_CODES.UNCLOSED_TAG;
-		for (const generated of generated_ranges(mappings, start, end, skip_anchors)) {
+		// With nothing holding an unclosed tag, only its own code is covered. Its
+		// anchor isn't that: it sits on whatever else is on its generated line.
+		const own_code = !holder && error.code === DIAGNOSTIC_CODES.UNCLOSED_TAG;
+		for (const generated of generated_ranges(mappings, start, end, own_code)) {
 			ranges.push([
 				Math.min(start, original_length),
 				Math.min(end, original_length),
@@ -183,11 +183,13 @@ function child_at(node, position) {
  * @param {readonly CodeMapping[]} mappings
  * @param {number} start
  * @param {number} end
- * @param {boolean} [skip_anchors] Don't count an error's anchor as the node's
- *   code. It still ends a range, as any code from outside the node does.
+ * @param {boolean} [own_code] Count only segments inside the range, and no
+ *   error's anchor. A segment that encloses the range doesn't count: a mapping of
+ *   the whole file can have the same length on both sides by chance. An anchor
+ *   still ends a range, as any code from outside the node does.
  * @returns {Array<[number, number]>}
  */
-function generated_ranges(mappings, start, end, skip_anchors = false) {
+function generated_ranges(mappings, start, end, own_code = false) {
 	/** @type {Array<[generated_start: number, generated_end: number, inside: boolean]>} */
 	const segments = [];
 	for (const mapping of mappings) {
@@ -196,11 +198,16 @@ function generated_ranges(mappings, start, end, skip_anchors = false) {
 			const length = mapping.lengths[i];
 			const generated = mapping.generatedOffsets[i];
 			const generated_length = mapping.generatedLengths?.[i] ?? length;
-			if (skip_anchors && mapping.data?.customData?.diagnosticAnchor) {
+			if (own_code && mapping.data?.customData?.diagnosticAnchor) {
 				segments.push([generated, generated + generated_length, false]);
 			} else if (source >= start && source + length <= end) {
 				segments.push([generated, generated + generated_length, true]);
-			} else if (source <= start && end <= source + length && generated_length === length) {
+			} else if (
+				!own_code &&
+				source <= start &&
+				end <= source + length &&
+				generated_length === length
+			) {
 				segments.push([generated + start - source, generated + end - source, true]);
 			} else {
 				segments.push([generated, generated + generated_length, false]);

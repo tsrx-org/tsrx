@@ -96,12 +96,19 @@ describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler)
 		expect(covers(compiler, source, 'wrong: string', at_the_end), source).toBe(false);
 	});
 
-	// A `<>` the output drops has only an anchor, on the line of its siblings.
+	// A `<>` the output drops has only an anchor, on the line of its siblings. Its
+	// place depends on the columns before it, and at one length the source and the
+	// generated code are the same length too, so try each.
 	it.each([
-		['Undefined1', 'export const y = <div>{/*cc*/}<><b /><Undefined1 /><i />\n'],
-		['missing', 'export const y = <div>{/*cc*/}<><b />{missing}<i />\n'],
-	])('leaves %s beside an unclosed fragment alone', (needle, source) => {
-		expect(covers(compiler, source, needle), source).toBe(false);
+		['Undefined1', '<b /><Undefined1 /><i />'],
+		['missing', '<b />{missing}<i />'],
+	])('leaves %s beside an unclosed fragment alone', (needle, children) => {
+		for (const first of ['export const y =', 'export const A = () =>']) {
+			for (let n = 0; n <= 12; n++) {
+				const source = `${first} <div>{/*${'c'.repeat(n)}*/}<>${children}\n`;
+				expect(covers(compiler, source, needle), source).toBe(false);
+			}
+		}
 	});
 
 	// With nothing holding the tag, the directive is still there for its own code.
