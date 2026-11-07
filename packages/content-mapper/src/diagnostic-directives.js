@@ -51,7 +51,9 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 		if (typeof error.pos !== 'number') {
 			continue;
 		}
-		const holder = source_ast ? holder_at(source_ast, held_position(error)) : null;
+		const on_tag = reported_on_tag(error);
+		const position = on_tag ? /** @type {number} */ (error.raisedAt) - 1 : error.pos;
+		const holder = source_ast ? holder_at(source_ast, position) : null;
 		const start = holder ? /** @type {number} */ (holder.start) : error.pos;
 		const end = holder
 			? /** @type {number} */ (holder.end)
@@ -60,7 +62,7 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 				: error.pos + 1;
 		// With nothing holding an unclosed tag, only its own code is covered. Its
 		// anchor isn't that: it sits on whatever else is on its generated line.
-		const own_code = !holder && error.code === DIAGNOSTIC_CODES.UNCLOSED_TAG;
+		const own_code = on_tag && !holder;
 		for (const generated of generated_ranges(mappings, start, end, own_code)) {
 			ranges.push([
 				Math.min(start, original_length),
@@ -101,26 +103,25 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 }
 
 /**
- * The position whose holder an error's directive covers. It's the error's own,
- * except for an unclosed tag that says the parser read past it. That tag is
- * reported on the tag and found where its template ends, one before `raisedAt`.
- * The closing tag that recovery adds has no mapping, so TypeScript's error on it
- * could only show at the top of the file, and the tag's own statement can end
- * before it. At the end of the file nothing holds that place: an unclosed tag's
+ * Whether `error` is an unclosed tag reported on the tag and found where its
+ * template ends, one before `raisedAt`. Its directive holds there, not at the
+ * error: the closing tag that recovery adds has no mapping, so TypeScript's error
+ * on it could only show at the top of the file, and the tag's own statement can
+ * end before it. At the end of the file nothing holds that place, as the tag's
  * declaration has stretched around the code that follows, which the directive
  * must not hide. A compiler from before tags were reported on themselves has its
- * error at the end of the file already, with `raisedAt` no further than `end`,
+ * error at the end of the template already, with `raisedAt` no further than `end`,
  * and the mapper runs whichever compiler the project has.
  * @param {CompileError} error
- * @returns {number}
+ * @returns {boolean}
  */
-function held_position({ code, pos, end, raisedAt }) {
-	return code === DIAGNOSTIC_CODES.UNCLOSED_TAG &&
+function reported_on_tag({ code, end, raisedAt }) {
+	return (
+		code === DIAGNOSTIC_CODES.UNCLOSED_TAG &&
 		typeof raisedAt === 'number' &&
 		typeof end === 'number' &&
 		raisedAt > end
-		? raisedAt - 1
-		: /** @type {number} */ (pos);
+	);
 }
 
 /**
