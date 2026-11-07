@@ -37,12 +37,11 @@ TypeScript 7 plain `tsc --runExternalCode` can be used directly instead.
   Microsoft's TypeScript extensions and registers `.tsrx` with any exposed
   content-mapper API for configured-project discovery. Microsoft's extensions
   choose which server runs. TSRX reads their settings only for its status item and
-  closing tags, and bundles no mapper.
-  The TSRX server always runs slim (`--typescript-backend=plugin`) and reports
-  TSRX compile errors; the extension drops that copy for a file the mapper already
-  reports on, so they show once on TypeScript 7 too. The extension now activates
-  on a single `.tsrx` file and declares that it does not run in untrusted
-  workspaces.
+  closing tags, and bundles no mapper. The TSRX server always runs slim
+  (`--typescript-backend=plugin`) and reports TSRX compile errors; the extension
+  drops that copy for a file the mapper already reports on, so they show once on
+  TypeScript 7 too. The extension now activates on a single `.tsrx` file and
+  declares that it does not run in untrusted workspaces.
 - **Editor guides** for Zed, Neovim (`setup(plugin, { typescript_backend })`),
   IntelliJ and Sublime Text describe the native setup per editor.
 - **TypeScript 6** on the classic path: the `typescript` peer range of
