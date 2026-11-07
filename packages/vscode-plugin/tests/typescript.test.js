@@ -81,6 +81,22 @@ describe('TypeScript activation for .tsrx documents', () => {
 		expect(subscription.dispose).toHaveBeenCalledOnce();
 	});
 
+	it('follows only the TypeScript 7 extension that runs the server, with two installed', async () => {
+		const state = setup();
+		const follow_native = vi.fn(() => ({ dispose() {} }));
+		const follow_source_build = vi.fn(() => ({ dispose() {} }));
+		Object.assign(state.api, { onLanguageServerInitialized: follow_native });
+		const source_build = {
+			id: 'TypeScriptTeam.vscode-typescript',
+			activate: vi.fn(async () => ({ onLanguageServerInitialized: follow_source_build })),
+		};
+		state.extensions.set(source_build.id, source_build);
+		await activate_typescript(state.context);
+		expect(follow_native).toHaveBeenCalledOnce();
+		expect(follow_source_build).not.toHaveBeenCalled();
+		state.dispose();
+	});
+
 	it("does not follow VS Code's own TypeScript", async () => {
 		const state = setup();
 		const follow = vi.fn(() => ({ dispose() {} }));

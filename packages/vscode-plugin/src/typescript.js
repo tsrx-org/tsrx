@@ -1,5 +1,5 @@
 import vscode from 'vscode';
-import { TYPESCRIPT_7_SERVER_EXTENSIONS, follow_running_compiler } from './typescript-7.js';
+import { follow_running_compiler, typescript_7_server_extension } from './typescript-7.js';
 
 // The TypeScript extensions VS Code recognizes. The nightly companion only supplies a compiler.
 const TYPESCRIPT_EXTENSIONS = [
@@ -51,9 +51,10 @@ export function activate_typescript(context) {
 					typeof api?.registerContentMappers === 'function'
 						? api.registerContentMappers(context.extension.id, [{ extensions: tsrx_extensions }])
 						: undefined;
-				const following = TYPESCRIPT_7_SERVER_EXTENSIONS.includes(id)
-					? follow_running_compiler(api)
-					: undefined;
+				const following =
+					extension.id === typescript_7_server_extension()?.id
+						? follow_running_compiler(api)
+						: undefined;
 				registrations.set(
 					id,
 					[registration, following].filter((disposable) => disposable !== undefined),

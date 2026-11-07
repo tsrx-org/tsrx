@@ -36,7 +36,8 @@ TypeScript 7 plain `tsc --runExternalCode` can be used directly instead.
   `tsconfig.json` declares under `contentMappers`. The extension activates
   Microsoft's TypeScript extensions and registers `.tsrx` with any exposed
   content-mapper API for configured-project discovery. Microsoft's extensions
-  choose which server runs; TSRX reads no selection setting and bundles no mapper.
+  choose which server runs. TSRX reads their settings only for its status item and
+  closing tags, and bundles no mapper.
   The TSRX server always runs slim (`--typescript-backend=plugin`) and reports
   TSRX compile errors; the extension drops that copy for a file the mapper already
   reports on, so they show once on TypeScript 7 too. The extension now activates
