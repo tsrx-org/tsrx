@@ -91,7 +91,7 @@
         "tsrx.autoClosingTags.enabled": {
           "type": "boolean",
           "default": true,
-          "markdownDescription": "Close tags when typing `>` in `.tsrx` files on TypeScript 7. The TypeScript 7 extension 1.0.2 and newer closes many of them too, so to stop closing tags there, also turn off `#js/ts.autoClosingTags.enabled#`. With VS Code's built-in TypeScript, TypeScript closes them instead (`#js/ts.autoClosingTags.enabled#`)."
+          "markdownDescription": "Close tags when typing `>` in `.tsrx` files on TypeScript 7. The TypeScript 7 extension 1.0.2 and newer can close some of them too, so to stop closing tags there, also turn off `#js/ts.autoClosingTags.enabled#`. With VS Code's built-in TypeScript, TypeScript closes them instead (`#js/ts.autoClosingTags.enabled#`)."
         },
         "tsrx.format.enable": {
           "type": "boolean",

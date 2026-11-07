@@ -12,11 +12,11 @@ import { USE_TSGO_SETTINGS, typescript_7_on } from './typescript-7.js';
 const TYPESCRIPT_7_CLOSES_TAGS = false;
 
 /**
- * Close JSX tags in `.tsrx` files when the TypeScript that serves them does not.
+ * Close JSX tags in `.tsrx` files while TypeScript 7 is on, whichever compiler serves them.
  * VS Code's own TypeScript closes them through `@tsrx/typescript-plugin`
  * (`js/ts.autoClosingTags.enabled`), so the TSRX language server's closing tags
- * (`tsrx.autoClosingTags.enabled`) run only while TypeScript 7 serves `.tsrx`
- * files: with both, two providers would race to insert the same closing tag. From
+ * (`tsrx.autoClosingTags.enabled`) run only while TypeScript 7 is on: with both, two
+ * providers would race to insert the same closing tag. From
  * extension 1.0.2 that race exists on TypeScript 7 too, wherever `tsc --lsp` answers.
  * @param {import('vscode').ExtensionContext} context
  * @param {import('vscode-languageclient/node').BaseLanguageClient} client
