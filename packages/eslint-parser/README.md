@@ -124,15 +124,15 @@ these without misdescribing the source to other rules:
   next, and `no-fallthrough` would then report every `@case`. The arms of `@if`
   and `@try` don't have this problem, so when an arm throws, an `@if`/`@else if`
   chain gets the right code paths.
+- `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
+  `@else`, `@else if` or `@for` body that holds a single statement, such as
+  `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
+  doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
 - Code path analysis runs a `@pending` block after the `@try` body, though it
   shows while the body suspends. After a body that can't complete, such as one
   that throws, `no-unreachable` reports `@pending`. `no-useless-assignment` can
   flag a value only `@pending` reads, when the body overwrites it or can't
   complete.
-- `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
-  `@else`, `@else if` or `@for` body that holds a single statement, such as
-  `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
-  doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
 
 ## Related Packages
 
