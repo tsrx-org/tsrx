@@ -1,5 +1,5 @@
 import vscode from 'vscode';
-import { follow_running_compiler, typescript_7_server_extension } from './typescript-7.js';
+import { TYPESCRIPT_7_SERVER_EXTENSIONS, follow_running_compiler } from './typescript-7.js';
 
 // The TypeScript extensions VS Code recognizes. The nightly companion only supplies a compiler.
 const TYPESCRIPT_EXTENSIONS = [
@@ -27,16 +27,36 @@ export function activate_typescript(context) {
 		'.tsrx',
 	];
 	// A successful activation is remembered even when that extension exposes no mapper API.
-	/** @type {Map<string, import('vscode').Disposable[]>} */
+	/** @type {Map<string, { api: any, registration: import('vscode').Disposable | undefined }>} */
 	const registrations = new Map();
+	/** @type {{ id: string, subscription: import('vscode').Disposable | undefined } | undefined} */
+	let following;
 	let disposed = false;
 	let pending = Promise.resolve();
 
+	function stop_following() {
+		following?.subscription?.dispose();
+		following = undefined;
+	}
+
+	/**
+	 * Follow the running compiler of the first TypeScript 7 server extension there is now,
+	 * which changes as extensions come and go. Each one starts a server, and one report at
+	 * a time can be right. `sync` calls this last, so a throw leaves the registrations be.
+	 */
+	function follow_server() {
+		const id = TYPESCRIPT_7_SERVER_EXTENSIONS.find((candidate) => registrations.has(candidate));
+		if (id === following?.id) return;
+		stop_following();
+		if (!id) return;
+		following = { id, subscription: follow_running_compiler(registrations.get(id)?.api) };
+	}
+
 	async function sync() {
 		if (disposed) return;
-		for (const [id, registration] of registrations) {
+		for (const [id, { registration }] of registrations) {
 			if (!vscode.extensions.getExtension(id)) {
-				for (const disposable of registration) disposable.dispose();
+				registration?.dispose();
 				registrations.delete(id);
 			}
 		}
@@ -51,18 +71,12 @@ export function activate_typescript(context) {
 					typeof api?.registerContentMappers === 'function'
 						? api.registerContentMappers(context.extension.id, [{ extensions: tsrx_extensions }])
 						: undefined;
-				const following =
-					extension.id === typescript_7_server_extension()?.id
-						? follow_running_compiler(api)
-						: undefined;
-				registrations.set(
-					id,
-					[registration, following].filter((disposable) => disposable !== undefined),
-				);
+				registrations.set(id, { api, registration });
 			} catch (error) {
 				console.warn(`[TSRX] Could not activate ${id}:`, error);
 			}
 		}
+		if (!disposed) follow_server();
 	}
 
 	function schedule() {
@@ -76,9 +90,8 @@ export function activate_typescript(context) {
 		{
 			dispose: () => {
 				disposed = true;
-				for (const registration of registrations.values()) {
-					for (const disposable of registration) disposable.dispose();
-				}
+				stop_following();
+				for (const { registration } of registrations.values()) registration?.dispose();
 				registrations.clear();
 			},
 		},
