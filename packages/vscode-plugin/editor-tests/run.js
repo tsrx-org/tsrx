@@ -246,7 +246,14 @@ function create_project(scenario) {
 		prettier: installed_package_dir(repo_root, 'prettier'),
 		'@tsrx/prettier-plugin': path.join(repo_root, 'packages', 'prettier-plugin'),
 	};
-	if (scenario.projectTypeScript) {
+	if (scenario.projectTypeScript === 'no-binary') {
+		// An install that left out the optional platform package.
+		fs.mkdirSync(path.join(project, 'node_modules', 'typescript'), { recursive: true });
+		fs.copyFileSync(
+			path.join(project_typescript, 'package.json'),
+			path.join(project, 'node_modules', 'typescript', 'package.json'),
+		);
+	} else if (scenario.projectTypeScript) {
 		links.typescript =
 			scenario.projectTypeScript === 'classic' ? classic_typescript : project_typescript;
 	}
@@ -254,6 +261,13 @@ function create_project(scenario) {
 		const link = path.join(project, 'node_modules', name);
 		fs.mkdirSync(path.dirname(link), { recursive: true });
 		fs.symlinkSync(target, link, 'junction');
+	}
+	if (scenario.workspaceSettings) {
+		fs.mkdirSync(path.join(project, '.vscode'));
+		fs.writeFileSync(
+			path.join(project, '.vscode', 'settings.json'),
+			JSON.stringify(scenario.workspaceSettings, null, 2),
+		);
 	}
 	return project;
 }
@@ -298,6 +312,7 @@ async function run_scenario(scenario, index) {
 			command: scenario.command,
 			packageChange: scenario.packageChange,
 			serverCrash: scenario.serverCrash,
+			workspacePrompt: scenario.workspacePrompt,
 			actionWaitMs: ACTION_WAIT_MS,
 		}),
 	);
