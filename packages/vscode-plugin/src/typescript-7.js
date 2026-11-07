@@ -119,6 +119,11 @@ function compiler_package(directory) {
 	return undefined;
 }
 
+/** @param {string} bin */
+function executable_name(bin) {
+	return process.platform === 'win32' ? `${bin}.exe` : bin;
+}
+
 /**
  * Whether a compiler package's executable is there, as the TypeScript 7 extension checks
  * before it runs one: `@typescript/<name>-<os>-<arch>` holds it, resolved from the
@@ -130,22 +135,21 @@ function has_platform_binary({ manifest, base_name, bin }) {
 	try {
 		const platform_package = `@typescript/${base_name}-${process.platform}-${process.arch}`;
 		const platform_manifest = createRequire(manifest).resolve(`${platform_package}/package.json`);
-		const executable = process.platform === 'win32' ? `${bin}.exe` : bin;
-		return fs.existsSync(path.join(path.dirname(platform_manifest), 'lib', executable));
+		return fs.existsSync(path.join(path.dirname(platform_manifest), 'lib', executable_name(bin)));
 	} catch {
 		return false;
 	}
 }
 
 /**
- * The version of the TypeScript 7 package a `tsdk` setting names, as the TypeScript 7
- * extension finds it: a package with its platform binary at that path or its parent (the
- * path may name its `lib` directory). It also runs a local build, a directory with a
- * bare `tsc` or `tsgo`, which this does not find.
+ * The compiler a `tsdk` setting names, as the TypeScript 7 extension finds it: a package
+ * with its platform binary at that path or its parent (the path may name its `lib`
+ * directory), or else a local build, a directory with a bare `tsc` or `tsgo`, which has
+ * no manifest and the version `local`.
  * @param {string} tsdk
- * @returns {string | undefined}
+ * @returns {{ version: string, manifest?: string } | undefined}
  */
-function tsdk_version(tsdk) {
+function tsdk_compiler(tsdk) {
 	const base = workspace_config_base();
 	let resolved = path.isAbsolute(tsdk) || !base ? tsdk : path.join(base, tsdk);
 	try {
@@ -155,9 +159,14 @@ function tsdk_version(tsdk) {
 	}
 	for (const directory of [resolved, path.dirname(resolved)]) {
 		const compiler = compiler_package(directory);
-		if (compiler && has_platform_binary(compiler)) return compiler.version;
+		if (compiler && has_platform_binary(compiler)) {
+			return { version: compiler.version, manifest: compiler.manifest };
+		}
 	}
-	return undefined;
+	const is_local_build = ['tsc', 'tsgo'].some((bin) =>
+		fs.existsSync(path.join(resolved, executable_name(bin))),
+	);
+	return is_local_build ? { version: 'local' } : undefined;
 }
 
 /** @param {string} tsdk */
@@ -216,12 +225,13 @@ function bundled_version(extension) {
 }
 
 /**
- * `scope` and `tsdk` say where a compiler from a setting comes from.
+ * `scope`, `tsdk` and `manifest` say where a compiler from a setting comes from.
  * @typedef {{
  * 	version: string,
  * 	from: 'setting' | 'nightly-extension' | 'bundled',
  * 	scope?: 'user' | 'workspace',
  * 	tsdk?: string,
+ * 	manifest?: string,
  * }} TypeScript7Compiler
  */
 
@@ -243,10 +253,10 @@ export function typescript_7_compiler() {
 	const server = typescript_7_server_extension();
 	if (!server) return undefined;
 	for (const candidate of tsdk_candidates()) {
-		const version = tsdk_version(candidate.value);
-		if (version) {
+		const compiler = tsdk_compiler(candidate.value);
+		if (compiler) {
 			return {
-				version,
+				...compiler,
 				from: 'setting',
 				scope: candidate.scope > 1 ? 'workspace' : 'user',
 				tsdk: candidate.value,
@@ -259,9 +269,12 @@ export function typescript_7_compiler() {
 }
 
 /**
- * What the TypeScript 7 server last reported about itself.
- * @type {{ version: string, isCurrent?: () => boolean } | undefined}
+ * What the TypeScript 7 server last reported about itself. A local build has no
+ * `packageJsonPath`.
+ * @typedef {{ version: string, packageJsonPath?: string, isCurrent?: () => boolean }} ReportedCompiler
  */
+
+/** @type {ReportedCompiler | undefined} */
 let reported_compiler;
 
 /** @type {Set<() => void>} */
@@ -271,20 +284,25 @@ const compiler_report_listeners = new Set();
  * Follow the compiler the TypeScript 7 server runs, through the TypeScript 7 extension's
  * API. `onLanguageServerInitialized` passes the running compiler on every start, and at
  * once if the server already runs. Extension 1.0.1 has the event but passes nothing, so
- * there `running_compiler_version` stays undefined.
+ * there `running_compiler` stays undefined.
+ *
+ * Subscribing has a cost: the extension then remembers the version in the compiler's
+ * `package.json`, and when that changes on disk its restart command asks to restart the
+ * extension host instead of restarting the server.
  * @param {unknown} api
  * @returns {import('vscode').Disposable | undefined}
  */
 export function follow_running_compiler(api) {
 	const { onLanguageServerInitialized: on_initialized } = /** @type {{
 		onLanguageServerInitialized?: (
-			listener: (compiler?: { version?: unknown, isCurrent?: () => boolean }) => void,
+			listener: (compiler?: Omit<ReportedCompiler, 'version'> & { version?: unknown }) => void,
 		) => import('vscode').Disposable,
 	}} */ (api ?? {});
 	if (typeof on_initialized !== 'function') return undefined;
 	const subscription = on_initialized((compiler) => {
 		if (typeof compiler?.version !== 'string') return;
-		reported_compiler = { version: compiler.version, isCurrent: compiler.isCurrent };
+		const { version, packageJsonPath, isCurrent } = compiler;
+		reported_compiler = { version, packageJsonPath, isCurrent };
 		for (const listener of compiler_report_listeners) listener();
 	});
 	return {
@@ -296,12 +314,35 @@ export function follow_running_compiler(api) {
 }
 
 /**
- * The version of the compiler the TypeScript 7 server runs, if it has said so and has
- * not started to restart since.
- * @returns {string | undefined}
+ * The compiler the TypeScript 7 server runs, if it has said so and has not started to
+ * restart since.
+ * @returns {ReportedCompiler | undefined}
  */
-export function running_compiler_version() {
-	return reported_compiler?.isCurrent?.() === false ? undefined : reported_compiler?.version;
+export function running_compiler() {
+	return reported_compiler?.isCurrent?.() === false ? undefined : reported_compiler;
+}
+
+/** Forget the running compiler, because a restart for a new one is about to start. */
+export function forget_running_compiler() {
+	reported_compiler = undefined;
+}
+
+/**
+ * Whether the server runs the compiler a setting names. Two packages can share a version,
+ * so a report is matched by its `package.json`. Only a local build goes by its version.
+ * @param {ReportedCompiler} running
+ * @param {TypeScript7Compiler} compiler
+ * @returns {boolean}
+ */
+export function runs_compiler(running, compiler) {
+	if (!running.packageJsonPath || !compiler.manifest) return running.version === compiler.version;
+	try {
+		return (
+			fs.realpathSync.native(running.packageJsonPath) === fs.realpathSync.native(compiler.manifest)
+		);
+	} catch {
+		return false;
+	}
 }
 
 /**

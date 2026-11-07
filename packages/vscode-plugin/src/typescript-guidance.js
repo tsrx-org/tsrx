@@ -7,9 +7,11 @@ import {
 import {
 	TSDK_SETTING_NAMES,
 	USE_TSGO_SETTINGS,
+	forget_running_compiler,
 	on_running_compiler_reported,
 	project_typescript,
-	running_compiler_version,
+	running_compiler,
+	runs_compiler,
 	typescript_7_compiler,
 	typescript_7_on,
 	typescript_7_server_extension,
@@ -54,8 +56,8 @@ export function typescript_status(uri) {
 	if (!compiler) return { kind: 'typescript-7-missing', project };
 	// What the settings predict is all there is until the server reports, and on extension
 	// 1.0.1, which never does.
-	const running = running_compiler_version();
-	const version = running ?? compiler.version;
+	const running = running_compiler();
+	const version = running?.version ?? compiler.version;
 	const supported =
 		version === 'unknown' || version === 'local' || has_content_mapper_protocol(version);
 	return {
@@ -63,7 +65,7 @@ export function typescript_status(uri) {
 		version,
 		project,
 		workspace_tsdk_ignored:
-			compiler.scope === 'workspace' && running !== undefined && running !== compiler.version,
+			compiler.scope === 'workspace' && running !== undefined && !runs_compiler(running, compiler),
 	};
 }
 
@@ -204,7 +206,7 @@ export function notice_for(status) {
 					id: 'typescript-7-unsupported',
 					severity: 'warning',
 					title: 'Fix type checking in .tsrx files',
-					message: `TypeScript 7 uses version ${status.version}. This version cannot type-check .tsrx files. The workspace settings name another version, which TypeScript 7 has not been allowed to use. To allow it, click Select TypeScript Version and choose Use Workspace Version.`,
+					message: `TypeScript 7 uses version ${status.version}. This version cannot type-check .tsrx files. The workspace settings name another compiler, which TypeScript 7 has not been allowed to use. To allow it, click Select TypeScript Version and choose Use Workspace Version. That also turns TypeScript 7 on in the workspace settings.`,
 					actions: [SELECT_TYPESCRIPT_VERSION, TURN_OFF_TYPESCRIPT_7],
 				};
 			}
@@ -357,6 +359,9 @@ export function activate_typescript_guidance(context) {
 		const compiler = compiler_key();
 		if (compiler === last_compiler) return;
 		last_compiler = compiler;
+		// The server still reports the old compiler until the restart below. Compared with
+		// the new setting, that would look like a setting the user has not allowed.
+		forget_running_compiler();
 		if (!typescript_7_on() || !typescript_7_server_extension()) return;
 		void vscode.commands.executeCommand(
 			typescript_7_compiler()?.scope === 'workspace'
@@ -395,7 +400,10 @@ export function activate_typescript_guidance(context) {
 			});
 			// The version pickers: VS Code's own while it serves TypeScript files, else the
 			// TypeScript 7 extension's, which only exists when that extension is installed.
-			if (status?.kind === 'vscode' || typescript_7_server_extension()) {
+			const has_picker = notice.actions.some(
+				(action) => action.id === SELECT_TYPESCRIPT_VERSION.id,
+			);
+			if (!has_picker && (status?.kind === 'vscode' || typescript_7_server_extension())) {
 				items.push({
 					label: 'Select TypeScript Version…',
 					run: () =>

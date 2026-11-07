@@ -27,6 +27,9 @@ const host = vi.hoisted(() => ({
 	updates: [],
 	showWarningMessage: vi.fn(),
 	showInformationMessage: vi.fn(),
+	showQuickPick: vi.fn(),
+	/** @type {Map<string, () => Promise<unknown>>} */
+	registered_commands: new Map(),
 	/** @type {Record<string, any>} */
 	status_item: {},
 }));
@@ -98,7 +101,7 @@ vi.mock('vscode', () => {
 				onDidChangeActiveTextEditor: listener,
 				showWarningMessage: host.showWarningMessage,
 				showInformationMessage: host.showInformationMessage,
-				showQuickPick: vi.fn(),
+				showQuickPick: host.showQuickPick,
 			},
 			languages: {
 				createLanguageStatusItem: () => {
@@ -109,7 +112,13 @@ vi.mock('vscode', () => {
 			commands: {
 				executeCommand: host.executeCommand,
 				getCommands: async () => host.commands,
-				registerCommand: listener,
+				registerCommand: (
+					/** @type {string} */ command,
+					/** @type {() => Promise<unknown>} */ handler,
+				) => {
+					host.registered_commands.set(command, handler);
+					return { dispose() {} };
+				},
 			},
 			env: { openExternal: vi.fn() },
 			Uri: { parse: (/** @type {string} */ value) => value },
@@ -185,21 +194,39 @@ const followed = [];
 
 /**
  * The API of a TypeScript 7 extension, as TSRX follows it.
- * @returns {(compiler?: { version: string, isCurrent?: () => boolean }) => void} Fires the
- *   extension's `onLanguageServerInitialized`.
+ * @returns {(compiler?: { version: string, packageJsonPath?: string, isCurrent?: () => boolean }) => void}
+ *   Fires the extension's `onLanguageServerInitialized`, and throws if nothing subscribed.
  */
 function follow_extension_api() {
-	/** @type {((compiler?: { version: string, isCurrent?: () => boolean }) => void) | undefined} */
+	/** @type {any} */
 	let listener;
 	followed.push(
 		follow_running_compiler({
-			onLanguageServerInitialized: (/** @type {typeof listener} */ callback) => {
+			onLanguageServerInitialized: (/** @type {any} */ callback) => {
 				listener = callback;
 				return { dispose() {} };
 			},
 		}),
 	);
-	return (compiler) => listener?.(compiler);
+	return (compiler) => listener(compiler);
+}
+
+/** @param {() => void} run What to do as if on Windows, which only `process.platform` tells. */
+function on_windows(run) {
+	const { platform } = process;
+	Object.defineProperty(process, 'platform', { value: 'win32' });
+	try {
+		run();
+	} finally {
+		Object.defineProperty(process, 'platform', { value: platform });
+	}
+}
+
+/** @param {string} name A setting that changed, as VS Code tells the listeners. */
+function changed(name) {
+	for (const listener of host.configuration_listeners) {
+		listener({ affectsConfiguration: (setting) => setting === name });
+	}
 }
 
 /** @param {string} section @param {string} key @param {Record<string, unknown>} scopes */
@@ -296,6 +323,48 @@ describe('which TypeScript serves .tsrx files', () => {
 		expect(typescript_status(app_file()).project?.name).toBe('@typescript/native-preview');
 	});
 
+	it('skips a platform package that lacks the executable', () => {
+		const directory = path.join(workspace, 'node_modules', '@typescript', 'native-preview');
+		write_native_package(directory, '@typescript/native-preview', '7.1.0-dev.20260923.1');
+		fs.rmSync(
+			path.join(
+				directory,
+				'node_modules',
+				'@typescript',
+				`native-preview-${process.platform}-${process.arch}`,
+				'lib',
+				'tsgo',
+			),
+		);
+		expect(typescript_status(app_file()).project).toBeUndefined();
+	});
+
+	it('finds the platform package beside a symlinked package, as pnpm lays them out', () => {
+		const store = path.join(workspace, 'node_modules', '.pnpm', 'native-preview@7.1');
+		const real_directory = path.join(store, 'node_modules', '@typescript', 'native-preview');
+		write_native_package(real_directory, '@typescript/native-preview', '7.1.0-dev.20260923.1', {
+			binary: false,
+		});
+		write_platform_binary(store, 'native-preview', 'tsgo');
+		const link = path.join(workspace, 'node_modules', '@typescript', 'native-preview');
+		fs.mkdirSync(path.dirname(link), { recursive: true });
+		fs.symlinkSync(real_directory, link);
+		expect(typescript_status(app_file()).project).toMatchObject({
+			name: '@typescript/native-preview',
+			directory: link,
+		});
+	});
+
+	it('finds a platform package with the Windows executable name', () => {
+		const directory = path.join(workspace, 'node_modules', '@typescript', 'native-preview');
+		on_windows(() => {
+			write_native_package(directory, '@typescript/native-preview', '7.1.0-dev.20260923.1');
+			expect(typescript_status(app_file()).project?.name).toBe('@typescript/native-preview');
+		});
+		// That is `tsgo.exe`, which an executable named `tsgo` is not.
+		expect(typescript_status(app_file()).project).toBeUndefined();
+	});
+
 	it('skips a package without the command the TypeScript 7 extension runs', () => {
 		const modules = path.join(workspace, 'node_modules');
 		write_native_package(
@@ -384,27 +453,49 @@ describe('which TypeScript serves .tsrx files', () => {
 		});
 	});
 
-	it('takes a workspace setting as allowed once the server runs its compiler', () => {
+	it('takes a workspace setting as allowed once the server reports its package', () => {
 		install('TypeScriptTeam.native-preview', NATIVE_PREVIEW);
 		use_tsgo();
-		write_typescript(path.join(workspace, 'node_modules', 'typescript'), '7.1.0-dev.20260930.4');
+		const directory = path.join(workspace, 'node_modules', 'typescript');
+		write_typescript(directory, '7.1.0-dev.20260930.4');
 		set('js/ts', 'tsdk.path', { workspaceValue: 'node_modules/typescript' });
-		follow_extension_api()({ version: '7.1.0-dev.20260930.4' });
+		// Another version than the manifest says now, so the status must come from the report.
+		follow_extension_api()({
+			version: '7.1.0-dev.20260923.1',
+			packageJsonPath: path.join(directory, 'package.json'),
+		});
 		expect(typescript_status(app_file())).toMatchObject({
 			kind: 'typescript-7',
-			version: '7.1.0-dev.20260930.4',
+			version: '7.1.0-dev.20260923.1',
 			workspace_tsdk_ignored: false,
 		});
 	});
 
-	it('goes back to the settings while the reported compiler is not current', () => {
+	it('tells a workspace compiler it ignores from a fallback of the same version', () => {
 		install('TypeScriptTeam.native-preview', NATIVE_PREVIEW);
 		use_tsgo();
-		let current = true;
-		follow_extension_api()({ version: '7.1.0-dev.20260930.4', isCurrent: () => current });
-		expect(typescript_status(app_file()).version).toBe('7.1.0-dev.20260930.4');
-		current = false;
-		expect(typescript_status(app_file()).version).toBe('7.0.2');
+		const bundled = path.join(workspace, 'bundled');
+		write_typescript(path.join(workspace, 'node_modules', 'typescript'), '7.0.2');
+		write_typescript(bundled, '7.0.2');
+		set('js/ts', 'tsdk.path', { workspaceValue: 'node_modules/typescript' });
+		follow_extension_api()({
+			version: '7.0.2',
+			packageJsonPath: path.join(bundled, 'package.json'),
+		});
+		expect(typescript_status(app_file())).toMatchObject({
+			kind: 'typescript-7-unsupported',
+			version: '7.0.2',
+			workspace_tsdk_ignored: true,
+		});
+	});
+
+	it('never calls a user setting ignored', () => {
+		install('TypeScriptTeam.native-preview', NATIVE_PREVIEW);
+		use_tsgo();
+		write_typescript(path.join(workspace, 'node_modules', 'typescript'), '7.1.0-dev.20260930.4');
+		set('js/ts', 'tsdk.path', { globalValue: 'node_modules/typescript' });
+		follow_extension_api()({ version: '7.0.2' });
+		expect(typescript_status(app_file()).workspace_tsdk_ignored).toBe(false);
 	});
 
 	it('keeps to the settings on extension 1.0.1, whose event passes nothing', () => {
@@ -427,6 +518,41 @@ describe('which TypeScript serves .tsrx files', () => {
 		use_tsgo();
 		follow_extension_api()({ version: 'local' });
 		expect(typescript_status(app_file())).toMatchObject({ kind: 'typescript-7', version: 'local' });
+	});
+
+	it('finds a local build, a directory with a bare compiler, with no report to go by', () => {
+		install('TypeScriptTeam.native-preview', NATIVE_PREVIEW);
+		use_tsgo();
+		const build = path.join(workspace, 'built', 'local');
+		fs.mkdirSync(build, { recursive: true });
+		fs.writeFileSync(path.join(build, 'tsgo'), '');
+		set('js/ts', 'tsdk.path', { globalValue: build });
+		expect(typescript_status(app_file())).toMatchObject({ kind: 'typescript-7', version: 'local' });
+	});
+
+	it('finds a local build by its Windows executable name', () => {
+		install('TypeScriptTeam.native-preview', NATIVE_PREVIEW);
+		use_tsgo();
+		const build = path.join(workspace, 'built', 'local');
+		fs.mkdirSync(build, { recursive: true });
+		fs.writeFileSync(path.join(build, 'tsc.exe'), '');
+		set('js/ts', 'tsdk.path', { globalValue: build });
+		on_windows(() => expect(typescript_status(app_file()).version).toBe('local'));
+		expect(typescript_status(app_file()).version).toBe('7.0.2');
+	});
+
+	it('matches a workspace local build by version, which is all its report has', () => {
+		install('TypeScriptTeam.native-preview', NATIVE_PREVIEW);
+		use_tsgo();
+		const build = path.join(workspace, 'built', 'local');
+		fs.mkdirSync(build, { recursive: true });
+		fs.writeFileSync(path.join(build, 'tsc'), '');
+		set('js/ts', 'tsdk.path', { workspaceValue: build });
+		const report = follow_extension_api();
+		report({ version: 'local' });
+		expect(typescript_status(app_file()).workspace_tsdk_ignored).toBe(false);
+		report({ version: '7.0.2' });
+		expect(typescript_status(app_file()).workspace_tsdk_ignored).toBe(true);
 	});
 
 	it('skips a tsdk setting whose platform package an install left out', () => {
@@ -541,7 +667,7 @@ describe('notices', () => {
 			workspace_tsdk_ignored: true,
 		});
 		expect(notice?.message).toBe(
-			'TypeScript 7 uses version 7.0.2. This version cannot type-check .tsrx files. The workspace settings name another version, which TypeScript 7 has not been allowed to use. To allow it, click Select TypeScript Version and choose Use Workspace Version.',
+			'TypeScript 7 uses version 7.0.2. This version cannot type-check .tsrx files. The workspace settings name another compiler, which TypeScript 7 has not been allowed to use. To allow it, click Select TypeScript Version and choose Use Workspace Version. That also turns TypeScript 7 on in the workspace settings.',
 		);
 		expect(labels(notice)).toEqual(['Select TypeScript Version', 'Turn Off TypeScript 7']);
 	});
@@ -656,6 +782,89 @@ describe('status item and notices in the editor', () => {
 		});
 	});
 
+	it('refreshes the status by itself on a report, and uses the settings while a report is not current', () => {
+		const report = follow_extension_api();
+		const guidance = activate_typescript_guidance(context());
+		let current = true;
+		report({ version: '7.1.0-dev.20260930.4', isCurrent: () => current });
+		expect(guidance.status()?.version).toBe('7.1.0-dev.20260930.4');
+		current = false;
+		changed('js/ts.experimental.useTsgo');
+		expect(guidance.status()?.version).toBe('7.0.2');
+		report({ version: '7.1.0-dev.20260923.1' });
+		expect(guidance.status()?.version).toBe('7.1.0-dev.20260923.1');
+	});
+
+	it('stops listening for reports on dispose', () => {
+		const report = follow_extension_api();
+		const extension_context = context();
+		const guidance = activate_typescript_guidance(extension_context);
+		for (const subscription of extension_context.subscriptions) subscription.dispose();
+		report({ version: '7.1.0-dev.20260930.4' });
+		expect(guidance.status()?.version).toBe('7.0.2');
+	});
+
+	it('does not call a changed workspace setting ignored because the old server still runs', () => {
+		host.showWarningMessage.mockResolvedValue(undefined);
+		const old_nightly = path.join(workspace, 'old');
+		const new_nightly = path.join(workspace, 'new');
+		write_typescript(old_nightly, '7.1.0-dev.20260923.1');
+		write_typescript(new_nightly, '7.1.0-dev.20260930.4');
+		set('js/ts', 'tsdk.path', { workspaceValue: old_nightly });
+		const report = follow_extension_api();
+		const guidance = activate_typescript_guidance(context());
+		report({
+			version: '7.1.0-dev.20260923.1',
+			packageJsonPath: path.join(old_nightly, 'package.json'),
+		});
+		expect(guidance.status()?.workspace_tsdk_ignored).toBe(false);
+		set('js/ts', 'tsdk.path', { workspaceValue: new_nightly });
+		changed('js/ts.tsdk.path');
+		expect(guidance.status()).toMatchObject({
+			version: '7.1.0-dev.20260930.4',
+			workspace_tsdk_ignored: false,
+		});
+		expect(guidance.shown).toEqual([]);
+	});
+
+	it('restarts TypeScript 7 for a change of tsdk setting that only a local build sees', () => {
+		const build = path.join(workspace, 'built', 'local');
+		fs.mkdirSync(build, { recursive: true });
+		activate_typescript_guidance(context());
+		fs.writeFileSync(path.join(build, 'tsgo'), '');
+		set('js/ts', 'tsdk.path', { globalValue: build });
+		changed('js/ts.tsdk.path');
+		expect(host.executeCommand).toHaveBeenCalledExactlyOnceWith(
+			'typescript.native-preview.restart',
+		);
+	});
+
+	it('lists the version picker once in the Fix… menu', async () => {
+		host.showWarningMessage.mockResolvedValue(undefined);
+		write_typescript(path.join(workspace, 'node_modules', 'typescript'), '7.1.0-dev.20260930.4');
+		set('js/ts', 'tsdk.path', { workspaceValue: 'node_modules/typescript' });
+		const report = follow_extension_api();
+		activate_typescript_guidance(context());
+		report({ version: '7.0.2' });
+		await host.registered_commands.get('tsrx.typescript.fix')?.();
+		const items = host.showQuickPick.mock.calls[0][0];
+		expect(items.map((/** @type {{ label: string }} */ item) => item.label)).toEqual([
+			'Select TypeScript Version',
+			'Turn Off TypeScript 7',
+			'Restart Language Server',
+		]);
+	});
+
+	it('keeps the version picker in the Fix… menu of a notice that has none', async () => {
+		host.showWarningMessage.mockResolvedValue(undefined);
+		activate_typescript_guidance(context());
+		await host.registered_commands.get('tsrx.typescript.fix')?.();
+		const items = host.showQuickPick.mock.calls[0][0];
+		expect(items.map((/** @type {{ label: string }} */ item) => item.label)).toContain(
+			'Select TypeScript Version…',
+		);
+	});
+
 	it("shows the notice once the server reports a compiler the settings did not predict, and opens the extension's version picker", async () => {
 		host.showWarningMessage.mockResolvedValue(undefined);
 		write_typescript(path.join(workspace, 'node_modules', 'typescript'), '7.1.0-dev.20260930.4');
@@ -731,12 +940,6 @@ describe('status item and notices in the editor', () => {
 		host.showWarningMessage.mockResolvedValue(undefined);
 		write_typescript(path.join(workspace, 'node_modules', 'typescript'), '7.1.0-dev.20260930.4');
 		activate_typescript_guidance(context());
-		/** @param {string} name */
-		const changed = (name) => {
-			for (const listener of host.configuration_listeners) {
-				listener({ affectsConfiguration: (setting) => setting === name });
-			}
-		};
 		set('js/ts', 'tsdk.path', { globalValue: 'node_modules/typ' });
 		changed('js/ts.tsdk.path');
 		expect(host.executeCommand).not.toHaveBeenCalled();
