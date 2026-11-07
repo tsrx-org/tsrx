@@ -67,8 +67,20 @@ describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler)
 		'export const A = () => <>\n',
 		'export const y = <div><b>\n',
 	])('leaves the components after %j alone', (first) => {
-		for (const rest of [TEMPLATE, ARROW, TEMPLATE + ARROW.replace('const B', 'const C')]) {
+		for (const rest of [
+			TEMPLATE,
+			TEMPLATE.trimEnd(),
+			ARROW,
+			TEMPLATE + ARROW.replace('const B', 'const C'),
+		]) {
 			expect(covers(compiler, first + rest, 'wrong: string'), first + rest).toBe(false);
+		}
+	});
+
+	it('leaves a component before an unclosed tag alone', () => {
+		const before = TEMPLATE.replace('function B', 'function Z');
+		for (const last of ['export const A = () => <div>\n', 'export const y = <Missing>']) {
+			expect(covers(compiler, before + last, 'wrong: string'), last).toBe(false);
 		}
 	});
 
