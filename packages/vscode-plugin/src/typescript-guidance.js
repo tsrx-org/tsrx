@@ -7,11 +7,11 @@ import {
 import {
 	TSDK_SETTING_NAMES,
 	USE_TSGO_SETTINGS,
-	forget_running_compiler,
 	on_running_compiler_reported,
 	project_typescript,
 	running_compiler,
 	runs_compiler,
+	supersede_running_compiler,
 	typescript_7_compiler,
 	typescript_7_on,
 	typescript_7_server_extension,
@@ -65,7 +65,10 @@ export function typescript_status(uri) {
 		version,
 		project,
 		workspace_tsdk_ignored:
-			compiler.scope === 'workspace' && running !== undefined && !runs_compiler(running, compiler),
+			compiler.scope === 'workspace' &&
+			running !== undefined &&
+			!running.superseded &&
+			!runs_compiler(running, compiler),
 	};
 }
 
@@ -359,9 +362,9 @@ export function activate_typescript_guidance(context) {
 		const compiler = compiler_key();
 		if (compiler === last_compiler) return;
 		last_compiler = compiler;
-		// The server still reports the old compiler until the restart below. Compared with
-		// the new setting, that would look like a setting the user has not allowed.
-		forget_running_compiler();
+		// The old server's report, compared with the new setting, would look like a setting
+		// the user has not allowed, until the restart below reports.
+		supersede_running_compiler();
 		if (!typescript_7_on() || !typescript_7_server_extension()) return;
 		void vscode.commands.executeCommand(
 			typescript_7_compiler()?.scope === 'workspace'

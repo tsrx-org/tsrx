@@ -270,8 +270,13 @@ export function typescript_7_compiler() {
 
 /**
  * What the TypeScript 7 server last reported about itself. A local build has no
- * `packageJsonPath`.
- * @typedef {{ version: string, packageJsonPath?: string, isCurrent?: () => boolean }} ReportedCompiler
+ * `packageJsonPath`. `superseded` says a change of setting has asked for a restart.
+ * @typedef {{
+ * 	version: string,
+ * 	packageJsonPath?: string,
+ * 	isCurrent?: () => boolean,
+ * 	superseded?: boolean,
+ * }} ReportedCompiler
  */
 
 /** @type {ReportedCompiler | undefined} */
@@ -279,6 +284,10 @@ let reported_compiler;
 
 /** @type {Set<() => void>} */
 const compiler_report_listeners = new Set();
+
+function notify_compiler_report() {
+	for (const listener of compiler_report_listeners) listener();
+}
 
 /**
  * Follow the compiler the TypeScript 7 server runs, through the TypeScript 7 extension's
@@ -303,12 +312,14 @@ export function follow_running_compiler(api) {
 		if (typeof compiler?.version !== 'string') return;
 		const { version, packageJsonPath, isCurrent } = compiler;
 		reported_compiler = { version, packageJsonPath, isCurrent };
-		for (const listener of compiler_report_listeners) listener();
+		notify_compiler_report();
 	});
 	return {
 		dispose() {
 			subscription.dispose();
+			if (!reported_compiler) return;
 			reported_compiler = undefined;
+			notify_compiler_report();
 		},
 	};
 }
@@ -322,9 +333,13 @@ export function running_compiler() {
 	return reported_compiler?.isCurrent?.() === false ? undefined : reported_compiler;
 }
 
-/** Forget the running compiler, because a restart for a new one is about to start. */
-export function forget_running_compiler() {
-	reported_compiler = undefined;
+/**
+ * Note that a changed setting has asked for a restart. The report stays, because that
+ * server runs until the restart starts, and goes on running if it fails or the user
+ * declines it.
+ */
+export function supersede_running_compiler() {
+	if (reported_compiler) reported_compiler.superseded = true;
 }
 
 /**
