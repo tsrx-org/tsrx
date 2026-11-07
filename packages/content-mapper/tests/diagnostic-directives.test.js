@@ -12,14 +12,15 @@ import { ignore_directives } from '../src/diagnostic-directives.js';
  * @param {any} compiler
  * @param {string} source
  * @param {string} needle
+ * @param {(error: any) => any} [reported] What the compiler reports for an error
  */
-function hidden_ranges(compiler, source, needle) {
+function hidden_ranges(compiler, source, needle, reported = (error) => error) {
 	const result = transform_tsrx(compiler, 'App.tsrx', source);
 	expect(result.fatalError, source).toBeFalsy();
 	const at = result.text.indexOf(needle);
 	expect(at, result.text).toBeGreaterThan(-1);
 	const { directives } = ignore_directives(
-		result.errors,
+		result.errors.map(reported),
 		result.sourceAst,
 		result.mappings,
 		source.length,
@@ -34,9 +35,10 @@ function hidden_ranges(compiler, source, needle) {
  * @param {any} compiler
  * @param {string} source
  * @param {string} needle
+ * @param {(error: any) => any} [reported]
  */
-function covers(compiler, source, needle) {
-	const { at, ranges } = hidden_ranges(compiler, source, needle);
+function covers(compiler, source, needle, reported) {
+	const { at, ranges } = hidden_ranges(compiler, source, needle, reported);
 	return ranges.some(([start, end]) => start <= at && at < end);
 }
 
@@ -55,18 +57,20 @@ const TEMPLATE = `export function B() @{\n\tconst wrong: string = 1;\n\t<span />
 const ARROW = `export const B = () => @{\n\tconst wrong: string = 1;\n\t<span />\n};\n`;
 const PLAIN = `export function B() {\n\tconst wrong: string = 1;\n\treturn wrong;\n}\n`;
 
+const UNCLOSED = [
+	'export const A = () => <div>\n',
+	'export const A = () => <div>;\n',
+	'export const y = <div>\n',
+	'export const y = <Missing>\n',
+	'export const y = <a.b>\n',
+	'export const A = () => <>\n',
+	'export const y = <div><b>\n',
+];
+
 describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler) => {
 	// An unclosed tag at module level swallows a `@{ … }` as a block inside it,
 	// so its declaration stretches around the component that follows.
-	it.each([
-		'export const A = () => <div>\n',
-		'export const A = () => <div>;\n',
-		'export const y = <div>\n',
-		'export const y = <Missing>\n',
-		'export const y = <a.b>\n',
-		'export const A = () => <>\n',
-		'export const y = <div><b>\n',
-	])('leaves the components after %j alone', (first) => {
+	it.each(UNCLOSED)('leaves the components after %j alone', (first) => {
 		for (const rest of [
 			TEMPLATE,
 			TEMPLATE.trimEnd(),
@@ -75,6 +79,27 @@ describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler)
 		]) {
 			expect(covers(compiler, first + rest, 'wrong: string'), first + rest).toBe(false);
 		}
+	});
+
+	// The mapper runs the project's compiler. One from before a tag's error moved
+	// onto the tag reports it at the end of the file, with nothing past `end`.
+	it.each(UNCLOSED)('leaves the components after %j alone with such a compiler', (first) => {
+		const source = first + TEMPLATE;
+		const at_the_end = (/** @type {any} */ error) => ({
+			code: error.code,
+			pos: source.length,
+			end: source.length,
+			raisedAt: source.length,
+		});
+		expect(covers(compiler, source, 'wrong: string', at_the_end), source).toBe(false);
+	});
+
+	// A `<>` the output drops has only an anchor, on the line of its siblings.
+	it.each([
+		['Undefined1', 'export const y = <div>{/*cc*/}<><b /><Undefined1 /><i />\n'],
+		['missing', 'export const y = <div>{/*cc*/}<><b />{missing}<i />\n'],
+	])('leaves %s beside an unclosed fragment alone', (needle, source) => {
+		expect(covers(compiler, source, needle), source).toBe(false);
 	});
 
 	it('leaves a component before an unclosed tag alone', () => {

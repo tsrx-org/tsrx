@@ -695,6 +695,19 @@ import def from './mixed';
 		expect(await client.diagnostics('Button.tsrx')).toEqual([]);
 	});
 
+	// A `<>` the output drops has only an anchor, on the line of its siblings.
+	it('keeps the errors beside an unclosed fragment the output drops', async () => {
+		const source = 'export const y = <div>{/*cc*/}<><b /><Undefined1 /><i />\n';
+		client.change('Button.tsrx', source);
+		const diagnostics = await client.diagnostics('Button.tsrx');
+		expect(
+			diagnostics.filter((d) => d.source !== 'TSRX').map((d) => range_text(source, d.range)),
+		).toContain('Undefined1');
+
+		client.change('Button.tsrx', files['Button.tsrx']);
+		expect(await client.diagnostics('Button.tsrx')).toEqual([]);
+	});
+
 	// An error's anchor is its nearest token plus the columns to the error. The
 	// code before a `<>` can be gone from the generated code, and a tag can be
 	// long, so either could carry the anchor, and a directive, into `B` (#1288).

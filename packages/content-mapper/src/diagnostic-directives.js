@@ -58,7 +58,10 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 			: typeof error.end === 'number' && error.end > error.pos
 				? error.end
 				: error.pos + 1;
-		for (const generated of generated_ranges(mappings, start, end)) {
+		// At the end of a file nothing holds an unclosed tag, so only its own code
+		// is covered, and an anchor there can sit on code that isn't the tag's.
+		const tokens_only = !holder && error.code === DIAGNOSTIC_CODES.UNCLOSED_TAG;
+		for (const generated of generated_ranges(mappings, start, end, tokens_only)) {
 			ranges.push([
 				Math.min(start, original_length),
 				Math.min(end, original_length),
@@ -99,18 +102,23 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 
 /**
  * The position whose holder an error's directive covers. It's the error's own,
- * except for an unclosed tag, which is reported on the tag and found where its
- * template ends, one before `raisedAt`. The closing tag that recovery adds has
- * no mapping, so TypeScript's error on it could only show at the top of the
- * file, and the tag's own statement can end before it. At the end of the file
- * nothing holds that place, so the directive covers the tag alone: there, an
- * unclosed tag's declaration has stretched around the code that follows it,
- * which the directive must not hide.
+ * except for an unclosed tag that says the parser read past it. That tag is
+ * reported on the tag and found where its template ends, one before `raisedAt`.
+ * The closing tag that recovery adds has no mapping, so TypeScript's error on it
+ * could only show at the top of the file, and the tag's own statement can end
+ * before it. At the end of the file nothing holds that place: an unclosed tag's
+ * declaration has stretched around the code that follows, which the directive
+ * must not hide. A compiler from before tags were reported on themselves has its
+ * error at the end of the file already, with `raisedAt` no further than `end`,
+ * and the mapper runs whichever compiler the project has.
  * @param {CompileError} error
  * @returns {number}
  */
-function held_position({ code, pos, raisedAt }) {
-	return code === DIAGNOSTIC_CODES.UNCLOSED_TAG && typeof raisedAt === 'number'
+function held_position({ code, pos, end, raisedAt }) {
+	return code === DIAGNOSTIC_CODES.UNCLOSED_TAG &&
+		typeof raisedAt === 'number' &&
+		typeof end === 'number' &&
+		raisedAt > end
 		? raisedAt - 1
 		: /** @type {number} */ (pos);
 }
@@ -175,9 +183,11 @@ function child_at(node, position) {
  * @param {readonly CodeMapping[]} mappings
  * @param {number} start
  * @param {number} end
+ * @param {boolean} [tokens_only] Count only source tokens as the node's code. A
+ *   mapping with no navigation, such as an error's anchor, still ends a range.
  * @returns {Array<[number, number]>}
  */
-function generated_ranges(mappings, start, end) {
+function generated_ranges(mappings, start, end, tokens_only = false) {
 	/** @type {Array<[generated_start: number, generated_end: number, inside: boolean]>} */
 	const segments = [];
 	for (const mapping of mappings) {
@@ -186,7 +196,9 @@ function generated_ranges(mappings, start, end) {
 			const length = mapping.lengths[i];
 			const generated = mapping.generatedOffsets[i];
 			const generated_length = mapping.generatedLengths?.[i] ?? length;
-			if (source >= start && source + length <= end) {
+			if (tokens_only && !mapping.data?.navigation) {
+				segments.push([generated, generated + generated_length, false]);
+			} else if (source >= start && source + length <= end) {
 				segments.push([generated, generated + generated_length, true]);
 			} else if (source <= start && end <= source + length && generated_length === length) {
 				segments.push([generated + start - source, generated + end - source, true]);
