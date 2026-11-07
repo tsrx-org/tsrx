@@ -291,6 +291,40 @@ export { rest };
 		expect(directive_for('OTHER1')).toEqual([[0, 6]]);
 	});
 
+	it("doesn't join a tag's ranges across an anchor", () => {
+		const source_ast = /** @type {any} */ ({ type: 'Program', start: 0, end: 20, body: [] });
+		/**
+		 * @param {number} source
+		 * @param {number} generated
+		 * @param {Record<string, unknown>} [customData]
+		 */
+		const mapping = (source, generated, customData = {}) => ({
+			sourceOffsets: [source],
+			generatedOffsets: [generated],
+			lengths: [3],
+			generatedLengths: [3],
+			data: { customData },
+		});
+		const directives = ignore_directives(
+			/** @type {any} */ ([
+				{ code: TSRX_ERRORS.UNCLOSED_TAG.code, pos: 10, end: 13, raisedAt: 21 },
+			]),
+			source_ast,
+			/** @type {any} */ ([
+				mapping(10, 0),
+				mapping(10, 8),
+				mapping(15, 4, { diagnosticAnchor: true }),
+			]),
+			20,
+			20,
+		)?.directives;
+
+		expect(directives?.map(([, , start, end]) => [start, end])).toEqual([
+			[0, 3],
+			[8, 11],
+		]);
+	});
+
 	it("keeps an older compiler's range when nothing holds its unclosed tag", () => {
 		const source_ast = /** @type {any} */ ({ type: 'Program', start: 0, end: 20, body: [] });
 		// A mapping of the whole file, the same length on both sides by chance.
