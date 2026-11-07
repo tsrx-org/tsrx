@@ -287,7 +287,7 @@ export { rest };
 			)?.directives.map(([start, length]) => [start, length]);
 
 		expect(directive_for(TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([[7, 13]]);
-		// Another compiler can set `raisedAt` as it likes.
+		// Only an unclosed tag's `raisedAt` says where the parser stopped.
 		expect(directive_for('OTHER1')).toEqual([[0, 6]]);
 	});
 

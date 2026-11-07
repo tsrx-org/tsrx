@@ -65,6 +65,8 @@ const UNCLOSED = [
 	'export const y = <a.b>\n',
 	'export const A = () => <>\n',
 	'export const y = <div><b>\n',
+	'const Tag = 1;\nexport const y = <{Tag}>\n',
+	'export const y = <Foo<string>>\n',
 ];
 
 describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler) => {
@@ -100,6 +102,11 @@ describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler)
 		['missing', 'export const y = <div>{/*cc*/}<><b />{missing}<i />\n'],
 	])('leaves %s beside an unclosed fragment alone', (needle, source) => {
 		expect(covers(compiler, source, needle), source).toBe(false);
+	});
+
+	// With nothing holding the tag, the directive is still there for its own code.
+	it('covers the name of an unclosed tag at the end of the file', () => {
+		expect(covers(compiler, 'export const y = <Missing>\n', 'Missing')).toBe(true);
 	});
 
 	it('leaves a component before an unclosed tag alone', () => {

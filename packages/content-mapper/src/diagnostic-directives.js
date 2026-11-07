@@ -58,10 +58,10 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 			: typeof error.end === 'number' && error.end > error.pos
 				? error.end
 				: error.pos + 1;
-		// At the end of a file nothing holds an unclosed tag, so only its own code
-		// is covered, and an anchor there can sit on code that isn't the tag's.
-		const tokens_only = !holder && error.code === DIAGNOSTIC_CODES.UNCLOSED_TAG;
-		for (const generated of generated_ranges(mappings, start, end, tokens_only)) {
+		// With nothing holding an unclosed tag, only its own code is covered, and
+		// its anchor isn't that: it sits on whatever else is on its generated line.
+		const skip_anchors = !holder && error.code === DIAGNOSTIC_CODES.UNCLOSED_TAG;
+		for (const generated of generated_ranges(mappings, start, end, skip_anchors)) {
 			ranges.push([
 				Math.min(start, original_length),
 				Math.min(end, original_length),
@@ -183,11 +183,11 @@ function child_at(node, position) {
  * @param {readonly CodeMapping[]} mappings
  * @param {number} start
  * @param {number} end
- * @param {boolean} [tokens_only] Count only source tokens as the node's code. A
- *   mapping with no navigation, such as an error's anchor, still ends a range.
+ * @param {boolean} [skip_anchors] Don't count an error's anchor as the node's
+ *   code. It still ends a range, as any code from outside the node does.
  * @returns {Array<[number, number]>}
  */
-function generated_ranges(mappings, start, end, tokens_only = false) {
+function generated_ranges(mappings, start, end, skip_anchors = false) {
 	/** @type {Array<[generated_start: number, generated_end: number, inside: boolean]>} */
 	const segments = [];
 	for (const mapping of mappings) {
@@ -196,7 +196,7 @@ function generated_ranges(mappings, start, end, tokens_only = false) {
 			const length = mapping.lengths[i];
 			const generated = mapping.generatedOffsets[i];
 			const generated_length = mapping.generatedLengths?.[i] ?? length;
-			if (tokens_only && !mapping.data?.navigation) {
+			if (skip_anchors && mapping.data?.customData?.diagnosticAnchor) {
 				segments.push([generated, generated + generated_length, false]);
 			} else if (source >= start && source + length <= end) {
 				segments.push([generated, generated + generated_length, true]);

@@ -64,6 +64,11 @@ export function getStyleElementStylesheet(
 export interface CompileError extends Error {
 	code: string | undefined;
 	pos: number | undefined;
+	/**
+	 * Usually `end`. An unclosed tag's TSRX1001 is reported on the tag and found
+	 * where its template ends, so its `raisedAt` is past `end`: one past the token
+	 * that ended the template, which at the end of the file is one past the input.
+	 */
 	raisedAt: number | undefined;
 	end: number | undefined;
 	loc: AST.SourceLocation | undefined;
@@ -2242,6 +2247,11 @@ export interface PluginActionOverrides {
 export interface CustomMappingData extends PluginActionOverrides {
 	embeddedId?: string;
 	content?: string;
+	/**
+	 * An error's anchor: a mapping for a token that isn't in the generated code.
+	 * It marks a place, and whatever it sits on isn't that token's code.
+	 */
+	diagnosticAnchor?: boolean;
 }
 
 export interface MappingData extends VolarCodeInformation {
