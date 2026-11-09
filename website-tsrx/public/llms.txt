@@ -1508,6 +1508,15 @@ lowers to loading primitives. Read props as `props.name` (or split them with
 `splitProps`) rather than destructuring them, so Solid's getter-based prop
 reactivity is preserved.
 
+In a generator, a `yield` in a template value that Solid's JSX compiler moves
+into an effect, a getter or a callback is a compile error (TSRX2034). Yield the
+value before the template instead: `const title = yield bag.title;`. The check
+follows babel-preset-solid's DOM output. `@tsrx/vite-plugin-solid` passes Vite's
+`ssr` flag to `compile` as `{ ssr: true }`, so a server build also follows the
+SSR output vite-plugin-solid compiles with its `ssr` option on, which moves more
+values, such as every attribute beside a host spread. The editor and the Rspack
+and Bun plugins follow the DOM output only.
+
 ### Vue
 
 Vue output targets `vue-jsx-vapor` and `defineVaporComponent(...)`. It supports

@@ -36,7 +36,11 @@ Bun.plugin(tsrxSolid());
 
 ## Options
 
-- `solid`: options forwarded to `babel-preset-solid`.
+- `solid`: options forwarded to `babel-preset-solid`. TSRX2034 (a `yield` in a
+  template value that Solid's JSX compiler moves out of its generator) follows the
+  DOM output only. Server builds with `solid: { generate: 'ssr' }` aren't covered:
+  a `yield` that only the SSR output moves isn't reported, and the build fails on
+  the compiled code instead.
 - `runtimeImports`: helper import mode (`'compiler'` by default, or `'direct'` for
   standalone runtime imports).
 - `platform`: optional override/fallback for the compile-time platform. Normally
