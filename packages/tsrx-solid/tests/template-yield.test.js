@@ -82,3 +82,119 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 		expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
 	});
 });
+
+// #1291: a server build (`ssr: true`) also follows babel-preset-solid's SSR
+// output, as vite-plugin-solid compiles it (`generate: 'ssr'`,
+// `hydratable: true`). That output renders a host element with a spread
+// through `ssrElement`, with its children in an arrow and, when it has other
+// attributes, its props merged in an arrow. It also evaluates an attribute
+// value with an element in it in an arrow, and groups neighbouring dynamic
+// values, `textContent` included, in one arrow.
+describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)", () => {
+	it.each([
+		[
+			"a host spread beside an attribute (#1291's shape)",
+			returning('<input {...bag} title={yield 1} />'),
+		],
+		[
+			"a host spread beside a ref (#246's shape)",
+			returning("<input {...{}} ref={() => {}} title={yield 'title'} />"),
+		],
+		['a child of a host element with a spread', returning('<div {...bag}>{yield t}</div>')],
+		[
+			'an element in a host element with a spread',
+			returning('<div {...bag}><b title={yield t} /></div>'),
+		],
+		['a stateful property beside a spread', returning('<input {...bag} checked={yield t} />')],
+		["a textarea's value beside a spread", returning('<textarea {...bag} value={yield t} />')],
+		[
+			'textContent beside a dynamic attribute',
+			returning('<p title={bag.title} textContent={yield t} />'),
+		],
+		[
+			"textContent after a sibling's dynamic attribute",
+			returning('<div><p title={bag.title} /><p textContent={yield t} /></div>'),
+		],
+		['an attribute value with an element in it', returning('<input title={(yield t) && <b />} />')],
+		[
+			'two attributes beside a spread, in source order',
+			returning('<input {...bag} title={yield t} data-a={yield t} />'),
+		],
+		[
+			'a spread in the output of a @{ … } body',
+			template("<input {...bag} title={yield 'title'} />"),
+		],
+	])('reports each yield in %s in a server build only', (_label, source) => {
+		const yields = [...source.matchAll(/\byield\b/g)].map((match) => match.index);
+		expect(() => compile(source, 'App.tsrx', { ssr: true })).toThrow(
+			expect.objectContaining({
+				code: DIAGNOSTIC_CODES.TARGET_TEMPLATE_YIELD_UNSUPPORTED,
+				pos: yields[0],
+			}),
+		);
+		const server = compile(source, 'App.tsrx', { collect: true, ssr: true });
+		expect(server.errors.map((error) => [error.code, error.pos])).toEqual(
+			yields.map((start) => [DIAGNOSTIC_CODES.TARGET_TEMPLATE_YIELD_UNSUPPORTED, start]),
+		);
+
+		// The client build and the editor keep the DOM output's rules, and the
+		// output is the same.
+		const client = compile(source, 'App.tsrx', { collect: true });
+		expect(client.errors).toEqual([]);
+		expect(compile(source, 'App.tsrx', { collect: true, ssr: false }).errors).toEqual([]);
+		expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
+		expect(server.code).toBe(client.code);
+	});
+
+	it.each([
+		['a static attribute value', returning('<input title={yield t} />')],
+		['an element nested in the returned one', returning('<div><input title={yield t} /></div>')],
+		[
+			'an event handler, which the SSR output leaves out',
+			returning('<button onClick={yield t} />'),
+		],
+		['a ref', returning('<div ref={yield bag.ref} />')],
+		['an event handler beside a spread', returning('<button {...bag} onClick={yield t} />')],
+		['a prop: value beside a spread', returning('<input {...bag} prop:value={yield t} />')],
+		[
+			'a live value beside its default and a spread, which the SSR output leaves out',
+			returning('<input {...bag} value={yield t} defaultValue="x" />'),
+		],
+		['textContent on its own', returning('<p textContent={yield t} />')],
+		['textContent beside a static attribute', returning('<p title={t} textContent={yield t} />')],
+		[
+			'textContent after a live value, which the SSR output sets apart',
+			returning('<div><input value={bag.value} /><p textContent={yield t} /></div>'),
+		],
+		[
+			'textContent on an element with children, which the SSR output leaves out',
+			returning('<div title={bag.title} textContent={yield t}>child</div>'),
+		],
+		["a textarea's value", returning('<textarea value={yield t} />')],
+		[
+			'the @{ … } body before the output',
+			template("const title = yield 'title';\n\t<input {...bag} title={title} />"),
+		],
+	])('allows a yield in %s in a server build too', (_label, source) => {
+		expect(compile(source, 'App.tsrx', { collect: true, ssr: true }).errors).toEqual([]);
+		expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
+	});
+
+	it.each([
+		['a dynamic attribute value', returning('<input title={yield bag.title} />')],
+		['an element in a ternary arm', returning('t ? <input title={yield t} /> : null')],
+		['a class value', returning('<div class={yield t} />')],
+	])(
+		'reports each yield in %s, which the DOM output moves, in a server build too',
+		(_label, source) => {
+			const yields = [...source.matchAll(/\byield\b/g)].map((match) => match.index);
+			for (const options of [{ collect: true }, { collect: true, ssr: true }]) {
+				expect(
+					compile(source, 'App.tsrx', options).errors.map((error) => [error.code, error.pos]),
+				).toEqual(
+					yields.map((start) => [DIAGNOSTIC_CODES.TARGET_TEMPLATE_YIELD_UNSUPPORTED, start]),
+				);
+			}
+		},
+	);
+});

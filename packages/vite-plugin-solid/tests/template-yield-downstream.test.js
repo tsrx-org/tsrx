@@ -9,6 +9,10 @@ import { describe, expect, it } from 'vitest';
 // calls it, then Vite's TypeScript strip, and checks that TSRX2034 appears
 // exactly when the result fails to parse as a module. A babel-preset-solid
 // release that compiles one of these differently fails here.
+//
+// #1291: with `ssr: true`, as `@tsrx/vite-plugin-solid` compiles a server
+// build, TSRX2034 must appear exactly when the server build (SSR output) or
+// its client build (DOM output) fails, since either fails the app.
 
 const require = createRequire(import.meta.url);
 const solid_require = createRequire(require.resolve('vite-plugin-solid'));
@@ -122,13 +126,94 @@ const PROBES = [
 ];
 
 /**
+ * Shapes aimed at the SSR output: a host spread beside other attributes or
+ * with children, `textContent` beside dynamic values, and an element in an
+ * attribute value. The server-build check also runs every probe above.
+ *
+ * @type {Array<[string, string]>}
+ */
+const SERVER_PROBES = [
+	// Reported in a server build: the SSR output moves the value into an arrow.
+	[
+		"a host spread beside an attribute (#1291's shape)",
+		returning('<input {...bag} title={yield 1} />'),
+	],
+	[
+		"a host spread beside a ref (#246's shape), returned",
+		returning("<input {...{}} ref={() => {}} title={yield 'title'} />"),
+	],
+	['an attribute before a host spread', returning('<input title={yield t} {...bag} />')],
+	['a host spread beside a static attribute', returning('<input {...(yield t)} title="x" />')],
+	['a child of a host element with a spread', returning('<div {...bag}>{yield t}</div>')],
+	[
+		'an element in a host element with a spread',
+		returning('<div {...bag}><b title={yield t} /></div>'),
+	],
+	['a children prop beside a spread', returning('<div {...bag} children={yield t} />')],
+	['textContent beside a spread', returning('<p {...bag} textContent={yield t} />')],
+	['a stateful property beside a spread', returning('<input {...bag} checked={yield t} />')],
+	["a textarea's value beside a spread", returning('<textarea {...bag} value={yield t} />')],
+	['a host spread in an element', returning('<div><input {...bag} title={yield t} /></div>')],
+	[
+		'textContent beside a dynamic attribute',
+		returning('<p title={bag.title} textContent={yield t} />'),
+	],
+	[
+		"textContent after a sibling's dynamic attribute",
+		returning('<div><p title={bag.title} /><p textContent={yield t} /></div>'),
+	],
+	[
+		"textContent before a sibling's dynamic class",
+		returning('<div><p textContent={yield t} /><p class={bag.c} /></div>'),
+	],
+	['an attribute value with an element in it', returning('<input title={(yield t) && <b />} />')],
+	['an attribute value with a fragment in it', returning('<input title={[yield t, <>x</>]} />')],
+	['a spread in the output of a @{ … } body', template("<input {...bag} title={yield 'title'} />")],
+	// Exempt: both outputs evaluate the value in place, or leave it out.
+	['an event handler beside a spread', returning('<button {...bag} onClick={yield t} />')],
+	['a prop: value beside a spread', returning('<input {...bag} prop:value={yield t} />')],
+	[
+		'a live value beside its default and a spread',
+		returning('<input {...bag} value={yield t} defaultValue="x" />'),
+	],
+	[
+		"a textarea's children beside its value and a spread",
+		returning('<textarea {...bag} value={bag.value}>{yield t}</textarea>'),
+	],
+	['textContent on its own', returning('<p textContent={yield t} />')],
+	['textContent beside a static attribute', returning('<p title={t} textContent={yield t} />')],
+	[
+		'textContent after a live value',
+		returning('<div><input value={bag.value} /><p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent after a host spread',
+		returning('<div title={bag.title}><p {...bag} /><p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent after an expression child',
+		returning('<div><p title={bag.title} />{true}<p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent on an element with children',
+		returning('<div title={bag.title} textContent={yield t}>child</div>'),
+	],
+	["a textarea's value", returning('<textarea value={yield t} />')],
+	[
+		'an attribute value with an empty fragment in it',
+		returning('<input title={[yield t, <></>]} />'),
+	],
+];
+
+/**
  * @param {string} code
+ * @param {{ generate: 'dom' | 'ssr', hydratable: boolean }} [options]
  * @returns {Promise<boolean>}
  */
-async function builds(code) {
+async function builds(code, options = { generate: 'dom', hydratable: false }) {
 	const compiled = await transformAsync(code, {
 		filename: 'probe.tsx',
-		presets: [[solid_preset, { generate: 'dom', hydratable: false }]],
+		presets: [[solid_preset, options]],
 		parserOpts: { plugins: ['jsx', 'decorators', 'typescript'] },
 		babelrc: false,
 		configFile: false,
@@ -148,5 +233,18 @@ describe('TSRX2034 matches what babel-preset-solid compiles (#259)', () => {
 		const reported = errors.some((error) => error.code === 'TSRX2034');
 		expect(errors.filter((error) => error.code !== 'TSRX2034')).toEqual([]);
 		expect({ reported, builds: await builds(code) }).toEqual({ reported, builds: !reported });
+	});
+});
+
+describe('in a server build, TSRX2034 matches what babel-preset-solid compiles for it or its client (#1291)', () => {
+	it.each([...PROBES, ...SERVER_PROBES])('%s', async (_label, source) => {
+		const { code, errors } = compile(source, 'Probe.tsrx', { collect: true, ssr: true });
+		const reported = errors.some((error) => error.code === 'TSRX2034');
+		expect(errors.filter((error) => error.code !== 'TSRX2034')).toEqual([]);
+		// vite-plugin-solid's `ssr` option compiles both builds as hydratable.
+		const fails =
+			!(await builds(code, { generate: 'ssr', hydratable: true })) ||
+			!(await builds(code, { generate: 'dom', hydratable: true }));
+		expect({ reported, fails }).toEqual({ reported, fails: reported });
 	});
 });
