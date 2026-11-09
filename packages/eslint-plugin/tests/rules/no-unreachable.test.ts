@@ -1,4 +1,5 @@
-import { RuleTester } from 'eslint';
+import { describe, expect, it } from 'vitest';
+import { Linter, RuleTester } from 'eslint';
 import rule from '../../src/rules/no-unreachable.js';
 import * as parser from '@tsrx/eslint-parser';
 
@@ -143,24 +144,6 @@ ruleTester.run('no-unreachable', rule, {
 }`),
 	],
 	invalid: [
-		// As the core rule does, it reports the `@pending` and `@catch` of a `@try`
-		// whose body throws, and the code after the `@try`.
-		{
-			code: component(`@switch (n) {
-	@case 1: { throw new Error('one'); }
-	@default: {
-		<div>
-			@try { throw new Error('two'); } @pending { <s /> } @catch (error) { <i /> }
-			@if (n) { <u /> }
-		</div>
-	}
-}`),
-			errors: [
-				{ messageId: 'unreachableCode', line: 7, column: 48 },
-				{ messageId: 'unreachableCode', line: 7, column: 73 },
-				{ messageId: 'unreachableCode', line: 8, column: 7 },
-			],
-		},
 		{
 			code: component(`@switch (n) {
 	@case 1: {
@@ -307,4 +290,56 @@ ruleTester.run('no-unreachable', rule, {
 			errors: [{ messageId: 'unreachableCode', line: 5 }],
 		},
 	],
+});
+
+// Known limitation: code path analysis runs the blocks of a `@try` one after
+// another, so after a body that throws, the core rule reports the `@pending`,
+// the `@catch` and the code after the `@try`. Those reports are false: the
+// `@catch` renders when the body throws, and so does what follows. In a revived
+// arm, `tsrx/no-unreachable` should give the same reports, and no more.
+describe('no-unreachable after a @try whose body throws (known limitation)', () => {
+	const shape = `@try { throw new Error('two'); } @pending { <s /> } @catch (error) { <i /> }
+@if (n) { <u /> }`;
+	const reported = (code: string, rule_id: string) => {
+		const lines = code.split('\n');
+		const offset = (line: number, column: number) =>
+			lines.slice(0, line - 1).reduce((total, text) => total + text.length + 1, 0) + column - 1;
+		return new Linter()
+			.verify(
+				code,
+				{
+					files: ['**/*.tsrx'],
+					languageOptions: { parser },
+					plugins: { tsrx: { rules: { 'no-unreachable': rule } } },
+					rules: { [rule_id]: 'error' },
+				},
+				'A.tsrx',
+			)
+			.map((message) =>
+				code.slice(
+					offset(message.line, message.column),
+					offset(message.endLine!, message.endColumn!),
+				),
+			);
+	};
+
+	it("gets the core rule's false reports in a revived arm, as outside one", () => {
+		const outside = reported(component(shape), 'no-unreachable');
+		const in_arm = reported(
+			component(`@switch (n) {
+	@case 1: { throw new Error('one'); }
+	@default: {
+		<div>
+${shape
+	.split('\n')
+	.map((line) => `\t\t\t${line}`)
+	.join('\n')}
+		</div>
+	}
+}`),
+			'tsrx/no-unreachable',
+		);
+		expect(outside).toEqual(['{ <s /> }', '{ <i /> }', 'if (n) { <u /> }']);
+		expect(in_arm).toEqual(outside);
+	});
 });
