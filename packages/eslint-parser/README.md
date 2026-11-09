@@ -125,15 +125,27 @@ these without misdescribing the source to other rules:
   reach its end. The arms of `@if` don't have this problem, so when an arm throws,
   an `@if`/`@else if` chain gets the right code paths.
 - Code path analysis runs the blocks of a `@try` one after another: the body,
-  `@pending`, then `@catch`. After a body that throws, `no-unreachable` reports
-  `@pending`, the `@catch` and the code after the `@try`. `no-useless-assignment`
-  treats an assignment in the body as overwritten by one in `@catch`, and
-  `react-hooks/rules-of-hooks` doesn't report a hook such as `useState` called in
-  `@catch`, though React fails on it. A `try` statement would fix these, but it
-  would put the body inside a `try`, which the React, Preact and Hono output
-  doesn't have. `rules-of-hooks` would then report each hook in the body after the
-  first as conditional, except `use()`, which react-hooks 6.1.1 and 7.1.1 report
-  anywhere in the body as inside a try/catch block.
+  `@pending`, then `@catch`. Each block runs only in its own case, so these
+  reports are false:
+  - After a body that throws, `no-unreachable` reports `@pending`, the `@catch`
+    and the code after the `@try`. After a `@pending` that throws, it reports the
+    `@catch` and the code after the `@try`, and after a `@catch` that throws, such
+    as one that rethrows, the code after the `@try`.
+  - `no-unreachable-loop` reports a `@for` that holds a `@try` whose body or
+    `@catch` throws, as if the loop could run only once.
+  - `react-hooks/rules-of-hooks` reports as conditional a hook after a `@try`
+    whose body or `@catch` throws.
+  - `no-useless-assignment` treats an assignment in the body as overwritten by one
+    in `@catch`. It also treats a value set before the `@try` as overwritten when
+    the body or `@pending` assigns it, though the `@catch` reads it.
+
+  `rules-of-hooks` also misses a hook such as `useState` called in `@catch`,
+  though React fails on it. A `try` statement would fix these, but it would put
+  the body inside a `try`, which the React, Preact and Hono output doesn't have.
+  `rules-of-hooks` would then report as conditional every hook after the body's
+  first call, member access or identifier, except `use()`, which react-hooks 6.1.1
+  and 7.1.1 report anywhere in the body as inside a try/catch block.
+
 - `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
   `@else`, `@else if` or `@for` body that holds a single statement, such as
   `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
