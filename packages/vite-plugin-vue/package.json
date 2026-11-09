@@ -25,7 +25,7 @@
   },
   "peerDependencies": {
     "vite": "*",
-    "vue-jsx-vapor": ">=3.2.14"
+    "vue-jsx-vapor": ">=3.2.27"
   },
   "devDependencies": {
     "typescript": "catalog:default",
