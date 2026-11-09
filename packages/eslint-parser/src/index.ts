@@ -38,7 +38,8 @@ const visitorKeys: Record<string, string[]> = {
 	JSXCodeBlock: ['body', 'render'],
 	StyleSheet: [],
 	ForOfStatement: ['left', 'right', 'body'],
-	IfStatement: ['test', 'consequent', 'alternate'],
+	// eslint-scope's default keys leave out `pending`, so without this, scope
+	// analysis would skip the `pending` block of a plain `try`.
 	TryStatement: ['block', 'pending', 'handler', 'finalizer'],
 };
 
@@ -217,9 +218,10 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 		// `if`. A `@try` keeps its blocks, in source order: as a `try` statement,
 		// its body would be inside a `try`, though the React, Preact and Hono
 		// output has none.
-		// `react-hooks/rules-of-hooks` would then report each hook after the first
-		// as conditional, except `use()`, which 6.1.1 and 7.1.1 report anywhere in
-		// the body as inside a try/catch block.
+		// `react-hooks/rules-of-hooks` would then report as conditional every hook
+		// after the body's first call, member access or identifier, except `use()`,
+		// which 6.1.1 and 7.1.1 report anywhere in the body as inside a try/catch
+		// block.
 		// `@switch` keeps its cases: a `switch` would fall through from each case
 		// into the next.
 		if (node.type in STATEMENT_FIELDS) {

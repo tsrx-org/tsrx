@@ -299,6 +299,17 @@ export function A({ items }) @{
 		]);
 	});
 
+	it('resolves names in the pending block of a plain try', () => {
+		const code = `export function App() {
+	try { foo(); } pending { bar(); } catch (e) { baz(e); }
+}`;
+		expect(lint(code, { rules: { 'no-undef': 'error' } })).toEqual([
+			"2: no-undef: 'foo' is not defined.",
+			"2: no-undef: 'bar' is not defined.",
+			"2: no-undef: 'baz' is not defined.",
+		]);
+	});
+
 	it('locates the loop of a @for with any line break', () => {
 		for (const line_break of ['\n', '\r\n', '\r', ' ']) {
 			const code = [
