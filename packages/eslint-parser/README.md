@@ -130,8 +130,9 @@ these without misdescribing the source to other rules:
   treats an assignment in the body as overwritten by one in `@catch`, and
   `react-hooks/rules-of-hooks` doesn't report a hook called in `@catch`, though
   React fails on it. A `try` statement would fix these, but it would put the body
-  inside a `try`, which the compiled output doesn't have, and `rules-of-hooks`
-  would then report `use()` in the body, and every hook after the first.
+  inside a `try`, which the compiled output doesn't have. `rules-of-hooks` would
+  then report every hook in the body after the first as conditional, and from 6.1,
+  `use()` in the body as inside a try/catch block.
 - `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
   `@else`, `@else if` or `@for` body that holds a single statement, such as
   `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that

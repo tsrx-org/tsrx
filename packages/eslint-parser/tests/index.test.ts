@@ -355,6 +355,32 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 		).toEqual(['3: no-unreachable', '3: no-unreachable', '4: no-unreachable']);
 	});
 
+	it('visits the blocks of a @try in source order', () => {
+		const names: string[] = [];
+		lint(
+			`export function A() @{
+	@try { <a /> } @pending { <p /> } @catch (e) { <b /> }
+}`,
+			{
+				plugins: {
+					probe: {
+						rules: {
+							order: {
+								create: () => ({
+									'JSXOpeningElement > JSXIdentifier'(node: any) {
+										names.push(node.name);
+									},
+								}),
+							},
+						},
+					},
+				},
+				rules: { 'probe/order': 'error' },
+			},
+		);
+		expect(names).toEqual(['a', 'p', 'b']);
+	});
+
 	it('keeps hooks in a @try body on one path, outside any try', () => {
 		// Test doubles for two checks in eslint-plugin-react-hooks, which isn't a
 		// dependency here: `use()` under a `TryStatement` or `CatchClause`, and a hook
