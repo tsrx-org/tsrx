@@ -77,6 +77,30 @@ describe('removed lazy destructuring', () => {
 	});
 });
 
+describe('@tsrx/hono @pending fallback', () => {
+	// Hono's DOM renderer can't recover from a `Suspense` fallback component
+	// that throws, so Hono keeps the fallback an expression the parent
+	// evaluates while rendering, where an enclosing `@catch` catches the throw.
+	it.each([
+		['server', compileServer],
+		['dom', compileDom],
+	])('%s compiler keeps the @pending body inline', (_name, compile) => {
+		const { code } = compile(
+			`export function App() @{
+				@try {
+					<Child />
+				} @pending {
+					const label = loadLabel();
+					<p>{label}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(/<Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
+	});
+});
+
 describe('@tsrx/hono server compiler', () => {
 	it('does not expose the compiler-only Dynamic helper at runtime', () => {
 		expect(honoServerRuntime).not.toHaveProperty('Dynamic');
