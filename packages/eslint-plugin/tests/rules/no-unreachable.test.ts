@@ -131,8 +131,36 @@ ruleTester.run('no-unreachable', rule, {
 		<b>{value}</b>
 	}
 }`),
+		// A `@try` in a revived arm, whose body completes.
+		component(`@switch (n) {
+	@case 1: { throw new Error('one'); }
+	@default: {
+		<div>
+			@try { <b /> } @pending { <s /> } @catch (error) { <i /> }
+			@if (n) { <u /> }
+		</div>
+	}
+}`),
 	],
 	invalid: [
+		// As the core rule does, it reports the `@pending` and `@catch` of a `@try`
+		// whose body throws, and the code after the `@try`.
+		{
+			code: component(`@switch (n) {
+	@case 1: { throw new Error('one'); }
+	@default: {
+		<div>
+			@try { throw new Error('two'); } @pending { <s /> } @catch (error) { <i /> }
+			@if (n) { <u /> }
+		</div>
+	}
+}`),
+			errors: [
+				{ messageId: 'unreachableCode', line: 7, column: 48 },
+				{ messageId: 'unreachableCode', line: 7, column: 73 },
+				{ messageId: 'unreachableCode', line: 8, column: 7 },
+			],
+		},
 		{
 			code: component(`@switch (n) {
 	@case 1: {

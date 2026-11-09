@@ -63,8 +63,12 @@ export default [...tsrx.configs.strict];
   itself, since code path analysis has already given up on the arm. It can miss
   unreachable code there when a `break`, `continue` or `return` passes through a
   `finally` block. In generated arms with heavy `try`/`finally`, label and loop
-  nesting, it missed some unreachable code in about 1 in 120 (0.8%). It never
-  reported code that runs.
+  nesting, it missed some unreachable code in about 1 in 120 (0.8%), and never
+  reported code that runs in them. Like the core rule, it reports the `@pending`
+  and `@catch` of a `@try` whose body throws, and the code after the `@try`, in an
+  arm or not, as the
+  [`@tsrx/eslint-parser` README](https://github.com/tsrx-org/tsrx/tree/main/packages/eslint-parser#known-limitations)
+  explains.
 
 ### With `js.configs.recommended`
 
