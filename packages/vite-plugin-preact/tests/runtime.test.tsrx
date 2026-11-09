@@ -1,6 +1,7 @@
 import { lazy } from 'preact/compat';
 import { act } from 'preact/test-utils';
-import { useState } from 'preact/hooks';
+import { createContext } from 'preact';
+import { useContext, useState } from 'preact/hooks';
 import { mergeRefs } from '@tsrx/preact/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
@@ -287,6 +288,74 @@ function deferred_resource(): { resource: Resource; resolve: (value: string) => 
 			resolve_promise();
 		},
 	};
+}
+
+const PendingThemeContext = createContext('light');
+
+function PendingContextApp(props: { resource: Resource }) @{
+	<PendingThemeContext.Provider value="dark">
+		@try {
+			<PendingSuspender resource={props.resource} />
+		} @pending {
+			const theme = useContext(PendingThemeContext);
+			<p class="pending">{theme}</p>
+		}
+	</PendingThemeContext.Provider>
+}
+
+function PendingParentStateApp(props: { resource: Resource }) @{
+	const [count, setCount] = useState(0);
+
+	<>
+		<button class="bump" onClick={() => setCount(count + 1)}>
+			{'bump'}
+		</button>
+		@try {
+			<PendingSuspender resource={props.resource} />
+		} @pending {
+			const label = 'waiting ' + count;
+			<p class="pending">{label}</p>
+		}
+	</>
+}
+
+function StaticPendingApp(props: { resource: Resource }) @{
+	@try {
+		<PendingSuspender resource={props.resource} />
+	} @pending {
+		<p class="pending">{'static loading'}</p>
+	}
+}
+
+function PendingRowsApp(props: { rows: { id: string; resource: Resource }[] }) @{
+	<div class="rows">
+		@for (const row of props.rows; key row.id) {
+			@try {
+				<PendingSuspender resource={row.resource} />
+			} @pending {
+				const label = 'loading ' + row.id;
+				<p class="pending">{label}</p>
+			}
+		}
+	</div>
+}
+
+let pendingLabelReads = 0;
+
+function SuspendingPendingApp(props: { body: Resource; label: Resource }) @{
+	@try {
+		<div class="outer">
+			@try {
+				<PendingSuspender resource={props.body} />
+			} @pending {
+				pendingLabelReads++;
+				const label = read(props.label);
+				<p class="inner-pending">{label}</p>
+			}
+		</div>
+	} @pending {
+		<p class="outer-pending">{'outer loading'}</p>
+	}
 }
 
 function ForFilteredApp() @{
@@ -694,6 +763,78 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 			(container.querySelector('.next') as HTMLButtonElement).click();
 		});
 		expect(text('.pending')).toBe('waiting 2');
+	});
+
+	it('reads context the same component provides around the try in the pending body', async () => {
+		await render(PendingContextApp, { resource: deferred_resource().resource });
+		expect(text('.pending')).toBe('dark');
+	});
+
+	it("re-renders the pending body with the parent's current state", async () => {
+		await render(PendingParentStateApp, { resource: deferred_resource().resource });
+		expect(text('.pending')).toBe('waiting 0');
+
+		await act(async () => {
+			(container.querySelector('.bump') as HTMLButtonElement).click();
+		});
+		expect(text('.pending')).toBe('waiting 1');
+	});
+
+	it('shows a static pending body while the try body suspends', async () => {
+		const { resource, resolve } = deferred_resource();
+		await render(StaticPendingApp, { resource });
+		expect(text('.pending')).toBe('static loading');
+
+		await act(async () => {
+			resolve('hello');
+		});
+		expect(text('.resolved')).toBe('hello');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('shows each row its own pending body in a keyed loop', async () => {
+		const a = deferred_resource();
+		const b = deferred_resource();
+		await render(PendingRowsApp, {
+			rows: [
+				{ id: 'a', resource: a.resource },
+				{ id: 'b', resource: b.resource },
+			],
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('loading aloading b');
+
+		await act(async () => {
+			b.resolve('b done');
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('loading ab done');
+
+		await act(async () => {
+			a.resolve('a done');
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('a doneb done');
+	});
+
+	// Preact limitation: preact/compat's Suspense counts a suspension thrown by
+	// its own fallback as one more child suspension, so it renders nothing
+	// until the try body resolves. React shows the enclosing @pending instead.
+	it('renders nothing while a pending body suspends, then the content', async () => {
+		pendingLabelReads = 0;
+		const body = deferred_resource();
+		const label = deferred_resource();
+		await render(SuspendingPendingApp, { body: body.resource, label: label.resource });
+		// The pending body ran and suspended; the empty output is not a missing fallback.
+		expect(pendingLabelReads).toBeGreaterThan(0);
+		expect(container.innerHTML).toBe('<div class="outer"></div>');
+
+		await act(async () => {
+			label.resolve('inner loading');
+		});
+		expect(container.innerHTML).toBe('<div class="outer"></div>');
+
+		await act(async () => {
+			body.resolve('done');
+		});
+		expect(container.innerHTML).toBe('<div class="outer"><p class="resolved">done</p></div>');
 	});
 
 	it('renders dynamic host elements', async () => {

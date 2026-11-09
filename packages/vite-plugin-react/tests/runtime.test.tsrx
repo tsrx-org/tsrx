@@ -1247,6 +1247,81 @@ function PendingHookApp(props: { promises: Promise<string>[] }) @{
 	</>
 }
 
+import { createContext, useContext } from 'react';
+
+const PendingThemeContext = createContext('light');
+
+function PendingContextApp(props: { promise: Promise<string> }) @{
+	<PendingThemeContext.Provider value="dark">
+		@try {
+			<PendingSuspender promise={props.promise} />
+		} @pending {
+			const theme = useContext(PendingThemeContext);
+			<p className="pending">{theme}</p>
+		}
+	</PendingThemeContext.Provider>
+}
+
+function PendingParentStateApp(props: { promise: Promise<string> }) @{
+	const [count, setCount] = useState(0);
+
+	<>
+		<button className="bump" onClick={() => setCount(count + 1)}>
+			{'bump'}
+		</button>
+		@try {
+			<PendingSuspender promise={props.promise} />
+		} @pending {
+			const label = 'waiting ' + count;
+			<p className="pending">{label}</p>
+		}
+	</>
+}
+
+function StaticPendingApp(props: { promise: Promise<string> }) @{
+	@try {
+		<PendingSuspender promise={props.promise} />
+	} @pending {
+		<p className="pending">{'static loading'}</p>
+	}
+}
+
+function PendingRowsApp(props: { rows: { id: string; promise: Promise<string> }[] }) @{
+	<div className="rows">
+		@for (const row of props.rows; key row.id) {
+			@try {
+				<PendingSuspender promise={row.promise} />
+			} @pending {
+				const label = 'loading ' + row.id;
+				<p className="pending">{label}</p>
+			}
+		}
+	</div>
+}
+
+function SuspendingPendingApp(props: { body: Promise<string>; label: Promise<string> }) @{
+	@try {
+		<div className="outer">
+			@try {
+				<PendingSuspender promise={props.body} />
+			} @pending {
+				const label = use(props.label);
+				<p className="inner-pending">{label}</p>
+			}
+		</div>
+	} @pending {
+		<p className="outer-pending">{'outer loading'}</p>
+	}
+}
+
+function deferred_promise(): { promise: Promise<string>; resolve: (value: string) => void } {
+	let resolve!: (value: string) => void;
+	const promise = new Promise<string>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
+}
+
 // ── Explicit hook component inside control flow ──
 
 function ExplicitHookPanel(props: { multiplier: number }) {
@@ -2094,6 +2169,72 @@ describe('tsrx-react runtime', () => {
 
 		await click('.next');
 		expect(text('.pending')).toBe('waiting 2');
+	});
+
+	it('reads context the same component provides around the try in the pending body', async () => {
+		await render(PendingContextApp, { promise: new Promise<string>(() => {}) });
+		expect(text('.pending')).toBe('dark');
+	});
+
+	it("re-renders the pending body with the parent's current state", async () => {
+		await render(PendingParentStateApp, { promise: new Promise<string>(() => {}) });
+		expect(text('.pending')).toBe('waiting 0');
+
+		await click('.bump');
+		expect(text('.pending')).toBe('waiting 1');
+	});
+
+	it('shows a static pending body while the try body suspends', async () => {
+		const { promise, resolve } = deferred_promise();
+		await render(StaticPendingApp, { promise });
+		expect(text('.pending')).toBe('static loading');
+
+		await act(async () => {
+			resolve('hello');
+		});
+		expect(text('.resolved')).toBe('hello');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('shows each row its own pending body in a keyed loop', async () => {
+		const a = deferred_promise();
+		const b = deferred_promise();
+		await render(PendingRowsApp, {
+			rows: [
+				{ id: 'a', promise: a.promise },
+				{ id: 'b', promise: b.promise },
+			],
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('loading aloading b');
+
+		await act(async () => {
+			b.resolve('b done');
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('loading ab done');
+
+		await act(async () => {
+			a.resolve('a done');
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('a doneb done');
+	});
+
+	it('falls back to the enclosing pending body while a pending body suspends', async () => {
+		const body = deferred_promise();
+		const label = deferred_promise();
+		await render(SuspendingPendingApp, { body: body.promise, label: label.promise });
+		expect(container.innerHTML).toBe('<p class="outer-pending">outer loading</p>');
+
+		await act(async () => {
+			label.resolve('inner loading');
+		});
+		expect(container.innerHTML).toBe(
+			'<div class="outer"><p class="inner-pending">inner loading</p></div>',
+		);
+
+		await act(async () => {
+			body.resolve('done');
+		});
+		expect(container.innerHTML).toBe('<div class="outer"><p class="resolved">done</p></div>');
 	});
 
 	// ── Explicit hook components inside control flow ──

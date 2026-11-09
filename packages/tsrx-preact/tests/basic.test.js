@@ -117,6 +117,39 @@ describe('@tsrx/preact basic', () => {
 		);
 	});
 
+	it('keeps the @pending body inline in type-only output', () => {
+		const { code } = compile_to_volar_mappings(
+			`export function App() @{
+				@try {
+					<Posts />
+				} @pending {
+					const label = loadLabel();
+					<p>{label}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('TsrxTryBody');
+		expect(code).toMatch(/<Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
+	});
+
+	it('keeps a @pending body that awaits inline', () => {
+		const { code } = compile(
+			`export async function App() @{
+				@try {
+					<Posts />
+				} @pending {
+					const label = await loadLabel();
+					<p>{label}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(/<Suspense fallback=\{await \(async \(\) => \{/);
+	});
+
 	it('imports TsrxErrorBoundary from @tsrx/preact/error-boundary when try/catch is used', () => {
 		const { code } = compile(
 			`function ThrowingChild() @{
