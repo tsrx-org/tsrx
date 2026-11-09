@@ -125,8 +125,8 @@ these without misdescribing the source to other rules:
   reach its end. The arms of `@if` don't have this problem, so when an arm throws,
   an `@if`/`@else if` chain gets the right code paths.
 - Code path analysis runs the blocks of a `@try` one after another: the body,
-  `@pending`, then `@catch`. Each block runs only in its own case, so these
-  reports are false:
+  `@pending`, then `@catch`. In TSRX, a `@catch` renders when the `@try` body
+  throws, and `@pending` shows while it suspends, so these reports can be false:
   - After a body that throws, `no-unreachable` reports `@pending`, the `@catch`
     and the code after the `@try`. After a `@pending` that throws, it reports the
     `@catch` and the code after the `@try`, and after a `@catch` that throws, such
@@ -145,6 +145,11 @@ these without misdescribing the source to other rules:
   `rules-of-hooks` would then report as conditional every hook after the body's
   first call, member access or identifier, except `use()`, which react-hooks 6.1.1
   and 7.1.1 report anywhere in the body as inside a try/catch block.
+
+  The React, Preact and Hono output differs from that model, so some of these
+  reports hold there: it runs `@pending`'s code before the body on every render,
+  and a throw in the body's own code, rather than in a component the body renders,
+  ends the render without reaching the `@catch`.
 
 - `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
   `@else`, `@else if` or `@for` body that holds a single statement, such as
