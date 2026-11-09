@@ -331,6 +331,15 @@ export function A({ items }) @{
 		expect([message.line, message.column]).toEqual([2, 2]);
 	});
 
+	it('accepts a plain try with a pending block and a catch or finally', () => {
+		for (const clause of ['catch (e) { baz(e); }', 'finally { baz(); }']) {
+			const code = `export function App() {
+	try { foo(); } pending { bar(); } ${clause}
+}`;
+			expect(lint(code)).toEqual([]);
+		}
+	});
+
 	it('gives each arm of an @if its own code path', () => {
 		const code = `export function A({ n }) @{
 	let x = 0;
