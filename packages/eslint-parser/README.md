@@ -121,9 +121,9 @@ these without misdescribing the source to other rules:
   arms and code that follow it. Rules built on code paths treat every arm as
   always running, so `react-hooks/rules-of-hooks` doesn't report a hook called in
   a `@case` body. A `switch` statement would add a path from each case into the
-  next, and `no-fallthrough` would then report every `@case` but the last. The
-  arms of `@if` don't have this problem, so when an arm throws, an
-  `@if`/`@else if` chain gets the right code paths.
+  next, and `no-fallthrough` would then report each `@case` but the last that can
+  reach its end. The arms of `@if` don't have this problem, so when an arm throws,
+  an `@if`/`@else if` chain gets the right code paths.
 - Code path analysis runs the blocks of a `@try` one after another: the body,
   `@pending`, then `@catch`. After a body that throws, `no-unreachable` reports
   `@pending`, the `@catch` and the code after the `@try`. `no-useless-assignment`
