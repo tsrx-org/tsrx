@@ -216,8 +216,9 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 		// analysis gives each arm a path of its own, as it does the branches of an
 		// `if`. A `@try` keeps its blocks, in source order: as a `try` statement,
 		// its body would be inside a `try`, though the compiled output has none.
-		// `react-hooks/rules-of-hooks` would then report every hook after the first
-		// as conditional, and from 6.1, `use()` there as inside a try/catch block.
+		// `react-hooks/rules-of-hooks` would then report each hook after the first
+		// as conditional, except `use()`, which 6.1.1 and 7.1.1 report anywhere in
+		// the body as inside a try/catch block.
 		// `@switch` keeps its cases: a `switch` would fall through from each case
 		// into the next.
 		if (node.type in STATEMENT_FIELDS) {
