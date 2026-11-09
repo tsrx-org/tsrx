@@ -122,8 +122,16 @@ these without misdescribing the source to other rules:
   always running, so `react-hooks/rules-of-hooks` doesn't report a hook called in
   a `@case` body. A `switch` statement would add a path from each case into the
   next, and `no-fallthrough` would then report every `@case`. The arms of `@if`
-  and `@try` don't have this problem, so when an arm throws, an `@if`/`@else if`
-  chain gets the right code paths.
+  don't have this problem, so when an arm throws, an `@if`/`@else if` chain gets
+  the right code paths.
+- Code path analysis runs the blocks of a `@try` one after another: the body,
+  `@pending`, then `@catch`. After a body that throws, `no-unreachable` reports
+  `@pending`, the `@catch` and the code after the `@try`. `no-useless-assignment`
+  treats an assignment in the body as overwritten by one in `@catch`, and
+  `react-hooks/rules-of-hooks` doesn't report a hook called in `@catch`, though
+  React fails on it. A `try` statement would fix these, but it would put the body
+  inside a `try`, which the compiled output doesn't have, and `rules-of-hooks`
+  would then report `use()` in the body, and every hook after the first.
 - `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
   `@else`, `@else if` or `@for` body that holds a single statement, such as
   `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
