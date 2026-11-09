@@ -75,8 +75,9 @@ export default [...tsrx.configs.strict];
 `js.configs.recommended` turns on `no-unused-vars` and `no-unreachable`. The `js`
 configuration turns those two off for `.tsrx` files and turns on
 `tsrx/no-unused-vars` and `tsrx/no-unreachable` at `error`. Every other report and
-suggestion is the core rule's. A configuration can't read the severity or options
-another one gives the core rule, so:
+suggestion is the core rule's, except inside a `@switch` arm that
+`tsrx/no-unreachable` revives, where it follows exits itself. A configuration
+can't read the severity or options another one gives the core rule, so:
 
 - list `tsrx.configs.js` after `js.configs.recommended`, and after any other
   configuration that turns these core rules on. Listed before them, it leaves both

@@ -125,7 +125,7 @@ Other rules built on code paths still treat every `@switch` arm as always runnin
 For example, `react-hooks/rules-of-hooks` doesn't report a hook called in a
 `@case` body. The arms of `@if` get their own code paths.
 
-These have no TSRX version:
+No TSRX rule covers these:
 
 - Code path analysis runs the blocks of a `@try` one after another: the body,
   `@pending`, then `@catch`. After a body that throws, `no-unreachable` reports
