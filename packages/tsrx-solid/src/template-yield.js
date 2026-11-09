@@ -385,9 +385,8 @@ function ssr_host_element(element, namespaces) {
 		}
 	}
 
-	const kept = attributes.filter((attribute) => roles.get(attribute) !== 'folded');
-	for (const [index, attribute] of kept.entries()) {
-		if (attribute.type !== 'JSXAttribute') continue;
+	for (const [index, attribute] of attributes.entries()) {
+		if (attribute.type !== 'JSXAttribute' || roles.has(attribute)) continue;
 		const name = /** @type {string} */ (names.get(attribute));
 		const value = attribute.value;
 		if (
@@ -406,7 +405,9 @@ function ssr_host_element(element, namespaces) {
 			);
 		} else {
 			// The template drops all but the last attribute of a name.
-			const later = kept.slice(index + 1).some((other) => names.get(other) === name);
+			const later = attributes
+				.slice(index + 1)
+				.some((other) => roles.get(other) !== 'folded' && names.get(other) === name);
 			roles.set(attribute, later ? 'dropped' : 'kept');
 		}
 	}
@@ -418,7 +419,7 @@ function ssr_host_element(element, namespaces) {
 	if (spread) {
 		let props = 0;
 		let running = false;
-		for (const attribute of kept) {
+		for (const attribute of attributes) {
 			if (attribute.type === 'JSXSpreadAttribute') {
 				if (running) props++;
 				running = false;

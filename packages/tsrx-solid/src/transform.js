@@ -17,10 +17,8 @@
  */
 
 import { walk } from 'zimmerframe';
-import {
-	find_deferred_server_template_yields,
-	find_deferred_template_yields,
-} from './template-yield.js';
+import { find_deferred_template_yields } from './template-yield.js';
+import { find_deferred_server_template_yields } from './template-yield.js';
 import {
 	DIAGNOSTIC_CODES,
 	TSRX_ERRORS,
