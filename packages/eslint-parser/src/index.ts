@@ -34,7 +34,7 @@ const visitorKeys: Record<string, string[]> = {
 	JSXForExpression: ['index', 'key', 'loop', 'empty'],
 	JSXSwitchExpression: ['discriminant', 'cases'],
 	JSXSwitchCase: ['test', 'consequent'],
-	JSXTryExpression: ['block', 'pending', 'statement'],
+	JSXTryExpression: ['block', 'pending', 'handler', 'finalizer'],
 	JSXCodeBlock: ['body', 'render'],
 	StyleSheet: [],
 	ForOfStatement: ['left', 'right', 'body'],
@@ -148,7 +148,6 @@ const LOOP_FIELDS: Record<string, string[]> = {
 
 const STATEMENT_FIELDS: Record<string, { keyword: string; fields: string[] }> = {
 	JSXIfExpression: { keyword: 'if', fields: ['test', 'consequent', 'alternate'] },
-	JSXTryExpression: { keyword: 'try', fields: ['block', 'pending', 'handler'] },
 };
 
 const SIGNATURE_TYPES = new Set([
@@ -213,14 +212,17 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 			node.loop = loop;
 		}
 
-		// An `@if` or `@try` likewise keeps its if or try statement in `statement`,
-		// so code path analysis gives each arm a path of its own, as it does the
-		// branches of an `if` and the blocks of a `try`. A `@pending` block stays
-		// in source order, after the `try` block. Code path analysis throws on a
-		// `try` without a `catch` or `finally`, so a `@try` with no `@catch` keeps
-		// its blocks. `@switch` keeps its cases: a `switch` would fall through
-		// from each case into the next.
-		if (node.type in STATEMENT_FIELDS && (node.type !== 'JSXTryExpression' || node.handler)) {
+		// An `@if` likewise keeps its if statement in `statement`, so code path
+		// analysis gives each arm a path of its own, as it does the branches of an
+		// `if`. A `@try` keeps its blocks, in source order: as a `try` statement,
+		// its body would be inside a `try`, though the React, Preact and Hono
+		// output has none.
+		// `react-hooks/rules-of-hooks` would then report each hook after the first
+		// as conditional, except `use()`, which 6.1.1 and 7.1.1 report anywhere in
+		// the body as inside a try/catch block.
+		// `@switch` keeps its cases: a `switch` would fall through from each case
+		// into the next.
+		if (node.type in STATEMENT_FIELDS) {
 			const { keyword, fields } = STATEMENT_FIELDS[node.type];
 			const statement: any = {
 				type: node.statementType,

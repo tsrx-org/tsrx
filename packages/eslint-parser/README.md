@@ -123,10 +123,20 @@ users, uses `tsrx/no-unused-vars` and `tsrx/no-unreachable` for `.tsrx` files:
 
 Other rules built on code paths still treat every `@switch` arm as always running.
 For example, `react-hooks/rules-of-hooks` doesn't report a hook called in a
-`@case` body. The arms of `@if` and `@try` get their own code paths.
+`@case` body. The arms of `@if` get their own code paths.
 
 These have no TSRX version:
 
+- Code path analysis runs the blocks of a `@try` one after another: the body,
+  `@pending`, then `@catch`. After a body that throws, `no-unreachable` reports
+  `@pending`, the `@catch` and the code after the `@try`. `no-useless-assignment`
+  treats an assignment in the body as overwritten by one in `@catch`, and
+  `react-hooks/rules-of-hooks` doesn't report a hook such as `useState` called in
+  `@catch`, though React fails on it. A `try` statement would fix these, but it
+  would put the body inside a `try`, which the React, Preact and Hono output
+  doesn't have. `rules-of-hooks` would then report each hook in the body after the
+  first as conditional, except `use()`, which react-hooks 6.1.1 and 7.1.1 report
+  anywhere in the body as inside a try/catch block.
 - `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
   `@else`, `@else if` or `@for` body that holds a single statement, such as
   `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
