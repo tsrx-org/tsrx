@@ -504,7 +504,7 @@ function collect_grouped_text_content(root, grouped, namespaces) {
 			}
 			// A live stateful property is set after the template, outside the run.
 			values.push(
-				is_dynamic(expression, true, namespaces) &&
+				is_surely_dynamic(expression, namespaces) &&
 					(name === 'class' ||
 						name === 'style' ||
 						DOM_WITH_STATE[ssr.tag.toLowerCase()]?.[name] !== 1),
@@ -557,6 +557,115 @@ function collect_grouped_text_content(root, grouped, namespaces) {
 			for (const entry of run) if (entry !== true) grouped.add(/** @type {AST.Node} */ (entry));
 		}
 		run = [];
+	}
+}
+
+/**
+ * Whether babel-preset-solid surely treats a host attribute's value as
+ * dynamic. It first folds a value it can evaluate into a literal
+ * (`'a'.length`, `String(1)`, `true || x`), and an object's values one by
+ * one, so a value that may fold counts as static here. Calling a static value
+ * dynamic would group a `textContent` beside it that the output leaves in
+ * place.
+ *
+ * @param {AST.Node} node
+ * @param {Set<string>} namespaces
+ * @returns {boolean}
+ */
+function is_surely_dynamic(node, namespaces) {
+	const expression = strip(node, []);
+	if (!expression) return false;
+	if (expression.type === 'ObjectExpression') {
+		// Its values are checked as one expression, with no namespace exception.
+		return expression.properties.some(
+			(property) =>
+				property.type !== 'Property' ||
+				(property.computed && contains_dynamic(property.key, true)) ||
+				(property.kind === 'init' &&
+					!property.method &&
+					is_surely_dynamic(property.value, new Set())),
+		);
+	}
+	return is_dynamic(expression, true, namespaces) && !may_fold(expression);
+}
+
+/** Globals babel's `evaluate` calls, and objects whose methods it calls. */
+const FOLDED_CALLEES = new Set([
+	'Number',
+	'String',
+	'Math',
+	'isFinite',
+	'isNaN',
+	'parseFloat',
+	'parseInt',
+	'decodeURI',
+	'decodeURIComponent',
+	'encodeURI',
+	'encodeURIComponent',
+]);
+
+/**
+ * Whether babel's `evaluate` may fold an expression into a constant. It reads
+ * literals, constant bindings and a few global functions, and skips the part
+ * of a short circuit that doesn't run. Errs towards yes.
+ *
+ * @param {AST.Node | null | undefined} node
+ * @returns {boolean}
+ */
+function may_fold(node) {
+	const expression = strip(node, COMPONENT_REF_WRAPPERS);
+	if (!expression) return true;
+	switch (expression.type) {
+		case 'Literal':
+		case 'Identifier':
+			return true;
+		case 'TemplateLiteral':
+			return expression.expressions.every(may_fold);
+		case 'TaggedTemplateExpression':
+			return (
+				expression.tag.type === 'MemberExpression' &&
+				expression.tag.object.type === 'Identifier' &&
+				expression.tag.object.name === 'String'
+			);
+		case 'MemberExpression':
+			return expression.object.type === 'Literal';
+		case 'CallExpression': {
+			const callee = expression.callee;
+			const folded =
+				(callee.type === 'Identifier' && FOLDED_CALLEES.has(callee.name)) ||
+				(callee.type === 'MemberExpression' &&
+					(callee.object.type === 'Literal' ||
+						(callee.object.type === 'Identifier' && FOLDED_CALLEES.has(callee.object.name))));
+			return folded && expression.arguments.every(may_fold);
+		}
+		case 'ConditionalExpression':
+			return (
+				may_fold(expression.test) &&
+				(may_fold(expression.consequent) || may_fold(expression.alternate))
+			);
+		case 'LogicalExpression':
+			return may_fold(expression.left);
+		case 'BinaryExpression':
+			return may_fold(expression.left) && may_fold(expression.right);
+		case 'UnaryExpression':
+			return expression.operator === 'void' || may_fold(expression.argument);
+		case 'SequenceExpression':
+			return may_fold(expression.expressions.at(-1));
+		case 'ArrayExpression':
+			return expression.elements.every(
+				(element) => element?.type !== 'SpreadElement' && may_fold(element),
+			);
+		case 'ObjectExpression':
+			return expression.properties.every(
+				(property) =>
+					property.type === 'Property' &&
+					property.kind === 'init' &&
+					!property.method &&
+					(!property.computed || may_fold(property.key)) &&
+					may_fold(property.value),
+			);
+		default:
+			return false;
 	}
 }
 

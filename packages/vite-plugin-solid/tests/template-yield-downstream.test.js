@@ -170,6 +170,10 @@ const SERVER_PROBES = [
 	['an attribute value with a fragment in it', returning('<input title={[yield t, <>x</>]} />')],
 	['a spread in the output of a @{ … } body', template("<input {...bag} title={yield 'title'} />")],
 	[
+		'textContent beside a short circuit that reads a member',
+		returning('<div title={bag.x || 1} textContent={yield t} />'),
+	],
+	[
 		'the last of two attributes of a name',
 		returning('<p title={bag.x} title={[yield t, <b />]} />'),
 	],
@@ -218,6 +222,19 @@ const SERVER_PROBES = [
 	[
 		'textContent after the first of two attributes of a name',
 		returning('<div><p title={bag.x} title="s" /><p textContent={yield t} /></div>'),
+	],
+	// The compiler folds a value it can evaluate into a literal first.
+	[
+		'textContent beside a member of a literal',
+		returning("<div title={{ x: 'a'.length }} textContent={yield t} />"),
+	],
+	[
+		'textContent beside a folded call',
+		returning('<div title={String(1)} textContent={yield t} />'),
+	],
+	[
+		'textContent beside a folded short circuit',
+		returning('<div title={true || bag.x} textContent={yield t} />'),
 	],
 ];
 
