@@ -130,10 +130,10 @@ these without misdescribing the source to other rules:
   treats an assignment in the body as overwritten by one in `@catch`, and
   `react-hooks/rules-of-hooks` doesn't report a hook such as `useState` called in
   `@catch`, though React fails on it. A `try` statement would fix these, but it
-  would put the body inside a `try`, which the compiled output doesn't have.
-  `rules-of-hooks` would then report each hook in the body after the first as
-  conditional, except `use()`, which react-hooks 6.1.1 and 7.1.1 report anywhere
-  in the body as inside a try/catch block.
+  would put the body inside a `try`, which the React, Preact and Hono output
+  doesn't have. `rules-of-hooks` would then report each hook in the body after the
+  first as conditional, except `use()`, which react-hooks 6.1.1 and 7.1.1 report
+  anywhere in the body as inside a try/catch block.
 - `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
   `@else`, `@else if` or `@for` body that holds a single statement, such as
   `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
