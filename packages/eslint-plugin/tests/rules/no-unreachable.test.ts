@@ -294,9 +294,13 @@ ruleTester.run('no-unreachable', rule, {
 
 // Known limitation: code path analysis runs the blocks of a `@try` one after
 // another, so after a body that throws, the core rule reports the `@pending`,
-// the `@catch` and the code after the `@try`. Those reports are false: the
-// `@catch` renders when the body throws, and so does what follows. In a revived
-// arm, `tsrx/no-unreachable` should give the same reports, and no more.
+// the `@catch` and the code after the `@try`. In TSRX, a `@catch` renders when
+// the `@try` body throws, so the reports on the `@catch` and on the code after
+// the `@try` are false. The `@pending` report holds only when the body throws
+// before it can suspend. (The React, Preact and Hono output differs: it runs
+// `@pending`'s code before the body, and a throw in the body's own code, as
+// here, ends the render without reaching the `@catch`.) In a revived arm,
+// `tsrx/no-unreachable` should give the same reports, and no more.
 describe('no-unreachable after a @try whose body throws (known limitation)', () => {
 	const shape = `@try { throw new Error('two'); } @pending { <s /> } @catch (error) { <i /> }
 @if (n) { <u /> }`;
@@ -323,7 +327,7 @@ describe('no-unreachable after a @try whose body throws (known limitation)', () 
 			);
 	};
 
-	it("gets the core rule's false reports in a revived arm, as outside one", () => {
+	it("gets the core rule's reports in a revived arm, as outside one", () => {
 		const outside = reported(component(shape), 'no-unreachable');
 		const in_arm = reported(
 			component(`@switch (n) {
