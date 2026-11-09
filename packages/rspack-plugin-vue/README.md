@@ -5,9 +5,11 @@ Rspack plugin for compiling `@tsrx/vue` `.tsrx` files.
 ## Installation
 
 ```bash
-pnpm add @tsrx/vue vue vue-jsx-vapor
+pnpm add @tsrx/vue "vue@^3.6.0-0" vue-jsx-vapor
 pnpm add -D @tsrx/rspack-plugin-vue
 ```
+
+Vapor needs Vue 3.6 or later, so name the version.
 
 ## Usage
 

@@ -53,8 +53,8 @@ npm install -D @tsrx/vite-plugin-solid
 npm install -D @tsrx/rspack-plugin-solid
 npm install -D @tsrx/bun-plugin-solid      # Bun
 
-# Vue target
-npm install @tsrx/vue vue vue-jsx-vapor
+# Vue target (Vapor needs Vue 3.6 or later)
+npm install @tsrx/vue "vue@^3.6.0-0" vue-jsx-vapor
 npm install -D @tsrx/vite-plugin-vue
 npm install -D @tsrx/rspack-plugin-vue
 npm install -D @tsrx/bun-plugin-vue        # Bun
