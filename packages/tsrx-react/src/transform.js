@@ -38,6 +38,7 @@ const react_platform = {
 		classAttrName: 'className',
 		multiRefStrategy: 'merge-refs',
 		hostSpreadRefBinding: 'in-place',
+		pendingFallback: 'try-body',
 	},
 	validation: {
 		requireUseServerForAwait: false,

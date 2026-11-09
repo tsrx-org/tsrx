@@ -47,6 +47,7 @@ const preact_platform = {
 		rewriteClassAttr: false,
 		multiRefStrategy: 'merge-refs',
 		hostSpreadRefBinding: 'in-place',
+		pendingFallback: 'try-body',
 		// preact-render-to-string escapes a string child of `<script>` like
 		// text; `dangerouslySetInnerHTML` renders the body as written on the
 		// client and the server.

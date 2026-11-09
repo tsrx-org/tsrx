@@ -167,6 +167,128 @@ function DifferentHookCountArmsApp() @{
 	</>
 }
 
+// ── The @pending body runs only while the try body suspends ──
+
+let pendingBodyRuns = 0;
+
+function pendingLabel(): string {
+	pendingBodyRuns++;
+	return 'loading';
+}
+
+function pendingBoom(): string {
+	pendingBodyRuns++;
+	throw new Error('pending boom');
+}
+
+function PendingSuspender(props: { resource: Resource }) @{
+	const value = read(props.resource);
+	<p class="resolved">{value}</p>
+}
+
+function PendingNotSuspendedApp() @{
+	const [count, setCount] = useState(0);
+
+	<>
+		<button class="bump" onClick={() => setCount(count + 1)}>
+			{'bump'}
+		</button>
+		@try {
+			<p class="ready">{'ready ' + count}</p>
+		} @pending {
+			const label = pendingLabel();
+			<p class="pending">{label}</p>
+		}
+	</>
+}
+
+function PendingSuspendedApp(props: { resource: Resource }) @{
+	@try {
+		<PendingSuspender resource={props.resource} />
+	} @pending {
+		const label = pendingLabel();
+		<p class="pending">{label}</p>
+	}
+}
+
+function ThrowingPendingNotSuspendedApp() @{
+	@try {
+		<p class="ready">{'ready'}</p>
+	} @pending {
+		const label = pendingBoom();
+		<p class="pending">{label}</p>
+	} @catch (err) {
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
+function ThrowingPendingApp(props: { resource: Resource }) @{
+	@try {
+		<PendingSuspender resource={props.resource} />
+	} @pending {
+		const label = pendingBoom();
+		<p class="pending">{label}</p>
+	} @catch (err) {
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
+function ThrowingPendingOuterCatchApp(props: { resource: Resource }) @{
+	@try {
+		<div class="outer">
+			@try {
+				<PendingSuspender resource={props.resource} />
+			} @pending {
+				const label = pendingBoom();
+				<p class="pending">{label}</p>
+			}
+		</div>
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+let pendingStateInits = 0;
+
+function PendingHookApp(props: { resources: Resource[] }) @{
+	const [step, setStep] = useState(0);
+
+	<>
+		<button class="next" onClick={() => setStep(step + 1)}>
+			{'next'}
+		</button>
+		@try {
+			@if (step === 0) {
+				<p class="ready">{'ready'}</p>
+			} @else {
+				<PendingSuspender resource={props.resources[step - 1]} />
+			}
+		} @pending {
+			const [label] = useState(() => {
+				pendingStateInits++;
+				return 'waiting ' + pendingStateInits;
+			});
+			<p class="pending">{label}</p>
+		}
+	</>
+}
+
+function deferred_resource(): { resource: Resource; resolve: (value: string) => void } {
+	let resolve_promise: () => void;
+	const resource: Resource = {
+		promise: new Promise<void>((resolve) => {
+			resolve_promise = resolve;
+		}),
+	};
+	return {
+		resource,
+		resolve(value) {
+			resource.value = value;
+			resolve_promise();
+		},
+	};
+}
+
 function ForFilteredApp() @{
 	const items = ['a', '', 'c'];
 	const visibleItems = items.filter(Boolean);
@@ -496,6 +618,82 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 		});
 		expect(text('.arm')).toBe('B!');
 		expect(container.querySelector('.caught')).toBeNull();
+	});
+
+	// ── The @pending body runs only while the try body suspends ──
+
+	it('does not run the pending body when nothing suspends', async () => {
+		pendingBodyRuns = 0;
+		await render(PendingNotSuspendedApp);
+		expect(text('.ready')).toBe('ready 0');
+		expect(pendingBodyRuns).toBe(0);
+
+		await act(async () => {
+			(container.querySelector('.bump') as HTMLButtonElement).click();
+		});
+		expect(text('.ready')).toBe('ready 1');
+		expect(pendingBodyRuns).toBe(0);
+	});
+
+	it('runs the pending body while the try body suspends', async () => {
+		pendingBodyRuns = 0;
+		const { resource, resolve } = deferred_resource();
+
+		await render(PendingSuspendedApp, { resource });
+		expect(text('.pending')).toBe('loading');
+		expect(pendingBodyRuns).toBeGreaterThan(0);
+
+		await act(async () => {
+			resolve('hello');
+		});
+		expect(text('.resolved')).toBe('hello');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('does not throw from a pending body when nothing suspends', async () => {
+		pendingBodyRuns = 0;
+		await render(ThrowingPendingNotSuspendedApp);
+		expect(text('.ready')).toBe('ready');
+		expect(container.querySelector('.caught')).toBeNull();
+		expect(pendingBodyRuns).toBe(0);
+	});
+
+	it('catches a throw from the pending body in the same try', async () => {
+		await render(ThrowingPendingApp, { resource: deferred_resource().resource });
+		expect(text('.caught')).toBe('pending boom');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('catches a throw from the pending body in an enclosing try', async () => {
+		await render(ThrowingPendingOuterCatchApp, { resource: deferred_resource().resource });
+		expect(text('.outer-caught')).toBe('pending boom');
+		expect(container.querySelector('.outer')).toBeNull();
+	});
+
+	it('gives hooks in the pending body to the fallback, which each suspension mounts fresh', async () => {
+		pendingStateInits = 0;
+		const first = deferred_resource();
+		const resources = [first.resource, deferred_resource().resource];
+
+		await render(PendingHookApp, { resources });
+		expect(text('.ready')).toBe('ready');
+		expect(pendingStateInits).toBe(0);
+
+		await act(async () => {
+			(container.querySelector('.next') as HTMLButtonElement).click();
+		});
+		expect(text('.pending')).toBe('waiting 1');
+
+		await act(async () => {
+			first.resolve('first');
+		});
+		expect(text('.resolved')).toBe('first');
+		expect(container.querySelector('.pending')).toBeNull();
+
+		await act(async () => {
+			(container.querySelector('.next') as HTMLButtonElement).click();
+		});
+		expect(text('.pending')).toBe('waiting 2');
 	});
 
 	it('renders dynamic host elements', async () => {

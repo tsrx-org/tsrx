@@ -17,6 +17,7 @@ const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'rejected',
 	'inner error',
 	'body boom',
+	'pending boom',
 	'The above error occurred in the <',
 	'React will try to recreate this component tree from scratch using the error boundary you provided',
 ];
@@ -1140,6 +1141,112 @@ function ThrownValueApp(props: { value: unknown }) @{
 	}
 }
 
+// ── The @pending body runs only while the try body suspends ──
+
+let pendingBodyRuns = 0;
+
+function pendingLabel(): string {
+	pendingBodyRuns++;
+	return 'loading';
+}
+
+function pendingBoom(): string {
+	pendingBodyRuns++;
+	throw new Error('pending boom');
+}
+
+function PendingSuspender(props: { promise: Promise<string> }) @{
+	const value = use(props.promise);
+	<p className="resolved">{value}</p>
+}
+
+function PendingNotSuspendedApp() @{
+	const [count, setCount] = useState(0);
+
+	<>
+		<button className="bump" onClick={() => setCount(count + 1)}>
+			{'bump'}
+		</button>
+		@try {
+			<p className="ready">{'ready ' + count}</p>
+		} @pending {
+			const label = pendingLabel();
+			<p className="pending">{label}</p>
+		}
+	</>
+}
+
+function PendingSuspendedApp(props: { promise: Promise<string> }) @{
+	@try {
+		<PendingSuspender promise={props.promise} />
+	} @pending {
+		const label = pendingLabel();
+		<p className="pending">{label}</p>
+	}
+}
+
+function ThrowingPendingNotSuspendedApp() @{
+	@try {
+		<p className="ready">{'ready'}</p>
+	} @pending {
+		const label = pendingBoom();
+		<p className="pending">{label}</p>
+	} @catch (err) {
+		<p className="caught">{(err as Error).message}</p>
+	}
+}
+
+function ThrowingPendingApp(props: { promise: Promise<string> }) @{
+	@try {
+		<PendingSuspender promise={props.promise} />
+	} @pending {
+		const label = pendingBoom();
+		<p className="pending">{label}</p>
+	} @catch (err) {
+		<p className="caught">{(err as Error).message}</p>
+	}
+}
+
+function ThrowingPendingOuterCatchApp(props: { promise: Promise<string> }) @{
+	@try {
+		<div className="outer">
+			@try {
+				<PendingSuspender promise={props.promise} />
+			} @pending {
+				const label = pendingBoom();
+				<p className="pending">{label}</p>
+			}
+		</div>
+	} @catch (err) {
+		<p className="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+let pendingStateInits = 0;
+
+function PendingHookApp(props: { promises: Promise<string>[] }) @{
+	const [step, setStep] = useState(0);
+
+	<>
+		<button className="next" onClick={() => setStep(step + 1)}>
+			{'next'}
+		</button>
+		@try {
+			@if (step === 0) {
+				<p className="ready">{'ready'}</p>
+			} @else {
+				<PendingSuspender promise={props.promises[step - 1]} />
+			}
+		} @pending {
+			const [label] = useState(() => {
+				pendingStateInits++;
+				return 'waiting ' + pendingStateInits;
+			});
+			<p className="pending">{label}</p>
+		}
+	</>
+}
+
 // ── Explicit hook component inside control flow ──
 
 function ExplicitHookPanel(props: { multiplier: number }) {
@@ -1910,6 +2017,84 @@ describe('tsrx-react runtime', () => {
 			expect(text('.ok')).toBe('recovered');
 		});
 	}
+
+	// ── The @pending body runs only while the try body suspends ──
+
+	it('does not run the pending body when nothing suspends', async () => {
+		pendingBodyRuns = 0;
+		await render(PendingNotSuspendedApp);
+		expect(text('.ready')).toBe('ready 0');
+		expect(pendingBodyRuns).toBe(0);
+
+		await click('.bump');
+		expect(text('.ready')).toBe('ready 1');
+		expect(pendingBodyRuns).toBe(0);
+	});
+
+	it('runs the pending body while the try body suspends', async () => {
+		pendingBodyRuns = 0;
+		let resolve_fn: (value: string) => void;
+		const promise = new Promise<string>((resolve) => {
+			resolve_fn = resolve;
+		});
+
+		await render(PendingSuspendedApp, { promise });
+		expect(text('.pending')).toBe('loading');
+		expect(pendingBodyRuns).toBeGreaterThan(0);
+
+		await act(async () => {
+			resolve_fn('hello');
+		});
+		expect(text('.resolved')).toBe('hello');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('does not throw from a pending body when nothing suspends', async () => {
+		pendingBodyRuns = 0;
+		await render(ThrowingPendingNotSuspendedApp);
+		expect(text('.ready')).toBe('ready');
+		expect(container.querySelector('.caught')).toBeNull();
+		expect(pendingBodyRuns).toBe(0);
+	});
+
+	it('catches a throw from the pending body in the same try', async () => {
+		await render(ThrowingPendingApp, { promise: new Promise<string>(() => {}) });
+		expect(text('.caught')).toBe('pending boom');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('catches a throw from the pending body in an enclosing try', async () => {
+		await render(ThrowingPendingOuterCatchApp, { promise: new Promise<string>(() => {}) });
+		expect(text('.outer-caught')).toBe('pending boom');
+		expect(container.querySelector('.outer')).toBeNull();
+	});
+
+	it('gives hooks in the pending body to the fallback, which each suspension mounts fresh', async () => {
+		pendingStateInits = 0;
+		let resolve_first: (value: string) => void;
+		const promises = [
+			new Promise<string>((resolve) => {
+				resolve_first = resolve;
+			}),
+			new Promise<string>(() => {}),
+		];
+
+		await render(PendingHookApp, { promises });
+		expect(text('.ready')).toBe('ready');
+		expect(pendingStateInits).toBe(0);
+
+		await click('.next');
+		expect(text('.pending')).toBe('waiting 1');
+
+		await act(async () => {
+			resolve_first('first');
+		});
+		expect(text('.resolved')).toBe('first');
+		expect(container.querySelector('.pending')).toBeNull();
+
+		await click('.next');
+		expect(text('.pending')).toBe('waiting 2');
+	});
 
 	// ── Explicit hook components inside control flow ──
 
