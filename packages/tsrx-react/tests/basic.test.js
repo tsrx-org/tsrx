@@ -1488,6 +1488,33 @@ describe('@tsrx/react basic', () => {
 		expect(code).toMatch(/<Suspense fallback=\{await \(async \(\) => \{/);
 	});
 
+	it.each([
+		[
+			'@try body',
+			`@try {
+				await using resource = acquire();
+				<p>{resource.label}</p>
+			} @pending {
+				<p>{'loading'}</p>
+			}`,
+		],
+		[
+			'@pending body',
+			`@try {
+				<Posts />
+			} @pending {
+				await using resource = acquire();
+				<p>{resource.label}</p>
+			}`,
+		],
+	])('keeps a %s with await using inline in an awaited async closure', (_name, template) => {
+		const { code } = compile(`export async function App() @{\n${template}\n}`, 'App.tsrx');
+
+		// `await using` needs an async function, like `await`.
+		expect(code).toMatch(/await \(async \(\) => \{\s*await using resource = acquire\(\);/);
+		expect(code).not.toMatch(/render=\{\(\) => \{\s*await using/);
+	});
+
 	it('applies scoped CSS hashes inside try blocks', () => {
 		const { code, css, cssHash } = compile(
 			`export function App() @{
