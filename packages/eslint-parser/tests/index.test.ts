@@ -331,15 +331,12 @@ export function A({ items }) @{
 		expect([message.line, message.column]).toEqual([2, 2]);
 	});
 
-	it('gives each arm of an @if or @try its own code path', () => {
+	it('gives each arm of an @if its own code path', () => {
 		const code = `export function A({ n }) @{
 	let x = 0;
 	<div>
 		@if (n) { throw new Error('a'); } @else if (n > 1) { <i /> } @else { <u /> }
 		@if (n > 2) { x = 1; <b /> } @else { x = 2; <s /> }
-		@try { throw new Error('b'); } @catch (e) { <p>{String(e)}</p> }
-		@try { <Child /> } @pending { <p /> } @catch (e) { <p>{String(e)}</p> }
-		@try { <Child /> } @pending { <p /> }
 		@if (n > 3) { throw new Error('c'); const late = 1; <p>{late}</p> }
 		{x}
 	</div>
@@ -351,10 +348,109 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 			lint(code, {
 				rules: { 'no-unreachable': 'error', 'no-useless-assignment': 'error' },
 			}).map((message) => message.split(': ', 2).join(': ')),
-		).toEqual(['2: no-useless-assignment', '9: no-unreachable']);
+		).toEqual(['2: no-useless-assignment', '6: no-unreachable']);
 	});
 
-	it('shows ESLint the if or try statement of an @if or @try', () => {
+	it('runs the blocks of a @try one after another', () => {
+		// The README's known limitation: code path analysis doesn't know that
+		// `@pending` and `@catch` run only when the body suspends or throws, so it
+		// reports them, and the `@if` after them.
+		const code = `export function A({ n }) @{
+	<div>
+		@try { throw new Error('b'); } @pending { <p /> } @catch (e) { <p>{String(e)}</p> }
+		@if (n) { <i /> }
+	</div>
+}`;
+		expect(
+			lint(code, { rules: { 'no-unreachable': 'error' } }).map((message) =>
+				message.split(': ', 2).join(': '),
+			),
+		).toEqual(['3: no-unreachable', '3: no-unreachable', '4: no-unreachable']);
+	});
+
+	it('visits the blocks of a @try in source order', () => {
+		const names: string[] = [];
+		lint(
+			`export function A() @{
+	@try { <a /> } @pending { <p /> } @catch (e) { <b /> }
+}`,
+			{
+				plugins: {
+					probe: {
+						rules: {
+							order: {
+								create: () => ({
+									'JSXOpeningElement > JSXIdentifier'(node: any) {
+										names.push(node.name);
+									},
+								}),
+							},
+						},
+					},
+				},
+				rules: { 'probe/order': 'error' },
+			},
+		);
+		expect(names).toEqual(['a', 'p', 'b']);
+	});
+
+	it('keeps hooks in a @try body on one path, outside any try', () => {
+		// Test doubles for two checks in eslint-plugin-react-hooks, which isn't a
+		// dependency here: `use()` under a `TryStatement` or `CatchClause`, and a hook
+		// that some path to the end skips.
+		const seen: string[] = [];
+		const code = `export function A({ p }) @{
+	<div>
+		@try {
+			const data = use(p);
+			const b = useB();
+			<p>{data}{b}</p>
+		} @pending {
+			const s = use(p);
+			<s>{s}</s>
+		} @catch (e) {
+			<b>{String(e)}</b>
+		}
+	</div>
+}`;
+		lint(code, {
+			plugins: {
+				probe: {
+					rules: {
+						hooks: {
+							create: () => {
+								const paths: Set<any>[] = [];
+								return {
+									onCodePathStart: () => paths.push(new Set()),
+									onCodePathEnd: () => paths.pop(),
+									onCodePathSegmentStart: (segment: any) => paths.at(-1)!.add(segment),
+									onCodePathSegmentEnd: (segment: any) => paths.at(-1)!.delete(segment),
+									'CallExpression[callee.name=/^use/]'(node: any) {
+										let in_try = false;
+										for (let parent = node.parent; parent; parent = parent.parent) {
+											if (parent.type === 'TryStatement' || parent.type === 'CatchClause')
+												in_try = true;
+										}
+										seen.push(
+											`${node.callee.name} in a try: ${in_try}, segments: ${[...paths.at(-1)!].map((segment) => segment.id)}`,
+										);
+									},
+								};
+							},
+						},
+					},
+				},
+			},
+			rules: { 'probe/hooks': 'error' },
+		});
+		expect(seen).toEqual([
+			'use in a try: false, segments: s2_1',
+			'useB in a try: false, segments: s2_1',
+			'use in a try: false, segments: s2_1',
+		]);
+	});
+
+	it('shows ESLint the if statement of an @if, and the blocks of a @try', () => {
 		const code = `export function A({ n }) @{
 	<div>
 		@if (n) { <i /> } @else { <u /> }
@@ -373,18 +469,13 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 			consequent: { type: 'BlockStatement' },
 			alternate: { type: 'BlockStatement' },
 		});
-		expect(tsrx_try.type).toBe('JSXTryExpression');
-		expect(tsrx_try.statement).toMatchObject({
-			type: 'TryStatement',
-			loc: { start: { line: 4, column: 3 }, end: { line: 4, column: 56 } },
-			block: { type: 'BlockStatement' },
-			pending: { type: 'BlockStatement' },
-			handler: { type: 'CatchClause' },
-		});
-		// A `try` needs a `catch` or `finally`.
-		expect(pending_only.statement).toBeUndefined();
-		expect(pending_only.block.type).toBe('BlockStatement');
-		expect(pending_only.pending.type).toBe('BlockStatement');
+		for (const tsrx_try_node of [tsrx_try, pending_only]) {
+			expect(tsrx_try_node.type).toBe('JSXTryExpression');
+			expect(tsrx_try_node.statement).toBeUndefined();
+			expect(tsrx_try_node.block.type).toBe('BlockStatement');
+			expect(tsrx_try_node.pending.type).toBe('BlockStatement');
+		}
+		expect(tsrx_try.handler.type).toBe('CatchClause');
 	});
 
 	it('gives TypeScript function types the params ESLint reads', () => {
