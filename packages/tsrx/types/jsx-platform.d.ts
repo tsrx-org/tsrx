@@ -463,9 +463,10 @@ export interface JsxPlatform {
 		 * fallback.
 		 *
 		 * - `'try-body'`: `<TsrxTryBody render={() => …} />`, like the `@try`
-		 *   body (see `imports.tryBody`, which it needs). The body then runs
-		 *   only while the `@try` body suspends, and a throw in it reaches the
-		 *   `@try`'s `@catch`. A body that awaits or yields stays inline.
+		 *   body (see `imports.tryBody`, which it needs). On the client, the
+		 *   body then runs only while the `@try` body suspends, and a throw in
+		 *   it reaches the `@try`'s `@catch`. A body that awaits or yields
+		 *   stays inline.
 		 * - `undefined`: the default `<Suspense>` lowering passes the body as
 		 *   an expression the parent evaluates on every render, whether or
 		 *   not anything suspends. For runtimes whose `Suspense` can't recover

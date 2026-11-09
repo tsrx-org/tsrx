@@ -1463,12 +1463,27 @@ to exactly the elements of one scope.
 ### React and Preact
 
 Hooks run where they are written. TSRX does not move a hook inside a template
-branch, loop, switch, or try block into a generated component, so the Rules of
-Hooks apply as they do in TSX: give hook state that belongs to a branch or a
-list item its own component. React and Preact can also emit async component
-functions when template body `await` is supported by the target pipeline. An
-`await` in an `@for`, `@empty`, `@switch`, or `@if` body is awaited by that
-component, and a loop body finishes one item before it starts the next.
+branch, loop, or switch into a generated component, so the Rules of Hooks apply
+as they do in TSX: give hook state that belongs to a branch or a list item its
+own component.
+
+`@try` is the exception. Its body and its `@pending` body each render through a
+`TsrxTryBody` component inside the boundaries its `@catch` and `@pending`
+create, so hook state and context reads written there belong to that component,
+not to the component that contains the `@try`:
+
+- `useContext` in either body sees providers that the same component renders
+  around the `@try`.
+- State in the `@try` body is dropped when `@catch` takes over, and `reset()`
+  mounts the body fresh.
+- On the client, a `@pending` body runs only while the `@try` body suspends, and
+  its state starts fresh each time it appears.
+- A body that uses `await` or `yield` stays in the component that contains it.
+
+React and Preact can also emit async component functions when template body
+`await` is supported by the target pipeline. An `await` in an `@for`, `@empty`,
+`@switch`, or `@if` body is awaited by that component, and a loop body finishes
+one item before it starts the next.
 
 ```tsrx
 import { useEffect, useState } from 'react';
