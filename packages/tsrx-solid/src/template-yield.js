@@ -411,10 +411,11 @@ function ssr_host_element(element, namespaces) {
 		}
 	}
 
-	// `ssrElement` takes a lone spread as the props. Otherwise it merges the
-	// props, in an arrow when there are several or a spread is dynamic.
+	// `ssrElement` merges the props in an arrow when there are several or a
+	// spread is dynamic. It passes a lone spread as is, but the DOM output
+	// moves a dynamic one anyway.
 	let merged = false;
-	if (spread && kept.length > 1) {
+	if (spread) {
 		let props = 0;
 		let running = false;
 		for (const attribute of kept) {

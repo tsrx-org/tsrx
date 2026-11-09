@@ -169,6 +169,14 @@ const SERVER_PROBES = [
 	['an attribute value with an element in it', returning('<input title={(yield t) && <b />} />')],
 	['an attribute value with a fragment in it', returning('<input title={[yield t, <>x</>]} />')],
 	['a spread in the output of a @{ … } body', template("<input {...bag} title={yield 'title'} />")],
+	[
+		'the last of two attributes of a name',
+		returning('<p title={bag.x} title={[yield t, <b />]} />'),
+	],
+	[
+		'textContent after the last of two attributes of a name',
+		returning('<div><p title="s" title={bag.x} /><p textContent={yield t} /></div>'),
+	],
 	// Exempt: both outputs evaluate the value in place, or leave it out.
 	['an event handler beside a spread', returning('<button {...bag} onClick={yield t} />')],
 	['a prop: value beside a spread', returning('<input {...bag} prop:value={yield t} />')],
@@ -202,6 +210,14 @@ const SERVER_PROBES = [
 	[
 		'an attribute value with an empty fragment in it',
 		returning('<input title={[yield t, <></>]} />'),
+	],
+	[
+		'the first of two attributes of a name',
+		returning('<p title={[yield t, <b />]} title={bag.x} />'),
+	],
+	[
+		'textContent after the first of two attributes of a name',
+		returning('<div><p title={bag.x} title="s" /><p textContent={yield t} /></div>'),
 	],
 ];
 

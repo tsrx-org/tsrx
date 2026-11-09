@@ -172,6 +172,10 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 		],
 		["a textarea's value", returning('<textarea value={yield t} />')],
 		[
+			'the first of two attributes of a name, which the SSR output leaves out',
+			returning('<p title={[yield t, <b />]} title={bag.title} />'),
+		],
+		[
 			'the @{ … } body before the output',
 			template("const title = yield 'title';\n\t<input {...bag} title={title} />"),
 		],
