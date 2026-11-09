@@ -18,11 +18,13 @@ async function fake_plugin_resolve(source) {
 /**
  * @param {import('vite').Plugin} plugin
  * @param {string} id
+ * @param {{ ssr?: boolean }} [options] the hook's options
+ * @param {object} [context] the hook's `this`
  */
-function call_load(plugin, id) {
+function call_load(plugin, id, options, context = {}) {
 	const hook = typeof plugin.load === 'function' ? plugin.load : plugin.load?.handler;
 	if (!hook) throw new Error('plugin has no load hook');
-	return hook.call(/** @type {any} */ ({}), id);
+	return hook.call(/** @type {any} */ (context), id, options);
 }
 
 /**
@@ -113,6 +115,44 @@ describe('@tsrx/vite-plugin-solid routing', () => {
 			expect(result).toBeTruthy();
 			expect(/** @type {any} */ (result).map.sources).toEqual([real_path]);
 			expect(/** @type {any} */ (result).map.sourcesContent).toEqual([source]);
+		});
+	});
+
+	// #1291: vite-plugin-solid compiles a server build to babel-preset-solid's
+	// SSR output, which moves this `yield` into an arrow; the DOM output
+	// doesn't. So only a server build reports it (TSRX2034).
+	describe('server builds', () => {
+		const dir = mkdtempSync(join(tmpdir(), 'tsrx-solid-ssr-'));
+		const real_path = join(dir, 'Field.tsrx');
+		const source = `export function* field(bag: any) {\n\treturn <input {...bag} title={yield 1} />;\n}`;
+		writeFileSync(real_path, source);
+		const id = real_path + '.tsx';
+		const plugin = tsrxSolid();
+		const server_error = expect.objectContaining({
+			code: 'TSRX2034',
+			pos: source.indexOf('yield'),
+		});
+
+		it("follows the SSR output when Vite's `ssr` flag is set", async () => {
+			await expect(call_load(plugin, id, { ssr: true })).rejects.toThrow(server_error);
+		});
+
+		it('follows the SSR output in a Vite 6+ server environment', async () => {
+			const server = { environment: { config: { consumer: 'server' } } };
+			await expect(call_load(plugin, id, undefined, server)).rejects.toThrow(server_error);
+			await expect(call_load(plugin, id, { ssr: true }, server)).rejects.toThrow(server_error);
+		});
+
+		it('keeps the DOM output rules in a client build', async () => {
+			const client = { environment: { config: { consumer: 'client' } } };
+			for (const result of [
+				call_load(plugin, id),
+				call_load(plugin, id, { ssr: false }),
+				call_load(plugin, id, undefined, client),
+				call_load(plugin, id, { ssr: false }, client),
+			]) {
+				expect(/** @type {any} */ (await result).code).toContain('title={yield 1}');
+			}
 		});
 	});
 });

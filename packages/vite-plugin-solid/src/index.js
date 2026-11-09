@@ -17,6 +17,23 @@ const VIRTUAL_TSX_SUFFIX = '.tsx';
 const CSS_QUERY = '?tsrx-solid-css&lang.css';
 
 /**
+ * Whether Vite runs a hook for a server build, where vite-plugin-solid
+ * compiles babel-preset-solid's SSR output (with its own `ssr` option on).
+ * Vite 6+ names the environment; older versions only pass the `ssr` flag,
+ * which vite-plugin-solid reads and Vite 6+ still passes.
+ *
+ * @param {unknown} context the hook's `this`
+ * @param {{ ssr?: boolean } | undefined} options the hook's options
+ * @returns {boolean}
+ */
+function is_server_build(context, options) {
+	const consumer = /** @type {{ environment?: { config?: { consumer?: string } } } | undefined} */ (
+		context
+	)?.environment?.config?.consumer;
+	return consumer ? consumer === 'server' : !!options?.ssr;
+}
+
+/**
  * Vite plugin that compiles `.tsrx` files to Solid-flavoured TSX via
  * `@tsrx/solid`. It does not run Solid's JSX-DOM-expressions transform
  * itself — instead it rewrites module ids so the upstream `vite-plugin-solid`
@@ -181,7 +198,7 @@ export function tsrxSolid(options = {}) {
 			return null;
 		},
 
-		async load(id) {
+		async load(id, load_options) {
 			if (id.includes(CSS_QUERY)) {
 				const key = id.split('?')[0];
 				return css_cache.get(key) ?? '';
@@ -191,7 +208,10 @@ export function tsrxSolid(options = {}) {
 
 			const real_path = to_real_path(path);
 			const source = await readFile(real_path, 'utf-8');
-			let { code, css, map } = compile(source, real_path, compile_options);
+			let { code, css, map } = compile(source, real_path, {
+				...compile_options,
+				ssr: is_server_build(this, load_options),
+			});
 
 			if (css) {
 				css_cache.set(real_path, css);
