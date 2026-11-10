@@ -85,6 +85,24 @@ const PROBES = [
 	['a value whose whole is a tagged template', returning('<div title={Comp`${yield t}`} />')],
 	['a member tag inside a value', returning('<div title={(yield t) + bag.tag`x`} />')],
 	['an object with a member value', returning('<div title={{ a: yield t, b: bag.x }} />')],
+	['a dynamic class object key', returning('<div class={{ active: yield bag.active }} />')],
+	['a class object with a computed key', returning('<div class={{ [t]: yield t }} />')],
+	['a class object key with a space', returning("<div class={{ 'a b': yield t }} />")],
+	[
+		'a class array whose object repeats a static class',
+		returning("<div class={['a', { a: yield t }]} />"),
+	],
+	['a class array led by a dynamic value', returning('<div class={[bag.x, { a: yield t }]} />')],
+	['a style object with a computed key', returning('<div style={{ [t]: yield t }} />')],
+	['a style object with a spread', returning('<div style={{ ...bag, color: yield t }} />')],
+	[
+		'a dynamic style key kept since it folds to null',
+		returning('<div style={{ color: null && (yield bag.x) }} />'),
+	],
+	[
+		'a className object with a member value',
+		returning('<div className={{ a: yield t, b: bag.b }} />'),
+	],
 	// Exempt: the compiler evaluates the value in place.
 	['a static attribute value', returning('<input title={yield t} />')],
 	['a literal attribute value', returning("<input title={yield 'title'} />")],
@@ -142,6 +160,26 @@ const PROBES = [
 	['a dead branch after true', returning('<input title={true || (yield bag.x)} />')],
 	['a dead conditional branch', returning("<input title={1 ? 'a' : (yield bag.x)} />")],
 	['a child that folds into text', returning("<p>{'a' || (yield bag.x)}</p>")],
+	[
+		'a class object key beside a dynamic one',
+		returning('<div class={{ active: yield t, big: bag.big }} />'),
+	],
+	['a class object key that drops', returning('<div class={{ active: null && (yield bag.x) }} />')],
+	["a class array's split object", returning("<div class={['x', { a: yield t }]} />")],
+	[
+		"a class array's split object with a tagged template",
+		returning("<div class={['x', { a: (yield t) + Comp`x` }]} />"),
+	],
+	[
+		'a style object key beside a dynamic one',
+		returning('<div style={{ color: yield t, width: bag.w }} />'),
+	],
+	[
+		'a style object key that folds into the style',
+		returning("<div style={{ color: 'a' || (yield bag.x) }} />"),
+	],
+	['a sequence that folds into its last value', returning("<input title={(yield bag.x, 'a')} />")],
+	['a className', returning('<div className={yield t} />')],
 	[
 		'a nested generator',
 		returning('<input title={[...(function* () { yield bag.t; })()].join()} />'),

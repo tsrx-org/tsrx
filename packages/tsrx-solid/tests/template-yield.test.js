@@ -48,6 +48,14 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			returning('<input title={null && (yield bag.title)} />'),
 		],
 		[
+			'a class object with a computed key, which is set whole',
+			returning('<div class={{ [t]: yield t }} />'),
+		],
+		[
+			'a style object with a computed key, which is set whole',
+			returning('<div style={{ [t]: yield t }} />'),
+		],
+		[
 			'an attribute and a child, in source order',
 			returning('<p title={yield bag.title}>{yield bag.text}</p>'),
 		],
@@ -108,6 +116,27 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			returning('<input title={false && (yield bag.title)} />'),
 		],
 		['a child that folds into text', returning("<p>{'a' || (yield bag.text)}</p>")],
+		[
+			'a class object key beside a dynamic one, which is set on its own',
+			returning('<div class={{ active: yield t, big: bag.big }} />'),
+		],
+		[
+			'a class object key the compiler evaluates and drops',
+			returning('<div class={{ active: null && (yield bag.active) }} />'),
+		],
+		[
+			"a class array's object, which the compiler splits off",
+			returning("<div class={['x', { a: yield t }]} />"),
+		],
+		[
+			'a style object key beside a dynamic one, which is set on its own',
+			returning('<div style={{ color: yield t, width: bag.width }} />'),
+		],
+		[
+			'a sequence that folds into its last value',
+			returning("<input title={(yield bag.title, 'a')} />"),
+		],
+		['a className, which is a plain attribute', returning('<div className={yield t} />')],
 	])('allows a yield in %s, which Solid evaluates in place', (_label, source) => {
 		expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
 		expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);

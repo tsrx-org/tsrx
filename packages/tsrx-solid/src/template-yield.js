@@ -124,6 +124,13 @@ export function find_deferred_template_yields(program) {
 			}
 			const expression = /** @type {AST.Expression} */ (value.expression);
 			const name = attribute_name(attribute.name);
+			const parts = spread ? undefined : split_class_or_style(name, expression, namespaces);
+			if (parts) {
+				for (const [part, deferred] of parts) {
+					if (deferred !== 'dropped') visit_value(part, context, deferred);
+				}
+				continue;
+			}
 			visit_value(
 				expression,
 				context,
@@ -263,10 +270,123 @@ function is_host_attribute_deferred(name, value, namespaces, tag) {
 	if (tag === 'select' && (name === 'value' || name === 'prop:value')) {
 		return expression?.type !== 'Literal';
 	}
-	if (name === 'class' || name === 'className' || name === 'style') {
-		return expression?.type !== 'ObjectExpression' || is_folded_dynamic(value, namespaces);
-	}
+	// A `class` or `style` value that isn't an object the compiler splits is
+	// set in an effect unless it folds into a constant.
+	if (name === 'class' || name === 'style') return !folds(value, FOLDED_TYPES);
 	return is_folded_dynamic(value, namespaces);
+}
+
+/**
+ * @typedef {Array<[AST.Node, boolean | 'dropped']>} SplitValue
+ * The parts of a value, each moved out of the element's code, left in place,
+ * or dropped.
+ */
+
+/**
+ * How dom-expressions compiles a `class` or `style` object on a host element
+ * without a spread, or `undefined` for any other value. It splits a `class`
+ * object (and a fixed `['static', { … }]` array) into one attribute per key,
+ * unless a key is computed or holds a space or colon, and drops a key whose
+ * value it can evaluate. It inlines a `style` key whose value is a string or
+ * number, drops one that is `null` or `undefined`, and splits off the other
+ * plain keys. Each split value is set in an effect only if it is dynamic; what
+ * stays in the object is set in an effect with it.
+ *
+ * @param {string} name
+ * @param {AST.Expression} value
+ * @param {Set<string>} namespaces
+ * @returns {SplitValue | undefined}
+ */
+function split_class_or_style(name, value, namespaces) {
+	const expression = strip(value, []);
+	if (name === 'class') {
+		/** @type {AST.ObjectExpression | undefined} */
+		let object;
+		/** @type {Set<string>} */
+		let statics = new Set();
+		if (expression?.type === 'ObjectExpression') {
+			object = expression;
+		} else if (expression?.type === 'ArrayExpression') {
+			const elements = expression.elements;
+			const last = elements.at(-1);
+			const leading = elements.slice(0, -1);
+			if (
+				leading.length === 0 ||
+				!leading.every(
+					(element) => element?.type === 'Literal' && typeof element.value === 'string',
+				) ||
+				last?.type !== 'ObjectExpression'
+			) {
+				return undefined;
+			}
+			statics = new Set(
+				leading.flatMap((element) =>
+					String(/** @type {AST.Literal} */ (element).value)
+						.trim()
+						.split(/\s+/)
+						.filter(Boolean),
+				),
+			);
+			object = last;
+		} else {
+			return undefined;
+		}
+		const keys = object.properties.map((property) =>
+			property.type === 'Property' && !property.computed ? property_key(property) : undefined,
+		);
+		const splits =
+			keys.every((key) => key !== undefined && !/[ :]/.test(key)) &&
+			!keys.some((key) => statics.has(/** @type {string} */ (key)));
+		if (!splits) {
+			// The whole value is set in an effect, unless the array isn't split.
+			return expression.type === 'ArrayExpression' ? undefined : [[expression, true]];
+		}
+		return object.properties.map((property) => {
+			const value = /** @type {AST.Property} */ (property).value;
+			if (/** @type {AST.Property} */ (property).method || property.type !== 'Property') {
+				return [value, false];
+			}
+			return [value, literal_value(value) ? 'dropped' : is_folded_dynamic(value, namespaces)];
+		});
+	}
+	if (name === 'style' && expression?.type === 'ObjectExpression') {
+		const spread = expression.properties.some((property) => property.type === 'SpreadElement');
+		/** @type {SplitValue} */
+		const parts = [];
+		for (const property of expression.properties) {
+			if (property.type !== 'Property' || property.kind !== 'init' || property.method) {
+				// What stays in the object is set with it, in an effect.
+				parts.push([property, true]);
+				continue;
+			}
+			const value = strip(property.value, []);
+			const inlined = folds(property.value, FOLDED_TYPES.slice(0, 2));
+			if (property.computed) {
+				parts.push([property.key, true], [property.value, inlined ? 'dropped' : true]);
+			} else if (
+				inlined ||
+				(value?.type === 'Literal' && value.value === null) ||
+				(value?.type === 'Identifier' && value.name === 'undefined')
+			) {
+				parts.push([property.value, 'dropped']);
+			} else {
+				parts.push([property.value, spread || is_folded_dynamic(property.value, namespaces)]);
+			}
+		}
+		return parts;
+	}
+	return undefined;
+}
+
+/**
+ * @param {AST.Property} property
+ * @returns {string | undefined}
+ */
+function property_key(property) {
+	const key = property.key;
+	if (key.type === 'Identifier') return key.name;
+	if (key.type === 'Literal') return String(key.value);
+	return undefined;
 }
 
 /** The types a host attribute value folds to. A host child folds to the first two. */
@@ -380,8 +500,8 @@ function folds(node, types) {
  * The value babel's `evaluate` surely gives `node`, reading only literals: a
  * string, number, boolean or null literal, a template of them, a member of a
  * string or number literal (`'x'.length`), `!`, `-`, `+`, `~`, `typeof` and
- * `void` of them, and a short circuit or conditional on them, which skips the
- * branch that never runs. It folds more (bindings, arithmetic, a few calls);
+ * `void` of them, a short circuit or conditional on them, which skips the
+ * branch that never runs, and the last of a sequence. It folds more (bindings, arithmetic, a few calls);
  * those count as not constant here.
  *
  * @param {AST.Node | null | undefined} node
@@ -458,6 +578,8 @@ function literal_value(node) {
 			const test = literal_value(expression.test);
 			return test && literal_value(test.value ? expression.consequent : expression.alternate);
 		}
+		case 'SequenceExpression':
+			return literal_value(expression.expressions.at(-1));
 		default:
 			return undefined;
 	}
