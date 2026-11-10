@@ -1511,11 +1511,12 @@ reactivity is preserved.
 In a generator, a `yield` in a template value that Solid's JSX compiler moves
 into an effect, a getter or a callback is a compile error (TSRX2034). Yield the
 value before the template instead: `const title = yield bag.title;`. The check
-follows babel-preset-solid's DOM output. `@tsrx/vite-plugin-solid` passes Vite's
-`ssr` flag to `compile` as `{ ssr: true }`, so a server build also follows the
-SSR output vite-plugin-solid compiles with its `ssr` option on, which moves more
-values, such as every attribute beside a host spread. The editor and the Rspack
-and Bun plugins follow the DOM output only.
+follows babel-preset-solid's DOM output. With `tsrxSolid({ ssr: true })`, set
+as you set `solid({ ssr: true })`, a server build also follows the hydratable
+SSR output, which moves more values, such as most attributes beside a host
+spread. `@tsrx/bun-plugin-solid` does the same when its `solid` options have
+`generate: 'ssr'` and `hydratable: true`. The editor, server builds with the
+option off, and the Rspack plugin follow the DOM output only.
 
 ### Vue
 

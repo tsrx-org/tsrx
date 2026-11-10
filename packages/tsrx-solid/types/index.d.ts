@@ -9,10 +9,10 @@ export type { Platform, RuntimeImportMode, TsrxPlatformFlags } from '@tsrx/core/
  */
 export interface CompileOptions {
 	/**
-	 * Compile for a server build, which babel-preset-solid compiles with
-	 * `generate: 'ssr'` (as `vite-plugin-solid` does with its `ssr` option on,
-	 * using `hydratable: true`). A `yield` in a template value that this output
-	 * moves into an arrow is then reported too (TSRX2034), as well as one the
+	 * Compile for a server build that babel-preset-solid compiles with
+	 * `generate: 'ssr'` and `hydratable: true`, as `vite-plugin-solid` does with
+	 * its `ssr` option on. A `yield` in a template value that this output moves
+	 * into an arrow is then reported too (TSRX2034), as well as one the
 	 * client's DOM output moves. The output is the same either way. Defaults to
 	 * `false`: only the DOM output's rules apply.
 	 */
