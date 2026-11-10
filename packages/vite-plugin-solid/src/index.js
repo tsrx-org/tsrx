@@ -17,10 +17,9 @@ const VIRTUAL_TSX_SUFFIX = '.tsx';
 const CSS_QUERY = '?tsrx-solid-css&lang.css';
 
 /**
- * Whether Vite runs a hook for a server build, where vite-plugin-solid
- * compiles babel-preset-solid's SSR output (with its own `ssr` option on).
- * Vite 6+ names the environment; older versions only pass the `ssr` flag,
- * which vite-plugin-solid reads and Vite 6+ still passes.
+ * Whether Vite runs a hook for a server build. Vite 6+ names the environment;
+ * older versions only pass the `ssr` flag, which vite-plugin-solid reads and
+ * Vite 6+ still passes.
  *
  * @param {unknown} context the hook's `this`
  * @param {{ ssr?: boolean } | undefined} options the hook's options
@@ -210,7 +209,9 @@ export function tsrxSolid(options = {}) {
 			const source = await readFile(real_path, 'utf-8');
 			let { code, css, map } = compile(source, real_path, {
 				...compile_options,
-				ssr: is_server_build(this, load_options),
+				// With `ssr` on, as for `solid({ ssr: true })`, vite-plugin-solid
+				// compiles a server build to babel-preset-solid's SSR output.
+				ssr: options.ssr === true && is_server_build(this, load_options),
 			});
 
 			if (css) {

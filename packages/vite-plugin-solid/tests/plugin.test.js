@@ -118,41 +118,52 @@ describe('@tsrx/vite-plugin-solid routing', () => {
 		});
 	});
 
-	// #1291: vite-plugin-solid compiles a server build to babel-preset-solid's
-	// SSR output, which moves this `yield` into an arrow; the DOM output
-	// doesn't. So only a server build reports it (TSRX2034).
+	// #1291: with `ssr` on, as in `solid({ ssr: true })`, vite-plugin-solid
+	// compiles a server build to babel-preset-solid's SSR output, which moves
+	// this `yield` into an arrow; the DOM output doesn't. So only a server
+	// build with the option on reports it (TSRX2034).
 	describe('server builds', () => {
 		const dir = mkdtempSync(join(tmpdir(), 'tsrx-solid-ssr-'));
 		const real_path = join(dir, 'Field.tsrx');
 		const source = `export function* field(bag: any) {\n\treturn <input {...bag} title={yield 1} />;\n}`;
 		writeFileSync(real_path, source);
 		const id = real_path + '.tsx';
-		const plugin = tsrxSolid();
+		const server = { environment: { config: { consumer: 'server' } } };
+		const client = { environment: { config: { consumer: 'client' } } };
 		const server_error = expect.objectContaining({
 			code: 'TSRX2034',
 			pos: source.indexOf('yield'),
 		});
 
-		it("follows the SSR output when Vite's `ssr` flag is set", async () => {
+		/** @param {Promise<unknown>} result */
+		const compiles = async (result) =>
+			expect(/** @type {any} */ (await result).code).toContain('title={yield 1}');
+
+		it("follows the SSR output with `ssr` on, on Vite's `ssr` flag", async () => {
+			const plugin = tsrxSolid({ ssr: true });
 			await expect(call_load(plugin, id, { ssr: true })).rejects.toThrow(server_error);
 		});
 
-		it('follows the SSR output in a Vite 6+ server environment', async () => {
-			const server = { environment: { config: { consumer: 'server' } } };
+		it('follows the SSR output with `ssr` on, in a Vite 6+ server environment', async () => {
+			const plugin = tsrxSolid({ ssr: true });
 			await expect(call_load(plugin, id, undefined, server)).rejects.toThrow(server_error);
 			await expect(call_load(plugin, id, { ssr: true }, server)).rejects.toThrow(server_error);
 		});
 
-		it('keeps the DOM output rules in a client build', async () => {
-			const client = { environment: { config: { consumer: 'client' } } };
-			for (const result of [
-				call_load(plugin, id),
-				call_load(plugin, id, { ssr: false }),
-				call_load(plugin, id, undefined, client),
-				call_load(plugin, id, { ssr: false }, client),
-			]) {
-				expect(/** @type {any} */ (await result).code).toContain('title={yield 1}');
+		it('keeps the DOM output rules in a server build with `ssr` off', async () => {
+			// As vite-plugin-solid does with `solid()`, e.g. a Vitest `node` environment.
+			for (const plugin of [tsrxSolid(), tsrxSolid({ ssr: false })]) {
+				await compiles(call_load(plugin, id, { ssr: true }));
+				await compiles(call_load(plugin, id, undefined, server));
 			}
+		});
+
+		it('keeps the DOM output rules in a client build', async () => {
+			const plugin = tsrxSolid({ ssr: true });
+			await compiles(call_load(plugin, id));
+			await compiles(call_load(plugin, id, { ssr: false }));
+			await compiles(call_load(plugin, id, undefined, client));
+			await compiles(call_load(plugin, id, { ssr: false }, client));
 		});
 	});
 });
