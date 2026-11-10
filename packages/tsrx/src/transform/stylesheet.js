@@ -5,6 +5,7 @@
 
 import MagicString from 'magic-string';
 import { walk } from 'zimmerframe';
+import { unescape_css } from '../parse/style.js';
 
 const regex_css_browser_prefix = /^-((webkit)|(moz)|(o)|(ms))-/;
 const regex_css_ident_start = /^(-?([a-zA-Z_\\]|[^\x00-\x7f])|--)/;
@@ -207,7 +208,8 @@ function keyframes_name_tokens(code, tokens, shorthand, names = [], set_longhand
 		} else if (regex_css_number.test(token.value)) {
 			set_longhands.add('iteration-count');
 		} else if (regex_css_ident_start.test(token.value)) {
-			const keyword = token.value.toLowerCase();
+			// An escaped keyword is still the keyword: `\65 ase` is `ease`
+			const keyword = keyframes_key(token).toLowerCase();
 			const longhand = shorthand ? animation_keyword_longhands.get(keyword) : undefined;
 			if (longhand && !set_longhands.has(longhand)) {
 				set_longhands.add(longhand);
@@ -218,6 +220,16 @@ function keyframes_name_tokens(code, tokens, shorthand, names = [], set_longhand
 	}
 
 	return names;
+}
+
+/**
+ * The name a keyframes name token stands for, with its escapes decoded, so
+ * that `spin\31 `, `spin\31`, and `spin1` name the same keyframes, as in CSS.
+ * @param {CssValueToken} token
+ * @returns {string}
+ */
+function keyframes_key(token) {
+	return unescape_css(token.value);
 }
 
 /**
@@ -431,9 +443,10 @@ const visitors = {
 				if (name.startsWith('-global-')) {
 					state.code.remove(start, start + 8);
 				} else if (!is_in_global_block(path)) {
+					const key = keyframes_key(token);
 					append_hash(state, start);
-					state.keyframes[name]?.indexes.forEach((index) => append_hash(state, index));
-					state.keyframes[name] = { indexes: [], local: true };
+					state.keyframes[key]?.indexes.forEach((index) => append_hash(state, index));
+					state.keyframes[key] = { indexes: [], local: true };
 				}
 			}
 
@@ -457,11 +470,12 @@ const visitors = {
 				property === 'animation',
 			)) {
 				const index = keyframes_name_start(token);
-				state.keyframes[token.value] ??= { indexes: [], local: undefined };
-				if (state.keyframes[token.value].local) {
+				const key = keyframes_key(token);
+				state.keyframes[key] ??= { indexes: [], local: undefined };
+				if (state.keyframes[key].local) {
 					append_hash(state, index);
 				} else {
-					state.keyframes[token.value].indexes.push(index);
+					state.keyframes[key].indexes.push(index);
 				}
 			}
 		}

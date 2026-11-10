@@ -781,6 +781,38 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(String.raw`animation: ${hash}-\33 d-spin 1s;`);
 		});
 
+		it('matches a name however its escapes are written', () => {
+			// `spin\31 `, `spin\31`, `spin\000031` and `spin1` all name `spin1`; the
+			// space after `\31` belongs to the escape, not to the name
+			const { css, hash } = compile_keyframes(
+				String.raw`.a { animation-name: \66 ade; }
+				@keyframes fade ${frames}
+				@keyframes spin\31  ${frames}
+				.b { animation-name: spin\31; }
+				.c { animation: 1s spin\31, 2s fade; }
+				.d { animation: 1s spin\000031; }
+				.e { animation: "spin1" 1s; }`,
+			);
+			expect(css).toContain(String.raw`animation-name: ${hash}-\66 ade;`);
+			expect(css).toContain(String.raw`@keyframes ${hash}-spin\31  {`);
+			expect(css).toContain(String.raw`animation-name: ${hash}-spin\31;`);
+			expect(css).toContain(String.raw`animation: 1s ${hash}-spin\31, 2s ${hash}-fade;`);
+			expect(css).toContain(String.raw`animation: 1s ${hash}-spin\000031;`);
+			expect(css).toContain(`animation: "${hash}-spin1" 1s;`);
+		});
+
+		it('reads an escaped animation keyword as the keyword', () => {
+			const { css, hash } = compile_keyframes(
+				String.raw`@keyframes ease ${frames} @keyframes infinite ${frames}
+				.a { animation: \65 ase 1s; }
+				.b { animation: 1s \69 nfinite; }
+				.c { animation: ease 1s \65 ase; }`,
+			);
+			expect(css).toContain(String.raw`animation: \65 ase 1s;`);
+			expect(css).toContain(String.raw`animation: 1s \69 nfinite;`);
+			expect(css).toContain(String.raw`animation: ease 1s ${hash}-\65 ase;`);
+		});
+
 		it('renames references written before their keyframes', () => {
 			const { css, hash } = compile_keyframes(
 				`.a { animation: fade 1s, "slide" 2s; }
