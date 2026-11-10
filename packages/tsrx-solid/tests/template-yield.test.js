@@ -251,6 +251,10 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 			'a spread in the output of a @{ … } body',
 			template("<input {...bag} title={yield 'title'} />"),
 		],
+		[
+			'textContent beside a call to an `import … =` binding, which babel does not fold',
+			`import String = Foo.Bar;\n${returning('<div title={String(1)} textContent={yield t} />')}`,
+		],
 	])('reports each yield in %s in a server build only', (_label, source) => {
 		const yields = [...source.matchAll(/\byield\b/g)].map((match) => match.index);
 		expect(() => compile(source, 'App.tsrx', { ssr: true })).toThrow(
@@ -318,6 +322,13 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 			'the @{ … } body before the output',
 			template("const title = yield 'title';\n\t<input {...bag} title={title} />"),
 		],
+		// Babel's scope doesn't bind these, so it still folds `String(1)`.
+		...['namespace String {}', 'enum String { A }', 'declare class String {}'].map(
+			(declaration) => [
+				`textContent beside a call to a global that a \`${declaration}\` doesn't shadow`,
+				`${declaration}\n${returning('<div title={String(1)} textContent={yield t} />')}`,
+			],
+		),
 	])('allows a yield in %s in a server build too', (_label, source) => {
 		expect(compile(source, 'App.tsrx', { collect: true, ssr: true }).errors).toEqual([]);
 		expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);

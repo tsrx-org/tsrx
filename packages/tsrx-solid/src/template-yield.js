@@ -932,7 +932,10 @@ function collect_bindings(program) {
 				block = fn = node.body.type === 'BlockStatement' ? node.body : node;
 				break;
 			case 'ClassDeclaration':
-				if (node.id) declare(node.id.name, block, 'other', null, false);
+				// Babel's scope doesn't bind a `declare class`.
+				if (node.id && !(/** @type {{ declare?: boolean }} */ (node).declare)) {
+					declare(node.id.name, block, 'other', null, false);
+				}
 				break;
 			case 'ClassExpression':
 				if (node.id) declare(node.id.name, node, 'other', null, false);
@@ -967,13 +970,12 @@ function collect_bindings(program) {
 				block = node;
 				break;
 			default: {
-				// TypeScript declarations that bind a value: `import x = …`, an
-				// enum, a namespace. A namespace's body is its own scope.
+				// Of TypeScript's value declarations, babel's scope binds only
+				// `import x = …`, not an enum, a namespace or a `declare function`.
+				// A namespace's body is its own scope.
 				const declaration = /** @type {{ type: string, id?: AST.Node | null }} */ (node);
 				if (
-					(declaration.type === 'TSImportEqualsDeclaration' ||
-						declaration.type === 'TSEnumDeclaration' ||
-						declaration.type === 'TSModuleDeclaration') &&
+					declaration.type === 'TSImportEqualsDeclaration' &&
 					declaration.id?.type === 'Identifier'
 				) {
 					declare(declaration.id.name, block, 'other', null, false);

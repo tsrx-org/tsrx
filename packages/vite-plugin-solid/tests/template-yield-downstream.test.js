@@ -382,6 +382,27 @@ const PROBES = [
  * @type {Array<[string, string]>}
  */
 const SERVER_PROBES = [
+	// TypeScript declarations babel's scope does or doesn't bind.
+	[
+		'textContent beside String(1) and `namespace String {}`',
+		'namespace String {}\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}',
+	],
+	[
+		'textContent beside String(1) and `enum String { A }`',
+		'enum String { A }\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}',
+	],
+	[
+		'textContent beside String(1) and `declare class String {}`',
+		'declare class String {}\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}',
+	],
+	[
+		'textContent beside String(1) and `declare function String(): string;`',
+		'declare function String(): string;\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}',
+	],
+	[
+		'textContent beside String(1) and `import String = Foo.Bar;`',
+		'import String = Foo.Bar;\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}',
+	],
 	// Values the SSR check counts as maybe folded, beside `yield`s the DOM
 	// output moves.
 	[
