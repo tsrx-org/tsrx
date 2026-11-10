@@ -1,3 +1,6 @@
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import solid from 'vite-plugin-solid';
@@ -16,6 +19,7 @@ const root = fileURLToPath(new URL('./fixtures/ssr/', import.meta.url));
 async function transform(plugins, environment) {
 	const server = await createServer({
 		root,
+		cacheDir: mkdtempSync(join(tmpdir(), 'tsrx-solid-ssr-cache-')),
 		configFile: false,
 		logLevel: 'silent',
 		plugins,
