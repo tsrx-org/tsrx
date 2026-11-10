@@ -144,7 +144,10 @@ export function find_deferred_template_yields(program) {
 			}
 			const expression = /** @type {AST.Expression} */ (value.expression);
 			const name = attribute_name(attribute.name);
-			const parts = spread ? undefined : split_class_or_style(name, expression, namespaces);
+			const parts = spread
+				? undefined
+				: (split_class_or_style(name, expression, namespaces) ??
+					split_event_handler(name, expression));
 			if (parts) {
 				for (const [part, deferred] of parts) {
 					if (deferred !== 'dropped') visit_value(part, context, deferred);
@@ -302,6 +305,32 @@ function is_host_attribute_deferred(name, value, namespaces, tag) {
 }
 
 /**
+ * How dom-expressions compiles a `[handler, data]` array on an event it
+ * doesn't delegate, or `undefined` for any other value: it calls the handler
+ * with the data inside a new listener and drops any later element.
+ *
+ * @param {string} name
+ * @param {AST.Expression} value
+ * @returns {SplitValue | undefined}
+ */
+function split_event_handler(name, value) {
+	const expression = strip(value, []);
+	if (
+		!name.startsWith('on') ||
+		DELEGATED_EVENTS.has(name.slice(2).toLowerCase()) ||
+		expression?.type !== 'ArrayExpression' ||
+		expression.elements.length < 2 ||
+		expression.elements.some((element) => !element || element.type === 'SpreadElement')
+	) {
+		return undefined;
+	}
+	return expression.elements.map((element, index) => [
+		/** @type {AST.Node} */ (element),
+		index < 2 || 'dropped',
+	]);
+}
+
+/**
  * @typedef {Array<[AST.Node, boolean | 'dropped']>} SplitValue
  * The parts of a value, each moved out of the element's code, left in place,
  * or dropped.
@@ -312,9 +341,9 @@ function is_host_attribute_deferred(name, value, namespaces, tag) {
  * without a spread, or `undefined` for any other value. It splits a `class`
  * object (and a fixed `['static', { … }]` array) into one attribute per key,
  * unless a key is computed or holds a space or colon, and drops a key whose
- * value it can evaluate. It inlines a `style` key whose value is a string or
- * number, drops one that is `null` or `undefined`, and splits off the other
- * plain keys. Each split value is set in an effect only if it is dynamic; what
+ * value it can evaluate; a method or accessor keeps the whole object as well,
+ * set in an effect. It inlines a `style` key whose value is a string or number,
+ * drops one that is `null` or `undefined`, and splits off the other plain keys. Each split value is set in an effect only if it is dynamic; what
  * stays in the object is set in an effect with it.
  *
  * @param {string} name
@@ -362,7 +391,12 @@ function split_class_or_style(name, value, namespaces) {
 		const splits =
 			keys.every((key) => key !== undefined && !/[ :]/.test(key)) &&
 			!keys.some((key) => statics.has(/** @type {string} */ (key)));
-		if (!splits) {
+		// A method or accessor stays in the object, which is then set whole
+		// beside the split keys.
+		const kept = object.properties.some(
+			(property) => property.type === 'Property' && (property.method || property.kind !== 'init'),
+		);
+		if (!splits || kept) {
 			// The whole value is set in an effect, unless the array isn't split.
 			if (expression.type === 'ArrayExpression') return undefined;
 			return [
@@ -500,6 +534,32 @@ function dom_attribute_names(tag, attributes) {
 	}
 	return names;
 }
+
+/** The events dom-expressions delegates by default. */
+const DELEGATED_EVENTS = new Set([
+	'beforeinput',
+	'click',
+	'dblclick',
+	'contextmenu',
+	'focusin',
+	'focusout',
+	'input',
+	'keydown',
+	'keyup',
+	'mousedown',
+	'mousemove',
+	'mouseout',
+	'mouseover',
+	'mouseup',
+	'pointerdown',
+	'pointermove',
+	'pointerout',
+	'pointerover',
+	'pointerup',
+	'touchend',
+	'touchmove',
+	'touchstart',
+]);
 
 /** Elements dom-expressions writes without children, by the tag as written. */
 const VOID_ELEMENTS = new Set([

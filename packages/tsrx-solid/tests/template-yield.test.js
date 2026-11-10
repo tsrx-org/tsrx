@@ -56,6 +56,14 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			returning('<div style={{ [t]: yield t }} />'),
 		],
 		[
+			'a class object with a method, which is also set whole',
+			returning('<div class={{ active: yield t, toString() { return 1; } }} />'),
+		],
+		[
+			'the data of an event the compiler does not delegate, which a new listener passes',
+			returning('<div onScroll={[bag.onScroll, yield t]} />'),
+		],
+		[
 			'an attribute and a child, in source order',
 			returning('<p title={yield bag.title}>{yield bag.text}</p>'),
 		],
@@ -84,6 +92,11 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 		['a namespaced event handler', returning('<button on:click={yield bag.onClick} />')],
 		['a ref', returning('<div ref={yield bag.ref} />')],
 		['a class object', returning('<div class={{ active: yield t }} />')],
+		['the data of a delegated event', returning('<button onClick={[bag.onClick, yield t]} />')],
+		[
+			'a third element of an event array, which the compiler drops',
+			returning('<div onScroll={[bag.onScroll, t, yield t]} />'),
+		],
 		['an element nested in the returned one', returning('<div><input title={yield t} /></div>')],
 		['a static component prop', returning('<Comp title={yield t} />')],
 		['a lone static component child', returning('<Comp>{yield t}</Comp>')],

@@ -126,6 +126,29 @@ const PROBES = [
 		returning('<div children={yield bag.t}>x</div>'),
 	],
 	['a children attribute on a void element', returning('<input children={yield bag.t} />')],
+	['a class object with a method', returning('<div class={{ a: yield t, b() { return 1; } }} />')],
+	[
+		'a class object with a method first',
+		returning('<div class={{ b() { return 1; }, a: yield t }} />'),
+	],
+	[
+		'a class object with a getter',
+		returning('<div class={{ a: yield t, get b() { return 1; } }} />'),
+	],
+	[
+		'a class array whose object has a method',
+		returning("<div class={['s', { a: yield t, b() { return 1; } }]} />"),
+	],
+	['event data the compiler does not delegate', returning('<div onScroll={[bag.h, yield t]} />')],
+	[
+		'an event handler in an array the compiler does not delegate',
+		returning('<div onScroll={[yield t, bag.d]} />'),
+	],
+	['a lone event handler in an array', returning('<div onScroll={[yield t]} />')],
+	['a third element of an event array', returning('<div onScroll={[bag.h, bag.d, yield t]} />')],
+	['delegated event data', returning('<div onClick={[bag.h, yield t]} />')],
+	['namespaced event data', returning('<div on:click={[bag.h, yield t]} />')],
+	['event data under a type assertion', returning('<div onScroll={[bag.h, yield t] as any} />')],
 	['a dynamic children attribute on its own', returning('<div children={yield bag.t} />')],
 	[
 		'a children attribute beside a spread and children',
