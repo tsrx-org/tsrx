@@ -36,6 +36,26 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			template('<ul>\n\t\t@for (const x of yield bag.items) { <li>{x}</li> }\n\t</ul>'),
 		],
 		[
+			'a dynamic event handler beside a spread, which is a getter on the spread',
+			returning('<button {...bag} onClick={yield bag.onClick} />'),
+		],
+		[
+			"a <select>'s value, which is also assigned in a microtask",
+			returning('<select value={yield t} />'),
+		],
+		[
+			'a branch the compiler keeps, since it folds only to a string, number or boolean',
+			returning('<input title={null && (yield bag.title)} />'),
+		],
+		[
+			'a class object with a computed key, which is set whole',
+			returning('<div class={{ [t]: yield t }} />'),
+		],
+		[
+			'a style object with a computed key, which is set whole',
+			returning('<div style={{ [t]: yield t }} />'),
+		],
+		[
 			'an attribute and a child, in source order',
 			returning('<p title={yield bag.title}>{yield bag.text}</p>'),
 		],
@@ -76,6 +96,55 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 		[
 			'a static @for iterable',
 			template('<ul>\n\t\t@for (const x of yield t) { <li>{x}</li> }\n\t</ul>'),
+		],
+		[
+			'a class value beside a spread, which is a prop of the spread',
+			returning('<div {...bag} class={yield t} />'),
+		],
+		['a static event handler beside a spread', returning('<button {...bag} onClick={yield t} />')],
+		['a <select> value beside a spread', returning('<select {...bag} value={yield t} />')],
+		[
+			'an object whose other value the compiler folds into a literal',
+			returning("<div title={{ a: yield t, b: 'x'.length }} />"),
+		],
+		[
+			'a value with a tagged template inside it',
+			'export function* f(t: any, tag: any) {\n\treturn <div title={`${yield t}` + tag`x`} />;\n}',
+		],
+		[
+			'a branch that never runs, which the compiler folds away',
+			returning('<input title={false && (yield bag.title)} />'),
+		],
+		['a child that folds into text', returning("<p>{'a' || (yield bag.text)}</p>")],
+		[
+			'a class object key beside a dynamic one, which is set on its own',
+			returning('<div class={{ active: yield t, big: bag.big }} />'),
+		],
+		[
+			'a class object key the compiler evaluates and drops',
+			returning('<div class={{ active: null && (yield bag.active) }} />'),
+		],
+		[
+			"a class array's object, which the compiler splits off",
+			returning("<div class={['x', { a: yield t }]} />"),
+		],
+		[
+			'a style object key beside a dynamic one, which is set on its own',
+			returning('<div style={{ color: yield t, width: bag.width }} />'),
+		],
+		[
+			'a sequence that folds into its last value',
+			returning("<input title={(yield bag.title, 'a')} />"),
+		],
+		['a className, which is a plain attribute', returning('<div className={yield t} />')],
+		[
+			'an attribute a later one of its name replaces',
+			returning('<div title={yield bag.title} title="kept" />'),
+		],
+		['a class value the compiler evaluates', returning('<div class={null && (yield t)} />')],
+		[
+			'a class object with a computed key the compiler evaluates',
+			returning("<div class={{ [(yield t, 'active')]: true }} />"),
 		],
 	])('allows a yield in %s, which Solid evaluates in place', (_label, source) => {
 		expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
