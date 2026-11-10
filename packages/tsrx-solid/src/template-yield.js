@@ -145,15 +145,20 @@ function find_deferred(program, server) {
 			visit_component(element, context);
 			return;
 		}
-		if (context.deferred || !inline) {
-			visit_all(element, { ...context, deferred: true });
-			return;
-		}
+		// The compiler creates any other host element in an immediately called
+		// arrow, with everything it keeps, but not what it drops.
+		if (!inline) context = { ...context, deferred: true };
 
 		const ssr = server ? ssr_host_element(element, namespaces) : undefined;
 		const tag = host_tag_name(opening.name);
 		const spread = opening.attributes.some((attribute) => attribute.type === 'JSXSpreadAttribute');
 		const names = dom_attribute_names(tag, opening.attributes);
+		// It writes no children for a void element or a `noscript`, and a
+		// textarea's literal value (named `''`) replaces them.
+		const childless =
+			VOID_ELEMENTS.has(tag) ||
+			tag === 'noscript' ||
+			opening.attributes.some((attribute) => names.get(attribute) === '');
 		for (const [index, attribute] of opening.attributes.entries()) {
 			if (attribute.type === 'JSXSpreadAttribute') {
 				visit_value(
@@ -173,6 +178,18 @@ function find_deferred(program, server) {
 			) {
 				continue;
 			}
+			// The DOM output removes an element's first `$key`.
+			if (
+				key === '$key' &&
+				opening.attributes.find((other) => names.get(other) === key) === attribute
+			) {
+				continue;
+			}
+			// Without a spread, a `children` attribute is dropped when the element
+			// has children of its own, or writes none.
+			if (!spread && key === 'children' && (element.children.length > 0 || childless)) {
+				continue;
+			}
 			const value = attribute.value;
 			const ssr_deferred =
 				!!ssr &&
@@ -189,10 +206,13 @@ function find_deferred(program, server) {
 			}
 			const expression = /** @type {AST.Expression} */ (value.expression);
 			const name = attribute_name(attribute.name);
-			// The DOM output splits a class or style object; a server build that
-			// moves the whole value moves every part.
+			// The DOM output splits a class or style object and an event array; a
+			// server build that moves the whole value moves every part.
 			const parts =
-				spread || ssr_deferred ? undefined : split_class_or_style(name, expression, namespaces);
+				spread || ssr_deferred
+					? undefined
+					: (split_class_or_style(name, expression, namespaces) ??
+						split_event_handler(name, expression));
 			if (parts) {
 				for (const [part, deferred] of parts) {
 					if (deferred !== 'dropped') visit_value(part, context, deferred);
@@ -216,7 +236,7 @@ function find_deferred(program, server) {
 			return;
 		}
 
-		for (const child of element.children) {
+		for (const child of childless ? [] : element.children) {
 			if (child.type === 'JSXElement') {
 				// A child element is created from the same template, in place.
 				visit_element(child, context, true);
@@ -257,6 +277,8 @@ function find_deferred(program, server) {
 			}
 			const value = attribute.value;
 			if (!value) continue;
+			// A `children` prop is dropped when the component has children.
+			if (attribute_name(attribute.name) === 'children' && element.children.length > 0) continue;
 			if (value.type !== 'JSXExpressionContainer') {
 				visit_value(value, context, value.type === 'JSXElement' || value.type === 'JSXFragment');
 				continue;
@@ -346,23 +368,6 @@ function find_deferred(program, server) {
 
 /** Properties dom-expressions renders as an element's content. */
 const CHILD_PROPERTIES = new Set(['innerHTML', 'textContent', 'innerText', 'children']);
-
-const VOID_ELEMENTS = new Set([
-	'area',
-	'base',
-	'br',
-	'col',
-	'embed',
-	'hr',
-	'img',
-	'input',
-	'link',
-	'meta',
-	'param',
-	'source',
-	'track',
-	'wbr',
-]);
 
 /**
  * How babel-preset-solid's SSR output (`hydratable: true`) renders a host
@@ -1019,6 +1024,32 @@ function is_host_attribute_deferred(name, value, namespaces, tag) {
 }
 
 /**
+ * How dom-expressions compiles an array on an event, or `undefined` for any
+ * other value: it keeps the handler and the data, the first two elements,
+ * and drops the rest. On an event it doesn't delegate, it calls the handler
+ * with the data inside a new listener; otherwise both stay in place.
+ *
+ * @param {string} name
+ * @param {AST.Expression} value
+ * @returns {SplitValue | undefined}
+ */
+function split_event_handler(name, value) {
+	const expression = strip(value, []);
+	if (!name.startsWith('on') || expression?.type !== 'ArrayExpression') return undefined;
+	const [handler, data] = expression.elements;
+	const paired = expression.elements.length > 1;
+	// The compiler throws on a hole or a spread handler, a hole for data, or,
+	// on a delegated event, a spread for data.
+	if (!handler || handler.type === 'SpreadElement' || (paired && !data)) return undefined;
+	const moved = paired && !DELEGATED_EVENTS.has(name.slice(2).toLowerCase());
+	return expression.elements.flatMap((element, index) =>
+		element
+			? [/** @type {[AST.Node, boolean | 'dropped']} */ ([element, index > 1 ? 'dropped' : moved])]
+			: [],
+	);
+}
+
+/**
  * @typedef {Array<[AST.Node, boolean | 'dropped']>} SplitValue
  * The parts of a value, each moved out of the element's code, left in place,
  * or dropped.
@@ -1029,9 +1060,9 @@ function is_host_attribute_deferred(name, value, namespaces, tag) {
  * without a spread, or `undefined` for any other value. It splits a `class`
  * object (and a fixed `['static', { … }]` array) into one attribute per key,
  * unless a key is computed or holds a space or colon, and drops a key whose
- * value it can evaluate. It inlines a `style` key whose value is a string or
- * number, drops one that is `null` or `undefined`, and splits off the other
- * plain keys. Each split value is set in an effect only if it is dynamic; what
+ * value it can evaluate; a method or accessor keeps the whole object as well,
+ * set in an effect. It inlines a `style` key whose value is a string or number,
+ * drops one that is `null` or `undefined`, and splits off the other plain keys. Each split value is set in an effect only if it is dynamic; what
  * stays in the object is set in an effect with it.
  *
  * @param {string} name
@@ -1079,7 +1110,12 @@ function split_class_or_style(name, value, namespaces) {
 		const splits =
 			keys.every((key) => key !== undefined && !/[ :]/.test(key)) &&
 			!keys.some((key) => statics.has(/** @type {string} */ (key)));
-		if (!splits) {
+		// A method or accessor stays in the object, which is then set whole
+		// beside the split keys.
+		const kept = object.properties.some(
+			(property) => property.type === 'Property' && (property.method || property.kind !== 'init'),
+		);
+		if (!splits || kept) {
 			// The whole value is set in an effect, unless the array isn't split.
 			if (expression.type === 'ArrayExpression') return undefined;
 			return [
@@ -1166,7 +1202,8 @@ const DOM_WITH_STATE = {
 /**
  * The names a host element's attributes have in the DOM output, which first
  * renames a stateful property set to something other than a literal to
- * `prop:…`, and a literal default to the property itself.
+ * `prop:…`, and a literal default to the property itself. A textarea's
+ * literal value, which becomes its content, is named `''`.
  *
  * @param {string} tag
  * @param {Array<ESTreeJSX.JSXAttribute | ESTreeJSX.JSXSpreadAttribute>} attributes
@@ -1217,6 +1254,50 @@ function dom_attribute_names(tag, attributes) {
 	}
 	return names;
 }
+
+/** The events dom-expressions delegates by default. */
+const DELEGATED_EVENTS = new Set([
+	'beforeinput',
+	'click',
+	'dblclick',
+	'contextmenu',
+	'focusin',
+	'focusout',
+	'input',
+	'keydown',
+	'keyup',
+	'mousedown',
+	'mousemove',
+	'mouseout',
+	'mouseover',
+	'mouseup',
+	'pointerdown',
+	'pointermove',
+	'pointerout',
+	'pointerover',
+	'pointerup',
+	'touchend',
+	'touchmove',
+	'touchstart',
+]);
+
+/** Elements dom-expressions writes without children, by the tag as written. */
+const VOID_ELEMENTS = new Set([
+	'area',
+	'base',
+	'br',
+	'col',
+	'embed',
+	'hr',
+	'img',
+	'input',
+	'link',
+	'meta',
+	'param',
+	'source',
+	'track',
+	'wbr',
+]);
 
 /** The types a host attribute value folds to. A host child folds to the first two. */
 const FOLDED_TYPES = ['string', 'number', 'boolean'];

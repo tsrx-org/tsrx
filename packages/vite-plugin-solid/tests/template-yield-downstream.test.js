@@ -102,6 +102,154 @@ const PROBES = [
 	['a style object with a dynamic computed key', returning('<div style={{ [bag.k]: yield t }} />')],
 	['the last of two attributes of a name', returning('<div title="a" title={yield bag.x} />')],
 	[
+		"a textarea's children beside a literal value",
+		returning('<textarea value="x">{yield bag.t}</textarea>'),
+	],
+	[
+		"a textarea's children beside a literal default",
+		returning('<textarea defaultValue="x">{yield bag.t}</textarea>'),
+	],
+	[
+		"a textarea's children beside a bare value",
+		returning('<textarea value>{yield bag.t}</textarea>'),
+	],
+	[
+		"a textarea's element child beside a literal value",
+		returning('<textarea value="x"><b title={yield bag.t} /></textarea>'),
+	],
+	[
+		"a textarea's children beside a dynamic value",
+		returning('<textarea value={bag.v}>{yield bag.t}</textarea>'),
+	],
+	[
+		"a textarea's children beside a null value",
+		returning('<textarea value={null}>{yield bag.t}</textarea>'),
+	],
+	[
+		'a children attribute on an element with children',
+		returning('<div children={yield bag.t}>x</div>'),
+	],
+	['a children attribute on a void element', returning('<input children={yield bag.t} />')],
+	['a class object with a method', returning('<div class={{ a: yield t, b() { return 1; } }} />')],
+	[
+		'a class object with a method first',
+		returning('<div class={{ b() { return 1; }, a: yield t }} />'),
+	],
+	[
+		'a class object with a getter',
+		returning('<div class={{ a: yield t, get b() { return 1; } }} />'),
+	],
+	[
+		'a class array whose object has a method',
+		returning("<div class={['s', { a: yield t, b() { return 1; } }]} />"),
+	],
+	['event data the compiler does not delegate', returning('<div onScroll={[bag.h, yield t]} />')],
+	[
+		'an event handler in an array the compiler does not delegate',
+		returning('<div onScroll={[yield t, bag.d]} />'),
+	],
+	['a lone event handler in an array', returning('<div onScroll={[yield t]} />')],
+	['a third element of an event array', returning('<div onScroll={[bag.h, bag.d, yield t]} />')],
+	['delegated event data', returning('<div onClick={[bag.h, yield t]} />')],
+	['namespaced event data', returning('<div on:click={[bag.h, yield t]} />')],
+	['event data under a type assertion', returning('<div onScroll={[bag.h, yield t] as any} />')],
+	['event data before a spread', returning('<div onScroll={[bag.h, yield t, ...bag.e]} />')],
+	['event data before a hole', returning('<div onScroll={[bag.h, yield t, ,]} />')],
+	['spread event data', returning('<div onScroll={[bag.h, ...(yield t)]} />')],
+	[
+		'an event handler in an array before a spread',
+		returning('<div onScroll={[yield t, bag.d, ...bag.e]} />'),
+	],
+	['a child of a void element', returning('<input>{yield bag.t}</input>')],
+	['a child of a nested void element', returning('<div><input>{yield bag.t}</input></div>')],
+	['an element in a void element', returning('<br><b title={yield bag.t} /></br>')],
+	["a child of an upper-case INPUT, which isn't void", returning('<INPUT>{yield bag.t}</INPUT>')],
+	['a child of a noscript', returning('<noscript>{yield bag.t}</noscript>')],
+	['an element in a noscript', returning('<noscript><b title={yield bag.t} /></noscript>')],
+	['an attribute of a noscript', returning('<noscript title={yield bag.t} />')],
+	['a child of an upper-case NOSCRIPT', returning('<NOSCRIPT>{yield bag.t}</NOSCRIPT>')],
+	[
+		'a child of a void element in a ternary arm',
+		returning('t ? <input>{yield bag.t}</input> : null'),
+	],
+	[
+		'a child of a noscript in a ternary arm',
+		returning('t ? <noscript>{yield bag.t}</noscript> : null'),
+	],
+	[
+		"a textarea's replaced child in a ternary arm",
+		returning('t ? <textarea value="x">{yield bag.t}</textarea> : null'),
+	],
+	[
+		'a dropped third event element in a ternary arm',
+		returning('t ? <div onScroll={[bag.h, bag.d, yield bag.x]} /> : null'),
+	],
+	['event data in a ternary arm', returning('t ? <div onScroll={[bag.h, yield bag.x]} /> : null')],
+	[
+		'a replaced attribute in a fragment',
+		returning('<><input title={yield bag.t} title={bag.u} /></>'),
+	],
+	[
+		'a dropped children attribute in a component child',
+		returning('<Comp><div children={yield bag.t}>x</div></Comp>'),
+	],
+	[
+		"a void element's child in a dynamic child",
+		returning('<div>{t ? <input>{yield bag.t}</input> : null}</div>'),
+	],
+	['a children attribute on a noscript', returning('<noscript children={yield bag.t} />')],
+	[
+		"a children attribute beside a textarea's literal value",
+		returning('<textarea value="x" children={yield bag.t} />'),
+	],
+	[
+		"a children attribute beside a textarea's number value",
+		returning('<textarea value={1} children={yield bag.t} />'),
+	],
+	[
+		"a children attribute beside a textarea's dynamic value",
+		returning('<textarea value={bag.v} children={yield bag.t} />'),
+	],
+	[
+		"a component's children prop beside children",
+		returning('<Comp children={yield bag.t}>x</Comp>'),
+	],
+	[
+		"a component's static children prop beside children",
+		returning('<Comp children={yield t}>x</Comp>'),
+	],
+	[
+		"a component's children prop beside children, in an arrow",
+		returning('t ? <div><Comp children={yield t}>x</Comp></div> : null'),
+	],
+	["a component's children prop on its own", returning('<Comp children={yield bag.t} />')],
+	[
+		"a component's children prop beside a spread and children",
+		returning('<Comp {...bag} children={yield bag.t}>x</Comp>'),
+	],
+	[
+		"a delegated event array's tail in an arrow",
+		returning('t ? <button onClick={[bag.h, bag.d, yield bag.x]} /> : null'),
+	],
+	[
+		'delegated event data in an arrow',
+		returning('t ? <button onClick={[bag.h, yield bag.x]} /> : null'),
+	],
+	[
+		'a lone delegated handler in an array, in an arrow',
+		returning('t ? <button onClick={[yield bag.x]} /> : null'),
+	],
+	["an element's $key", returning('<div $key={yield bag.k} />')],
+	["an element's $key in an arrow", returning('t ? <div $key={yield t} /> : null')],
+	["an element's $key beside a spread", returning('<div {...bag} $key={yield bag.k} />')],
+	["an element's second $key", returning('<div $key={bag.k} $key={yield bag.k} />')],
+	["a component's $key", returning('<Comp $key={yield bag.k} />')],
+	['a dynamic children attribute on its own', returning('<div children={yield bag.t} />')],
+	[
+		'a children attribute beside a spread and children',
+		returning('<div {...bag} children={yield bag.t}>x</div>'),
+	],
+	[
 		'a stateful value the compiler renames before it drops duplicates',
 		returning('<input value={yield bag.value} value="kept" />'),
 	],

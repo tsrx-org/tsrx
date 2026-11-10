@@ -56,6 +56,18 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			returning('<div style={{ [t]: yield t }} />'),
 		],
 		[
+			'a class object with a method, which is also set whole',
+			returning('<div class={{ active: yield t, toString() { return 1; } }} />'),
+		],
+		[
+			'the data of an event the compiler does not delegate, which a new listener passes',
+			returning('<div onScroll={[bag.onScroll, yield t]} />'),
+		],
+		[
+			'listener data before a spread the compiler drops',
+			returning('<div onScroll={[bag.onScroll, yield t, ...bag.rest]} />'),
+		],
+		[
 			'an attribute and a child, in source order',
 			returning('<p title={yield bag.title}>{yield bag.text}</p>'),
 		],
@@ -84,6 +96,40 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 		['a namespaced event handler', returning('<button on:click={yield bag.onClick} />')],
 		['a ref', returning('<div ref={yield bag.ref} />')],
 		['a class object', returning('<div class={{ active: yield t }} />')],
+		['the data of a delegated event', returning('<button onClick={[bag.onClick, yield t]} />')],
+		[
+			'a child of a void element or a noscript, which the compiler drops',
+			returning('<div><input>{yield bag.text}</input><noscript>{yield bag.text}</noscript></div>'),
+		],
+		[
+			'what the compiler drops from an element it creates in an arrow',
+			returning(
+				't ? <div title={yield bag.title} title={bag.title}><input>{yield bag.text}</input></div> : null',
+			),
+		],
+		[
+			'a children attribute on a noscript or a textarea with a literal value',
+			returning(
+				'<div><noscript children={yield bag.text} /><textarea value="x" children={yield bag.text} /></div>',
+			),
+		],
+		[
+			"an event array's dropped tail in an element created in an arrow",
+			returning('t ? <button onClick={[bag.onClick, t, yield bag.x]} /> : null'),
+		],
+		[
+			"a component's children prop beside its children, which the compiler drops",
+			returning('<Comp children={yield bag.text}>x</Comp>'),
+		],
+		["an element's $key, which the DOM output removes", returning('<div $key={yield bag.key} />')],
+		// The compiler throws on these whatever the `yield`.
+		['an event array with no handler', returning('<div onScroll={[, yield t]} />')],
+		['an event array with a spread handler', returning('<div onScroll={[...bag.h, yield t]} />')],
+		['an event array with a hole for data', returning('<div onScroll={[bag.h, , yield t]} />')],
+		[
+			'a third element of an event array, which the compiler drops',
+			returning('<div onScroll={[bag.onScroll, t, yield t]} />'),
+		],
 		['an element nested in the returned one', returning('<div><input title={yield t} /></div>')],
 		['a static component prop', returning('<Comp title={yield t} />')],
 		['a lone static component child', returning('<Comp>{yield t}</Comp>')],
@@ -138,6 +184,14 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 		],
 		['a className, which is a plain attribute', returning('<div className={yield t} />')],
 		[
+			"a textarea's children, which its literal value replaces",
+			returning('<textarea value="x">{yield bag.text}</textarea>'),
+		],
+		[
+			'a children attribute on an element with children, which the compiler drops',
+			returning('<div children={yield bag.text}>x</div>'),
+		],
+		[
 			'an attribute a later one of its name replaces',
 			returning('<div title={yield bag.title} title="kept" />'),
 		],
@@ -146,7 +200,7 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			'a class object with a computed key the compiler evaluates',
 			returning("<div class={{ [(yield t, 'active')]: true }} />"),
 		],
-	])('allows a yield in %s, which Solid evaluates in place', (_label, source) => {
+	])('allows a yield in %s, which the DOM output leaves in place or drops', (_label, source) => {
 		expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
 		expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
 	});
