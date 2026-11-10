@@ -129,8 +129,14 @@ export function find_deferred_template_yields(program) {
 				continue;
 			}
 			// Without a spread, a `children` attribute is dropped when the element
-			// has children of its own.
-			if (!spread && key === 'children' && element.children.length > 0) continue;
+			// has children of its own, or can't have any.
+			if (
+				!spread &&
+				key === 'children' &&
+				(element.children.length > 0 || VOID_ELEMENTS.has(tag))
+			) {
+				continue;
+			}
 			const value = attribute.value;
 			if (value?.type !== 'JSXExpressionContainer') {
 				if (value) visit_value(value, context, false);
@@ -494,6 +500,24 @@ function dom_attribute_names(tag, attributes) {
 	}
 	return names;
 }
+
+/** Elements dom-expressions writes without children, by the tag as written. */
+const VOID_ELEMENTS = new Set([
+	'area',
+	'base',
+	'br',
+	'col',
+	'embed',
+	'hr',
+	'img',
+	'input',
+	'link',
+	'meta',
+	'param',
+	'source',
+	'track',
+	'wbr',
+]);
 
 /** The types a host attribute value folds to. A host child folds to the first two. */
 const FOLDED_TYPES = ['string', 'number', 'boolean'];
