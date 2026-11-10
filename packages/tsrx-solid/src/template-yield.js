@@ -717,11 +717,11 @@ const FOLDED_GLOBALS = ['undefined', 'NaN', 'Infinity'];
 
 /**
  * babel's `evaluate` (@babel/traverse 7.29.0) for the module's values. It
- * reads bindings by name: a binding it folds is a `const` or `let`, declared
- * once in the module with a plain name and never assigned, and read after its
- * declaration and inside its block. A name declared any other way, or read
- * elsewhere, isn't a constant here, and a global it reads must not be
- * declared anywhere in the module.
+ * reads bindings by name: a binding it folds is a `const`, `let` or `var`
+ * (outside a nested block), declared once in the module with a plain name
+ * and never assigned, and read after its declaration and inside its scope.
+ * A name declared any other way, or read elsewhere, isn't a constant here,
+ * and a global it reads must not be declared anywhere in the module.
  *
  * @param {AST.Program} program
  * @returns {Folder}
@@ -1107,16 +1107,22 @@ function collect_bindings(program, declarations, assigned) {
 	 */
 	const visit = (node, block, fn) => {
 		switch (node.type) {
-			case 'VariableDeclaration':
+			case 'VariableDeclaration': {
+				// babel reads a `var` declared in a nested block only in some cases.
+				const top =
+					node.kind !== 'var' ||
+					block === fn ||
+					/** @type {{ body?: AST.Node }} */ (fn).body === block;
 				for (const declarator of node.declarations) {
 					const scope = node.kind === 'var' ? fn : block;
-					if (declarator.id.type === 'Identifier' && node.kind !== 'var') {
+					if (declarator.id.type === 'Identifier' && top) {
 						declare(declarator.id.name, declarator, scope, true);
 					} else {
 						names(declarator.id, (name) => declare(name, null, scope, true));
 					}
 				}
 				break;
+			}
 			case 'FunctionDeclaration':
 			case 'FunctionExpression':
 			case 'ArrowFunctionExpression':

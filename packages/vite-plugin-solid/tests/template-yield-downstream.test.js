@@ -186,6 +186,10 @@ const SERVER_PROBES = [
 		returning('<div title={bag.x} data-mid={1 + 1} textContent={yield t} />'),
 	],
 	[
+		'a branch a var in a nested block leaves open',
+		`export function* f(bag: any, t: any) {\n\tif (t) {\n\t\tvar off = false;\n\t}\n\treturn <div {...bag} title={off && (yield t)} />;\n}`,
+	],
+	[
 		'a branch a reassigned binding leaves open',
 		`let on = false;\non = true;\n${returning('<div {...bag} title={on && (yield t)} />')}`,
 	],
@@ -273,6 +277,14 @@ const SERVER_PROBES = [
 	[
 		'a branch a module constant rules out',
 		`const off = false;\n${returning('<div {...bag} title={off && (yield t)} />')}`,
+	],
+	[
+		'a branch a module var rules out',
+		`var off = false;\n${returning('<div {...bag} title={off && (yield t)} />')}`,
+	],
+	[
+		'textContent beside a constant whose name is declared twice',
+		`const on = true;\nfunction g(on: any) {\n\treturn on;\n}\n${returning('<div title={on || bag.x} textContent={yield t} />')}`,
 	],
 	[
 		'a branch a local constant rules out',
