@@ -102,6 +102,10 @@ const PROBES = [
 		returning('<input value={yield bag.value} value="kept" />'),
 	],
 	[
+		"a textarea's value after one the compiler folds into its content",
+		returning('<textarea value="first" value={yield bag.value} defaultValue="fallback" />'),
+	],
+	[
 		'a dynamic style key kept since it folds to null',
 		returning('<div style={{ color: null && (yield bag.x) }} />'),
 	],

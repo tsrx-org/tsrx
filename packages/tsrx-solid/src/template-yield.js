@@ -425,12 +425,12 @@ function property_key(property) {
  * @type {Record<string, Record<string, 1 | 2>>}
  */
 const DOM_WITH_STATE = {
-	input: { value: 1, defaultValue: 2, checked: 1, defaultChecked: 2 },
-	select: { value: 1 },
-	option: { value: 1, selected: 1, defaultSelected: 2 },
-	textarea: { value: 1, defaultValue: 2 },
-	video: { muted: 1, defaultMuted: 2 },
-	audio: { muted: 1, defaultMuted: 2 },
+	INPUT: { value: 1, defaultValue: 2, checked: 1, defaultChecked: 2 },
+	SELECT: { value: 1 },
+	OPTION: { value: 1, selected: 1, defaultSelected: 2 },
+	TEXTAREA: { value: 1, defaultValue: 2 },
+	VIDEO: { muted: 1, defaultMuted: 2 },
+	AUDIO: { muted: 1, defaultMuted: 2 },
 };
 
 /**
@@ -448,7 +448,9 @@ function dom_attribute_names(tag, attributes) {
 	for (const attribute of attributes) {
 		if (attribute.type === 'JSXAttribute') names.set(attribute, attribute_name(attribute.name));
 	}
-	const stateful = DOM_WITH_STATE[tag.toLowerCase()];
+	// Looked up by the tag in upper case, as the compiler does.
+	const upper = tag.toUpperCase();
+	const stateful = DOM_WITH_STATE[upper];
 	if (!stateful) return names;
 	/** @param {string} name */
 	const find = (name) =>
@@ -465,10 +467,22 @@ function dom_attribute_names(tag, attributes) {
 			attribute.value?.type === 'JSXExpressionContainer'
 				? attribute.value.expression
 				: attribute.value;
-		const literal = !value || value.type === 'Literal';
+		const literal =
+			!value ||
+			(value.type === 'Literal' &&
+				!(/** @type {{ regex?: unknown, bigint?: unknown }} */ (value).regex) &&
+				!(/** @type {{ regex?: unknown, bigint?: unknown }} */ (value).bigint));
+		const name = property.replace('default', '').toLowerCase();
+		const folded_into_children =
+			is_default &&
+			literal &&
+			upper === 'TEXTAREA' &&
+			name === 'value' &&
+			!(value?.type === 'Literal' && value.value === null);
 		names.set(
 			attribute,
-			is_default && literal ? property.replace('default', '').toLowerCase() : `prop:${property}`,
+			// A textarea's literal value becomes its content, so the attribute is gone.
+			folded_into_children ? '' : is_default && literal ? name : `prop:${property}`,
 		);
 	}
 	return names;
