@@ -9,6 +9,11 @@ export interface TsrxSolidBunPluginOptions {
 	include?: RegExp;
 	exclude?: RegExp | RegExp[];
 	emitCss?: boolean;
+	/**
+	 * Options forwarded to `babel-preset-solid`. With `generate: 'ssr'` and
+	 * `hydratable: true`, TSRX2034 also follows the SSR output, which moves
+	 * more template values into arrows than the DOM output does.
+	 */
 	solid?: object;
 }
 

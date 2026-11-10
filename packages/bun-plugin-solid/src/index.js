@@ -120,7 +120,16 @@ export function tsrxSolid(options = {}) {
 				platform: explicit_platform,
 				integration: '@tsrx/bun-plugin-solid',
 			});
-			const compile_options = { runtimeImports: options.runtimeImports, platform };
+			const solid_options = /** @type {{ generate?: string, hydratable?: boolean } | undefined} */ (
+				options.solid
+			);
+			const compile_options = {
+				runtimeImports: options.runtimeImports,
+				platform,
+				// babel-preset-solid compiles the SSR output with `generate: 'ssr'`.
+				// TSRX2034 follows it for the hydratable output, which moves more.
+				ssr: solid_options?.generate === 'ssr' && !!solid_options.hydratable,
+			};
 			if (platform !== undefined && build.config) {
 				build.config.define = /** @type {Record<string, string>} */ (
 					mergePlatformDefinitions(build.config.define, platform, {

@@ -185,4 +185,36 @@ describe('@tsrx/bun-plugin-solid', () => {
 		const transformed = await load_tsrx(hooks, '/project/ignored.tsrx');
 		expect(transformed).toBeUndefined();
 	});
+
+	// #1291: babel-preset-solid's hydratable SSR output merges the props of a
+	// host element with a spread in an arrow, which moves this `yield`; the
+	// DOM output and the non-hydratable SSR output don't.
+	describe('server builds', () => {
+		const source = `export function* field(bag: any) {\n\treturn <input {...bag} title={yield 1} />;\n}`;
+
+		/** @param {import('../types/index.js').TsrxSolidBunPluginOptions} options */
+		async function load(options) {
+			const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-solid-ssr-'));
+			try {
+				const file_path = path.join(dir, 'Field.tsrx');
+				await writeFile(file_path, source);
+				return await load_tsrx(setup_plugin(options), file_path);
+			} finally {
+				await rm(dir, { recursive: true, force: true });
+			}
+		}
+
+		it('reports TSRX2034 with `generate: ssr` and `hydratable`', async () => {
+			await expect(load({ solid: { generate: 'ssr', hydratable: true } })).rejects.toThrow(
+				expect.objectContaining({ code: 'TSRX2034', pos: source.indexOf('yield') }),
+			);
+		});
+
+		it('keeps the DOM output rules otherwise', async () => {
+			for (const solid of [undefined, { generate: 'dom' }, { generate: 'ssr' }]) {
+				const result = await load({ solid });
+				expect(result?.contents).toContain('yield 1');
+			}
+		});
+	});
 });
