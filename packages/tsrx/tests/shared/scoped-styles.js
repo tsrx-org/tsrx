@@ -764,6 +764,45 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('keeps every :not() argument in a chain kept without a match', () => {
+			const in_expression = `<i ${attr}="y" />{show && <b ${attr}="b" />}`;
+			const after_component = `{show && <Comp />}<b ${attr}="b" />`;
+			/** @type {Array<[string, string, (hash: string) => string]>} */
+			const cases = [
+				[
+					'.y:not(.z, :global(.w)) + .b',
+					in_expression,
+					(hash) => `.y.${hash}:not(.z, .w) + .b:where(.${hash}) {`,
+				],
+				[
+					'.y:not(.p .z) + .b',
+					in_expression,
+					(hash) => `.y.${hash}:not(.p:where(.${hash}) .z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					':global(.x) + .y:not(.z) + .b',
+					after_component,
+					(hash) => `.x + .y.${hash}:not(.z) + .b:where(.${hash}) {`,
+				],
+			];
+
+			for (const [rule, body, expected] of cases) {
+				const { css, cssHash } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>${rule} { color: red; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				// An empty `:not()` is invalid, and a shorter one matches more
+				expect(css, rule).not.toContain('(unused)');
+				expect(css, rule).toContain(expected(hashes_of(cssHash)[0]));
+			}
+		});
+
 		it('prunes sibling rules when another element or a parent boundary separates the siblings', () => {
 			const a = `<i ${attr}="a" />`;
 			const b = `<b ${attr}="b">{'b'}</b>`;
