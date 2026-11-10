@@ -174,7 +174,15 @@ function find_deferred(program, server) {
 				continue;
 			}
 			const value = attribute.value;
-			const ssr_deferred = !!ssr && is_ssr_attribute_deferred(attribute, ssr, grouped, namespaces);
+			const ssr_deferred =
+				!!ssr &&
+				is_ssr_attribute_deferred(
+					attribute,
+					ssr,
+					grouped,
+					namespaces,
+					/** @type {Folder} */ (folder),
+				);
 			if (value?.type !== 'JSXExpressionContainer') {
 				if (value) visit_value(value, context, ssr_deferred);
 				continue;
@@ -461,16 +469,19 @@ function ssr_host_element(element, namespaces) {
  * @param {SsrHostElement} ssr
  * @param {Set<AST.Node>} grouped
  * @param {Set<string>} namespaces
+ * @param {Folder} folder
  * @returns {boolean}
  */
-function is_ssr_attribute_deferred(attribute, ssr, grouped, namespaces) {
+function is_ssr_attribute_deferred(attribute, ssr, grouped, namespaces, folder) {
 	const role = ssr.roles.get(attribute);
 	if (ssr.spread) return role === 'folded' || (role === 'kept' && ssr.merged);
 	const value = attribute.value;
 	if (value?.type !== 'JSXExpressionContainer') return false;
 	if (role === 'content') return grouped.has(value.expression);
-	// A dynamic value, counting an element in it, is rendered in an arrow.
-	return role === 'kept' && is_folded_dynamic(value.expression, namespaces, true);
+	// A dynamic value, counting an element in it, is rendered in an arrow. A
+	// value that may fold counts as static, so a `yield` there goes unreported
+	// rather than reported though it stays in place.
+	return role === 'kept' && is_surely_dynamic(value.expression, namespaces, folder);
 }
 
 /**
@@ -599,9 +610,10 @@ function collect_grouped_text_content(root, grouped, namespaces, folder) {
  * @param {AST.Node} node
  * @param {Set<string>} namespaces
  * @param {Folder} folder
+ * @param {boolean} [nested] whether it is a value in an object
  * @returns {boolean}
  */
-function is_surely_dynamic(node, namespaces, folder) {
+function is_surely_dynamic(node, namespaces, folder, nested = false) {
 	const expression = strip(node, []);
 	if (!expression) return false;
 	if (expression.type === 'ObjectExpression') {
@@ -612,16 +624,17 @@ function is_surely_dynamic(node, namespaces, folder) {
 				(property.computed && contains_dynamic(property.key, true)) ||
 				(property.kind === 'init' &&
 					!property.method &&
-					is_surely_dynamic(property.value, new Set(), folder)),
+					is_surely_dynamic(property.value, namespaces, folder, true)),
 		);
 	}
+	// Inside an object, a value is part of the whole, so only what's inside it
+	// counts (a tagged template there isn't dynamic).
+	const dynamic = nested
+		? contains_dynamic(expression, true)
+		: is_dynamic(expression, true, namespaces);
 	const constant = folder.evaluate(expression);
-	if (constant) {
-		return (
-			!FOLDED_TYPES.includes(typeof constant.value) && is_dynamic(expression, true, namespaces)
-		);
-	}
-	return is_dynamic(expression, true, namespaces) && !folder.may_fold(expression);
+	if (constant) return !FOLDED_TYPES.includes(typeof constant.value) && dynamic;
+	return dynamic && !folder.may_fold(expression);
 }
 
 /**
