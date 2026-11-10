@@ -1733,6 +1733,8 @@ function DefaultChildrenApp() @{
 		<DefaultChildrenCard>
 			<b>{'given'}</b>
 		</DefaultChildrenCard>
+		<DefaultChildrenCard children={null} />
+		<DefaultChildrenCard children={undefined} />
 	</>
 }
 
@@ -1880,8 +1882,14 @@ describe('tsrx-vue component children', () => {
 
 	it('falls back to a destructured children default only without children', async () => {
 		await render(DefaultChildrenApp);
-		// A slot keeps a trailing text anchor in its host (#870).
-		expect(texts('.default-children').map((value) => value?.trim())).toEqual(['none', 'given']);
+		// A slot keeps a trailing text anchor in its host (#870). Like a
+		// destructuring default, it replaces only `undefined`, so `null` stays.
+		expect(texts('.default-children').map((value) => value?.trim())).toEqual([
+			'none',
+			'given',
+			'',
+			'none',
+		]);
 	});
 
 	it("reads the outer component's children inside a nested component", async () => {

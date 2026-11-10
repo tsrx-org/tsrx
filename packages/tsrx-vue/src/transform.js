@@ -1384,8 +1384,10 @@ function is_assignment_target(node, parent) {
 
 /**
  * `_$_Card_slots.default?.() ?? <read>` where the read renders the children,
- * `_$_Card_slots.default ?? <read>` where it only tests them, then the
- * destructured default if there is one.
+ * `_$_Card_slots.default ?? <read>` where it only tests them. A destructured
+ * default applies to the prop as it did in the pattern, only when the prop is
+ * `undefined` (`children === void 0 ? <default> : children`), so an explicit
+ * `children={null}` stays `null`.
  *
  * @param {AST.Expression} read
  * @param {AST.Node | undefined} parent
@@ -1395,13 +1397,16 @@ function is_assignment_target(node, parent) {
 function read_children_or_default_slot(read, parent, state) {
 	state.rewrites.count += 1;
 	const slot = b.member(clone_identifier(state.slots_id), 'default');
-	const slot_or_prop = b.logical(
-		'??',
-		is_test_position(read, parent) ? slot : b.maybe_call(slot),
-		read,
-	);
 	const fallback = read.type === 'Identifier' ? state.children_defaults.get(read.name) : undefined;
-	return fallback ? b.logical('??', slot_or_prop, clone_ast_node(fallback)) : slot_or_prop;
+	const prop =
+		read.type === 'Identifier' && fallback
+			? b.conditional(
+					b.binary('===', read, b.unary('void', b.literal(0))),
+					clone_ast_node(fallback),
+					clone_identifier(read),
+				)
+			: read;
+	return b.logical('??', is_test_position(read, parent) ? slot : b.maybe_call(slot), prop);
 }
 
 /**

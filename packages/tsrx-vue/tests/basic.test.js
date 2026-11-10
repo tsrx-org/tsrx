@@ -405,7 +405,9 @@ export function Inner({ label = PREFIX }: { label?: string }) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('<div>{_$_Card_slots.default?.() ?? children ?? <i />}</div>');
+		expect(code).toContain(
+			'<div>{_$_Card_slots.default?.() ?? (children === void 0 ? <i /> : children)}</div>',
+		);
 	});
 
 	it('falls back from the slot to the prop to a destructured children default', () => {
@@ -417,7 +419,11 @@ export function Inner({ label = PREFIX }: { label?: string }) @{
 		);
 
 		expect(code).toContain('function Card({ children }: { children?: string })');
-		expect(code).toContain("<p>{_$_Card_slots.default?.() ?? children ?? 'none'}</p>");
+		// Like the destructuring default, it replaces only `undefined`, so an
+		// explicit `children={null}` stays `null`.
+		expect(code).toContain(
+			"<p>{_$_Card_slots.default?.() ?? (children === void 0 ? 'none' : children)}</p>",
+		);
 	});
 
 	it('names the slot per component, so a nested component reads its own and the outer slot', () => {
