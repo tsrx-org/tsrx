@@ -13,6 +13,11 @@ describe('file events sent to the TSRX language server', () => {
 			'apps/site/.next/package.json',
 			'apps/shop/.output/server/package.json',
 			'apps\\site\\.svelte-kit\\output\\server\\manifest.json',
+			// Packages a production build copies into its output, with their install markers.
+			'apps/shop/.output/server/node_modules/vue/package.json',
+			'apps/shop/.output/server/node_modules/.package-lock.json',
+			'apps/site/.next/standalone/node_modules/react/package.json',
+			'.vercel/output/functions/index.func/node_modules/@scope/pkg/package.json',
 		]) {
 			expect(is_needed_file_event(path), path).toBe(false);
 		}

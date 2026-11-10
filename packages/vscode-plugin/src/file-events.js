@@ -31,7 +31,7 @@ const INSTALL_MARKER_FILE_NAMES = new Set([
  * directories except the ones kept here: a TypeScript config (a project can extend
  * one, such as `.nuxt/tsconfig.json`), and a file that shows an install finished (an
  * install marker, or the manifest of a package installed directly in a
- * `node_modules` folder).
+ * `node_modules` folder that is not inside build output).
  * @param {string} relative_path
  * @returns {boolean}
  */
@@ -46,7 +46,14 @@ export function is_needed_file_event(relative_path) {
 		return true;
 	}
 	const index = segments.indexOf('node_modules');
-	if (index === -1 || segments.includes('node_modules', index + 1)) return false;
+	if (
+		index === -1 ||
+		segments.includes('node_modules', index + 1) ||
+		// A `node_modules` in build output is a copy a build writes, not an install.
+		segments.slice(0, index).some((segment) => GENERATED_DIRECTORY_NAMES.has(segment))
+	) {
+		return false;
+	}
 	const rest = segments.slice(index + 1);
 	if (rest.length === 1) return INSTALL_MARKER_FILE_NAMES.has(rest[0]);
 	const name = rest.slice(0, rest[0].startsWith('@') ? 2 : 1);

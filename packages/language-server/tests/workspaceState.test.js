@@ -68,6 +68,11 @@ describe('language-server workspace state', () => {
 			'/workspace/apps/site/.next/package.json',
 			'/workspace/apps/shop/.output/server/package.json',
 			'C:\\workspace\\node_modules\\.vite\\deps\\package.json',
+			// Packages a production build copies into its output, with their install markers.
+			'/workspace/apps/shop/.output/server/node_modules/vue/package.json',
+			'/workspace/apps/shop/.output/server/node_modules/.package-lock.json',
+			'/workspace/apps/site/.next/standalone/node_modules/react/package.json',
+			'/workspace/.vercel/output/functions/index.func/node_modules/@scope/pkg/package.json',
 		]) {
 			expect(classifyWorkspaceChanges([change(file_name)])).toEqual({
 				restartLanguageServer: false,

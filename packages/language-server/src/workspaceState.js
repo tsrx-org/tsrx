@@ -145,12 +145,20 @@ export function isGeneratedFile(file_name, workspace_folders = []) {
  * marker, or the manifest of a package installed directly in a `node_modules`
  * folder (`node_modules/<name>/package.json`, `node_modules/@scope/<name>/package.json`),
  * which npm and Bun write for each package they install. The lockfile is not enough:
- * `git pull` can change it before the install that changes the TSRX compiler.
+ * `git pull` can change it before the install that changes the TSRX compiler. A
+ * `node_modules` inside build output (`.output/server/node_modules`,
+ * `.next/standalone/node_modules`) is a copy a build writes, not an install.
  * @param {readonly string[]} segments Path segments relative to the workspace folder.
  */
 function isInstallStateFile(segments) {
 	const index = segments.indexOf('node_modules');
-	if (index === -1 || segments.includes('node_modules', index + 1)) return false;
+	if (
+		index === -1 ||
+		segments.includes('node_modules', index + 1) ||
+		segments.slice(0, index).some((segment) => GENERATED_DIRECTORY_NAMES.has(segment))
+	) {
+		return false;
+	}
 	const rest = segments.slice(index + 1);
 	if (rest.length === 1) return INSTALL_MARKER_FILE_NAMES.has(rest[0]);
 	const name = rest.slice(0, rest[0]?.startsWith('@') ? 2 : 1);
