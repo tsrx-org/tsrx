@@ -653,6 +653,21 @@ function get_possible_element_siblings(node, direction, adjacent_only) {
 }
 
 /**
+ * Treat the rest of a selector as matched when a sibling search cannot place
+ * the elements it would match. Each compound gets the scope hash unless it is
+ * global, as a match would give it, so the kept rule still only matches
+ * elements of this scope there.
+ *
+ * @param {AST.CSS.RelativeSelector[]} selectors
+ * @returns {void}
+ */
+function assume_match(selectors) {
+	for (const selector of selectors) {
+		if (!is_outer_global(selector)) selector.metadata.scoped = true;
+	}
+}
+
+/**
  * @param {AST.CSS.RelativeSelector} relative_selector
  * @param {AST.CSS.RelativeSelector[]} rest_selectors
  * @param {AST.CSS.Rule} rule
@@ -696,11 +711,7 @@ function apply_combinator(relative_selector, rest_selectors, rule, node, directi
 
 			// Siblings the search cannot know may match the rest of the selector
 			let sibling_matched = uncertain;
-			if (uncertain) {
-				for (const selector of rest_selectors) {
-					if (!is_outer_global(selector)) selector.metadata.scoped = true;
-				}
-			}
+			if (uncertain) assume_match(rest_selectors);
 
 			for (const possible_sibling of siblings) {
 				if (!can_render_dynamic_content(possible_sibling)) {
@@ -720,7 +731,10 @@ function apply_combinator(relative_selector, rest_selectors, rule, node, directi
 				}
 				// Check whether the elements after the component match the rest
 				const after = get_possible_element_siblings(possible_sibling, FORWARD, adjacent_only);
-				if (after.uncertain) sibling_matched = true;
+				if (after.uncertain) {
+					sibling_matched = true;
+					assume_match(remaining);
+				}
 				for (const subsequent of after.siblings) {
 					if (apply_selector(remaining, rule, subsequent, direction)) {
 						sibling_matched = true;

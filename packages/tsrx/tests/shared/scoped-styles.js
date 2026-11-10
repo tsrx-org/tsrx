@@ -745,6 +745,25 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('scopes the rest of a chain kept for a component the search cannot place', () => {
+			for (const combinator of ['+', '~']) {
+				const { css, cssHash } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>:global(.x) ${combinator} .y ${combinator} .b { color: red; }</style>
+							{show && <Comp />}
+							<b ${attr}="b" />
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				// Unscoped, `.y` would match an element the component renders
+				const hash = hashes_of(cssHash)[0];
+				expect(css).toContain(`.x ${combinator} .y.${hash} ${combinator} .b:where(.${hash}) {`);
+			}
+		});
+
 		it('prunes sibling rules when another element or a parent boundary separates the siblings', () => {
 			const a = `<i ${attr}="a" />`;
 			const b = `<b ${attr}="b">{'b'}</b>`;
