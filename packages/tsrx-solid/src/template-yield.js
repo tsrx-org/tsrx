@@ -516,9 +516,9 @@ function is_ssr_attribute_deferred(attribute, ssr, grouped, namespaces, folder) 
 	if (ssr.spread) return role === 'folded' || (role === 'kept' && ssr.merged);
 	const value = attribute.value;
 	if (value?.type !== 'JSXExpressionContainer') return false;
-	if (role === 'content') {
-		// Content is rendered like a child: in an arrow when it's dynamic, not
-		// counting an element in it, or grouped.
+	if (role === 'content' || role === 'folded') {
+		// Content, and a textarea's value, is rendered like a child: in an arrow
+		// when it's dynamic, not counting an element in it, or grouped.
 		return (
 			grouped.has(value.expression) ||
 			is_surely_dynamic(value.expression, namespaces, folder, false, false)

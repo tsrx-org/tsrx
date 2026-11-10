@@ -382,6 +382,35 @@ const PROBES = [
  * @type {Array<[string, string]>}
  */
 const SERVER_PROBES = [
+	// A textarea's value is rendered as its content.
+	[
+		"a textarea's value before a prop:value",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={yield bag.t} prop:value="x" />;\n}',
+	],
+	[
+		"a textarea's defaultValue before a prop:defaultValue",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea defaultValue={yield bag.t} prop:defaultValue="x" />;\n}',
+	],
+	[
+		"a textarea's static value before a prop:value",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={yield t} prop:value="x" />;\n}',
+	],
+	[
+		"a textarea's dynamic value",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={yield bag.t} />;\n}',
+	],
+	[
+		"a textarea's static value",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={yield t} />;\n}',
+	],
+	[
+		"a textarea's value with an element in it",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={[yield t, <b />]} />;\n}',
+	],
+	[
+		"a textarea's value beside a dynamic attribute",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea title={bag.x} value={yield t} />;\n}',
+	],
 	// A content property with no value doesn't fill the slot; one of the same
 	// name still replaces an earlier one.
 	[

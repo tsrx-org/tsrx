@@ -252,6 +252,10 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 			template("<input {...bag} title={yield 'title'} />"),
 		],
 		[
+			"a textarea's value the DOM output renames apart from a later prop: one",
+			returning('<textarea value={yield bag.value} prop:value="x" />'),
+		],
+		[
 			'textContent beside a later innerHTML with no value, which the SSR output ignores',
 			returning('<div {...bag}><p textContent={yield t} innerHTML /></div>'),
 		],
