@@ -138,6 +138,14 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 		],
 		['a className, which is a plain attribute', returning('<div className={yield t} />')],
 		[
+			"a textarea's children, which its literal value replaces",
+			returning('<textarea value="x">{yield bag.text}</textarea>'),
+		],
+		[
+			'a children attribute on an element with children, which the compiler drops',
+			returning('<div children={yield bag.text}>x</div>'),
+		],
+		[
 			'an attribute a later one of its name replaces',
 			returning('<div title={yield bag.title} title="kept" />'),
 		],

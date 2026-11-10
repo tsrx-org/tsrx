@@ -128,6 +128,9 @@ export function find_deferred_template_yields(program) {
 			) {
 				continue;
 			}
+			// Without a spread, a `children` attribute is dropped when the element
+			// has children of its own.
+			if (!spread && key === 'children' && element.children.length > 0) continue;
 			const value = attribute.value;
 			if (value?.type !== 'JSXExpressionContainer') {
 				if (value) visit_value(value, context, false);
@@ -152,7 +155,11 @@ export function find_deferred_template_yields(program) {
 			);
 		}
 
-		for (const child of element.children) {
+		// A textarea's literal value replaces its children.
+		const children = opening.attributes.some((attribute) => names.get(attribute) === '')
+			? []
+			: element.children;
+		for (const child of children) {
 			if (child.type === 'JSXElement') {
 				// A child element is created from the same template, in place.
 				visit_element(child, context, true);

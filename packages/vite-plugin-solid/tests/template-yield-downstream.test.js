@@ -98,6 +98,39 @@ const PROBES = [
 	['a style object with a dynamic computed key', returning('<div style={{ [bag.k]: yield t }} />')],
 	['the last of two attributes of a name', returning('<div title="a" title={yield bag.x} />')],
 	[
+		"a textarea's children beside a literal value",
+		returning('<textarea value="x">{yield bag.t}</textarea>'),
+	],
+	[
+		"a textarea's children beside a literal default",
+		returning('<textarea defaultValue="x">{yield bag.t}</textarea>'),
+	],
+	[
+		"a textarea's children beside a bare value",
+		returning('<textarea value>{yield bag.t}</textarea>'),
+	],
+	[
+		"a textarea's element child beside a literal value",
+		returning('<textarea value="x"><b title={yield bag.t} /></textarea>'),
+	],
+	[
+		"a textarea's children beside a dynamic value",
+		returning('<textarea value={bag.v}>{yield bag.t}</textarea>'),
+	],
+	[
+		"a textarea's children beside a null value",
+		returning('<textarea value={null}>{yield bag.t}</textarea>'),
+	],
+	[
+		'a children attribute on an element with children',
+		returning('<div children={yield bag.t}>x</div>'),
+	],
+	['a dynamic children attribute on its own', returning('<div children={yield bag.t} />')],
+	[
+		'a children attribute beside a spread and children',
+		returning('<div {...bag} children={yield bag.t}>x</div>'),
+	],
+	[
 		'a stateful value the compiler renames before it drops duplicates',
 		returning('<input value={yield bag.value} value="kept" />'),
 	],
