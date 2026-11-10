@@ -112,9 +112,21 @@ export function find_deferred_template_yields(program) {
 
 		const tag = host_tag_name(opening.name);
 		const spread = opening.attributes.some((attribute) => attribute.type === 'JSXSpreadAttribute');
-		for (const attribute of opening.attributes) {
+		for (const [index, attribute] of opening.attributes.entries()) {
 			if (attribute.type === 'JSXSpreadAttribute') {
 				visit_value(attribute.argument, context, is_dynamic(attribute.argument, false, namespaces));
+				continue;
+			}
+			// Without a spread, the compiler keeps only the last attribute of a
+			// name, but every `ref`.
+			const key = attribute_name(attribute.name);
+			if (
+				!spread &&
+				key !== 'ref' &&
+				opening.attributes
+					.slice(index + 1)
+					.some((other) => other.type === 'JSXAttribute' && attribute_name(other.name) === key)
+			) {
 				continue;
 			}
 			const value = attribute.value;
@@ -527,7 +539,8 @@ function folds(node, types) {
  * The value babel's `evaluate` surely gives `node`, reading only literals: a
  * string, number, boolean or null literal, a template of them, a member of a
  * string or number literal (`'x'.length`), `!`, `-`, `+`, `~`, `typeof` and
- * `void` of them, a short circuit or conditional on them, which skips the
+ * `void` of them (and `typeof` of a function or class), a short circuit or
+ * conditional on them, which skips the
  * branch that never runs, the last of a sequence, and arrays and objects of
  * them. It folds more (bindings, arithmetic, a few calls);
  * those count as not constant here.
@@ -574,6 +587,12 @@ function literal_value(node) {
 		}
 		case 'UnaryExpression': {
 			if (expression.operator === 'void') return { value: undefined };
+			if (
+				expression.operator === 'typeof' &&
+				(isFunctionNode(expression.argument) || expression.argument.type === 'ClassExpression')
+			) {
+				return { value: 'function' };
+			}
 			const constant = literal_value(expression.argument);
 			if (!constant) return undefined;
 			const value = /** @type {any} */ (constant.value);

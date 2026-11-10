@@ -137,6 +137,10 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			returning("<input title={(yield bag.title, 'a')} />"),
 		],
 		['a className, which is a plain attribute', returning('<div className={yield t} />')],
+		[
+			'an attribute a later one of its name replaces',
+			returning('<div title={yield bag.title} title="kept" />'),
+		],
 		['a class value the compiler evaluates', returning('<div class={null && (yield t)} />')],
 		[
 			'a class object with a computed key the compiler evaluates',

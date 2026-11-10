@@ -96,6 +96,7 @@ const PROBES = [
 	['a style object with a computed key', returning('<div style={{ [t]: yield t }} />')],
 	['a style object with a spread', returning('<div style={{ ...bag, color: yield t }} />')],
 	['a style object with a dynamic computed key', returning('<div style={{ [bag.k]: yield t }} />')],
+	['the last of two attributes of a name', returning('<div title="a" title={yield bag.x} />')],
 	[
 		'a dynamic style key kept since it folds to null',
 		returning('<div style={{ color: null && (yield bag.x) }} />'),
@@ -181,6 +182,14 @@ const PROBES = [
 	],
 	['a sequence that folds into its last value', returning("<input title={(yield bag.x, 'a')} />")],
 	['a className', returning('<div className={yield t} />')],
+	[
+		'an attribute a later one of its name replaces',
+		returning('<div class={{ [yield t]: true }} class="kept" />'),
+	],
+	[
+		'a value whose type the compiler evaluates',
+		returning('<div title={typeof class extends (yield bag.x) {}} />'),
+	],
 	[
 		'a className object with a tagged template value',
 		returning('<div className={{ a: Comp`${yield t}` }} />'),
