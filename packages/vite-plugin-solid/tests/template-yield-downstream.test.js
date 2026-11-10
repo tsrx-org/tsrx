@@ -125,6 +125,7 @@ const PROBES = [
 		'a children attribute on an element with children',
 		returning('<div children={yield bag.t}>x</div>'),
 	],
+	['a children attribute on a void element', returning('<input children={yield bag.t} />')],
 	['a dynamic children attribute on its own', returning('<div children={yield bag.t} />')],
 	[
 		'a children attribute beside a spread and children',
