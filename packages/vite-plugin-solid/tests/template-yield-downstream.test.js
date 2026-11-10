@@ -423,7 +423,11 @@ const SERVER_PROBES = [
 	],
 	[
 		'a global call whose name is only declared',
-		`declare function String(x: any): string;\n${returning('<div title={String(1)} textContent={yield t} />')}`,
+		`declare const String: any;\n${returning('<div title={String(1)} textContent={yield t} />')}`,
+	],
+	[
+		"a global call in a parameter's default, beside the body's var of that name",
+		`function outer(\n\tg = function* (bag: any, t: any) {\n\t\treturn <div title={String(1)} textContent={yield t} />;\n\t},\n) {\n\tvar String = (x: any) => x;\n\treturn g;\n}`,
 	],
 	[
 		'a constant whose name a loop elsewhere reassigns',

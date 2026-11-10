@@ -886,8 +886,6 @@ function collect_bindings(program) {
 	 * @param {AST.Node} fn the nearest function scope
 	 */
 	const visit = (node, block, fn) => {
-		// An ambient declaration (`declare …`) is erased before babel runs.
-		if (/** @type {{ declare?: boolean }} */ (node).declare) return;
 		switch (node.type) {
 			case 'VariableDeclaration':
 				for (const declarator of node.declarations) {
