@@ -69,16 +69,25 @@ export function fill_tsrx_module_format(
 const patched = new WeakSet();
 
 /**
+ * The options of the program each patched compiler host is creating.
+ * @type {WeakMap<import('typescript').CompilerHost, import('typescript').CompilerOptions>}
+ */
+const host_compiler_options = new WeakMap();
+
+/**
  * `tsrx-tsc`: fill in the module format of each `.tsrx` source file the host
  * reads. Volar's program proxy reads the file through this host, then parses
- * the generated code with the same options.
+ * the generated code with the same options. A solution build (`-b`) creates
+ * every project's program with one host, and a watch rebuild reuses it, so the
+ * host reads with the options of the program it is creating now.
  * @param {typeof import('typescript')} ts
  * @param {import('typescript').CompilerHost} host
  * @param {import('typescript').CompilerOptions} compiler_options
  */
 export function with_tsrx_module_format_on_host(ts, host, compiler_options) {
-	if (patched.has(host)) return;
-	patched.add(host);
+	const patched_before = host_compiler_options.has(host);
+	host_compiler_options.set(host, compiler_options);
+	if (patched_before) return;
 	const get_source_file = host.getSourceFile;
 	host.getSourceFile = (file_name, language_version_or_options, ...rest) => {
 		fill_tsrx_module_format(
@@ -87,7 +96,7 @@ export function with_tsrx_module_format_on_host(ts, host, compiler_options) {
 			language_version_or_options,
 			undefined,
 			host,
-			compiler_options,
+			/** @type {import('typescript').CompilerOptions} */ (host_compiler_options.get(host)),
 		);
 		return get_source_file.call(host, file_name, language_version_or_options, ...rest);
 	};

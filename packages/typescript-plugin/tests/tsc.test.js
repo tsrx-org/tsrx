@@ -557,3 +557,40 @@ it('reports errors on a bare this in .tsrx files', () => {
 		`layout.tsrx(4,${line.lastIndexOf('this') + 1}): error TS17009: 'super' must be called before accessing 'this' in the constructor of a derived class.`,
 	);
 });
+
+it('gives .tsrx files the module format of their own project in a solution build', () => {
+	// `-b` creates every project's program with one compiler host, and the
+	// Bundler project builds before the NodeNext one.
+	/** @param {string} name @param {string} module @param {string} file @param {string} source */
+	const add_project = (name, module, file, source) => {
+		fs.mkdirSync(path.join(workspace, name));
+		fs.writeFileSync(
+			path.join(workspace, name, 'tsconfig.json'),
+			JSON.stringify({
+				tsrx: { compiler: '@tsrx/preact' },
+				compilerOptions: {
+					composite: true,
+					outDir: 'dist',
+					module,
+					moduleResolution: module === 'NodeNext' ? 'NodeNext' : 'Bundler',
+					target: 'ES2022',
+					strict: true,
+					skipLibCheck: true,
+					types: [],
+				},
+				include: [file],
+			}),
+		);
+		fs.writeFileSync(path.join(workspace, name, file), source);
+	};
+	add_project('bundler', 'ESNext', 'index.ts', 'export const value = 1;\n');
+	add_project('nodenext', 'NodeNext', 'meta.tsrx', 'export const url = import.meta.url;\n');
+	fs.writeFileSync(
+		path.join(workspace, 'tsconfig.json'),
+		JSON.stringify({ files: [], references: [{ path: './bundler' }, { path: './nodenext' }] }),
+	);
+
+	const result = run_cli('native', ['-b', 'tsconfig.json']);
+	expect(result.output).toBe('');
+	expect(result.status).toBe(0);
+});
