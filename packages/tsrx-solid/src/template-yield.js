@@ -80,6 +80,14 @@ function find_deferred(program, server) {
 	 * @type {Set<AST.Node>}
 	 */
 	const grouped = new Set();
+	/**
+	 * `yield`s the compiler drops with a value it folds into a constant. Both
+	 * outputs drop them. Only a server build reads this, so the client
+	 * build's results stay as they were.
+	 *
+	 * @type {Set<AST.Node>}
+	 */
+	const folded = server ? collect_folded_yields(program) : new Set();
 
 	/**
 	 * @typedef {{ generator: boolean, deferred: boolean }} Context
@@ -95,7 +103,7 @@ function find_deferred(program, server) {
 		if (isFunctionNode(node)) {
 			context = { generator: !!node.generator, deferred: false };
 		} else if (node.type === 'YieldExpression') {
-			if (context.generator && context.deferred) found.push(node);
+			if (context.generator && context.deferred && !folded.has(node)) found.push(node);
 		} else if (node.type === 'ReturnStatement' || node.type === 'VariableDeclarator') {
 			const value = node.type === 'ReturnStatement' ? node.argument : node.init;
 			const element = strip(value, []);
@@ -399,10 +407,7 @@ function ssr_host_element(element, namespaces) {
 		} else if (spread) {
 			roles.set(attribute, name === 'children' && has_children ? 'dropped' : 'kept');
 		} else if (CHILD_PROPERTIES.has(name)) {
-			roles.set(
-				attribute,
-				has_children || VOID_ELEMENTS.has(tag.toLowerCase()) ? 'dropped' : 'content',
-			);
+			roles.set(attribute, has_children || VOID_ELEMENTS.has(tag) ? 'dropped' : 'content');
 		} else {
 			// The template drops all but the last attribute of a name.
 			const later = attributes
@@ -510,7 +515,7 @@ function collect_grouped_text_content(root, grouped, namespaces) {
 						DOM_WITH_STATE[ssr.tag.toLowerCase()]?.[name] !== 1),
 			);
 		}
-		if (VOID_ELEMENTS.has(ssr.tag.toLowerCase())) return;
+		if (VOID_ELEMENTS.has(ssr.tag)) return;
 
 		const text_content = !!content && ssr.names.get(content) === 'textContent';
 		const children = content ? [content.value] : element.children;
@@ -648,7 +653,11 @@ function may_fold(node) {
 		case 'BinaryExpression':
 			return may_fold(expression.left) && may_fold(expression.right);
 		case 'UnaryExpression':
-			return expression.operator === 'void' || may_fold(expression.argument);
+			return (
+				expression.operator === 'void' ||
+				expression.operator === 'typeof' ||
+				may_fold(expression.argument)
+			);
 		case 'SequenceExpression':
 			return may_fold(expression.expressions.at(-1));
 		case 'ArrayExpression':
@@ -667,6 +676,216 @@ function may_fold(node) {
 		default:
 			return false;
 	}
+}
+
+/**
+ * The `yield`s babel-preset-solid drops before it compiles a host element, in
+ * either output. It folds an attribute value, or a value in an object there,
+ * into a literal when it evaluates to a string, number or boolean, and a
+ * child into text when it evaluates to a string or number. A `yield` in a
+ * branch that never runs, as in `true || (yield t)`, goes with it.
+ *
+ * @param {AST.Program} program
+ * @returns {Set<AST.Node>}
+ */
+function collect_folded_yields(program) {
+	/** @type {Set<AST.Node>} */
+	const folded = new Set();
+	/**
+	 * @param {AST.Node} node
+	 * @param {string[]} types the types it folds to
+	 */
+	const fold = (node, types) => {
+		const constant = evaluate_constant(node);
+		if (constant && types.includes(typeof constant.value)) {
+			for (const inner of find_yields(node)) folded.add(inner);
+		}
+	};
+	/** @param {AST.Node} node */
+	const fold_attribute = (node) => {
+		const value = strip(node, []);
+		if (value?.type === 'ObjectExpression') {
+			for (const property of value.properties) {
+				if (property.type === 'Property' && property.kind === 'init' && !property.method) {
+					fold_attribute(property.value);
+				}
+			}
+		} else if (value && value.type !== 'Literal') {
+			fold(value, ['string', 'number', 'boolean']);
+		}
+	};
+	/** @param {AST.Node} node */
+	const visit = (node) => {
+		if (node.type === 'JSXElement' && !is_component_name(node.openingElement.name)) {
+			for (const attribute of node.openingElement.attributes) {
+				if (
+					attribute.type === 'JSXAttribute' &&
+					attribute.value?.type === 'JSXExpressionContainer'
+				) {
+					fold_attribute(attribute.value.expression);
+				}
+			}
+			for (const child of node.children) {
+				const expression = child.type === 'JSXExpressionContainer' && strip(child.expression, []);
+				if (expression && expression.type !== 'SequenceExpression') {
+					fold(expression, ['string', 'number']);
+				}
+			}
+		}
+		for_each_child(node, visit);
+	};
+	visit(program);
+	return folded;
+}
+
+/**
+ * @param {AST.Node} node
+ * @param {AST.Node[]} [found]
+ * @returns {AST.Node[]}
+ */
+function find_yields(node, found = []) {
+	if (node.type === 'YieldExpression') found.push(node);
+	for_each_child(node, (child) => find_yields(child, found));
+	return found;
+}
+
+/**
+ * babel's `evaluate`, on the part of it that needs no scope: literals,
+ * template literals, a member of a string or number literal, `undefined`,
+ * `NaN` and `Infinity`, and unary, binary, logical, conditional and sequence
+ * expressions of them, which skip what a short circuit doesn't run. Anything
+ * else, a `yield` included, isn't a constant here; babel folds a little more
+ * (constant bindings, a few global functions).
+ *
+ * @param {AST.Node | null | undefined} node
+ * @returns {{ value: unknown } | undefined}
+ */
+function evaluate_constant(node) {
+	const expression = strip(node, []);
+	if (!expression) return undefined;
+	switch (expression.type) {
+		case 'Literal':
+			return /** @type {{ regex?: unknown, bigint?: unknown }} */ (expression).regex ||
+				/** @type {{ regex?: unknown, bigint?: unknown }} */ (expression).bigint
+				? undefined
+				: { value: expression.value };
+		case 'TemplateLiteral': {
+			let text = '';
+			for (const [index, quasi] of expression.quasis.entries()) {
+				text += quasi.value.cooked;
+				const inner = expression.expressions[index];
+				if (!inner) continue;
+				const constant = evaluate_constant(inner);
+				if (!constant) return undefined;
+				text += String(constant.value);
+			}
+			return { value: text };
+		}
+		case 'Identifier':
+			return expression.name === 'undefined'
+				? { value: undefined }
+				: expression.name === 'NaN' || expression.name === 'Infinity'
+					? { value: globalThis[expression.name] }
+					: undefined;
+		case 'MemberExpression': {
+			const object = expression.object;
+			if (
+				object.type !== 'Literal' ||
+				(typeof object.value !== 'string' && typeof object.value !== 'number')
+			) {
+				return undefined;
+			}
+			const key = expression.computed
+				? evaluate_constant(expression.property)?.value
+				: expression.property.type === 'Identifier'
+					? expression.property.name
+					: undefined;
+			return typeof key === 'string' || typeof key === 'number'
+				? { value: /** @type {any} */ (object.value)[key] }
+				: undefined;
+		}
+		case 'UnaryExpression': {
+			if (expression.operator === 'void') return { value: undefined };
+			if (expression.operator === 'typeof' && is_function_or_class(expression.argument)) {
+				return { value: 'function' };
+			}
+			const constant = evaluate_constant(expression.argument);
+			if (!constant) return undefined;
+			const value = /** @type {any} */ (constant.value);
+			switch (expression.operator) {
+				case '!':
+					return { value: !value };
+				case '+':
+					return { value: +value };
+				case '-':
+					return { value: -value };
+				case '~':
+					return { value: ~value };
+				case 'typeof':
+					return { value: typeof value };
+			}
+			return undefined;
+		}
+		case 'BinaryExpression': {
+			const left = evaluate_constant(expression.left);
+			const right = left && evaluate_constant(expression.right);
+			if (!left || !right) return undefined;
+			const operate = BINARY_OPERATORS[expression.operator];
+			return operate ? { value: operate(left.value, right.value) } : undefined;
+		}
+		case 'LogicalExpression': {
+			const left = evaluate_constant(expression.left);
+			if (!left) return undefined;
+			const skips =
+				expression.operator === '||'
+					? !!left.value
+					: expression.operator === '&&'
+						? !left.value
+						: left.value != null;
+			return skips ? left : evaluate_constant(expression.right);
+		}
+		case 'ConditionalExpression': {
+			const test = evaluate_constant(expression.test);
+			if (!test) return undefined;
+			return evaluate_constant(test.value ? expression.consequent : expression.alternate);
+		}
+		case 'SequenceExpression':
+			return evaluate_constant(expression.expressions.at(-1));
+		default:
+			return undefined;
+	}
+}
+
+/** @type {Record<string, (left: any, right: any) => unknown>} */
+const BINARY_OPERATORS = {
+	'-': (a, b) => a - b,
+	'+': (a, b) => a + b,
+	'/': (a, b) => a / b,
+	'*': (a, b) => a * b,
+	'%': (a, b) => a % b,
+	'**': (a, b) => a ** b,
+	'<': (a, b) => a < b,
+	'>': (a, b) => a > b,
+	'<=': (a, b) => a <= b,
+	'>=': (a, b) => a >= b,
+	'==': (a, b) => a == b,
+	'!=': (a, b) => a != b,
+	'===': (a, b) => a === b,
+	'!==': (a, b) => a !== b,
+	'|': (a, b) => a | b,
+	'&': (a, b) => a & b,
+	'^': (a, b) => a ^ b,
+	'<<': (a, b) => a << b,
+	'>>': (a, b) => a >> b,
+	'>>>': (a, b) => a >>> b,
+};
+
+/**
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_function_or_class(node) {
+	return isFunctionNode(node) || node.type === 'ClassExpression';
 }
 
 /**

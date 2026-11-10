@@ -173,6 +173,12 @@ const SERVER_PROBES = [
 		'textContent beside a short circuit that reads a member',
 		returning('<div title={bag.x || 1} textContent={yield t} />'),
 	],
+	// The compiler folds only to a string, number or boolean.
+	[
+		'a short circuit to null beside a spread',
+		returning('<div {...bag} title={null && (yield t)} />'),
+	],
+	['a boolean child of a spread', returning('<div {...bag}>{true || (yield t)}</div>')],
 	[
 		'the last of two attributes of a name',
 		returning('<p title={bag.x} title={[yield t, <b />]} />'),
@@ -236,6 +242,10 @@ const SERVER_PROBES = [
 		'textContent beside a folded short circuit',
 		returning('<div title={true || bag.x} textContent={yield t} />'),
 	],
+	// A folded value takes a `yield` in a branch that never runs with it.
+	['a folded value beside a spread', returning('<div {...bag} title={true || (yield t)} />')],
+	['a folded child of a spread', returning('<div {...bag}>{true ? "x" : (yield t)}</div>')],
+	['a folded value with an element in it', returning('<div title={true || [yield t, <b />]} />')],
 ];
 
 /**

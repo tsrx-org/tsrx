@@ -172,6 +172,10 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 		],
 		["a textarea's value", returning('<textarea value={yield t} />')],
 		[
+			'a branch that never runs, which the compiler folds away',
+			returning('<div {...bag} title={true || (yield t)} />'),
+		],
+		[
 			'textContent beside a value the compiler folds into a literal',
 			returning("<div title={{ x: 'a'.length }} textContent={yield t} />"),
 		],
