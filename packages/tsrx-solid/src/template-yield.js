@@ -886,6 +886,8 @@ function collect_bindings(program) {
 	 * @param {AST.Node} fn the nearest function scope
 	 */
 	const visit = (node, block, fn) => {
+		// An ambient declaration (`declare …`) is erased before babel runs.
+		if (/** @type {{ declare?: boolean }} */ (node).declare) return;
 		switch (node.type) {
 			case 'VariableDeclaration':
 				for (const declarator of node.declarations) {
@@ -913,7 +915,8 @@ function collect_bindings(program) {
 				for (const param of node.params) {
 					identifiers(param, (id) => declare(id.name, node, 'other', null, false));
 				}
-				block = fn = node;
+				// The body's own bindings aren't visible to the parameters.
+				block = fn = node.body.type === 'BlockStatement' ? node.body : node;
 				break;
 			case 'ClassDeclaration':
 				if (node.id) declare(node.id.name, block, 'other', null, false);
@@ -942,25 +945,27 @@ function collect_bindings(program) {
 				}
 				block = node;
 				break;
-			case 'BlockStatement':
 			case 'StaticBlock':
+				block = fn = node;
+				break;
+			case 'BlockStatement':
 			case 'ForStatement':
 			case 'SwitchStatement':
 				block = node;
 				break;
 			default: {
 				// TypeScript declarations that bind a value: `import x = …`, an
-				// enum, a namespace, a declared function.
+				// enum, a namespace. A namespace's body is its own scope.
 				const declaration = /** @type {{ type: string, id?: AST.Node | null }} */ (node);
 				if (
 					(declaration.type === 'TSImportEqualsDeclaration' ||
 						declaration.type === 'TSEnumDeclaration' ||
-						declaration.type === 'TSModuleDeclaration' ||
-						declaration.type === 'TSDeclareFunction') &&
+						declaration.type === 'TSModuleDeclaration') &&
 					declaration.id?.type === 'Identifier'
 				) {
 					declare(declaration.id.name, block, 'other', null, false);
 				}
+				if (declaration.type === 'TSModuleBlock') block = fn = node;
 			}
 		}
 		for_each_child(node, (child) => visit(child, block, fn));

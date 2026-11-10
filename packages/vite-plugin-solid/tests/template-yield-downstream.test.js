@@ -309,6 +309,10 @@ const SERVER_PROBES = [
 		returning('<div><p title="s" title={bag.x} /><p textContent={yield t} /></div>'),
 	],
 	[
+		'textContent beside a call a local binding shadows',
+		`export function* f(bag: any, t: any) {\n\tconst String = (x: any) => x;\n\treturn <div title={String(1)} textContent={yield t} />;\n}`,
+	],
+	[
 		'textContent beside a short circuit a literal leaves open',
 		returning('<div title={false || bag.x} textContent={yield t} />'),
 	],
@@ -412,6 +416,14 @@ const SERVER_PROBES = [
 	[
 		'a global call whose name is a parameter elsewhere',
 		`function g(String: any) {\n\treturn String;\n}\n${returning('<div title={String(1)} textContent={yield t} />')}`,
+	],
+	[
+		'a global call whose name a namespace body declares',
+		`namespace N {\n\tconst String = (x: any) => x;\n}\n${returning('<div title={String(1)} textContent={yield t} />')}`,
+	],
+	[
+		'a global call whose name is only declared',
+		`declare function String(x: any): string;\n${returning('<div title={String(1)} textContent={yield t} />')}`,
 	],
 	[
 		'a constant whose name a loop elsewhere reassigns',
