@@ -279,14 +279,6 @@ const SERVER_PROBES = [
 		returning('<div title={t || bag.x} textContent={yield t} />'),
 	],
 	[
-		'textContent after a constant child',
-		returning('<div><p title={bag.x} />{1 + 1}<p textContent={yield t} /></div>'),
-	],
-	[
-		'textContent after a constant attribute',
-		returning('<div title={bag.x} data-mid={1 + 1} textContent={yield t} />'),
-	],
-	[
 		'textContent beside the type of a member',
 		returning('<div title={typeof bag.x} textContent={yield t} />'),
 	],
@@ -297,10 +289,6 @@ const SERVER_PROBES = [
 	[
 		'textContent beside a reassigned binding',
 		`export function* f(bag: any, t: any) {\n\tlet on = true;\n\ton = bag.on;\n\treturn <div title={on && bag.x} textContent={yield t} />;\n}`,
-	],
-	[
-		'a branch a var in a nested block leaves open',
-		`export function* f(bag: any, t: any) {\n\tif (t) {\n\t\tvar off = false;\n\t}\n\treturn <div {...bag} title={off && (yield t)} />;\n}`,
 	],
 	[
 		'a branch a reassigned binding leaves open',
@@ -319,6 +307,10 @@ const SERVER_PROBES = [
 	[
 		'textContent after the last of two attributes of a name',
 		returning('<div><p title="s" title={bag.x} /><p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent beside a short circuit a literal leaves open',
+		returning('<div title={false || bag.x} textContent={yield t} />'),
 	],
 	// Exempt: both outputs evaluate the value in place, or leave it out.
 	['an event handler beside a spread', returning('<button {...bag} onClick={yield t} />')],
@@ -402,6 +394,24 @@ const SERVER_PROBES = [
 	[
 		'a branch a local constant rules out',
 		`export function* f(bag: any, t: any) {\n\tconst off = false;\n\treturn <div {...bag} title={off && (yield t)} />;\n}`,
+	],
+	// The SSR output writes a falsy textContent into the template as text.
+	[
+		'textContent after a false one',
+		returning('<div><p textContent={false} /><p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent after an undefined one',
+		returning('<div><p textContent={undefined} /><p textContent={yield t} /></div>'),
+	],
+	// A name declared elsewhere in the module doesn't shadow one here.
+	[
+		'a global call whose name is a parameter elsewhere',
+		`function g(String: any) {\n\treturn String;\n}\n${returning('<div title={String(1)} textContent={yield t} />')}`,
+	],
+	[
+		'a constant whose name a loop elsewhere reassigns',
+		`function g() {\n\tfor (let i = 0; i < 1; i++) {}\n}\nconst i = 2;\n${returning('<div title={String(i)} textContent={yield t} />')}`,
 	],
 ];
 
