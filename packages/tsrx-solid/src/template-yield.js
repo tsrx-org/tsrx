@@ -450,12 +450,18 @@ function ssr_host_element(element, namespaces) {
 		} else if (spread) {
 			roles.set(attribute, name === 'children' && has_children ? 'dropped' : 'kept');
 		} else {
-			// The template drops all but the last attribute of a name.
-			const later = attributes
-				.slice(index + 1)
-				.some((other) => roles.get(other) !== 'folded' && names.get(other) === name);
+			// The template drops all but the last attribute of a name, and all but
+			// the last content property: they fill one slot.
+			const content = CHILD_PROPERTIES.has(name);
+			const later = attributes.slice(index + 1).some((other) => {
+				const other_name = names.get(other);
+				return (
+					roles.get(other) !== 'folded' &&
+					(other_name === name || (content && CHILD_PROPERTIES.has(other_name ?? '')))
+				);
+			});
 			if (later) roles.set(attribute, 'dropped');
-			else if (!CHILD_PROPERTIES.has(name)) roles.set(attribute, 'kept');
+			else if (!content) roles.set(attribute, 'kept');
 			else roles.set(attribute, has_children || VOID_ELEMENTS.has(tag) ? 'dropped' : 'content');
 		}
 	}
@@ -641,10 +647,10 @@ function collect_grouped_text_content(root, grouped, namespaces, folder) {
  * @param {Set<string>} namespaces
  * @param {Folder} folder
  * @param {boolean} [nested] whether it is a value in an object
- * @param {boolean} [tags] whether an element in it counts
+ * @param {boolean} [elements] whether an element in it counts as dynamic
  * @returns {boolean}
  */
-function is_surely_dynamic(node, namespaces, folder, nested = false, tags = true) {
+function is_surely_dynamic(node, namespaces, folder, nested = false, elements = true) {
 	const expression = strip(node, []);
 	if (!expression) return false;
 	if (expression.type === 'ObjectExpression') {
@@ -662,7 +668,7 @@ function is_surely_dynamic(node, namespaces, folder, nested = false, tags = true
 	// counts (a tagged template there isn't dynamic).
 	const dynamic = nested
 		? contains_dynamic(expression, true)
-		: is_dynamic(expression, tags, namespaces);
+		: is_dynamic(expression, elements, namespaces);
 	const constant = folder.evaluate(expression);
 	if (constant) return !FOLDED_TYPES.includes(typeof constant.value) && dynamic;
 	return dynamic && !folder.may_fold(expression);

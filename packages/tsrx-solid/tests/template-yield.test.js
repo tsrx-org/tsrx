@@ -356,6 +356,10 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 		],
 		['an element in textContent', returning('<p textContent={[yield t, <b />]} />')],
 		[
+			'a content property a later one replaces, in a spread children arrow',
+			returning('<div {...bag}><p textContent={yield t} innerHTML="x" /></div>'),
+		],
+		[
 			'a first $key a later _key replaces, after the SSR output renames it',
 			returning('<div $key={yield bag.key} _key="second" />'),
 		],

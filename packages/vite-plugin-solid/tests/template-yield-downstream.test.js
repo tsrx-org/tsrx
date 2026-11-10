@@ -382,6 +382,23 @@ const PROBES = [
  * @type {Array<[string, string]>}
  */
 const SERVER_PROBES = [
+	// One content slot: the last content property fills it.
+	[
+		"a textContent a later innerHTML replaces, in a spread's children",
+		returning('<div {...bag}><p textContent={yield t} innerHTML="x" /></div>'),
+	],
+	[
+		"a children attribute a later innerText replaces, in a spread's children",
+		returning('<div {...bag}><p children={yield t} innerText="x" /></div>'),
+	],
+	[
+		"an innerHTML a later textContent replaces, in a spread's children",
+		returning('<div {...bag}><p innerHTML={yield t} textContent="x" /></div>'),
+	],
+	[
+		"a dynamic innerHTML after a textContent, in a spread's children",
+		returning('<div {...bag}><p textContent="x" innerHTML={yield bag.t} /></div>'),
+	],
 	// Where the SSR output's names, drops and arrows differ from the DOM output's.
 	[
 		'a value before a prop:value',
