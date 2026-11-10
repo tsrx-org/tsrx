@@ -961,6 +961,13 @@ function get_hono_exposed_path(identifier, ancestors, scopes, is_arrow_method) {
 				}
 				return path;
 			}
+			case 'JSXSpreadAttribute': {
+				// A host element reads a spread's members. A component receives them as
+				// its props, so any member can have its own members replaced.
+				const element = ancestors[index - 2];
+				if (element?.type === 'JSXElement' && is_hono_host_element(element)) return null;
+				return held ? path : [...path, '*'];
+			}
 			case 'NewExpression':
 				return parent.callee === child ? null : path;
 			case 'ArrowFunctionExpression':
@@ -976,7 +983,6 @@ function get_hono_exposed_path(identifier, ancestors, scopes, is_arrow_method) {
 			case 'JSXIfExpression':
 			case 'JSXSwitchExpression':
 			case 'VariableDeclarator':
-			case 'JSXSpreadAttribute':
 			case 'ExportSpecifier':
 			case 'ExportDefaultDeclaration':
 			case 'ClassDeclaration':
