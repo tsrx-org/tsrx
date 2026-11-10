@@ -164,10 +164,14 @@ export function find_deferred_template_yields(program) {
 			);
 		}
 
-		// A textarea's literal value replaces its children.
-		const children = opening.attributes.some((attribute) => names.get(attribute) === '')
-			? []
-			: element.children;
+		// The compiler writes no children for a void element or a `noscript`,
+		// and a textarea's literal value (named `''`) replaces them.
+		const children =
+			VOID_ELEMENTS.has(tag) ||
+			tag === 'noscript' ||
+			opening.attributes.some((attribute) => names.get(attribute) === '')
+				? []
+				: element.children;
 		for (const child of children) {
 			if (child.type === 'JSXElement') {
 				// A child element is created from the same template, in place.
@@ -319,15 +323,18 @@ function split_event_handler(name, value) {
 		!name.startsWith('on') ||
 		DELEGATED_EVENTS.has(name.slice(2).toLowerCase()) ||
 		expression?.type !== 'ArrayExpression' ||
-		expression.elements.length < 2 ||
-		expression.elements.some((element) => !element || element.type === 'SpreadElement')
+		expression.elements.length < 2
 	) {
 		return undefined;
 	}
-	return expression.elements.map((element, index) => [
-		/** @type {AST.Node} */ (element),
-		index < 2 || 'dropped',
-	]);
+	// The compiler throws on a hole or a spread handler, or a hole for data.
+	const [handler, data] = expression.elements;
+	if (!handler || handler.type === 'SpreadElement' || !data) return undefined;
+	return expression.elements.flatMap((element, index) =>
+		element
+			? [/** @type {[AST.Node, boolean | 'dropped']} */ ([element, index < 2 || 'dropped'])]
+			: [],
+	);
 }
 
 /**
@@ -483,7 +490,8 @@ const DOM_WITH_STATE = {
 /**
  * The names a host element's attributes have in the DOM output, which first
  * renames a stateful property set to something other than a literal to
- * `prop:…`, and a literal default to the property itself.
+ * `prop:…`, and a literal default to the property itself. A textarea's
+ * literal value, which becomes its content, is named `''`.
  *
  * @param {string} tag
  * @param {Array<ESTreeJSX.JSXAttribute | ESTreeJSX.JSXSpreadAttribute>} attributes

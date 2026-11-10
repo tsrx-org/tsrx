@@ -64,6 +64,10 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			returning('<div onScroll={[bag.onScroll, yield t]} />'),
 		],
 		[
+			'listener data before a spread the compiler drops',
+			returning('<div onScroll={[bag.onScroll, yield t, ...bag.rest]} />'),
+		],
+		[
 			'an attribute and a child, in source order',
 			returning('<p title={yield bag.title}>{yield bag.text}</p>'),
 		],
@@ -93,6 +97,10 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 		['a ref', returning('<div ref={yield bag.ref} />')],
 		['a class object', returning('<div class={{ active: yield t }} />')],
 		['the data of a delegated event', returning('<button onClick={[bag.onClick, yield t]} />')],
+		[
+			'a child of a void element or a noscript, which the compiler drops',
+			returning('<div><input>{yield bag.text}</input><noscript>{yield bag.text}</noscript></div>'),
+		],
 		[
 			'a third element of an event array, which the compiler drops',
 			returning('<div onScroll={[bag.onScroll, t, yield t]} />'),
