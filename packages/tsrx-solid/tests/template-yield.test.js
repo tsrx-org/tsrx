@@ -327,6 +327,24 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 		['a dynamic attribute value', returning('<input title={yield bag.title} />')],
 		['an element in a ternary arm', returning('t ? <input title={yield t} /> : null')],
 		['a class value', returning('<div class={yield t} />')],
+		// The SSR check counts a value babel might fold through a binding as
+		// folded; the DOM output's `yield`s are still reported.
+		[
+			'a branch a constant decides, which neither output folds',
+			`const on = true;\n${returning('<input title={on && (yield bag.t)} />')}`,
+		],
+		[
+			'a ternary arm a constant decides',
+			`const off = false;\n${returning('<input title={off ? 0 : (yield bag.title)} />')}`,
+		],
+		[
+			'a child guarded by a destructured value',
+			'export function* f(bag: any) {\n\tconst { off } = bag;\n\treturn <div>{off && (yield bag.t)}</div>;\n}',
+		],
+		[
+			'a child guarded by a let',
+			'export function* f(bag: any) {\n\tlet off = false;\n\treturn <div>{off && (yield bag.t)}</div>;\n}',
+		],
 	])(
 		'reports each yield in %s, which the DOM output moves, in a server build too',
 		(_label, source) => {

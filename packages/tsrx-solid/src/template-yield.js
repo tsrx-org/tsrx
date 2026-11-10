@@ -64,11 +64,16 @@ export function find_deferred_template_yields(program) {
  * - groups neighbouring dynamic values, `textContent` included, in one arrow;
  * - leaves out refs, event handlers and `prop:` values.
  *
+ * The client's `yield`s are found as `find_deferred_template_yields` finds
+ * them, on their own, so a value the SSR check counts as maybe folded (see
+ * `collect_folded_yields`) never hides one: a server build reports every
+ * `yield` a client build does.
+ *
  * @param {AST.Program} program
  * @returns {AST.YieldExpression[]}
  */
 export function find_deferred_server_template_yields(program) {
-	return find_deferred(program, true);
+	return [...find_deferred(program, false), ...find_deferred(program, true)];
 }
 
 /**
@@ -146,18 +151,21 @@ function find_deferred(program, server) {
 			return;
 		}
 		// The compiler creates any other host element in an immediately called
-		// arrow, with everything it keeps, but not what it drops.
-		if (!inline) context = { ...context, deferred: true };
+		// arrow, with everything it keeps, but not what it drops. The SSR
+		// output doesn't, and a server build checks the DOM output on its own
+		// as well (`find_deferred_server_template_yields`).
+		if (!inline && !server) context = { ...context, deferred: true };
 
 		const ssr = server ? ssr_host_element(element, namespaces) : undefined;
 		const tag = host_tag_name(opening.name);
 		const spread = opening.attributes.some((attribute) => attribute.type === 'JSXSpreadAttribute');
 		const names = dom_attribute_names(tag, opening.attributes);
-		// It writes no children for a void element or a `noscript`, and a
-		// textarea's literal value (named `''`) replaces them.
+		// It writes no children for a void element or a `noscript` (the SSR
+		// output writes a `noscript`'s), and a textarea's literal value (named
+		// `''`) replaces them.
 		const childless =
 			VOID_ELEMENTS.has(tag) ||
-			tag === 'noscript' ||
+			(tag === 'noscript' && !ssr) ||
 			opening.attributes.some((attribute) => names.get(attribute) === '');
 		for (const [index, attribute] of opening.attributes.entries()) {
 			if (attribute.type === 'JSXSpreadAttribute') {
@@ -178,8 +186,10 @@ function find_deferred(program, server) {
 			) {
 				continue;
 			}
-			// The DOM output removes an element's first `$key`.
+			// The DOM output removes an element's first `$key`; the SSR output
+			// renders it as `_key`.
 			if (
+				!ssr &&
 				key === '$key' &&
 				opening.attributes.find((other) => names.get(other) === key) === attribute
 			) {
@@ -1338,10 +1348,10 @@ function object_is_dynamic(object) {
 
 /**
  * The `yield`s dom-expressions drops when it folds a host attribute value, a
- * value in an object there, or a host child into a literal. In a server
- * build, a value that may fold, but whose literals don't decide it, counts
- * too, so a `yield` there goes unreported rather than reported though
- * dropped.
+ * value in an object there, or a host child into a literal. For the SSR
+ * check, a value that may fold, but whose literals don't decide it, counts
+ * too, so a `yield` only that check finds there goes unreported rather than
+ * reported though dropped.
  *
  * @param {AST.Program} program
  * @param {Folder} [folder]

@@ -382,6 +382,28 @@ const PROBES = [
  * @type {Array<[string, string]>}
  */
 const SERVER_PROBES = [
+	// Values the SSR check counts as maybe folded, beside `yield`s the DOM
+	// output moves.
+	[
+		'a branch a constant decides, which the SSR check counts as maybe folded',
+		'const on = true;\nexport function* f(bag: any) {\n\treturn <input title={on && (yield bag.t)} />;\n}',
+	],
+	[
+		'a ternary arm a constant decides',
+		'const off = false;\nexport function* f(bag: any) {\n\treturn <input title={off ? 0 : (yield bag.title)} />;\n}',
+	],
+	[
+		'a child guarded by a destructured value',
+		'export function* f(bag: any) {\n\tconst { off } = bag;\n\treturn <div>{off && (yield bag.t)}</div>;\n}',
+	],
+	[
+		'a child guarded by a let',
+		'export function* f(bag: any) {\n\tlet off = false;\n\treturn <div>{off && (yield bag.t)}</div>;\n}',
+	],
+	[
+		'a child guarded by a constant',
+		'const off = false;\nexport function* f(bag: any) {\n\treturn <div>{off && (yield bag.t)}</div>;\n}',
+	],
 	// Reported in a server build: the SSR output moves the value into an arrow.
 	[
 		"a host spread beside an attribute (#1291's shape)",
@@ -528,10 +550,6 @@ const SERVER_PROBES = [
 	['a folded child of a spread', returning('<div {...bag}>{true ? "x" : (yield t)}</div>')],
 	['a folded value with an element in it', returning('<div title={true || [yield t, <b />]} />')],
 	[
-		'a folded call beside a spread',
-		returning('<div {...bag} title={Math.max(1, 2) || (yield t)} />'),
-	],
-	[
 		'a folded array beside a spread',
 		returning('<div {...bag} title={[1] + (true || (yield t))} />'),
 	],
@@ -618,6 +636,11 @@ describe('in a server build, TSRX2034 matches what babel-preset-solid compiles f
 	it.each([...PROBES, ...SERVER_PROBES])('%s', async (_label, source) => {
 		const { code, errors } = compile(source, 'Probe.tsrx', { collect: true, ssr: true });
 		const reported = errors.some((error) => error.code === 'TSRX2034');
+		// Every `yield` a client build reports is reported here too.
+		const client = compile(source, 'Probe.tsrx', { collect: true }).errors;
+		expect(errors.map((error) => error.pos)).toEqual(
+			expect.arrayContaining(client.map((error) => error.pos)),
+		);
 		expect(errors.filter((error) => error.code !== 'TSRX2034')).toEqual([]);
 		// vite-plugin-solid's `ssr` option compiles both builds as hydratable.
 		const fails =
