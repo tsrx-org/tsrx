@@ -23,6 +23,13 @@ const AST_METADATA_KEYS = new Set(['loc', 'start', 'end', 'metadata']);
  *   drops any other `ref`;
  * - reads TypeScript as written, so an element or value behind `as`,
  *   `satisfies` or `!` is just an expression to it;
+ * - passes every attribute of a host element with a spread, but `ref`, as a
+ *   prop of the spread: a dynamic one in a getter, any other in place;
+ * - sets a `<select>`'s value in a microtask as well as in place;
+ * - first folds a host attribute value, or a value in an object there, into a
+ *   literal when it evaluates to a string, number or boolean, and a host
+ *   child into text when it evaluates to a string or number, dropping any
+ *   `yield` in a branch that never runs, as in `false && (yield x)`;
  * - passes component children in a getter when there are several, or one is
  *   an element or a dynamic value.
  *
@@ -42,6 +49,7 @@ export function find_deferred_template_yields(program) {
 	/** @type {AST.YieldExpression[]} */
 	const found = [];
 	const namespaces = collect_namespace_imports(program);
+	const folded = collect_folded_yields(program);
 
 	/**
 	 * @typedef {{ generator: boolean, deferred: boolean }} Context
@@ -57,7 +65,7 @@ export function find_deferred_template_yields(program) {
 		if (isFunctionNode(node)) {
 			context = { generator: !!node.generator, deferred: false };
 		} else if (node.type === 'YieldExpression') {
-			if (context.generator && context.deferred) found.push(node);
+			if (context.generator && context.deferred && !folded.has(node)) found.push(node);
 		} else if (node.type === 'ReturnStatement' || node.type === 'VariableDeclarator') {
 			const value = node.type === 'ReturnStatement' ? node.argument : node.init;
 			const element = strip(value, []);
@@ -102,6 +110,8 @@ export function find_deferred_template_yields(program) {
 			return;
 		}
 
+		const tag = host_tag_name(opening.name);
+		const spread = opening.attributes.some((attribute) => attribute.type === 'JSXSpreadAttribute');
 		for (const attribute of opening.attributes) {
 			if (attribute.type === 'JSXSpreadAttribute') {
 				visit_value(attribute.argument, context, is_dynamic(attribute.argument, false, namespaces));
@@ -113,10 +123,14 @@ export function find_deferred_template_yields(program) {
 				continue;
 			}
 			const expression = /** @type {AST.Expression} */ (value.expression);
+			const name = attribute_name(attribute.name);
 			visit_value(
 				expression,
 				context,
-				is_host_attribute_deferred(attribute_name(attribute.name), expression, namespaces),
+				// Beside a spread, every attribute but `ref` is a prop of the spread.
+				spread && name !== 'ref'
+					? is_folded_dynamic(expression, namespaces)
+					: is_host_attribute_deferred(name, expression, namespaces, tag),
 			);
 		}
 
@@ -232,27 +246,238 @@ export function find_deferred_template_yields(program) {
 
 /**
  * Whether dom-expressions evaluates a host element's attribute value outside
- * the element's own code.
+ * the element's own code, when the element has no spread.
  *
  * @param {string} name
  * @param {AST.Expression} value
  * @param {Set<string>} namespaces
+ * @param {string} tag the element's tag, as written
  * @returns {boolean}
  */
-function is_host_attribute_deferred(name, value, namespaces) {
+function is_host_attribute_deferred(name, value, namespaces, tag) {
 	if (name === 'ref') return strip(value, HOST_REF_WRAPPERS)?.type === 'ArrayExpression';
 	const expression = strip(value, []);
 	if (name.startsWith('on')) return false;
-	if (name === 'class' || name === 'className' || name === 'style') {
-		return expression?.type !== 'ObjectExpression' || is_dynamic(value, false, namespaces);
+	// A `<select>`'s value, unless it's a literal, is assigned in a microtask
+	// as well as in place.
+	if (tag === 'select' && (name === 'value' || name === 'prop:value')) {
+		return expression?.type !== 'Literal';
 	}
-	return is_dynamic(value, false, namespaces);
+	if (name === 'class' || name === 'className' || name === 'style') {
+		return expression?.type !== 'ObjectExpression' || is_folded_dynamic(value, namespaces);
+	}
+	return is_folded_dynamic(value, namespaces);
+}
+
+/** The types a host attribute value folds to. A host child folds to the first two. */
+const FOLDED_TYPES = ['string', 'number', 'boolean'];
+
+/**
+ * dom-expressions' test for a host attribute value it re-evaluates, after it
+ * folds the value, or an object's values one by one, into literals. An
+ * object's values are checked as one expression, with no namespace exception.
+ *
+ * @param {AST.Node | null | undefined} node
+ * @param {Set<string>} namespaces
+ * @returns {boolean}
+ */
+function is_folded_dynamic(node, namespaces) {
+	const expression = strip(node, []);
+	if (!expression) return false;
+	if (expression.type === 'ObjectExpression') {
+		return expression.properties.some(
+			(property) =>
+				property.type !== 'Property' ||
+				(property.computed && contains_dynamic(property.key, false)) ||
+				(property.kind === 'init' &&
+					!property.method &&
+					is_folded_dynamic(property.value, new Set())),
+		);
+	}
+	if (folds(expression, FOLDED_TYPES)) return false;
+	return is_dynamic(expression, false, namespaces);
+}
+
+/**
+ * The `yield`s dom-expressions drops when it folds a host attribute value, a
+ * value in an object there, or a host child into a literal.
+ *
+ * @param {AST.Program} program
+ * @returns {Set<AST.Node>}
+ */
+function collect_folded_yields(program) {
+	/** @type {Set<AST.Node>} */
+	const folded = new Set();
+	/**
+	 * @param {AST.Node} node
+	 * @param {string[]} types
+	 */
+	const fold = (node, types) => {
+		if (folds(node, types)) for (const inner of find_yields(node)) folded.add(inner);
+	};
+	/** @param {AST.Node} node */
+	const fold_attribute = (node) => {
+		const value = strip(node, []);
+		if (value?.type === 'ObjectExpression') {
+			for (const property of value.properties) {
+				if (property.type === 'Property' && property.kind === 'init' && !property.method) {
+					fold_attribute(property.value);
+				}
+			}
+		} else if (value) {
+			fold(value, FOLDED_TYPES);
+		}
+	};
+	/** @param {AST.Node} node */
+	const visit = (node) => {
+		if (node.type === 'JSXElement' && !is_component_name(node.openingElement.name)) {
+			for (const attribute of node.openingElement.attributes) {
+				if (
+					attribute.type === 'JSXAttribute' &&
+					attribute.value?.type === 'JSXExpressionContainer'
+				) {
+					fold_attribute(attribute.value.expression);
+				}
+			}
+			for (const child of node.children) {
+				const expression = child.type === 'JSXExpressionContainer' && strip(child.expression, []);
+				if (expression && expression.type !== 'SequenceExpression') {
+					fold(expression, FOLDED_TYPES.slice(0, 2));
+				}
+			}
+		}
+		for_each_child(node, visit);
+	};
+	visit(program);
+	return folded;
+}
+
+/**
+ * @param {AST.Node} node
+ * @param {AST.Node[]} [found]
+ * @returns {AST.Node[]}
+ */
+function find_yields(node, found = []) {
+	if (node.type === 'YieldExpression') found.push(node);
+	for_each_child(node, (child) => find_yields(child, found));
+	return found;
+}
+
+/**
+ * Whether babel's `evaluate` surely folds `node` into a value of one of
+ * `types`.
+ *
+ * @param {AST.Node} node
+ * @param {string[]} types
+ * @returns {boolean}
+ */
+function folds(node, types) {
+	const constant = literal_value(node);
+	return !!constant && types.includes(typeof constant.value);
+}
+
+/**
+ * The value babel's `evaluate` surely gives `node`, reading only literals: a
+ * string, number, boolean or null literal, a template of them, a member of a
+ * string or number literal (`'x'.length`), `!`, `-`, `+`, `~`, `typeof` and
+ * `void` of them, and a short circuit or conditional on them, which skips the
+ * branch that never runs. It folds more (bindings, arithmetic, a few calls);
+ * those count as not constant here.
+ *
+ * @param {AST.Node | null | undefined} node
+ * @returns {{ value: unknown } | undefined}
+ */
+function literal_value(node) {
+	const expression = strip(node, []);
+	if (!expression) return undefined;
+	switch (expression.type) {
+		case 'Literal': {
+			const literal = /** @type {{ regex?: unknown, bigint?: unknown }} */ (expression);
+			return literal.regex || literal.bigint ? undefined : { value: expression.value };
+		}
+		case 'TemplateLiteral': {
+			let text = '';
+			for (const [index, quasi] of expression.quasis.entries()) {
+				text += quasi.value.cooked;
+				const inner = expression.expressions[index];
+				if (!inner) continue;
+				const constant = literal_value(inner);
+				if (!constant) return undefined;
+				text += String(constant.value);
+			}
+			return { value: text };
+		}
+		case 'MemberExpression': {
+			const object = expression.object;
+			if (
+				object.type !== 'Literal' ||
+				(typeof object.value !== 'string' && typeof object.value !== 'number')
+			) {
+				return undefined;
+			}
+			const key = expression.computed
+				? literal_value(expression.property)?.value
+				: expression.property.type === 'Identifier'
+					? expression.property.name
+					: undefined;
+			return typeof key === 'string' || typeof key === 'number'
+				? { value: /** @type {any} */ (object.value)[key] }
+				: undefined;
+		}
+		case 'UnaryExpression': {
+			if (expression.operator === 'void') return { value: undefined };
+			const constant = literal_value(expression.argument);
+			if (!constant) return undefined;
+			const value = /** @type {any} */ (constant.value);
+			switch (expression.operator) {
+				case '!':
+					return { value: !value };
+				case '-':
+					return { value: -value };
+				case '+':
+					return { value: +value };
+				case '~':
+					return { value: ~value };
+				case 'typeof':
+					return { value: typeof value };
+			}
+			return undefined;
+		}
+		case 'LogicalExpression': {
+			const left = literal_value(expression.left);
+			if (!left) return undefined;
+			const skips =
+				expression.operator === '||'
+					? !!left.value
+					: expression.operator === '&&'
+						? !left.value
+						: left.value != null;
+			return skips ? left : literal_value(expression.right);
+		}
+		case 'ConditionalExpression': {
+			const test = literal_value(expression.test);
+			return test && literal_value(test.value ? expression.consequent : expression.alternate);
+		}
+		default:
+			return undefined;
+	}
+}
+
+/**
+ * @param {AST.Node} name
+ * @returns {string}
+ */
+function host_tag_name(name) {
+	if (name.type === 'JSXIdentifier' || name.type === 'Identifier') return name.name;
+	if (name.type === 'JSXNamespacedName') return `${name.namespace.name}:${name.name.name}`;
+	return '';
 }
 
 /**
  * dom-expressions' test for a value it re-evaluates: one with a call, a
  * member access (other than on a namespace import), a spread or `in`, or with
- * `tags`, an element. Function bodies don't count.
+ * `tags`, an element. A tagged template counts only as the whole value, and
+ * function bodies don't count.
  *
  * @param {AST.Node | null | undefined} node
  * @param {boolean} tags
@@ -262,6 +487,8 @@ function is_host_attribute_deferred(name, value, namespaces) {
 function is_dynamic(node, tags, namespaces) {
 	const expression = strip(node, []);
 	if (!expression || isFunctionNode(expression)) return false;
+	// A tagged template is dynamic itself, but not inside a value.
+	if (expression.type === 'TaggedTemplateExpression') return true;
 	if (
 		expression.type === 'MemberExpression' &&
 		expression.object.type === 'Identifier' &&
@@ -282,7 +509,6 @@ function contains_dynamic(node, tags) {
 	switch (node.type) {
 		case 'CallExpression':
 		case 'ImportExpression':
-		case 'TaggedTemplateExpression':
 		case 'MemberExpression':
 		case 'SpreadElement':
 			return true;
