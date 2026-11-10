@@ -186,6 +186,14 @@ const SERVER_PROBES = [
 		returning('<div title={bag.x} data-mid={1 + 1} textContent={yield t} />'),
 	],
 	[
+		'textContent beside the type of a member',
+		returning('<div title={typeof bag.x} textContent={yield t} />'),
+	],
+	[
+		'textContent beside a reassigned binding',
+		`export function* f(bag: any, t: any) {\n\tlet on = true;\n\ton = bag.on;\n\treturn <div title={on && bag.x} textContent={yield t} />;\n}`,
+	],
+	[
 		'a branch a var in a nested block leaves open',
 		`export function* f(bag: any, t: any) {\n\tif (t) {\n\t\tvar off = false;\n\t}\n\treturn <div {...bag} title={off && (yield t)} />;\n}`,
 	],

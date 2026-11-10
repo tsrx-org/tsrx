@@ -984,30 +984,45 @@ function create_folder(program) {
 			case 'Literal':
 				return true;
 			case 'Identifier':
-				// A parameter, import, function or class never folds.
+				// A parameter, import, function, class or assigned binding never folds.
 				return (
 					FOLDED_GLOBALS.includes(expression.name) ||
-					!!declarations.get(expression.name)?.some((declared) => declared.variable)
+					(!assigned.has(expression.name) &&
+						!!declarations.get(expression.name)?.some((declared) => declared.variable))
 				);
 			case 'TemplateLiteral':
 				return expression.expressions.every(may_fold);
-			case 'TaggedTemplateExpression':
+			case 'TaggedTemplateExpression': {
+				const tag = expression.tag;
 				return (
-					expression.tag.type === 'MemberExpression' &&
-					expression.tag.object.type === 'Identifier' &&
-					expression.tag.object.name === 'String'
+					tag.type === 'MemberExpression' &&
+					tag.object.type === 'Identifier' &&
+					tag.object.name === 'String' &&
+					tag.property.type === 'Identifier' &&
+					tag.property.name === 'raw' &&
+					expression.quasi.expressions.every(may_fold)
 				);
+			}
 			case 'MemberExpression':
-				return expression.object.type === 'Literal';
+				return (
+					expression.object.type === 'Literal' &&
+					(typeof expression.object.value === 'string' ||
+						typeof expression.object.value === 'number') &&
+					(!expression.computed || may_fold(expression.property))
+				);
 			case 'CallExpression': {
 				const callee = expression.callee;
 				const folds =
 					(callee.type === 'Identifier' &&
 						(FOLDED_FUNCTIONS.includes(callee.name) || FOLDED_OBJECTS.includes(callee.name))) ||
 					(callee.type === 'MemberExpression' &&
-						(callee.object.type === 'Literal' ||
+						callee.property.type === 'Identifier' &&
+						((callee.object.type === 'Literal' &&
+							(typeof callee.object.value === 'string' ||
+								typeof callee.object.value === 'number')) ||
 							(callee.object.type === 'Identifier' &&
-								FOLDED_OBJECTS.includes(callee.object.name))));
+								FOLDED_OBJECTS.includes(callee.object.name) &&
+								callee.property.name !== 'random')));
 				return folds && expression.arguments.every(may_fold);
 			}
 			case 'ConditionalExpression':
@@ -1022,7 +1037,9 @@ function create_folder(program) {
 			case 'UnaryExpression':
 				return (
 					expression.operator === 'void' ||
-					expression.operator === 'typeof' ||
+					(expression.operator === 'typeof' &&
+						(isFunctionNode(expression.argument) ||
+							expression.argument.type === 'ClassExpression')) ||
 					may_fold(expression.argument)
 				);
 			case 'SequenceExpression':
@@ -1143,6 +1160,21 @@ function collect_bindings(program, declarations, assigned) {
 					declare(specifier.local.name, null, program, false);
 				}
 				break;
+			default: {
+				// TypeScript declarations that bind a value: `import x = …`, an
+				// enum, a namespace, a declared function.
+				const declaration = /** @type {{ type: string, id?: AST.Node | null }} */ (node);
+				if (
+					(declaration.type === 'TSImportEqualsDeclaration' ||
+						declaration.type === 'TSEnumDeclaration' ||
+						declaration.type === 'TSModuleDeclaration' ||
+						declaration.type === 'TSDeclareFunction') &&
+					declaration.id?.type === 'Identifier'
+				) {
+					declare(declaration.id.name, null, program, false);
+				}
+				break;
+			}
 			case 'CatchClause':
 				names(node.param, (name) => declare(name, null, node, false));
 				break;
