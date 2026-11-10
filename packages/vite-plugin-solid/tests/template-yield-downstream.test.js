@@ -206,6 +206,40 @@ const PROBES = [
 		"a children attribute beside a textarea's dynamic value",
 		returning('<textarea value={bag.v} children={yield bag.t} />'),
 	],
+	[
+		"a component's children prop beside children",
+		returning('<Comp children={yield bag.t}>x</Comp>'),
+	],
+	[
+		"a component's static children prop beside children",
+		returning('<Comp children={yield t}>x</Comp>'),
+	],
+	[
+		"a component's children prop beside children, in an arrow",
+		returning('t ? <div><Comp children={yield t}>x</Comp></div> : null'),
+	],
+	["a component's children prop on its own", returning('<Comp children={yield bag.t} />')],
+	[
+		"a component's children prop beside a spread and children",
+		returning('<Comp {...bag} children={yield bag.t}>x</Comp>'),
+	],
+	[
+		"a delegated event array's tail in an arrow",
+		returning('t ? <button onClick={[bag.h, bag.d, yield bag.x]} /> : null'),
+	],
+	[
+		'delegated event data in an arrow',
+		returning('t ? <button onClick={[bag.h, yield bag.x]} /> : null'),
+	],
+	[
+		'a lone delegated handler in an array, in an arrow',
+		returning('t ? <button onClick={[yield bag.x]} /> : null'),
+	],
+	["an element's $key", returning('<div $key={yield bag.k} />')],
+	["an element's $key in an arrow", returning('t ? <div $key={yield t} /> : null')],
+	["an element's $key beside a spread", returning('<div {...bag} $key={yield bag.k} />')],
+	["an element's second $key", returning('<div $key={bag.k} $key={yield bag.k} />')],
+	["a component's $key", returning('<Comp $key={yield bag.k} />')],
 	['a dynamic children attribute on its own', returning('<div children={yield bag.t} />')],
 	[
 		'a children attribute beside a spread and children',

@@ -113,6 +113,15 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 				'<div><noscript children={yield bag.text} /><textarea value="x" children={yield bag.text} /></div>',
 			),
 		],
+		[
+			"an event array's dropped tail in an element created in an arrow",
+			returning('t ? <button onClick={[bag.onClick, t, yield bag.x]} /> : null'),
+		],
+		[
+			"a component's children prop beside its children, which the compiler drops",
+			returning('<Comp children={yield bag.text}>x</Comp>'),
+		],
+		["an element's $key, which the DOM output removes", returning('<div $key={yield bag.key} />')],
 		// The compiler throws on these whatever the `yield`.
 		['an event array with no handler', returning('<div onScroll={[, yield t]} />')],
 		['an event array with a spread handler', returning('<div onScroll={[...bag.h, yield t]} />')],

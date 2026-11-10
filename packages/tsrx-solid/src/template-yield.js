@@ -133,6 +133,13 @@ export function find_deferred_template_yields(program) {
 			) {
 				continue;
 			}
+			// The DOM output removes an element's first `$key`.
+			if (
+				key === '$key' &&
+				opening.attributes.find((other) => names.get(other) === key) === attribute
+			) {
+				continue;
+			}
 			// Without a spread, a `children` attribute is dropped when the element
 			// has children of its own, or writes none.
 			if (!spread && key === 'children' && (element.children.length > 0 || childless)) {
@@ -206,6 +213,8 @@ export function find_deferred_template_yields(program) {
 			}
 			const value = attribute.value;
 			if (!value) continue;
+			// A `children` prop is dropped when the component has children.
+			if (attribute_name(attribute.name) === 'children' && element.children.length > 0) continue;
 			if (value.type !== 'JSXExpressionContainer') {
 				visit_value(value, context, value.type === 'JSXElement' || value.type === 'JSXFragment');
 				continue;
@@ -302,9 +311,10 @@ function is_host_attribute_deferred(name, value, namespaces, tag) {
 }
 
 /**
- * How dom-expressions compiles a `[handler, data]` array on an event it
- * doesn't delegate, or `undefined` for any other value: it calls the handler
- * with the data inside a new listener and drops any later element.
+ * How dom-expressions compiles an array on an event, or `undefined` for any
+ * other value: it keeps the handler and the data, the first two elements,
+ * and drops the rest. On an event it doesn't delegate, it calls the handler
+ * with the data inside a new listener; otherwise both stay in place.
  *
  * @param {string} name
  * @param {AST.Expression} value
@@ -312,20 +322,16 @@ function is_host_attribute_deferred(name, value, namespaces, tag) {
  */
 function split_event_handler(name, value) {
 	const expression = strip(value, []);
-	if (
-		!name.startsWith('on') ||
-		DELEGATED_EVENTS.has(name.slice(2).toLowerCase()) ||
-		expression?.type !== 'ArrayExpression' ||
-		expression.elements.length < 2
-	) {
-		return undefined;
-	}
-	// The compiler throws on a hole or a spread handler, or a hole for data.
+	if (!name.startsWith('on') || expression?.type !== 'ArrayExpression') return undefined;
 	const [handler, data] = expression.elements;
-	if (!handler || handler.type === 'SpreadElement' || !data) return undefined;
+	const paired = expression.elements.length > 1;
+	// The compiler throws on a hole or a spread handler, a hole for data, or,
+	// on a delegated event, a spread for data.
+	if (!handler || handler.type === 'SpreadElement' || (paired && !data)) return undefined;
+	const moved = paired && !DELEGATED_EVENTS.has(name.slice(2).toLowerCase());
 	return expression.elements.flatMap((element, index) =>
 		element
-			? [/** @type {[AST.Node, boolean | 'dropped']} */ ([element, index < 2 || 'dropped'])]
+			? [/** @type {[AST.Node, boolean | 'dropped']} */ ([element, index > 1 ? 'dropped' : moved])]
 			: [],
 	);
 }
