@@ -190,6 +190,10 @@ const SERVER_PROBES = [
 		returning('<div title={typeof bag.x} textContent={yield t} />'),
 	],
 	[
+		'textContent beside a call to an imported binding named like a global',
+		`import Number = require('./number');\n${returning('<div title={Number(1)} textContent={yield t} />')}`,
+	],
+	[
 		'textContent beside a reassigned binding',
 		`export function* f(bag: any, t: any) {\n\tlet on = true;\n\ton = bag.on;\n\treturn <div title={on && bag.x} textContent={yield t} />;\n}`,
 	],

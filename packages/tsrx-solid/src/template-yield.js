@@ -1014,6 +1014,7 @@ function create_folder(program) {
 				const callee = expression.callee;
 				const folds =
 					(callee.type === 'Identifier' &&
+						!declarations.has(callee.name) &&
 						(FOLDED_FUNCTIONS.includes(callee.name) || FOLDED_OBJECTS.includes(callee.name))) ||
 					(callee.type === 'MemberExpression' &&
 						callee.property.type === 'Identifier' &&
