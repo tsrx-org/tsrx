@@ -423,8 +423,9 @@ const FOLDED_TYPES = ['string', 'number', 'boolean'];
 function is_folded_dynamic(node, namespaces) {
 	const expression = strip(node, []);
 	if (!expression) return false;
+	// A value that folds into a literal keeps no `yield` (see
+	// `collect_folded_yields`), so only an object's values need folding here.
 	if (expression.type === 'ObjectExpression') return object_is_dynamic(expression);
-	if (folds(expression, FOLDED_TYPES)) return false;
 	return is_dynamic(expression, false, namespaces);
 }
 
