@@ -312,6 +312,10 @@ const SERVER_PROBES = [
 		'textContent beside a short circuit a literal leaves open',
 		returning('<div title={false || bag.x} textContent={yield t} />'),
 	],
+	[
+		'textContent beside a conditional a literal test sends to a member',
+		returning("<div title={0 ? 'a' : bag.x} textContent={yield t} />"),
+	],
 	// Exempt: both outputs evaluate the value in place, or leave it out.
 	['an event handler beside a spread', returning('<button {...bag} onClick={yield t} />')],
 	['a prop: value beside a spread', returning('<input {...bag} prop:value={yield t} />')],
