@@ -1406,23 +1406,36 @@ function inject_vue_imports(program, transform_context) {
  * @returns {void}
  */
 function ensure_named_import(program, source, name, local = name) {
+	/** @type {import('estree').ImportDeclaration | undefined} */
+	let first;
 	for (const statement of program.body) {
 		if (statement.type !== 'ImportDeclaration' || statement.source?.value !== source) {
 			continue;
 		}
 
-		const has_specifier = statement.specifiers.some(
-			(specifier) =>
-				specifier.type === 'ImportSpecifier' &&
-				specifier.imported?.type === 'Identifier' &&
-				specifier.imported.name === name &&
-				specifier.local?.name === local,
-		);
+		// Any declaration may already import it as a value, such as an authored
+		// `import { Suspense } from 'vue'` after the keyed slot's `computed`
+		// import. A type-only import is erased, so it doesn't count.
+		const has_specifier =
+			/** @type {{ importKind?: string }} */ (statement).importKind !== 'type' &&
+			statement.specifiers.some(
+				(specifier) =>
+					specifier.type === 'ImportSpecifier' &&
+					/** @type {{ importKind?: string }} */ (specifier).importKind !== 'type' &&
+					specifier.imported?.type === 'Identifier' &&
+					specifier.imported.name === name &&
+					specifier.local?.name === local,
+			);
 
-		if (!has_specifier) {
-			statement.specifiers.push(create_import_specifier(name, local));
+		if (has_specifier) {
+			return;
 		}
 
+		first ??= statement;
+	}
+
+	if (first) {
+		first.specifiers.push(create_import_specifier(name, local));
 		return;
 	}
 

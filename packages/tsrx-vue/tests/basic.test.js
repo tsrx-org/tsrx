@@ -728,6 +728,49 @@ describe('@tsrx/vue basic', () => {
 		}
 	});
 
+	it('imports Suspense once, as a value, beside the computed import and authored vue imports', () => {
+		for (const [authored, suspense_import] of [
+			["import { Suspense } from 'vue';", "import { Suspense } from 'vue';"],
+			[
+				"import type { Ref } from 'vue';",
+				"import { computed as _$_vapor_computed, Suspense } from 'vue';",
+			],
+			[
+				"import * as Vue from 'vue';",
+				"import { computed as _$_vapor_computed, Suspense } from 'vue';",
+			],
+			[
+				"import { ref } from 'vue';\nimport { Suspense } from 'vue';",
+				"import { Suspense } from 'vue';",
+			],
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function Data() @{
+					<i />
+				}
+				function App({ rows }: { rows: string[][] }) @{
+					<div>
+						@for (const [first] of rows; key first) {
+							<p>{first}</p>
+						}
+						@try {
+							<Data />
+						} @pending {
+							<p>{'loading'}</p>
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual([suspense_import]);
+			expect(code, authored).toMatch(/^import \{ computed as _\$_vapor_computed\b/);
+		}
+	});
+
 	it('leaves type parameters and type references in a keyed slot alone (#922)', () => {
 		const { code, errors } = compile(
 			`function List({ items }: { items: { id: string; label: string }[] }) @{
