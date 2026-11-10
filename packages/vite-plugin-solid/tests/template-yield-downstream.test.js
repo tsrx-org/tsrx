@@ -164,6 +164,48 @@ const PROBES = [
 	['an element in a noscript', returning('<noscript><b title={yield bag.t} /></noscript>')],
 	['an attribute of a noscript', returning('<noscript title={yield bag.t} />')],
 	['a child of an upper-case NOSCRIPT', returning('<NOSCRIPT>{yield bag.t}</NOSCRIPT>')],
+	[
+		'a child of a void element in a ternary arm',
+		returning('t ? <input>{yield bag.t}</input> : null'),
+	],
+	[
+		'a child of a noscript in a ternary arm',
+		returning('t ? <noscript>{yield bag.t}</noscript> : null'),
+	],
+	[
+		"a textarea's replaced child in a ternary arm",
+		returning('t ? <textarea value="x">{yield bag.t}</textarea> : null'),
+	],
+	[
+		'a dropped third event element in a ternary arm',
+		returning('t ? <div onScroll={[bag.h, bag.d, yield bag.x]} /> : null'),
+	],
+	['event data in a ternary arm', returning('t ? <div onScroll={[bag.h, yield bag.x]} /> : null')],
+	[
+		'a replaced attribute in a fragment',
+		returning('<><input title={yield bag.t} title={bag.u} /></>'),
+	],
+	[
+		'a dropped children attribute in a component child',
+		returning('<Comp><div children={yield bag.t}>x</div></Comp>'),
+	],
+	[
+		"a void element's child in a dynamic child",
+		returning('<div>{t ? <input>{yield bag.t}</input> : null}</div>'),
+	],
+	['a children attribute on a noscript', returning('<noscript children={yield bag.t} />')],
+	[
+		"a children attribute beside a textarea's literal value",
+		returning('<textarea value="x" children={yield bag.t} />'),
+	],
+	[
+		"a children attribute beside a textarea's number value",
+		returning('<textarea value={1} children={yield bag.t} />'),
+	],
+	[
+		"a children attribute beside a textarea's dynamic value",
+		returning('<textarea value={bag.v} children={yield bag.t} />'),
+	],
 	['a dynamic children attribute on its own', returning('<div children={yield bag.t} />')],
 	[
 		'a children attribute beside a spread and children',

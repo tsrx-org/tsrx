@@ -102,6 +102,22 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			returning('<div><input>{yield bag.text}</input><noscript>{yield bag.text}</noscript></div>'),
 		],
 		[
+			'what the compiler drops from an element it creates in an arrow',
+			returning(
+				't ? <div title={yield bag.title} title={bag.title}><input>{yield bag.text}</input></div> : null',
+			),
+		],
+		[
+			'a children attribute on a noscript or a textarea with a literal value',
+			returning(
+				'<div><noscript children={yield bag.text} /><textarea value="x" children={yield bag.text} /></div>',
+			),
+		],
+		// The compiler throws on these whatever the `yield`.
+		['an event array with no handler', returning('<div onScroll={[, yield t]} />')],
+		['an event array with a spread handler', returning('<div onScroll={[...bag.h, yield t]} />')],
+		['an event array with a hole for data', returning('<div onScroll={[bag.h, , yield t]} />')],
+		[
 			'a third element of an event array, which the compiler drops',
 			returning('<div onScroll={[bag.onScroll, t, yield t]} />'),
 		],
@@ -175,7 +191,7 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			'a class object with a computed key the compiler evaluates',
 			returning("<div class={{ [(yield t, 'active')]: true }} />"),
 		],
-	])('allows a yield in %s, which Solid evaluates in place', (_label, source) => {
+	])('allows a yield in %s, which the DOM output leaves in place or drops', (_label, source) => {
 		expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
 		expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
 	});

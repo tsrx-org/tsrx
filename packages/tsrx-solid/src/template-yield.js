@@ -105,14 +105,19 @@ export function find_deferred_template_yields(program) {
 			visit_component(element, context);
 			return;
 		}
-		if (context.deferred || !inline) {
-			visit_all(element, { ...context, deferred: true });
-			return;
-		}
+		// The compiler creates any other host element in an immediately called
+		// arrow, with everything it keeps, but not what it drops.
+		if (!inline) context = { ...context, deferred: true };
 
 		const tag = host_tag_name(opening.name);
 		const spread = opening.attributes.some((attribute) => attribute.type === 'JSXSpreadAttribute');
 		const names = dom_attribute_names(tag, opening.attributes);
+		// It writes no children for a void element or a `noscript`, and a
+		// textarea's literal value (named `''`) replaces them.
+		const childless =
+			VOID_ELEMENTS.has(tag) ||
+			tag === 'noscript' ||
+			opening.attributes.some((attribute) => names.get(attribute) === '');
 		for (const [index, attribute] of opening.attributes.entries()) {
 			if (attribute.type === 'JSXSpreadAttribute') {
 				visit_value(attribute.argument, context, is_dynamic(attribute.argument, false, namespaces));
@@ -129,12 +134,8 @@ export function find_deferred_template_yields(program) {
 				continue;
 			}
 			// Without a spread, a `children` attribute is dropped when the element
-			// has children of its own, or can't have any.
-			if (
-				!spread &&
-				key === 'children' &&
-				(element.children.length > 0 || VOID_ELEMENTS.has(tag))
-			) {
+			// has children of its own, or writes none.
+			if (!spread && key === 'children' && (element.children.length > 0 || childless)) {
 				continue;
 			}
 			const value = attribute.value;
@@ -164,15 +165,7 @@ export function find_deferred_template_yields(program) {
 			);
 		}
 
-		// The compiler writes no children for a void element or a `noscript`,
-		// and a textarea's literal value (named `''`) replaces them.
-		const children =
-			VOID_ELEMENTS.has(tag) ||
-			tag === 'noscript' ||
-			opening.attributes.some((attribute) => names.get(attribute) === '')
-				? []
-				: element.children;
-		for (const child of children) {
+		for (const child of childless ? [] : element.children) {
 			if (child.type === 'JSXElement') {
 				// A child element is created from the same template, in place.
 				visit_element(child, context, true);
