@@ -80,6 +80,7 @@ function find_deferred(program, server) {
 	 * @type {Set<AST.Node>}
 	 */
 	const grouped = new Set();
+	const folder = server ? create_folder(program) : undefined;
 	/**
 	 * `yield`s the compiler drops with a value it folds into a constant. Both
 	 * outputs drop them. Only a server build reads this, so the client
@@ -87,7 +88,7 @@ function find_deferred(program, server) {
 	 *
 	 * @type {Set<AST.Node>}
 	 */
-	const folded = server ? collect_folded_yields(program) : new Set();
+	const folded = folder ? collect_folded_yields(program, folder) : new Set();
 
 	/**
 	 * @typedef {{ generator: boolean, deferred: boolean }} Context
@@ -108,7 +109,7 @@ function find_deferred(program, server) {
 			const value = node.type === 'ReturnStatement' ? node.argument : node.init;
 			const element = strip(value, []);
 			if (element?.type === 'JSXElement') {
-				if (server) collect_grouped_text_content(element, grouped, namespaces);
+				if (folder) collect_grouped_text_content(element, grouped, namespaces, folder);
 				for_each_child(node, (child) =>
 					child === value ? visit_element(element, context, true) : visit(child, context),
 				);
@@ -471,8 +472,9 @@ function is_ssr_attribute_deferred(attribute, ssr, grouped, namespaces) {
  * @param {ESTreeJSX.JSXElement | AST.TSRXJSXElement} root
  * @param {Set<AST.Node>} grouped
  * @param {Set<string>} namespaces
+ * @param {Folder} folder
  */
-function collect_grouped_text_content(root, grouped, namespaces) {
+function collect_grouped_text_content(root, grouped, namespaces, folder) {
 	if (is_component_name(root.openingElement.name)) return;
 
 	/**
@@ -482,6 +484,15 @@ function collect_grouped_text_content(root, grouped, namespaces) {
 	 * @type {Array<AST.Node | boolean>}
 	 */
 	const values = [false]; // the hydration key
+
+	/**
+	 * @param {AST.Node} node
+	 * @param {string[]} types
+	 */
+	const folds = (node, types) => {
+		const constant = folder.evaluate(node);
+		return !!constant && types.includes(typeof constant.value);
+	};
 
 	/** @param {ESTreeJSX.JSXElement | AST.TSRXJSXElement} element */
 	const add = (element) => {
@@ -498,7 +509,8 @@ function collect_grouped_text_content(root, grouped, namespaces) {
 			const value = attribute.value;
 			if (role !== 'kept' || value?.type !== 'JSXExpressionContainer') continue;
 			const expression = value.expression;
-			if (is_literal(expression)) continue;
+			// A value the compiler folds into a literal is written into the template.
+			if (folds(expression, FOLDED_TYPES)) continue;
 			const name = /** @type {string} */ (ssr.names.get(attribute));
 			if (
 				name === 'style' &&
@@ -509,7 +521,7 @@ function collect_grouped_text_content(root, grouped, namespaces) {
 			}
 			// A live stateful property is set after the template, outside the run.
 			values.push(
-				is_surely_dynamic(expression, namespaces) &&
+				is_surely_dynamic(expression, namespaces, folder) &&
 					(name === 'class' ||
 						name === 'style' ||
 						DOM_WITH_STATE[ssr.tag.toLowerCase()]?.[name] !== 1),
@@ -523,11 +535,10 @@ function collect_grouped_text_content(root, grouped, namespaces) {
 			if (!child || child.type === 'JSXText' || child.type === 'Literal') continue;
 			if (child.type === 'JSXExpressionContainer') {
 				const expression = child.expression;
-				// A string or number is written into the template as text.
+				// A child the compiler folds into a string or number is text.
 				if (
 					expression.type === 'JSXEmptyExpression' ||
-					(expression.type === 'Literal' &&
-						(typeof expression.value === 'string' || typeof expression.value === 'number'))
+					(expression.type !== 'SequenceExpression' && folds(expression, FOLDED_TYPES.slice(0, 2)))
 				) {
 					continue;
 				}
@@ -567,17 +578,18 @@ function collect_grouped_text_content(root, grouped, namespaces) {
 
 /**
  * Whether babel-preset-solid surely treats a host attribute's value as
- * dynamic. It first folds a value it can evaluate into a literal
- * (`'a'.length`, `String(1)`, `true || x`), and an object's values one by
- * one, so a value that may fold counts as static here. Calling a static value
- * dynamic would group a `textContent` beside it that the output leaves in
- * place.
+ * dynamic. It first folds a value it can evaluate into a string, number or
+ * boolean literal (`'a'.length`, `String(1)`, `true || x`), and an object's
+ * values one by one, so a value that may fold counts as static here. Calling
+ * a static value dynamic would group a `textContent` beside it that the
+ * output leaves in place.
  *
  * @param {AST.Node} node
  * @param {Set<string>} namespaces
+ * @param {Folder} folder
  * @returns {boolean}
  */
-function is_surely_dynamic(node, namespaces) {
+function is_surely_dynamic(node, namespaces, folder) {
 	const expression = strip(node, []);
 	if (!expression) return false;
 	if (expression.type === 'ObjectExpression') {
@@ -588,95 +600,20 @@ function is_surely_dynamic(node, namespaces) {
 				(property.computed && contains_dynamic(property.key, true)) ||
 				(property.kind === 'init' &&
 					!property.method &&
-					is_surely_dynamic(property.value, new Set())),
+					is_surely_dynamic(property.value, new Set(), folder)),
 		);
 	}
-	return is_dynamic(expression, true, namespaces) && !may_fold(expression);
-}
-
-/** Globals babel's `evaluate` calls, and objects whose methods it calls. */
-const FOLDED_CALLEES = new Set([
-	'Number',
-	'String',
-	'Math',
-	'isFinite',
-	'isNaN',
-	'parseFloat',
-	'parseInt',
-	'decodeURI',
-	'decodeURIComponent',
-	'encodeURI',
-	'encodeURIComponent',
-]);
-
-/**
- * Whether babel's `evaluate` may fold an expression into a constant. It reads
- * literals, constant bindings and a few global functions, and skips the part
- * of a short circuit that doesn't run. Errs towards yes.
- *
- * @param {AST.Node | null | undefined} node
- * @returns {boolean}
- */
-function may_fold(node) {
-	const expression = strip(node, COMPONENT_REF_WRAPPERS);
-	if (!expression) return true;
-	switch (expression.type) {
-		case 'Literal':
-		case 'Identifier':
-			return true;
-		case 'TemplateLiteral':
-			return expression.expressions.every(may_fold);
-		case 'TaggedTemplateExpression':
-			return (
-				expression.tag.type === 'MemberExpression' &&
-				expression.tag.object.type === 'Identifier' &&
-				expression.tag.object.name === 'String'
-			);
-		case 'MemberExpression':
-			return expression.object.type === 'Literal';
-		case 'CallExpression': {
-			const callee = expression.callee;
-			const folded =
-				(callee.type === 'Identifier' && FOLDED_CALLEES.has(callee.name)) ||
-				(callee.type === 'MemberExpression' &&
-					(callee.object.type === 'Literal' ||
-						(callee.object.type === 'Identifier' && FOLDED_CALLEES.has(callee.object.name))));
-			return folded && expression.arguments.every(may_fold);
-		}
-		case 'ConditionalExpression':
-			return (
-				may_fold(expression.test) &&
-				(may_fold(expression.consequent) || may_fold(expression.alternate))
-			);
-		case 'LogicalExpression':
-			return may_fold(expression.left);
-		case 'BinaryExpression':
-			return may_fold(expression.left) && may_fold(expression.right);
-		case 'UnaryExpression':
-			return (
-				expression.operator === 'void' ||
-				expression.operator === 'typeof' ||
-				may_fold(expression.argument)
-			);
-		case 'SequenceExpression':
-			return may_fold(expression.expressions.at(-1));
-		case 'ArrayExpression':
-			return expression.elements.every(
-				(element) => element?.type !== 'SpreadElement' && may_fold(element),
-			);
-		case 'ObjectExpression':
-			return expression.properties.every(
-				(property) =>
-					property.type === 'Property' &&
-					property.kind === 'init' &&
-					!property.method &&
-					(!property.computed || may_fold(property.key)) &&
-					may_fold(property.value),
-			);
-		default:
-			return false;
+	const constant = folder.evaluate(expression);
+	if (constant) {
+		return (
+			!FOLDED_TYPES.includes(typeof constant.value) && is_dynamic(expression, true, namespaces)
+		);
 	}
+	return is_dynamic(expression, true, namespaces) && !folder.may_fold(expression);
 }
+
+/** The types an attribute value folds to. A child folds to the first two. */
+const FOLDED_TYPES = ['string', 'number', 'boolean'];
 
 /**
  * The `yield`s babel-preset-solid drops before it compiles a host element, in
@@ -686,9 +623,10 @@ function may_fold(node) {
  * branch that never runs, as in `true || (yield t)`, goes with it.
  *
  * @param {AST.Program} program
+ * @param {Folder} folder
  * @returns {Set<AST.Node>}
  */
-function collect_folded_yields(program) {
+function collect_folded_yields(program, folder) {
 	/** @type {Set<AST.Node>} */
 	const folded = new Set();
 	/**
@@ -696,7 +634,7 @@ function collect_folded_yields(program) {
 	 * @param {string[]} types the types it folds to
 	 */
 	const fold = (node, types) => {
-		const constant = evaluate_constant(node);
+		const constant = folder.evaluate(node);
 		if (constant && types.includes(typeof constant.value)) {
 			for (const inner of find_yields(node)) folded.add(inner);
 		}
@@ -711,7 +649,7 @@ function collect_folded_yields(program) {
 				}
 			}
 		} else if (value && value.type !== 'Literal') {
-			fold(value, ['string', 'number', 'boolean']);
+			fold(value, FOLDED_TYPES);
 		}
 	};
 	/** @param {AST.Node} node */
@@ -728,7 +666,7 @@ function collect_folded_yields(program) {
 			for (const child of node.children) {
 				const expression = child.type === 'JSXExpressionContainer' && strip(child.expression, []);
 				if (expression && expression.type !== 'SequenceExpression') {
-					fold(expression, ['string', 'number']);
+					fold(expression, FOLDED_TYPES.slice(0, 2));
 				}
 			}
 		}
@@ -750,110 +688,480 @@ function find_yields(node, found = []) {
 }
 
 /**
- * babel's `evaluate`, on the part of it that needs no scope: literals,
- * template literals, a member of a string or number literal, `undefined`,
- * `NaN` and `Infinity`, and unary, binary, logical, conditional and sequence
- * expressions of them, which skip what a short circuit doesn't run. Anything
- * else, a `yield` included, isn't a constant here; babel folds a little more
- * (constant bindings, a few global functions).
- *
- * @param {AST.Node | null | undefined} node
- * @returns {{ value: unknown } | undefined}
+ * @typedef {{
+ * 	evaluate: (node: AST.Node | null | undefined) => { value: unknown } | undefined,
+ * 	may_fold: (node: AST.Node | null | undefined) => boolean,
+ * }} Folder
+ * babel's `evaluate`, which babel-preset-solid runs to fold a value. `evaluate`
+ * returns a value only where babel surely gets that value; `may_fold` errs
+ * towards yes.
  */
-function evaluate_constant(node) {
-	const expression = strip(node, []);
-	if (!expression) return undefined;
-	switch (expression.type) {
-		case 'Literal':
-			return /** @type {{ regex?: unknown, bigint?: unknown }} */ (expression).regex ||
-				/** @type {{ regex?: unknown, bigint?: unknown }} */ (expression).bigint
-				? undefined
-				: { value: expression.value };
-		case 'TemplateLiteral': {
-			let text = '';
-			for (const [index, quasi] of expression.quasis.entries()) {
-				text += quasi.value.cooked;
-				const inner = expression.expressions[index];
-				if (!inner) continue;
-				const constant = evaluate_constant(inner);
-				if (!constant) return undefined;
-				text += String(constant.value);
-			}
-			return { value: text };
-		}
-		case 'Identifier':
-			return expression.name === 'undefined'
-				? { value: undefined }
-				: expression.name === 'NaN' || expression.name === 'Infinity'
-					? { value: globalThis[expression.name] }
-					: undefined;
-		case 'MemberExpression': {
-			const object = expression.object;
-			if (
-				object.type !== 'Literal' ||
-				(typeof object.value !== 'string' && typeof object.value !== 'number')
-			) {
-				return undefined;
-			}
-			const key = expression.computed
-				? evaluate_constant(expression.property)?.value
-				: expression.property.type === 'Identifier'
-					? expression.property.name
-					: undefined;
-			return typeof key === 'string' || typeof key === 'number'
-				? { value: /** @type {any} */ (object.value)[key] }
+
+/** Globals babel's `evaluate` calls. */
+const FOLDED_FUNCTIONS = [
+	'isFinite',
+	'isNaN',
+	'parseFloat',
+	'parseInt',
+	'decodeURI',
+	'decodeURIComponent',
+	'encodeURI',
+	'encodeURIComponent',
+];
+
+/** Globals whose functions babel's `evaluate` calls, also called themselves. */
+const FOLDED_OBJECTS = ['Number', 'String', 'Math'];
+
+/** Globals babel's `evaluate` reads. */
+const FOLDED_GLOBALS = ['undefined', 'NaN', 'Infinity'];
+
+/**
+ * babel's `evaluate` (@babel/traverse 7.29.0) for the module's values. It
+ * reads bindings by name: a binding it folds is a `const` or `let`, declared
+ * once in the module with a plain name and never assigned, and read after its
+ * declaration and inside its block. A name declared any other way, or read
+ * elsewhere, isn't a constant here, and a global it reads must not be
+ * declared anywhere in the module.
+ *
+ * @param {AST.Program} program
+ * @returns {Folder}
+ */
+function create_folder(program) {
+	/** @type {Map<string, Array<{ declarator: AST.VariableDeclarator | null, scope: AST.Node, variable: boolean }>>} */
+	const declarations = new Map();
+	/** @type {Set<string>} */
+	const assigned = new Set();
+	collect_bindings(program, declarations, assigned);
+	/** @type {Set<AST.Node>} */
+	const evaluating = new Set();
+
+	/**
+	 * @param {AST.Identifier} identifier
+	 * @returns {{ value: unknown } | undefined}
+	 */
+	const read = (identifier) => {
+		const name = identifier.name;
+		const declared = declarations.get(name);
+		if (!declared) {
+			return FOLDED_GLOBALS.includes(name)
+				? { value: /** @type {Record<string, unknown>} */ (globalThis)[name] }
 				: undefined;
 		}
-		case 'UnaryExpression': {
-			if (expression.operator === 'void') return { value: undefined };
-			if (expression.operator === 'typeof' && is_function_or_class(expression.argument)) {
-				return { value: 'function' };
+		const [{ declarator, scope }] = declared;
+		const start = identifier.start;
+		if (
+			declared.length !== 1 ||
+			assigned.has(name) ||
+			!declarator?.init ||
+			typeof start !== 'number' ||
+			typeof declarator.end !== 'number' ||
+			typeof scope.start !== 'number' ||
+			typeof scope.end !== 'number' ||
+			start < declarator.end ||
+			start < scope.start ||
+			start >= scope.end ||
+			evaluating.has(declarator)
+		) {
+			return undefined;
+		}
+		evaluating.add(declarator);
+		const constant = evaluate(declarator.init);
+		evaluating.delete(declarator);
+		// babel reads an object from a binding only when it's read once.
+		return constant && (typeof constant.value !== 'object' || constant.value === null)
+			? constant
+			: undefined;
+	};
+
+	/**
+	 * @param {AST.Node | null | undefined} node
+	 * @returns {{ value: unknown } | undefined}
+	 */
+	const evaluate = (node) => {
+		const expression = strip(node, []);
+		if (!expression) return undefined;
+		switch (expression.type) {
+			case 'Literal': {
+				const literal = /** @type {{ regex?: unknown, bigint?: unknown }} */ (expression);
+				return literal.regex || literal.bigint ? undefined : { value: expression.value };
 			}
-			const constant = evaluate_constant(expression.argument);
+			case 'TemplateLiteral':
+				return evaluate_quasis(expression.quasis, expression.expressions, false);
+			case 'TaggedTemplateExpression': {
+				const tag = expression.tag;
+				return tag.type === 'MemberExpression' &&
+					tag.object.type === 'Identifier' &&
+					tag.object.name === 'String' &&
+					!declarations.has('String') &&
+					tag.property.type === 'Identifier' &&
+					tag.property.name === 'raw'
+					? evaluate_quasis(expression.quasi.quasis, expression.quasi.expressions, true)
+					: undefined;
+			}
+			case 'Identifier':
+				return read(expression);
+			case 'MemberExpression': {
+				const object = expression.object;
+				if (
+					object.type !== 'Literal' ||
+					(typeof object.value !== 'string' && typeof object.value !== 'number')
+				) {
+					return undefined;
+				}
+				const key = expression.computed
+					? evaluate(expression.property)?.value
+					: expression.property.type === 'Identifier'
+						? expression.property.name
+						: undefined;
+				return typeof key === 'string' || typeof key === 'number'
+					? { value: /** @type {any} */ (object.value)[key] }
+					: undefined;
+			}
+			case 'CallExpression':
+				return call(expression);
+			case 'UnaryExpression': {
+				if (expression.operator === 'void') return { value: undefined };
+				if (
+					expression.operator === 'typeof' &&
+					(isFunctionNode(expression.argument) || expression.argument.type === 'ClassExpression')
+				) {
+					return { value: 'function' };
+				}
+				const constant = evaluate(expression.argument);
+				if (!constant) return undefined;
+				const value = /** @type {any} */ (constant.value);
+				switch (expression.operator) {
+					case '!':
+						return { value: !value };
+					case '+':
+						return { value: +value };
+					case '-':
+						return { value: -value };
+					case '~':
+						return { value: ~value };
+					case 'typeof':
+						return { value: typeof value };
+				}
+				return undefined;
+			}
+			case 'BinaryExpression': {
+				const left = evaluate(expression.left);
+				const right = left && evaluate(expression.right);
+				const operate = BINARY_OPERATORS[expression.operator];
+				return left && right && operate ? { value: operate(left.value, right.value) } : undefined;
+			}
+			case 'LogicalExpression': {
+				const left = evaluate(expression.left);
+				if (!left) return undefined;
+				const skips =
+					expression.operator === '||'
+						? !!left.value
+						: expression.operator === '&&'
+							? !left.value
+							: left.value != null;
+				return skips ? left : evaluate(expression.right);
+			}
+			case 'ConditionalExpression': {
+				const test = evaluate(expression.test);
+				return test && evaluate(test.value ? expression.consequent : expression.alternate);
+			}
+			case 'SequenceExpression':
+				return evaluate(expression.expressions.at(-1));
+			case 'ArrayExpression': {
+				/** @type {unknown[]} */
+				const array = [];
+				for (const element of expression.elements) {
+					const constant = element?.type === 'SpreadElement' ? undefined : evaluate(element);
+					if (!constant) return undefined;
+					array.push(constant.value);
+				}
+				return { value: array };
+			}
+			case 'ObjectExpression': {
+				/** @type {Record<string, unknown>} */
+				const object = {};
+				for (const property of expression.properties) {
+					if (property.type !== 'Property' || property.kind !== 'init' || property.method) {
+						return undefined;
+					}
+					const key = property.computed
+						? evaluate(property.key)
+						: {
+								value:
+									property.key.type === 'Identifier'
+										? property.key.name
+										: /** @type {AST.Literal} */ (property.key).value,
+							};
+					const value = key && evaluate(property.value);
+					if (!value) return undefined;
+					object[/** @type {string} */ (key.value)] = value.value;
+				}
+				return { value: object };
+			}
+			default:
+				return undefined;
+		}
+	};
+
+	/**
+	 * @param {AST.TemplateElement[]} quasis
+	 * @param {AST.Node[]} expressions
+	 * @param {boolean} raw
+	 * @returns {{ value: unknown } | undefined}
+	 */
+	const evaluate_quasis = (quasis, expressions, raw) => {
+		let text = '';
+		for (const [index, quasi] of quasis.entries()) {
+			text += raw ? quasi.value.raw : quasi.value.cooked;
+			const inner = expressions[index];
+			if (!inner) continue;
+			const constant = evaluate(inner);
 			if (!constant) return undefined;
-			const value = /** @type {any} */ (constant.value);
-			switch (expression.operator) {
-				case '!':
-					return { value: !value };
-				case '+':
-					return { value: +value };
-				case '-':
-					return { value: -value };
-				case '~':
-					return { value: ~value };
-				case 'typeof':
-					return { value: typeof value };
+			text += String(constant.value);
+		}
+		return { value: text };
+	};
+
+	/**
+	 * @param {AST.CallExpression} expression
+	 * @returns {{ value: unknown } | undefined}
+	 */
+	const call = (expression) => {
+		const callee = expression.callee;
+		/** @type {any} */
+		let context;
+		/** @type {unknown} */
+		let fn;
+		if (
+			callee.type === 'Identifier' &&
+			!declarations.has(callee.name) &&
+			(FOLDED_FUNCTIONS.includes(callee.name) || FOLDED_OBJECTS.includes(callee.name))
+		) {
+			fn = /** @type {Record<string, unknown>} */ (globalThis)[callee.name];
+		}
+		if (callee.type === 'MemberExpression' && callee.property.type === 'Identifier') {
+			const object = callee.object;
+			const key = callee.property.name;
+			if (
+				object.type === 'Identifier' &&
+				FOLDED_OBJECTS.includes(object.name) &&
+				key !== 'random'
+			) {
+				context = /** @type {Record<string, any>} */ (globalThis)[object.name];
+				if (Object.hasOwn(context, key)) fn = context[key];
 			}
+			if (
+				object.type === 'Literal' &&
+				(typeof object.value === 'string' || typeof object.value === 'number')
+			) {
+				context = object.value;
+				fn = context[key];
+			}
+		}
+		if (typeof fn !== 'function') return undefined;
+		/** @type {unknown[]} */
+		const args = [];
+		for (const argument of expression.arguments) {
+			const constant = argument.type === 'SpreadElement' ? undefined : evaluate(argument);
+			if (!constant) return undefined;
+			args.push(constant.value);
+		}
+		try {
+			return { value: fn.apply(context, args) };
+		} catch {
 			return undefined;
 		}
-		case 'BinaryExpression': {
-			const left = evaluate_constant(expression.left);
-			const right = left && evaluate_constant(expression.right);
-			if (!left || !right) return undefined;
-			const operate = BINARY_OPERATORS[expression.operator];
-			return operate ? { value: operate(left.value, right.value) } : undefined;
+	};
+
+	/**
+	 * @param {AST.Node | null | undefined} node
+	 * @returns {boolean}
+	 */
+	const may_fold = (node) => {
+		const expression = strip(node, COMPONENT_REF_WRAPPERS);
+		if (!expression) return true;
+		switch (expression.type) {
+			case 'Literal':
+				return true;
+			case 'Identifier':
+				// A parameter, import, function or class never folds.
+				return (
+					FOLDED_GLOBALS.includes(expression.name) ||
+					!!declarations.get(expression.name)?.some((declared) => declared.variable)
+				);
+			case 'TemplateLiteral':
+				return expression.expressions.every(may_fold);
+			case 'TaggedTemplateExpression':
+				return (
+					expression.tag.type === 'MemberExpression' &&
+					expression.tag.object.type === 'Identifier' &&
+					expression.tag.object.name === 'String'
+				);
+			case 'MemberExpression':
+				return expression.object.type === 'Literal';
+			case 'CallExpression': {
+				const callee = expression.callee;
+				const folds =
+					(callee.type === 'Identifier' &&
+						(FOLDED_FUNCTIONS.includes(callee.name) || FOLDED_OBJECTS.includes(callee.name))) ||
+					(callee.type === 'MemberExpression' &&
+						(callee.object.type === 'Literal' ||
+							(callee.object.type === 'Identifier' &&
+								FOLDED_OBJECTS.includes(callee.object.name))));
+				return folds && expression.arguments.every(may_fold);
+			}
+			case 'ConditionalExpression':
+				return (
+					may_fold(expression.test) &&
+					(may_fold(expression.consequent) || may_fold(expression.alternate))
+				);
+			case 'LogicalExpression':
+				return may_fold(expression.left);
+			case 'BinaryExpression':
+				return may_fold(expression.left) && may_fold(expression.right);
+			case 'UnaryExpression':
+				return (
+					expression.operator === 'void' ||
+					expression.operator === 'typeof' ||
+					may_fold(expression.argument)
+				);
+			case 'SequenceExpression':
+				return may_fold(expression.expressions.at(-1));
+			case 'ArrayExpression':
+				return expression.elements.every(
+					(element) => element?.type !== 'SpreadElement' && may_fold(element),
+				);
+			case 'ObjectExpression':
+				return expression.properties.every(
+					(property) =>
+						property.type === 'Property' &&
+						property.kind === 'init' &&
+						!property.method &&
+						(!property.computed || may_fold(property.key)) &&
+						may_fold(property.value),
+				);
+			default:
+				return false;
 		}
-		case 'LogicalExpression': {
-			const left = evaluate_constant(expression.left);
-			if (!left) return undefined;
-			const skips =
-				expression.operator === '||'
-					? !!left.value
-					: expression.operator === '&&'
-						? !left.value
-						: left.value != null;
-			return skips ? left : evaluate_constant(expression.right);
+	};
+
+	return { evaluate, may_fold };
+}
+
+/**
+ * Every name the module declares, with the declarator and block of a plain
+ * `const` or `let`, and every name it assigns.
+ *
+ * @param {AST.Program} program
+ * @param {Map<string, Array<{ declarator: AST.VariableDeclarator | null, scope: AST.Node, variable: boolean }>>} declarations
+ * @param {Set<string>} assigned
+ */
+function collect_bindings(program, declarations, assigned) {
+	/**
+	 * @param {string} name
+	 * @param {AST.VariableDeclarator | null} declarator
+	 * @param {AST.Node} scope
+	 * @param {boolean} variable
+	 */
+	const declare = (name, declarator, scope, variable) => {
+		const list = declarations.get(name) ?? [];
+		list.push({ declarator, scope, variable });
+		declarations.set(name, list);
+	};
+	/**
+	 * The names bound by a pattern.
+	 *
+	 * @param {AST.Node | null | undefined} pattern
+	 * @param {(name: string) => void} each
+	 */
+	const names = (pattern, each) => {
+		if (!pattern) return;
+		switch (pattern.type) {
+			case 'Identifier':
+				each(pattern.name);
+				break;
+			case 'ObjectPattern':
+				for (const property of pattern.properties) {
+					names(property.type === 'RestElement' ? property.argument : property.value, each);
+				}
+				break;
+			case 'ArrayPattern':
+				for (const element of pattern.elements) names(element, each);
+				break;
+			case 'RestElement':
+				names(pattern.argument, each);
+				break;
+			case 'AssignmentPattern':
+				names(pattern.left, each);
+				break;
+			default:
+				if (/** @type {AST.Node} */ (pattern).type === 'TSParameterProperty') {
+					names(/** @type {any} */ (pattern).parameter, each);
+				}
 		}
-		case 'ConditionalExpression': {
-			const test = evaluate_constant(expression.test);
-			if (!test) return undefined;
-			return evaluate_constant(test.value ? expression.consequent : expression.alternate);
+	};
+	/**
+	 * @param {AST.Node} node
+	 * @param {AST.Node} block the nearest block scope
+	 * @param {AST.Node} fn the nearest function scope
+	 */
+	const visit = (node, block, fn) => {
+		switch (node.type) {
+			case 'VariableDeclaration':
+				for (const declarator of node.declarations) {
+					const scope = node.kind === 'var' ? fn : block;
+					if (declarator.id.type === 'Identifier' && node.kind !== 'var') {
+						declare(declarator.id.name, declarator, scope, true);
+					} else {
+						names(declarator.id, (name) => declare(name, null, scope, true));
+					}
+				}
+				break;
+			case 'FunctionDeclaration':
+			case 'FunctionExpression':
+			case 'ArrowFunctionExpression':
+				if (node.type !== 'ArrowFunctionExpression' && node.id) {
+					declare(node.id.name, null, block, false);
+				}
+				for (const param of node.params) {
+					names(param, (name) => declare(name, null, node, false));
+				}
+				block = fn = node;
+				break;
+			case 'ClassDeclaration':
+			case 'ClassExpression':
+				if (node.id) declare(node.id.name, null, block, false);
+				break;
+			case 'ImportDeclaration':
+				for (const specifier of node.specifiers) {
+					declare(specifier.local.name, null, program, false);
+				}
+				break;
+			case 'CatchClause':
+				names(node.param, (name) => declare(name, null, node, false));
+				break;
+			case 'AssignmentExpression':
+				names(node.left, (name) => assigned.add(name));
+				break;
+			case 'UpdateExpression':
+				names(node.argument, (name) => assigned.add(name));
+				break;
+			case 'ForInStatement':
+			case 'ForOfStatement':
+				if (node.left.type !== 'VariableDeclaration')
+					names(node.left, (name) => assigned.add(name));
+				block = node;
+				break;
+			case 'BlockStatement':
+			case 'StaticBlock':
+			case 'ForStatement':
+			case 'SwitchStatement':
+				block = node;
+				break;
 		}
-		case 'SequenceExpression':
-			return evaluate_constant(expression.expressions.at(-1));
-		default:
-			return undefined;
-	}
+		for_each_child(node, (child) => visit(child, block, fn));
+	};
+	visit(program, program, program);
 }
 
 /** @type {Record<string, (left: any, right: any) => unknown>} */
@@ -879,30 +1187,6 @@ const BINARY_OPERATORS = {
 	'>>': (a, b) => a >> b,
 	'>>>': (a, b) => a >>> b,
 };
-
-/**
- * @param {AST.Node} node
- * @returns {boolean}
- */
-function is_function_or_class(node) {
-	return isFunctionNode(node) || node.type === 'ClassExpression';
-}
-
-/**
- * A string, number or boolean literal, which the SSR output writes into the
- * template as an attribute.
- *
- * @param {AST.Node} node
- * @returns {boolean}
- */
-function is_literal(node) {
-	return (
-		node.type === 'Literal' &&
-		(typeof node.value === 'string' ||
-			typeof node.value === 'number' ||
-			typeof node.value === 'boolean')
-	);
-}
 
 /**
  * @param {AST.Node} name

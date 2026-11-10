@@ -115,6 +115,10 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 			"textContent after a sibling's dynamic attribute",
 			returning('<div><p title={bag.title} /><p textContent={yield t} /></div>'),
 		],
+		[
+			'textContent beside a short circuit on a parameter',
+			returning('<div title={t || bag.title} textContent={yield t} />'),
+		],
 		['an attribute value with an element in it', returning('<input title={(yield t) && <b />} />')],
 		[
 			'two attributes beside a spread, in source order',
@@ -174,6 +178,10 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 		[
 			'a branch that never runs, which the compiler folds away',
 			returning('<div {...bag} title={true || (yield t)} />'),
+		],
+		[
+			'a branch a constant rules out',
+			`const off = false;\n${returning('<div {...bag} title={off && (yield t)} />')}`,
 		],
 		[
 			'textContent beside a value the compiler folds into a literal',

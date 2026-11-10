@@ -173,6 +173,22 @@ const SERVER_PROBES = [
 		'textContent beside a short circuit that reads a member',
 		returning('<div title={bag.x || 1} textContent={yield t} />'),
 	],
+	[
+		'textContent beside a short circuit on a parameter',
+		returning('<div title={t || bag.x} textContent={yield t} />'),
+	],
+	[
+		'textContent after a constant child',
+		returning('<div><p title={bag.x} />{1 + 1}<p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent after a constant attribute',
+		returning('<div title={bag.x} data-mid={1 + 1} textContent={yield t} />'),
+	],
+	[
+		'a branch a reassigned binding leaves open',
+		`let on = false;\non = true;\n${returning('<div {...bag} title={on && (yield t)} />')}`,
+	],
 	// The compiler folds only to a string, number or boolean.
 	[
 		'a short circuit to null beside a spread',
@@ -246,6 +262,22 @@ const SERVER_PROBES = [
 	['a folded value beside a spread', returning('<div {...bag} title={true || (yield t)} />')],
 	['a folded child of a spread', returning('<div {...bag}>{true ? "x" : (yield t)}</div>')],
 	['a folded value with an element in it', returning('<div title={true || [yield t, <b />]} />')],
+	[
+		'a folded call beside a spread',
+		returning('<div {...bag} title={Math.max(1, 2) || (yield t)} />'),
+	],
+	[
+		'a folded array beside a spread',
+		returning('<div {...bag} title={[1] + (true || (yield t))} />'),
+	],
+	[
+		'a branch a module constant rules out',
+		`const off = false;\n${returning('<div {...bag} title={off && (yield t)} />')}`,
+	],
+	[
+		'a branch a local constant rules out',
+		`export function* f(bag: any, t: any) {\n\tconst off = false;\n\treturn <div {...bag} title={off && (yield t)} />;\n}`,
+	],
 ];
 
 /**
