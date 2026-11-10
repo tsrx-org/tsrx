@@ -98,6 +98,10 @@ const PROBES = [
 	['a style object with a dynamic computed key', returning('<div style={{ [bag.k]: yield t }} />')],
 	['the last of two attributes of a name', returning('<div title="a" title={yield bag.x} />')],
 	[
+		'a stateful value the compiler renames before it drops duplicates',
+		returning('<input value={yield bag.value} value="kept" />'),
+	],
+	[
 		'a dynamic style key kept since it folds to null',
 		returning('<div style={{ color: null && (yield bag.x) }} />'),
 	],

@@ -112,20 +112,19 @@ export function find_deferred_template_yields(program) {
 
 		const tag = host_tag_name(opening.name);
 		const spread = opening.attributes.some((attribute) => attribute.type === 'JSXSpreadAttribute');
+		const names = dom_attribute_names(tag, opening.attributes);
 		for (const [index, attribute] of opening.attributes.entries()) {
 			if (attribute.type === 'JSXSpreadAttribute') {
 				visit_value(attribute.argument, context, is_dynamic(attribute.argument, false, namespaces));
 				continue;
 			}
 			// Without a spread, the compiler keeps only the last attribute of a
-			// name, but every `ref`.
-			const key = attribute_name(attribute.name);
+			// name, but every `ref`, after it renames stateful properties.
+			const key = names.get(attribute);
 			if (
 				!spread &&
 				key !== 'ref' &&
-				opening.attributes
-					.slice(index + 1)
-					.some((other) => other.type === 'JSXAttribute' && attribute_name(other.name) === key)
+				opening.attributes.slice(index + 1).some((other) => names.get(other) === key)
 			) {
 				continue;
 			}
@@ -418,6 +417,61 @@ function property_key(property) {
 	if (key.type === 'Identifier') return key.name;
 	if (key.type === 'Literal') return String(key.value);
 	return undefined;
+}
+
+/**
+ * Stateful DOM properties: 1 for the live value, 2 for its default.
+ *
+ * @type {Record<string, Record<string, 1 | 2>>}
+ */
+const DOM_WITH_STATE = {
+	input: { value: 1, defaultValue: 2, checked: 1, defaultChecked: 2 },
+	select: { value: 1 },
+	option: { value: 1, selected: 1, defaultSelected: 2 },
+	textarea: { value: 1, defaultValue: 2 },
+	video: { muted: 1, defaultMuted: 2 },
+	audio: { muted: 1, defaultMuted: 2 },
+};
+
+/**
+ * The names a host element's attributes have in the DOM output, which first
+ * renames a stateful property set to something other than a literal to
+ * `prop:…`, and a literal default to the property itself.
+ *
+ * @param {string} tag
+ * @param {Array<ESTreeJSX.JSXAttribute | ESTreeJSX.JSXSpreadAttribute>} attributes
+ * @returns {Map<AST.Node, string>}
+ */
+function dom_attribute_names(tag, attributes) {
+	/** @type {Map<AST.Node, string>} */
+	const names = new Map();
+	for (const attribute of attributes) {
+		if (attribute.type === 'JSXAttribute') names.set(attribute, attribute_name(attribute.name));
+	}
+	const stateful = DOM_WITH_STATE[tag.toLowerCase()];
+	if (!stateful) return names;
+	/** @param {string} name */
+	const find = (name) =>
+		attributes.find(
+			(attribute) => attribute.type === 'JSXAttribute' && attribute_name(attribute.name) === name,
+		);
+	for (const property of Object.keys(stateful)) {
+		const attribute = /** @type {ESTreeJSX.JSXAttribute | undefined} */ (find(property));
+		if (!attribute) continue;
+		const default_property = `default${property[0].toUpperCase()}${property.slice(1)}`;
+		const is_default =
+			property.includes('default') || !(default_property in stateful && find(default_property));
+		const value =
+			attribute.value?.type === 'JSXExpressionContainer'
+				? attribute.value.expression
+				: attribute.value;
+		const literal = !value || value.type === 'Literal';
+		names.set(
+			attribute,
+			is_default && literal ? property.replace('default', '').toLowerCase() : `prop:${property}`,
+		);
+	}
+	return names;
 }
 
 /** The types a host attribute value folds to. A host child folds to the first two. */
