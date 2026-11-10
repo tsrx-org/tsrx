@@ -252,6 +252,10 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 			template("<input {...bag} title={yield 'title'} />"),
 		],
 		[
+			'a first $key, which the SSR output renames to _key before it drops duplicates',
+			returning('<div $key={yield bag.key} $key="second" />'),
+		],
+		[
 			'textContent beside a call to an `import … =` binding, which babel does not fold',
 			`import String = Foo.Bar;\n${returning('<div title={String(1)} textContent={yield t} />')}`,
 		],
@@ -321,6 +325,18 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 		[
 			'the @{ … } body before the output',
 			template("const title = yield 'title';\n\t<input {...bag} title={title} />"),
+		],
+		[
+			'a first $key a later _key replaces, after the SSR output renames it',
+			returning('<div $key={yield bag.key} _key="second" />'),
+		],
+		[
+			'textContent beside a $key a later _key replaces, so nothing groups with it',
+			returning('<p $key={bag.key} _key="x" textContent={yield t} />'),
+		],
+		[
+			'textContent beside a call to a global a parameter property has the name of',
+			'class C {\n\tconstructor(public String: any) {\n\t\tfunction* f(t: any) {\n\t\t\treturn <div title={String(1)} textContent={yield t} />;\n\t\t}\n\t}\n}',
 		],
 		// Babel's scope doesn't bind these, so it still folds `String(1)`.
 		...['namespace String {}', 'enum String { A }', 'declare class String {}'].map(

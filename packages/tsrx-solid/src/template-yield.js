@@ -160,6 +160,10 @@ function find_deferred(program, server) {
 		const tag = host_tag_name(opening.name);
 		const spread = opening.attributes.some((attribute) => attribute.type === 'JSXSpreadAttribute');
 		const names = dom_attribute_names(tag, opening.attributes);
+		// The DOM output removes an element's first `$key`; the SSR output
+		// renames it to `_key`, before either drops duplicates.
+		const first_key = opening.attributes.find((attribute) => names.get(attribute) === '$key');
+		if (ssr && first_key) names.set(first_key, '_key');
 		// It writes no children for a void element or a `noscript` (the SSR
 		// output writes a `noscript`'s), and a textarea's literal value (named
 		// `''`) replaces them.
@@ -186,15 +190,7 @@ function find_deferred(program, server) {
 			) {
 				continue;
 			}
-			// The DOM output removes an element's first `$key`; the SSR output
-			// renders it as `_key`.
-			if (
-				!ssr &&
-				key === '$key' &&
-				opening.attributes.find((other) => names.get(other) === key) === attribute
-			) {
-				continue;
-			}
+			if (!ssr && attribute === first_key) continue;
 			// Without a spread, a `children` attribute is dropped when the element
 			// has children of its own, or writes none.
 			if (!spread && key === 'children' && (element.children.length > 0 || childless)) {
@@ -401,6 +397,10 @@ function ssr_host_element(element, namespaces) {
 	}
 	/** @param {string} name */
 	const find = (name) => attributes.find((attribute) => names.get(attribute) === name);
+
+	// The first `$key` is rendered as `_key`.
+	const key = find('$key');
+	if (key) names.set(key, '_key');
 
 	// Stateful properties are renamed before anything else, and a textarea's
 	// value becomes its only child.
@@ -889,10 +889,8 @@ function collect_bindings(program) {
 			case 'AssignmentPattern':
 				identifiers(pattern.left, each);
 				break;
-			default:
-				if (/** @type {AST.Node} */ (pattern).type === 'TSParameterProperty') {
-					identifiers(/** @type {any} */ (pattern).parameter, each);
-				}
+			// Babel's scope doesn't bind a parameter property
+			// (`constructor(public x)`).
 		}
 	};
 	/**

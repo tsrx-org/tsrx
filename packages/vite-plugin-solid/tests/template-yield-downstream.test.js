@@ -382,6 +382,78 @@ const PROBES = [
  * @type {Array<[string, string]>}
  */
 const SERVER_PROBES = [
+	// `$key`, a `<noscript>`'s children and parameter properties, where the
+	// SSR output differs from the DOM's or babel's scope from the declarations.
+	[
+		'a first $key beside a later $key, which the SSR output renames',
+		'export function* f(bag: any, t: any) {\n\treturn <div $key={yield bag.x} $key="second" />;\n}',
+	],
+	[
+		'a first $key beside a later _key',
+		'export function* f(bag: any, t: any) {\n\treturn <div $key={yield bag.x} _key="second" />;\n}',
+	],
+	[
+		'textContent beside a $key a later _key replaces',
+		returning('<p $key={bag.k} _key="x" textContent={yield t} />'),
+	],
+	['textContent beside a dynamic $key', returning('<p $key={bag.k} textContent={yield t} />')],
+	[
+		'a _key before a $key',
+		'export function* f(bag: any, t: any) {\n\treturn <div _key={yield bag.x} $key="k" />;\n}',
+	],
+	[
+		'a second $key',
+		'export function* f(bag: any, t: any) {\n\treturn <div $key="k" $key={yield bag.x} />;\n}',
+	],
+	[
+		'a dynamic $key, which the SSR output renders',
+		'export function* f(bag: any, t: any) {\n\treturn <div $key={yield bag.x} />;\n}',
+	],
+	['a static $key', 'export function* f(bag: any, t: any) {\n\treturn <div $key={yield t} />;\n}'],
+	[
+		'a $key beside a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag} $key={yield bag.x} />;\n}',
+	],
+	[
+		'a static $key beside a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag} $key={yield t} />;\n}',
+	],
+	[
+		'a static $key in a ternary arm',
+		'export function* f(bag: any, t: any) {\n\treturn t ? <div $key={yield t} /> : null;\n}',
+	],
+	[
+		'a dynamic $key in a ternary arm',
+		'export function* f(bag: any, t: any) {\n\treturn t ? <div $key={yield bag.x} /> : null;\n}',
+	],
+	[
+		"a noscript's dynamic child, which the SSR output renders",
+		'export function* f(bag: any, t: any) {\n\treturn <noscript>{yield bag.t}</noscript>;\n}',
+	],
+	[
+		"a noscript's static child in a ternary arm",
+		'export function* f(bag: any, t: any) {\n\treturn t ? <noscript>{yield t}</noscript> : null;\n}',
+	],
+	[
+		"a noscript's dynamic child in a ternary arm",
+		'export function* f(bag: any, t: any) {\n\treturn t ? <noscript>{yield bag.t}</noscript> : null;\n}',
+	],
+	[
+		'textContent beside String(1) and a parameter property named String',
+		'class C {\n\tconstructor(public String: any) {\n\t\tfunction* f(t: any) {\n\t\t\treturn <div title={String(1)} textContent={yield t} />;\n\t\t}\n\t}\n}',
+	],
+	[
+		'textContent beside String(1) and a readonly parameter property named String',
+		'class C {\n\tconstructor(private readonly String: any = 1) {\n\t\tfunction* f(t: any) {\n\t\t\treturn <div title={String(1)} textContent={yield t} />;\n\t\t}\n\t}\n}',
+	],
+	[
+		'textContent beside String(1) and a constructor parameter named String',
+		'class C {\n\tconstructor(String: any) {\n\t\tfunction* f(t: any) {\n\t\t\treturn <div title={String(1)} textContent={yield t} />;\n\t\t}\n\t}\n}',
+	],
+	[
+		'textContent beside String(1) and a type import named String',
+		"import type { String } from 'x';\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}",
+	],
 	// TypeScript declarations babel's scope does or doesn't bind.
 	[
 		'textContent beside String(1) and `namespace String {}`',
