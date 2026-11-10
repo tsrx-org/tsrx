@@ -444,20 +444,30 @@ function ssr_host_element(element, namespaces) {
 			name === 'ref' ||
 			name.startsWith('on') ||
 			name.startsWith('prop:') ||
-			(value?.type === 'JSXExpressionContainer' && value.expression.type === 'JSXEmptyExpression')
+			(value?.type === 'JSXExpressionContainer' &&
+				value.expression.type === 'JSXEmptyExpression') ||
+			// A content property with no value is ignored.
+			(!value && CHILD_PROPERTIES.has(name))
 		) {
 			roles.set(attribute, 'dropped');
 		} else if (spread) {
 			roles.set(attribute, name === 'children' && has_children ? 'dropped' : 'kept');
 		} else {
 			// The template drops all but the last attribute of a name, and all but
-			// the last content property: they fill one slot.
+			// the last content property with a value: they fill one slot.
 			const content = CHILD_PROPERTIES.has(name);
 			const later = attributes.slice(index + 1).some((other) => {
-				const other_name = names.get(other);
+				const other_name = names.get(other) ?? '';
+				if (roles.get(other) === 'folded' || other.type !== 'JSXAttribute') return false;
+				if (other_name === name) return true;
 				return (
-					roles.get(other) !== 'folded' &&
-					(other_name === name || (content && CHILD_PROPERTIES.has(other_name ?? '')))
+					content &&
+					CHILD_PROPERTIES.has(other_name) &&
+					!!other.value &&
+					!(
+						other.value.type === 'JSXExpressionContainer' &&
+						other.value.expression.type === 'JSXEmptyExpression'
+					)
 				);
 			});
 			if (later) roles.set(attribute, 'dropped');

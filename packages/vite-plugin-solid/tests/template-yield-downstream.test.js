@@ -382,6 +382,88 @@ const PROBES = [
  * @type {Array<[string, string]>}
  */
 const SERVER_PROBES = [
+	// A content property with no value doesn't fill the slot; one of the same
+	// name still replaces an earlier one.
+	[
+		'spread parent: textContent then valueless textContent',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t} textContent /></div>;\n}',
+	],
+	[
+		'spread parent: textContent then valueless innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t} innerHTML /></div>;\n}',
+	],
+	[
+		'spread parent: textContent then valueless innerText',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t} innerText /></div>;\n}',
+	],
+	[
+		'spread parent: textContent then valueless children',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t} children /></div>;\n}',
+	],
+	[
+		'spread parent: innerHTML then valueless textContent',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerHTML={yield t} textContent /></div>;\n}',
+	],
+	[
+		'spread parent: innerHTML then valueless innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerHTML={yield t} innerHTML /></div>;\n}',
+	],
+	[
+		'spread parent: innerHTML then valueless innerText',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerHTML={yield t} innerText /></div>;\n}',
+	],
+	[
+		'spread parent: innerHTML then valueless children',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerHTML={yield t} children /></div>;\n}',
+	],
+	[
+		'spread parent: innerText then valueless textContent',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerText={yield t} textContent /></div>;\n}',
+	],
+	[
+		'spread parent: innerText then valueless innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerText={yield t} innerHTML /></div>;\n}',
+	],
+	[
+		'spread parent: innerText then valueless innerText',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerText={yield t} innerText /></div>;\n}',
+	],
+	[
+		'spread parent: innerText then valueless children',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerText={yield t} children /></div>;\n}',
+	],
+	[
+		'spread parent: children then valueless textContent',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p children={yield t} textContent /></div>;\n}',
+	],
+	[
+		'spread parent: children then valueless innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p children={yield t} innerHTML /></div>;\n}',
+	],
+	[
+		'spread parent: children then valueless innerText',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p children={yield t} innerText /></div>;\n}',
+	],
+	[
+		'spread parent: children then valueless children',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p children={yield t} children /></div>;\n}',
+	],
+	[
+		'grouping: textContent then valueless innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <p title={bag.x} textContent={yield t} innerHTML />;\n}',
+	],
+	[
+		'spread parent: textContent then innerHTML literal',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t} innerHTML="x" /></div>;\n}',
+	],
+	[
+		'spread parent: title then valueless title',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p title={yield t} title /></div>;\n}',
+	],
+	[
+		'root: dyn title then valueless title',
+		'export function* f(bag: any, t: any) {\n\treturn <p title={yield bag.t} title />;\n}',
+	],
 	// One content slot: the last content property fills it.
 	[
 		"a textContent a later innerHTML replaces, in a spread's children",

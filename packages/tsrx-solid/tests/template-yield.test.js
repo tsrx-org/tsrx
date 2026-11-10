@@ -252,6 +252,10 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 			template("<input {...bag} title={yield 'title'} />"),
 		],
 		[
+			'textContent beside a later innerHTML with no value, which the SSR output ignores',
+			returning('<div {...bag}><p textContent={yield t} innerHTML /></div>'),
+		],
+		[
 			'a stateful value the DOM output renames apart from a later prop: one',
 			returning('<input value={yield bag.value} prop:value="x" />'),
 		],
@@ -355,6 +359,10 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 			returning('<p textContent={yield bag.text} textContent="x" />'),
 		],
 		['an element in textContent', returning('<p textContent={[yield t, <b />]} />')],
+		[
+			'textContent a later one of its name replaces, even with no value',
+			returning('<div {...bag}><p textContent={yield t} textContent /></div>'),
+		],
 		[
 			'a content property a later one replaces, in a spread children arrow',
 			returning('<div {...bag}><p textContent={yield t} innerHTML="x" /></div>'),
