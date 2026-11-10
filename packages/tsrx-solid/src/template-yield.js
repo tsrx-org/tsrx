@@ -1225,32 +1225,30 @@ const FOLDED_TYPES = ['string', 'number', 'boolean'];
  *
  * @param {AST.Node | null | undefined} node
  * @param {Set<string>} namespaces
- * @param {boolean} [tags] whether an element counts as dynamic, as in the SSR output
  * @returns {boolean}
  */
-function is_folded_dynamic(node, namespaces, tags = false) {
+function is_folded_dynamic(node, namespaces) {
 	const expression = strip(node, []);
 	if (!expression) return false;
 	// A value that folds into a literal keeps no `yield` (see
 	// `collect_folded_yields`), so only an object's values need folding here.
-	if (expression.type === 'ObjectExpression') return object_is_dynamic(expression, tags);
-	return is_dynamic(expression, tags, namespaces);
+	if (expression.type === 'ObjectExpression') return object_is_dynamic(expression);
+	return is_dynamic(expression, false, namespaces);
 }
 
 /**
  * @param {AST.ObjectExpression} object
- * @param {boolean} tags
  * @returns {boolean}
  */
-function object_is_dynamic(object, tags) {
+function object_is_dynamic(object) {
 	return object.properties.some((property) => {
 		if (property.type !== 'Property') return true;
-		if (property.computed && contains_dynamic(property.key, tags)) return true;
+		if (property.computed && contains_dynamic(property.key, false)) return true;
 		if (property.kind !== 'init' || property.method) return false;
 		const value = strip(property.value, []);
 		if (!value) return false;
-		if (value.type === 'ObjectExpression') return object_is_dynamic(value, tags);
-		return !folds(value, FOLDED_TYPES) && contains_dynamic(value, tags);
+		if (value.type === 'ObjectExpression') return object_is_dynamic(value);
+		return !folds(value, FOLDED_TYPES) && contains_dynamic(value, false);
 	});
 }
 
