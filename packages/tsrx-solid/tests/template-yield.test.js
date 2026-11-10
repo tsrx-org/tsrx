@@ -137,6 +137,11 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			returning("<input title={(yield bag.title, 'a')} />"),
 		],
 		['a className, which is a plain attribute', returning('<div className={yield t} />')],
+		['a class value the compiler evaluates', returning('<div class={null && (yield t)} />')],
+		[
+			'a class object with a computed key the compiler evaluates',
+			returning("<div class={{ [(yield t, 'active')]: true }} />"),
+		],
 	])('allows a yield in %s, which Solid evaluates in place', (_label, source) => {
 		expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
 		expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);

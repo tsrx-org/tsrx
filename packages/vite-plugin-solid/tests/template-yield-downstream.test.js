@@ -95,6 +95,7 @@ const PROBES = [
 	['a class array led by a dynamic value', returning('<div class={[bag.x, { a: yield t }]} />')],
 	['a style object with a computed key', returning('<div style={{ [t]: yield t }} />')],
 	['a style object with a spread', returning('<div style={{ ...bag, color: yield t }} />')],
+	['a style object with a dynamic computed key', returning('<div style={{ [bag.k]: yield t }} />')],
 	[
 		'a dynamic style key kept since it folds to null',
 		returning('<div style={{ color: null && (yield bag.x) }} />'),
@@ -180,6 +181,24 @@ const PROBES = [
 	],
 	['a sequence that folds into its last value', returning("<input title={(yield bag.x, 'a')} />")],
 	['a className', returning('<div className={yield t} />')],
+	[
+		'a className object with a tagged template value',
+		returning('<div className={{ a: Comp`${yield t}` }} />'),
+	],
+	['a class value the compiler evaluates', returning('<div class={null && (yield t)} />')],
+	['a style value the compiler evaluates', returning('<div style={null && (yield t)} />')],
+	[
+		'a class object with a computed key it evaluates',
+		returning("<div class={{ [(yield t, 'active')]: true }} />"),
+	],
+	[
+		'a style object with a computed key it evaluates',
+		returning("<div style={{ [(yield t, 'color')]: 'red' }} />"),
+	],
+	[
+		'a class object key holding an array it evaluates',
+		returning('<div class={{ active: [(yield bag.x, 1)] }} />'),
+	],
 	[
 		'a nested generator',
 		returning('<input title={[...(function* () { yield bag.t; })()].join()} />'),

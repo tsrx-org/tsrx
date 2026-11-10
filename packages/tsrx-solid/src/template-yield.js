@@ -272,7 +272,8 @@ function is_host_attribute_deferred(name, value, namespaces, tag) {
 	}
 	// A `class` or `style` value that isn't an object the compiler splits is
 	// set in an effect unless it folds into a constant.
-	if (name === 'class' || name === 'style') return !folds(value, FOLDED_TYPES);
+	if (name === 'class' || name === 'style')
+		return is_folded_dynamic(value, namespaces) || !literal_value(value);
 	return is_folded_dynamic(value, namespaces);
 }
 
@@ -339,7 +340,10 @@ function split_class_or_style(name, value, namespaces) {
 			!keys.some((key) => statics.has(/** @type {string} */ (key)));
 		if (!splits) {
 			// The whole value is set in an effect, unless the array isn't split.
-			return expression.type === 'ArrayExpression' ? undefined : [[expression, true]];
+			if (expression.type === 'ArrayExpression') return undefined;
+			return [
+				[expression, is_folded_dynamic(expression, namespaces) || !literal_value(expression)],
+			];
 		}
 		return object.properties.map((property) => {
 			const value = /** @type {AST.Property} */ (property).value;
@@ -353,26 +357,41 @@ function split_class_or_style(name, value, namespaces) {
 		const spread = expression.properties.some((property) => property.type === 'SpreadElement');
 		/** @type {SplitValue} */
 		const parts = [];
+		/** @type {AST.Node[]} */
+		const remaining = [];
 		for (const property of expression.properties) {
 			if (property.type !== 'Property' || property.kind !== 'init' || property.method) {
-				// What stays in the object is set with it, in an effect.
-				parts.push([property, true]);
+				remaining.push(property);
 				continue;
 			}
 			const value = strip(property.value, []);
 			const inlined = folds(property.value, FOLDED_TYPES.slice(0, 2));
 			if (property.computed) {
-				parts.push([property.key, true], [property.value, inlined ? 'dropped' : true]);
+				remaining.push(property.key);
+				if (inlined) parts.push([property.value, 'dropped']);
+				else remaining.push(property.value);
 			} else if (
 				inlined ||
 				(value?.type === 'Literal' && value.value === null) ||
 				(value?.type === 'Identifier' && value.name === 'undefined')
 			) {
 				parts.push([property.value, 'dropped']);
+			} else if (spread) {
+				remaining.push(property.value);
 			} else {
-				parts.push([property.value, spread || is_folded_dynamic(property.value, namespaces)]);
+				parts.push([property.value, is_folded_dynamic(property.value, namespaces)]);
 			}
 		}
+		// What stays in the object is set with it, in an effect if it is
+		// dynamic or the compiler can't evaluate it.
+		const whole = remaining.some(
+			(part) =>
+				part.type === 'SpreadElement' ||
+				part.type === 'Property' ||
+				contains_dynamic(part, false) ||
+				!literal_value(part),
+		);
+		for (const part of remaining) parts.push([part, whole]);
 		return parts;
 	}
 	return undefined;
@@ -404,18 +423,25 @@ const FOLDED_TYPES = ['string', 'number', 'boolean'];
 function is_folded_dynamic(node, namespaces) {
 	const expression = strip(node, []);
 	if (!expression) return false;
-	if (expression.type === 'ObjectExpression') {
-		return expression.properties.some(
-			(property) =>
-				property.type !== 'Property' ||
-				(property.computed && contains_dynamic(property.key, false)) ||
-				(property.kind === 'init' &&
-					!property.method &&
-					is_folded_dynamic(property.value, new Set())),
-		);
-	}
+	if (expression.type === 'ObjectExpression') return object_is_dynamic(expression);
 	if (folds(expression, FOLDED_TYPES)) return false;
 	return is_dynamic(expression, false, namespaces);
+}
+
+/**
+ * @param {AST.ObjectExpression} object
+ * @returns {boolean}
+ */
+function object_is_dynamic(object) {
+	return object.properties.some((property) => {
+		if (property.type !== 'Property') return true;
+		if (property.computed && contains_dynamic(property.key, false)) return true;
+		if (property.kind !== 'init' || property.method) return false;
+		const value = strip(property.value, []);
+		if (!value) return false;
+		if (value.type === 'ObjectExpression') return object_is_dynamic(value);
+		return !folds(value, FOLDED_TYPES) && contains_dynamic(value, false);
+	});
 }
 
 /**
@@ -501,7 +527,8 @@ function folds(node, types) {
  * string, number, boolean or null literal, a template of them, a member of a
  * string or number literal (`'x'.length`), `!`, `-`, `+`, `~`, `typeof` and
  * `void` of them, a short circuit or conditional on them, which skips the
- * branch that never runs, and the last of a sequence. It folds more (bindings, arithmetic, a few calls);
+ * branch that never runs, the last of a sequence, and arrays and objects of
+ * them. It folds more (bindings, arithmetic, a few calls);
  * those count as not constant here.
  *
  * @param {AST.Node | null | undefined} node
@@ -580,6 +607,37 @@ function literal_value(node) {
 		}
 		case 'SequenceExpression':
 			return literal_value(expression.expressions.at(-1));
+		case 'ArrayExpression': {
+			/** @type {unknown[]} */
+			const array = [];
+			for (const element of expression.elements) {
+				const constant = element?.type === 'SpreadElement' ? undefined : literal_value(element);
+				if (!constant) return undefined;
+				array.push(constant.value);
+			}
+			return { value: array };
+		}
+		case 'ObjectExpression': {
+			/** @type {Record<string, unknown>} */
+			const object = {};
+			for (const property of expression.properties) {
+				if (property.type !== 'Property' || property.kind !== 'init' || property.method) {
+					return undefined;
+				}
+				const key = property.computed
+					? literal_value(property.key)
+					: {
+							value:
+								property.key.type === 'Identifier'
+									? property.key.name
+									: /** @type {AST.Literal} */ (property.key).value,
+						};
+				const value = key && literal_value(property.value);
+				if (!value) return undefined;
+				object[String(key.value)] = value.value;
+			}
+			return { value: object };
+		}
 		default:
 			return undefined;
 	}
