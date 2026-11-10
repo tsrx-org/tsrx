@@ -160,23 +160,44 @@ function find_deferred(program, server) {
 		const tag = host_tag_name(opening.name);
 		const spread = opening.attributes.some((attribute) => attribute.type === 'JSXSpreadAttribute');
 		const names = dom_attribute_names(tag, opening.attributes);
-		// The DOM output removes an element's first `$key`; the SSR output
-		// renames it to `_key`, before either drops duplicates.
+		// The DOM output removes an element's first `$key`.
 		const first_key = opening.attributes.find((attribute) => names.get(attribute) === '$key');
-		if (ssr && first_key) names.set(first_key, '_key');
-		// It writes no children for a void element or a `noscript` (the SSR
-		// output writes a `noscript`'s), and a textarea's literal value (named
-		// `''`) replaces them.
-		const childless =
-			VOID_ELEMENTS.has(tag) ||
-			(tag === 'noscript' && !ssr) ||
-			opening.attributes.some((attribute) => names.get(attribute) === '');
+		// It writes no children for a void element or a `noscript`, and a
+		// textarea's literal value (named `''`) replaces them. A server build
+		// follows the SSR output, which writes a `noscript`'s children and
+		// replaces a textarea's with any default value.
+		const childless = ssr
+			? VOID_ELEMENTS.has(tag) || ssr.replaced_children
+			: VOID_ELEMENTS.has(tag) ||
+				tag === 'noscript' ||
+				opening.attributes.some((attribute) => names.get(attribute) === '');
 		for (const [index, attribute] of opening.attributes.entries()) {
 			if (attribute.type === 'JSXSpreadAttribute') {
 				visit_value(
 					attribute.argument,
 					context,
 					is_dynamic(attribute.argument, false, namespaces) || !!ssr?.merged,
+				);
+				continue;
+			}
+			const value = attribute.value;
+			// A server build follows the SSR output alone, its names and what it
+			// leaves out (a ref is left out of the markup but evaluated where the
+			// element is); the DOM output's are checked on their own.
+			if (ssr) {
+				if (ssr.roles.get(attribute) === 'dropped' && attribute_name(attribute.name) !== 'ref') {
+					continue;
+				}
+				visit_value(
+					value?.type === 'JSXExpressionContainer' ? value.expression : value,
+					context,
+					is_ssr_attribute_deferred(
+						attribute,
+						ssr,
+						grouped,
+						namespaces,
+						/** @type {Folder} */ (folder),
+					),
 				);
 				continue;
 			}
@@ -190,35 +211,23 @@ function find_deferred(program, server) {
 			) {
 				continue;
 			}
-			if (!ssr && attribute === first_key) continue;
-			// Without a spread, a `children` attribute is dropped when the element
-			// has children of its own, or writes none.
+			if (attribute === first_key) continue;
+			// Without a spread, a `children` attribute is dropped when the
+			// element has children of its own, or writes none.
 			if (!spread && key === 'children' && (element.children.length > 0 || childless)) {
 				continue;
 			}
-			const value = attribute.value;
-			const ssr_deferred =
-				!!ssr &&
-				is_ssr_attribute_deferred(
-					attribute,
-					ssr,
-					grouped,
-					namespaces,
-					/** @type {Folder} */ (folder),
-				);
 			if (value?.type !== 'JSXExpressionContainer') {
-				if (value) visit_value(value, context, ssr_deferred);
+				if (value) visit_value(value, context, false);
 				continue;
 			}
 			const expression = /** @type {AST.Expression} */ (value.expression);
 			const name = attribute_name(attribute.name);
-			// The DOM output splits a class or style object and an event array; a
-			// server build that moves the whole value moves every part.
-			const parts =
-				spread || ssr_deferred
-					? undefined
-					: (split_class_or_style(name, expression, namespaces) ??
-						split_event_handler(name, expression));
+			// The DOM output splits a class or style object and an event array.
+			const parts = spread
+				? undefined
+				: (split_class_or_style(name, expression, namespaces) ??
+					split_event_handler(name, expression));
 			if (parts) {
 				for (const [part, deferred] of parts) {
 					if (deferred !== 'dropped') visit_value(part, context, deferred);
@@ -228,11 +237,10 @@ function find_deferred(program, server) {
 			visit_value(
 				expression,
 				context,
-				ssr_deferred ||
-					// Beside a spread, every attribute but `ref` is a prop of the spread.
-					(spread && name !== 'ref'
-						? is_folded_dynamic(expression, namespaces)
-						: is_host_attribute_deferred(name, expression, namespaces, tag)),
+				// Beside a spread, every attribute but `ref` is a prop of the spread.
+				spread && name !== 'ref'
+					? is_folded_dynamic(expression, namespaces)
+					: is_host_attribute_deferred(name, expression, namespaces, tag),
 			);
 		}
 
@@ -441,14 +449,14 @@ function ssr_host_element(element, namespaces) {
 			roles.set(attribute, 'dropped');
 		} else if (spread) {
 			roles.set(attribute, name === 'children' && has_children ? 'dropped' : 'kept');
-		} else if (CHILD_PROPERTIES.has(name)) {
-			roles.set(attribute, has_children || VOID_ELEMENTS.has(tag) ? 'dropped' : 'content');
 		} else {
 			// The template drops all but the last attribute of a name.
 			const later = attributes
 				.slice(index + 1)
 				.some((other) => roles.get(other) !== 'folded' && names.get(other) === name);
-			roles.set(attribute, later ? 'dropped' : 'kept');
+			if (later) roles.set(attribute, 'dropped');
+			else if (!CHILD_PROPERTIES.has(name)) roles.set(attribute, 'kept');
+			else roles.set(attribute, has_children || VOID_ELEMENTS.has(tag) ? 'dropped' : 'content');
 		}
 	}
 
@@ -492,7 +500,14 @@ function is_ssr_attribute_deferred(attribute, ssr, grouped, namespaces, folder) 
 	if (ssr.spread) return role === 'folded' || (role === 'kept' && ssr.merged);
 	const value = attribute.value;
 	if (value?.type !== 'JSXExpressionContainer') return false;
-	if (role === 'content') return grouped.has(value.expression);
+	if (role === 'content') {
+		// Content is rendered like a child: in an arrow when it's dynamic, not
+		// counting an element in it, or grouped.
+		return (
+			grouped.has(value.expression) ||
+			is_surely_dynamic(value.expression, namespaces, folder, false, false)
+		);
+	}
 	// A dynamic value, counting an element in it, is rendered in an arrow. A
 	// value that may fold counts as static, so a `yield` there goes unreported
 	// rather than reported though it stays in place.
@@ -626,9 +641,10 @@ function collect_grouped_text_content(root, grouped, namespaces, folder) {
  * @param {Set<string>} namespaces
  * @param {Folder} folder
  * @param {boolean} [nested] whether it is a value in an object
+ * @param {boolean} [tags] whether an element in it counts
  * @returns {boolean}
  */
-function is_surely_dynamic(node, namespaces, folder, nested = false) {
+function is_surely_dynamic(node, namespaces, folder, nested = false, tags = true) {
 	const expression = strip(node, []);
 	if (!expression) return false;
 	if (expression.type === 'ObjectExpression') {
@@ -646,7 +662,7 @@ function is_surely_dynamic(node, namespaces, folder, nested = false) {
 	// counts (a tagged template there isn't dynamic).
 	const dynamic = nested
 		? contains_dynamic(expression, true)
-		: is_dynamic(expression, true, namespaces);
+		: is_dynamic(expression, tags, namespaces);
 	const constant = folder.evaluate(expression);
 	if (constant) return !FOLDED_TYPES.includes(typeof constant.value) && dynamic;
 	return dynamic && !folder.may_fold(expression);

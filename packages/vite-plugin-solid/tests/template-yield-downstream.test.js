@@ -382,6 +382,95 @@ const PROBES = [
  * @type {Array<[string, string]>}
  */
 const SERVER_PROBES = [
+	// Where the SSR output's names, drops and arrows differ from the DOM output's.
+	[
+		'a value before a prop:value',
+		'export function* f(bag: any, t: any) {\n\treturn <input value={yield bag.t} prop:value="x" />;\n}',
+	],
+	[
+		'a checked before a prop:checked',
+		'export function* f(bag: any, t: any) {\n\treturn <input checked={yield bag.t} prop:checked={true} />;\n}',
+	],
+	[
+		'a defaultValue before a prop:defaultValue',
+		'export function* f(bag: any, t: any) {\n\treturn <input defaultValue={yield bag.t} prop:defaultValue="x" />;\n}',
+	],
+	[
+		"a select's static value before a prop:value",
+		'export function* f(bag: any, t: any) {\n\treturn <select value={yield t} prop:value="x" />;\n}',
+	],
+	[
+		'a static value before a prop:value',
+		'export function* f(bag: any, t: any) {\n\treturn <input value={yield t} prop:value="x" />;\n}',
+	],
+	[
+		"an event handler in a noscript's dynamic child",
+		'export function* f(bag: any, t: any) {\n\treturn <noscript>{bag.x && <button onClick={yield t} />}</noscript>;\n}',
+	],
+	[
+		'an event handler in an element in a host element with a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><button onClick={yield t} /></div>;\n}',
+	],
+	[
+		'a prop: value in an element in a host element with a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><input prop:value={yield t} /></div>;\n}',
+	],
+	[
+		'a dropped textContent in an element in a host element with a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t}>x</p></div>;\n}',
+	],
+	[
+		'a ref in an element in a host element with a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><b ref={yield t} /></div>;\n}',
+	],
+	[
+		"a $key in a textarea's replaced child",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={bag.v}>{<div $key={bag.x && (yield t)} />}</textarea>;\n}',
+	],
+	[
+		"a textarea's replaced dynamic child",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={bag.v}>{yield bag.t}</textarea>;\n}',
+	],
+	[
+		"a textarea's replaced static child",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={bag.v}>{yield t}</textarea>;\n}',
+	],
+	[
+		'an event handler in a ternary child',
+		'export function* f(bag: any, t: any) {\n\treturn <div>{bag.x ? <button onClick={yield t} /> : null}</div>;\n}',
+	],
+	[
+		'an array ref in a ternary child',
+		'export function* f(bag: any, t: any) {\n\treturn <div>{bag.x ? <b ref={[yield t]} /> : null}</div>;\n}',
+	],
+	[
+		'a textContent a later one replaces',
+		'export function* f(bag: any, t: any) {\n\treturn <p textContent={yield bag.t} textContent="x" />;\n}',
+	],
+	[
+		'a textContent that replaces a static one',
+		'export function* f(bag: any, t: any) {\n\treturn <p textContent="x" textContent={yield bag.t} />;\n}',
+	],
+	[
+		'an element in a textContent array',
+		'export function* f(bag: any, t: any) {\n\treturn <p textContent={[yield t, <b />]} />;\n}',
+	],
+	[
+		'a dynamic textContent on its own',
+		'export function* f(bag: any, t: any) {\n\treturn <p textContent={yield bag.t} />;\n}',
+	],
+	[
+		'a dynamic innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <p innerHTML={yield bag.t} />;\n}',
+	],
+	[
+		'a dynamic children attribute on its own',
+		'export function* f(bag: any, t: any) {\n\treturn <div children={yield bag.t} />;\n}',
+	],
+	[
+		'a dynamic children attribute on a noscript',
+		'export function* f(bag: any, t: any) {\n\treturn <noscript children={yield bag.t} />;\n}',
+	],
 	// `$key`, a `<noscript>`'s children and parameter properties, where the
 	// SSR output differs from the DOM's or babel's scope from the declarations.
 	[

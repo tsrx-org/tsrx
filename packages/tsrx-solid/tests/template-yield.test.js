@@ -252,6 +252,18 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 			template("<input {...bag} title={yield 'title'} />"),
 		],
 		[
+			'a stateful value the DOM output renames apart from a later prop: one',
+			returning('<input value={yield bag.value} prop:value="x" />'),
+		],
+		[
+			'a ref in an element in a host element with a spread, evaluated in its arrow',
+			returning('<div {...bag}><b ref={yield t} /></div>'),
+		],
+		[
+			'a dynamic children attribute on a noscript',
+			returning('<noscript children={yield bag.text} />'),
+		],
+		[
 			'a first $key, which the SSR output renames to _key before it drops duplicates',
 			returning('<div $key={yield bag.key} $key="second" />'),
 		],
@@ -326,6 +338,23 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 			'the @{ … } body before the output',
 			template("const title = yield 'title';\n\t<input {...bag} title={title} />"),
 		],
+		[
+			'an event handler the SSR output leaves out, in an arrow',
+			returning('<noscript>{bag.x && <button onClick={yield t} />}</noscript>'),
+		],
+		[
+			"a textarea's children, which the SSR output replaces with its value",
+			returning('<textarea value={bag.value}>{<div $key={bag.x && (yield t)} />}</textarea>'),
+		],
+		[
+			"a select's value a later prop: one replaces in the SSR output",
+			returning('<select value={yield t} prop:value="x" />'),
+		],
+		[
+			'textContent a later one replaces',
+			returning('<p textContent={yield bag.text} textContent="x" />'),
+		],
+		['an element in textContent', returning('<p textContent={[yield t, <b />]} />')],
 		[
 			'a first $key a later _key replaces, after the SSR output renames it',
 			returning('<div $key={yield bag.key} _key="second" />'),
