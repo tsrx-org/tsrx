@@ -58,11 +58,14 @@ const rule: Rule.RuleModule = {
 };
 
 // TypeScript nodes that hold a value; every other TypeScript node is a type.
+// TSRX reads `<T>value` as JSX, so no key holds a `TSTypeAssertion`.
 const TS_EXPRESSIONS = new Set([
 	'TSAsExpression',
 	'TSSatisfiesExpression',
 	'TSNonNullExpression',
 	'TSInstantiationExpression',
+	// The default in `constructor(public x = value)`.
+	'TSParameterProperty',
 ]);
 
 /**
