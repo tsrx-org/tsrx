@@ -1420,7 +1420,7 @@ export function TSRXPlugin(config) {
 			// reports them, where they're recorded, by a strict parse as by a
 			// collecting one (see `#holdingErrors`). An object of its own, which
 			// acorn-typescript's undo log restores when it abandons a parse (see
-			// `tsParseTypeParameters`).
+			// `#setHeld`).
 			/** @type {{ held: CompileError[] | null }} */
 			#hold = { held: null };
 			// While `checkParams` checks a parameter list, the bindings of the names
@@ -1584,6 +1584,9 @@ export function TSRXPlugin(config) {
 			// a statement that isn't in a list (see `#inStatementList`).
 			/** @type {string | null} */
 			#statementContext = null;
+			// Where the labels around the statement being read start, innermost last.
+			/** @type {number[]} */
+			#labelStarts = [];
 
 			/**
 			 * @type {Parse.Parser['finishNode']}
@@ -4670,7 +4673,7 @@ export function TSRXPlugin(config) {
 				const errors = this.#errors;
 				const errors_length = errors?.length ?? 0;
 				const held = this.#hold.held;
-				this.#hold.held = null;
+				this.#setHeld(null);
 				try {
 					return this.tsLookAhead(() => {
 						try {
@@ -4683,7 +4686,7 @@ export function TSRXPlugin(config) {
 					});
 				} finally {
 					if (errors) errors.length = errors_length;
-					this.#hold.held = held;
+					this.#setHeld(held);
 				}
 			}
 
@@ -5458,7 +5461,7 @@ export function TSRXPlugin(config) {
 					this.#bindingListClose = outer;
 					this.#readingGenericArrowParameters = outer_generic_arrow;
 					this.#parameterList = outer_list;
-					this.#hold.held = outer_hold;
+					this.#setHeld(outer_hold);
 				}
 				if (recorded) generic_arrow_parameter_errors.set(params, recorded);
 				if (list?.deferred.length) deferred_parameter_errors.set(params, list.deferred);
@@ -5572,7 +5575,7 @@ export function TSRXPlugin(config) {
 				const clashes = this.#parameterClashes;
 				this.#collect = true;
 				this.#errors = [];
-				this.#hold.held = null;
+				this.#setHeld(null);
 				this.#parameterClashes = records;
 				try {
 					/** @type {Record<string, boolean>} */
@@ -5586,7 +5589,7 @@ export function TSRXPlugin(config) {
 				} finally {
 					this.#collect = collect;
 					this.#errors = errors;
-					this.#hold.held = held;
+					this.#setHeld(held);
 					this.#parameterClashes = clashes;
 				}
 			}
@@ -5905,8 +5908,7 @@ export function TSRXPlugin(config) {
 				if (own) {
 					this.parseEffects?.willSet(own, 'reserved');
 					own.reserved = null;
-					this.parseEffects?.willSet(this.#hold, 'held');
-					this.#hold.held = own.outerHeld;
+					this.#setHeld(own.outerHeld);
 					reported.push(...own.held);
 				}
 				this.#releaseErrors(reported);
@@ -7163,6 +7165,21 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Hold checker errors in `held` from here, or stop holding them (`null`),
+			 * through acorn-typescript's undo log, as every change of `#hold` goes:
+			 * an abandoned parse puts back what it held before. A change it didn't
+			 * log would be undone to the value that a later logged one found, which
+			 * could be a list of the abandoned parse's, where the errors after it
+			 * would be held and never reported. (A `catch` that sets back the outer
+			 * value before its `finally` sets it again needn't log it.)
+			 * @param {CompileError[] | null} held
+			 */
+			#setHeld(held) {
+				this.parseEffects?.willSet(this.#hold, 'held');
+				this.#hold.held = held;
+			}
+
+			/**
 			 * The error TypeScript's checker reports for the modifiers of a
 			 * declaration of `kind` (`checkGrammarModifiers`), for the modifiers this
 			 * parser reads before one, or `null`.
@@ -8257,7 +8274,7 @@ export function TSRXPlugin(config) {
 				// errors in the rest of the list, are held until the list is read, for
 				// the duplicate names before it (see `#reportParameterList`), and
 				// TS2369 at its start comes first then (see `parseBindingList`).
-				this.#hold.held = list.held;
+				this.#setHeld(list.held);
 				const item = read();
 				const held_length = list.held.length;
 				this.#raiseCheckerError(start, TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR);
@@ -9720,8 +9737,7 @@ export function TSRXPlugin(config) {
 						arrow.reserved = node;
 						this.parseEffects?.willSet(arrow, 'outerHeld');
 						arrow.outerHeld = this.#hold.held;
-						this.parseEffects?.willSet(this.#hold, 'held');
-						this.#hold.held = arrow.held;
+						this.#setHeld(arrow.held);
 					}
 				}
 				return node;
@@ -10052,7 +10068,7 @@ export function TSRXPlugin(config) {
 			 */
 			#asCollecting(read, recorded = []) {
 				const held = this.#hold.held;
-				this.#hold.held = null;
+				this.#setHeld(null);
 				try {
 					if (this.#collect) return read();
 					const errors = this.#errors;
@@ -10065,7 +10081,7 @@ export function TSRXPlugin(config) {
 						this.#errors = errors;
 					}
 				} finally {
-					this.#hold.held = held;
+					this.#setHeld(held);
 				}
 			}
 
@@ -10083,7 +10099,7 @@ export function TSRXPlugin(config) {
 			 */
 			#holdingErrors(held, read) {
 				const outer = this.#hold.held;
-				this.#hold.held = held;
+				this.#setHeld(held);
 				try {
 					return read();
 				} catch (error) {
@@ -10091,7 +10107,7 @@ export function TSRXPlugin(config) {
 					this.#abandonHeldErrors(held, error);
 					throw error;
 				} finally {
-					this.#hold.held = outer;
+					this.#setHeld(outer);
 				}
 			}
 
@@ -13059,6 +13075,20 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Records where the label starts, for the statement it labels (see
+			 * `#parseStatement`).
+			 * @type {Parse.Parser['parseLabeledStatement']}
+			 */
+			parseLabeledStatement(node, maybeName, expr, context) {
+				this.#labelStarts.push(/** @type {number} */ (expr.start));
+				try {
+					return super.parseLabeledStatement(node, maybeName, expr, context);
+				} finally {
+					this.#labelStarts.pop();
+				}
+			}
+
+			/**
 			 * @type {Parse.Parser['parseStatement']}
 			 */
 			#parseStatement(context, topLevel, exports) {
@@ -13073,15 +13103,26 @@ export function TSRXPlugin(config) {
 				}
 				if (context == null) {
 					this.#checkStatementStart();
-				} else if (!context.includes('label')) {
+				} else {
 					const kind = this.#blockScopedDeclarationKind();
 					if (kind !== null) {
-						// TypeScript's parser reads the declaration, and its checker reports
-						// it (`checkGrammarForDisallowedBlockScopedVariableStatement`).
-						this.#raiseCheckerError(
-							this.start,
-							TS_ERRORS.BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK(kind),
-						);
+						// TypeScript's parser reads the declaration. After a label, its
+						// binder reports TS1344 at the label (`checkStrictModeLabeledStatement`).
+						// Its checker reports TS1156, also after a label that is itself the
+						// body of an `if` or a loop (`iflabel`), but not after one in a list
+						// (`checkGrammarForDisallowedBlockScopedVariableStatement`).
+						if (context.includes('label')) {
+							this.#raiseCheckerError(
+								/** @type {number} */ (this.#labelStarts.at(-1)),
+								TS_ERRORS.LABEL_NOT_ALLOWED,
+							);
+						}
+						if (context !== 'label') {
+							this.#raiseCheckerError(
+								this.start,
+								TS_ERRORS.BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK(kind),
+							);
+						}
 						context = undefined;
 					}
 				}
@@ -13803,9 +13844,13 @@ export function TSRXPlugin(config) {
 			 */
 			parseMethod(isGenerator, isAsync, allowDirectSuper, inClassScope, method) {
 				// TypeScript reads `static constructor() {}` as a constructor, with
-				// TS1089 at `static`, where acorn reads a static method.
+				// TS1089 at `static`, where acorn reads a static method. Not an
+				// accessor or a generator, which it reads as a member named
+				// `constructor`, as `parseClassElement` does.
 				const static_constructor =
 					method?.static === true &&
+					method.kind === 'method' &&
+					!isGenerator &&
 					!method.computed &&
 					method.key.type === 'Identifier' &&
 					method.key.name === 'constructor';

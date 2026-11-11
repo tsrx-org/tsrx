@@ -734,6 +734,7 @@ const TYPESCRIPT_ERROR_CODES = [
 	'TS1316  Global module exports may only appear at top level.',
 	'TS1317  A parameter property cannot be declared using a rest parameter.',
 	'TS1341  Class constructor may not be an accessor.',
+	"TS1344  'A label is not allowed here.",
 	"TS1347  'use strict' directive cannot be used with non-simple parameter list.",
 	'TS1351  An identifier or keyword cannot immediately follow a numeric literal.',
 	"TS1354  'readonly' type modifier is only permitted on array and tuple literal types.",
