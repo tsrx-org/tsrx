@@ -1399,6 +1399,12 @@ function inject_vue_imports(program, transform_context) {
 }
 
 /**
+ * Import `name` as `local` from `source` unless a named value import of
+ * `source` already has it, in any declaration: an authored
+ * `import { Suspense } from 'vue'` can follow the keyed slot's `computed`
+ * import. Otherwise add it to the first named value import of `source`, or
+ * give it an import of its own.
+ *
  * @param {import('estree').Program} program
  * @param {string} source
  * @param {string} name
@@ -1412,20 +1418,23 @@ function ensure_named_import(program, source, name, local = name) {
 		if (statement.type !== 'ImportDeclaration' || statement.source?.value !== source) {
 			continue;
 		}
+		// A type-only import is erased from the build, and a namespace import
+		// takes no named specifiers: the helper gets an import of its own.
+		if (
+			statement.importKind === 'type' ||
+			statement.specifiers.some((specifier) => specifier.type === 'ImportNamespaceSpecifier')
+		) {
+			continue;
+		}
 
-		// Any declaration may already import it as a value, such as an authored
-		// `import { Suspense } from 'vue'` after the keyed slot's `computed`
-		// import. A type-only import is erased, so it doesn't count.
-		const has_specifier =
-			/** @type {{ importKind?: string }} */ (statement).importKind !== 'type' &&
-			statement.specifiers.some(
-				(specifier) =>
-					specifier.type === 'ImportSpecifier' &&
-					/** @type {{ importKind?: string }} */ (specifier).importKind !== 'type' &&
-					specifier.imported?.type === 'Identifier' &&
-					specifier.imported.name === name &&
-					specifier.local?.name === local,
-			);
+		const has_specifier = statement.specifiers.some(
+			(specifier) =>
+				specifier.type === 'ImportSpecifier' &&
+				specifier.importKind !== 'type' &&
+				specifier.imported?.type === 'Identifier' &&
+				specifier.imported.name === name &&
+				specifier.local?.name === local,
+		);
 
 		if (has_specifier) {
 			return;

@@ -771,6 +771,35 @@ describe('@tsrx/vue basic', () => {
 		}
 	});
 
+	it('imports Suspense on its own beside a type-only or namespace import of vue', () => {
+		for (const authored of [
+			"import type { Ref } from 'vue';",
+			"import * as Vue from 'vue';",
+			"import type { Ref } from 'vue';\nimport * as Vue from 'vue';",
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function Data() @{
+					<i />
+				}
+				function App() @{
+					@try {
+						<Data />
+					} @pending {
+						<p>{'loading'}</p>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual([
+				"import { Suspense } from 'vue';",
+			]);
+		}
+	});
+
 	it('leaves type parameters and type references in a keyed slot alone (#922)', () => {
 		const { code, errors } = compile(
 			`function List({ items }: { items: { id: string; label: string }[] }) @{
