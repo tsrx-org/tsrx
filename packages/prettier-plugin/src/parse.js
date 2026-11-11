@@ -116,9 +116,9 @@ function isAbstractInBlock(error, text) {
 	);
 }
 
-/** Modifiers, then a class `static` block's `static {`. */
+/** Modifiers, then a class `static` block's `static {`, with comments between them. */
 const regex_static_block_modifiers =
-	/^(?:(?:abstract|accessor|declare|override|private|protected|public|readonly)\s+)+static\s*\{/u;
+	/^(?:(?:abstract|accessor|declare|override|private|protected|public|readonly)(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)+static(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*\{/u;
 
 /**
  * Whether `error` is for decorators on a class `static` block (`@dec static

@@ -11686,9 +11686,13 @@ export function TSRXPlugin(config) {
 					method,
 				);
 				// TypeScript reads `static constructor() {}` as a constructor, with
-				// TS1089 at `static`, where acorn reads a static method.
+				// TS1089 at `static`, where acorn reads a static method. Not an
+				// accessor or a generator, which it reads as a member named
+				// `constructor`, as `parseClassElement` does.
 				const static_constructor =
 					method?.static === true &&
+					method.kind === 'method' &&
+					!isGenerator &&
 					!method.computed &&
 					method.key.type === 'Identifier' &&
 					method.key.name === 'constructor';

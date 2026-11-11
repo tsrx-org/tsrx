@@ -2368,6 +2368,16 @@ describe('parse errors', () => {
 		// Nor modifiers or decorators before a class `static` block (#885).
 		await expectFormat('class A { public static {} }', 'class A {\n  static {}\n}\n');
 		await expectFormat('class A { abstract static {} }', 'class A {\n  static {}\n}\n');
+		// With comments between them too, which Prettier keeps in the block.
+		for (const input of [
+			'class A { abstract /* c */ static {} }',
+			'class A { abstract static /* c */ {} }',
+			'class A { abstract /* a */ public static {} /* c */ }',
+		]) {
+			const output = await format(input);
+			expect(output, input).toBe(await prettier.format(input, { parser: 'typescript' }));
+			expect(await format(output), input).toBe(output);
+		}
 		await expectFormat(
 			'class A { @dec static { f(); } }',
 			'class A {\n  static {\n    f();\n  }\n}\n',
