@@ -660,6 +660,62 @@ function get_possible_element_siblings(node, direction, adjacent_only) {
 }
 
 /**
+ * Keep every argument of a `:not()`, since pruning one would change what it
+ * excludes. :not(...) contents should stay unscoped. Scoping them would achieve
+ * the opposite of what we want, because they are then _more_ likely to bleed
+ * out of the component. The exception is complex selectors with descendants,
+ * in which case we scope them all.
+ *
+ * @param {AST.CSS.PseudoClassSelector} selector
+ * @returns {boolean} whether an argument has a combinator
+ */
+function keep_not_arguments(selector) {
+	let has_combinator = false;
+
+	for (const complex_selector of selector.args?.children ?? []) {
+		walk(complex_selector, null, {
+			ComplexSelector(node, context) {
+				node.metadata.used = true;
+				context.next();
+			},
+		});
+
+		if (complex_selector.children.length > 1) {
+			// foo:not(bar foo) means that bar is an ancestor of foo (side note: ending with foo is the only way the selector make sense).
+			// We can't fully check if that actually matches with our current algorithm, so we just assume it does.
+			// The result may not match a real element, so the only drawback is the missing prune.
+			for (const relative_selector of truncate(complex_selector)) {
+				relative_selector.metadata.scoped = true;
+			}
+			has_combinator = true;
+		}
+	}
+
+	return has_combinator;
+}
+
+/**
+ * Treat the rest of a selector as matched when a sibling search cannot place
+ * the elements it would match. Each compound gets the scope hash unless it is
+ * global, and keeps its `:not()` arguments, as a match would give it, so the
+ * kept rule still only matches elements of this scope there.
+ *
+ * @param {AST.CSS.RelativeSelector[]} selectors
+ * @returns {void}
+ */
+function assume_match(selectors) {
+	for (const selector of selectors) {
+		if (!is_outer_global(selector)) selector.metadata.scoped = true;
+
+		for (const simple_selector of selector.selectors) {
+			if (simple_selector.type === 'PseudoClassSelector' && simple_selector.name === 'not') {
+				keep_not_arguments(simple_selector);
+			}
+		}
+	}
+}
+
+/**
  * @param {AST.CSS.RelativeSelector} relative_selector
  * @param {AST.CSS.RelativeSelector[]} rest_selectors
  * @param {AST.CSS.Rule} rule
@@ -703,11 +759,7 @@ function apply_combinator(relative_selector, rest_selectors, rule, node, directi
 
 			// Siblings the search cannot know may match the rest of the selector
 			let sibling_matched = uncertain;
-			if (uncertain) {
-				for (const selector of rest_selectors) {
-					if (!is_outer_global(selector)) selector.metadata.scoped = true;
-				}
-			}
+			if (uncertain) assume_match(rest_selectors);
 
 			for (const possible_sibling of siblings) {
 				if (!can_render_dynamic_content(possible_sibling)) {
@@ -727,7 +779,10 @@ function apply_combinator(relative_selector, rest_selectors, rule, node, directi
 				}
 				// Check whether the elements after the component match the rest
 				const after = get_possible_element_siblings(possible_sibling, FORWARD, adjacent_only);
-				if (after.uncertain) sibling_matched = true;
+				if (after.uncertain) {
+					sibling_matched = true;
+					assume_match(remaining);
+				}
 				for (const subsequent of after.siblings) {
 					if (apply_selector(remaining, rule, subsequent, direction)) {
 						sibling_matched = true;
@@ -1089,33 +1144,13 @@ function relative_selector_might_apply_to_node(relative_selector, rule, element,
 				// We came across a :global, everything beyond it is global and therefore a potential match
 				if (name === 'global' && selector.args === null) return true;
 
-				// :not(...) contents should stay unscoped. Scoping them would achieve the opposite of what we want,
-				// because they are then _more_ likely to bleed out of the component. The exception is complex selectors
-				// with descendants, in which case we scope them all.
 				if (name === 'not' && selector.args) {
-					for (const complex_selector of selector.args.children) {
-						walk(complex_selector, null, {
-							ComplexSelector(node, context) {
-								node.metadata.used = true;
-								context.next();
-							},
-						});
-						const relative = truncate(complex_selector);
-
-						if (complex_selector.children.length > 1) {
-							// foo:not(bar foo) means that bar is an ancestor of foo (side note: ending with foo is the only way the selector make sense).
-							// We can't fully check if that actually matches with our current algorithm, so we just assume it does.
-							// The result may not match a real element, so the only drawback is the missing prune.
-							for (const selector of relative) {
-								selector.metadata.scoped = true;
-							}
-
-							/** @type {AST.TSRXElementNode | null} */
-							let el = element;
-							while (el) {
-								el.metadata.scoped = true;
-								el = get_element_parent(el);
-							}
+					if (keep_not_arguments(selector)) {
+						/** @type {AST.TSRXElementNode | null} */
+						let el = element;
+						while (el) {
+							el.metadata.scoped = true;
+							el = get_element_parent(el);
 						}
 					}
 
