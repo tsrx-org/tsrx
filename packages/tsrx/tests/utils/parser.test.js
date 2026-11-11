@@ -12514,6 +12514,60 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it('holds no errors after an abandoned parse that held some (#1214)', () => {
+		// acorn-typescript tries `async <U>(…)` and `f<U>(…)` as a generic arrow
+		// function first, and abandons the attempt. The errors held in a parameter
+		// list or a `static` block in it, around a reserved arrow function, aren't
+		// held anymore after it: a strict parse throws the first, and a collecting
+		// one records the errors after it too.
+		const parameter_property = code_of(TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR);
+		const reserved = code_of(TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER);
+		const modifiers = code_of(TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE);
+		const after = '\nconst k = (public x: number) => x;';
+		/** @type {Array<[source: string, errors: Array<[code: string | undefined, at: string]>]>} */
+		const cases = [
+			[
+				`const a = async <U>(function (public p, q = <T>(y: T) => y) {});${after}`,
+				[
+					[parameter_property, 'public p'],
+					[reserved, 'T>'],
+					[parameter_property, 'public x'],
+				],
+			],
+			[
+				`const a = f<U>(class { public static { const g = <T>(y: T) => y; } });${after}`,
+				[
+					[modifiers, 'public static'],
+					[reserved, 'T>'],
+					[parameter_property, 'public x'],
+				],
+			],
+		];
+		for (const [source, expected] of cases) {
+			const [code, at] = expected[0];
+			expect(() => parseModule(source, 'a.mts'), source).toThrow(
+				expect.objectContaining({ code, pos: source.indexOf(at) }),
+			);
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'a.mts', { collect: true, errors });
+			expect(
+				errors.map(({ code, pos }) => [code, pos]),
+				source,
+			).toEqual(expected.map(([code, at]) => [code, source.indexOf(at)]));
+		}
+		// A collecting parse recorded none of them here.
+		const source = `const a = async <U,>(b = function (public p, q = <T>(y: T) => y) {}, 1);${after}`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		parseModule(source, 'a.mts', { collect: true, errors });
+		expect(errors.map(({ code, pos }) => [code, pos])).toEqual([
+			[parameter_property, source.indexOf('public p')],
+			[reserved, source.indexOf('T>')],
+			[parameter_property, source.indexOf('public x')],
+		]);
+	});
+
 	it('keeps the held errors that come before a syntax error, and drops the later ones (#1214)', () => {
 		// A strict parse throws what it threw before holding them, and a collecting
 		// one records them before it throws the syntax error. A method's TS2369
