@@ -10855,6 +10855,12 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			errors: [[TS_ERRORS.MODIFIER_ON_CONSTRUCTOR, 'static']],
 			throws: [TS_ERRORS.MODIFIER_ON_CONSTRUCTOR, '2:1'],
 		},
+		{
+			// A static accessor named `constructor` is a member, which doesn't.
+			source: 'class A {\n\tstatic set constructor(public v) {}\n}',
+			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public']],
+			throws: [TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '2:24'],
+		},
 		// `declare` directly in an ambient namespace or module (#961).
 		{
 			source: 'declare namespace N {\n\tdeclare class A {}\n}',
@@ -12397,6 +12403,29 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 
 		expect(outcomes).toEqual(
 			sources.flatMap(() => collect_modes.map(() => ({ ok: true, errors: [] }))),
+		);
+	});
+
+	it('reads a static accessor or generator named `constructor` as a member', async () => {
+		// TypeScript reads these as members, not constructors, so not TS1089: its
+		// checker reports TS1341 or TS1368 at the name, from the emitted code.
+		const sources = [
+			'class A {\n\tstatic get constructor() {\n\t\treturn 1;\n\t}\n}',
+			'class A {\n\tstatic set constructor(v) {}\n}',
+			'class A {\n\tstatic *constructor() {}\n}',
+			'class A {\n\tstatic async *constructor() {}\n}',
+		];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) =>
+				[undefined, ...collect_modes].map((options) => ({ source, options })),
+			),
+		);
+
+		expect(outcomes).toEqual(
+			sources.flatMap(() => [
+				{ ok: true, errors: undefined },
+				...collect_modes.map(() => ({ ok: true, errors: [] })),
+			]),
 		);
 	});
 
