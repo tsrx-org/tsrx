@@ -5419,7 +5419,7 @@ export function TSRXPlugin(config) {
 					list &&
 					(kind === 'signature' ||
 						(this.isAmbientContext && (kind === 'function' || kind === 'method')));
-				if (list && signature_like) this.#hold.held = list.held;
+				if (list && signature_like) this.#setHeld(list.held);
 				/** @type {AST.Pattern[]} */
 				let params;
 				/** @type {CompileError[] | null} */

@@ -12704,6 +12704,22 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			[reserved, source.indexOf('T>')],
 			[parameter_property, source.indexOf('public x')],
 		]);
+		// Nor those of a signature's parameter list, which are held from its
+		// start (#964).
+		const initializer = code_of(TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER);
+		for (const signature of [
+			'x as (q = <T>(y: T) => y) => void',
+			'x as { m(q = <T>(y: T) => y): void }',
+			'(z: (q = <T>(y: T) => y) => void) => 1',
+		]) {
+			const source = `const a = async <U,>(b = (${signature}), 1);${after}`;
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'a.mts', { collect: true, errors });
+			const recorded = errors.map(({ code, pos }) => [code, pos]);
+			expect(recorded, source).toContainEqual([initializer, source.indexOf('q =')]);
+			expect(recorded, source).toContainEqual([parameter_property, source.indexOf('public x')]);
+		}
 	});
 
 	it('keeps the held errors that come before a syntax error, and drops the later ones (#1214)', () => {
