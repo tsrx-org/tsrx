@@ -697,8 +697,10 @@ function keep_not_arguments(selector) {
 /**
  * Treat the rest of a selector as matched when a sibling search cannot place
  * the elements it would match. Each compound gets the scope hash unless it is
- * global, and keeps its `:not()` arguments, as a match would give it, so the
- * kept rule still only matches elements of this scope there.
+ * global, as a match would give it, so the kept rule still only matches
+ * elements of this scope there. It keeps its `:not()` arguments, and every
+ * argument of its `:is()`, `:where()`, and `:has()`, since any of them may
+ * match the elements that cannot be placed; those are scoped in turn.
  *
  * @param {AST.CSS.RelativeSelector[]} selectors
  * @returns {void}
@@ -708,8 +710,19 @@ function assume_match(selectors) {
 		if (!is_outer_global(selector)) selector.metadata.scoped = true;
 
 		for (const simple_selector of selector.selectors) {
-			if (simple_selector.type === 'PseudoClassSelector' && simple_selector.name === 'not') {
+			if (simple_selector.type !== 'PseudoClassSelector' || !simple_selector.args) continue;
+
+			if (simple_selector.name === 'not') {
 				keep_not_arguments(simple_selector);
+			} else if (
+				simple_selector.name === 'is' ||
+				simple_selector.name === 'where' ||
+				simple_selector.name === 'has'
+			) {
+				for (const complex_selector of simple_selector.args.children) {
+					complex_selector.metadata.used = true;
+					assume_match(truncate(complex_selector));
+				}
 			}
 		}
 	}
