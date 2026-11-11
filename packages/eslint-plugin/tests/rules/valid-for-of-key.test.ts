@@ -107,6 +107,20 @@ ruleTester.run('valid-for-of-key', rule, {
 				}
 			`,
 		},
+		// Valid: @for key with a parameter property whose default is the loop variable
+		{
+			code: `
+				interface Id {}
+				function App() {
+					const items = [{id: 1}, {id: 2}];
+					return <>
+						@for (const item of items; key new (class { constructor(public id: Id = item.id) {} })().id) {
+							<div>{item.id}</div>
+						}
+					</>;
+				}
+			`,
+		},
 	],
 	invalid: [
 		// Invalid: key uses undefined variable
@@ -338,6 +352,20 @@ ruleTester.run('valid-for-of-key', rule, {
 					let t;
 					return <>
 						@for (const item of items; key await missing) {
+							<div>{item.id}</div>
+						}
+					</>;
+				}
+			`,
+			errors: [{ messageId: 'undefinedVariable', data: { name: 'missing' } }],
+		},
+		// Invalid: undefined variable in a parameter property's default
+		{
+			code: `
+				function App() {
+					const items = [{id: 1}, {id: 2}];
+					return <>
+						@for (const item of items; key new (class { constructor(public id = missing) {} })().id) {
 							<div>{item.id}</div>
 						}
 					</>;
