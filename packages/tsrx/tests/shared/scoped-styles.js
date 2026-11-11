@@ -803,6 +803,50 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('keeps every :is(), :where(), and :has() argument in a chain kept without a match', () => {
+			const in_expression = `{show && <b ${attr}="b" />}`;
+			/** @type {Array<[string, string, (hash: string) => string]>} */
+			const cases = [
+				// Matched normally, this compound keeps `> .z` as well
+				[
+					'.y:has(> .z) + .b',
+					`<i ${attr}="y"><span ${attr}="z" /></i>${in_expression}`,
+					(hash) => `.y.${hash}:has(> .z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					'.y:has(.z) + .b',
+					`<i ${attr}="y" />${in_expression}`,
+					(hash) => `.y.${hash}:has(.z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					'.y:is(.z, .q) + .b',
+					`<i ${attr}="y z" />${in_expression}`,
+					(hash) => `.y.${hash}:is(.z:where(.${hash}), .q:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					':global(.x) + .y:where(.z) + .b',
+					`{show && <Comp />}<b ${attr}="b" />`,
+					(hash) => `.x + .y.${hash}:where(.z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+			];
+
+			for (const [rule, body, expected] of cases) {
+				const { css, cssHash } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>${rule} { color: red; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				// An empty `:has()` is invalid, so the browser drops the whole rule
+				expect(css, rule).not.toContain('(unused)');
+				expect(css, rule).toContain(expected(hashes_of(cssHash)[0]));
+			}
+		});
+
 		it('prunes sibling rules when another element or a parent boundary separates the siblings', () => {
 			const a = `<i ${attr}="a" />`;
 			const b = `<b ${attr}="b">{'b'}</b>`;
