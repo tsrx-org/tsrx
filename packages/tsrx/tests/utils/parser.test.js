@@ -11101,6 +11101,38 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: first,
 			match: { body: { type: 'VariableDeclaration', kind: 'using' } },
 		},
+		// After a label, its binder reports TS1344 at the label, and its checker
+		// TS1156 only when the label is the body of an `if` or a loop.
+		{
+			source: 'l: let x = 1;',
+			errors: [[TS_ERRORS.LABEL_NOT_ALLOWED, 'l:']],
+			throws: [TS_ERRORS.LABEL_NOT_ALLOWED, '1:0'],
+			pick: first,
+			match: { type: 'LabeledStatement', body: { type: 'VariableDeclaration', kind: 'let' } },
+		},
+		{
+			source: 'if (a) l: m: const [x] = b;',
+			errors: [
+				[TS_ERRORS.LABEL_NOT_ALLOWED, 'm:'],
+				[TS_ERRORS.BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK, 'const'],
+			],
+			throws: [TS_ERRORS.LABEL_NOT_ALLOWED, '1:10'],
+			pick: first,
+			match: {
+				consequent: {
+					type: 'LabeledStatement',
+					body: { type: 'LabeledStatement', body: { type: 'VariableDeclaration', kind: 'const' } },
+				},
+			},
+		},
+		{
+			source: 'for (;;) l: using x = f();',
+			errors: [
+				[TS_ERRORS.LABEL_NOT_ALLOWED, 'l:'],
+				[TS_ERRORS.BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK, 'using'],
+			],
+			throws: [TS_ERRORS.LABEL_NOT_ALLOWED, '1:9'],
+		},
 		// A rest element that isn't last in an arrow function's parameters is
 		// TS2462 at its target, as in a binding pattern, and TypeScript reports
 		// each one.

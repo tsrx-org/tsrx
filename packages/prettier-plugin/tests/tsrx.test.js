@@ -2396,6 +2396,9 @@ describe('parse errors', () => {
 		);
 		// Prettier's typescript parser formats `let` as a name the same way.
 		await expectFormat('var let = 1;\nclass let {}', 'var let = 1;\nclass let {}\n');
+		// And a label before a `let`, `const` or `using` declaration (TS1344).
+		await expectFormat('l: let x = 1;', 'l: let x = 1;\n');
+		await expectFormat('if (a) l: const [x] = b;', 'if (a) l: const [x] = b;\n');
 		// And a parameter after an arrow function's rest parameter.
 		await expectFormat('const f = (...a, b) => [a, b];', 'const f = (...a, b) => [a, b];\n');
 		await expectFormat(
