@@ -594,6 +594,9 @@ export const TS_ERRORS = {
 		'TS1156',
 		(kind) => `'${kind}' declarations can only be declared inside a block.`,
 	),
+	// A label before a `let`, `const` or `using` declaration. TypeScript's
+	// message starts with a stray quote.
+	LABEL_NOT_ALLOWED: { code: 'TS1344', message: "'A label is not allowed here." },
 	VARIABLE_DECLARATION_NOT_ALLOWED: {
 		code: 'TS1440',
 		message: 'Variable declaration not allowed at this location.',

@@ -10990,6 +10990,12 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			errors: [[TS_ERRORS.MODIFIER_ON_CONSTRUCTOR, 'static']],
 			throws: [TS_ERRORS.MODIFIER_ON_CONSTRUCTOR, '2:1'],
 		},
+		{
+			// A static accessor named `constructor` is a member, which doesn't.
+			source: 'class A {\n\tstatic set constructor(public v) {}\n}',
+			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public']],
+			throws: [TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '2:24'],
+		},
 		// `declare` directly in an ambient namespace or module (#961).
 		{
 			source: 'declare namespace N {\n\tdeclare class A {}\n}',
@@ -11232,6 +11238,38 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK, '1:9'],
 			pick: first,
 			match: { body: { type: 'VariableDeclaration', kind: 'using' } },
+		},
+		// After a label, its binder reports TS1344 at the label, and its checker
+		// TS1156 only when the label is the body of an `if` or a loop.
+		{
+			source: 'l: let x = 1;',
+			errors: [[TS_ERRORS.LABEL_NOT_ALLOWED, 'l:']],
+			throws: [TS_ERRORS.LABEL_NOT_ALLOWED, '1:0'],
+			pick: first,
+			match: { type: 'LabeledStatement', body: { type: 'VariableDeclaration', kind: 'let' } },
+		},
+		{
+			source: 'if (a) l: m: const [x] = b;',
+			errors: [
+				[TS_ERRORS.LABEL_NOT_ALLOWED, 'm:'],
+				[TS_ERRORS.BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK, 'const'],
+			],
+			throws: [TS_ERRORS.LABEL_NOT_ALLOWED, '1:10'],
+			pick: first,
+			match: {
+				consequent: {
+					type: 'LabeledStatement',
+					body: { type: 'LabeledStatement', body: { type: 'VariableDeclaration', kind: 'const' } },
+				},
+			},
+		},
+		{
+			source: 'for (;;) l: using x = f();',
+			errors: [
+				[TS_ERRORS.LABEL_NOT_ALLOWED, 'l:'],
+				[TS_ERRORS.BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK, 'using'],
+			],
+			throws: [TS_ERRORS.LABEL_NOT_ALLOWED, '1:9'],
 		},
 		// A rest element that isn't last in an arrow function's parameters is
 		// TS2462 at its target, as in a binding pattern, and TypeScript reports
@@ -12600,6 +12638,60 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it('holds no errors after an abandoned parse that held some (#1214)', () => {
+		// acorn-typescript tries `async <U>(…)` and `f<U>(…)` as a generic arrow
+		// function first, and abandons the attempt. The errors held in a parameter
+		// list or a `static` block in it, around a reserved arrow function, aren't
+		// held anymore after it: a strict parse throws the first, and a collecting
+		// one records the errors after it too.
+		const parameter_property = code_of(TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR);
+		const reserved = code_of(TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER);
+		const modifiers = code_of(TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE);
+		const after = '\nconst k = (public x: number) => x;';
+		/** @type {Array<[source: string, errors: Array<[code: string | undefined, at: string]>]>} */
+		const cases = [
+			[
+				`const a = async <U>(function (public p, q = <T>(y: T) => y) {});${after}`,
+				[
+					[parameter_property, 'public p'],
+					[reserved, 'T>'],
+					[parameter_property, 'public x'],
+				],
+			],
+			[
+				`const a = f<U>(class { public static { const g = <T>(y: T) => y; } });${after}`,
+				[
+					[modifiers, 'public static'],
+					[reserved, 'T>'],
+					[parameter_property, 'public x'],
+				],
+			],
+		];
+		for (const [source, expected] of cases) {
+			const [code, at] = expected[0];
+			expect(() => parseModule(source, 'a.mts'), source).toThrow(
+				expect.objectContaining({ code, pos: source.indexOf(at) }),
+			);
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'a.mts', { collect: true, errors });
+			expect(
+				errors.map(({ code, pos }) => [code, pos]),
+				source,
+			).toEqual(expected.map(([code, at]) => [code, source.indexOf(at)]));
+		}
+		// A collecting parse recorded none of them here.
+		const source = `const a = async <U,>(b = function (public p, q = <T>(y: T) => y) {}, 1);${after}`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		parseModule(source, 'a.mts', { collect: true, errors });
+		expect(errors.map(({ code, pos }) => [code, pos])).toEqual([
+			[parameter_property, source.indexOf('public p')],
+			[reserved, source.indexOf('T>')],
+			[parameter_property, source.indexOf('public x')],
+		]);
+	});
+
 	it('keeps the held errors that come before a syntax error, and drops the later ones (#1214)', () => {
 		// A strict parse throws what it threw before holding them, and a collecting
 		// one records them before it throws the syntax error. A method's TS2369
@@ -13105,6 +13197,29 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		expect(outcome.errors).toEqual([
 			{ code: TS_ERRORS.READONLY_TYPE_MODIFIER.code, pos: 9, end: 17 },
 		]);
+	});
+
+	it('reads a static accessor or generator named `constructor` as a member', async () => {
+		// TypeScript reads these as members, not constructors, so not TS1089: its
+		// checker reports TS1341 or TS1368 at the name, from the emitted code.
+		const sources = [
+			'class A {\n\tstatic get constructor() {\n\t\treturn 1;\n\t}\n}',
+			'class A {\n\tstatic set constructor(v) {}\n}',
+			'class A {\n\tstatic *constructor() {}\n}',
+			'class A {\n\tstatic async *constructor() {}\n}',
+		];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) =>
+				[undefined, ...collect_modes].map((options) => ({ source, options })),
+			),
+		);
+
+		expect(outcomes).toEqual(
+			sources.flatMap(() => [
+				{ ok: true, errors: undefined },
+				...collect_modes.map(() => ({ ok: true, errors: [] })),
+			]),
+		);
 	});
 
 	it('records an empty declaration list with no width, right after its keyword', async () => {

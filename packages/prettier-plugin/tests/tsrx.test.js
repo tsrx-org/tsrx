@@ -2373,6 +2373,16 @@ describe('parse errors', () => {
 		// Nor modifiers or decorators before a class `static` block (#885).
 		await expectFormat('class A { public static {} }', 'class A {\n  static {}\n}\n');
 		await expectFormat('class A { abstract static {} }', 'class A {\n  static {}\n}\n');
+		// With comments between them too, which Prettier keeps in the block.
+		for (const input of [
+			'class A { abstract /* c */ static {} }',
+			'class A { abstract static /* c */ {} }',
+			'class A { abstract /* a */ public static {} /* c */ }',
+		]) {
+			const output = await format(input);
+			expect(output, input).toBe(await prettier.format(input, { parser: 'typescript' }));
+			expect(await format(output), input).toBe(output);
+		}
 		await expectFormat(
 			'class A { @dec static { f(); } }',
 			'class A {\n  static {\n    f();\n  }\n}\n',
@@ -2401,6 +2411,9 @@ describe('parse errors', () => {
 		);
 		// Prettier's typescript parser formats `let` as a name the same way.
 		await expectFormat('var let = 1;\nclass let {}', 'var let = 1;\nclass let {}\n');
+		// And a label before a `let`, `const` or `using` declaration (TS1344).
+		await expectFormat('l: let x = 1;', 'l: let x = 1;\n');
+		await expectFormat('if (a) l: const [x] = b;', 'if (a) l: const [x] = b;\n');
 		// And a parameter after an arrow function's rest parameter.
 		await expectFormat('const f = (...a, b) => [a, b];', 'const f = (...a, b) => [a, b];\n');
 		await expectFormat(
