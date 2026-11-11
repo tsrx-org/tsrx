@@ -1516,6 +1516,9 @@ export function TSRXPlugin(config) {
 			// a statement that isn't in a list (see `#inStatementList`).
 			/** @type {string | null} */
 			#statementContext = null;
+			// Where the labels around the statement being read start, innermost last.
+			/** @type {number[]} */
+			#labelStarts = [];
 
 			/**
 			 * @type {Parse.Parser['finishNode']}
@@ -12463,6 +12466,20 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Records where the label starts, for the statement it labels (see
+			 * `#parseStatement`).
+			 * @type {Parse.Parser['parseLabeledStatement']}
+			 */
+			parseLabeledStatement(node, maybeName, expr, context) {
+				this.#labelStarts.push(/** @type {number} */ (expr.start));
+				try {
+					return super.parseLabeledStatement(node, maybeName, expr, context);
+				} finally {
+					this.#labelStarts.pop();
+				}
+			}
+
+			/**
 			 * @type {Parse.Parser['parseStatement']}
 			 */
 			#parseStatement(context, topLevel, exports) {
@@ -12477,15 +12494,26 @@ export function TSRXPlugin(config) {
 				}
 				if (context == null) {
 					this.#checkStatementStart();
-				} else if (!context.includes('label')) {
+				} else {
 					const kind = this.#blockScopedDeclarationKind();
 					if (kind !== null) {
-						// TypeScript's parser reads the declaration, and its checker reports
-						// it (`checkGrammarForDisallowedBlockScopedVariableStatement`).
-						this.#raiseCheckerError(
-							this.start,
-							TS_ERRORS.BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK(kind),
-						);
+						// TypeScript's parser reads the declaration. After a label, its
+						// binder reports TS1344 at the label (`checkStrictModeLabeledStatement`).
+						// Its checker reports TS1156, also after a label that is itself the
+						// body of an `if` or a loop (`iflabel`), but not after one in a list
+						// (`checkGrammarForDisallowedBlockScopedVariableStatement`).
+						if (context.includes('label')) {
+							this.#raiseCheckerError(
+								/** @type {number} */ (this.#labelStarts.at(-1)),
+								TS_ERRORS.LABEL_NOT_ALLOWED,
+							);
+						}
+						if (context !== 'label') {
+							this.#raiseCheckerError(
+								this.start,
+								TS_ERRORS.BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK(kind),
+							);
+						}
 						context = undefined;
 					}
 				}
@@ -13177,9 +13205,13 @@ export function TSRXPlugin(config) {
 			 */
 			parseMethod(isGenerator, isAsync, allowDirectSuper, inClassScope, method) {
 				// TypeScript reads `static constructor() {}` as a constructor, with
-				// TS1089 at `static`, where acorn reads a static method.
+				// TS1089 at `static`, where acorn reads a static method. Not an
+				// accessor or a generator, which it reads as a member named
+				// `constructor`, as `parseClassElement` does.
 				const static_constructor =
 					method?.static === true &&
+					method.kind === 'method' &&
+					!isGenerator &&
 					!method.computed &&
 					method.key.type === 'Identifier' &&
 					method.key.name === 'constructor';
