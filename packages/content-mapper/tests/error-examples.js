@@ -809,6 +809,10 @@ export default 2;`,
 		source: `if (ready) let x = 1;`,
 	},
 	{
+		error: TS_ERRORS.LABEL_NOT_ALLOWED,
+		source: `outer: let x = 1;`,
+	},
+	{
 		error: TS_ERRORS.MODIFIER_ON_CONSTRUCTOR,
 		source: `class A {
 	static constructor() {}
