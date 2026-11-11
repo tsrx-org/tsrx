@@ -96,6 +96,7 @@ export function prepare_style_scopes(program, ctx) {
 				? {
 						props: ctx.platform.jsx.hostSpreadClassProps,
 						kind: ctx.platform.jsx.classValue ?? null,
+						printed_apart: ctx.platform.jsx.classPropsPrintedApart === true,
 					}
 				: null,
 		// The type-only print keeps the template literal, which types as a string.

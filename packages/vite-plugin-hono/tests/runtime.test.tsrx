@@ -236,6 +236,33 @@ function ReactiveSpreadClassApp({ bags }: { bags: SpreadBag[] }) @{
 	</>
 }
 
+// Hono DOM applies the last of several class attributes.
+function NativeClassAttrs() @{
+	<>
+		<span data-probe="native-class-class-name" class="a" className="b" />
+		<span data-probe="native-class-name-class" className="a" class="b" />
+	</>
+}
+
+function ScopedClassAttrs() @{
+	<>
+		<style>
+			span {
+				color: rgb(0, 128, 0);
+			}
+		</style>
+		<span data-probe="class-class-name" class="a" className="b" />
+		<span data-probe="class-name-class" className="a" class="b" />
+	</>
+}
+
+function ClassAttrsApp() @{
+	<>
+		<NativeClassAttrs />
+		<ScopedClassAttrs />
+	</>
+}
+
 // Hono types `class` as a string, but untyped code can pass any of these.
 type ClassValue = string | number | boolean | null | undefined;
 
@@ -581,4 +608,12 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			expect(classes('class-name-after')).toEqual(['last', SCOPE_HASH]);
 		});
 	}
+
+	it('stamps the class attribute Hono DOM applies when an element has several', () => {
+		render(<ClassAttrsApp />, container);
+
+		for (const probe of ['class-class-name', 'class-name-class']) {
+			expect(class_list(probe)).toEqual([...class_list(`native-${probe}`), SCOPE_HASH]);
+		}
+	});
 });

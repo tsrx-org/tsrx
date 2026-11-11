@@ -80,6 +80,10 @@ function create_hono_platform(mode) {
 			rewriteClassAttr: false,
 			// Hono renders `className` as `class`.
 			hostSpreadClassProps: ['class', 'className'],
+			// Hono's server renderer prints `class` and `className` as two `class`
+			// attributes, and a browser reads the first; the DOM renderer applies
+			// the last.
+			classPropsPrintedApart: !is_dom,
 			// Hono's server renderer prints a boolean class as text; the DOM
 			// renderer leaves it out.
 			classValue: is_dom ? 'text' : 'text-both',

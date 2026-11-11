@@ -211,6 +211,77 @@ describe('@tsrx/vite-plugin-hono', () => {
 		}
 	});
 
+	// Hono prints `class` and `className` as two `class` attributes, and a
+	// browser reads the first; of two of one name, the last one is printed.
+	it('stamps the class attribute Hono SSR applies when an element has several', async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-'),
+		);
+		const elements = [
+			'<span class="a" className="b" />',
+			'<span className="a" class="b" />',
+			'<span class="a" {...bag} className="b" />',
+			'<span class="a" {...bag} class="b" />',
+		];
+
+		try {
+			const source_id = path.join(directory, 'App.tsrx');
+			const output_id = path.join(directory, 'App.js');
+			const transformed = await plugin.transform.call(
+				context,
+				elements
+					.map(
+						(element, index) => `export function Native${index}({ bag }) @{
+							${element}
+						}
+
+						export function Scoped${index}({ bag }) @{
+							<>
+								<style>
+									span {
+										color: red;
+									}
+								</style>
+								${element}
+							</>
+						}`,
+					)
+					.join('\n'),
+				source_id,
+			);
+			await writeFile(output_id, transformed.code.replace(/^import ".*\?tsrx-css.*";$/m, ''));
+
+			const [components, { jsx }] = await Promise.all([
+				import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+				import('hono/jsx'),
+			]);
+			/**
+			 * The classes of the first `class` attribute, which a browser reads.
+			 * @param {unknown} component
+			 * @param {unknown} bag
+			 */
+			const classes = async (component, bag) => {
+				const html = String(
+					await jsx(/** @type {any} */ (component), { bag: /** @type {any} */ (bag) }).toString(),
+				);
+				return (/class="([^"]*)"/.exec(html)?.[1] ?? '').split(' ').filter(Boolean);
+			};
+
+			for (const index of elements.keys()) {
+				for (const bag of [{}, { class: 'x' }]) {
+					expect(await classes(components[`Scoped${index}`], bag)).toEqual([
+						...(await classes(components[`Native${index}`], bag)),
+						expect.stringMatching(/^tsrx-[0-9a-f]+$/),
+					]);
+				}
+			}
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it('renders awaits inside @for, @empty, @switch, and @if bodies with Hono SSR (#145)', async () => {
 		const plugin = tsrxHono();
 		const context = create_context();
