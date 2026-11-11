@@ -486,10 +486,23 @@ export function add_scope_classes(
 	const attrs = element.openingElement.attributes ?? [];
 	// Of several class attributes, a runtime that reads a spread's class
 	// itself (`spread_class`) applies the last one written, so that one gets
-	// the scope classes. Vue's `mergeProps` joins them all, so the first does.
+	// the scope classes. One that prints `class` and `className` apart
+	// (Hono's server) applies the last one named like the first, which a
+	// browser reads. Vue's `mergeProps` joins them all, so the first does.
 	let index = -1;
+	/** @type {string | null} */
+	let first_name = null;
 	for (let i = 0; i < attrs.length; i++) {
-		if (is_class_attribute(attrs[i]) && (index === -1 || spread_class)) index = i;
+		const attr = attrs[i];
+		if (!is_class_attribute(attr)) continue;
+		const attr_name = /** @type {ESTreeJSX.JSXIdentifier} */ (attr.name).name;
+		first_name ??= attr_name;
+		if (
+			index === -1 ||
+			(spread_class && (!spread_class.printed_apart || attr_name === first_name))
+		) {
+			index = i;
+		}
 	}
 	const existing = index === -1 ? undefined : /** @type {ESTreeJSX.JSXAttribute} */ (attrs[index]);
 	const metadata = element.metadata || (element.metadata = { path: [] });

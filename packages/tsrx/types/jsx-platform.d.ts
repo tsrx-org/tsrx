@@ -461,6 +461,15 @@ export interface JsxPlatform {
 		 */
 		hostSpreadClassProps?: ReadonlyArray<'class' | 'className'>;
 		/**
+		 * Whether the runtime prints a host element's `class` and `className` as
+		 * two `class` attributes, as Hono's server renderer does. A browser reads
+		 * the first, so of several class attributes beside scoped CSS classes,
+		 * the last one named like the first gets the scope classes. Otherwise,
+		 * with `hostSpreadClassProps`, the last one written gets them, as the
+		 * runtime applies it.
+		 */
+		classPropsPrintedApart?: boolean;
+		/**
 		 * How the runtime renders a host element's class value. With it, a class
 		 * attribute beside scoped CSS classes whose value may not be a string
 		 * joins them through `join_scope_class` from `imports.refProp`, and a

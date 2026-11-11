@@ -1679,12 +1679,14 @@ export type ScopeClassJoin = 'text' | 'text-true' | 'text-both' | 'list' | null;
 
 /**
  * How a scope pre-pass keeps the class a host spread passes an element: the
- * platform's `jsx.hostSpreadClassProps`, and its `jsx.classValue` for how the
- * runtime renders the spread's class.
+ * platform's `jsx.hostSpreadClassProps`, its `jsx.classValue` for how the
+ * runtime renders the spread's class, and its `jsx.classPropsPrintedApart`
+ * for which of several class attributes applies.
  */
 export interface SpreadClassOptions {
 	props: ReadonlyArray<'class' | 'className'>;
 	kind: ScopeClassJoin;
+	printed_apart: boolean;
 }
 
 /**
