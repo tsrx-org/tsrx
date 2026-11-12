@@ -76,6 +76,8 @@ function visit_render_output(node, { next, path, state }) {
 		state.function &&
 		!(state.function_body_is_code_block && state.function.body === node) &&
 		!state.inside_template_output &&
+		// The parser reported it as a second output (TSRX2011, TSRX2012).
+		!node.metadata?.misplaced_output &&
 		is_free_floating_template(node, path)
 	) {
 		validate_forgotten_statement_container(

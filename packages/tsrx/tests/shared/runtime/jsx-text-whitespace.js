@@ -12,10 +12,12 @@ import {
  * Shared runtime suite for JSX whitespace and characters in template text
  * across the JSX targets: each case renders what the same TSX renders.
  *
- * @param {{ nbsp: 'kept' | 'trimmed' }} options - What the target's JSX
- *   compiler does with a non-breaking space at the edge of a line
+ * @param {{ nbsp: 'kept' | 'trimmed', anchors?: 'empty comments' }} options -
+ *   `nbsp` is what the target's JSX compiler does with a non-breaking space at
+ *   the edge of a line, and `anchors` names a marker the target's runtime leaves
+ *   in the DOM, which isn't part of what these cases compare
  */
-export function runJsxTextWhitespaceRuntimeTests({ nbsp }) {
+export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors }) {
 	async function settle() {
 		const flush = globalThis.flush;
 		if (flush) {
@@ -27,7 +29,8 @@ export function runJsxTextWhitespaceRuntimeTests({ nbsp }) {
 	async function render(selector) {
 		await globalThis.render(JsxTextWhitespaceApp);
 		await settle();
-		return globalThis.container.querySelector(selector)?.innerHTML;
+		const html = globalThis.container.querySelector(selector)?.innerHTML;
+		return anchors === 'empty comments' ? html?.replaceAll('<!---->', '') : html;
 	}
 
 	/** @param {string} selector */
