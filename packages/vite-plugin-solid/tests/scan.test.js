@@ -26,14 +26,14 @@ export function App() @{
  * @param {import('../types/index.js').TsrxSolidOptions} [options]
  */
 function get_scan_plugin(options) {
-	const config = /** @type {any} */ (tsrxSolid(options)).config();
+	const config = /** @type {any} */ (tsrxSolid(options)).config.handler();
 
 	return config.optimizeDeps.rolldownOptions.plugins[0];
 }
 
 describe('@tsrx/vite-plugin-solid dep scan', () => {
 	it('registers the dep-scan plugin via the config hook', () => {
-		const config = /** @type {any} */ (tsrxSolid()).config();
+		const config = /** @type {any} */ (tsrxSolid()).config.handler();
 		const scan_plugins = config.optimizeDeps.rolldownOptions.plugins;
 
 		expect(scan_plugins).toHaveLength(1);
@@ -44,7 +44,7 @@ describe('@tsrx/vite-plugin-solid dep scan', () => {
 		// Rolldown's jsx transform defaults to react's automatic runtime, which
 		// would put an unresolvable `react/jsx-dev-runtime` import into a Solid
 		// project and fail the scan outright.
-		const config = /** @type {any} */ (tsrxSolid()).config();
+		const config = /** @type {any} */ (tsrxSolid()).config.handler();
 
 		expect(config.optimizeDeps.rolldownOptions.transform).toEqual({ jsx: 'preserve' });
 	});

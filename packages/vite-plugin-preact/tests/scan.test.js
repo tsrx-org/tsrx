@@ -24,12 +24,12 @@ export function App() @{
  * @param {ReturnType<typeof tsrxPreact>} plugin
  */
 function get_scan_plugin(plugin) {
-	return plugin.config().optimizeDeps.rolldownOptions.plugins[0];
+	return plugin.config.handler().optimizeDeps.rolldownOptions.plugins[0];
 }
 
 describe('@tsrx/vite-plugin-preact dep scan', () => {
 	it('registers the .tsrx extension and the dep-scan plugin via the config hook', () => {
-		const config = tsrxPreact().config();
+		const config = tsrxPreact().config.handler();
 
 		expect(config.optimizeDeps.extensions).toEqual(['.tsrx']);
 
@@ -44,11 +44,12 @@ describe('@tsrx/vite-plugin-preact dep scan', () => {
 		// Left at rolldown's react default, the scan emits an unresolvable
 		// `react/jsx-dev-runtime` import and fails outright — a preact project
 		// has no react to resolve it against.
-		expect(tsrxPreact().config().optimizeDeps.rolldownOptions.transform).toEqual({
+		expect(tsrxPreact().config.handler().optimizeDeps.rolldownOptions.transform).toEqual({
 			jsx: { importSource: 'preact' },
 		});
 		expect(
-			tsrxPreact({ jsxImportSource: 'react' }).config().optimizeDeps.rolldownOptions.transform,
+			tsrxPreact({ jsxImportSource: 'react' }).config.handler().optimizeDeps.rolldownOptions
+				.transform,
 		).toEqual({ jsx: { importSource: 'react' } });
 	});
 

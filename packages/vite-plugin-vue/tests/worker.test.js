@@ -99,6 +99,7 @@ describe('@tsrx/vite-plugin-vue web workers', () => {
 		const worker_module = { id: '/abs/path/Worker.tsrx.tsx?worker_file&type=module' };
 		const modules = await call_handle_hot_update(get_main_plugin(), {
 			file: '/abs/path/Worker.tsrx',
+			read: async () => worker('updated'),
 			modules: [],
 			server: {
 				moduleGraph: {

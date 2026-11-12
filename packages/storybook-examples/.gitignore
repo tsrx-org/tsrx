@@ -1,0 +1,4 @@
+*/dist/
+*.log
+.cache/
+test-results/
