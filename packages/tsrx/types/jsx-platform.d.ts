@@ -58,6 +58,9 @@ export interface JsxTransformContext {
 	needs_match: boolean;
 	needs_errored: boolean;
 	needs_loading: boolean;
+	needs_for_items: boolean;
+	needs_for_keyed_rows: boolean;
+	needs_for_memo: boolean;
 	needs_define_vapor_component: boolean;
 	needs_vapor_for: boolean;
 	needs_vapor_computed: boolean;
@@ -69,6 +72,12 @@ export interface JsxTransformContext {
 	/** Set once a helper is declared beside a component inside another function. */
 	has_local_helpers?: boolean;
 	available_bindings: Map<string, AST.Identifier>;
+	/**
+	 * Start offsets of the `await`s that `hooks.validateComponentAwait`
+	 * reported. The shared checks for an `await` the output can't hold skip
+	 * these, so each `await` is reported once.
+	 */
+	rejected_awaits: Set<number>;
 	/**
 	 * Whether each tag in the module can be read where a static hoisted out of
 	 * it runs, keyed by the start of the identifier the tag starts with.
@@ -93,6 +102,8 @@ export interface JsxTransformContext {
 	comments: AST.CommentWithLocation[] | undefined;
 	/** True when emitting a type-only virtual TSX module. */
 	typeOnly: boolean;
+	/** True when the module's directive prologue holds `"use server"`. */
+	uses_server_directive: boolean;
 	/**
 	 * True when generated nodes may be anchored on the directive keyword that
 	 * produced them. Off by default; the emitted code and its source map are
@@ -326,9 +337,14 @@ export interface JsxPlatformHooks {
 	 */
 	canHoistStaticNode?: (node: AST.TSRXJSXElement, ctx: JsxTransformContext) => boolean;
 	/**
-	 * Custom validation for a component body that uses top-level `await`.
-	 * Default: enforce `validation.requireUseServerForAwait`. Solid rejects
-	 * component-level await outright with a keyword-precise location.
+	 * Custom validation for a component body that uses top-level `await`,
+	 * called once for each such `await`, in source order.
+	 * `moduleUsesServerDirective` is whether the module's directive prologue
+	 * holds `"use server"`; it is `false` when
+	 * `validation.scanUseServerDirectiveForAwaitWithCustomValidator` is `false`.
+	 * Default: enforce `validation.requireUseServerForAwait` at the first one.
+	 * Solid rejects component-level await outright with a keyword-precise
+	 * location.
 	 */
 	validateComponentAwait?: (
 		awaitNode: AST.TSRXAwaitNode,
@@ -337,6 +353,18 @@ export interface JsxPlatformHooks {
 		moduleUsesServerDirective: boolean,
 		source: string,
 	) => void;
+	/**
+	 * The `yield`s in the final output that the target's own JSX compiler moves
+	 * out of their generator, into an effect, getter or callback, where they no
+	 * longer parse. Each is reported as TSRX2034. Only a `yield` whose nearest
+	 * enclosing function is a generator belongs here. A returned `yield*` that
+	 * delegates to a generator made from a generated closure stands for the
+	 * authored `yield`s inside it.
+	 */
+	findDeferredTemplateYields?: (
+		program: AST.Program,
+		ctx: JsxTransformContext,
+	) => AST.YieldExpression[];
 	/**
 	 * Factory-managed state extra fields. Returns a record merged into the
 	 * initial `transform_context`. Lets solid seed its `needs_show` /
@@ -433,7 +461,8 @@ export interface JsxPlatform {
 		 * use target-owned paths like `'@tsrx/react/runtime/iterable'` and
 		 * `'@tsrx/preact/runtime/iterable'`, which re-export from
 		 * `'@tsrx/core/runtime/iterable'`. Solid and Vue lower for-of via their
-		 * own iteration components and leave this unset.
+		 * own iteration components; Solid imports the helpers that give its
+		 * `<For>` an array from this module instead.
 		 */
 		forOfIterableHelper?: string;
 	};
@@ -536,7 +565,9 @@ export interface JsxPlatform {
 		 * natively, so it can use the cheaper array form.
 		 *
 		 * - `'merge-refs'`: emit `ref={mergeRefs(a, b, ...)}` and inject an
-		 *   import from `imports.mergeRefs`.
+		 *   import from `imports.mergeRefs`. A lone ref list written as an array
+		 *   literal, `ref={[a, b]}`, becomes `ref={mergeRefs([a, b])}`, because
+		 *   these runtimes take a single ref.
 		 * - `'array'`: emit `ref={[a, b, ...]}`. No runtime helper needed.
 		 * - `undefined`: no merging — duplicate `ref` attributes pass through
 		 *   unchanged. The platform's runtime is responsible.
@@ -553,6 +584,15 @@ export interface JsxPlatform {
 		 * function, where another element's cleanup would replace it. The
 		 * platform's `imports.mergeRefs` module must export `merge_element_refs`,
 		 * as `@tsrx/runtime/ref` does. The type-only print keeps `mergeRefs`.
+		 *
+		 * With `hostSpreadRefBinding: 'in-place'` as well, the spread
+		 * normalizers merge a bag's refs the same way, so a new bag carrying the
+		 * same refs gets the same `ref`. Core then imports
+		 * `copy_spread_props_sharing_refs` and
+		 * `copy_spread_props_for_ref_attr_sharing_refs` in place of
+		 * `copy_spread_props` and `copy_spread_props_for_ref_attr`, and the
+		 * platform's `imports.refProp` module must export them, as
+		 * `@tsrx/runtime/ref` does.
 		 */
 		shareMergedRefs?: boolean;
 		/**

@@ -199,6 +199,12 @@ export namespace Parse {
 			loose: boolean;
 			errors: CoreCompiler.CompileError[] | undefined;
 			filename: string | undefined;
+			/**
+			 * Collects the `[start, end]` of each line comment the tokenizer
+			 * recorded that template text reads as text, which the caller drops
+			 * after the parse.
+			 */
+			textComments?: Array<[number, number]>;
 		};
 		// The type has "latest" but it's converted to 1e8 at runtime
 		// and if (ecmaVersion >= 2015) { ecmaVersion -= 2009 }
@@ -587,6 +593,8 @@ export namespace Parse {
 		 * changes, undone when the parse is abandoned
 		 */
 		parseEffects?: {
+			/** Whether a speculative parse is being read */
+			readonly active: boolean;
 			/** Record `target`'s length, to restore if the current speculative parse is abandoned */
 			willAppend(target: unknown[]): void;
 			/** Record `target[key]`, to restore if the current speculative parse is abandoned */
@@ -1401,6 +1409,28 @@ export namespace Parse {
 		 * Whether the current token is a `<` (@sveltejs/acorn-typescript)
 		 */
 		tsMatchLeftRelational(): boolean;
+
+		/**
+		 * Read the `const` of a const assertion written `<const>x`, after its `<`,
+		 * or `null` when another type follows (@sveltejs/acorn-typescript)
+		 */
+		tsTryNextParseConstantContext(): AST.TypeNode | null;
+
+		/**
+		 * Read the next token, then a type (@sveltejs/acorn-typescript)
+		 */
+		tsNextThenParseType(): AST.TypeNode;
+
+		/**
+		 * acorn's own `parseMaybeAssign`, without the attempts that
+		 * acorn-typescript's makes at an expression that starts with `<`: an
+		 * element, then a generic arrow function (@sveltejs/acorn-typescript)
+		 */
+		parseMaybeAssignOrigin(
+			forInit?: ForInit,
+			refDestructuringErrors?: DestructuringErrors,
+			afterLeftParse?: (node: AST.Node, startPos: number, startLoc: AST.Position) => AST.Node,
+		): AST.Expression;
 
 		/**
 		 * Parse type arguments in an expression position, rescanning the `<` that was

@@ -1,10 +1,11 @@
-import { TS_ERRORS } from '@tsrx/core';
+import { TS_ERRORS, TSRX_ERRORS } from '@tsrx/core';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { defineVaporComponent } from 'vue-jsx-vapor';
 import {
 	runSharedAnonymousComponentTests,
 	runSharedClassFunctionComponentTests,
+	runSharedArrayRefTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -20,6 +21,7 @@ runSharedSourceMappingTests({
 	compile_to_volar_mappings,
 	name: 'vue',
 	rejectsComponentAwait: true,
+	rejectsTemplateYield: true,
 });
 
 describe('@tsrx/vue direct runtime imports', () => {
@@ -49,6 +51,7 @@ runSharedTsxExpressionTsrxTests({ compile, name: 'vue', classAttrName: 'class' }
 runSharedCompileTests({ compile, name: 'vue', classAttrName: 'class' });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'vue' });
 runSharedCodeBlockChildrenTests({ compile, name: 'vue' });
+runSharedArrayRefTests({ compile, compile_to_volar_mappings, name: 'vue', merge: 'mergeRefs' });
 runSharedClassFunctionComponentTests({ compile, compile_to_volar_mappings, name: 'vue' });
 runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'vue' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'vue' });
@@ -1624,8 +1627,10 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('<VaporFor in={items}>{(item) => <div>{item}</div>}</VaporFor>');
-		expect(code).toContain("import { defineVaporComponent, VaporFor } from 'vue-jsx-vapor';");
+		expect(code).toContain('<__VaporFor in={items}>{(item) => <div>{item}</div>}</__VaporFor>');
+		expect(code).toContain(
+			"import { defineVaporComponent, VaporFor as __VaporFor } from 'vue-jsx-vapor';",
+		);
 		expect(code).not.toContain('not yet supported in Vue TSRX');
 	});
 
@@ -1639,7 +1644,7 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('<VaporFor in={items} getKey={(item) => item.id}>');
+		expect(code).toContain('<__VaporFor in={items} getKey={(item) => item.id}>');
 		expect(code).toContain('item.value.text');
 	});
 
@@ -1672,7 +1677,7 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('<VaporFor in={items} getKey={(item, i) => item.id}>');
+		expect(code).toContain('<__VaporFor in={items} getKey={(item, i) => item.id}>');
 		expect(code).toContain('{(item, i) => <div>');
 		expect(code).toContain('{i.value}');
 		expect(code).toContain('item.value.text');
@@ -1688,7 +1693,7 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('<VaporFor in={items} getKey={(item, i) => i}>');
+		expect(code).toContain('<__VaporFor in={items} getKey={(item, i) => i}>');
 		expect(code).toContain("{(item, i) => <div>{'test'}</div>}");
 		expect(code).toContain("<div>{'test'}</div>");
 		expect(code).not.toContain('<div key={i}>');
@@ -1708,7 +1713,7 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('<VaporFor in={items} getKey={(item, i) => i}>');
+		expect(code).toContain('<__VaporFor in={items} getKey={(item, i) => i}>');
 		expect(code).toContain('{(item, i) => <>');
 		expect(code).toContain("<div>{'one'}</div>");
 		expect(code).toContain("<div>{'two'}</div>");
@@ -1726,7 +1731,7 @@ export function Card(${params}: any) @{
 		);
 
 		expect(errors).toEqual([]);
-		expect(code).toContain("<VaporFor in={rows} getKey={([first, second = 'none']) => first}>");
+		expect(code).toContain("<__VaporFor in={rows} getKey={([first, second = 'none']) => first}>");
 		expect(code).toMatch(
 			/const _\$_vapor_bindings_1 = _\$_vapor_computed\(\(\) => \{\s*const \[first, second = 'none'\] = __vapor_item\.value;\s*return \{ first, second \};/,
 		);
@@ -2041,6 +2046,154 @@ export function Card(${params}: any) @{
 		expect(code).toContain(generated);
 		expect(code).toContain('<__Suspense v-slots=');
 		expect(code).not.toContain('<Suspense');
+	});
+
+	it('keeps `import type { VaporFor }` type-only and imports the generated names as values', () => {
+		const { code } = compile(
+			`import type { VaporFor } from 'vue-jsx-vapor';
+
+			export function App({ rows }: { rows: string[] }) @{
+				<ul>@for (const row of rows; key row) { <li>{row}</li> }</ul>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.split('\n').filter((line) => line.includes("from 'vue-jsx-vapor'"))).toEqual([
+			"import { defineVaporComponent, VaporFor as __VaporFor } from 'vue-jsx-vapor';",
+			"import type { VaporFor } from 'vue-jsx-vapor';",
+		]);
+		expect(code).toContain('const App = defineVaporComponent(function App(');
+		expect(code).toContain('<__VaporFor in={rows} getKey={(row) => row}>');
+	});
+
+	describe('authored bindings named defineVaporComponent', () => {
+		const component = `export function App() @{
+	<p>{'text'}</p>
+}`;
+		const compile_modes = /** @type {const} */ ([
+			['collect', (/** @type {string} */ source) => compile(source, 'App.tsrx', { collect: true })],
+			['editor', (/** @type {string} */ source) => compile_to_volar_mappings(source, 'App.tsrx')],
+		]);
+
+		/** @param {string} code */
+		const vue_jsx_vapor_imports = (code) =>
+			code.split('\n').filter((line) => line.includes("from 'vue-jsx-vapor'"));
+
+		it.each([
+			[
+				'an import from another module',
+				`import { defineVaporComponent } from './helpers';\n\n${component}`,
+			],
+			[
+				'a module function',
+				`function defineVaporComponent<T>(component: T): T {\n\treturn component;\n}\n\n${component}`,
+			],
+			[
+				'a declared function',
+				`declare function defineVaporComponent<T>(component: T): T;\n\n${component}`,
+			],
+			[
+				'a module const',
+				`const defineVaporComponent = <T,>(component: T): T => component;\n\n${component}`,
+			],
+			[
+				'a namespace with a value',
+				`namespace defineVaporComponent {\n\texport const options = {};\n}\n\n${component}`,
+			],
+			[
+				'a var in a top-level block',
+				`if (Math.random() > 1) {\n\tvar defineVaporComponent = (component: unknown) => component;\n}\n\n${component}`,
+			],
+			[
+				'a setup local in a component',
+				`export function App() @{\n\tconst defineVaporComponent = 'mine';\n\t<p>{defineVaporComponent}</p>\n}`,
+			],
+		])('reports %s with TSRX2032', (_label, source) => {
+			const start = source.indexOf('defineVaporComponent');
+			const end = start + 'defineVaporComponent'.length;
+
+			expect(() => compile(source, 'App.tsrx')).toThrow(
+				expect.objectContaining({
+					code: 'TSRX2032',
+					message: TSRX_ERRORS.DEFINE_VAPOR_COMPONENT_BINDING.message,
+					pos: start,
+				}),
+			);
+			for (const [mode, compile_in_mode] of compile_modes) {
+				const { code, errors } = compile_in_mode(source);
+				expect(
+					errors.map((error) => [error.code, error.pos, error.end]),
+					mode,
+				).toEqual([['TSRX2032', start, end]]);
+				// After the error the compiler adds no import, which could declare
+				// the name a second time.
+				expect(vue_jsx_vapor_imports(code), mode).toEqual([]);
+			}
+		});
+
+		it.each([
+			[
+				'a namespace of types only',
+				`declare namespace defineVaporComponent {\n\ttype Options = { name: string };\n}`,
+				["import { defineVaporComponent } from 'vue-jsx-vapor';"],
+			],
+			[
+				'a quoted import from vue-jsx-vapor',
+				`import { "defineVaporComponent" as defineVaporComponent } from 'vue-jsx-vapor';`,
+				[`import { "defineVaporComponent" as defineVaporComponent } from 'vue-jsx-vapor';`],
+			],
+		])('does not report %s', (_label, declaration, imports) => {
+			const source = `${declaration}\n\n${component}`;
+
+			for (const result of [
+				compile(source, 'App.tsrx'),
+				...compile_modes.map(([, compile_in_mode]) => compile_in_mode(source)),
+			]) {
+				expect(result.errors).toEqual([]);
+				expect(vue_jsx_vapor_imports(result.code)).toEqual(imports);
+				expect(result.code).toContain('const App = defineVaporComponent(function App(');
+			}
+		});
+
+		it.each([
+			[
+				`import type { defineVaporComponent } from 'vue-jsx-vapor';`,
+				`import { defineVaporComponent } from 'vue-jsx-vapor';`,
+			],
+			[
+				`import { type defineVaporComponent } from 'vue-jsx-vapor';`,
+				`import { defineVaporComponent } from 'vue-jsx-vapor';`,
+			],
+			[
+				`import type { defineVaporComponent, VaporForProps } from 'vue-jsx-vapor';`,
+				`import { defineVaporComponent, type VaporForProps } from 'vue-jsx-vapor';`,
+			],
+		])('turns `%s` into the value import the compiler needs', (authored, value_import) => {
+			const source = `${authored}\n\n${component}`;
+
+			const { code } = compile(source, 'App.tsrx');
+			expect(vue_jsx_vapor_imports(code)).toEqual([value_import]);
+			expect(code).toContain('const App = defineVaporComponent(function App(');
+			for (const [mode, compile_in_mode] of compile_modes) {
+				const result = compile_in_mode(source);
+				expect(result.errors, mode).toEqual([]);
+				expect(vue_jsx_vapor_imports(result.code), mode).toEqual([value_import]);
+			}
+		});
+
+		it('leaves a type-only import of defineVaporComponent alone in a module without components', () => {
+			const source = `import type { defineVaporComponent } from 'vue-jsx-vapor';\n\nexport type Define = typeof defineVaporComponent;\n`;
+
+			for (const result of [
+				compile(source, 'App.tsrx'),
+				...compile_modes.map(([, compile_in_mode]) => compile_in_mode(source)),
+			]) {
+				expect(result.errors).toEqual([]);
+				expect(vue_jsx_vapor_imports(result.code)).toEqual([
+					"import type { defineVaporComponent } from 'vue-jsx-vapor';",
+				]);
+			}
+		});
 	});
 
 	it('compiles try/pending into a Vue Suspense slot boundary', () => {
@@ -2519,7 +2672,7 @@ export function Card(${params}: any) @{
 		expect(code).toContain('Suspense');
 		expect(code).toContain('fallback={(err, _reset) =>');
 		expect(code).toContain('default: () => (() => {');
-		expect(code).toContain('return <AsyncChild value="hello" />;');
+		expect(code).toContain('return <AsyncChild value="hello" />');
 		expect(code).not.toContain('catch(_error)');
 		expect(code).not.toContain('return ((err, _reset) =>');
 		expect(code).not.toContain('err: any');
@@ -2564,7 +2717,7 @@ export function Card(${params}: any) @{
 					}`,
 				'App.tsrx',
 			),
-		).toThrow(/`await` is not yet supported in Vue TSRX components\./);
+		).toThrow(expect.objectContaining(TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED('Vue')));
 	});
 
 	it('allows await in nested async functions inside component bodies', () => {

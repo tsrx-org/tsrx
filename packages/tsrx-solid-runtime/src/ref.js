@@ -1,7 +1,7 @@
 /** @import { SpreadFalsy, SpreadProps } from '@tsrx/runtime/ref' */
 
 import { createMemo, omit } from 'solid-js';
-import { normalize_spread_props } from '@tsrx/runtime/ref';
+import { normalize_spread_props_sharing_refs } from '@tsrx/runtime/ref';
 
 export * from '@tsrx/runtime/ref';
 
@@ -16,7 +16,8 @@ export * from '@tsrx/runtime/ref';
  *
  * `spread()` applies every function in the list each time the list changes, so
  * after the first list `refs.ref` holds only the refs that changed, and it
- * changes only when one does: a bag update that keeps its ref applies nothing.
+ * changes only when one does: a bag update that keeps its refs applies nothing.
+ * A bag's several refs merge into the same `ref` while they stay the same.
  *
  * @param {...() => object | SpreadFalsy} sources
  * @returns {{
@@ -25,7 +26,9 @@ export * from '@tsrx/runtime/ref';
  * }}
  */
 export function spread_ref_bags(...sources) {
-	const bags = sources.map((source) => createMemo(() => normalize_spread_props(source())));
+	const bags = sources.map((source) =>
+		createMemo(() => normalize_spread_props_sharing_refs(source())),
+	);
 	/** @type {unknown[]} */
 	let applied = [];
 	const changed_refs = createMemo(

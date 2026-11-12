@@ -28,6 +28,12 @@ It also pushes `.tsrx` into `resolve.extensions` and enables `experiments.css`
 when unset. In development mode it adds `solid-refresh/babel` unless you pass
 `hot: false`.
 
+The plugin runs `babel-preset-solid` with its defaults, which compile Solid's DOM
+output, and TSRX2034 (a `yield` in a template value that Solid's JSX compiler
+moves out of its generator) follows that output. Server builds with
+`generate: 'ssr'` aren't covered: a `yield` that only the SSR output moves isn't
+reported.
+
 ## Options
 
 - `hot`: whether to add `solid-refresh/babel` to the Babel pipeline. Defaults to

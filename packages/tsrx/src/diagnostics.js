@@ -94,14 +94,28 @@ export const DIAGNOSTIC_CODES = {
 	TOP_LEVEL_AWAIT_USE_SERVER: 'TSRX2025',
 	/** An `@catch` reset parameter on a target whose error boundary has none. */
 	TARGET_CATCH_RESET_UNSUPPORTED: 'TSRX2026',
-	/** An `@for` head that assigns to existing variables, or declares its loop variable with `using`. */
+	/** An `@for` head that assigns to existing variables, or declares its loop variable with `var` or `using`. */
 	FOR_HEAD: 'TSRX2027',
 	/** A component read above its declaration on a target that compiles it to a constant, where moving the declaration up would change what it reads. */
 	TARGET_COMPONENT_READ_BEFORE_DECLARATION: 'TSRX2028',
 	/** A destructured prop default the target's component compiler drops. */
 	TARGET_PROP_DEFAULT_UNSUPPORTED: 'TSRX2029',
+	/** A `var` declared in a nested `@{ … }` block or an `@if`, `@for`, `@switch` or `@try` body, outside any function or class in it. */
+	DIRECTIVE_BODY_VAR: 'TSRX2030',
 	/** A destructured prop key the target's component compiler reads as another prop, or leaves out. */
 	TARGET_PROP_KEY_UNSUPPORTED: 'TSRX2031',
+	/** A binding of a name the target's toolchain finds by name: Vue's `defineVaporComponent`. */
+	TARGET_RESERVED_NAME: 'TSRX2032',
+	/** Type arguments after a dynamic tag (`<{Tag}<T> />`). */
+	DYNAMIC_TAG_TYPE_ARGUMENTS: 'TSRX2033',
+	/** A `yield` in a template value the target's JSX compiler moves into an effect, getter or callback. */
+	TARGET_TEMPLATE_YIELD_UNSUPPORTED: 'TSRX2034',
+	/**
+	 * A warning: a `@{ … }` with no output whose only statement is an
+	 * expression there only for its value, such as `<p>@{user.name}</p>`, so
+	 * it renders nothing.
+	 */
+	CODE_BLOCK_EXPRESSION_ONLY: 'TSRX2035',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -147,6 +161,57 @@ export const DIAGNOSTIC_CODES = {
  * errors with it.
  */
 export const DIAGNOSTIC_SOURCE = 'TSRX';
+
+/**
+ * The TypeScript codes in this module that TypeScript reports as syntax errors,
+ * from its scanner or parser (`getSyntacticDiagnostics`). It reports every
+ * other TypeScript code here from its binder or checker, as a grammar or
+ * semantic error, with its other checker errors, and none of them for a file
+ * with a syntax error (see `#isSyntaxError` in `plugin.js`). A test derives
+ * this from where TypeScript raises each code.
+ * @type {string[]}
+ */
+export const TS_SYNTAX_ERROR_CODES = [
+	'TS1002',
+	'TS1003',
+	'TS1005',
+	'TS1010',
+	'TS1012',
+	'TS1109',
+	'TS1124',
+	'TS1125',
+	'TS1127',
+	'TS1128',
+	'TS1134',
+	'TS1136',
+	'TS1145',
+	'TS1146',
+	'TS1160',
+	'TS1161',
+	'TS1177',
+	'TS1178',
+	'TS1198',
+	'TS1209',
+	'TS1260',
+	'TS1351',
+	'TS1359',
+	'TS1381',
+	'TS1382',
+	'TS1434',
+	'TS1435',
+	'TS1438',
+	'TS1440',
+	'TS1472',
+	'TS1477',
+	'TS1478',
+	'TS1487',
+	'TS1488',
+	'TS17002',
+	'TS17008',
+	'TS2657',
+	'TS6188',
+	'TS6189',
+];
 
 /**
  * TypeScript 7's content-mapper protocol takes a number as an error's code, and
@@ -266,6 +331,15 @@ export const TSRX_ERRORS = {
 		'UNCLOSED_TAG',
 		(tag) => `Unclosed tag '<${tag}>'. Expected '</${tag}>' before end of template.`,
 	),
+	/**
+	 * An unclosed tag that is a lone type parameter before a `(`, as in
+	 * `<T>(x) => x`. `parameter` is the type parameter, with its `const`.
+	 */
+	UNCLOSED_TAG_GENERIC_ARROW: tsrx_with_values(
+		'UNCLOSED_TAG',
+		(tag, parameter) =>
+			`Unclosed tag '<${tag}>'. Expected '</${tag}>' before end of template. To write a generic arrow function, add a trailing comma, as in \`<${parameter},>() => ...\`.`,
+	),
 	MISMATCHED_CLOSING_TAG: tsrx_with_values(
 		'MISMATCHED_CLOSING_TAG',
 		(opening, closing) =>
@@ -363,6 +437,10 @@ export const TSRX_ERRORS = {
 		'DYNAMIC_TAG_EXPRESSION',
 		'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
 	),
+	DYNAMIC_TAG_TYPE_ARGUMENTS: tsrx(
+		'DYNAMIC_TAG_TYPE_ARGUMENTS',
+		'A dynamic tag takes no type arguments. Declare a typed alias before the element: `const Typed = Tag<T>;`, then `<{Typed} />`.',
+	),
 	FOR_OF_ONLY: tsrx(
 		'FOR_OF_ONLY',
 		'TSRX `@for` currently supports `for...of` loops in template output.',
@@ -387,15 +465,23 @@ export const TSRX_ERRORS = {
 		'FOR_HEAD',
 		'TSRX `@for` must declare its loop variable, as in `@for (const item of items)`, not assign to an existing variable or property.',
 	),
+	FOR_HEAD_VAR: tsrx(
+		'FOR_HEAD',
+		"TSRX `@for` does not support `var` loop variables, since its loop variable can't be read after the loop. Declare it with `const` or `let`, as in `@for (const item of items)`.",
+	),
 	/** `kind` is `using` or `await using`. */
 	FOR_HEAD_USING: tsrx_with_values(
 		'FOR_HEAD',
 		(kind) =>
 			`TSRX \`@for\` does not support \`${kind}\` loop variables. Declare the resource in the loop body instead: \`@for (const item of items) { ${kind} resource = item; ... }\`.`,
 	),
+	DIRECTIVE_BODY_VAR: tsrx(
+		'DIRECTIVE_BODY_VAR',
+		"TSRX does not support `var` declarations in a nested `@{ … }` block or an `@if`, `@for`, `@switch` or `@try` body, since the variable can't be read outside it. Declare it with `const` or `let`.",
+	),
 	MULTIPLE_REFS: tsrx(
 		'MULTIPLE_REFS',
-		'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single array-valued ref such as `ref={[a, b]}` where the target framework supports multiple refs.',
+		'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single ref list such as `ref={[a, b]}`, which applies every ref in it.',
 	),
 	INVALID_HTML_NESTING: tsrx_with_values(
 		'INVALID_HTML_NESTING',
@@ -417,11 +503,31 @@ export const TSRX_ERRORS = {
 		(target) =>
 			`${target} TSRX does not support \`await\` here: this part of the template renders through a callback the target calls, so its result cannot be awaited. Await the value in the component body, or move it into an async child component.`,
 	),
+	/** `target` is the target's name. For a target whose components can't be async. */
+	TARGET_COMPONENT_AWAIT_UNSUPPORTED: tsrx_with_values(
+		'TARGET_AWAIT_UNSUPPORTED',
+		(target) => `${target} TSRX components do not support \`await\`.`,
+	),
+	HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED: tsrx(
+		'TARGET_AWAIT_UNSUPPORTED',
+		'Hono JSX DOM does not support top-level `await` in components. Use `use(promise)` with `<Suspense>` instead.',
+	),
+	/** For an `async` component that a Hono DOM module renders. */
+	HONO_DOM_ASYNC_COMPONENT_UNSUPPORTED: tsrx(
+		'TARGET_AWAIT_UNSUPPORTED',
+		'Hono JSX DOM does not support async components. Use `use(promise)` with `<Suspense>` instead.',
+	),
 	/** `target` is the target's name. */
 	TARGET_YIELD_UNSUPPORTED: tsrx_with_values(
 		'TARGET_YIELD_UNSUPPORTED',
 		(target) =>
 			`${target} TSRX does not support \`yield\` here: this part of the template runs in a callback, which cannot yield from the enclosing generator. Yield the value in the function body first.`,
+	),
+	/** `target` is the target's name. For Solid and Vue, whose JSX compilers move some template values into effects. */
+	TARGET_TEMPLATE_YIELD_UNSUPPORTED: tsrx_with_values(
+		'TARGET_TEMPLATE_YIELD_UNSUPPORTED',
+		(target) =>
+			`${target} TSRX does not support \`yield\` in this part of the template: ${target}'s JSX compiler evaluates it in an effect, a getter or a callback, which cannot yield from the enclosing generator. Yield the value before the template, as in \`const value = yield …;\`, and use \`value\` in it.`,
 	),
 	/** `target` is the target's name. */
 	TARGET_SUPER_UNSUPPORTED: tsrx_with_values(
@@ -437,6 +543,11 @@ export const TSRX_ERRORS = {
 	TOP_LEVEL_AWAIT_USE_SERVER: tsrx(
 		'TOP_LEVEL_AWAIT_USE_SERVER',
 		'Top-level `await` in TSRX functions requires a module-level `"use server"` directive.',
+	),
+	/** Hono's ErrorBoundary calls its fallback with the error only. */
+	TARGET_CATCH_RESET_UNSUPPORTED: tsrx(
+		'TARGET_CATCH_RESET_UNSUPPORTED',
+		'Hono JSX ErrorBoundary does not provide a reset callback. Use `@catch (error)` without a reset parameter.',
 	),
 	/** `target` is the target's name, and `name` the component's. */
 	TARGET_COMPONENT_READ_BEFORE_DECLARATION: tsrx_with_values(
@@ -500,6 +611,22 @@ export const TSRX_ERRORS = {
 		'TARGET_PROP_KEY_UNSUPPORTED',
 		(target, key, example) =>
 			`${target} TSRX cannot read the prop at \`${key}\`: vue-jsx-vapor reads a destructured prop only by a key that is a name, so this binding never gets the prop. ${read_prop_where_used(example)}`,
+	),
+	DEFINE_VAPOR_COMPONENT_BINDING: tsrx(
+		'TARGET_RESERVED_NAME',
+		"Vue TSRX does not allow a binding named `defineVaporComponent`. vue-jsx-vapor finds components by calls to that exact name, and the compiler wraps each component in the one from 'vue-jsx-vapor', so the name can't be declared again or shadowed. Rename this binding.",
+	),
+	// A warning. This one is for a child of an element or fragment, where the
+	// `@` may have been meant as text.
+	CODE_BLOCK_EXPRESSION_CHILD: tsrx(
+		'CODE_BLOCK_EXPRESSION_ONLY',
+		"This @{…} is a code block, not '@' text and an expression: it runs the expression as a statement and renders nothing. To render '@' and the value, write {`@${value}`} or {'@' + value}; for the value alone, write {value}.",
+	),
+	// A warning. This one is for anywhere else: a function body, a value, or
+	// the output of another `@{ … }` or a directive body.
+	CODE_BLOCK_EXPRESSION_ONLY: tsrx(
+		'CODE_BLOCK_EXPRESSION_ONLY',
+		'This @{…} code block holds only an expression statement, so it renders nothing. To render the value, end the block with output, such as @{ <>{value}</> }.',
 	),
 
 	// TSRX3xxx
@@ -997,6 +1124,12 @@ export const TS_ERRORS = {
 		message:
 			'This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma, as in `<T,>() => ...`.',
 	},
+	/** A type assertion written `<T>x` in a `.mts` or `.cts` file. */
+	RESERVED_TYPE_ASSERTION: {
+		code: 'TS7059',
+		message:
+			'This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead.',
+	},
 };
 
 /**
@@ -1004,8 +1137,11 @@ export const TS_ERRORS = {
  * doesn't write: the pattern of its message, and TypeScript's code for the
  * same mistake. The code is TypeScript's diagnostic with the same wording, or
  * the one TypeScript reports for an input that raises the message (checked for
- * each), and `TSRX4003` where TypeScript accepts the code.
- * @typedef {{ pattern: RegExp, code: string }} UpstreamError
+ * each), and `TSRX4003` where TypeScript accepts the code. `checker` marks one
+ * that TypeScript reports from its checker though its parser reports the code
+ * too, which `TS_SYNTAX_ERROR_CODES` lists: a regular expression's mistake,
+ * `await` as a name in an async function (#1264).
+ * @typedef {{ pattern: RegExp, code: string, checker?: boolean }} UpstreamError
  */
 
 /**
@@ -1095,11 +1231,12 @@ export const UPSTREAM_ERRORS = {
 /**
  * acorn's and acorn-typescript's errors, which they raise as bare messages:
  * the lookup that gives each its code. A row is an {@link UpstreamError}, a
- * `[pattern, code]` pair, or the entry of a message TSRX raises too in the same
- * words, whose pattern is the entry's message with any value in it. A comment
- * names the upstream functions that raise each. The first row that matches
- * wins.
- * @returns {Array<UpstreamError | [RegExp, string] | Diagnostic | DiagnosticWithValues>}
+ * `[pattern, code]` pair, a `[pattern, code, 'checker']` triple for a checker
+ * error with a code in `TS_SYNTAX_ERROR_CODES`, or the entry of a message TSRX
+ * raises too in the same words, whose pattern is the entry's message with any
+ * value in it. A comment names the upstream functions that raise each. The
+ * first row that matches wins.
+ * @returns {Array<UpstreamError | [RegExp, string] | [RegExp, string, 'checker'] | Diagnostic | DiagnosticWithValues>}
  */
 function upstream_lookup_rows() {
 	return [
@@ -1110,7 +1247,7 @@ function upstream_lookup_rows() {
 		// acorn: checkPatternErrors, toAssignable
 		[/^Assigning to rvalue$/, 'TS2364'],
 		// acorn: checkPatternErrors
-		[/^Parenthesized pattern$/, 'TS1005'],
+		[/^Parenthesized pattern$/, 'TS1005', 'checker'],
 		// acorn: checkExpressionErrors
 		[/^Shorthand property assignments are valid only in destructuring patterns$/, 'TS1312'],
 		// acorn: checkExpressionErrors, checkPropClash
@@ -1191,9 +1328,9 @@ function upstream_lookup_rows() {
 		// acorn: parseModuleExportName
 		[/^An export name cannot include a lone surrogate\.$/, 'TSRX4003'],
 		// acorn: toAssignable, parseSubscript, checkUnreserved
-		[/^Cannot use 'await' as identifier inside an async function$/, 'TS1359'],
+		[/^Cannot use 'await' as identifier inside an async function$/, 'TS1359', 'checker'],
 		// acorn: toAssignable
-		[/^Object pattern can't contain getter or setter$/, 'TS1136'],
+		[/^Object pattern can't contain getter or setter$/, 'TS1136', 'checker'],
 		// acorn: toAssignable
 		[/^Rest elements cannot have a default value$/, 'TS1186'],
 		// acorn: toAssignable
@@ -1340,23 +1477,23 @@ function upstream_lookup_rows() {
 		// acorn: regexp_eatTerm
 		[/^Invalid regular expression: \/.*\/: Invalid quantifier$/, 'TS1507'],
 		// acorn: regexp_eatAssertion, regexp_eatCapturingGroup, regexp_eatUncapturingGroup
-		[/^Invalid regular expression: \/.*\/: Unterminated group$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Unterminated group$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatBracedQuantifier
 		[/^Invalid regular expression: \/.*\/: numbers out of order in \{\} quantifier$/, 'TS1506'],
 		// acorn: regexp_eatBracedQuantifier
-		[/^Invalid regular expression: \/.*\/: Incomplete quantifier$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Incomplete quantifier$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatUncapturingGroup
 		[/^Invalid regular expression: \/.*\/: Duplicate regular expression modifiers$/, 'TS1500'],
 		// acorn: regexp_eatUncapturingGroup
 		[/^Invalid regular expression: \/.*\/: Invalid regular expression modifiers$/, 'TS1504'],
 		// acorn: regexp_eatCapturingGroup, regexp_groupSpecifier
-		[/^Invalid regular expression: \/.*\/: Invalid group$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Invalid group$/, 'TS1005', 'checker'],
 		// acorn: regexp_groupSpecifier
 		[/^Invalid regular expression: \/.*\/: Duplicate capture group name$/, 'TS1515'],
 		// acorn: regexp_eatGroupName
 		[/^Invalid regular expression: \/.*\/: Invalid capture group name$/, 'TS1514'],
 		// acorn: regexp_eatAtomEscape, regexp_eatRegExpUnicodeEscapeSequence
-		[/^Invalid regular expression: \/.*\/: Invalid unicode escape$/, 'TS1198'],
+		[/^Invalid regular expression: \/.*\/: Invalid unicode escape$/, 'TS1198', 'checker'],
 		// acorn: regexp_eatKGroupName
 		[/^Invalid regular expression: \/.*\/: Invalid named reference$/, 'TS1510'],
 		// acorn: regexp_eatCharacterClassEscape, regexp_validateUnicodePropertyNameAndValue, regexp_validateUnicodePropertyNameOrValue
@@ -1364,7 +1501,7 @@ function upstream_lookup_rows() {
 		// acorn: regexp_validateUnicodePropertyNameAndValue
 		[/^Invalid regular expression: \/.*\/: Invalid property value$/, 'TS1526'],
 		// acorn: regexp_eatCharacterClass
-		[/^Invalid regular expression: \/.*\/: Unterminated character class$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Unterminated character class$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatCharacterClass, regexp_eatNestedClass
 		[/^Invalid regular expression: \/.*\/: Negated character class may contain strings$/, 'TS1518'],
 		// acorn: regexp_nonEmptyClassRanges
@@ -1489,10 +1626,7 @@ function upstream_lookup_rows() {
 		// acorn-typescript: tsParseTypeAssertion
 		TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER,
 		// acorn-typescript: tsParseTypeAssertion
-		[
-			/^This syntax is reserved in files with the \.mts or \.cts extension\. Use an `as` expression instead\.$/,
-			'TS7059',
-		],
+		TS_ERRORS.RESERVED_TYPE_ASSERTION,
 		// acorn-typescript: tsParsePropertyOrMethodSignature
 		[/^A 'set' accessor cannot have an optional parameter\.$/, 'TS1051'],
 		// acorn-typescript: tsParsePropertyOrMethodSignature
@@ -1576,7 +1710,12 @@ let upstream_lookup;
  */
 export function get_upstream_error(message) {
 	upstream_lookup ??= upstream_lookup_rows().map((row) => {
-		if (Array.isArray(row)) return { pattern: row[0], error: { pattern: row[0], code: row[1] } };
+		if (Array.isArray(row)) {
+			/** @type {UpstreamError} */
+			const error = { pattern: row[0], code: row[1] };
+			if (row[2] === 'checker') error.checker = true;
+			return { pattern: row[0], error };
+		}
 		if ('pattern' in row) return { pattern: row.pattern, error: row };
 		return { pattern: message_pattern(row), error: row };
 	});

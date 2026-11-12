@@ -518,7 +518,7 @@ export class TSRXVirtualCode {
 
 		if (!result.fatalError && result.text) {
 			// Successful compilation - update everything
-			this.generatedCode = result.text;
+			this.generatedCode = hashbang_as_comment(result.text);
 			this.mappings = result.mappings;
 			this.usageErrors = result.errors;
 			this.sourceAst = result.sourceAst;
@@ -565,7 +565,7 @@ export class TSRXVirtualCode {
 			// (or an unreliable one), since the dedicated diagnostic plugin would
 			// otherwise pin the error to offset 0 (top of file, off-screen) and the
 			// user would have no signal pointing at the actual problem.
-			this.generatedCode = newCode;
+			this.generatedCode = hashbang_as_comment(newCode);
 
 			// Create 1:1 mappings for the entire content.
 			//
@@ -707,6 +707,20 @@ export class TSRXVirtualCode {
 			clamp_offset(end - last.sourceOffsets[0], last.generatedLengths[0]);
 		return [generated_start, Math.max(generated_end, generated_start + 1)];
 	}
+}
+
+/**
+ * Volar puts the generated code after blank lines as long as the source in the
+ * file TypeScript reads (in tsserver and `tsrx-tsc`), so a `#!` line there is no
+ * longer at the start of the file and TypeScript reads it as code: two
+ * expression statements without `;`. They count when TypeScript infers the
+ * semicolon style of an edit, so an import added to a file whose own statements
+ * have no `;` lost its `;`. A line comment of the same length keeps every offset.
+ * @param {string} code
+ * @returns {string}
+ */
+function hashbang_as_comment(code) {
+	return code.startsWith('#!') ? `//${code.slice(2)}` : code;
 }
 
 /**

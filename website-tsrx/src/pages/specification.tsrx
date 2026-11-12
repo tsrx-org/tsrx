@@ -534,6 +534,8 @@ const SPECIAL_AST_SHAPE = [
 const TSRX_ERROR_CODES = [
 	"TSRX1001  Unclosed tag '<div>'. Expected '</div>' before end of template.",
 	'          const a = <div><b>text</b>;',
+	'          (for a lone type parameter before `(`, also: To write a generic arrow function, add a trailing comma, as in `<T,>() => ...`.)',
+	'          const f = <T>(x: T) => x;',
 	"TSRX1002  Expected closing tag to match opening tag. Expected '</div>' but found '</span>'",
 	'          const a = <div></span>;',
 	'TSRX1003  Unexpected closing tag',
@@ -589,7 +591,7 @@ const TSRX_ERROR_CODES = [
 	'TSRX2017  Invalid HTML nesting: <p> cannot be a descendant of <p>.',
 	'          <p><p /></p>  (on targets that check nesting)',
 	'TSRX2018  <target> TSRX does not support JavaScript `try/finally` in TSRX templates.',
-	'          a template try with a finally block, in a tree from another parser',
+	'          try { if (x) throw e; } finally {}  (a component-body try that Solid lowers, or a template try with a finally block from another parser)',
 	'TSRX2019  TSRX try statements must have a `pending` or `catch` block.',
 	'          a template try with neither, in a tree from another parser',
 	'TSRX2020  <target> TSRX does not support `@pending`.',
@@ -606,14 +608,28 @@ const TSRX_ERROR_CODES = [
 	'          async function App() @{ const x = await f(); <p>{x}</p> }',
 	'TSRX2026  <target> ErrorBoundary does not provide a reset callback.',
 	'          @catch (e, reset) { <p /> }  (Hono)',
-	'TSRX2027  TSRX `@for` must declare its loop variable, as in `@for (const item of items)`.',
-	'          @for (state.item of xs) { <p /> }  or  @for (using x of xs) { <p /> }',
+	'TSRX2027  TSRX `@for` must declare its loop variable with `const` or `let`, as in `@for (const item of items)`.',
+	'          @for (state.item of xs) { <p /> }  or  @for (var x of xs) { <p /> }',
+	'          or  @for (using x of xs) { <p /> }',
 	"TSRX2028  'Card' is read here before its declaration. <target> TSRX compiles the component to a constant.",
 	"          const r = { Card }; const D = 'x'; function Card({ t = D }) @{ <p /> }  (Vue)",
 	"TSRX2029  <target> TSRX cannot keep this default for 's'.",
 	'          function Card({ s = cfg.size }) @{ <p>{s}</p> }  (Vue)',
+	"TSRX2030  TSRX does not support `var` declarations in a nested `@{ … }` block or an `@if`, `@for`, `@switch` or `@try` body, since the variable can't be read outside it.",
+	'          @for (const x of xs) { var y = x; <p>{y}</p> }',
+	'          or  <div>@{ var y = 1; <p>{y}</p> }</div>',
 	'TSRX2031  <target> TSRX cannot read this computed prop key.',
 	'          function Card({ [k]: v }) @{ <p>{v}</p> }  (Vue)',
+	'TSRX2032  Vue TSRX does not allow a binding named `defineVaporComponent`.',
+	"          import { defineVaporComponent } from './helpers';  (Vue)",
+	'TSRX2033  A dynamic tag takes no type arguments.',
+	'          <{Tag}<T> />',
+	'TSRX2034  <target> TSRX does not support `yield` in this part of the template.',
+	'          function* f(b) { return <input title={yield b.title} />; }  (Solid, Vue)',
+	"TSRX2035  This @{…} is a code block, not '@' text and an expression: it runs the expression as a statement and renders nothing.  (a warning)",
+	'          <p>@{user.name}</p>',
+	'TSRX2035  This @{…} code block holds only an expression statement, so it renders nothing.  (a warning)',
+	'          const v = @{ x };  (outside a child list)',
 	"TSRX3001  The 'apply' attribute of a <style> block requires an expression value.",
 	'          <style apply="a" />',
 	"TSRX3002  'a' is not a style block.",
@@ -1056,6 +1072,15 @@ export function SpecificationPage() @{
 								ordinary TypeScript constructs. Hosts may choose which TSRX-producing functions are
 								considered components.
 							</p>
+							<p class="section-body muted">
+								As in a <code class="inline-code">.tsx</code> file, a{' '}
+								<code class="inline-code">{'<'}</code> where an expression starts begins a generic
+								arrow function only when its type parameter is followed by a comma, a default, or a
+								constraint (<code class="inline-code">{'<T,>'}</code>,{' '}
+								<code class="inline-code">{'<T = U>'}</code>,{' '}
+								<code class="inline-code">{'<T extends U>'}</code>). Anything else, including{' '}
+								<code class="inline-code">{'<T>(x) => x'}</code>, begins an element.
+							</p>
 						</section>
 
 						<section class="doc-section" id="templates">
@@ -1071,10 +1096,11 @@ export function SpecificationPage() @{
 								<code class="inline-code">{'//'}</code> starts a line comment where whitespace comes
 								right before it, at the start of a line, or right after a tag, an expression
 								container, or a block, and the comment runs to the end of the line, a closing tag on
-								it included. A <code class="inline-code">{'//'}</code> that touches other text, as
-								in <code class="inline-code">{'https://example.com'}</code> or{' '}
-								<code class="inline-code">{'a//b'}</code>, is text. So is a character reference or a
-								string expression: only <code class="inline-code">{'/*'}</code> and{' '}
+								it included. A <code class="inline-code">{'//'}</code> that touches other text or a
+								block comment, as in <code class="inline-code">{'https://example.com'}</code>,{' '}
+								<code class="inline-code">{'a//b'}</code> or{' '}
+								<code class="inline-code">{'/* c */// c'}</code>, is text. So is a character
+								reference or a string expression: only <code class="inline-code">{'/*'}</code> and{' '}
 								<code class="inline-code">{'//'}</code> start a comment, so{' '}
 								<code class="inline-code">{'&#47;*'}</code>,{' '}
 								<code class="inline-code">{'&#47;/'}</code> and{' '}
@@ -1163,7 +1189,11 @@ export function SpecificationPage() @{
 								the expression in its closing tag, so anything more is computed above the element
 								and the result used as the tag:{' '}
 								<code class="inline-code">{'const Tag = c ? Child : Fallback;'}</code> followed by{' '}
-								<code class="inline-code">{'<{Tag} />'}</code>. Forms such as{' '}
+								<code class="inline-code">{'<{Tag} />'}</code>. Type arguments after the tag
+								expression, which TSX allows after a tag name, parse and are reported too:{' '}
+								<code class="inline-code">{'<{Tag}<T> />'}</code> needs a typed alias above the
+								element, <code class="inline-code">{'const Typed = Tag<T>;'}</code> followed by{' '}
+								<code class="inline-code">{'<{Typed} />'}</code>. Forms such as{' '}
 								<code class="inline-code">{'<@tag />'}</code> and{' '}
 								<code class="inline-code">{'<@Component />'}</code> are not dynamic tag syntax in
 								current TSRX.
@@ -1595,6 +1625,12 @@ export function SpecificationPage() @{
 									change the parse.
 								</li>
 								<li>
+									Type arguments after a dynamic tag expression, as in{' '}
+									<code class="inline-code">{'<{Tag}<T> />'}</code>, are{' '}
+									<code class="inline-code">TSRX2033</code>, reported at the type arguments. The
+									check doesn't change the parse.
+								</li>
+								<li>
 									A JSXCodeBlock or template control-flow block that contains TypeScript setup
 									statements and rendered output must place those statements before the output node
 									and must have exactly one output node.
@@ -2009,6 +2045,12 @@ export function SpecificationPage() @{
 								<code class="inline-code">TSRX4xxx</code> for everything else. The messages below
 								are the reference implementation's; <code class="inline-code">&lt;target&gt;</code>{' '}
 								is the name of the target, such as React.
+							</p>
+							<p class="section-body">
+								A code marked <code class="inline-code">(a warning)</code> is for code that compiles
+								but likely doesn't do what was meant. A warning never stops a compile. The reference
+								implementation reports one only where it collects diagnostics, as editors and{' '}
+								<code class="inline-code">tsrx-tsc</code> do.
 							</p>
 							<h3 class="appendix-heading">B.1 TSRX codes</h3>
 							<pre class="code-block plain">

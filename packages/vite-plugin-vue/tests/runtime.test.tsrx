@@ -18,6 +18,8 @@ import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtim
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
+import { runArrayRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-ref';
 import { runLocalHelperNamesRuntimeTests } from '@tsrx/core/test-harness/runtime/local-helper-names';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
@@ -656,6 +658,22 @@ function ForKeyedStateApp() @{
 			{'rename'}
 		</button>
 	</>
+}
+
+function LocalVaporForNameApp() @{
+	const VaporFor = () => <p class="authored-vapor-for">{'authored'}</p>;
+	const rows = ref(['a', 'b']);
+	<div>
+		<VaporFor />
+		<ul class="vapor-for-rows">
+			@for (const row of rows.value; key row) {
+				<li>{row}</li>
+			}
+		</ul>
+		<button class="reverse-vapor-for-rows" onClick={() => (rows.value = [...rows.value].reverse())}>
+			{'reverse'}
+		</button>
+	</div>
 }
 
 function ForJsxKeyedStateApp() @{
@@ -1673,6 +1691,15 @@ describe('tsrx-vue runtime', () => {
 		expect(text('.row-b')).toBe('Bravo:1');
 	});
 
+	it('renders a keyed loop through the generated VaporFor beside a setup local VaporFor', async () => {
+		await render(LocalVaporForNameApp);
+		expect(texts('.authored-vapor-for')).toEqual(['authored']);
+		expect(texts('.vapor-for-rows > li')).toEqual(['a', 'b']);
+
+		await click('.reverse-vapor-for-rows');
+		expect(texts('.vapor-for-rows > li')).toEqual(['b', 'a']);
+	});
+
 	it('preserves component state when keys come from JSX key attributes', async () => {
 		await render(ForJsxKeyedStateApp);
 		expect(texts('.keyed-row')).toEqual(['Alpha:0', 'Beta:0', 'Gamma:0']);
@@ -2518,3 +2545,5 @@ runJsxTextWhitespaceRuntimeTests({ nbsp: 'kept', anchors: 'empty comments' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
+runArraySpreadRefRuntimeTests();
+runArrayRefRuntimeTests();

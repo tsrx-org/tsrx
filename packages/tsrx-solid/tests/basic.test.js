@@ -1,7 +1,9 @@
+import { TSRX_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedAnonymousComponentTests,
 	runSharedClassFunctionComponentTests,
+	runSharedArrayRefTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -11,12 +13,18 @@ import {
 } from '@tsrx/core/test-harness/compile';
 import { runSharedSourceMappingTests } from '@tsrx/core/test-harness/source-mappings';
 import { compile, compile_to_volar_mappings } from '../src/index.js';
+import { for_items, for_keyed_rows } from '../src/iterable.js';
+
+const SOLID_COMPONENT_AWAIT = expect.objectContaining(
+	TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED('Solid'),
+);
 
 runSharedSourceMappingTests({
 	compile,
 	compile_to_volar_mappings,
 	name: 'solid',
 	rejectsComponentAwait: true,
+	rejectsTemplateYield: true,
 });
 
 describe('@tsrx/solid direct runtime imports', () => {
@@ -42,6 +50,7 @@ runSharedTsxExpressionTsrxTests({ compile, name: 'solid', classAttrName: 'class'
 runSharedCompileTests({ compile, name: 'solid', classAttrName: 'class' });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'solid' });
 runSharedCodeBlockChildrenTests({ compile, name: 'solid' });
+runSharedArrayRefTests({ compile, compile_to_volar_mappings, name: 'solid', merge: null });
 runSharedClassFunctionComponentTests({ compile, compile_to_volar_mappings, name: 'solid' });
 runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'solid' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'solid' });
@@ -72,7 +81,7 @@ describe('@tsrx/solid basic', () => {
 						}`,
 					'App.tsrx',
 				),
-			).toThrow(/`await` is not allowed inside Solid components/);
+			).toThrow(SOLID_COMPONENT_AWAIT);
 		});
 
 		// `is_template_for_of_node` gates the hook-bearing for-of hoist; a
@@ -103,7 +112,7 @@ describe('@tsrx/solid basic', () => {
 						}`,
 					'App.tsrx',
 				),
-			).toThrow(/`await` is not allowed inside Solid components/);
+			).toThrow(SOLID_COMPONENT_AWAIT);
 		});
 
 		it('rejects for await...of in component body', () => {
@@ -116,7 +125,7 @@ describe('@tsrx/solid basic', () => {
 					}`,
 					'App.tsrx',
 				),
-			).toThrow(/`await` is not allowed inside Solid components/);
+			).toThrow(SOLID_COMPONENT_AWAIT);
 		});
 
 		it('reports for await...of errors at the await keyword', () => {
@@ -239,8 +248,8 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Show when={n > 0}>');
-			expect(code).toContain("import { Show } from 'solid-js'");
+			expect(code).toContain('<__Show when={n > 0}>');
+			expect(code).toContain("import { Show as __Show } from 'solid-js'");
 		});
 
 		it('if/else → <Show when fallback>', () => {
@@ -254,7 +263,7 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Show when={n > 0} fallback=');
+			expect(code).toContain('<__Show when={n > 0} fallback=');
 		});
 
 		it('if/else-if/else → <Switch>/<Match>', () => {
@@ -270,10 +279,10 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toContain('<Match when={n > 10}>');
-			expect(code).toContain('<Match when={n > 5}>');
-			expect(code).toContain("import { Switch, Match } from 'solid-js'");
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toContain('<__Match when={n > 10}>');
+			expect(code).toContain('<__Match when={n > 5}>');
+			expect(code).toContain("import { Switch as __Switch, Match as __Match } from 'solid-js'");
 		});
 
 		it('for-of with index and no key → <For keyed={false}>', () => {
@@ -285,11 +294,11 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<For each={items}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).toContain('keyed={false}');
 			expect(code).toMatch(/\(item, i\) =>/);
 			expect(code).toContain('<li>{i + item()}</li>');
-			expect(code).toContain("import { For } from 'solid-js'");
+			expect(code).toContain("import { For as __For } from 'solid-js'");
 		});
 
 		it('for-of without index or key → default <For>', () => {
@@ -301,10 +310,10 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<For each={items}>');
+			expect(code).toContain('<__For each={__for_items(items)}>');
 			expect(code).not.toContain('keyed=');
 			expect(code).toContain('(item) => <li>{item}</li>');
-			expect(code).toContain("import { For } from 'solid-js'");
+			expect(code).toContain("import { For as __For } from 'solid-js'");
 		});
 
 		it('for-of with `key` clause → <For keyed={...}>', () => {
@@ -319,8 +328,149 @@ describe('@tsrx/solid basic', () => {
 			// `key item.id` lifts to `keyed={(item) => item.id}` — Solid 2.0's
 			// <For keyed> switches reconciliation from reference identity to
 			// the derived key.
-			expect(code).toContain('<For each={items}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).toMatch(/keyed=\{\(item\) =>\s*item\.id\}/);
+		});
+
+		it('for-of over any iterable imports the array helper (#1070)', () => {
+			const source = `function App({ tags }: { tags: Set<string> }) @{
+				@for (const tag of tags) {
+					<li>{tag}</li>
+				}
+			}`;
+
+			const { code } = compile(source, 'App.tsrx');
+			expect(code).toContain("import { for_items as __for_items } from '@tsrx/solid/iterable';");
+			expect(code).toContain('<__For each={__for_items(tags)}>');
+
+			const direct = compile(source, 'App.tsrx', { runtimeImports: 'direct' }).code;
+			expect(direct).toContain(
+				"import { for_items as __for_items } from '@tsrx/solid-runtime/iterable';",
+			);
+		});
+
+		it('for-of keyed by its declared index computes keys with the index (#933)', () => {
+			const { code } = compile(
+				`function App({ items }: { items: string[] }) @{
+					@for (const item of items; index i; key i) {
+						<li>{item()}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain(
+				"import { for_keyed_rows as __for_keyed_rows } from '@tsrx/solid/iterable';",
+			);
+			expect(code).toContain('each={__for_keyed_rows(items, (item, i) => i)}');
+			expect(code).toContain('keyed={(_$_row) => _$_row.key}');
+			expect(code).toMatch(/\(_\$_row, i\) => \{\s*const item = \(\) => _\$_row\(\)\.item;/);
+		});
+
+		it('leaves names a nested function or enum declares again in a destructured keyed loop', () => {
+			const { code } = compile(
+				`function App({ items }: { items: { id: number }[] }) @{
+					@for (const { id } of items; key id) {
+						<li onClick={() => {
+							var id = 1;
+							enum Kind { A = id }
+							return [id, Kind.A];
+						}} title={() => {
+							function id() {}
+							return id;
+						}}>{id}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('var id = 1;');
+			expect(code).toContain('A = id');
+			expect(code).toContain('return [id, Kind.A];');
+			expect(code).toContain('function id() {}');
+			expect(code).toMatch(/\{_\$_bindings_\d+\(\)\.id\}<\/li>/);
+		});
+
+		it("leaves a class expression's own name inside it in a destructured keyed loop", () => {
+			const { code } = compile(
+				`function App({ items }: { items: { Item: string }[] }) @{
+					@for (const { Item } of items; index i) {
+						const Made = class Item {
+							static label() {
+								return Item.name;
+							}
+						};
+						<li title={Item}>{Made.label()}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('return Item.name;');
+			expect(code).toMatch(/title=\{_\$_bindings_\d+\(\)\.Item\}/);
+		});
+
+		it('leaves names the loop body declares again in a destructured keyed loop', () => {
+			const { code } = compile(
+				`function App({ items, other }: { items: { id: number; name: string }[]; other: { name: string } }) @{
+					@for (const { id, name } of items; key id) {
+						const { name } = other;
+						const label = (() => {
+							switch (id) {
+								case 1:
+									const id = 'one';
+									return id;
+								default:
+									return 'other';
+							}
+						})();
+						<li title={name}>{label}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			// A for…of body may declare a loop binding's name again; its own
+			// declaration then wins in the whole body, as in JavaScript.
+			expect(code).toContain('const { name } = other;');
+			expect(code).toContain('title={name}');
+			// Unbraced cases share the switch's block; the discriminant is outside it.
+			expect(code).toMatch(/switch \(_\$_bindings_\d+\(\)\.id\)/);
+			expect(code).toContain("const id = 'one';");
+			expect(code).toContain('return id;');
+			expect(code).toMatch(/keyed=\{\(\{ id, name \}\) => id\}/);
+		});
+
+		it('keeps the authored names in the type view of a destructured keyed loop', () => {
+			const { code, errors } = compile_to_volar_mappings(
+				`function App({ items }: { items: { id: number; Icon: () => any }[] }) @{
+					@for (const { id, Icon } of items; key id) {
+						<li title={String(id satisfies typeof id)}><Icon /></li>
+					}
+				}`,
+				'App.tsrx',
+				{ loose: true },
+			);
+
+			expect(errors).toEqual([]);
+			expect(code).toContain('const { id, Icon } = _$_item();');
+			expect(code).toContain('id satisfies typeof id');
+			expect(code).toContain('<Icon />');
+			expect(code).not.toContain('_$_bindings');
+		});
+
+		it('for-of keyed without its index keeps the item key', () => {
+			const { code } = compile(
+				`function App({ items }: { items: { i: string }[] }) @{
+					@for (const item of items; index i; key item.i) {
+						<li>{item().i}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).not.toContain('__for_keyed_rows');
+			expect(code).toMatch(/keyed=\{\(item\) =>\s*item\.i\}/);
 		});
 
 		it('try/catch → <Errored fallback> binding the thrown value', () => {
@@ -335,10 +485,10 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 			// `<Errored>` passes an accessor; `err` is the value it returns.
-			expect(code).toContain('<Errored fallback={(_tsrx_error, reset) => {');
+			expect(code).toContain('<__Errored fallback={(_tsrx_error, reset) => {');
 			expect(code).toContain('let err = _tsrx_error();');
 			expect(code).toContain('<div>{err.message}</div>');
-			expect(code).toContain("import { Errored } from 'solid-js'");
+			expect(code).toContain("import { Errored as __Errored } from 'solid-js'");
 		});
 
 		it('try/pending/catch → <Errored><Loading>...', () => {
@@ -354,9 +504,11 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Errored');
-			expect(code).toContain('<Loading fallback=');
-			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
+			expect(code).toContain('<__Errored');
+			expect(code).toContain('<__Loading fallback=');
+			expect(code).toMatch(
+				/import \{[^}]*Errored as __Errored[^}]*Loading as __Loading[^}]*\} from 'solid-js'/,
+			);
 		});
 
 		it('static @if condition → plain conditional instead of <Show>', () => {
@@ -390,9 +542,9 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Show when={import.meta.env.DEV}>');
-			expect(code).toContain('<Match when={true}>');
-			expect(code).toContain('<Show when={import.meta.url}>');
+			expect(code).toContain('<__Show when={import.meta.env.DEV}>');
+			expect(code).toContain('<__Match when={true}>');
+			expect(code).toContain('<__Show when={import.meta.url}>');
 		});
 
 		it('switch statement → <Switch>/<Match> using ===', () => {
@@ -406,9 +558,9 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toMatch(/<Match when=\{kind === 'a'\}>/);
-			expect(code).toMatch(/<Match when=\{kind === 'b'\}>/);
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toMatch(/<__Match when=\{kind === 'a'\}>/);
+			expect(code).toMatch(/<__Match when=\{kind === 'b'\}>/);
 		});
 
 		it('switch reads a discriminant with a side effect once through a memo', () => {
@@ -419,17 +571,18 @@ describe('@tsrx/solid basic', () => {
 				}
 			}`;
 			const { code } = compile(source, 'App.tsrx');
-			expect(code).toContain(
-				"import { Switch, Match, createMemo as _$_createMemo } from 'solid-js';",
+			// The printer wraps this import over several lines.
+			expect(code).toMatch(
+				/import \{\s*Switch as __Switch,\s*Match as __Match,\s*createMemo as _\$_createMemo\s*\} from 'solid-js';/,
 			);
 			// Boxed, so a thenable discriminant is compared rather than awaited.
 			expect(code).toContain('const _$_switch_value = _$_createMemo(() => [queue.shift()]);');
-			expect(code).toContain("<Match when={_$_switch_value()[0] === 'loading'}>");
-			expect(code).toContain("<Match when={_$_switch_value()[0] === 'ready'}>");
+			expect(code).toContain("<__Match when={_$_switch_value()[0] === 'loading'}>");
+			expect(code).toContain("<__Match when={_$_switch_value()[0] === 'ready'}>");
 			expect(code.match(/queue\.shift\(\)/g)).toHaveLength(1);
 
 			const type_only = compile_to_volar_mappings(source, 'App.tsrx').code;
-			expect(type_only).toContain("<Match when={queue.shift() === 'loading'}>");
+			expect(type_only).toContain("<__Match when={queue.shift() === 'loading'}>");
 			expect(type_only).not.toContain('createMemo');
 		});
 
@@ -485,7 +638,7 @@ describe('@tsrx/solid basic', () => {
 			// The block's setup becomes the branch's function child, which `<Show>`
 			// runs untracked, like a body without the `@{ }`.
 			expect(code).toMatch(
-				/<Show when=\{props\.on\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Show>/,
+				/<__Show when=\{props\.on\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/__Show>/,
 			);
 			expect(code).not.toContain('return null');
 		});
@@ -513,7 +666,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 			expect(code).toMatch(
-				/<Match when=\{kind === 'a'\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Match>/,
+				/<__Match when=\{kind === 'a'\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/__Match>/,
 			);
 			expect(code).toMatch(
 				/fallback=\{_\$_untrack\(\(\) => \{\s*const w = 2;\s*return <i>\{w\}<\/i>;\s*\}\)\}/,
@@ -590,7 +743,7 @@ describe('@tsrx/solid basic', () => {
 				/fallback=\{\(_tsrx_error, reset\) => \{\s*let err = _tsrx_error\(\);\s*return _\$_untrack\(\(\) => \{\s*const f = 6;\s*return <i>\{f\}<\/i>;\s*\}\);\s*\}\}/,
 			);
 			expect(code).toMatch(
-				/>\{_\$_untrack\(\(\) => \{\s*const e = 5;\s*return <i>\{e\}<\/i>;\s*\}\)\}<\/Errored>/,
+				/>\{_\$_untrack\(\(\) => \{\s*const e = 5;\s*return <i>\{e\}<\/i>;\s*\}\)\}<\/__Errored>/,
 			);
 		});
 
@@ -660,11 +813,11 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 			const signal_idx = code.indexOf('createSignal(0)');
-			const show_idx = code.indexOf('<Show when={!cond}');
+			const show_idx = code.indexOf('<__Show when={!cond}');
 			expect(signal_idx).toBeGreaterThan(-1);
 			expect(show_idx).toBeGreaterThan(-1);
 			expect(signal_idx).toBeLessThan(show_idx);
-			expect(code).toContain("import { Show } from 'solid-js'");
+			expect(code).toContain("import { Show as __Show } from 'solid-js'");
 			expect(code).not.toContain('if (cond)');
 		});
 
@@ -686,9 +839,9 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<For each={items}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).not.toContain('keyed=');
-			expect(code).toContain('<Show when={cond}');
+			expect(code).toContain('<__Show when={cond}');
 			expect(code).toContain('setup();');
 			expect(code).not.toContain('if (cond)');
 		});
@@ -711,8 +864,8 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('if (props.disabled)');
 			expect(code).toContain('return <span>disabled</span>;');
 			expect(code).toContain('return <span>enabled</span>;');
-			expect(code).not.toContain('<Show');
-			expect(code).not.toContain("import { Show } from 'solid-js'");
+			expect(code).not.toContain('<__Show');
+			expect(code).not.toContain("import { Show as __Show } from 'solid-js'");
 		});
 
 		it('preserves ordinary control flow for plain functions returning templates', () => {
@@ -733,8 +886,8 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('if (!user)');
 			expect(code).toContain('return <p>No user found</p>;');
 			expect(code).toContain('return <><h1>Welcome,{user}</h1><p>Here is your dashboard.</p></>;');
-			expect(code).not.toContain('<Show');
-			expect(code).not.toContain("import { Show } from 'solid-js'");
+			expect(code).not.toContain('<__Show');
+			expect(code).not.toContain("import { Show as __Show } from 'solid-js'");
 		});
 
 		it('component-body guard preserves switch trailing render fallback', () => {
@@ -757,12 +910,12 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Show when={!hidden}>');
-			expect(code).toContain("<Match when={kind === 'skip'}><span>{'rest'}</span></Match>");
-			expect(code).toContain("<Match when={kind === 'done'}><p>{'done'}</p></Match>");
+			expect(code).toContain('<__Show when={!hidden}>');
+			expect(code).toContain("<__Match when={kind === 'skip'}><span>{'rest'}</span></__Match>");
+			expect(code).toContain("<__Match when={kind === 'done'}><p>{'done'}</p></__Match>");
 			expect(code).toContain("fallback={<span>{'rest'}</span>}");
 			expect(code).not.toContain('StatementBodyHook');
-			expect(code).not.toContain("<Match when={kind === 'skip'}>{null}</Match>");
+			expect(code).not.toContain("<__Match when={kind === 'skip'}>{null}</__Match>");
 		});
 
 		it('component-body if/else returns lower to reactive <Show>', () => {
@@ -777,7 +930,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Show when={cond} fallback=');
+			expect(code).toContain('<__Show when={cond} fallback=');
 			expect(code).toContain("{'yes'}");
 			expect(code).toContain("{'no'}");
 			expect(code).not.toContain('if (cond)');
@@ -798,8 +951,8 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toContain("<Match when={kind === 'a'}>");
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toContain("<__Match when={kind === 'a'}>");
 			expect(code).not.toContain('switch (kind)');
 		});
 
@@ -821,11 +974,11 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain("<Match when={kind === 'skip'}><em>{'rest'}</em></Match>");
-			expect(code).toContain("<Match when={kind === 'a'}><span>{'A'}</span></Match>");
+			expect(code).toContain("<__Match when={kind === 'skip'}><em>{'rest'}</em></__Match>");
+			expect(code).toContain("<__Match when={kind === 'a'}><span>{'A'}</span></__Match>");
 			expect(code).toContain("fallback={<em>{'rest'}</em>}");
 			expect(code).not.toContain('StatementBodyHook');
-			expect(code).not.toContain("<Match when={kind === 'skip'}>{null}</Match>");
+			expect(code).not.toContain("<__Match when={kind === 'skip'}>{null}</__Match>");
 		});
 
 		it('component-body switch with final return lowers non-returning cases', () => {
@@ -843,8 +996,8 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toContain("<Match when={kind === 'a'}>");
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toContain("<__Match when={kind === 'a'}>");
 			expect(code).toContain("{'A'}");
 			expect(code).toContain("{'rest'}");
 			expect(code).not.toContain('switch (kind)');
@@ -860,7 +1013,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<For each={items}>');
+			expect(code).toContain('<__For each={__for_items(items)}>');
 			expect(code).not.toContain('keyed=');
 			expect(code).toContain('(item) => <div>{item}</div>');
 			expect(code).not.toContain('for (const item of items)');
@@ -876,7 +1029,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<For each={items}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).toMatch(/keyed=\{\(item\) =>\s*item\.id\}/);
 			expect(code).toContain('(item, i) => <div>{i() + item.name}</div>');
 		});
@@ -895,9 +1048,11 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Errored');
-			expect(code).toContain('<Loading fallback=');
-			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
+			expect(code).toContain('<__Errored');
+			expect(code).toContain('<__Loading fallback=');
+			expect(code).toMatch(
+				/import \{[^}]*Errored as __Errored[^}]*Loading as __Loading[^}]*\} from 'solid-js'/,
+			);
 			expect(code).not.toContain('try {');
 		});
 
@@ -917,12 +1072,62 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Errored');
-			expect(code).toContain('<Loading fallback=');
+			expect(code).toContain('<__Errored');
+			expect(code).toContain('<__Loading fallback=');
 			expect(code).toContain('setup();');
 			expect(code).toContain('recover(err);');
-			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
+			expect(code).toMatch(
+				/import \{[^}]*Errored as __Errored[^}]*Loading as __Loading[^}]*\} from 'solid-js'/,
+			);
 			expect(code).not.toContain('try {');
+		});
+
+		// A statement that throws lowers into Solid's reactive render forms, which
+		// have no `finally` (#1202: these used messages outside the error tables).
+		it.each([
+			['try/catch/finally', ' catch {}'],
+			// Without `catch` it has no handler either, but one error is enough.
+			['try/finally', ''],
+		])('rejects a JavaScript %s that throws with one core try error', (_label, handler) => {
+			const source = `export function App(props: { bad: boolean }) @{
+				try {
+					if (props.bad) throw new Error('bad');
+				}${handler} finally {
+					console.log('done');
+				}
+				<p>ok</p>
+			}`;
+			const TRY_FINALLY = expect.objectContaining({
+				...TSRX_ERRORS.TEMPLATE_TRY_FINALLY('Solid'),
+				pos: source.indexOf('finally') + 'finally '.length,
+			});
+			expect(() => compile(source, 'App.tsrx')).toThrow(TRY_FINALLY);
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([TRY_FINALLY]);
+			expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([TRY_FINALLY]);
+		});
+
+		// The statement still lowers to nothing, so suppressing the `finally` error
+		// must leave the missing-handler one, as before (#1228 review).
+		it('still reports a throwing try/finally whose finally error is ignored', () => {
+			const source = `export function App(props: { bad: boolean }) @{
+				try {
+					if (props.bad) throw new Error('bad');
+				}
+				// @tsrx-ignore
+				finally {
+					console.log('done');
+				}
+				<p>ok</p>
+			}`;
+			expect(() => compile(source, 'App.tsrx')).toThrow(
+				expect.objectContaining(TSRX_ERRORS.TEMPLATE_TRY_FINALLY('Solid')),
+			);
+			const TRY_HANDLER = expect.objectContaining({
+				...TSRX_ERRORS.TEMPLATE_TRY_HANDLER,
+				pos: source.indexOf('try'),
+			});
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([TRY_HANDLER]);
+			expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([TRY_HANDLER]);
 		});
 
 		it('rejects return statements inside template @if branches', () => {
@@ -1518,5 +1723,43 @@ describe('@tsrx/solid basic', () => {
 
 			expect(code).toContain('ref={[refA, refB, refC]}');
 		});
+	});
+});
+
+describe('@for runtime helpers', () => {
+	it('hands <For> an array for any iterable and keeps a missing source', () => {
+		const items = ['a'];
+		expect(for_items(items)).toBe(items);
+		expect(for_items(new Set(['a', 'b']))).toEqual(['a', 'b']);
+		expect(for_items(undefined)).toBe(undefined);
+		expect(for_items(false)).toBe(false);
+	});
+
+	it('pairs each item with its key, holes included', () => {
+		// prettier-ignore
+		const rows = for_keyed_rows(['a', , 'c'], (item, index) => `${index}:${item}`);
+		expect(rows).toEqual([
+			{ item: 'a', key: '0:a' },
+			{ item: undefined, key: '1:undefined' },
+			{ item: 'c', key: '2:c' },
+		]);
+	});
+
+	it('reuses the row of an object item found again under the same key', () => {
+		const a = { id: 'a' };
+		const b = { id: 'b' };
+		const first = /** @type {Array<{ item: unknown, key: unknown }>} */ (
+			for_keyed_rows([a, b], (_item, index) => index)
+		);
+		const same = /** @type {Array<{ item: unknown, key: unknown }>} */ (
+			for_keyed_rows([a, b], (_item, index) => index)
+		);
+		const swapped = /** @type {Array<{ item: unknown, key: unknown }>} */ (
+			for_keyed_rows([b, a], (_item, index) => index)
+		);
+		expect(same[0]).toBe(first[0]);
+		expect(same[1]).toBe(first[1]);
+		expect(swapped[0]).not.toBe(first[1]);
+		expect(swapped[0]).toEqual({ item: b, key: 0 });
 	});
 });

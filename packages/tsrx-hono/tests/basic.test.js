@@ -1,7 +1,9 @@
 import { fileURLToPath } from 'node:url';
+import { TSRX_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedAnonymousComponentTests,
+	runSharedArrayRefTests,
 	runSharedCatchErrorTypeTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
@@ -40,6 +42,18 @@ runSharedCatchErrorTypeTests({
 });
 runSharedCodeBlockChildrenTests({ compile: compileServer, name: 'hono' });
 runSharedAnonymousComponentTests({ compile: compileServer, name: 'hono' });
+runSharedArrayRefTests({
+	compile: compileServer,
+	compile_to_volar_mappings: compileServerToVolarMappings,
+	name: 'hono',
+	merge: 'merge_element_refs',
+});
+runSharedArrayRefTests({
+	compile: compileDom,
+	compile_to_volar_mappings: compileDomToVolarMappings,
+	name: 'hono-dom',
+	merge: 'merge_element_refs',
+});
 runSharedHookBodyTests({
 	compile: compileServer,
 	compile_to_volar_mappings: compileServerToVolarMappings,
@@ -213,9 +227,12 @@ describe('@tsrx/hono server compiler', () => {
 		).not.toThrow();
 	});
 
-	it('rejects the unsupported Hono reset callback shape', () => {
+	it.each([
+		['server', compileServer],
+		['DOM', compileDom],
+	])('rejects the unsupported Hono reset callback shape (%s)', (_mode, compile) => {
 		expect(() =>
-			compileServer(
+			compile(
 				`export function App() @{
 					@try {
 						<div />
@@ -225,12 +242,7 @@ describe('@tsrx/hono server compiler', () => {
 				}`,
 				'App.tsrx',
 			),
-		).toThrow(
-			expect.objectContaining({
-				code: 'TSRX2026',
-				message: expect.stringMatching(/does not provide a reset callback/),
-			}),
-		);
+		).toThrow(expect.objectContaining(TSRX_ERRORS.TARGET_CATCH_RESET_UNSUPPORTED));
 	});
 
 	it('keeps Hono-specific adapters available in direct runtime mode', () => {
@@ -707,7 +719,7 @@ false && <A.x />;
 				<App />`,
 				'App.tsrx',
 			),
-		).toThrow(/Hono JSX DOM does not support async components/);
+		).toThrow(expect.objectContaining(TSRX_ERRORS.HONO_DOM_ASYNC_COMPONENT_UNSUPPORTED));
 	});
 
 	it('does not duplicate the async diagnostic when await has a precise diagnostic', () => {
@@ -721,6 +733,34 @@ false && <A.x />;
 		expect(
 			result.errors.filter((error) => error.message.includes('Hono JSX DOM does not support')),
 		).toHaveLength(1);
+	});
+
+	// #1201: the core await finder skipped these, and the async-component check
+	// stood down because it saw the `await`, so the editor showed no error.
+	it.each([
+		['a root element attribute', '<div title={await props.p} />'],
+		[
+			'an if test',
+			`@{
+	let label = 'no';
+	if (await props.p) label = 'yes';
+	<div>{label}</div>
+}`,
+		],
+		[
+			'an await using declaration',
+			`@{
+	await using res = props.r;
+	<div>{res.name}</div>
+}`,
+		],
+	])('reports an await in %s once when the module renders the component', (_label, output) => {
+		const source = `export async function App(props: { p: Promise<string>; r: AsyncDisposable & { name: string } }) @{ ${output} }
+export function Root() @{ <App p={Promise.resolve('')} r={null as never} /> }`;
+		const { errors } = compileDomToVolarMappings(source, 'App.tsrx');
+		expect(errors.map((error) => [error.message, error.pos])).toEqual([
+			[TSRX_ERRORS.HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED.message, source.indexOf('await')],
+		]);
 	});
 
 	it('continues validating later async components after an await diagnostic', () => {

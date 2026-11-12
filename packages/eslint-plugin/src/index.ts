@@ -4,6 +4,9 @@ import controlFlowJsx from './rules/control-flow-jsx.js';
 import validForOfKey from './rules/valid-for-of-key.js';
 import requireStatementContainerBody from './rules/require-statement-container-body.js';
 import jsxCurlyBracePresence from './rules/jsx-curly-brace-presence.js';
+import noUnusedVars from './rules/no-unused-vars.js';
+import noAwaitInLoop from './rules/no-await-in-loop.js';
+import noUnreachable from './rules/no-unreachable.js';
 
 const plugin = {
 	meta: {
@@ -16,6 +19,9 @@ const plugin = {
 		'valid-for-of-key': validForOfKey,
 		'require-statement-container-body': requireStatementContainerBody,
 		'jsx-curly-brace-presence': jsxCurlyBracePresence,
+		'no-unused-vars': noUnusedVars,
+		'no-await-in-loop': noAwaitInLoop,
+		'no-unreachable': noUnreachable,
 	},
 	configs: {} as any,
 };
@@ -107,6 +113,25 @@ plugin.configs.react = [
 		rules: {
 			'tsrx/jsx-curly-brace-presence': 'error',
 			'react/jsx-curly-brace-presence': 'off',
+		},
+	},
+];
+
+// For `js.configs.recommended` users, listed after it: the TSRX versions of the
+// core rules it turns on. A config can't read the severity another gives the
+// core rule, so each is an error, as `js.configs.recommended` has it.
+plugin.configs.js = [
+	{
+		name: 'tsrx/js-tsrx-files',
+		files: ['**/*.tsrx'],
+		plugins: {
+			tsrx: plugin,
+		},
+		rules: {
+			'no-unused-vars': 'off',
+			'tsrx/no-unused-vars': 'error',
+			'no-unreachable': 'off',
+			'tsrx/no-unreachable': 'error',
 		},
 	},
 ];

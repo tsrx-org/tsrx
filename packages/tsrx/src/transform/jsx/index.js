@@ -6,7 +6,10 @@ import { walk } from 'zimmerframe';
 import { print } from 'esrap';
 import { error } from '../../errors.js';
 import { DIAGNOSTIC_CODES, TSRX_ERRORS } from '../../diagnostics.js';
-import { is_template_value_position } from '../../analyze/validation.js';
+import {
+	get_statement_keyword_node,
+	is_template_value_position,
+} from '../../analyze/validation.js';
 import { analyze_css } from '../../analyze/css-analyze.js';
 import {
 	in_jsx_child_context,
@@ -40,10 +43,7 @@ import {
 	jsx_id as build_jsx_id,
 } from '../../utils/builders.js';
 import * as b from '../../utils/builders.js';
-import {
-	find_first_top_level_await,
-	find_first_top_level_await_in_tsrx_function_body,
-} from '../await.js';
+import { find_first_top_level_await, find_top_level_awaits } from '../await.js';
 import {
 	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 	MERGE_SPREAD_CLASS_INTERNAL_NAME,
@@ -70,16 +70,16 @@ import {
 	child_nodes,
 	has_location,
 	is_ast_node,
+	is_code_block_function_body,
 	is_function_node,
 	is_function_or_class_node as is_function_or_class_boundary,
 	is_template_directive as is_jsx_control_flow_expression,
-	node_children,
 	render_children,
 } from '../../utils/ast.js';
 import { is_reference } from '../../utils/is-reference.js';
 
-const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
-const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
+export const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
+export const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
 const LEADING_INLINE_WHITESPACE = /^[ \t]+/;
 const TRAILING_INLINE_WHITESPACE = /[ \t]+$/;
 
@@ -543,6 +543,7 @@ export function createJsxTransform(platform) {
 	 * @returns {JsxTransformResult}
 	 */
 	function transform(ast, source, filename, options) {
+		const parsed = ast;
 		/** @type {Map<number, boolean> | undefined} */
 		let hoistable_tags;
 		const effective_platform =
@@ -587,6 +588,9 @@ export function createJsxTransform(platform) {
 			needs_match: false,
 			needs_errored: false,
 			needs_loading: false,
+			needs_for_items: false,
+			needs_for_keyed_rows: false,
+			needs_for_memo: false,
 			needs_define_vapor_component: false,
 			needs_vapor_for: false,
 			needs_vapor_computed: false,
@@ -594,13 +598,15 @@ export function createJsxTransform(platform) {
 			type_only_style_anchors,
 			helper_state: null,
 			available_bindings: new Map(),
-			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast)),
+			rejected_awaits: new Set(),
+			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast, parsed)),
 			filename: filename ?? null,
 			source,
 			collect,
 			errors: collect ? options?.errors : undefined,
 			comments: options?.comments,
 			typeOnly: !!options?.typeOnly,
+			uses_server_directive: has_use_server_directive(ast),
 			// Opt-in navigation origins (see stamp_directive_origin). OFF by
 			// default, and the editor pipeline never asks for it: with the flag
 			// clear the emitted code, the source map and therefore every Volar
@@ -610,6 +616,8 @@ export function createJsxTransform(platform) {
 			// needs_show / needs_for flags) via `hooks.initialState`.
 			...(platform.hooks?.initialState?.() ?? {}),
 		};
+
+		validate_directive_declarations(ast, transform_context);
 
 		// Opt-in server-module dialect (`module <name> { … }` plus its boundary
 		// `import … from '<specifier>'`): lower to plain checkable TS before any
@@ -874,6 +882,7 @@ export function createJsxTransform(platform) {
 			lower_remaining_jsx_code_blocks(expanded, transform_context),
 			transform_context,
 		);
+		report_deferred_template_yields(final_program, transform_context);
 		inject_dynamic_import(final_program, transform_context);
 		if (platform.hooks?.injectImports) {
 			platform.hooks.injectImports(final_program, transform_context, suspense_source);
@@ -965,7 +974,9 @@ function lower_dynamic_jsx_element(node, transform_context) {
 				name_id,
 				[...extra_attributes, ...(node.openingElement.attributes || [])],
 				node.openingElement.selfClosing,
-				node.openingElement.typeArguments,
+				// Type arguments here are an error (TSRX2033): on `TsrxDynamic` they
+				// would type the tag, not its props.
+				undefined,
 				has_location(node.openingElement) ? node.openingElement : undefined,
 			),
 			closing
@@ -1784,22 +1795,40 @@ function transform_native_tsrx_function(node, { next, state, path }, { nativeBod
  * @returns {void}
  */
 function validate_native_await(node, transform_context) {
-	const await_node = find_native_await(node);
-	if (!await_node) {
+	const awaits = find_native_awaits(node);
+	if (!awaits.length) {
 		return;
 	}
 
+	const { validation } = transform_context.platform;
 	const validator = transform_context.platform.hooks?.validateComponentAwait;
 	if (validator) {
-		validator(await_node, node, transform_context, false, transform_context.source || '');
+		const uses_server_directive =
+			validation.scanUseServerDirectiveForAwaitWithCustomValidator !== false &&
+			transform_context.uses_server_directive;
+		for (const await_node of awaits) {
+			const reported = transform_context.errors?.length ?? 0;
+			validator(
+				await_node,
+				node,
+				transform_context,
+				uses_server_directive,
+				transform_context.source || '',
+			);
+			// The shared checks for an `await` the output can't hold skip one the
+			// target has reported, so each `await` is reported once.
+			if ((transform_context.errors?.length ?? 0) > reported) {
+				transform_context.rejected_awaits.add(/** @type {number} */ (await_node.start));
+			}
+		}
 		return;
 	}
 
-	if (transform_context.platform.validation.requireUseServerForAwait) {
+	if (validation.requireUseServerForAwait && !transform_context.uses_server_directive) {
 		error(
 			TSRX_ERRORS.TOP_LEVEL_AWAIT_USE_SERVER,
 			transform_context.filename,
-			await_node,
+			awaits[0],
 			transform_context.errors,
 			transform_context.comments,
 		);
@@ -1807,88 +1836,39 @@ function validate_native_await(node, transform_context) {
 }
 
 /**
+ * Whether the module's directive prologue holds `"use server"`. The parser
+ * marks only the leading string statements as directives, so a string after
+ * another statement, or a parenthesized one, doesn't count.
+ *
+ * @param {AST.Program} program
+ * @returns {boolean}
+ */
+function has_use_server_directive(program) {
+	return program.body.some(
+		(statement) =>
+			statement.type === 'ExpressionStatement' &&
+			'directive' in statement &&
+			statement.directive === 'use server',
+	);
+}
+
+/**
+ * The `await`s of a component outside nested functions, in source order. Any of
+ * them makes the component async, so this walks the whole body, statement
+ * headers and the output's attributes included.
+ *
  * @param {AST.Function} node
- * @returns {AST.TSRXAwaitNode | null}
+ * @returns {AST.TSRXAwaitNode[]}
  */
-function find_native_await(node) {
-	if (
-		node.type === 'ArrowFunctionExpression' &&
-		node.body?.type !== 'BlockStatement' &&
-		node_contains_native_tsrx_template(node.body)
-	) {
-		return find_first_top_level_await(node.body, false);
+function find_native_awaits(node) {
+	if (node.body?.type !== 'BlockStatement' && !node_contains_native_tsrx_template(node.body)) {
+		return [];
 	}
-
-	if (node.body?.type === 'JSXCodeBlock') {
-		return find_native_await_in_list(get_raw_jsx_code_block_body_nodes(node.body));
-	}
-
-	const body = node.body?.type === 'BlockStatement' ? node.body.body || [] : [];
-	return find_native_await_in_list(body);
-}
-
-/**
- * @param {AST.Node[]} statements
- * @returns {AST.TSRXAwaitNode | null}
- */
-function find_native_await_in_list(statements) {
-	for (const statement of statements) {
-		const found = find_native_await_in_statement(statement);
-		if (found) return found;
-	}
-	return null;
-}
-
-/**
- * @param {AST.Node | null | undefined} statement
- * @returns {AST.TSRXAwaitNode | null}
- */
-function find_native_await_in_statement(statement) {
-	if (!statement) return null;
-
-	if (statement.type === 'ReturnStatement' && is_native_tsrx_node(statement.argument)) {
-		return find_first_top_level_await_in_tsrx_function_body(node_children(statement.argument));
-	}
-
-	if (
-		statement.type === 'ReturnStatement' &&
-		node_contains_native_tsrx_template(statement.argument)
-	) {
-		return find_first_top_level_await(statement.argument, false);
-	}
-
-	if (is_function_or_class_boundary(statement)) {
-		return null;
-	}
-
-	if (statement.type === 'BlockStatement') {
-		return find_native_await_in_list(statement.body || []);
-	}
-
-	if (is_if_control_node(statement)) {
-		return (
-			find_native_await_in_statement(statement.consequent) ||
-			find_native_await_in_statement(statement.alternate)
-		);
-	}
-
-	if (is_switch_control_node(statement)) {
-		for (const switch_case of statement.cases || []) {
-			const found = find_native_await_in_list(switch_case.consequent || []);
-			if (found) return found;
-		}
-		return null;
-	}
-
-	if (is_try_control_node(statement)) {
-		return (
-			find_native_await_in_statement(statement.block) ||
-			find_native_await_in_statement(statement.handler?.body) ||
-			find_native_await_in_statement(statement.finalizer)
-		);
-	}
-
-	return find_first_top_level_await(statement, false);
+	// The walk visits an element's children before its attributes. Strict mode
+	// throws at the first `await` reported, so report them in source order.
+	return find_top_level_awaits(node.body).sort(
+		(a, b) => /** @type {number} */ (a.start) - /** @type {number} */ (b.start),
+	);
 }
 
 /**
@@ -2621,6 +2601,9 @@ function references_scope_bindings(node, scope_bindings, referenced_bindings) {
  * Hoisting prevents React from recreating the element on every render, allowing
  * the reconciler to skip diffing when it sees the same element identity.
  *
+ * A static element that an expression container renders is hoisted too,
+ * wherever the container sits in the rendered JSX (#81).
+ *
  * @param {ESTreeJSX.JSXRenderChild[]} render_nodes
  * @param {TransformContext} transform_context
  */
@@ -2629,35 +2612,236 @@ function hoist_static_render_nodes(render_nodes, transform_context) {
 
 	for (let i = 0; i < render_nodes.length; i++) {
 		const node = render_nodes[i];
-		if (node.type !== 'JSXElement') continue;
-		if (!is_hoist_safe_jsx_node(node)) continue;
-		if (is_bare_component_invocation(node)) {
-			// `<Helper />` with no attributes and no children is just an
-			// invocation reference. Hoisting it would produce
-			// `const App__staticN = <Helper />` aliases that bloat the output
-			// without enabling React's element-identity fast path (the helper
-			// isn't memoized, so the parent re-invokes it every render either
-			// way). Inline the reference at the call site instead.
-			continue;
-		}
-		if (
-			transform_context.platform.hooks?.canHoistStaticNode &&
-			!transform_context.platform.hooks.canHoistStaticNode(node, transform_context)
-		) {
-			continue;
-		}
-		if (references_scope_bindings(node, transform_context.available_bindings)) continue;
-		if (reads_unhoistable_tag(node, transform_context.hoistable_tags())) continue;
-
-		const name = create_helper_name(transform_context.helper_state, 'static');
-		const id = create_generated_identifier(name);
-
-		transform_context.helper_state.statics.push(
-			b.const(id, lower_static_script_bodies(node, transform_context)),
-		);
-
-		render_nodes[i] = to_jsx_expression_container(clone_identifier(id), node);
+		const id = hoist_static_jsx(node, transform_context);
+		render_nodes[i] = id
+			? to_jsx_expression_container(id, node)
+			: hoist_static_jsx_in_containers(node, false, transform_context);
 	}
+}
+
+/**
+ * Moves `node` to a module-level static when it is a static element, and
+ * returns an identifier that reads the static.
+ *
+ * @param {AST.Node} node
+ * @param {TransformContext} transform_context
+ * @returns {AST.Identifier | null}
+ */
+function hoist_static_jsx(node, transform_context) {
+	const helper_state = transform_context.helper_state;
+	if (!helper_state || node.type !== 'JSXElement') return null;
+	if (!is_hoist_safe_jsx_node(node)) return null;
+	if (is_bare_component_invocation(node)) {
+		// `<Helper />` with no attributes and no children is just an
+		// invocation reference. Hoisting it would produce
+		// `const App__staticN = <Helper />` aliases that bloat the output
+		// without enabling React's element-identity fast path (the helper
+		// isn't memoized, so the parent re-invokes it every render either
+		// way). Inline the reference at the call site instead.
+		return null;
+	}
+	if (
+		transform_context.platform.hooks?.canHoistStaticNode &&
+		!transform_context.platform.hooks.canHoistStaticNode(node, transform_context)
+	) {
+		return null;
+	}
+	if (references_scope_bindings(node, transform_context.available_bindings)) return null;
+	if (reads_unhoistable_tag(node, transform_context.hoistable_tags())) return null;
+
+	// Skip a name the source already uses, so the static can't redeclare or be
+	// shadowed by an authored `App__static1`.
+	/** @type {string} */
+	let name;
+	do {
+		name = create_helper_name(helper_state, 'static');
+	} while (source_mentions_identifier(transform_context.source, name));
+	const id = create_generated_identifier(name);
+	helper_state.statics.push(b.const(id, lower_static_script_bodies(node, transform_context)));
+	return clone_identifier(id);
+}
+
+/**
+ * Hoists an element that an expression container renders, unless it has a
+ * `key`. When a branch decides whether it renders (`conditional`), only host
+ * elements are hoisted: a static reads its tags when the module loads, and a
+ * component or member tag that the render may never reach (`<ui.Button>` in
+ * `{false && …}`) can be uninitialized there, as in a cyclic import.
+ *
+ * @param {AST.Node} node
+ * @param {boolean} conditional
+ * @param {TransformContext} transform_context
+ * @returns {AST.Identifier | null}
+ */
+function hoist_contained_static_jsx(node, conditional, transform_context) {
+	if (node.type !== 'JSXElement' || has_key_attribute(node)) return null;
+	if (conditional && reads_tag_binding(node)) return null;
+	return hoist_static_jsx(node, transform_context);
+}
+
+/**
+ * Returns `node` with the static elements that its expression containers
+ * render hoisted: a container in an element's or a fragment's children or in
+ * an attribute value, through `?:`, `&&`, `||` and `??` branches and nested
+ * containers. A bare child of a dynamic element stays in place, and the walk
+ * doesn't enter a function or any other expression, so `{items.map(() =>
+ * <li />)}` keeps its JSX. (A function whose returned JSX is lowered as render
+ * output, such as a render helper in the component body, gets its own pass.)
+ * Each node on the way to a hoisted element is copied rather than changed,
+ * since the parsed tree that editor features read can hold the same nodes.
+ *
+ * @template {AST.Node} T
+ * @param {T} node
+ * @param {boolean} conditional whether a branch above decides if `node` renders
+ * @param {TransformContext} transform_context
+ * @returns {T}
+ */
+function hoist_static_jsx_in_containers(node, conditional, transform_context) {
+	/** @type {AST.Node} */
+	const current = node;
+	if (current.type === 'JSXElement') {
+		const { openingElement } = current;
+		const attributes = map_changed(openingElement.attributes, (attribute) => {
+			if (
+				attribute.type !== 'JSXAttribute' ||
+				attribute.value?.type !== 'JSXExpressionContainer' ||
+				(attribute.name.type === 'JSXIdentifier' &&
+					(attribute.name.name === 'key' || attribute.name.name === 'ref'))
+			) {
+				return attribute;
+			}
+			const value = hoist_static_jsx_in_containers(attribute.value, conditional, transform_context);
+			return value === attribute.value ? attribute : { ...attribute, value };
+		});
+		const children = map_changed(current.children, (child) =>
+			hoist_static_jsx_in_containers(child, conditional, transform_context),
+		);
+		if (attributes === openingElement.attributes && children === current.children) return node;
+		return /** @type {T} */ ({
+			...current,
+			openingElement:
+				attributes === openingElement.attributes
+					? openingElement
+					: { ...openingElement, attributes },
+			children,
+		});
+	}
+	if (current.type === 'JSXFragment') {
+		const children = map_changed(current.children, (child) =>
+			hoist_static_jsx_in_containers(child, conditional, transform_context),
+		);
+		return children === current.children ? node : /** @type {T} */ ({ ...current, children });
+	}
+	if (
+		current.type === 'JSXExpressionContainer' &&
+		current.expression.type !== 'JSXEmptyExpression'
+	) {
+		const expression = hoist_static_jsx_in_expression(
+			current.expression,
+			conditional,
+			transform_context,
+		);
+		return expression === current.expression ? node : /** @type {T} */ ({ ...current, expression });
+	}
+	return node;
+}
+
+/**
+ * Returns `expression`, a container's value, as a static's identifier when it
+ * is a static element, or with the static elements it renders through branches
+ * and containers hoisted. A fragment keeps its children: each static child is
+ * hoisted on its own, as in a component's top-level fragment, so the children
+ * React sees keep their shape.
+ *
+ * @param {AST.Expression} expression
+ * @param {boolean} conditional
+ * @param {TransformContext} transform_context
+ * @returns {AST.Expression}
+ */
+function hoist_static_jsx_in_expression(expression, conditional, transform_context) {
+	switch (expression.type) {
+		case 'JSXElement':
+			return (
+				hoist_contained_static_jsx(expression, conditional, transform_context) ??
+				hoist_static_jsx_in_containers(expression, conditional, transform_context)
+			);
+		case 'JSXFragment': {
+			const children = map_changed(expression.children, (child) => {
+				const id = hoist_contained_static_jsx(child, conditional, transform_context);
+				return id
+					? to_jsx_expression_container(id, child)
+					: hoist_static_jsx_in_containers(child, conditional, transform_context);
+			});
+			return children === expression.children ? expression : { ...expression, children };
+		}
+		case 'ConditionalExpression': {
+			const consequent = hoist_static_jsx_in_expression(
+				expression.consequent,
+				true,
+				transform_context,
+			);
+			const alternate = hoist_static_jsx_in_expression(
+				expression.alternate,
+				true,
+				transform_context,
+			);
+			return consequent === expression.consequent && alternate === expression.alternate
+				? expression
+				: { ...expression, consequent, alternate };
+		}
+		case 'LogicalExpression': {
+			const right = hoist_static_jsx_in_expression(expression.right, true, transform_context);
+			return right === expression.right ? expression : { ...expression, right };
+		}
+		case 'ParenthesizedExpression': {
+			const inner = hoist_static_jsx_in_expression(
+				expression.expression,
+				conditional,
+				transform_context,
+			);
+			return inner === expression.expression ? expression : { ...expression, expression: inner };
+		}
+		default:
+			return expression;
+	}
+}
+
+/**
+ * `items` mapped through `map`, or `items` itself when no item changed.
+ *
+ * @template T
+ * @param {T[]} items
+ * @param {(item: T) => T} map
+ * @returns {T[]}
+ */
+function map_changed(items, map) {
+	const mapped = items.map(map);
+	return mapped.some((item, index) => item !== items[index]) ? mapped : items;
+}
+
+/**
+ * @param {AST.TSRXJSXElement} element
+ * @returns {boolean}
+ */
+function has_key_attribute(element) {
+	return element.openingElement.attributes.some(
+		(attribute) =>
+			attribute.type === 'JSXAttribute' &&
+			attribute.name.type === 'JSXIdentifier' &&
+			attribute.name.name === 'key',
+	);
+}
+
+/**
+ * Whether `node` has a tag that reads a binding: a component, or a member tag
+ * such as `<ui.Button>`.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function reads_tag_binding(node) {
+	if (node.type === 'JSXOpeningElement' && !is_intrinsic_tag(node.name)) return true;
+	return child_nodes(node).some(reads_tag_binding);
 }
 
 /**
@@ -2668,14 +2852,22 @@ function hoist_static_render_nodes(render_nodes, transform_context) {
  * declaration, or a `const` or class declared in an earlier statement. A
  * member tag (`<Menu.Item>`) also reads a property, which the module can still
  * assign after it loads (`Menu.Item = …`), so only one that starts with an
- * import is hoisted. A tag that starts with `this`, `super`, a local binding,
- * a binding that can be reassigned (`let`, `var`, an enum, a namespace, an
- * import alias), or a name the module does not bind stays at render time.
+ * import is hoisted, and only when the module writes no property under that
+ * import. A namespace import's own properties are read-only, so a tag that
+ * reads one of them (`<ns.Button>`) is hoisted either way. A tag that starts
+ * with `this`, `super`, a local binding, a binding that can be reassigned
+ * (`let`, `var`, an enum, a namespace, an import alias), a binding the module
+ * assigns anywhere (`Tag = Replacement` after `function Tag() {}`, or any
+ * binding once it calls `eval` directly), or a name the module does not bind
+ * stays at render time, since a static would keep the value it read when the
+ * module loaded.
  *
  * @param {AST.Program} program
+ * @param {AST.Program} [parsed] the program before the passes that can move
+ * authored code out of the tree, which the assignments are read from
  * @returns {Map<number, boolean>}
  */
-function collect_hoistable_tags(program) {
+function collect_hoistable_tags(program, parsed = program) {
 	/** @type {Map<string, { kind: string, end: number }>} */
 	const module_bindings = new Map();
 	/**
@@ -2698,32 +2890,39 @@ function collect_hoistable_tags(program) {
 	// A `var` in a block outside any function is module-level too
 	for (const name of var_names(program)) declare(name, 'mutable', Infinity);
 
-	/** @type {Map<number, boolean>} */
-	const hoistable = new Map();
 	/** @type {Set<string>[]} */
 	const scopes = [];
+	// A name a local binding shadows counts too: that only keeps a static at
+	// render time
+	const assigned = collect_assigned_names(parsed);
 	/**
 	 * @param {string} name
-	 * @param {boolean} member
+	 * @param {number} depth how many properties the tag reads: none for
+	 * `<Tag>`, two for `<ui.Menu.Item>`
 	 * @param {number} position
 	 * @returns {boolean}
 	 */
-	const is_hoistable = (name, member, position) => {
+	const is_hoistable = (name, depth, position) => {
 		if (name === 'this' || name === 'super') return false;
 		if (scopes.some((names) => names.has(name))) return false;
+		if (!assigned || assigned.names.has(name)) return false;
 		const binding = module_bindings.get(name);
 		switch (binding?.kind) {
 			case 'import':
-				return true;
+				return depth === 0 || !assigned.objects.has(name);
+			case 'namespace import':
+				return depth <= 1 || !assigned.objects.has(name);
 			case 'function':
-				return !member;
+				return depth === 0;
 			case 'class':
 			case 'const':
-				return !member && binding.end <= position;
+				return depth === 0 && binding.end <= position;
 			default:
 				return false;
 		}
 	};
+	/** @type {Map<number, boolean>} */
+	const hoistable = new Map();
 	/** @param {AST.Node} node */
 	const visit = (node) => {
 		const names = node === program ? null : scope_names(node);
@@ -2731,10 +2930,11 @@ function collect_hoistable_tags(program) {
 		if (node.type === 'JSXOpeningElement' && !is_intrinsic_tag(node.name)) {
 			const root = jsx_tag_root(node.name);
 			if (root && typeof root.start === 'number') {
-				hoistable.set(
-					root.start,
-					is_hoistable(root.name, node.name.type === 'JSXMemberExpression', root.start),
-				);
+				let depth = 0;
+				for (let name = node.name; name.type === 'JSXMemberExpression'; name = name.object) {
+					depth++;
+				}
+				hoistable.set(root.start, is_hoistable(root.name, depth, root.start));
 			}
 		}
 		for (const child of child_nodes(node)) visit(child);
@@ -2742,6 +2942,145 @@ function collect_hoistable_tags(program) {
 	};
 	visit(program);
 	return hoistable;
+}
+
+/**
+ * What `program` assigns anywhere. `names` are the names it assigns: the
+ * targets of an assignment, an update, or a `for … in`/`for … of` head
+ * without a declaration, through destructuring and type assertions. `objects`
+ * are the names it can write a property under: the name a member target of
+ * any of those starts with (`ui` for `ui.Menu.Item = …`), the one a `delete`
+ * starts with, and the one the first argument of any call or `new` starts
+ * with, since `Object.assign(ui, …)` and `Object.defineProperty(ui.Menu, …)`
+ * write one.
+ * `null` when the program calls `eval` directly, which can assign any name it
+ * can see. Read from the program as parsed: the style pass moves the `ref` of
+ * a `<style>` in a nested root to the root's metadata, which `child_nodes`
+ * skips.
+ *
+ * @param {AST.Program} program
+ * @returns {{ names: Set<string>, objects: Set<string> } | null}
+ */
+function collect_assigned_names(program) {
+	const assigned = { names: new Set(), objects: new Set() };
+	let calls_eval = false;
+	/** @param {AST.Node} node */
+	const visit = (node) => {
+		if (node.type === 'AssignmentExpression') add_target_names(node.left, assigned);
+		else if (node.type === 'UpdateExpression') add_target_names(node.argument, assigned);
+		else if (node.type === 'UnaryExpression' && node.operator === 'delete') {
+			add_object_names(node.argument, assigned.objects);
+		} else if (
+			(node.type === 'ForInStatement' || node.type === 'ForOfStatement') &&
+			node.left.type !== 'VariableDeclaration'
+		) {
+			add_target_names(node.left, assigned);
+		} else if (node.type === 'CallExpression' || node.type === 'NewExpression') {
+			const callee = unwrap_expression(node.callee);
+			if (callee.type === 'Identifier' && callee.name === 'eval') calls_eval = true;
+			const [first] = node.arguments;
+			if (first && first.type !== 'SpreadElement') add_object_names(first, assigned.objects);
+		}
+		for (const child of child_nodes(node)) visit(child);
+	};
+	visit(program);
+	return calls_eval ? null : assigned;
+}
+
+/**
+ * `node` without the parentheses, type assertions and type arguments around
+ * it.
+ *
+ * @param {AST.Node} node
+ * @returns {AST.Node}
+ */
+function unwrap_expression(node) {
+	/** @type {any} */
+	let current = node;
+	while (
+		current.type === 'ParenthesizedExpression' ||
+		current.type === 'TSAsExpression' ||
+		current.type === 'TSSatisfiesExpression' ||
+		current.type === 'TSNonNullExpression' ||
+		current.type === 'TSTypeAssertion' ||
+		current.type === 'TSInstantiationExpression'
+	) {
+		current = current.expression;
+	}
+	return current;
+}
+
+/**
+ * @param {AST.Node | null} target
+ * @param {{ names: Set<string>, objects: Set<string> }} assigned
+ */
+function add_target_names(target, assigned) {
+	/** @type {any} */
+	const node = target && unwrap_expression(target);
+	switch (node?.type) {
+		case 'Identifier':
+			assigned.names.add(node.name);
+			break;
+		case 'MemberExpression':
+			add_object_names(node, assigned.objects);
+			break;
+		case 'ObjectPattern':
+			for (const property of node.properties) {
+				add_target_names(
+					property.type === 'RestElement' ? property.argument : property.value,
+					assigned,
+				);
+			}
+			break;
+		case 'ArrayPattern':
+			for (const element of node.elements) add_target_names(element, assigned);
+			break;
+		case 'RestElement':
+			add_target_names(node.argument, assigned);
+			break;
+		case 'AssignmentPattern':
+			add_target_names(node.left, assigned);
+			break;
+	}
+}
+
+/**
+ * Adds the names whose value `node` can be, or that a property path in it
+ * starts from: `ui` for `ui`, `ui.Menu`, `(0, ui)`, `ui?.Menu` and
+ * `(await ui)`.
+ *
+ * @param {AST.Node} node
+ * @param {Set<string>} names
+ */
+function add_object_names(node, names) {
+	/** @type {any} */
+	const current = unwrap_expression(node);
+	switch (current.type) {
+		case 'Identifier':
+			names.add(current.name);
+			break;
+		case 'MemberExpression':
+			add_object_names(current.object, names);
+			break;
+		case 'ChainExpression':
+			add_object_names(current.expression, names);
+			break;
+		case 'AwaitExpression':
+			add_object_names(current.argument, names);
+			break;
+		case 'SequenceExpression':
+			add_object_names(current.expressions[current.expressions.length - 1], names);
+			break;
+		case 'ConditionalExpression':
+			add_object_names(current.consequent, names);
+			add_object_names(current.alternate, names);
+			break;
+		case 'LogicalExpression':
+		case 'AssignmentExpression':
+			add_object_names(current.left, names);
+			add_object_names(current.right, names);
+			break;
+	}
 }
 
 /**
@@ -2777,8 +3116,8 @@ function jsx_tag_root(name) {
 
 /**
  * The value bindings a statement in a statement list declares, with their
- * kind: `import`, `function`, `class`, `const`, or `mutable`. Type-only and
- * ambient declarations bind no value.
+ * kind: `import`, `namespace import`, `function`, `class`, `const`, or
+ * `mutable`. Type-only and ambient declarations bind no value.
  *
  * @param {AST.Node} statement
  * @returns {Array<[string, string]>}
@@ -2794,9 +3133,11 @@ function statement_bindings(statement) {
 	switch (node.type) {
 		case 'ImportDeclaration':
 			if (node.importKind === 'type') return [];
-			return node.specifiers.flatMap((/** @type {any} */ specifier) =>
-				specifier.importKind === 'type' ? [] : [[specifier.local.name, 'import']],
-			);
+			return node.specifiers.flatMap((/** @type {any} */ specifier) => {
+				if (specifier.importKind === 'type') return [];
+				const kind = specifier.type === 'ImportNamespaceSpecifier' ? 'namespace import' : 'import';
+				return [[specifier.local.name, kind]];
+			});
 		case 'VariableDeclaration': {
 			/** @type {Map<string, AST.Identifier>} */
 			const bindings = new Map();
@@ -3219,6 +3560,77 @@ function lower_remaining_jsx_code_blocks(node, transform_context, seen = new Set
 }
 
 /**
+ * Reports the `yield`s a target's own JSX compiler would move out of their
+ * generator (TSRX2034): Solid's and Vue's compilers evaluate some template
+ * expressions in effects, getters or callbacks, where a `yield` no longer
+ * runs in its generator and the compiled output fails to parse. The target's
+ * `findDeferredTemplateYields` hook finds them in the final output, which is
+ * what that compiler reads. A `yield*` that delegates to a generator made from
+ * a generated closure stands for the authored `yield`s inside it.
+ *
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function report_deferred_template_yields(program, transform_context) {
+	const find = transform_context.platform.hooks?.findDeferredTemplateYields;
+	if (!find || (transform_context.source && !transform_context.source.includes('yield'))) {
+		return;
+	}
+
+	/** @type {Map<number, AST.YieldExpression>} */
+	const authored = new Map();
+	/** @param {AST.YieldExpression} node */
+	const add = (node) => {
+		const generator = /** @type {AST.FunctionExpression | undefined} */ (
+			node.metadata?.generated_delegation
+		);
+		if (generator) {
+			for (const inner of find_own_yields(generator.body)) add(inner);
+		} else if (typeof node.start === 'number') {
+			authored.set(node.start, node);
+		}
+	};
+	for (const node of find(program, transform_context)) add(node);
+
+	// A `yield` with an error of its own already, or one inside it, needs no
+	// second: TSRX2022 for a callback the target calls itself, TSRX2023 for a
+	// `super` that the lowering for the `yield` can't read.
+	const reported = (transform_context.errors ?? []).map((error) => error.pos ?? -1);
+	for (const node of [...authored.values()]
+		.filter(
+			(node) =>
+				!reported.some(
+					(pos) =>
+						pos >= /** @type {number} */ (node.start) && pos < /** @type {number} */ (node.end),
+				),
+		)
+		.sort((a, b) => /** @type {number} */ (a.start) - /** @type {number} */ (b.start))) {
+		error(
+			TSRX_ERRORS.TARGET_TEMPLATE_YIELD_UNSUPPORTED(transform_context.platform.name),
+			transform_context.filename,
+			node,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	}
+}
+
+/**
+ * The `yield`s in `node` that belong to the function around it.
+ *
+ * @param {AST.Node} node
+ * @param {AST.YieldExpression[]} [found]
+ * @returns {AST.YieldExpression[]}
+ */
+function find_own_yields(node, found = []) {
+	if (is_function_node(node)) return found;
+	if (node.type === 'YieldExpression') found.push(node);
+	for (const child of child_nodes(node)) find_own_yields(child, found);
+	return found;
+}
+
+/**
  * An authored `await` or `yield` is valid where it was written, but lowering
  * can move it into a closure the compiler generated: the IIFE of a `@switch`,
  * of a branch with setup statements, or of an element whose spread and `ref`
@@ -3371,7 +3783,9 @@ function suspend_generated_closures(program, transform_context) {
 			if (make_async) {
 				if (awaitable) {
 					fn = { ...fn, async: true };
-				} else {
+				} else if (
+					!transform_context.rejected_awaits.has(/** @type {number} */ (first_await?.start))
+				) {
 					error(
 						TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED(transform_context.platform.name),
 						transform_context.filename,
@@ -3409,11 +3823,18 @@ function suspend_generated_closures(program, transform_context) {
 			if (made_generator.has(call.callee)) {
 				// `yield*` also settles a delegated async generator, so a closure
 				// made both async and a generator is not awaited as well.
+				const delegation = b.yield(
+					delegate_to_generated_generator(call, transform_context, get_arguments_name),
+					true,
+				);
+				// It stands for the authored `yield`s in the generated generator,
+				// which is where a later check reports them.
+				delegation.metadata = {
+					...delegation.metadata,
+					generated_delegation: /** @type {AST.FunctionExpression} */ (call.callee),
+				};
 				result = {
-					node: b.yield(
-						delegate_to_generated_generator(call, transform_context, get_arguments_name),
-						true,
-					),
+					node: delegation,
 					first_await: made_async.get(call.callee) ?? first_await,
 					first_yield: made_generator.get(call.callee) ?? first_yield,
 				};
@@ -4428,14 +4849,6 @@ function get_jsx_code_block_body_nodes(node, transform_context) {
 }
 
 /**
- * @param {AST.JSXCodeBlock} node
- * @returns {AST.Node[]}
- */
-function get_raw_jsx_code_block_body_nodes(node) {
-	return [...(node.body || []), ...(node.render ? [node.render] : [])];
-}
-
-/**
  * @param {AST.Node | null | undefined} node
  * @returns {node is AST.NativeTSRXNode}
  */
@@ -5120,17 +5533,26 @@ function validate_if_body_control_flow(node, transform_context) {
 /**
  * Every target hands an `@for` item to a callback, so the head has to declare
  * its loop variable the way a parameter can: assigning to an existing variable
- * or property would only shadow it, and a `using` item would never be disposed.
- * A target that lowers `@for` itself calls this from its own lowering.
+ * or property would only shadow it, a `var` would not reach the enclosing
+ * function, and a `using` item would never be disposed. Called from
+ * `validate_directive_declarations`, before any target lowers an `@for`.
  *
  * @param {AST.ForOfStatement['left']} left
  * @param {TransformContext} transform_context
  * @returns {void}
  */
-export function validate_for_of_head(left, transform_context) {
+function validate_for_of_head(left, transform_context) {
 	if (left.type !== 'VariableDeclaration') {
 		error(
 			TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
+			transform_context.filename,
+			left,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	} else if (left.kind === 'var') {
+		error(
+			TSRX_ERRORS.FOR_HEAD_VAR,
 			transform_context.filename,
 			left,
 			transform_context.errors,
@@ -5144,6 +5566,69 @@ export function validate_for_of_head(left, transform_context) {
 			transform_context.errors,
 			transform_context.comments,
 		);
+	}
+}
+
+/**
+ * Every target runs an `@if`, `@for`, `@switch` or `@try` body that declares
+ * something, and every `@{ … }` block that isn't a function's own body, in a
+ * function of its own, so a `var` there, or in a plain block or loop inside
+ * one, would not reach the enclosing function. A function or class inside
+ * scopes its own `var`s. This walks the authored module before any target
+ * lowers a directive or block, and reports those `var`s and invalid `@for`
+ * heads once each, in source order.
+ *
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function validate_directive_declarations(program, transform_context) {
+	/** @type {Array<{ node: AST.Node, head: boolean }>} */
+	const found = [];
+	collect_directive_declarations(program, null, false, found);
+	found.sort(
+		(a, b) =>
+			/** @type {AST.NodeWithLocation} */ (a.node).start -
+			/** @type {AST.NodeWithLocation} */ (b.node).start,
+	);
+	for (const { node, head } of found) {
+		if (head) {
+			validate_for_of_head(/** @type {AST.ForOfStatement['left']} */ (node), transform_context);
+		} else {
+			error(
+				TSRX_ERRORS.DIRECTIVE_BODY_VAR,
+				transform_context.filename,
+				get_statement_keyword_node(node, 'var'),
+				transform_context.errors,
+				transform_context.comments,
+			);
+		}
+	}
+}
+
+/**
+ * @param {AST.Node} node
+ * @param {AST.Node | null} parent
+ * @param {boolean} in_body Whether `node` is inside a directive body or a nested `@{ … }` block.
+ * @param {Array<{ node: AST.Node, head: boolean }>} found An `@for` head, or a `var` declaration in a body.
+ * @returns {void}
+ */
+function collect_directive_declarations(node, parent, in_body, found) {
+	if (in_body && node.type === 'VariableDeclaration' && node.kind === 'var' && !node.declare) {
+		found.push({ node, head: false });
+	} else if (is_template_for_of_node(node)) {
+		found.push({ node: node.left, head: true });
+	}
+
+	const children_in_body =
+		is_jsx_control_flow_expression(node) ||
+		(node.type === 'JSXCodeBlock' && !is_code_block_function_body(node, parent)) ||
+		(in_body && !is_function_or_class_boundary(node));
+	for (const child of child_nodes(node)) {
+		// The `@for` head is validated as a head.
+		const in_for_head =
+			node.type === 'JSXForExpression' && child !== node.body && child !== node.empty;
+		collect_directive_declarations(child, node, children_in_body && !in_for_head, found);
 	}
 }
 
@@ -5170,8 +5655,7 @@ function is_loop_statement(node) {
  * @returns {ESTreeJSX.JSXExpressionContainer}
  */
 function for_of_statement_to_jsx_child(node, transform_context) {
-	validate_for_of_head(node.left, transform_context);
-	if (node.await) {
+	if (node.await && !transform_context.rejected_awaits.has(/** @type {number} */ (node.start))) {
 		error(
 			TSRX_ERRORS.TARGET_FOR_AWAIT_UNSUPPORTED(transform_context.platform.name),
 			transform_context.filename,
@@ -6128,6 +6612,10 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	// so it gets the normalizers that return their copy: handing back the
 	// original bag would make the copy read its getters a second time.
 	const copies_spread = transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place';
+	// Those normalizers merge a bag's refs as `merge_element_refs` does when the
+	// platform lets elements share a merged ref.
+	const shares_merged_refs =
+		!transform_context.typeOnly && transform_context.platform.jsx?.shareMergedRefs === true;
 
 	/** @type {Map<string, AST.ImportSpecifier[]>} */
 	const ref_imports = new Map();
@@ -6137,9 +6625,7 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			merge_refs_source,
 			b.import_specifier(
-				!transform_context.typeOnly && transform_context.platform.jsx?.shareMergedRefs
-					? 'merge_element_refs'
-					: 'mergeRefs',
+				shares_merged_refs ? 'merge_element_refs' : 'mergeRefs',
 				MERGE_REFS_INTERNAL_NAME,
 			),
 		);
@@ -6166,7 +6652,11 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			normalize_spread_props_source,
 			b.import_specifier(
-				copies_spread ? 'copy_spread_props' : 'normalize_spread_props',
+				copies_spread
+					? shares_merged_refs
+						? 'copy_spread_props_sharing_refs'
+						: 'copy_spread_props'
+					: 'normalize_spread_props',
 				NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 			),
 		);
@@ -6177,7 +6667,11 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			normalize_spread_props_for_ref_attr_source,
 			b.import_specifier(
-				copies_spread ? 'copy_spread_props_for_ref_attr' : 'normalize_spread_props_for_ref_attr',
+				copies_spread
+					? shares_merged_refs
+						? 'copy_spread_props_for_ref_attr_sharing_refs'
+						: 'copy_spread_props_for_ref_attr'
+					: 'normalize_spread_props_for_ref_attr',
 				NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 			),
 		);
@@ -6393,8 +6887,9 @@ function transform_element_attributes_dispatch(attrs, transform_context, element
 export function is_component_like_element(element) {
 	const name = element?.openingElement?.name;
 	if (!name) return false;
-	if (name.type === 'Identifier') return /^[A-Z]/.test(name.name);
-	if (name.type === 'JSXIdentifier') return /^[A-Z]/.test(name.name);
+	// As in `is_component_jsx_name`, only a lowercase first letter makes a host tag.
+	if (name.type === 'Identifier') return !/^[a-z]/.test(name.name);
+	if (name.type === 'JSXIdentifier') return !/^[a-z]/.test(name.name);
 	if (name.type === 'MemberExpression') return true;
 	if (name.type === 'JSXMemberExpression') return true;
 	return false;
@@ -6406,7 +6901,7 @@ export function is_component_like_element(element) {
  */
 function is_component_like_jsx_name(name) {
 	if (!name) return false;
-	if (name.type === 'JSXIdentifier') return /^[A-Z]/.test(name.name);
+	if (name.type === 'JSXIdentifier') return !/^[a-z]/.test(name.name);
 	if (name.type === 'JSXMemberExpression') return true;
 	return false;
 }
@@ -6475,9 +6970,10 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				);
 				// Bound in place, the bag is evaluated between the attributes around
 				// it, as in native JSX; the setup declaration only declares the name.
+				const in_place = bind_in_place && !yields_in_deferred_spread(attr, transform_context);
 				const spread = {
 					...attr,
-					argument: bind_in_place
+					argument: in_place
 						? b.parenthesized(b.assignment('=', clone_identifier(normalized_id), normalized))
 						: clone_identifier(normalized_id),
 				};
@@ -6493,7 +6989,7 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				ref_attr.metadata.synthetic_ref = true;
 				add_jsx_setup_declaration(
 					spread,
-					bind_in_place
+					in_place
 						? b.let(clone_identifier(normalized_id))
 						: b.let(clone_identifier(normalized_id), normalized),
 				);
@@ -6765,8 +7261,10 @@ export function validate_at_most_one_ref_attribute(raw_attrs, transform_context)
  * - `undefined` — return the list unchanged. The platform takes care
  *   of duplicate refs at runtime (or doesn't support them).
  *
- * Single-ref elements are always left unchanged so trivial cases stay
- * import-free and produce no helper call.
+ * Single-ref elements are left unchanged so trivial cases stay import-free and
+ * produce no helper call. The exception is a ref list written as an array
+ * literal, `ref={[a, b]}`, under `'merge-refs'`: those runtimes take a single
+ * ref, so the list becomes `ref={__mergeRefs([a, b])}`.
  *
  * @param {ESTreeJSX.JSXAttributeNode[]} jsx_attrs
  * @param {TransformContext} transform_context
@@ -6783,7 +7281,11 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 		count += 1;
 		if (!attr.metadata?.synthetic_ref) tsx_form_count += 1;
 	}
-	if (count <= 1) return jsx_attrs;
+	if (count <= 1) {
+		return strategy === 'merge-refs'
+			? merge_ref_list_literal(jsx_attrs, transform_context)
+			: jsx_attrs;
+	}
 	// Two or more genuine `ref={...}` (TSX-form) attributes are already a
 	// validator-flagged compile error and TypeScript flags them as duplicate
 	// JSX props. Leave them in place so the user gets all three signals
@@ -6855,6 +7357,55 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 }
 
 /**
+ * Give an element's lone `ref={[a, b]}` to `__mergeRefs`, which applies every
+ * ref in the list. The attribute keeps its name node and location, so its
+ * mappings and metadata stay; a second pass sees the call and leaves it.
+ *
+ * @param {ESTreeJSX.JSXAttributeNode[]} jsx_attrs
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXAttributeNode[]}
+ */
+function merge_ref_list_literal(jsx_attrs, transform_context) {
+	const index = jsx_attrs.findIndex(
+		(attr) => is_jsx_ref_attribute(attr) && is_array_literal(attr.value.expression),
+	);
+	if (index === -1) return jsx_attrs;
+
+	const attr = /** @type {ESTreeJSX.JSXRefAttribute} */ (jsx_attrs[index]);
+	transform_context.needs_merge_refs = true;
+	const merged_attr = build_jsx_attribute(
+		attr.name,
+		b.jsx_expression_container(b.call(b.id(MERGE_REFS_INTERNAL_NAME), attr.value.expression)),
+		false,
+		has_location(attr) ? attr : undefined,
+	);
+	merged_attr.metadata = { ...(attr.metadata || {}), ...(merged_attr.metadata || {}) };
+	const result = [...jsx_attrs];
+	result[index] = merged_attr;
+	return result;
+}
+
+/**
+ * An array literal, through parentheses and type assertions such as `as const`.
+ *
+ * @param {AST.Expression} expression
+ * @returns {boolean}
+ */
+function is_array_literal(expression) {
+	/** @type {any} */
+	let node = expression;
+	while (
+		node.type === 'ParenthesizedExpression' ||
+		node.type === 'TSAsExpression' ||
+		node.type === 'TSSatisfiesExpression' ||
+		node.type === 'TSNonNullExpression'
+	) {
+		node = node.expression;
+	}
+	return node.type === 'ArrayExpression';
+}
+
+/**
  * @param {TransformContext} transform_context
  * @returns {boolean}
  */
@@ -6862,6 +7413,25 @@ function binds_host_spread_in_place(transform_context) {
 	return (
 		!transform_context.typeOnly &&
 		transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place'
+	);
+}
+
+/**
+ * Whether a host spread's bag yields on a target whose JSX compiler evaluates
+ * a spread in a render effect, which is one that reports the `yield`s it moves
+ * (`findDeferredTemplateYields`, TSRX2034). A `yield` can't run in that
+ * effect, so such a bag isn't bound in place: it is evaluated once, in its
+ * setup declaration before the element, where its generator runs it. A
+ * generator yields a value once, so the effect could never read it again.
+ *
+ * @param {ESTreeJSX.JSXSpreadAttribute} attr
+ * @param {TransformContext} transform_context
+ * @returns {boolean}
+ */
+function yields_in_deferred_spread(attr, transform_context) {
+	return (
+		!!transform_context.platform.hooks?.findDeferredTemplateYields &&
+		find_own_yields(/** @type {AST.Node} */ (attr.argument)).length > 0
 	);
 }
 

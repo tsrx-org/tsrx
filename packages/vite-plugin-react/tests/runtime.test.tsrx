@@ -1,6 +1,6 @@
 import type { MockInstance } from 'vitest';
 import { useState, use } from 'react';
-import { mergeRefs } from '@tsrx/react/ref';
+import { create_ref_prop, mergeRefs } from '@tsrx/react/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runForOfSourcesRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-sources';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
@@ -8,8 +8,14 @@ import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtim
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
+import { runArrayRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-ref';
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
+import { runStaticContainersRuntimeTests } from '@tsrx/core/test-harness/runtime/static-containers';
+import { StaticContainers } from '@tsrx/core/test-harness/runtime/static-containers-components.tsrx';
+import { runAssignedImportMemberRuntimeTests } from '@tsrx/core/test-harness/runtime/assigned-import-member';
+import { AssignedImportMember } from '@tsrx/core/test-harness/runtime/assigned-import-member-components.tsrx';
 import { runGeneratedImportBindingsRuntimeTests } from '@tsrx/core/test-harness/runtime/generated-import-bindings';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
@@ -839,6 +845,133 @@ function SpreadRefRenderApp() @{
 	</>
 }
 
+const bag_first_ref = log_spread_ref('bag-first');
+const bag_second_ref = log_spread_ref('bag-second');
+const bag_replaced_ref = log_spread_ref('bag-replaced');
+const own_refs_ref = log_spread_ref('own-refs');
+const named_ref = create_ref_prop(() => log_spread_ref('named'));
+const stable_ref_list = [bag_first_ref, bag_second_ref];
+
+function SpreadRefsRenderApp() @{
+	const [count, setCount] = useState(0);
+	const [replaced, setReplaced] = useState(false);
+	const bag_ref = replaced ? bag_replaced_ref : bag_first_ref;
+
+	<>
+		<input
+			className="own-refs"
+			ref={own_refs_ref}
+			{...{ 'data-count': count, ref: bag_ref, extra: named_ref }}
+		/>
+		<input className="bag-refs" {...{ 'data-count': count, ref: bag_ref, extra: named_ref }} />
+		<input
+			className="ref-list"
+			ref={own_refs_ref}
+			{...{ 'data-count': count, ref: stable_ref_list }}
+		/>
+		<button className="spread-refs-rerender" onClick={() => setCount(count + 1)}>
+			{count}
+		</button>
+		<button className="spread-refs-replace" onClick={() => setReplaced(true)}>
+			{'replace'}
+		</button>
+	</>
+}
+
+function SpreadRefListRenderApp() @{
+	const [count, setCount] = useState(0);
+	const [replaced, setReplaced] = useState(false);
+	const last_ref = replaced ? bag_replaced_ref : bag_second_ref;
+
+	<>
+		<input className="lone-ref-list" {...{ 'data-count': count, ref: [bag_first_ref, last_ref] }} />
+		<button className="ref-list-rerender" onClick={() => setCount(count + 1)}>
+			{count}
+		</button>
+		<button className="ref-list-replace" onClick={() => setReplaced(true)}>
+			{'replace'}
+		</button>
+	</>
+}
+
+function ArrayRefRenderApp() @{
+	const [count, setCount] = useState(0);
+	const [replaced, setReplaced] = useState(false);
+	const last_ref = replaced ? bag_replaced_ref : bag_second_ref;
+
+	<>
+		<input className="inline-ref-list" data-count={count} ref={[bag_first_ref, last_ref]} />
+		<button className="inline-ref-list-rerender" onClick={() => setCount(count + 1)}>
+			{count}
+		</button>
+		<button className="inline-ref-list-replace" onClick={() => setReplaced(true)}>
+			{'replace'}
+		</button>
+	</>
+}
+
+const shared_bag_log: string[] = [];
+
+function cleanup_ref(name: string) {
+	return (node: HTMLElement | null) => {
+		if (node === null) {
+			shared_bag_log.push(`${name}:null`);
+			return;
+		}
+		const id = node.id;
+		shared_bag_log.push(`${name}:${id}`);
+		return () => {
+			shared_bag_log.push(`${name}-cleanup:${id}`);
+		};
+	};
+}
+
+const shared_own_ref = cleanup_ref('own');
+const shared_bag_ref = cleanup_ref('bag');
+const shared_swapped_ref = cleanup_ref('swapped');
+const shared_named_ref = create_ref_prop(() => cleanup_ref('named'));
+const shared_plain_ref = (node: HTMLElement | null) => {
+	shared_bag_log.push(node ? `plain:${node.id}` : 'plain:null');
+};
+
+let set_shared_count: (count: number) => void = () => {};
+let set_shared_second: (shown: boolean) => void = () => {};
+let set_shared_mode: (mode: 'both' | 'swapped' | 'none' | 'list') => void = () => {};
+
+function SharedRefBagApp() @{
+	const [count, setCount] = useState(0);
+	const [second, setSecond] = useState(true);
+	const [mode, setMode] = useState<'both' | 'swapped' | 'none' | 'list'>('both');
+	set_shared_count = setCount;
+	set_shared_second = setSecond;
+	set_shared_mode = setMode;
+	const bag = { title: String(count), ref: shared_bag_ref, extra: shared_named_ref };
+	const changing =
+		mode === 'both'
+			? { title: String(count), ref: shared_bag_ref, extra: shared_named_ref }
+			: mode === 'swapped'
+				? { title: String(count), ref: shared_swapped_ref, extra: shared_named_ref }
+				: mode === 'none'
+					? { title: String(count) }
+					: {
+							title: String(count),
+							ref: [shared_plain_ref, shared_bag_ref],
+							extra: shared_named_ref,
+						};
+
+	<>
+		<input id="one" ref={shared_own_ref} {...bag} />
+		@if (second) {
+			<input id="two" ref={shared_own_ref} {...bag} />
+		}
+		<input id="three" {...bag} />
+		@if (second) {
+			<input id="four" {...bag} />
+		}
+		<input id="changing" {...changing} />
+	</>
+}
+
 // ── Conditional host spreads ──
 
 let conditional_spread_and_node: HTMLInputElement | null = null;
@@ -1488,6 +1621,24 @@ function StaticHoistInBranchApp() @{
 	</>
 }
 
+// ── Static hoisting: static JSX in expression containers (#81) ──
+
+function StaticContainersHost() @{
+	const [on, setOn] = useState(false);
+	const [count, setCount] = useState(0);
+
+	<>
+		<StaticContainers {on} {count} />
+		<StaticContainers {on} {count} />
+		<button className="static-containers-toggle" onClick={() => setOn(!on)}>
+			{'toggle'}
+		</button>
+		<button className="static-containers-inc" onClick={() => setCount(count + 1)}>
+			{'inc'}
+		</button>
+	</>
+}
+
 // ── Static hoisting: fully static component ──
 
 function FullyStaticApp() @{
@@ -1796,6 +1947,144 @@ describe('tsrx-react runtime', () => {
 
 		await click('.spread-ref-swap');
 		expect(spread_ref_render_log).toEqual(['swap-first:detach', 'swap-second:attach']);
+	});
+
+	it("applies a spread bag's several refs again only when one of them changes", async () => {
+		spread_ref_render_log.length = 0;
+		await render(SpreadRefsRenderApp);
+		expect(spread_ref_render_log).toEqual([
+			'own-refs:attach',
+			'bag-first:attach',
+			'named:attach',
+			'bag-first:attach',
+			'named:attach',
+			'own-refs:attach',
+			'bag-first:attach',
+			'bag-second:attach',
+		]);
+
+		spread_ref_render_log.length = 0;
+		await click('.spread-refs-rerender');
+		await click('.spread-refs-rerender');
+		expect(text('.spread-refs-rerender')).toBe('2');
+		expect(container.querySelector('.bag-refs')!.getAttribute('data-count')).toBe('2');
+		expect(spread_ref_render_log).toEqual([]);
+
+		await click('.spread-refs-replace');
+		expect(spread_ref_render_log).toEqual([
+			'own-refs:detach',
+			'bag-first:detach',
+			'named:detach',
+			'bag-first:detach',
+			'named:detach',
+			'own-refs:attach',
+			'bag-replaced:attach',
+			'named:attach',
+			'bag-replaced:attach',
+			'named:attach',
+		]);
+	});
+
+	it("applies a spread bag's lone ref list again only when one of its refs changes", async () => {
+		spread_ref_render_log.length = 0;
+		await render(SpreadRefListRenderApp);
+		expect(spread_ref_render_log).toEqual(['bag-first:attach', 'bag-second:attach']);
+
+		spread_ref_render_log.length = 0;
+		await click('.ref-list-rerender');
+		await click('.ref-list-rerender');
+		expect(container.querySelector('.lone-ref-list')!.getAttribute('data-count')).toBe('2');
+		expect(spread_ref_render_log).toEqual([]);
+
+		await click('.ref-list-replace');
+		expect(spread_ref_render_log).toEqual([
+			'bag-first:detach',
+			'bag-second:detach',
+			'bag-first:attach',
+			'bag-replaced:attach',
+		]);
+	});
+
+	it('applies an inline ref list again only when one of its refs changes', async () => {
+		spread_ref_render_log.length = 0;
+		await render(ArrayRefRenderApp);
+		expect(spread_ref_render_log).toEqual(['bag-first:attach', 'bag-second:attach']);
+
+		spread_ref_render_log.length = 0;
+		await click('.inline-ref-list-rerender');
+		await click('.inline-ref-list-rerender');
+		expect(container.querySelector('.inline-ref-list')!.getAttribute('data-count')).toBe('2');
+		expect(spread_ref_render_log).toEqual([]);
+
+		await click('.inline-ref-list-replace');
+		expect(spread_ref_render_log).toEqual([
+			'bag-first:detach',
+			'bag-second:detach',
+			'bag-first:attach',
+			'bag-replaced:attach',
+		]);
+	});
+
+	it("keeps each element's ref cleanups when elements share a bag", async () => {
+		shared_bag_log.length = 0;
+		await render(SharedRefBagApp);
+		expect(shared_bag_log).toEqual([
+			'own:one',
+			'bag:one',
+			'named:one',
+			'own:two',
+			'bag:two',
+			'named:two',
+			'bag:three',
+			'named:three',
+			'bag:four',
+			'named:four',
+			'bag:changing',
+			'named:changing',
+		]);
+
+		shared_bag_log.length = 0;
+		await act(async () => set_shared_count(1));
+		expect(shared_bag_log).toEqual([]);
+
+		// Removing two elements runs only their own cleanups.
+		await act(async () => set_shared_second(false));
+		expect([...shared_bag_log].sort()).toEqual(
+			[
+				'own-cleanup:two',
+				'bag-cleanup:two',
+				'named-cleanup:two',
+				'bag-cleanup:four',
+				'named-cleanup:four',
+			].sort(),
+		);
+	});
+
+	it("applies a spread bag's refs again when one changes or the bag drops them", async () => {
+		shared_bag_log.length = 0;
+		await render(SharedRefBagApp);
+		shared_bag_log.length = 0;
+
+		await act(async () => set_shared_mode('swapped'));
+		expect(shared_bag_log).toEqual([
+			'bag-cleanup:changing',
+			'named-cleanup:changing',
+			'swapped:changing',
+			'named:changing',
+		]);
+
+		shared_bag_log.length = 0;
+		await act(async () => set_shared_mode('none'));
+		expect(shared_bag_log).toEqual(['swapped-cleanup:changing', 'named-cleanup:changing']);
+
+		// An inline ref list is applied once and kept across renders.
+		shared_bag_log.length = 0;
+		await act(async () => set_shared_mode('list'));
+		expect(shared_bag_log).toEqual(['plain:changing', 'bag:changing', 'named:changing']);
+		shared_bag_log.length = 0;
+		await act(async () => set_shared_count(1));
+		await act(async () => set_shared_count(2));
+		expect(shared_bag_log).toEqual([]);
 	});
 
 	for (const enabled of [false, true]) {
@@ -2433,6 +2722,10 @@ runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
+runArraySpreadRefRuntimeTests();
+runArrayRefRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();
+runStaticContainersRuntimeTests({ Host: StaticContainersHost, click });
+runAssignedImportMemberRuntimeTests({ AssignedImportMember });
 runGeneratedImportBindingsRuntimeTests();

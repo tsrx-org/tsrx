@@ -5,6 +5,8 @@ import {
 	apply_ref_value,
 	copy_spread_props,
 	copy_spread_props_for_ref_attr,
+	copy_spread_props_for_ref_attr_sharing_refs,
+	copy_spread_props_sharing_refs,
 	create_ref_prop,
 	join_scope_class,
 	merge_element_refs,
@@ -13,6 +15,7 @@ import {
 	mergeRefs,
 	normalize_spread_props,
 	normalize_spread_props_for_ref_attr,
+	normalize_spread_props_sharing_refs,
 } from '../../src/runtime/ref.js';
 
 describe('ref runtime helpers', () => {
@@ -224,7 +227,7 @@ describe('ref runtime helpers', () => {
 		expect(current_ref.current).toBeNull();
 	});
 
-	it('mergeRefs ignores array refs and DOM-like objects', () => {
+	it('mergeRefs applies the refs in a ref list and ignores DOM-like objects', () => {
 		const node = {};
 		const dom_like = { nodeType: 1, nodeName: 'DIV', current: null, value: null };
 		/** @type {{ current: object | null }} */
@@ -238,12 +241,12 @@ describe('ref runtime helpers', () => {
 		};
 
 		const cleanup = mergeRefs(
-			/** @type {MergeableRef<object>} */ (/** @type {unknown} */ ([callback])),
+			[callback],
 			/** @type {MergeableRef<object>} */ (dom_like),
 			current_ref,
 		)(node);
 
-		expect(callback_seen).toEqual([]);
+		expect(callback_seen).toEqual([node]);
 		expect(dom_like.current).toBeNull();
 		expect(dom_like.value).toBeNull();
 		expect(current_ref.current).toBe(node);
@@ -454,7 +457,7 @@ describe('ref runtime helpers', () => {
 		expect(current_ref.current).toBeNull();
 	});
 
-	it('mergeRefs ignores DOM-like objects and arrays in the two-ref shape', () => {
+	it('mergeRefs ignores DOM-like objects and applies ref lists in the two-ref shape', () => {
 		const node = {};
 		const dom_like = { nodeType: 1, nodeName: 'DIV', current: 'untouched' };
 		/** @type {{ current: object | null }} */
@@ -470,14 +473,12 @@ describe('ref runtime helpers', () => {
 		expect(dom_like.current).toBe('untouched');
 		expect(current_ref.current).toBeNull();
 
-		const array_cleanup = mergeRefs(
-			/** @type {MergeableRef<object>} */ (/** @type {unknown} */ ([current_ref])),
-			{ value: null },
-		)(node);
-		expect(current_ref.current).toBeNull();
+		const array_cleanup = mergeRefs([current_ref], { value: null })(node);
+		expect(current_ref.current).toBe(node);
 		array_cleanup();
+		expect(current_ref.current).toBeNull();
 
-		// Ignored shapes are skipped in the second slot too.
+		// The second slot reads a list and skips a DOM-like object too.
 		/** @type {Array<unknown>} */
 		const events = [];
 		/** @param {object | null} value */
@@ -495,15 +496,15 @@ describe('ref runtime helpers', () => {
 		expect(current_ref.current).toBeNull();
 		expect(dom_like.current).toBe('untouched');
 
-		const second_array_cleanup = mergeRefs(
-			current_ref,
-			/** @type {MergeableRef<object>} */ (/** @type {unknown} */ ([callback])),
-		)(node);
+		const second_array_cleanup = mergeRefs(current_ref, [[callback], false])(node);
 		expect(current_ref.current).toBe(node);
-		expect(events).toEqual([]);
+		expect(events).toEqual([['callback', node]]);
 		second_array_cleanup();
 		expect(current_ref.current).toBeNull();
-		expect(events).toEqual([]);
+		expect(events).toEqual([
+			['callback', node],
+			['callback', null],
+		]);
 	});
 
 	it('mergeRefs stops a two-ref mount at a thrown callback and skips cleanup', () => {
@@ -601,11 +602,17 @@ describe('ref runtime helpers', () => {
 		expect(mergeRefs.length).toBe(0);
 	});
 
-	it.each([0, 1])('throws on a primitive ref in two-ref slot %i', (slot) => {
-		/** @type {MergeableRef<object>[]} */
+	it.each([0, 1])('leaves out a primitive ref in two-ref slot %i', (slot) => {
+		const node = {};
+		/** @type {{ current: object | null }[]} */
 		const refs = [{ current: null }, { current: null }];
-		refs[slot] = /** @type {any} */ (5);
-		expect(() => mergeRefs(...refs)({})).toThrow(TypeError);
+		/** @type {MergeableRef<object>[]} */
+		const args = [...refs];
+		args[slot] = /** @type {any} */ (5);
+		const cleanup = mergeRefs(...args)(node);
+		expect(refs[1 - slot].current).toBe(node);
+		cleanup();
+		expect(refs[1 - slot].current).toBeNull();
 	});
 
 	it.each([0, 1])('classifies two-ref slot %i with the same traps as the general path', (slot) => {
@@ -945,9 +952,54 @@ describe('ref runtime helpers', () => {
 		expect(both).toEqual({ current: null, value: null });
 	});
 
-	it('throws on primitive non-function refs at the DOM-node check', () => {
-		const merged = mergeRefs(/** @type {any} */ (5));
-		expect(() => merged(/** @type {any} */ ({}))).toThrow(TypeError);
+	it('mergeRefs applies nested ref lists in order and clears them in the same order', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const node = {};
+		/** @type {{ value: object | null }} */
+		const value_ref = { value: null };
+		/** @param {string} name */
+		const log = (name) => /** @param {object | null} value */ (value) => {
+			events.push([name, value]);
+		};
+
+		const cleanup = mergeRefs([log('a'), [log('b'), null, value_ref]], undefined, [
+			false,
+			log('c'),
+		])(node);
+		expect(events).toEqual([
+			['a', node],
+			['b', node],
+			['c', node],
+		]);
+		expect(value_ref.value).toBe(node);
+		cleanup();
+		expect(events.slice(3)).toEqual([
+			['a', null],
+			['b', null],
+			['c', null],
+		]);
+		expect(value_ref.value).toBeNull();
+	});
+
+	it('leaves out values that are not refs, such as the false of `cond && cb`', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		/** @param {object | null} value */
+		const callback = (value) => {
+			events.push(value);
+		};
+		const node = {};
+		const cleanup = mergeRefs(
+			false,
+			/** @type {any} */ (0),
+			/** @type {any} */ (''),
+			callback,
+			/** @type {any} */ (5),
+		)(node);
+		expect(events).toEqual([node]);
+		cleanup();
+		expect(events).toEqual([node, null]);
 	});
 
 	it('replays array ref cleanups in flat push order through apply_ref_value', () => {
@@ -1021,6 +1073,40 @@ describe('merge_element_refs', () => {
 		expect(merge_element_refs(second, first)).not.toBe(merged);
 		expect(merge_element_refs(first, second, third)).not.toBe(merged);
 		expect(merge_element_refs(first, second, third)).toBe(merge_element_refs(first, second, third));
+	});
+
+	it('keys a ref list by the refs in it', () => {
+		const a = () => {};
+		const b = () => {};
+		const c = () => {};
+
+		const merged = merge_element_refs([a, b], c);
+		expect(merge_element_refs([a, b], c)).toBe(merged);
+		expect(merge_element_refs(a, [b, [c]])).toBe(merged);
+		expect(merge_element_refs([a], undefined)).toBe(a);
+
+		// A list whose refs change gets a new callback.
+		const list = [a];
+		const first = merge_element_refs(list, c);
+		list[0] = b;
+		expect(merge_element_refs(list, c)).not.toBe(first);
+	});
+
+	it('merges a lone ref object from a list, and gives one passed as itself back', () => {
+		const node = {};
+		/** @type {{ value: object | null }} */
+		const object = { value: null };
+
+		expect(merge_element_refs(object, undefined)).toBe(object);
+		const merged = /** @type {(node: object | null) => () => void} */ (
+			merge_element_refs([object, /** @type {any} */ (false)])
+		);
+		expect(typeof merged).toBe('function');
+		expect(merge_element_refs([[object]])).toBe(merged);
+		const cleanup = merged(node);
+		expect(object.value).toBe(node);
+		cleanup();
+		expect(object.value).toBeNull();
 	});
 
 	it('leaves out a value that is not a ref, such as the false of `cond && cb`', () => {
@@ -1411,6 +1497,138 @@ describe('spread ref normalization', () => {
 		expect(copied.ref).toBeUndefined();
 	});
 
+	it('gives a new bag with the same refs the same merged ref when sharing refs', () => {
+		/** @param {object | null} _node */
+		const own = (_node) => {};
+		const object = { current: null };
+		const named = create_ref_prop(() => own);
+		/** @param {Record<string, unknown>} bag */
+		const ref_of = (bag) =>
+			/** @type {Record<string, unknown>} */ (copy_spread_props_sharing_refs(bag)).ref;
+		/** @param {Record<string, unknown>} bag */
+		const attr_ref_of = (bag) =>
+			/** @type {Record<string, unknown>} */ (copy_spread_props_for_ref_attr_sharing_refs(bag)).ref;
+
+		const merged = ref_of({ title: '1', ref: own, extra: named });
+		expect(typeof merged).toBe('function');
+		expect(ref_of({ title: '2', ref: own, extra: named })).toBe(merged);
+		// An inline list is keyed by its refs, not by the new array.
+		expect(ref_of({ ref: [own, object], extra: named })).toBe(
+			ref_of({ ref: [own, object], extra: named }),
+		);
+		expect(attr_ref_of({ title: '3', ref: own, extra: named })).toBe(merged);
+		expect(ref_of({ ref: object, extra: named })).not.toBe(merged);
+		expect(ref_of({ ref: false, extra: named })).toBe(named);
+		expect(ref_of({ ref: object })).toBe(object);
+
+		const attr_bag = copy_spread_props_for_ref_attr_sharing_refs({ title: '4', extra: named });
+		expect(Object.keys(attr_bag)).toEqual(['title']);
+		expect(/** @type {Record<string, unknown>} */ (attr_bag).ref).toBe(named);
+
+		// Without sharing, each bag's refs merge into a new callback.
+		const own_ref = /** @type {Record<string, unknown>} */ (
+			copy_spread_props({ ref: own, extra: named })
+		).ref;
+		expect(
+			/** @type {Record<string, unknown>} */ (copy_spread_props({ ref: own, extra: named })).ref,
+		).not.toBe(own_ref);
+	});
+
+	it("merges a ref list that is a bag's only ref", () => {
+		/** @type {Array<[string, unknown]>} */
+		const calls = [];
+		/** @param {string} name */
+		const log_ref = (name) => /** @param {object | null} node */ (node) => {
+			calls.push([name, node]);
+		};
+		const first = log_ref('first');
+		const second = log_ref('second');
+		/** @type {{ current: object | null }} */
+		const object = { current: null };
+		const node = {};
+		/** @param {unknown} bag */
+		const ref_of = (bag) => /** @type {Record<string, unknown>} */ (bag).ref;
+
+		for (const normalize of [
+			copy_spread_props,
+			copy_spread_props_sharing_refs,
+			copy_spread_props_for_ref_attr,
+			copy_spread_props_for_ref_attr_sharing_refs,
+			normalize_spread_props_for_ref_attr,
+		]) {
+			calls.length = 0;
+			const bag = /** @type {Record<string, unknown>} */ (
+				normalize({ title: 't', ref: [first, [second, object]] })
+			);
+			expect(bag.title).toBe('t');
+			const ref = /** @type {(node: object | null) => () => void} */ (bag.ref);
+			expect(typeof ref).toBe('function');
+			const cleanup = ref(node);
+			expect(calls).toEqual([
+				['first', node],
+				['second', node],
+			]);
+			expect(object.current).toBe(node);
+			cleanup();
+			expect(calls.slice(2)).toEqual([
+				['first', null],
+				['second', null],
+			]);
+			expect(object.current).toBe(null);
+
+			// A list of one callback gives back that callback. An empty list still
+			// replaces an earlier spread's ref, as its `ref` key would in native JSX.
+			expect(ref_of(normalize({ ref: [first, false] }))).toBe(first);
+			const empty = /** @type {object} */ (normalize({ ref: [] }));
+			expect('ref' in empty).toBe(true);
+			expect(ref_of(empty)).toBeUndefined();
+		}
+
+		// Sharing refs, a new list with the same refs gives back the same callback.
+		expect(ref_of(copy_spread_props_sharing_refs({ ref: [first, second] }))).toBe(
+			ref_of(copy_spread_props_for_ref_attr_sharing_refs({ ref: [first, second] })),
+		);
+
+		// Solid's spread takes a ref list and reads the bag lazily, so the bag
+		// comes back as itself.
+		const solid_bag = { title: 't', ref: [first, second] };
+		expect(normalize_spread_props(solid_bag)).toBe(solid_bag);
+	});
+
+	it("merges a ref list's lone ref object into a callback", () => {
+		const node = {};
+		/** @param {unknown} bag */
+		const ref_of = (bag) => /** @type {Record<string, unknown>} */ (bag).ref;
+
+		for (const normalize of [
+			copy_spread_props,
+			copy_spread_props_sharing_refs,
+			copy_spread_props_for_ref_attr,
+			copy_spread_props_for_ref_attr_sharing_refs,
+			normalize_spread_props_for_ref_attr,
+		]) {
+			for (const object of [{ current: null }, { value: null }]) {
+				const ref = /** @type {(node: object | null) => () => void} */ (
+					ref_of(normalize({ ref: [object, null] }))
+				);
+				expect(typeof ref).toBe('function');
+				const cleanup = ref(node);
+				expect(Object.values(object)).toEqual([node]);
+				cleanup();
+				expect(Object.values(object)).toEqual([null]);
+			}
+		}
+
+		// Sharing refs, a new list with the same ref object gives back the same
+		// callback, and a bag whose `ref` is the object itself still passes it on.
+		const object = { value: null };
+		expect(ref_of(copy_spread_props_sharing_refs({ ref: [object] }))).toBe(
+			ref_of(copy_spread_props_for_ref_attr_sharing_refs({ ref: [[object]] })),
+		);
+		expect(ref_of(copy_spread_props_sharing_refs({ ref: object }))).toBe(object);
+		expect(ref_of(copy_spread_props({ ref: object }))).toBe(object);
+	});
+
 	it('preserves explicit ordinary-ref reads, source state, and the selected ref value', () => {
 		/** @type {string[]} */
 		const events = [];
@@ -1720,6 +1938,35 @@ describe('spread ref normalization', () => {
 			expect(normalized.ref).toBeUndefined();
 			expect({ ...normalized }).toEqual({});
 		}
+	});
+
+	it('gives a new bag with the same refs the same merged ref when sharing refs', () => {
+		/** @param {object | null} _node */
+		const own = (_node) => {};
+		const object = { current: null };
+		const named = create_ref_prop(() => own);
+		/** @param {Record<string, unknown>} bag */
+		const ref_of = (bag) =>
+			/** @type {Record<string, unknown>} */ (normalize_spread_props_sharing_refs(bag)).ref;
+
+		const merged = ref_of({ title: '1', ref: own, extra: named });
+		expect(typeof merged).toBe('function');
+		expect(ref_of({ title: '2', ref: own, extra: named })).toBe(merged);
+		expect(ref_of({ ref: object, extra: named })).not.toBe(merged);
+		expect(ref_of({ ref: false, extra: named })).toBe(named);
+		expect(ref_of({ extra: named, other: named })).toBe(ref_of({ extra: named, other: named }));
+
+		const plain = { title: 'plain', ref: own };
+		expect(normalize_spread_props_sharing_refs(plain)).toBe(plain);
+
+		// Without sharing, each bag's refs merge into a new callback.
+		const own_ref = /** @type {Record<string, unknown>} */ (
+			normalize_spread_props({ ref: own, extra: named })
+		).ref;
+		expect(
+			/** @type {Record<string, unknown>} */ (normalize_spread_props({ ref: own, extra: named }))
+				.ref,
+		).not.toBe(own_ref);
 	});
 
 	it('passes a single collected ref through unwrapped', () => {

@@ -20,7 +20,7 @@ import { DIAGNOSTIC_SOURCE, MAPPER_CODES, TYPESCRIPT_CODE_PREFIX } from '@tsrx/c
 import { ignore_directives } from './diagnostic-directives.js';
 import { build_export_stub } from './export-stub.js';
 import { share_platform_globals } from './platform-globals.js';
-import { to_span_mappings } from './span-mappings.js';
+import { to_span_mappings, to_verification_mappings } from './span-mappings.js';
 
 const require = createRequire(import.meta.url);
 const bare_package_specifier_pattern =
@@ -33,6 +33,7 @@ const bare_package_specifier_pattern =
  * @property {string} [compiler] Bare package specifier of the TSRX compiler. Takes precedence over `tsrx.compiler` in the tsconfig chain.
  * @property {'web' | 'ios' | 'android'} [platform] Platform for `import.meta.env.platform` flags. Takes precedence over `tsrx.platform`.
  * @property {boolean} [languageFeatures] `false` clears every editor feature bit while keeping spans for diagnostics (CLI-only projects).
+ * @property {boolean} [verificationMappings] `true` adds `verificationMappings` to each transform result: the transform's own diagnostics mappings, in Volar's shape and order, for command-line checkers. Off by default; TypeScript ignores the field.
  */
 
 /**
@@ -184,32 +185,42 @@ export function create_tsrx_content_mapper(context = {}) {
 			state.lastGood.set(file_name, result.sourceAst);
 		}
 
-		const shared = share_platform_globals(result.text, result.mappings);
-		const text = shared.text;
+		// The one generated output every consumer below reads, so that a rewrite of
+		// the text and its mappings reaches the spans, the directives and the
+		// verification mappings alike.
+		const generated = share_platform_globals(result.text, result.mappings);
 		const language_features = state.options.languageFeatures !== false;
-		const mappings = to_span_mappings(shared.mappings, text, content, {
+		const mappings = to_span_mappings(generated.mappings, generated.text, content, {
 			languageFeatures: language_features,
 		});
 		// Every error goes to TypeScript, even one with a TypeScript code: the
 		// generated code can lose the mistake (a repeated modifier, a rest
 		// parameter's `?`), and then TypeScript never reports it. Where TypeScript
 		// does, the directives hide its copy until the mapper's error is fixed.
-		const diagnostics = result.errors.map((error) =>
+		// A warning doesn't go: TypeScript shows each of the mapper's diagnostics
+		// as an error, as the protocol has no severity, so `tsc` would fail on
+		// code that compiles, and its directive would hide TypeScript's own
+		// errors in the statement that holds it.
+		const errors = result.errors.filter((error) => error.severity !== 'warning');
+		const diagnostics = errors.map((error) =>
 			to_diagnostic(error, content.length, MAPPER_CODES.USAGE_ERROR),
 		);
 		const diagnosticDirectives = ignore_directives(
-			result.errors,
+			errors,
 			result.sourceAst,
-			shared.mappings,
+			generated.mappings,
 			content.length,
-			text.length,
+			generated.text.length,
 		);
 		return {
-			text,
+			text: generated.text,
 			extension: '.tsx',
 			mappings,
 			...(diagnostics.length > 0 ? { diagnostics } : null),
 			...(diagnosticDirectives ? { diagnosticDirectives } : null),
+			...(state.options.verificationMappings
+				? { verificationMappings: to_verification_mappings(generated.mappings) }
+				: null),
 		};
 	}
 
@@ -327,6 +338,7 @@ export function create_tsrx_content_mapper(context = {}) {
 			extension: '.ts',
 			mappings: [],
 			diagnostics: [clamp_diagnostic(diagnostic, content.length)],
+			...(state.options.verificationMappings ? { verificationMappings: [] } : null),
 		};
 	}
 
@@ -380,12 +392,13 @@ export function validate_options(raw) {
 				}
 				break;
 			case 'languageFeatures':
+			case 'verificationMappings':
 				if (typeof value === 'boolean') {
-					options.languageFeatures = value;
+					options[key] = value;
 				} else {
 					optionDiagnostics.push({
 						path: [key],
-						messageText: '"languageFeatures" must be a boolean.',
+						messageText: `"${key}" must be a boolean.`,
 						code: MAPPER_CODES.INVALID_CONFIG,
 					});
 				}

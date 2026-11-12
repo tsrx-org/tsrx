@@ -64,6 +64,12 @@ export function getStyleElementStylesheet(
 export interface CompileError extends Error {
 	code: string | undefined;
 	pos: number | undefined;
+	/**
+	 * Usually `end`. An unclosed tag's TSRX1001 is reported on the tag and found
+	 * later, so its `raisedAt` is past `end`, one past where the parser stopped:
+	 * the token that ended the template, or the start of a `<style>` or `<script>`
+	 * body. A tag that runs to the end of the file has it one past the input.
+	 */
 	raisedAt: number | undefined;
 	end: number | undefined;
 	loc: AST.SourceLocation | undefined;
@@ -148,6 +154,14 @@ export interface BaseNodeMetaData {
 	 * like Prettier's `prettierIgnore` for the union member after one.
 	 */
 	prettierIgnore?: boolean;
+	/**
+	 * On a declaration after modifiers that a collecting parse reads, for each
+	 * modifier the tree leaves out, the error TypeScript reports for it once the
+	 * declaration's first modifier error is fixed. TypeScript reports only the
+	 * first; the formatter refuses the code with these, instead of printing it
+	 * without the modifier.
+	 */
+	dropped_modifiers?: CompileError[];
 	parenthesized?: boolean;
 	/**
 	 * Offset of the outermost `(` of a parenthesized expression. Only grouping
@@ -180,6 +194,11 @@ export interface BaseNodeMetaData {
 	tsrx_render_fragment?: boolean;
 	/** A merged text run produced by normalize_children - renders through the text path. */
 	tsrx_text?: boolean;
+	/**
+	 * On a `yield*` the compiler added for a generated closure it made a
+	 * generator: that generator, whose authored `yield`s the `yield*` stands for.
+	 */
+	generated_delegation?: AST.FunctionExpression;
 	/** Control-flow node renders as the sole child of its parent (controlled anchor). */
 	is_controlled?: boolean;
 	/** Control-flow node is the root of a render body - anchors on `__anchor`. */
@@ -634,7 +653,12 @@ declare module 'estree' {
 		| JSXTemplateStatement;
 
 	/** An AST node that represents component-level `await` during validation. */
-	type TSRXAwaitNode = AST.AwaitExpression | AST.ForOfStatement | JSXForOfExpression;
+	type TSRXAwaitNode =
+		| AST.AwaitExpression
+		| AST.ForOfStatement
+		| JSXForOfExpression
+		/** An `await using` declaration. */
+		| AST.VariableDeclaration;
 
 	/** Any node that can be the rendered output of a TSRX template or statement container. */
 	type TSRXRenderOutput =
@@ -2297,6 +2321,11 @@ export interface PluginActionOverrides {
 export interface CustomMappingData extends PluginActionOverrides {
 	embeddedId?: string;
 	content?: string;
+	/**
+	 * An error's anchor: a mapping for a token that isn't in the generated code.
+	 * It marks a place, and whatever it sits on isn't that token's code.
+	 */
+	diagnosticAnchor?: boolean;
 }
 
 export interface MappingData extends VolarCodeInformation {
@@ -2415,6 +2444,7 @@ export function mergePlatformDefinitions(
 export function withPlatformTypes(
 	result: VolarMappingsResult,
 	platform: unknown,
+	generatedProgram?: AST.Program | null,
 ): VolarMappingsResult;
 export function replacePlatformFlags(
 	source: string,
@@ -2510,6 +2540,13 @@ export interface SourceMappingHarness {
 	 * test asserts the compiler throws rather than that it maps successfully.
 	 */
 	rejectsComponentAwait: boolean;
+	/**
+	 * Does the platform report some `yield`s in a template (TSRX2034)? Solid and
+	 * Vue do, where their JSX compilers evaluate the value in an effect, a
+	 * getter or a callback. The shared tests then leave those shapes to the
+	 * target's own tests. Default: `false`.
+	 */
+	rejectsTemplateYield?: boolean;
 }
 
 /** The per-target entry point the shared editor-diagnostics tests run against. */

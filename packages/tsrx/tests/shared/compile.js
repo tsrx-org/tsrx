@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES, TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
 import { parseModule } from '../../src/index.js';
+import { find_exact_mapping } from '../../src/source-map-utils.js';
 import { error_with } from './errors.js';
 import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
@@ -290,14 +292,18 @@ export function App() @{
 			expect(virtual_parse_diagnostics(code)).toEqual([]);
 
 			const attributes = source.indexOf('{ with');
-			for (const text of [
-				"{ with: { type: 'json' } }",
-				'with',
-				'type',
-				"'json'",
-				"'resolution-mode'",
-				"'require'",
-			]) {
+			// The options object maps its start and its end as the points of one
+			// mapping, which hold the object's whole printed text between them.
+			const options = "{ with: { type: 'json' } }";
+			const whole = mappings.find(
+				(candidate) =>
+					candidate.sourceOffsets[0] === attributes &&
+					candidate.sourceOffsets[1] === attributes + options.length,
+			);
+			expect(whole, options).toBeDefined();
+			const [from, to] = /** @type {NonNullable<typeof whole>} */ (whole).generatedOffsets;
+			expect(code.slice(from, to)).toBe(options);
+			for (const text of ['with', 'type', "'json'", "'resolution-mode'", "'require'"]) {
 				const start = source.indexOf(text, attributes);
 				const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === start);
 				expect(mapping, text).toBeDefined();
@@ -406,6 +412,104 @@ export const d: number = bad;
 			expect(errors).toEqual([]);
 			expect(code).not.toContain('@ts-ignore');
 			expect(code).not.toContain('@ts-expect-error');
+		});
+
+		/**
+		 * The diagnostics TypeScript reports on the virtual code for names,
+		 * assignments and unused directives, with the text each one covers.
+		 * @param {string} code
+		 * @returns {Array<[number, string]>}
+		 */
+		const suppression_diagnostics = (code) =>
+			virtual_semantic_diagnostics(code)
+				.filter((diagnostic) => [2304, 2322, 2578].includes(diagnostic.code))
+				.map((diagnostic) => [
+					diagnostic.code,
+					code.slice(diagnostic.start, (diagnostic.start ?? 0) + (diagnostic.length ?? 0)),
+				]);
+
+		it('keeps the later lines of a statement off the line a directive covers', () => {
+			// TypeScript applies a directive to the line after it, so that line must
+			// hold the code of the source line after it and no more (#1144).
+			const source = `declare function foo(a: number, b?: number): void;
+// @ts-expect-error
+foo(
+	1,
+	missingA
+);
+/* @ts-expect-error */
+foo(1,
+	missingB);
+// @ts-expect-error
+foo(missingC,
+	1);
+// @ts-expect-error
+export const o = { a: missingD, b: 'a long string to make the printer wrap', c: 'and another long string' };
+export function App() @{
+	// @ts-expect-error
+	const x: number = foo(
+		1,
+		missingE,
+	);
+	<div>{x}</div>
+}
+`;
+			const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(suppression_diagnostics(code)).toEqual([
+				[2578, '// @ts-expect-error'],
+				[2304, 'missingA'],
+				[2578, '/* @ts-expect-error */'],
+				[2304, 'missingB'],
+				[2304, 'missingE'],
+			]);
+		});
+
+		it('breaks the line a directive covers only where the code reads the same', () => {
+			// The break goes where the source breaks the line between the same two
+			// tokens, or after code that must go on. The TSRX parser reads import
+			// attributes across a line break, which TypeScript does not, so those
+			// lines stay joined. A parenthesis the printer adds maps to the next `(`
+			// of the source, which is on a later line.
+			const source = `declare const bad: string;
+export function f(a: number) {
+	// @ts-expect-error
+	return (
+		a + missingA
+	);
+}
+// @ts-expect-error
+export const b = (bad
+) as unknown as number;
+// @ts-expect-error
+import 'x'
+with { type: 'json' };
+// @ts-expect-error
+export const c = \`\${bad}
+\${missingC}\`;
+// @ts-expect-error
+export const p = 1
+(bad)();
+`;
+			const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(code).toContain('return (\n\t\ta + missingA);');
+			expect(code).toContain('(bad\n\t) as unknown as number;');
+			expect(code).toContain("import 'x' with {");
+			expect(code).toContain('export const p = (1)(\n');
+			expect(suppression_diagnostics(code)).toEqual([
+				[2578, '// @ts-expect-error'],
+				[2304, 'missingA'],
+				[2578, '// @ts-expect-error'],
+				[2578, '// @ts-expect-error'],
+				[2578, '// @ts-expect-error'],
+				[2304, 'missingC'],
+				[2578, '// @ts-expect-error'],
+			]);
 		});
 
 		it('maps an object literal getter or setter with type parameters', () => {
@@ -583,6 +687,33 @@ export const d: number = bad;
 			expect(mapping).toBeDefined();
 			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
 			expect(code.slice(generated, generated + 'number'.length)).toBe('number');
+		});
+	});
+
+	describe(`[${name}] type arguments after a dynamic tag in virtual code (#1243)`, () => {
+		// The editor reports them and still gets virtual code, which leaves them
+		// out: on the helper the tag lowers to, they would type the tag, not its
+		// props.
+		it('reports them, leaves them out, and keeps mapping the element', () => {
+			const source = `export function App({ Tag, title }: any) @{
+	<{Tag}<string> title={title}>
+		<p>{title}</p>
+	</{Tag}>
+}`;
+			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			const start = source.indexOf('<string>');
+			expect(errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				[DIAGNOSTIC_CODES.DYNAMIC_TAG_TYPE_ARGUMENTS, start, start + '<string>'.length],
+			]);
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			expect(code).not.toContain('<string>');
+
+			const value = source.indexOf('{title}') + 1;
+			const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === value);
+			expect(mapping).toBeDefined();
+			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
+			expect(code.slice(generated, generated + 'title'.length)).toBe('title');
 		});
 	});
 
@@ -816,6 +947,36 @@ export const d: number = bad;
 			}
 		});
 
+		it('reports an `@for` head that declares its item with `var` (#1158)', () => {
+			for (const head of ['var item', 'var { item }']) {
+				const source = `export function App({ items }: { items: any[] }) @{
+					<>
+						<ul>
+							@for (${head} of items) {
+								<li>{String(item)}</li>
+							}
+						</ul>
+						<p>{String(item)}</p>
+					</>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf(`(${head} of`) + 1;
+
+				expect(
+					result.errors.map((error) => [error.code, error.message, error.pos, error.end]),
+					head,
+				).toEqual([
+					[
+						TSRX_ERRORS.FOR_HEAD_VAR.code,
+						TSRX_ERRORS.FOR_HEAD_VAR.message,
+						start,
+						start + head.length,
+					],
+				]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
 		it('reports an invalid `@for` head wherever the loop is nested', () => {
 			/** @type {Record<string, (loop: string) => string>} */
 			const positions = {
@@ -828,6 +989,7 @@ export const d: number = bad;
 			for (const [head, code] of [
 				['state.item of items', TSRX_ERRORS.FOR_HEAD_ASSIGNMENT.code],
 				['using item of items', TSRX_ERRORS.FOR_HEAD_USING.code],
+				['var item of items', TSRX_ERRORS.FOR_HEAD_VAR.code],
 			]) {
 				for (const [label, wrap] of Object.entries(positions)) {
 					const source = `export async function App({ items, groups, c }: any) @{
@@ -866,6 +1028,197 @@ export const d: number = bad;
 				).toEqual([TSRX_ERRORS.FOR_HEAD_ASSIGNMENT.code]);
 				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
 			}
+		});
+
+		it('reports a `var` declared in a directive body, at its keyword (#1208)', () => {
+			/** @type {Record<string, (body: string) => string>} */
+			const bodies = {
+				'@if': (body) => `@if (c) { ${body} }`,
+				'@else if': (body) => `@if (c) { <p /> } @else if (d) { ${body} }`,
+				'@else': (body) => `@if (c) { <p /> } @else { ${body} }`,
+				'@for': (body) => `@for (const item of items) { ${body} }`,
+				'@empty': (body) => `@for (const item of items) { <p /> } @empty { ${body} }`,
+				'@case': (body) => `@switch (c) { @case 1: { ${body} } }`,
+				'@default': (body) => `@switch (c) { @case 1: { <p /> } @default: { ${body} } }`,
+				'@try': (body) => `@try { ${body} } @catch (e) { <p /> }`,
+				'@pending': (body) => `@try { <p /> } @pending { ${body} }`,
+				'@catch': (body) => `@try { <p /> } @catch (e) { ${body} }`,
+			};
+			for (const [label, wrap] of Object.entries(bodies)) {
+				const source = `export function App({ items, c, d }: any) @{
+					<div>
+						${wrap('var value = 1; <p>{value}</p>')}
+					</div>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf('var value');
+
+				expect(
+					result.errors.map((error) => [error.code, error.message, error.pos, error.end]),
+					label,
+				).toEqual([
+					[
+						TSRX_ERRORS.DIRECTIVE_BODY_VAR.code,
+						TSRX_ERRORS.DIRECTIVE_BODY_VAR.message,
+						start,
+						start + 'var'.length,
+					],
+				]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
+		it('reports a `var` in a plain block nested in a directive body (#1208)', () => {
+			for (const statement of [
+				'{ var value = 1; }',
+				'if (c) { var value = 1; }',
+				'if (c) {} else { var value = 1; }',
+				'for (var value = 0; value < 1; value++) {}',
+				'for (var value of items) {}',
+				'for (var value in c) {}',
+				'while (c) { var value = 1; }',
+				'switch (c) { case 1: var value = 1; }',
+				'try { var value = 1; } catch {}',
+				'try {} catch { var value = 1; }',
+				'try {} finally { var value = 1; }',
+				'block: { var value = 1; }',
+			]) {
+				const source = `export function App({ items, c }: any) @{
+					<ul>
+						@for (const item of items) {
+							${statement}
+							<li>{item}</li>
+						}
+					</ul>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf('var value');
+
+				expect(
+					result.errors.map((error) => [error.code, error.pos, error.end]),
+					statement,
+				).toEqual([[TSRX_ERRORS.DIRECTIVE_BODY_VAR.code, start, start + 'var'.length]]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
+		it('reports a `var` declared in a nested `@{ … }` block, at its keyword (#1208)', () => {
+			/** @type {Record<string, { setup?: string, output: string, module?: string }>} */
+			const positions = {
+				child: { output: '<div>@{ var value = 1; <p>{value}</p> }</div>' },
+				'setup value': {
+					setup: 'const view = @{ var value = 1; <p>{value}</p> };',
+					output: '<div>{view}</div>',
+				},
+				'attribute value': { output: '<div title={@{ var value = 1; <p>{value}</p> }} />' },
+				'return value': {
+					setup: 'function view() { return @{ var value = 1; <p>{value}</p> }; }',
+					output: '<div>{view()}</div>',
+				},
+				'module value': {
+					module: 'const view = @{ var value = 1; <p>{value}</p> };',
+					output: '<div>{view}</div>',
+				},
+				'directive body': {
+					output: '<div>@if (c) { <p>@{ var value = 1; <b>{value}</b> }</p> }</div>',
+				},
+			};
+			for (const [label, { setup = '', output, module = '' }] of Object.entries(positions)) {
+				const source = `${module}
+				export function App({ c }: any) @{
+					${setup}
+					${output}
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf('var value');
+
+				expect(
+					result.errors.map((error) => [error.code, error.pos, error.end]),
+					label,
+				).toEqual([[TSRX_ERRORS.DIRECTIVE_BODY_VAR.code, start, start + 'var'.length]]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
+		it("accepts a `var` in a function's own `@{ … }` body or in a function or class in a block (#1208)", () => {
+			for (const statement of [
+				'const read = () => { var value = 1; return value; };',
+				'function read() { var value = 1; return value; }',
+				'const read = function () { var value = 1; return value; };',
+				'const model = { read() { var value = 1; return value; } };',
+				'class Model { static { var value = 1; } read() { var value = 1; return value; } }',
+				'const Row = () => @{ var value = 1; <b>{value}</b> };',
+				'const model = { render() @{ var value = 1; <b>{value}</b> } };',
+				'const view = @{ const read = () => { var value = 1; return value; }; <b>{read()}</b> };',
+			]) {
+				const source = `export function App({ c }: any) @{
+					var outer = 1;
+					function helper() { var local = 1; return local; }
+					<div>
+						@if (c) {
+							${statement}
+							<p>{outer}{helper()}</p>
+						}
+					</div>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(result.errors, statement).toEqual([]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
+		it('reports each `var` in nested directive bodies once, beside a `var` head (#1208)', () => {
+			const source = `export function App({ items, c }: any) @{
+				<ul>
+					@for (var item of items) {
+						var outer = item;
+						const row = () => @if (c) {
+							var inner = outer;
+							<b>{inner}</b>
+						};
+						@switch (c) {
+							@case 1: {
+								var deep = 1;
+								<li>{row()}{deep}</li>
+							}
+						}
+					}
+				</ul>
+			}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const at = (/** @type {string} */ text) => source.indexOf(text);
+
+			expect(result.errors.map((error) => [error.code, error.pos])).toEqual([
+				[TSRX_ERRORS.FOR_HEAD_VAR.code, at('var item')],
+				[TSRX_ERRORS.DIRECTIVE_BODY_VAR.code, at('var outer')],
+				[TSRX_ERRORS.DIRECTIVE_BODY_VAR.code, at('var inner')],
+				[TSRX_ERRORS.DIRECTIVE_BODY_VAR.code, at('var deep')],
+			]);
+			expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+		});
+
+		it('reports `var`s in nested bodies in source order (#1208)', () => {
+			const source = `export function App({ items, c }: any) @{
+				<div title={@if (c) { var first = 1; <b>{first}</b> }}>
+					@for (const item of items) {
+						var second = item;
+						<p>{second}</p>
+					}
+					@{
+						var third = 1;
+						<i>{third}</i>
+					}
+				</div>
+			}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+			expect(result.errors.map((error) => [error.code, error.pos])).toEqual(
+				['var first', 'var second', 'var third'].map((text) => [
+					TSRX_ERRORS.DIRECTIVE_BODY_VAR.code,
+					source.indexOf(text),
+				]),
+			);
 		});
 
 		it('preserves deferred imports in type-only output', () => {
@@ -1868,10 +2221,10 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch');
-			expect(code).toMatch(/<Match when=\{status === "idle"\}>/);
-			expect(code).toMatch(/<Match when=\{status === "active"\}>/);
-			expect(code).toMatch(/<Match when=\{status === "offline"\}>/);
+			expect(code).toContain('<__Switch');
+			expect(code).toMatch(/<__Match when=\{status === "idle"\}>/);
+			expect(code).toMatch(/<__Match when=\{status === "active"\}>/);
+			expect(code).toMatch(/<__Match when=\{status === "offline"\}>/);
 			expect(count_substring(code, "'Offline'")).toBe(1);
 			expect(count_substring(code, "'Away'")).toBe(1);
 			expect(count_substring(code, "'Online'")).toBe(1);
@@ -1893,8 +2246,8 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toMatch(/<Match when=\{kind === "a"\}>/);
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toMatch(/<__Match when=\{kind === "a"\}>/);
 			expect(count_substring(code, "'D'")).toBe(1);
 		});
 	});
@@ -2069,6 +2422,61 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 						'App.tsrx',
 					),
 				).toThrow(error_with(expected));
+			}
+		});
+
+		it('rejects a `var` declared in a directive body or a nested `@{ … }` block, strictly and when collecting (#1208)', () => {
+			const source = `export function App({ items }: { items: string[] }) @{
+				<>
+					<ul title={@{ var count = items.length; <b>{count}</b> }}>
+						@for (const item of items) {
+							var last = item;
+							<li>{item}</li>
+						}
+					</ul>
+					<p>{last}</p>
+				</>
+			}`;
+			const [count, last] = ['var count', 'var last'].map((text) => {
+				const start = source.indexOf(text);
+				return expect.objectContaining({
+					code: TSRX_ERRORS.DIRECTIVE_BODY_VAR.code,
+					pos: start,
+					end: start + 'var'.length,
+				});
+			});
+
+			expect(() => compile(source, 'App.tsrx')).toThrow(count);
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([count, last]);
+		});
+
+		it('reports a `var` head and body `var`s in source order, strictly and when collecting (#1208)', () => {
+			for (const [loops, order] of /** @type {Array<[string, string[]]>} */ ([
+				[
+					'@for (var item of items) { var label = item; <li>{label}</li> }',
+					['var item', 'var label'],
+				],
+				[
+					'@for (const item of items) { var label = item; <li>{label}</li> } @for (var other of items) { <li /> }',
+					['var label', 'var other'],
+				],
+			])) {
+				const source = `export function App({ items }: { items: string[] }) @{
+					<ul>
+						${loops}
+					</ul>
+				}`;
+				const expected = order.map((text) => {
+					const start = source.indexOf(text);
+					return expect.objectContaining({
+						code: (text === 'var label' ? TSRX_ERRORS.DIRECTIVE_BODY_VAR : TSRX_ERRORS.FOR_HEAD_VAR)
+							.code,
+						pos: start,
+					});
+				});
+
+				expect(() => compile(source, 'App.tsrx'), loops).toThrow(expected[0]);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, loops).toEqual(expected);
 			}
 		});
 
@@ -2354,9 +2762,9 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 			expect(code).toContain('children={({ items }: { items: JSX.Element[] }) => <ul>');
 			expect(code).toContain(
 				name === 'solid'
-					? '<For each={items} keyed={false}>'
+					? '<__For each={__for_items(items)} keyed={false}>'
 					: name === 'vue'
-						? '<VaporFor in={items}'
+						? '<__VaporFor in={items}'
 						: '__map_iterable(items, (item, i)',
 			);
 			expect(code).toContain(name === 'vue' ? '<li>{item.value}</li>' : '<li key={i}>{item}</li>');
@@ -2455,6 +2863,61 @@ export function runSharedComponentParamsTests({ compile, compile_to_volar_mappin
 					/** @type {{ message?: string }} */ (error).message?.includes(removed_message),
 				),
 			).toBe(false);
+		});
+	});
+}
+
+/**
+ * Shared validation that a ref list written on an element, `ref={[a, b]}`,
+ * reaches a runtime that takes a single ref as one merged ref. `merge` names
+ * the helper the build output merges it with; `null` for a target whose
+ * runtime applies a ref list itself (Solid), which keeps the list as written.
+ *
+ * @param {Pick<CompileHarness, 'compile' | 'name'> & Pick<CompileDiagnosticsHarness, 'compile_to_volar_mappings'> & { merge: string | null }} harness
+ */
+export function runSharedArrayRefTests({ compile, compile_to_volar_mappings, name, merge }) {
+	const source = `export function App({ a, b, show }) @{
+	<>
+		<input ref={[a, [b, show && a]]} />
+		<input ref={a} />
+	</>
+}`;
+
+	describe(`[${name}] ref lists written on an element`, () => {
+		it(merge ? 'merges the list into one ref' : 'keeps the list as written', () => {
+			const { code } = compile(source, 'App.tsrx');
+			const { code: type_only, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(code).toContain('<input ref={a} />');
+			expect(type_only).toContain('<input ref={a} />');
+			if (merge === null) {
+				expect(code).toContain('<input ref={[a, [b, show && a]]} />');
+				expect(code).not.toContain('__mergeRefs');
+				expect(type_only).toContain('<input ref={[a, [b, show && a]]} />');
+				return;
+			}
+
+			expect(code).toContain(`${merge} as __mergeRefs`);
+			expect(code).toContain('<input ref={__mergeRefs([a, [b, show && a]])} />');
+			// The editor checks the list against the public \`mergeRefs\`, whose
+			// type takes ref lists.
+			expect(type_only).toContain('mergeRefs as __mergeRefs');
+			expect(type_only).toContain('<input ref={__mergeRefs([a, [b, show && a]])} />');
+
+			// The \`ref\` name and the refs in the list keep their source positions.
+			for (const [source_text, generated_text, length] of /** @type {const} */ ([
+				['ref={[a', 'ref={__mergeRefs([a', 'ref'.length],
+				['b, show', 'b, show', 'b'.length],
+			])) {
+				expect(
+					find_exact_mapping(
+						mappings,
+						source.indexOf(source_text),
+						type_only.indexOf(generated_text),
+						length,
+					),
+				).toBeDefined();
+			}
 		});
 	});
 }
@@ -3384,6 +3847,40 @@ export function App() @{
 		});
 	});
 
+	describe(`[${name}] type arguments after a dynamic tag (#1243)`, () => {
+		// They would type the helper the tag lowers to, not the tag, so the parser
+		// reports them on every target.
+		const source = `export function App({ Tag, title }: any) @{
+	<main>
+		<{Tag}<string> title={title}>
+			<p>{title}</p>
+		</{Tag}>
+	</main>
+}`;
+		const start = source.indexOf('<string>');
+		const end = start + '<string>'.length;
+
+		it('throws', () => {
+			expect(() => compile(source, 'App.tsrx')).toThrow(
+				expect.objectContaining({
+					code: TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS.code,
+					pos: start,
+					end,
+				}),
+			);
+		});
+
+		it('records them in collect mode, and leaves them out of the code', () => {
+			const { code, errors } = compile(source, 'App.tsrx', { collect: true });
+
+			expect(errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				[TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS.code, start, end],
+			]);
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			expect(code).not.toContain('<string>');
+		});
+	});
+
 	describe(`[${name}] component export shapes`, () => {
 		// Export prefix preservation should stay stable per target. Vue wraps
 		// every component in `defineVaporComponent(...)`; the other targets
@@ -3539,8 +4036,10 @@ export function App() @{
 		});
 	});
 
-	// The targets that share the core import injector, and the sources it
-	// imports each generated component from.
+	// The components each target imports itself, and the sources it imports
+	// them from. React, Preact and Hono share the core import injector; Solid
+	// and Vue have their own. Vue's `defineVaporComponent` keeps its public
+	// name: vue-jsx-vapor finds components by that callee name.
 	const generated_import_sources = /** @type {Record<string, Record<string, string>>} */ ({
 		react: {
 			Suspense: 'react',
@@ -3557,6 +4056,17 @@ export function App() @{
 			Fragment: 'hono/jsx',
 			TsrxErrorBoundary: '@tsrx/hono/error-boundary',
 		},
+		solid: {
+			Show: 'solid-js',
+			For: 'solid-js',
+			Switch: 'solid-js',
+			Match: 'solid-js',
+			Errored: 'solid-js',
+			Loading: 'solid-js',
+		},
+		vue: {
+			VaporFor: 'vue-jsx-vapor',
+		},
 	})[name];
 
 	if (generated_import_sources) {
@@ -3568,6 +4078,13 @@ export function App() @{
 				Suspense: `<div>@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }</div>`,
 				TsrxErrorBoundary: `<div>@try { <p>{'ready'}</p> } @catch (error) { <p>{'failed'}</p> }</div>`,
 				Fragment: `<ul>@for (const row of rows; key row) { <><li>{row}</li><li>{'end'}</li></> }</ul>`,
+				Show: `<div>@if (rows.length > 0) { <p>{'some'}</p> }</div>`,
+				For: `<ul>@for (const row of rows) { <li>{row}</li> }</ul>`,
+				Switch: `<div>@switch (rows[0]) { @case 'a': { <p>{'a'}</p> } @default: { <p>{'other'}</p> } }</div>`,
+				Match: `<div>@switch (rows[0]) { @case 'a': { <p>{'a'}</p> } @default: { <p>{'other'}</p> } }</div>`,
+				Errored: `<div>@try { <p>{'ready'}</p> } @catch (error) { <p>{'failed'}</p> }</div>`,
+				Loading: `<div>@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }</div>`,
+				VaporFor: `<ul>@for (const row of rows; key row) { <li>{row}</li> }</ul>`,
 			};
 
 			/**
@@ -3597,14 +4114,21 @@ export function App() @{
 					.filter((diagnostic) => [2300, 2440, 2451].includes(diagnostic.code))
 					.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
 				expect(redeclarations).toEqual([]);
-				expect(code).toContain(
-					`import { ${generated} as __${generated} } from '${sources[generated]}';`,
+				// A target can import several generated names from one source in a
+				// single declaration, which the printer may wrap over several lines.
+				const import_line = [...code.matchAll(/^import \{([^}]*)\} from '([^']+)';$/gm)].find(
+					(match) =>
+						match[2] === sources[generated] &&
+						match[1]
+							.split(',')
+							.some((specifier) => specifier.trim() === `${generated} as __${generated}`),
 				);
+				expect(import_line, `a value import of ${generated} as __${generated}`).toBeDefined();
 				expect(code).toContain(`<__${generated} `);
 				expect(code).not.toMatch(new RegExp(`<${generated}[\\s>]`));
 			}
 
-			for (const generated of ['Suspense', 'TsrxErrorBoundary', 'Fragment']) {
+			for (const generated of Object.keys(sources)) {
 				const source = sources[generated];
 
 				it.each([
@@ -3631,17 +4155,37 @@ export function App() @{
 				});
 			}
 
-			it('keys a fragment row with the generated Fragment when the loop variable is named Fragment', () => {
-				const code = compile_beside(
-					'Fragment',
-					'',
-					'',
-					`<ul>@for (const Fragment of rows; key Fragment) { <><li>{Fragment}</li><li>{'end'}</li></> }</ul>`,
-				);
+			it.runIf('Fragment' in sources)(
+				'keys a fragment row with the generated Fragment when the loop variable is named Fragment',
+				() => {
+					const code = compile_beside(
+						'Fragment',
+						'',
+						'',
+						`<ul>@for (const Fragment of rows; key Fragment) { <><li>{Fragment}</li><li>{'end'}</li></> }</ul>`,
+					);
 
-				expect_private_generated_binding(code, 'Fragment');
-				expect(code).toContain('<__Fragment key={Fragment}>');
-			});
+					expect_private_generated_binding(code, 'Fragment');
+					expect(code).toContain('<__Fragment key={Fragment}>');
+				},
+			);
+
+			it.runIf(name === 'solid')(
+				'switches through the generated Match when the loop variable is named Match',
+				() => {
+					const code = compile_beside(
+						'Match',
+						'',
+						'',
+						`<ul>@for (const Match of rows) { @switch (Match) { @case 'a': { <li>{'a'}</li> } @default: { <li>{'b'}</li> } } }</ul>`,
+					);
+
+					expect_private_generated_binding(code, 'Match');
+					expect_private_generated_binding(code, 'For');
+					expect(code).toContain('{(Match) => <__Switch');
+					expect(code).toContain(`<__Match when={Match === 'a'}>`);
+				},
+			);
 		});
 	}
 
@@ -3946,15 +4490,18 @@ break"}</p>
 			expect(code).toContain('export function getItems<Item>(props: Props<Item>)');
 		});
 
-		it('keeps a generic arrow with one type parameter from reading as a JSX tag', () => {
+		it('keeps the comma of a generic arrow with one type parameter, so the output reparses', () => {
 			const { code } = compile(
-				`export const first = <T>(items: T[]) => items[0];
+				`export const f = <T,>(x: T) => x;
+				export const first = <const T,>(items: T[]) => items[0];
 				export const pair = <A, B>(a: A, b: B) => [a, b];`,
 				'App.tsrx',
 			);
 
-			expect(code).toContain('export const first = <T,>(items: T[]) => items[0];');
+			expect(code).toContain('export const f = <T,>(x: T) => x;');
+			expect(code).toContain('export const first = <const T,>(items: T[]) => items[0];');
 			expect(code).toContain('export const pair = <A, B>(a: A, b: B) => [a, b];');
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
 		});
 
 		it('keeps parameter decorators before parameter property modifiers', () => {
@@ -5097,7 +5644,7 @@ export function App() @{
 			const { code } = compile(
 				`function Card() @{
 					<div class="card">@{
-						var a = "one"
+						let a = "one"
 						a = "two"
 						<>
 							<b>{"hello" + a}</b>
@@ -5248,10 +5795,12 @@ export function App() @{
 		 * and returns what its `result` export returns. An import is a string
 		 * that names it when it is capitalized, and otherwise a function that
 		 * returns its argument; a default import is a module of the same kind.
+		 * `modules` replaces the modules it names.
 		 * @param {string} code
+		 * @param {Record<string, object>} [modules]
 		 * @returns {unknown}
 		 */
-		function run_result(code) {
+		function run_result(code, modules = {}) {
 			const { outputText } = ts.transpileModule(code, {
 				fileName: 'App.tsx',
 				compilerOptions: {
@@ -5272,6 +5821,7 @@ export function App() @{
 			 * @returns {object}
 			 */
 			const require = (specifier) =>
+				modules[specifier] ??
 				new Proxy(
 					{},
 					{
@@ -5382,6 +5932,63 @@ export function App() @{
 				"const Foo = 'outer';\nnamespace Outer {\n\texport function Foo() {\n\t\treturn null;\n\t}\n}\nnamespace Outer.Foo.Bar {\n\texport function App() {\n\t\treturn <Foo>ok</Foo>;\n\t}\n}\nexport const result = () => Outer.Foo.Bar.App().type === Outer.Foo;",
 				true,
 			],
+			[
+				'a function declaration the module assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nTag = Replacement;\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration that another function assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nexport function swap() {\n\tTag = Replacement;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport const result = () => {\n\tswap();\n\treturn App().props.children[0].type === Replacement;\n};',
+				true,
+			],
+			[
+				'a class declaration the module assigns by destructuring',
+				'class Box {}\nclass Other {}\nfunction App() {\n\treturn <div><Box>hello</Box></div>;\n}\n[Box] = [Other];\nexport const result = () => App().props.children[0].type === Other;',
+				true,
+			],
+			[
+				'a function declaration assigned through a typed destructuring target',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n[Tag as any] = [Replacement];\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				// Any assignment of the name counts, even to a local that shadows it
+				'a function declaration whose name another function assigns as a local',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function other() {\n\tlet Tag = 1;\n\tTag = 2;\n\treturn Tag;\n}\nexport const result = () => App().props.children[0].type === Tag;',
+				true,
+			],
+			[
+				'a function declaration a for…of head assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfor (Tag of [Replacement]);\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration a for…in head assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfor (Tag in { replacement: 1 });\nexport const result = () => App().props.children[0].type;',
+				'replacement',
+			],
+			[
+				'a function declaration another function updates',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function bump() {\n\tTag++;\n}\nexport const result = () => {\n\tbump();\n\treturn Number.isNaN(App().props.children[0].type);\n};',
+				true,
+			],
+			[
+				'a function declaration assigned by object destructuring with a default',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n({ Tag = Replacement } = {});\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				// The style pass moves a `ref` of a `<style>` in a nested root out of the tree
+				'a function declaration a style ref assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nexport function App() @{\n\tconst content = <><style ref={() => { Tag = Replacement; }} /><span>content</span></>;\n\t<>{content}<div><Tag>hello</Tag></div></>\n}\nexport const result = () => App().props.children[1].props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration a direct eval can assign',
+				"function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n(eval)('Tag = Replacement');\nexport const result = () => App().props.children[0].type === Replacement;",
+				true,
+			],
 		])(
 			'leaves JSX whose tag reads %s in place, reading it at render time',
 			(_case, source, expected) => {
@@ -5390,6 +5997,185 @@ export function App() @{
 				expect(run_result(code)).toBe(expected);
 			},
 		);
+
+		it.each([
+			[
+				'a default import the module assigns a property of (#1292)',
+				"import ui from './ui';\nfunction Replacement() {\n\treturn null;\n}\nexport function App() @{\n\t<div><ui.Button>hello</ui.Button></div>\n}\nui.Button = Replacement;\nexport const result = () => App().props.children[0].type === Replacement;",
+				true,
+			],
+			[
+				'a named import another function assigns a property of (#1292)',
+				"import { Menu } from './menu';\nfunction Replacement() {\n\treturn null;\n}\nexport function patch() {\n\tMenu.Item = Replacement;\n}\nexport function App() @{\n\t<div><Menu.Item /></div>\n}\nexport const result = () => {\n\tpatch();\n\treturn App().props.children[0].type === Replacement;\n};",
+				true,
+			],
+			[
+				'a property path under an import the module assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Menu.Item>hello</ui.Menu.Item></div>;\n}\nui.Menu.Item = 'deep';\nexport const result = () => App().props.children[0].type;",
+				'deep',
+			],
+			[
+				'an import property the module assigns by a computed key',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nui['Button'] = 'computed';\nexport const result = () => App().props.children[0].type;",
+				'computed',
+			],
+			[
+				'an import property the module assigns with a compound operator',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nui.Button += '!';\nexport const result = () => App().props.children[0].type;",
+				'original!',
+			],
+			[
+				'an import property the module assigns with a logical operator',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nui.Button &&= 'logical';\nexport const result = () => App().props.children[0].type;",
+				'logical',
+			],
+			[
+				'an import property another function updates',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport function bump() {\n\tui.Button++;\n}\nexport const result = () => {\n\tbump();\n\treturn Number.isNaN(App().props.children[0].type);\n};",
+				true,
+			],
+			[
+				'an import property the module deletes',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\ndelete ui.Button;\nexport const result = () => App().props.children[0].type === undefined;",
+				true,
+			],
+			[
+				'an import property the module deletes through optional chaining',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\ndelete ui?.Button;\nexport const result = () => App().props.children[0].type === undefined;",
+				true,
+			],
+			[
+				'an import property the module assigns by array destructuring',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n[ui.Button] = ['array'];\nexport const result = () => App().props.children[0].type;",
+				'array',
+			],
+			[
+				'an import property the module assigns by object destructuring',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n({ x: ui.Button } = { x: 'object' });\nexport const result = () => App().props.children[0].type;",
+				'object',
+			],
+			[
+				'an import property a for…of head assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nfor (ui.Button of ['of']);\nexport const result = () => App().props.children[0].type;",
+				'of',
+			],
+			[
+				'an import property a for…in head assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nfor (ui.Button in { key: 1 });\nexport const result = () => App().props.children[0].type;",
+				'key',
+			],
+			[
+				'an import property a class static block assigns',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nclass Patch {\n\tstatic {\n\t\tui.Button = 'class';\n\t}\n}\nexport const result = () => App().props.children[0].type;",
+				'class',
+			],
+			[
+				'an import property its component body assigns',
+				"import ui from './ui';\nexport function App() @{\n\tui.Button = 'render';\n\t<div><ui.Button>hello</ui.Button></div>\n}\nexport const result = () => App().props.children[0].type;",
+				'render',
+			],
+			[
+				'an import property the module assigns through a type assertion',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(ui as any).Button = 'typed';\nexport const result = () => App().props.children[0].type;",
+				'typed',
+			],
+			[
+				'an import property the module assigns through a sequence',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(0, ui).Button = 'sequence';\nexport const result = () => App().props.children[0].type;",
+				'sequence',
+			],
+			[
+				'an import property the module assigns through a conditional',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(true ? ui : ({} as any)).Button = 'conditional';\nexport const result = () => App().props.children[0].type;",
+				'conditional',
+			],
+			[
+				"an import property the module assigns through a conditional's alternate",
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(false ? ({} as any) : ui).Button = 'alternate';\nexport const result = () => App().props.children[0].type;",
+				'alternate',
+			],
+			[
+				'an import property the module assigns through a logical expression',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(ui || ({} as any)).Button = 'either';\nexport const result = () => App().props.children[0].type;",
+				'either',
+			],
+			[
+				"an import property the module assigns through a logical expression's right operand",
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(({} as any) && ui).Button = 'right';\nexport const result = () => App().props.children[0].type;",
+				'right',
+			],
+			[
+				'an import property the module assigns through an assignment',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nlet alias: any;\n(alias = ui).Button = 'alias';\nexport const result = () => App().props.children[0].type;",
+				'alias',
+			],
+			[
+				'an import property the module assigns through await',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport async function patch() {\n\t(await ui).Button = 'awaited';\n}\nexport const result = async () => {\n\tawait patch();\n\treturn App().props.children[0].type;\n};",
+				'awaited',
+			],
+			[
+				'an import property the module assigns through type arguments',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\n(ui<any>).Button = 'instantiated';\nexport const result = () => App().props.children[0].type;",
+				'instantiated',
+			],
+			[
+				'an import property Object.assign gives',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nObject.assign(ui, { Button: 'assigned' });\nexport const result = () => App().props.children[0].type;",
+				'assigned',
+			],
+			[
+				'an import property Object.defineProperty defines',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nObject.defineProperty(ui, 'Button', { value: 'defined' });\nexport const result = () => App().props.children[0].type;",
+				'defined',
+			],
+			[
+				'a property path under an import that Object.assign gives',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Menu.Item>hello</ui.Menu.Item></div>;\n}\nObject.assign(ui.Menu, { Item: 'merged' });\nexport const result = () => App().props.children[0].type;",
+				'merged',
+			],
+			[
+				'an import property a constructor given the import writes',
+				"import ui from './ui';\nclass Patch {\n\tconstructor(target: any) {\n\t\ttarget.Button = 'constructed';\n\t}\n}\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nnew Patch(ui);\nexport const result = () => App().props.children[0].type;",
+				'constructed',
+			],
+			[
+				// A namespace object's own properties are read-only, but not the
+				// properties of the objects it exports
+				'a property path under a namespace import the module assigns',
+				"import * as lib from './lib';\nfunction App() {\n\treturn <div><lib.Menu.Item>hello</lib.Menu.Item></div>;\n}\nlib.Menu.Item = 'deep';\nexport const result = () => App().props.children[0].type;",
+				'deep',
+			],
+			[
+				// Any property write under the name counts, even under a local that
+				// shadows it
+				'an import whose name another function writes a property of as a local',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport function other(ui: any) {\n\tui.Button = 'local';\n}\nexport const result = () => App().props.children[0].type;",
+				'original',
+			],
+		])(
+			'leaves JSX whose member tag reads %s in place, reading it at render time',
+			async (_case, source, expected) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(code).not.toContain('__static');
+				expect(
+					await run_result(code, {
+						'./ui': { default: { Button: 'original', Menu: { Item: 'original' } } },
+						'./menu': { Menu: { Item: 'original' } },
+						'./lib': { Menu: { Item: 'original' } },
+					}),
+				).toBe(expected);
+			},
+		);
+
+		it('leaves JSX whose member tag reads an import a directive body assigns a property of in place', () => {
+			const { code } = compile(
+				"import ui from './ui';\nexport function App() @{\n\t<>\n\t\t@if (true) {\n\t\t\tui.Button = 'branch';\n\t\t\t<b>branch</b>\n\t\t}\n\t\t<div><ui.Button>hello</ui.Button></div>\n\t</>\n}",
+				'App.tsrx',
+			);
+			expect(code).toContain('<div><ui.Button>hello</ui.Button></div></>');
+			expect(code).not.toMatch(/__static\d+ = <div>/);
+		});
 
 		it('leaves the static JSX of a component inside another function in place', () => {
 			// Its statics would go to module level, which only the components a
@@ -5453,6 +6239,22 @@ export function App() @{
 				'./ui.default.Button',
 			],
 			[
+				// A namespace object's own properties are read-only
+				'a member of a namespace import whose property the module assigns',
+				"import * as ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport function patch() {\n\t(ui as any).Button = 'patched';\n\tObject.assign(ui, { Button: 'patched' });\n}\nexport const result = () => App().props.children[0].type;",
+				'./ui.Button',
+			],
+			[
+				'an import whose property the module assigns',
+				"import { Tag } from './tag';\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function patch() {\n\t(Tag as any).displayName = 'T';\n}\nexport const result = () => App().props.children[0].type;",
+				'./tag.Tag',
+			],
+			[
+				'a member of an import beside one whose property the module assigns',
+				"import ui from './ui';\nimport other from './other';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nother.Button = 'other';\nexport const result = () => App().props.children[0].type;",
+				'./ui.default.Button',
+			],
+			[
 				'a function declared after it',
 				'function App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfunction Tag() {\n\treturn null;\n}\nexport const result = () => App().props.children[0].type === Tag;',
 				true,
@@ -5475,6 +6277,30 @@ export function App() @{
 			}
 			expect(run_result(code)).toBe(expected);
 		});
+
+		it.each([
+			[
+				'in the component and at module level',
+				"const App__static1 = 'module';\nexport function App() {\n\tconst App__static2 = 'local';\n\treturn <>{<div>static</div>}<b>bare</b>{App__static1}{App__static2}</>;\n}\nexport const result = () => App().props.children.map((child: any) => (typeof child === 'object' ? child.type : child));",
+				['App__static3', 'App__static4'],
+				['div', 'b', 'module', 'local'],
+			],
+			[
+				'with a $ in its name',
+				"export function $App() {\n\tconst $App__static1 = 'local';\n\treturn <>{<div>static</div>}{$App__static1}</>;\n}\nexport const result = () => $App().props.children.map((child: any) => (typeof child === 'object' ? child.type : child));",
+				['$App__static2'],
+				['div', 'local'],
+			],
+		])(
+			'names a static apart from an authored static name %s',
+			(_case, source, statics, expected) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(
+					[...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]),
+				).toEqual(hoistsStaticJsx ? statics : []);
+				expect(run_result(code)).toEqual(expected);
+			},
+		);
 
 		it('hoists an intrinsic tag that shares its name with a later binding', () => {
 			const { code } = compile(
@@ -5499,6 +6325,240 @@ export function App() @{
 		])('keeps the body of a raw script in %s of static JSX (#845)', (_case, source) => {
 			const { code } = compile(source, 'App.tsrx');
 			expect(code).toContain(`'{"a":1}'`);
+		});
+
+		describe('in expression containers (#81)', () => {
+			/** @param {string} code */
+			const static_count = (code) => code.match(/^const App__static\d+ = /gm)?.length ?? 0;
+
+			it('hoists a static element in a container like the bare one beside it', () => {
+				const { code } = compile(
+					'export function App() {\n\treturn <>{<b>a</b>}<b>b</b></>;\n}\n' +
+						'export const result = () => {\n' +
+						'\tconst [first, second] = [App(), App()];\n' +
+						'\treturn [first.props.children.length, ...first.props.children.map((child: unknown, i: number) => child === second.props.children[i])];\n' +
+						'};',
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code).toContain('const App__static1 = <b>a</b>;');
+					expect(code).toContain('const App__static2 = <b>b</b>;');
+					expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+					expect(run_result(code)).toEqual([2, true, true]);
+				} else {
+					expect(code).not.toContain('__static');
+					expect(run_result(code)).toEqual([2, false, false]);
+				}
+			});
+
+			it('hoists through children, attribute values, branches, nested containers and fragments', () => {
+				const { code } = compile(
+					`function Card(props: { header: unknown; n: number; children?: unknown }) {
+	return null;
+}
+export function App(props: { on: boolean; n: number; label?: string }) {
+	return (
+		<div title={String(props.n)}>
+			{<b>child</b>}
+			<Card header={<h1>header</h1>} n={props.n}>
+				{<i>card child</i>}
+			</Card>
+			{props.on ? <span>on</span> : <span>off</span>}
+			{props.on && <em>and</em>}
+			{props.label ?? <s>fallback</s>}
+			{<p title={String(props.n)}>{<u>nested</u>}</p>}
+			{<><a>one</a><a>two</a></>}
+		</div>
+	);
+}
+const strip = (node: any): any =>
+	node && typeof node === 'object'
+		? { type: typeof node.type === 'function' ? node.type.name : node.type, props: Object.fromEntries(Object.entries(node.props).map(([k, v]) => [k, Array.isArray(v) ? v.map(strip) : strip(v)])) }
+		: node;
+export const result = () => [App({ on: true, n: 1 }), App({ on: false, n: 2, label: 'x' })].map(strip);`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(static_count(code)).toBe(10);
+					expect(code).toContain(
+						'return <div title={String(props.n)}>{App__static1}<Card header={App__static2} n={props.n}>{App__static3}</Card>{props.on ? App__static4 : App__static5}{props.on && App__static6}{props.label ?? App__static7}{<p title={String(props.n)}>{App__static8}</p>}{<>{App__static9}{App__static10}</>}</div>;',
+					);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+				/** @param {string} type @param {Record<string, unknown>} [props] */
+				const el = (type, props = {}) => ({ type, props });
+				/** @param {boolean} on @param {number} n @param {unknown} fallback */
+				const tree = (on, n, fallback) =>
+					el('div', {
+						title: String(n),
+						children: [
+							el('b', { children: ['child'] }),
+							el('Card', {
+								header: el('h1', { children: ['header'] }),
+								n,
+								children: [el('i', { children: ['card child'] })],
+							}),
+							el('span', { children: [on ? 'on' : 'off'] }),
+							on && el('em', { children: ['and'] }),
+							fallback,
+							el('p', { title: String(n), children: [el('u', { children: ['nested'] })] }),
+							el('Fragment', {
+								children: [el('a', { children: ['one'] }), el('a', { children: ['two'] })],
+							}),
+						],
+					});
+				expect(run_result(code)).toEqual([
+					tree(true, 1, el('s', { children: ['fallback'] })),
+					tree(false, 2, 'x'),
+				]);
+			});
+
+			it('hoists a static element in a nested container of a component body', () => {
+				const { code } = compile(
+					`export function App(props: { n: number }) @{
+	const label = String(props.n);
+	<section title={label}>
+		{<div title={label}>{<span>nested</span>}</div>}
+	</section>
+}`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code).toContain('const App__static1 = <span>nested</span>;');
+					expect(code).toContain(
+						'return <section title={label}>{<div title={label}>{App__static1}</div>}</section>;',
+					);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('hoists only host elements in a conditional container', () => {
+				// A static reads its tags when the module loads; a component the
+				// render may never reach can be uninitialized then (a cyclic import)
+				const { code } = compile(
+					`import * as ui from './ui';
+function Icon(props: { size: number }) {
+	return null;
+}
+export function App(props: { on: boolean; n: number; label?: string }) {
+	return <div title={String(props.n)}>
+		{props.on && <ui.Button x="x" />}
+		{props.on ? <Icon size={1} /> : <span>off</span>}
+		{props.label ?? <b><Icon size={2} /></b>}
+		{props.on || <i>host</i>}
+		{props.on && <p title={String(props.n)}>{<Icon size={3} />}{<em>nested host</em>}</p>}
+	</div>;
+}`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code.match(/^const App__static\d+ = .*$/gm)).toEqual([
+						'const App__static1 = <span>off</span>;',
+						'const App__static2 = <i>host</i>;',
+						'const App__static3 = <em>nested host</em>;',
+					]);
+					expect(code).toContain('{props.on && <ui.Button x="x" />}');
+					expect(code).toContain('{props.on ? <Icon size={1} /> : App__static1}');
+					expect(code).toContain('{props.label ?? <b><Icon size={2} /></b>}');
+					expect(code).toContain('{<Icon size={3} />}{App__static3}');
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('does not read a component in a conditional container when the module loads', () => {
+				const { code } = compile(
+					"import * as ui from './ui';\n" +
+						'export function App(props: { on: boolean }) {\n' +
+						'\treturn <>{props.on && <ui.Button x="x" />}</>;\n' +
+						'}\n' +
+						'export const result = () => App({ on: false }).props.children;',
+					'App.tsrx',
+				);
+				const ui = {
+					get Button() {
+						throw new Error('ui.Button read');
+					},
+				};
+				expect(run_result(code, { './ui': ui })).toEqual([false]);
+			});
+
+			it('hoists a component in an unconditional container, as it does a bare one', () => {
+				const { code } = compile(
+					`import * as ui from './ui';
+function Icon(props: { size: number }) {
+	return null;
+}
+export function App(props: { n: number }) {
+	return <div title={String(props.n)}>
+		{<ui.Button x="x" />}
+		<ui.Button x={<Icon size={1} />} y={String(props.n)} />
+	</div>;
+}`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code.match(/^const App__static\d+ = .*$/gm)).toEqual([
+						'const App__static1 = <ui.Button x="x" />;',
+						'const App__static2 = <Icon size={1} />;',
+					]);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('hoists each of two static containers on its own instead of merging them', () => {
+				const { code } = compile(
+					'export function App() {\n\treturn <>{<b>a</b>}{<b>b</b>}</>;\n}',
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(static_count(code)).toBe(2);
+					expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('leaves keyed elements, binding reads, bare children and other expressions in place', () => {
+				const { code } = compile(
+					`function Card(props: { n?: number }) {
+	return null;
+}
+function Helper() {
+	return null;
+}
+export function App(props: { on: boolean; n: number; items: string[] }) {
+	return (
+		<div title={String(props.n)}>
+			<p>bare child</p>
+			{<b key="k">keyed</b>}
+			{props.on ? <i key="on">on</i> : <i key="off">off</i>}
+			{<b>{props.n}</b>}
+			{<Card n={props.n} />}
+			{<Helper />}
+			{props.items.map((item) => <li>row</li>)}
+			{[<u key="a">a</u>]}
+		</div>
+	);
+}`,
+					'App.tsrx',
+				);
+				expect(code).not.toContain('__static');
+			});
+
+			it('hoists the statics of the shared runtime fixture', () => {
+				const source = readFileSync(
+					new URL('./runtime/static-containers-components.tsrx', import.meta.url),
+					'utf8',
+				);
+				const { code } = compile(source, 'StaticContainers.tsrx');
+				expect(code.match(/^const StaticContainers__static\d+ = /gm)?.length ?? 0).toBe(
+					hoistsStaticJsx ? 10 : 0,
+				);
+			});
 		});
 	});
 

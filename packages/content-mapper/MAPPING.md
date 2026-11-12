@@ -57,11 +57,19 @@ diagnostic text shows the authored name.
 
 ## Post-processing in `span-mappings.js`
 
+Everything below applies to `mappings`, the spans TypeScript 7 reads. The opt-in
+`verificationMappings` output (`to_verification_mappings`) skips all of it: it
+keeps every mapping with `verification` whole (zero-length points included) and in
+the transform's order, which is what Volar, and so `tsrx-tsc`, maps diagnostics
+through.
+
 - Container spans lose to the token spans they enclose (Verbatim first, then
   shorter before longer, disjoint in generated space).
 - Neighbouring Verbatim spans with equal feature bits whose gap is identical text
   in both files are coalesced, so whole statements such as import declarations
-  become one edit-safe span.
+  become one edit-safe span. A span from a mapping with no Volar feature at all,
+  not even `verification` (the brackets of a respaced literal), joins either
+  neighbour and takes its features, as unmapped text between them would.
 - A Verbatim span extends over the identical whitespace that follows it. The rest
   of the identical text before the next span gets a Verbatim span with no feature
   bits: TypeScript 7 offers no auto-import completion at the end of a span that
