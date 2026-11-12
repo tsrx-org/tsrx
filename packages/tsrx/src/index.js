@@ -179,12 +179,14 @@ export {
 	is_component_like_element,
 	is_svg_tag_name as isSvgTagName,
 	is_mathml_tag_name as isMathmlTagName,
+	lower_spread_ref_bags as lowerSpreadRefBags,
 	MERGE_REFS_INTERNAL_NAME,
 	merge_duplicate_refs as mergeDuplicateRefs,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	return_value_body_to_expression as returnValueBodyToExpression,
 	source_mentions_identifier as sourceMentionsIdentifier,
+	SPREAD_REF_BAGS_INTERNAL_NAME,
 	validate_at_most_one_ref_attribute as validateAtMostOneRefAttribute,
 	wrap_edge_whitespace as wrapEdgeWhitespace,
 } from './transform/jsx/index.js';
@@ -234,6 +236,8 @@ export {
 	annotate_with_hash as annotateWithHash,
 	annotate_component_with_hash as annotateComponentWithHash,
 	add_hash_class as addHashClass,
+	MERGE_SPREAD_CLASS_INTERNAL_NAME,
+	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 } from './transform/scoping.js';
 export {
 	convert_source_map_to_mappings as convertSourceMapToMappings,

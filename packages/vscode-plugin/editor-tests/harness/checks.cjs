@@ -96,6 +96,33 @@ async function poll_symbols(document) {
 }
 
 /**
+ * The folds VS Code shows in `document`, merged from every folding provider, as
+ * `<first line>-<last folded line> [kind]` with lines numbered from 1, polled until there
+ * are some or 20 seconds have passed: right after a start, the TSRX server may not answer
+ * yet. TypeScript answers none for `.tsrx` files, on TypeScript 7 and through the tsserver
+ * plugin, and VS Code then folds nothing by indentation either.
+ * @param {vscode.TextDocument} document
+ */
+async function poll_folds(document) {
+	/** @type {vscode.FoldingRange[]} */
+	let folds = [];
+	const deadline = Date.now() + 20000;
+	while (folds.length === 0 && Date.now() < deadline) {
+		folds =
+			(await within(
+				vscode.commands.executeCommand('vscode.executeFoldingRangeProvider', document.uri),
+				5000,
+				undefined,
+			)) ?? [];
+		if (folds.length === 0) await sleep(500);
+	}
+	return folds.map(
+		(fold) =>
+			`${fold.start + 1}-${fold.end + 1}${fold.kind ? ` ${vscode.FoldingRangeKind[fold.kind].toLowerCase()}` : ''}`,
+	);
+}
+
+/**
  * The text of `document` with `edits` applied to a copy: a changed document would make
  * VS Code ask to save it when the instance closes, and that dialog brings the hidden
  * window to the front.
@@ -142,6 +169,8 @@ exports.run = async () => {
 
 		const text = document.getText();
 		result.hover = await hover_on_count(document, config.hoverTimeoutMs);
+		// Before the edits below, which move the lines.
+		result.folding = await poll_folds(document);
 		// Without a TypeScript that answers, the import checks below only look once.
 		const answering = /number/.test(result.hover);
 

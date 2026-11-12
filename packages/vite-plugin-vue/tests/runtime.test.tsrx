@@ -1,5 +1,14 @@
 import type { MockInstance } from 'vitest';
-import { defineVaporAsyncComponent, inject, provide, reactive, ref, watch, watchEffect } from 'vue';
+import {
+	createVaporApp,
+	defineVaporAsyncComponent,
+	inject,
+	provide,
+	reactive,
+	ref,
+	watch,
+	watchEffect,
+} from 'vue';
 import { mergeRefs } from '@tsrx/vue/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
@@ -14,6 +23,9 @@ const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'conditional boom',
 	'inner error',
 	'pending catch boom',
+	'async reject boom',
+	'pending reset boom',
+	'watcher boom',
 	'Unhandled error during execution of setup function',
 	'Active effect was not restored correctly',
 ];
@@ -736,6 +748,48 @@ function DestructuredKeyedRow(props: { id: string; label: string }) @{
 	>{`${props.label}:${count.value}`}</button>
 }
 
+function ForNestedArrayDestructuredKeyedApp() @{
+	const rows = ref<[string, [string, string][]][]>([
+		[
+			'p',
+			[
+				['x', 'X'],
+				['y', 'Y'],
+			],
+		],
+	]);
+	<ul>
+		@for (const [k, list] of rows.value; key k) {
+			@for (const [a, b] of list; key a) {
+				<li class="nested-array-destructured">{`${k}-${a}-${b}`}</li>
+			}
+		}
+	</ul>
+}
+
+function ForArrayDestructuredKeyedApp() @{
+	const rows = ref<Iterable<string>[]>([new Set(['a', 'Alpha']), '😀x', ['b']]);
+	<>
+		@for (const [id, label = 'none'] of rows.value; key id) {
+			<DestructuredKeyedRow {id} {label} />
+		}
+		<button
+			class="reverse-array-destructured-keyed"
+			onClick={() => (rows.value = [...rows.value].reverse())}
+		>
+			{'reverse'}
+		</button>
+		<button
+			class="rename-array-destructured-keyed-a"
+			onClick={() =>
+				(rows.value = rows.value.map((row) => ([...row][0] === 'a' ? ['a', 'Again'] : row)))
+			}
+		>
+			{'rename'}
+		</button>
+	</>
+}
+
 function ForDestructuredKeyedStateApp() @{
 	const items = ref([
 		{ id: 'a', label: 'Alpha' },
@@ -974,6 +1028,97 @@ function SuspenseErrorApp() @{
 			{prefix}
 			{(err as Error).message}
 		</p>
+	}
+}
+
+function loadOrThrow(state: { fail: boolean }) {
+	if (state.fail) throw new Error('pending reset boom');
+	return 'Ready';
+}
+
+function ElementChildBoundaryApp() @{
+	<div class="wrap">
+		@try {
+			<ThrowingChild />
+		} @catch (err) {
+			<p class="caught">{(err as Error).message}</p>
+		}
+	</div>
+}
+
+const watched = ref(0);
+
+function SyncWatcher() @{
+	watch(
+		watched,
+		() => {
+			throw new Error('watcher boom');
+		},
+		{ flush: 'sync' },
+	);
+	<p class="watcher">{'watcher'}</p>
+}
+
+function WatchedWriter() @{
+	watched.value++;
+	<p class="writer">{'writer'}</p>
+}
+
+function SiblingBoundariesApp() @{
+	<>
+		@try {
+			<SyncWatcher />
+		} @catch (err) {
+			<p class="watcher-caught">{(err as Error).message}</p>
+		}
+		@try {
+			<WatchedWriter />
+		} @catch (err) {
+			<p class="writer-caught">{(err as Error).message}</p>
+		}
+	</>
+}
+
+const null_state = { fail: true };
+
+function NullThrower() @{
+	if (null_state.fail) throw null;
+	<p class="ok">{'recovered'}</p>
+}
+
+function NullThrowApp() @{
+	@try {
+		<NullThrower />
+	} @catch (err, reset) {
+		<button
+			class="reset"
+			onClick={() => {
+				null_state.fail = false;
+				reset();
+			}}
+		>
+			{'caught ' + String(err)}
+		</button>
+	}
+}
+
+function SuspenseResetApp() @{
+	const state = { fail: true };
+	@try {
+		const result = loadOrThrow(state);
+		<p class="async-resolved">{result}</p>
+	} @pending {
+		<p class="async-pending">{'loading...'}</p>
+	} @catch (err, reset) {
+		<button
+			class="reset"
+			onClick={() => {
+				state.fail = false;
+				reset();
+			}}
+		>
+			{(err as Error).message}
+		</button>
 	}
 }
 
@@ -1431,6 +1576,25 @@ describe('tsrx-vue runtime', () => {
 		expect(text('.row-b')).toBe('Bravo:1');
 	});
 
+	it('reads the destructured names of each loop in nested keyed loops', async () => {
+		await render(ForNestedArrayDestructuredKeyedApp);
+		expect(texts('.nested-array-destructured')).toEqual(['p-x-X', 'p-y-Y']);
+	});
+
+	it('destructures keyed for-of array patterns the way for...of does (#938)', async () => {
+		await render(ForArrayDestructuredKeyedApp);
+		expect(texts('.destructured-keyed-row')).toEqual(['Alpha:0', 'x:0', 'none:0']);
+
+		await click('.row-a');
+		expect(text('.row-a')).toBe('Alpha:1');
+
+		await click('.reverse-array-destructured-keyed');
+		expect(texts('.destructured-keyed-row')).toEqual(['none:0', 'x:0', 'Alpha:1']);
+
+		await click('.rename-array-destructured-keyed-a');
+		expect(text('.row-a')).toBe('Again:1');
+	});
+
 	it('switches rendered branches reactively', async () => {
 		await render(SwitchReactiveApp);
 		expect(text('.page')).toBe('Home');
@@ -1451,6 +1615,47 @@ describe('tsrx-vue runtime', () => {
 		await render(ErrorBoundaryApp);
 		await flush();
 		expect(text('.caught')).toBe('sync boom');
+	});
+
+	it('catches a child setup error when the app has its own errorHandler', async () => {
+		const app = createVaporApp(ErrorBoundaryApp);
+		const handled: unknown[] = [];
+		app.config.errorHandler = (error) => {
+			handled.push(error);
+		};
+		app.mount(container);
+		await flush();
+		expect(text('.caught')).toBe('sync boom');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('catches inside element children when the app has its own errorHandler', async () => {
+		const app = createVaporApp(ElementChildBoundaryApp);
+		const handled: unknown[] = [];
+		app.config.errorHandler = (error) => {
+			handled.push(error);
+		};
+		app.mount(container);
+		await flush();
+		expect(text('.wrap .caught')).toBe('sync boom');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('does not render boundary props as DOM attributes', async () => {
+		await render(ElementChildBoundaryApp);
+		expect(container.querySelector('.wrap')?.hasAttribute('fallback')).toBe(false);
+		expect(container.querySelector('.wrap')?.hasAttribute('content')).toBe(false);
+	});
+
+	it('routes an error to the boundary around its source, not the one rendering', async () => {
+		watched.value = 0;
+		await render(SiblingBoundariesApp);
+		await flush();
+		expect(text('.watcher-caught')).toBe('watcher boom');
+		expect(text('.writer')).toBe('writer');
+		expect(container.querySelector('.writer-caught')).toBeNull();
 	});
 
 	it('recovers from error via reset and re-triggers on state change', async () => {
@@ -1561,6 +1766,42 @@ describe('tsrx-vue runtime', () => {
 		expect(text('.async-resolved')).toBe('hello');
 	});
 
+	it('routes a rejected Vapor async component to catch blocks', async () => {
+		let reject_fn: (error: Error) => void;
+		const promise = new Promise<typeof AsyncResolvedChild>((_resolve, reject) => {
+			reject_fn = reject;
+		});
+
+		await render(SuspenseCatchApp, { promise });
+		expect(text('.async-pending')).toBe('loading...');
+
+		reject_fn!(new Error('async reject boom'));
+		await flush();
+		expect(text('.async-caught')).toBe('async reject boom');
+		expect(container.querySelector('.async-pending')).toBeNull();
+		expect(container.querySelector('.async-resolved')).toBeNull();
+	});
+
+	it('catches a thrown null and recovers via reset', async () => {
+		null_state.fail = true;
+		await render(NullThrowApp);
+		expect(text('.reset')).toBe('caught null');
+
+		await click('.reset');
+		expect(text('.ok')).toBe('recovered');
+	});
+
+	it('re-renders the try body on reset after a sync error with pending', async () => {
+		await render(SuspenseResetApp);
+		await flush();
+		expect(text('.reset')).toBe('pending reset boom');
+
+		await click('.reset');
+		await flush();
+		expect(text('.async-resolved')).toBe('Ready');
+		expect(container.querySelector('.reset')).toBeNull();
+	});
+
 	it('routes errors from Suspense default content to catch blocks', async () => {
 		await render(SuspenseErrorApp);
 		await flush();
@@ -1572,9 +1813,156 @@ describe('tsrx-vue runtime', () => {
 	runLocalHelperNamesRuntimeTests();
 });
 
+const HandlerArrow = ({ label, onPick }: { label: string; onPick: (label: string) => void }) => (
+	<button class="handler" onClick={() => onPick(label)}>
+		{label}
+	</button>
+);
+
+function VariableCard({ title }: { title: string }) {
+	const element = <div class="card" title={title} />;
+	return element;
+}
+
+function VariableCardParent() @{
+	<section>
+		<VariableCard title="child" />
+	</section>
+}
+
+// Reads `RegisteredInner` above its declaration, so this module only loads
+// when the wrapped component is still initialized first.
+const component_registry = { inner: RegisteredInner };
+
+function RegisteredInner(props: { label: string }) @{
+	<span>{props.label}</span>
+}
+
+describe('tsrx-vue component wrapping', () => {
+	it('mounts an arrow component with an inline handler as the app root', async () => {
+		await render(HandlerArrow, { label: 'root', onPick: () => {} });
+		expect(container.innerHTML).toBe('<button class="handler">root</button>');
+	});
+
+	it('passes props to a component that returns JSX through a variable', async () => {
+		await render(VariableCardParent);
+		expect(container.innerHTML).toBe('<section><div class="card" title="child"></div></section>');
+	});
+
+	it('mounts a component that returns JSX through a variable as the app root', async () => {
+		await render(VariableCard, { title: 'root' });
+		expect(container.innerHTML).toBe('<div class="card" title="root"></div>');
+	});
+
+	it('renders a component read above its declaration', async () => {
+		await render(component_registry.inner, { label: 'registered' });
+		expect(container.innerHTML).toBe('<span>registered</span>');
+	});
+});
+
+const merged_ref_log: string[] = [];
+const merged_ref_object = ref<HTMLInputElement | null>(null);
+
+function MergedRefCleanupApp() @{
+	const shown = ref(true);
+	const withCleanup = (node: HTMLInputElement | null) => {
+		merged_ref_log.push(node ? 'set' : 'null');
+		return () => {
+			merged_ref_log.push('cleanup');
+		};
+	};
+	<>
+		@if (shown.value) {
+			<input class="merged-cleanup" ref={mergeRefs(withCleanup, merged_ref_object)} />
+		}
+		<button class="hide-merged" onClick={() => (shown.value = false)}>
+			{'hide'}
+		</button>
+	</>
+}
+
+const swapped_ref_log: string[] = [];
+const swapped_ref_which = ref(0);
+const swapped_ref_object = ref<HTMLInputElement | null>(null);
+
+function SwappedMergedRefApp() @{
+	const shown = ref(true);
+	const withCleanup = (node: HTMLInputElement | null) => {
+		swapped_ref_log.push(node ? 'A:set' : 'A:null');
+		return () => {
+			swapped_ref_log.push('A:cleanup');
+		};
+	};
+	const plain = (node: HTMLInputElement | null) => {
+		swapped_ref_log.push(node ? 'B:set' : 'B:null');
+	};
+	const other = (node: HTMLInputElement | null) => {
+		swapped_ref_log.push(node ? 'C:set' : 'C:null');
+	};
+	<>
+		@if (shown.value) {
+			<input
+				class="swapped-merged"
+				ref={mergeRefs(
+					withCleanup,
+					plain,
+					swapped_ref_object,
+					swapped_ref_which.value ? other : null,
+				)}
+			/>
+		}
+		<button class="hide-swapped" onClick={() => (shown.value = false)}>
+			{'hide'}
+		</button>
+	</>
+}
+
+describe('tsrx-vue merged refs', () => {
+	it('runs the replaced merged ref cleanup when a new one is set on the element', async () => {
+		swapped_ref_log.length = 0;
+		swapped_ref_which.value = 0;
+		await render(SwappedMergedRefApp);
+		expect(swapped_ref_log).toEqual(['A:set', 'B:set']);
+
+		// A reactive read re-creates the merged ref; Vue sets the new one without
+		// calling the old one with `null`.
+		swapped_ref_which.value = 1;
+		await flush();
+		expect(swapped_ref_log).toEqual([
+			'A:set',
+			'B:set',
+			'A:cleanup',
+			'B:null',
+			'A:set',
+			'B:set',
+			'C:set',
+		]);
+		expect(swapped_ref_object.value).toBeInstanceOf(HTMLInputElement);
+
+		await click('.hide-swapped');
+		expect(swapped_ref_log.slice(7)).toEqual(['A:cleanup', 'B:null', 'C:null']);
+		expect(swapped_ref_object.value).toBeNull();
+	});
+
+	it("runs a merged ref's cleanup when Vue unsets the ref", async () => {
+		merged_ref_log.length = 0;
+		await render(MergedRefCleanupApp);
+		expect(merged_ref_log).toEqual(['set']);
+		expect(merged_ref_object.value).toBeInstanceOf(HTMLInputElement);
+
+		await click('.hide-merged');
+		// Vue ignores a function ref's return value and calls it with `null`;
+		// the merged ref runs the stored cleanup on that call instead.
+		expect(merged_ref_log).toEqual(['set', 'cleanup']);
+		expect(merged_ref_object.value).toBeNull();
+	});
+});
+
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
-runJsxTextWhitespaceRuntimeTests({ nbsp: 'kept' });
+// Vapor leaves an empty comment where a constant `@if` with a following sibling
+// was inserted.
+runJsxTextWhitespaceRuntimeTests({ nbsp: 'kept', anchors: 'empty comments' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
