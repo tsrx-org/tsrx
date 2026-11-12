@@ -291,14 +291,18 @@ export function App() @{
 			expect(virtual_parse_diagnostics(code)).toEqual([]);
 
 			const attributes = source.indexOf('{ with');
-			for (const text of [
-				"{ with: { type: 'json' } }",
-				'with',
-				'type',
-				"'json'",
-				"'resolution-mode'",
-				"'require'",
-			]) {
+			// The options object maps its start and its end as the points of one
+			// mapping, which hold the object's whole printed text between them.
+			const options = "{ with: { type: 'json' } }";
+			const whole = mappings.find(
+				(candidate) =>
+					candidate.sourceOffsets[0] === attributes &&
+					candidate.sourceOffsets[1] === attributes + options.length,
+			);
+			expect(whole, options).toBeDefined();
+			const [from, to] = /** @type {NonNullable<typeof whole>} */ (whole).generatedOffsets;
+			expect(code.slice(from, to)).toBe(options);
+			for (const text of ['with', 'type', "'json'", "'resolution-mode'", "'require'"]) {
 				const start = source.indexOf(text, attributes);
 				const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === start);
 				expect(mapping, text).toBeDefined();
