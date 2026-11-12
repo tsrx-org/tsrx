@@ -592,6 +592,27 @@ describe('@tsrx/preact basic', () => {
 			);
 		});
 
+		it('keeps a key the spreads follow ahead of a bound own ref', () => {
+			const { code } = compile(
+				`export function App(props: any) @{
+					<>
+						<input ref={props.r} key="a" {...props.rest} />
+						<input ref={props.r} title="t" key="b" {...props.rest} />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			// A spread before `key` would make the JSX compiler pass `key` in the
+			// props through `createElement`, where a bag's own `key` replaces it.
+			expect(code.replace(/\s+/g, ' ')).toContain(
+				'<input key="a" {...( App__ref1 = props.r, App__spread_props2 = __normalize_spread_props_for_ref_attr(props.rest) )} ref={__mergeRefs(App__ref1, App__spread_props2?.ref)} />',
+			);
+			expect(code).toContain(
+				'<input key="b" {...(App__ref3 = props.r, null)} title="t" {...(App__spread_props4 = __normalize_spread_props_for_ref_attr(props.rest))} ref={__mergeRefs(App__ref3, App__spread_props4?.ref)} />',
+			);
+		});
+
 		it('imports the spread normalizers that return their copy', () => {
 			const { code } = compile(
 				`export function App() @{

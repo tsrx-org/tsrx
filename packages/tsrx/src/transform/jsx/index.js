@@ -7008,6 +7008,21 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 
 	if (own_ref_id !== null) {
 		const own_ref = /** @type {ESTreeJSX.JSXRefAttribute} */ (attrs[own_ref_index]);
+		// A spread before `key` makes a JSX compiler pass `key` in the props
+		// (`createElement`) rather than as `jsx()`'s own argument, and a later
+		// bag's `key` then replaces it (Preact and Hono read `jsx()`'s argument
+		// first). So a `key` that no authored spread precedes moves ahead of the
+		// binding spread added below; `jsx()` reads it after the props wherever it
+		// is written.
+		const first_spread_index = attrs.findIndex((attr) => attr.type === 'JSXSpreadAttribute');
+		const keys = attrs.filter(
+			(attr, index) =>
+				index > own_ref_index && index < first_spread_index && is_key_attribute(attr),
+		);
+		for (const key of keys) {
+			lowered.splice(lowered.indexOf(key), 1);
+		}
+		lowered.splice(lowered.indexOf(own_ref), 0, ...keys);
 		const binding = b.assignment('=', clone_identifier(own_ref_id), own_ref.value.expression);
 		const position = lowered.indexOf(own_ref);
 		lowered[position] = {
