@@ -240,7 +240,10 @@ export function analyze_styles(ast, scopes, state) {
 			return;
 		}
 
-		if (/** @type {number} */ (binding.node.start) > /** @type {number} */ (root.start)) {
+		// The applied block must end before it is applied, which also rules out a
+		// block that applies itself or a later block of the same object, and so
+		// any cycle of applies.
+		if (/** @type {number} */ (target.end) > /** @type {number} */ (root.start)) {
 			report(TSRX_ERRORS.STYLE_APPLY_BEFORE_DECLARATION(name), root);
 			return;
 		}
