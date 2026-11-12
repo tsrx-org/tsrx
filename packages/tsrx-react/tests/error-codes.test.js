@@ -121,6 +121,30 @@ describe('error codes', () => {
 }`,
 			],
 			[
+				'TSRX2027',
+				`function App() @{
+	@for (state.item of xs) {
+		<p />
+	}
+}`,
+			],
+			[
+				'TSRX2027',
+				`function App() @{
+	@for (using x of xs) {
+		<p />
+	}
+}`,
+			],
+			[
+				'TSRX2027',
+				`function App() @{
+	@for (var x of xs) {
+		<p />
+	}
+}`,
+			],
+			[
 				'TSRX3011',
 				`function App() @{
 	<>

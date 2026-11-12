@@ -1,19 +1,23 @@
 import { lazy } from 'preact/compat';
 import { act } from 'preact/test-utils';
-import { useState } from 'preact/hooks';
+import { createContext } from 'preact';
+import { useContext, useState } from 'preact/hooks';
 import { mergeRefs } from '@tsrx/preact/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
+import { runForOfSourcesRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-sources';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
 import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace';
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
 import { runStaticContainersRuntimeTests } from '@tsrx/core/test-harness/runtime/static-containers';
 import { StaticContainers } from '@tsrx/core/test-harness/runtime/static-containers-components.tsrx';
 import { runAssignedImportMemberRuntimeTests } from '@tsrx/core/test-harness/runtime/assigned-import-member';
 import { AssignedImportMember } from '@tsrx/core/test-harness/runtime/assigned-import-member-components.tsrx';
+import { runGeneratedImportBindingsRuntimeTests } from '@tsrx/core/test-harness/runtime/generated-import-bindings';
 
 function text(selector: string): string | null {
 	return container.querySelector(selector)?.textContent ?? null;
@@ -100,6 +104,264 @@ function EmptyPendingSuspenseApp(props: {
 	@try {
 		<LazyChild value="hello" />
 	} @pending {
+	}
+}
+
+// ── Setup statements inside the try body ──
+
+type Resource = { value?: string; promise: Promise<void> };
+
+function read(resource: Resource) {
+	if (resource.value === undefined) throw resource.promise;
+	return resource.value;
+}
+
+function InlineSuspendApp(props: { resource: Resource }) @{
+	@try {
+		const data = read(props.resource);
+		<p class="resolved">{data}</p>
+	} @pending {
+		<p class="pending">{'loading...'}</p>
+	}
+}
+
+function loadOrThrow(fail: boolean) {
+	if (fail) throw new Error('body boom');
+	return 'loaded';
+}
+
+function BodyThrowApp() @{
+	const [fail, setFail] = useState(true);
+
+	@try {
+		const result = loadOrThrow(fail);
+		<p class="ok">{result}</p>
+	} @catch (err, reset: () => void) {
+		<button
+			class="reset"
+			onClick={() => {
+				setFail(false);
+				reset();
+			}}
+		>
+			{(err as Error).message}
+		</button>
+	}
+}
+
+function DifferentHookCountArmsApp() @{
+	const [first, setFirst] = useState(true);
+
+	<>
+		<button class="flip" onClick={() => setFirst(!first)}>
+			{'flip'}
+		</button>
+		@if (first) {
+			@try {
+				const [label] = useState('A');
+				<p class="arm">{label}</p>
+			} @catch (err) {
+				<p class="caught">{(err as Error).message}</p>
+			}
+		} @else {
+			@try {
+				const [label] = useState('B');
+				const [suffix] = useState('!');
+				<p class="arm">{label + suffix}</p>
+			} @catch (err) {
+				<p class="caught">{(err as Error).message}</p>
+			}
+		}
+	</>
+}
+
+// ── The @pending body runs only while the try body suspends ──
+
+let pendingBodyRuns = 0;
+
+function pendingLabel(): string {
+	pendingBodyRuns++;
+	return 'loading';
+}
+
+function pendingBoom(): string {
+	pendingBodyRuns++;
+	throw new Error('pending boom');
+}
+
+function PendingSuspender(props: { resource: Resource }) @{
+	const value = read(props.resource);
+	<p class="resolved">{value}</p>
+}
+
+function PendingNotSuspendedApp() @{
+	const [count, setCount] = useState(0);
+
+	<>
+		<button class="bump" onClick={() => setCount(count + 1)}>
+			{'bump'}
+		</button>
+		@try {
+			<p class="ready">{'ready ' + count}</p>
+		} @pending {
+			const label = pendingLabel();
+			<p class="pending">{label}</p>
+		}
+	</>
+}
+
+function PendingSuspendedApp(props: { resource: Resource }) @{
+	@try {
+		<PendingSuspender resource={props.resource} />
+	} @pending {
+		const label = pendingLabel();
+		<p class="pending">{label}</p>
+	}
+}
+
+function ThrowingPendingNotSuspendedApp() @{
+	@try {
+		<p class="ready">{'ready'}</p>
+	} @pending {
+		const label = pendingBoom();
+		<p class="pending">{label}</p>
+	} @catch (err) {
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
+function ThrowingPendingApp(props: { resource: Resource }) @{
+	@try {
+		<PendingSuspender resource={props.resource} />
+	} @pending {
+		const label = pendingBoom();
+		<p class="pending">{label}</p>
+	} @catch (err) {
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
+function ThrowingPendingOuterCatchApp(props: { resource: Resource }) @{
+	@try {
+		<div class="outer">
+			@try {
+				<PendingSuspender resource={props.resource} />
+			} @pending {
+				const label = pendingBoom();
+				<p class="pending">{label}</p>
+			}
+		</div>
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+let pendingStateInits = 0;
+
+function PendingHookApp(props: { resources: Resource[] }) @{
+	const [step, setStep] = useState(0);
+
+	<>
+		<button class="next" onClick={() => setStep(step + 1)}>
+			{'next'}
+		</button>
+		@try {
+			@if (step === 0) {
+				<p class="ready">{'ready'}</p>
+			} @else {
+				<PendingSuspender resource={props.resources[step - 1]} />
+			}
+		} @pending {
+			const [label] = useState(() => {
+				pendingStateInits++;
+				return 'waiting ' + pendingStateInits;
+			});
+			<p class="pending">{label}</p>
+		}
+	</>
+}
+
+function deferred_resource(): { resource: Resource; resolve: (value: string) => void } {
+	let resolve_promise: () => void;
+	const resource: Resource = {
+		promise: new Promise<void>((resolve) => {
+			resolve_promise = resolve;
+		}),
+	};
+	return {
+		resource,
+		resolve(value) {
+			resource.value = value;
+			resolve_promise();
+		},
+	};
+}
+
+const PendingThemeContext = createContext('light');
+
+function PendingContextApp(props: { resource: Resource }) @{
+	<PendingThemeContext.Provider value="dark">
+		@try {
+			<PendingSuspender resource={props.resource} />
+		} @pending {
+			const theme = useContext(PendingThemeContext);
+			<p class="pending">{theme}</p>
+		}
+	</PendingThemeContext.Provider>
+}
+
+function PendingParentStateApp(props: { resource: Resource }) @{
+	const [count, setCount] = useState(0);
+
+	<>
+		<button class="bump" onClick={() => setCount(count + 1)}>
+			{'bump'}
+		</button>
+		@try {
+			<PendingSuspender resource={props.resource} />
+		} @pending {
+			const label = 'waiting ' + count;
+			<p class="pending">{label}</p>
+		}
+	</>
+}
+
+function StaticPendingApp(props: { resource: Resource }) @{
+	@try {
+		<PendingSuspender resource={props.resource} />
+	} @pending {
+		<p class="pending">{'static loading'}</p>
+	}
+}
+
+function PendingRowsApp(props: { rows: { id: string; resource: Resource }[] }) @{
+	<div class="rows">
+		@for (const row of props.rows; key row.id) {
+			@try {
+				<PendingSuspender resource={row.resource} />
+			} @pending {
+				const label = 'loading ' + row.id;
+				<p class="pending">{label}</p>
+			}
+		}
+	</div>
+}
+
+let pendingLabelReads = 0;
+
+function SuspendingPendingApp(props: { body: Resource; label: Resource }) @{
+	@try {
+		<div class="outer">
+			@try {
+				<PendingSuspender resource={props.body} />
+			} @pending {
+				pendingLabelReads++;
+				const label = read(props.label);
+				<p class="inner-pending">{label}</p>
+			}
+		</div>
+	} @pending {
+		<p class="outer-pending">{'outer loading'}</p>
 	}
 }
 
@@ -267,6 +529,44 @@ function MultiSpreadExplicitRefApp() @{
 	/>
 }
 
+// ── Elements that merge the same refs ──
+
+const shared_ref_log: string[] = [];
+
+function shared_cleanup_ref(node: HTMLParagraphElement | null) {
+	const name = node?.className;
+	shared_ref_log.push(`own:${name}`);
+	return () => {
+		shared_ref_log.push(`own-cleanup:${name}`);
+	};
+}
+
+const shared_ref_bag = {
+	ref: (node: HTMLParagraphElement | null) => {
+		shared_ref_log.push(`bag:${node ? node.className : 'null'}`);
+	},
+};
+
+function SharedRefToggle() @{
+	const [shown, setShown] = useState(true);
+
+	<>
+		@if (shown) {
+			<p class="shared-ref-b" ref={shared_cleanup_ref} {...shared_ref_bag} />
+		}
+		<button class="shared-ref-hide" onClick={() => setShown(false)}>
+			{'hide'}
+		</button>
+	</>
+}
+
+function SharedRefApp() @{
+	<>
+		<p class="shared-ref-a" ref={shared_cleanup_ref} {...shared_ref_bag} />
+		<SharedRefToggle />
+	</>
+}
+
 // ── Conditional host spreads ──
 
 let conditional_spread_and_node: HTMLInputElement | null = null;
@@ -411,6 +711,195 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 		expect(container.querySelector('.resolved')?.textContent).toBe('hello');
 	});
 
+	it('shows pending fallback for a try body setup statement that suspends', async () => {
+		let resolve_fn: () => void;
+		const resource: Resource = {
+			promise: new Promise<void>((r) => {
+				resolve_fn = r;
+			}),
+		};
+
+		await render(InlineSuspendApp, { resource });
+		expect(text('.pending')).toBe('loading...');
+
+		await act(async () => {
+			resource.value = 'inline';
+			resolve_fn!();
+		});
+		expect(text('.resolved')).toBe('inline');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('catches a synchronous throw from a try body setup statement', async () => {
+		await render(BodyThrowApp);
+		expect(text('.reset')).toBe('body boom');
+
+		await act(async () => {
+			(container.querySelector('.reset') as HTMLButtonElement).click();
+		});
+		expect(text('.ok')).toBe('loaded');
+		expect(container.querySelector('.reset')).toBeNull();
+	});
+
+	it('gives each try site in an if/else its own body state', async () => {
+		await render(DifferentHookCountArmsApp);
+		expect(text('.arm')).toBe('A');
+
+		await act(async () => {
+			(container.querySelector('.flip') as HTMLButtonElement).click();
+		});
+		expect(text('.arm')).toBe('B!');
+		expect(container.querySelector('.caught')).toBeNull();
+	});
+
+	// ── The @pending body runs only while the try body suspends ──
+
+	it('does not run the pending body when nothing suspends', async () => {
+		pendingBodyRuns = 0;
+		await render(PendingNotSuspendedApp);
+		expect(text('.ready')).toBe('ready 0');
+		expect(pendingBodyRuns).toBe(0);
+
+		await act(async () => {
+			(container.querySelector('.bump') as HTMLButtonElement).click();
+		});
+		expect(text('.ready')).toBe('ready 1');
+		expect(pendingBodyRuns).toBe(0);
+	});
+
+	it('runs the pending body while the try body suspends', async () => {
+		pendingBodyRuns = 0;
+		const { resource, resolve } = deferred_resource();
+
+		await render(PendingSuspendedApp, { resource });
+		expect(text('.pending')).toBe('loading');
+		expect(pendingBodyRuns).toBeGreaterThan(0);
+
+		await act(async () => {
+			resolve('hello');
+		});
+		expect(text('.resolved')).toBe('hello');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('does not throw from a pending body when nothing suspends', async () => {
+		pendingBodyRuns = 0;
+		await render(ThrowingPendingNotSuspendedApp);
+		expect(text('.ready')).toBe('ready');
+		expect(container.querySelector('.caught')).toBeNull();
+		expect(pendingBodyRuns).toBe(0);
+	});
+
+	it('catches a throw from the pending body in the same try', async () => {
+		await render(ThrowingPendingApp, { resource: deferred_resource().resource });
+		expect(text('.caught')).toBe('pending boom');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('catches a throw from the pending body in an enclosing try', async () => {
+		await render(ThrowingPendingOuterCatchApp, { resource: deferred_resource().resource });
+		expect(text('.outer-caught')).toBe('pending boom');
+		expect(container.querySelector('.outer')).toBeNull();
+	});
+
+	it('gives hooks in the pending body to the fallback, which each suspension mounts fresh', async () => {
+		pendingStateInits = 0;
+		const first = deferred_resource();
+		const resources = [first.resource, deferred_resource().resource];
+
+		await render(PendingHookApp, { resources });
+		expect(text('.ready')).toBe('ready');
+		expect(pendingStateInits).toBe(0);
+
+		await act(async () => {
+			(container.querySelector('.next') as HTMLButtonElement).click();
+		});
+		expect(text('.pending')).toBe('waiting 1');
+
+		await act(async () => {
+			first.resolve('first');
+		});
+		expect(text('.resolved')).toBe('first');
+		expect(container.querySelector('.pending')).toBeNull();
+
+		await act(async () => {
+			(container.querySelector('.next') as HTMLButtonElement).click();
+		});
+		expect(text('.pending')).toBe('waiting 2');
+	});
+
+	it('reads context the same component provides around the try in the pending body', async () => {
+		await render(PendingContextApp, { resource: deferred_resource().resource });
+		expect(text('.pending')).toBe('dark');
+	});
+
+	it("re-renders the pending body with the parent's current state", async () => {
+		await render(PendingParentStateApp, { resource: deferred_resource().resource });
+		expect(text('.pending')).toBe('waiting 0');
+
+		await act(async () => {
+			(container.querySelector('.bump') as HTMLButtonElement).click();
+		});
+		expect(text('.pending')).toBe('waiting 1');
+	});
+
+	it('shows a static pending body while the try body suspends', async () => {
+		const { resource, resolve } = deferred_resource();
+		await render(StaticPendingApp, { resource });
+		expect(text('.pending')).toBe('static loading');
+
+		await act(async () => {
+			resolve('hello');
+		});
+		expect(text('.resolved')).toBe('hello');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('shows each row its own pending body in a keyed loop', async () => {
+		const a = deferred_resource();
+		const b = deferred_resource();
+		await render(PendingRowsApp, {
+			rows: [
+				{ id: 'a', resource: a.resource },
+				{ id: 'b', resource: b.resource },
+			],
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('loading aloading b');
+
+		await act(async () => {
+			b.resolve('b done');
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('loading ab done');
+
+		await act(async () => {
+			a.resolve('a done');
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('a doneb done');
+	});
+
+	// Preact limitation: preact/compat's Suspense counts a suspension thrown by
+	// its own fallback as one more child suspension, so it renders nothing
+	// until the try body resolves. React shows the enclosing @pending instead.
+	it('renders nothing while a pending body suspends, then the content', async () => {
+		pendingLabelReads = 0;
+		const body = deferred_resource();
+		const label = deferred_resource();
+		await render(SuspendingPendingApp, { body: body.resource, label: label.resource });
+		// The pending body ran and suspended; the empty output is not a missing fallback.
+		expect(pendingLabelReads).toBeGreaterThan(0);
+		expect(container.innerHTML).toBe('<div class="outer"></div>');
+
+		await act(async () => {
+			label.resolve('inner loading');
+		});
+		expect(container.innerHTML).toBe('<div class="outer"></div>');
+
+		await act(async () => {
+			body.resolve('done');
+		});
+		expect(container.innerHTML).toBe('<div class="outer"><p class="resolved">done</p></div>');
+	});
+
 	it('renders dynamic host elements', async () => {
 		await render(DynamicElementApp);
 		const element = container.querySelector('.dynamic-host');
@@ -546,6 +1035,26 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 		expect(container.querySelector('.multi-spread-explicit-ref')!.hasAttribute('ref')).toBe(false);
 	});
 
+	it("keeps each element's ref cleanup when two elements merge the same refs", async () => {
+		shared_ref_log.length = 0;
+		await render(SharedRefApp);
+		// Mounting the second element runs no cleanup of the first.
+		expect(shared_ref_log).toEqual([
+			'own:shared-ref-a',
+			'bag:shared-ref-a',
+			'own:shared-ref-b',
+			'bag:shared-ref-b',
+		]);
+
+		shared_ref_log.length = 0;
+		await act(() => {
+			(container.querySelector('.shared-ref-hide') as HTMLButtonElement).click();
+		});
+		expect(container.querySelector('.shared-ref-b')).toBeNull();
+		expect(container.querySelector('.shared-ref-a')).not.toBeNull();
+		expect(shared_ref_log).toEqual(['own-cleanup:shared-ref-b', 'bag:null']);
+	});
+
 	for (const enabled of [false, true]) {
 		it(`renders conditional host spreads when the condition is ${enabled}`, async () => {
 			conditional_spread_and_node = null;
@@ -607,11 +1116,13 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 });
 
 runSwitchFallthroughRuntimeTests();
+runForOfSourcesRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
+runArraySpreadRefRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();
 runStaticContainersRuntimeTests({
@@ -623,3 +1134,4 @@ runStaticContainersRuntimeTests({
 	},
 });
 runAssignedImportMemberRuntimeTests({ AssignedImportMember });
+runGeneratedImportBindingsRuntimeTests();

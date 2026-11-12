@@ -24,18 +24,25 @@ import {
 	createScriptBody as create_script_body,
 	error,
 	mergeDuplicateRefs,
+	MERGE_SPREAD_CLASS_INTERNAL_NAME,
+	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 	validateAtMostOneRefAttribute,
+	validateForOfHead as validate_for_of_head,
 	addJsxSetupDeclaration as add_jsx_setup_declaration,
 	buildReturnExpression as build_return_expression,
 	collectParamBindings as collect_param_bindings,
 	collectStatementBindings as collect_statement_bindings,
 	extractJsxSetupDeclarations as extract_jsx_setup_declarations,
+	insertAfterDirectives as insert_after_directives,
 	isInterleavedBody as is_interleaved_body_core,
 	isCapturableJsxChild as is_capturable_jsx_child,
 	captureJsxChild,
+	lowerSpreadRefBags as lower_spread_ref_bags,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
+	sourceMentionsIdentifier as source_mentions_identifier,
 	returnValueBodyToExpression as return_value_body_to_expression,
+	SPREAD_REF_BAGS_INTERNAL_NAME,
 	clone_ast_node,
 	clone_identifier,
 	clone_jsx_name,
@@ -53,9 +60,20 @@ import {
 	isTemplateSwitchNode as is_template_switch_node,
 	isTemplateTryNode as is_template_try_node,
 	isFunctionOrClassNode as is_function_or_class_boundary,
+	IDENTIFIER_OBFUSCATION_PREFIX,
 } from '@tsrx/core';
 
 import { builders as b } from '@tsrx/core';
+
+/**
+ * Local name of the `createMemo` import that holds a `@switch` discriminant.
+ * The reserved prefix keeps it and {@link SWITCH_VALUE_NAME} clear of authored
+ * names.
+ */
+const SWITCH_MEMO_INTERNAL_NAME = `${IDENTIFIER_OBFUSCATION_PREFIX}createMemo`;
+const SWITCH_VALUE_NAME = `${IDENTIFIER_OBFUSCATION_PREFIX}switch_value`;
+/** Local name of the `untrack` import that runs a fallback body. */
+const UNTRACK_INTERNAL_NAME = `${IDENTIFIER_OBFUSCATION_PREFIX}untrack`;
 
 /**
  * Solid platform descriptor consumed by `createJsxTransform`. Everything
@@ -91,10 +109,18 @@ const solid_platform = {
 	},
 	jsx: {
 		rewriteClassAttr: false,
+		// Solid reads a class only from `class`, which also takes an object or
+		// a list.
+		hostSpreadClassProps: ['class'],
+		classValue: 'list',
+		// Solid doesn't read `className`.
+		rewriteClassNameAttr: true,
 		// Solid's runtime accepts an array of refs natively, so multiple
 		// `ref` attributes collapse to `ref={[a, b, ...]}` rather than
 		// going through a `mergeRefs` helper.
 		multiRefStrategy: 'array',
+		// Solid's `spread()` applies the bag's `ref` beside the element's own.
+		hostSpreadRefStrategy: 'spread',
 		// Solid's compiler escapes a string child into its HTML template, and a
 		// `<script>` element's text there isn't decoded; `innerHTML` renders the
 		// body as written on the client and the server.
@@ -115,6 +141,8 @@ const solid_platform = {
 			needs_match: false,
 			needs_errored: false,
 			needs_loading: false,
+			needs_switch_memo: false,
+			needs_untrack: false,
 			needs_normalize_spread_props: false,
 		}),
 		canHoistStaticNode() {
@@ -189,6 +217,21 @@ function get_await_keyword_start(await_node, source) {
 // =====================================================================
 
 /**
+ * Local names for the `solid-js` components the transform imports itself. An
+ * authored binding of a public name (an import, a local, or a `@for` loop
+ * variable named `Match`) then neither collides with the import nor replaces
+ * the generated element.
+ */
+const CONTROL_FLOW_LOCALS = {
+	Show: '__Show',
+	For: '__For',
+	Switch: '__Switch',
+	Match: '__Match',
+	Errored: '__Errored',
+	Loading: '__Loading',
+};
+
+/**
  * Lower one body node to a Solid JSX child. Render sources (see
  * {@link is_solid_render_child}) always come back as a JSX child; anything else
  * is returned untouched.
@@ -210,6 +253,11 @@ function get_await_keyword_start(await_node, source) {
 function to_jsx_child(node, transform_context) {
 	if (!node) return node;
 	switch (node.type) {
+		case 'JSXCodeBlock':
+			// Rendered as an expression child: the walker later lowers the block
+			// to an IIFE that returns its output. As a statement, that value
+			// would be dropped.
+			return to_jsx_expression_container(node, node);
 		case 'JSXFragment':
 			if (node.metadata?.native_tsrx) {
 				return tsrx_node_to_jsx_expression(node, transform_context, true);
@@ -348,17 +396,19 @@ function tsrx_node_to_jsx_expression(node, transform_context, in_jsx_child = fal
  *   - `<Show>` / `<Match>` children: invoked as function children via
  *     {@link to_function_child} which ensures `length > 0` so Solid's
  *     runtime calls them with a condition accessor.
- *   - `<For>` / `<Errored fallback>`: the outer iteration/fallback arrow's
- *     body is merged with the branch arrow's body via
- *     {@link merge_branch_body_into_arrow}.
+ *   - `<For>`: the iteration arrow's body is merged with the branch arrow's
+ *     body via {@link merge_branch_body_into_arrow}.
  *   - Fallback props (`<Show fallback>`, `<Switch fallback>`,
- *     `<Loading fallback>`): IIFE-wrapped via {@link iife_if_arrow}.
+ *     `<For fallback>`, `<Loading fallback>`), the `<Errored fallback>`
+ *     arrow's body, and `@try` children: run untracked via
+ *     {@link untrack_if_arrow}.
  *
  * @param {AST.Node[]} body_nodes
  * @param {TransformContext} transform_context
  * @returns {AST.Expression}
  */
 function body_to_jsx_child(body_nodes, transform_context) {
+	body_nodes = expand_code_block_body(body_nodes);
 	// When non-JSX statements are interleaved with JSX children, preserve
 	// source order by capturing each JSX child into a const at its textual
 	// position. Otherwise all statements would run before any JSX is
@@ -417,6 +467,33 @@ function body_to_jsx_child(body_nodes, transform_context) {
 }
 
 /**
+ * A body whose only node is a `@{ }` block is that block's scope: its setup
+ * statements and output are spliced into the body, so they lower like any
+ * other branch body, as a function child that Solid runs untracked. As an
+ * expression child, the block's IIFE would run inside the `<Show>` or
+ * `<Switch>` memo and re-run whenever a signal its setup reads changes. A
+ * block beside other nodes keeps its own scope as an expression child.
+ *
+ * @param {AST.Node[]} body_nodes
+ * @returns {AST.Node[]}
+ */
+function expand_code_block_body(body_nodes) {
+	// A `@case` body holds its block as an expression statement.
+	const nodes = body_nodes.map((node) =>
+		node?.type === 'ExpressionStatement' &&
+		/** @type {AST.Node} */ (node.expression).type === 'JSXCodeBlock'
+			? /** @type {AST.JSXCodeBlock} */ (/** @type {unknown} */ (node.expression))
+			: node,
+	);
+	const meaningful = nodes.filter((node) => node && node.type !== 'EmptyStatement');
+	if (meaningful.length !== 1 || meaningful[0].type !== 'JSXCodeBlock') {
+		return nodes;
+	}
+	const block = /** @type {AST.JSXCodeBlock} */ (meaningful[0]);
+	return expand_code_block_body([...(block.body || []), ...(block.render ? [block.render] : [])]);
+}
+
+/**
  * @param {AST.Node | null | undefined} node
  * @returns {boolean}
  */
@@ -472,6 +549,9 @@ function is_solid_render_control(node) {
  * @returns {node is SolidRenderSource}
  */
 function is_solid_render_child(node) {
+	if (node?.type === 'JSXCodeBlock') {
+		return true;
+	}
 	if (!node || !is_jsx_child(node)) {
 		return false;
 	}
@@ -635,6 +715,7 @@ function validate_if_body_control_flow(node, transform_context) {
  * @returns {AST.Node[]}
  */
 function loop_body_to_callback_statements(body_nodes, transform_context) {
+	body_nodes = expand_code_block_body(body_nodes);
 	/** @type {AST.Node[]} */
 	const statements = [];
 	/** @type {ESTreeJSX.JSXRenderChild[]} */
@@ -910,6 +991,26 @@ function iife_if_arrow(node) {
 }
 
 /**
+ * Run a branch arrow untracked as the `fallback` of `<Show>`, `<Switch>`,
+ * `<For>`, `<Loading>`, or `<Errored>`, or as the children of `<Errored>` or
+ * `<Loading>`. Solid reads these inside the component's memo, so a body called
+ * there would make each signal its setup reads a dependency of that memo, and
+ * run again whenever one changes; setup in `<Show>` and `<Match>` function
+ * children runs once.
+ * Returns non-arrow inputs unchanged.
+ *
+ * @template {AST.Expression} T
+ * @param {T} node
+ * @param {TransformContext} transform_context
+ * @returns {T | AST.CallExpression}
+ */
+function untrack_if_arrow(node, transform_context) {
+	if (!is_branch_arrow(node)) return node;
+	transform_context.needs_untrack = true;
+	return b.call(UNTRACK_INTERNAL_NAME, node);
+}
+
+/**
  * `if (test) { ... }` → `<Show when={test}>...</Show>`
  * `if (test) { a } else { b }` → `<Show when={test} fallback={b}>a</Show>`
  * `if (a) { } else if (b) { } else { }` → `<Switch fallback={...}><Match when={a}>...</Match>...</Switch>`
@@ -926,11 +1027,23 @@ function if_statement_to_jsx_child(node, transform_context) {
 		}
 	}
 
+	const static_conditional = !transform_context.typeOnly
+		? build_static_conditional(branches, transform_context)
+		: null;
+	if (static_conditional) {
+		return static_conditional;
+	}
+
 	if (branches.length === 1) {
 		// Single `if` with no else → <Show when>
 		transform_context.needs_show = true;
 		const [{ test, body }] = branches;
-		return build_show_element(test, body_to_jsx_child(body, transform_context), null);
+		return build_show_element(
+			test,
+			body_to_jsx_child(body, transform_context),
+			null,
+			transform_context,
+		);
 	}
 
 	if (branches.length === 2 && branches[1].test === null) {
@@ -941,6 +1054,7 @@ function if_statement_to_jsx_child(node, transform_context) {
 			if_branch.test,
 			body_to_jsx_child(if_branch.body, transform_context),
 			body_to_jsx_child(else_branch.body, transform_context),
+			transform_context,
 		);
 	}
 
@@ -965,20 +1079,91 @@ function if_statement_to_jsx_child(node, transform_context) {
 			? [
 					b.jsx_attribute(
 						b.jsx_id('fallback'),
-						to_jsx_expression_container(iife_if_arrow(fallback)),
+						to_jsx_expression_container(untrack_if_arrow(fallback, transform_context)),
 					),
 				]
 			: [];
 
 	const children = match_branches.map((branch) =>
 		create_jsx_element(
-			'Match',
+			CONTROL_FLOW_LOCALS.Match,
 			[b.jsx_attribute(b.jsx_id('when'), to_jsx_expression_container(branch.test))],
 			[jsx_child_wrap(to_function_child(body_to_jsx_child(branch.body, transform_context)))],
 		),
 	);
 
-	return create_jsx_element('Switch', attributes, children);
+	return create_jsx_element(CONTROL_FLOW_LOCALS.Switch, attributes, children);
+}
+
+/**
+ * A condition that cannot change at runtime needs no `<Show>`: render
+ * `test ? a : b` instead. Only branches whose bodies are plain output qualify;
+ * a body with setup statements keeps `<Show>`, which runs it untracked.
+ *
+ * @param {[SolidIfTestBranch, ...SolidIfBranch[]]} branches
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXExpressionContainer | null}
+ */
+function build_static_conditional(branches, transform_context) {
+	const [if_branch, else_branch] = branches;
+	if (
+		branches.length > 2 ||
+		(else_branch && else_branch.test !== null) ||
+		!is_static_condition(if_branch.test)
+	) {
+		return null;
+	}
+
+	const consequent = body_to_jsx_child(if_branch.body, transform_context);
+	const alternate = else_branch
+		? body_to_jsx_child(else_branch.body, transform_context)
+		: create_null_literal();
+	if (!is_plain_output(consequent) || !is_plain_output(alternate)) {
+		return null;
+	}
+
+	return to_jsx_expression_container(b.conditional(if_branch.test, consequent, alternate));
+}
+
+/**
+ * An element, fragment or literal. Anything else, such as the IIFE of a branch
+ * with setup statements or of a nested `@switch`, would run inside the
+ * enclosing insert effect, where `<Show>` runs its children untracked.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_plain_output(node) {
+	return node.type === 'JSXElement' || node.type === 'JSXFragment' || node.type === 'Literal';
+}
+
+/**
+ * A literal, `import.meta.env.*`, or the negation of either.
+ *
+ * @param {AST.Expression} node
+ * @returns {boolean}
+ */
+function is_static_condition(node) {
+	if (node.type === 'Literal') return true;
+	if (node.type === 'UnaryExpression' && node.operator === '!') {
+		return is_static_condition(node.argument);
+	}
+	/** @type {AST.Node} */
+	let object = node;
+	while (object.type === 'MemberExpression' && !object.computed) {
+		/** @type {AST.Node} */
+		const inner = object.object;
+		if (
+			inner.type === 'MetaProperty' &&
+			inner.meta.name === 'import' &&
+			object.property.type === 'Identifier' &&
+			object.property.name === 'env'
+		) {
+			return true;
+		}
+		object = inner;
+	}
+	return false;
 }
 
 /**
@@ -1016,16 +1201,22 @@ function flatten_if_chain(node) {
  * @param {AST.Expression} test
  * @param {AST.Expression} children
  * @param {AST.Expression | null | undefined} fallback
+ * @param {TransformContext} transform_context
  * @returns {AST.TSRXJSXElement}
  */
-function build_show_element(test, children, fallback) {
+function build_show_element(test, children, fallback, transform_context) {
 	const attributes = [b.jsx_attribute(b.jsx_id('when'), to_jsx_expression_container(test))];
 	if (fallback !== null && fallback !== undefined) {
 		attributes.push(
-			b.jsx_attribute(b.jsx_id('fallback'), to_jsx_expression_container(iife_if_arrow(fallback))),
+			b.jsx_attribute(
+				b.jsx_id('fallback'),
+				to_jsx_expression_container(untrack_if_arrow(fallback, transform_context)),
+			),
 		);
 	}
-	return create_jsx_element('Show', attributes, [jsx_child_wrap(to_function_child(children))]);
+	return create_jsx_element(CONTROL_FLOW_LOCALS.Show, attributes, [
+		jsx_child_wrap(to_function_child(children)),
+	]);
 }
 
 /**
@@ -1047,8 +1238,9 @@ function build_show_element(test, children, fallback) {
  */
 function for_of_statement_to_jsx_child(node, transform_context) {
 	transform_context.needs_for = true;
+	validate_for_of_head(node.left, transform_context);
 
-	const loop_params = get_for_of_iteration_params(node.left, node.index);
+	const loop_params = get_for_of_iteration_params(node.left, node.index, node.key);
 	const loop_body = node.body.type === 'BlockStatement' ? node.body.body : [node.body];
 	const uses_index_only_mode = !node.key && node.index;
 	validate_for_body_control_flow(loop_body, transform_context);
@@ -1072,7 +1264,10 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		attributes.push(
 			b.jsx_attribute(
 				b.jsx_id('fallback'),
-				to_jsx_expression_container(body_to_jsx_child(empty_body, transform_context), node.empty),
+				to_jsx_expression_container(
+					untrack_if_arrow(body_to_jsx_child(empty_body, transform_context), transform_context),
+					node.empty,
+				),
 			),
 		);
 	}
@@ -1087,7 +1282,9 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		attributes.push(b.jsx_attribute(b.jsx_id('keyed'), to_jsx_expression_container(b.false)));
 	}
 
-	return create_jsx_element('For', attributes, [to_jsx_expression_container(arrow)]);
+	return create_jsx_element(CONTROL_FLOW_LOCALS.For, attributes, [
+		to_jsx_expression_container(arrow),
+	]);
 }
 
 /**
@@ -1105,6 +1302,15 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 function switch_statement_to_jsx_child(node, transform_context) {
 	transform_context.needs_switch = true;
 	transform_context.needs_match = true;
+
+	// Each `<Match>` reads the discriminant, so one with a side effect (a call
+	// such as `queue.shift()`) would run once per case and each case would
+	// compare a different value. Read it once through a memo instead. The
+	// type-only output keeps the inline comparisons the editor maps.
+	const switch_value =
+		transform_context.typeOnly || is_reference_expression(node.discriminant)
+			? null
+			: create_generated_identifier(SWITCH_VALUE_NAME);
 
 	/** @type {AST.Expression | null} */
 	let fallback = null;
@@ -1131,7 +1337,9 @@ function switch_statement_to_jsx_child(node, transform_context) {
 		// for editor IntelliSense and don't clone it.
 		const test = b.binary(
 			'===',
-			clone_ast_node(node.discriminant),
+			switch_value
+				? b.member(b.call(clone_identifier(switch_value)), b.literal(0), true)
+				: clone_ast_node(node.discriminant),
 			/** @type {AST.Expression} */ (original_case.test),
 		);
 
@@ -1140,7 +1348,7 @@ function switch_statement_to_jsx_child(node, transform_context) {
 
 	const match_children = match_entries.map(({ test, body_jsx }) =>
 		create_jsx_element(
-			'Match',
+			CONTROL_FLOW_LOCALS.Match,
 			[b.jsx_attribute(b.jsx_id('when'), to_jsx_expression_container(test))],
 			[jsx_child_wrap(to_function_child(body_jsx))],
 		),
@@ -1151,12 +1359,54 @@ function switch_statement_to_jsx_child(node, transform_context) {
 			? [
 					b.jsx_attribute(
 						b.jsx_id('fallback'),
-						to_jsx_expression_container(iife_if_arrow(fallback)),
+						to_jsx_expression_container(untrack_if_arrow(fallback, transform_context)),
 					),
 				]
 			: [];
 
-	return create_jsx_element('Switch', attributes, match_children);
+	const switch_element = create_jsx_element(CONTROL_FLOW_LOCALS.Switch, attributes, match_children);
+	if (!switch_value) {
+		return switch_element;
+	}
+
+	transform_context.needs_switch_memo = true;
+	return to_jsx_expression_container(
+		b.call(
+			b.arrow(
+				[],
+				b.block([
+					// Boxed, so a thenable discriminant is compared as a value, as a
+					// JavaScript switch compares it, instead of suspending the memo.
+					b.const(
+						switch_value,
+						b.call(SWITCH_MEMO_INTERNAL_NAME, b.arrow([], b.array([node.discriminant]))),
+					),
+					b.return(switch_element),
+				]),
+			),
+		),
+		node,
+	);
+}
+
+/**
+ * Whether reading `node` again gives the same value without side effects: an
+ * identifier, a literal, `this`, or a non-computed property chain of those.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_reference_expression(node) {
+	switch (node.type) {
+		case 'Identifier':
+		case 'Literal':
+		case 'ThisExpression':
+			return true;
+		case 'MemberExpression':
+			return !node.computed && is_reference_expression(node.object);
+		default:
+			return false;
+	}
 }
 
 /**
@@ -1196,8 +1446,13 @@ function try_statement_to_jsx_child(node, transform_context) {
 	}
 
 	const try_body_nodes = node.block.body || [];
+	// `<Errored>` and `<Loading>` read their children inside a memo and call
+	// only a function child that takes no arguments, so the body runs untracked
+	// there instead of as a `<Show>`-style function child.
 	/** @type {ESTreeJSX.JSXRenderChild} */
-	let result = jsx_child_wrap(iife_if_arrow(body_to_jsx_child(try_body_nodes, transform_context)));
+	let result = jsx_child_wrap(
+		untrack_if_arrow(body_to_jsx_child(try_body_nodes, transform_context), transform_context),
+	);
 
 	if (pending) {
 		transform_context.needs_loading = true;
@@ -1205,11 +1460,11 @@ function try_statement_to_jsx_child(node, transform_context) {
 		const fallback_content = body_to_jsx_child(pending_body_nodes, transform_context);
 
 		result = create_jsx_element(
-			'Loading',
+			CONTROL_FLOW_LOCALS.Loading,
 			[
 				b.jsx_attribute(
 					b.jsx_id('fallback'),
-					to_jsx_expression_container(iife_if_arrow(fallback_content)),
+					to_jsx_expression_container(untrack_if_arrow(fallback_content, transform_context)),
 				),
 			],
 			[result],
@@ -1219,29 +1474,81 @@ function try_statement_to_jsx_child(node, transform_context) {
 	if (handler) {
 		transform_context.needs_errored = true;
 
+		// `<Errored>` passes the error as an accessor; the `@catch` binding is the
+		// thrown value itself, as on every other target.
+		const error_accessor = create_generated_identifier(
+			handler.param ? unused_catch_name(handler) : '_error',
+		);
 		/** @type {AST.Pattern[]} */
-		const catch_params = [];
-		if (handler.param) catch_params.push(handler.param);
-		else catch_params.push(create_generated_identifier('_error'));
+		const catch_params = [error_accessor];
 		if (handler.resetParam) catch_params.push(handler.resetParam);
 		else catch_params.push(create_generated_identifier('_reset'));
 
-		const catch_body_nodes = handler.body.body || [];
-		const catch_jsx = body_to_jsx_child(catch_body_nodes, transform_context);
-
-		const fallback_fn = merge_branch_body_into_arrow(
-			b.arrow(catch_params, b.literal(null)),
-			catch_jsx,
+		// `<Errored>` calls its fallback inside a memo, so the body runs untracked
+		// within it. The binding reads the accessor before that, tracked, so a
+		// new error runs the body again with its value.
+		const catch_jsx = untrack_if_arrow(
+			body_to_jsx_child(handler.body.body || [], transform_context),
+			transform_context,
+		);
+		const fallback_fn = b.arrow(
+			catch_params,
+			handler.param
+				? b.block([
+						b.let(handler.param, b.call(clone_identifier(error_accessor))),
+						b.return(catch_jsx),
+					])
+				: catch_jsx,
 		);
 
 		result = create_jsx_element(
-			'Errored',
+			CONTROL_FLOW_LOCALS.Errored,
 			[b.jsx_attribute(b.jsx_id('fallback'), to_jsx_expression_container(fallback_fn))],
 			[result],
 		);
 	}
 
 	return result;
+}
+
+/**
+ * A name for the `<Errored>` error accessor that no identifier in the catch
+ * clause uses, so the accessor neither shadows nor is shadowed by one.
+ *
+ * @param {AST.CatchClause} handler
+ * @returns {string}
+ */
+function unused_catch_name(handler) {
+	/** @type {Set<string>} */
+	const names = new Set();
+	collect_identifier_names(handler, names);
+	let name = '_tsrx_error';
+	for (let i = 1; names.has(name); i++) name = `_tsrx_error${i}`;
+	return name;
+}
+
+/**
+ * @param {unknown} node
+ * @param {Set<string>} names
+ * @returns {void}
+ */
+function collect_identifier_names(node, names) {
+	if (Array.isArray(node)) {
+		for (const child of node) collect_identifier_names(child, names);
+		return;
+	}
+	if (!node || typeof node !== 'object') return;
+	const record = /** @type {Record<string, unknown>} */ (node);
+	if (
+		(record.type === 'Identifier' || record.type === 'JSXIdentifier') &&
+		typeof record.name === 'string'
+	) {
+		names.add(record.name);
+	}
+	for (const key of Object.keys(record)) {
+		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
+		collect_identifier_names(record[key], names);
+	}
 }
 
 /**
@@ -1893,8 +2200,9 @@ function get_static_property_name(key) {
 }
 
 /**
- * Inject `import { Show, For, Switch, Match, Errored, Loading } from 'solid-js'`
- * specifiers for whichever control-flow primitives the transform emitted.
+ * Inject `import { Show as __Show, For as __For, … } from 'solid-js'`
+ * specifiers for whichever control-flow primitives the transform emitted (see
+ * {@link CONTROL_FLOW_LOCALS}).
  *
  * @param {AST.Program} program
  * @param {TransformContext} transform_context
@@ -1904,16 +2212,25 @@ function inject_solid_imports(program, transform_context) {
 	const ref_prop_source = transform_context.platform.imports.refProp;
 
 	if (transform_context.needs_normalize_spread_props && ref_prop_source) {
-		program.body.unshift(
+		insert_after_directives(program, [
 			b.import_declaration(
 				[b.import_specifier('normalize_spread_props', NORMALIZE_SPREAD_PROPS_INTERNAL_NAME)],
 				ref_prop_source,
 			),
-		);
+		]);
+	}
+
+	if (transform_context.needs_spread_ref_bags && ref_prop_source) {
+		insert_after_directives(program, [
+			b.import_declaration(
+				[b.import_specifier('spread_ref_bags', SPREAD_REF_BAGS_INTERNAL_NAME)],
+				ref_prop_source,
+			),
+		]);
 	}
 
 	if (transform_context.needs_normalize_spread_props_for_ref_attr && ref_prop_source) {
-		program.body.unshift(
+		insert_after_directives(program, [
 			b.import_declaration(
 				[
 					b.import_specifier(
@@ -1923,9 +2240,28 @@ function inject_solid_imports(program, transform_context) {
 				],
 				ref_prop_source,
 			),
-		);
+		]);
 	}
 
+	if (transform_context.needs_merge_spread_class && ref_prop_source) {
+		insert_after_directives(program, [
+			b.import_declaration(
+				[b.import_specifier('merge_spread_class', MERGE_SPREAD_CLASS_INTERNAL_NAME)],
+				ref_prop_source,
+			),
+		]);
+	}
+
+	if (transform_context.needs_join_scope_class && ref_prop_source) {
+		insert_after_directives(program, [
+			b.import_declaration(
+				[b.import_specifier('join_scope_class', JOIN_SCOPE_CLASS_INTERNAL_NAME)],
+				ref_prop_source,
+			),
+		]);
+	}
+
+	/** @type {Array<keyof typeof CONTROL_FLOW_LOCALS>} */
 	const needed = [];
 	if (transform_context.needs_show) needed.push('Show');
 	if (transform_context.needs_for) needed.push('For');
@@ -1934,14 +2270,18 @@ function inject_solid_imports(program, transform_context) {
 	if (transform_context.needs_errored) needed.push('Errored');
 	if (transform_context.needs_loading) needed.push('Loading');
 
-	if (needed.length === 0) return;
+	/** @type {Array<[string, string]>} */
+	const specifiers = needed.map((name) => [name, CONTROL_FLOW_LOCALS[name]]);
+	if (transform_context.needs_switch_memo) {
+		specifiers.push(['createMemo', SWITCH_MEMO_INTERNAL_NAME]);
+	}
+	if (transform_context.needs_untrack) {
+		specifiers.push(['untrack', UNTRACK_INTERNAL_NAME]);
+	}
 
-	program.body.unshift(
-		b.imports(
-			needed.map((name) => [name, name]),
-			'solid-js',
-		),
-	);
+	if (specifiers.length === 0) return;
+
+	insert_after_directives(program, [b.imports(specifiers, 'solid-js')]);
 }
 
 // =====================================================================
@@ -2076,7 +2416,21 @@ function transform_element_attributes(raw_attrs, is_composite, transform_context
 function normalize_solid_host_ref_spreads(attrs, is_host, transform_context) {
 	if (!is_host) return attrs;
 
-	const needs_synthetic_spread_ref = attrs.some(is_solid_jsx_ref_attribute);
+	// Solid's `spread()` applies a lone spread's `ref` beside the element's own
+	// `ref`, which keeps its native meaning (`ref={el}` assigns `el`). Of several
+	// spreads' refs its prop merge keeps only the last, so those go through one
+	// `spread_ref_bags` group; the type-only print merges them into the
+	// element's `ref` array instead.
+	const needs_synthetic_spread_ref =
+		attrs.some(is_solid_jsx_ref_attribute) &&
+		attrs.filter((attr) => attr?.type === 'JSXSpreadAttribute').length > 1;
+	if (needs_synthetic_spread_ref && !transform_context.typeOnly) {
+		return lower_spread_ref_bags(
+			attrs,
+			create_generated_identifier(create_solid_spread_props_name(transform_context)),
+			transform_context,
+		);
+	}
 
 	return attrs.flatMap(
 		/**
@@ -2155,7 +2509,7 @@ function create_solid_spread_props_name(transform_context) {
 			name = `_tsrx_spread_props_${transform_context.local_statement_component_index}`;
 		}
 		// A name the author wrote anywhere could be shadowed or redeclared
-	} while (new RegExp(`(?<![\\w$])${name}(?![\\w$])`).test(transform_context.source));
+	} while (source_mentions_identifier(transform_context.source, name));
 	return name;
 }
 
