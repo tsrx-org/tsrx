@@ -1573,6 +1573,12 @@ export namespace Parse {
 		tsParseModuleOrNamespaceDeclaration(node: AST.Node, nested?: boolean): AST.TSModuleDeclaration;
 
 		/**
+		 * Parse the `{ … }` body of a namespace or module, in a scope of its own
+		 * (@sveltejs/acorn-typescript).
+		 */
+		tsParseModuleBlock(): AST.TSModuleBlock;
+
+		/**
 		 * Parse a global augmentation from `global`, or a module named by the
 		 * string after `module`, which has been read (@sveltejs/acorn-typescript).
 		 */
@@ -1939,11 +1945,15 @@ export namespace Parse {
 		 * @param isGenerator Whether generator method
 		 * @param isAsync Whether async method
 		 * @param allowDirectSuper Whether super() allowed
+		 * @param inClassScope Whether a class member (@sveltejs/acorn-typescript)
+		 * @param method The class member, for a class method (@sveltejs/acorn-typescript)
 		 */
 		parseMethod(
 			isGenerator: boolean,
 			isAsync?: boolean,
 			allowDirectSuper?: boolean,
+			inClassScope?: boolean,
+			method?: AST.MethodDefinition,
 		): AST.FunctionExpression;
 
 		// ============================================================
@@ -2256,7 +2266,8 @@ export namespace Parse {
 		/**
 		 * Record the source spans of `async`/`function` keywords on the program as
 		 * `tsrx_keyword_tokens` — the mapping collector needs them and no AST node
-		 * carries them.
+		 * carries them — and every token as `tsrx_tokens`, for esrap's `tokens`
+		 * print option.
 		 */
 		keywordTokens?: boolean;
 	}
@@ -2268,6 +2279,9 @@ export namespace Parse {
 		end: number;
 		loc: AST.SourceLocation;
 	}
+
+	/** A token recorded by the `keywordTokens` parse option. */
+	export type Token = acorn.Token;
 
 	/**
 	 * The constructor/class type for the extended TSRX parser.

@@ -203,7 +203,15 @@ export function tsrxHono(options = {}) {
 			const css_module = this.environment.moduleGraph.getModuleById(options.file + CSS_QUERY);
 			if (!css_module) return options.modules;
 
-			update_css_cache(css_cache_for(this), await options.read(), options.file);
+			const source = await options.read();
+			try {
+				update_css_cache(css_cache_for(this), source, options.file);
+			} catch {
+				// Vite keeps the stylesheet module after the last component import is
+				// gone, so the file may now be imported only as `?raw`. Keep the last
+				// good css; a component import reports the error when it transforms.
+				return options.modules;
+			}
 
 			this.environment.moduleGraph.invalidateModule(css_module);
 			// Vite usually lists the CSS module already, under the component's file.
