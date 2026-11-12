@@ -164,9 +164,7 @@ describe('compile error diagnostic plugin — a statement-only code block', () =
 				severity: diagnostic.severity,
 				message: diagnostic.source === 'TSRX' ? diagnostic.message : undefined,
 				// The editor spans the tokens the virtual code maps, so not `@{`
-				// and `}`. Since #1085 the virtual code maps `user.nmae` from the
-				// line break and indent before it, so Volar maps the warning's
-				// start, at the generated `user`, to the source `nmae`.
+				// and `}`.
 				text: document.getText(diagnostic.range),
 			}));
 		expect(shown).toEqual([
@@ -182,7 +180,7 @@ describe('compile error diagnostic plugin — a statement-only code block', () =
 				code: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD.code,
 				severity: DiagnosticSeverity.Warning,
 				message: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD.message,
-				text: 'nmae',
+				text: 'user.nmae',
 			},
 		]);
 	});
