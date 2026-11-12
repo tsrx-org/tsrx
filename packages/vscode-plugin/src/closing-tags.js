@@ -3,20 +3,21 @@ import { activateAutoInsertion } from '@volar/vscode';
 import { USE_TSGO_SETTINGS, typescript_7_on } from './typescript-7.js';
 
 /**
- * Whether TypeScript 7 closes JSX tags in `.tsrx` files itself. `tsc --lsp` answers
- * its closing-tag request (`_vs_onAutoInsert`) for them through the content mapper,
- * but the TypeScript 7 extension only sends that request for TypeScript and
- * JavaScript files (microsoft/TypeScript#64564). Set this to true once a fixed
- * extension ships; then remove it with TSRX's own closing tags (tsrx-org/tsrx#989).
+ * Whether TypeScript 7 closes JSX tags in `.tsrx` files well enough to leave them to it.
+ * The TypeScript 7 extension asks `tsc --lsp` for them since 1.0.2
+ * (microsoft/TypeScript#64564), but `tsc --lsp` answers only in a file the content mapper
+ * covers and can parse, and not in every position of one. Until that changes, TSRX keeps
+ * its own closing tags (tsrx-org/tsrx#989).
  */
 const TYPESCRIPT_7_CLOSES_TAGS = false;
 
 /**
- * Close JSX tags in `.tsrx` files when the TypeScript that serves them does not.
+ * Close JSX tags in `.tsrx` files while TypeScript 7 is on, whichever compiler serves them.
  * VS Code's own TypeScript closes them through `@tsrx/typescript-plugin`
  * (`js/ts.autoClosingTags.enabled`), so the TSRX language server's closing tags
- * (`tsrx.autoClosingTags.enabled`) run only while TypeScript 7 serves `.tsrx`
- * files: with both, two providers would race to insert the same closing tag.
+ * (`tsrx.autoClosingTags.enabled`) run only while TypeScript 7 is on: with both, two
+ * providers would race to insert the same closing tag. From
+ * extension 1.0.2 that race exists on TypeScript 7 too, wherever `tsc --lsp` answers.
  * @param {import('vscode').ExtensionContext} context
  * @param {import('vscode-languageclient/node').BaseLanguageClient} client
  */

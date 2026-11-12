@@ -139,6 +139,37 @@ describe.each(['native', 'bypass', 'legacy'])('tsrx-tsc with the %s loader', (lo
 		expect(result.output).not.toContain('TS2307');
 	});
 
+	// Two CLI runs, ESM then CommonJS.
+	it(
+		'takes the module format of .tsrx files from package.json under NodeNext (#163)',
+		{
+			timeout: 60_000,
+		},
+		() => {
+			const config_path = path.join(workspace, 'tsconfig.json');
+			const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+			config.compilerOptions.module = 'NodeNext';
+			config.compilerOptions.moduleResolution = 'NodeNext';
+			config.include = ['main.ts', 'meta.tsrx'];
+			fs.writeFileSync(config_path, JSON.stringify(config));
+			fs.appendFileSync(path.join(workspace, 'layout.tsrx'), 'console.log(import.meta.url);\n');
+			// No import, so TypeScript resolves nothing for it.
+			fs.writeFileSync(path.join(workspace, 'meta.tsrx'), 'export const url = import.meta.url;\n');
+
+			// `"type": "module"`: ESM, as a `.ts` file there.
+			const esm = run_cli(loader);
+			expect(esm.output).toBe('');
+			expect(esm.status).toBe(0);
+
+			fs.writeFileSync(path.join(workspace, 'package.json'), '{"type":"commonjs"}');
+			const cjs = run_cli(loader);
+			const ts1470 =
+				"error TS1470: The 'import.meta' meta-property is not allowed in files which will build into CommonJS output.";
+			expect(cjs.output).toBe(`layout.tsrx(4,13): ${ts1470}\nmeta.tsrx(1,20): ${ts1470}\n`);
+			expect(cjs.status).toBe(2);
+		},
+	);
+
 	it('uses the installed TypeScript version for --version', () => {
 		const result = run_cli(loader, ['--version']);
 		expect(result.output).toBe(`Version ${cli_require('typescript').version}\n`);
@@ -436,6 +467,31 @@ process.exit(Number(process.env.TSRX_TEST_EXIT ?? 0));
 	});
 });
 
+// The editor's loose compile, which tsrx-tsc runs, reports unclosed and
+// mismatched tags as a collecting compile does (#978), an unclosed tag at its
+// name (#1288).
+it.each([
+	[
+		'an unclosed tag',
+		'\t<div>{title}\n',
+		"(2,3): error TSRX1001: Unclosed tag '<div>'. Expected '</div>' before end of template.",
+	],
+	[
+		'a mismatched closing tag',
+		'\t<div><span>{title}</div>\n',
+		"(2,20): error TSRX1002: Expected closing tag to match opening tag. Expected '</span>' but found '</div>'",
+	],
+])('reports %s in a .tsrx file', (_label, body, diagnostic) => {
+	fs.writeFileSync(
+		path.join(workspace, 'layout.tsrx'),
+		`export default function MainLayout({ title }: { title: string }) @{\n${body}}\n`,
+	);
+	const result = run_cli('native');
+	expect(result.output).toContain(
+		`[tsrx-tsc] ${path.join(fs.realpathSync(workspace), 'layout.tsrx')}${diagnostic}`,
+	);
+});
+
 it('reports unresolved class field and heritage types in .tsrx files', () => {
 	const line =
 		'export class Model<T extends MissingBound> implements MissingShape { value!: MissingType; }';
@@ -445,6 +501,104 @@ it('reports unresolved class field and heritage types in .tsrx files', () => {
 	for (const name of ['MissingBound', 'MissingShape', 'MissingType']) {
 		expect(result.output).toContain(
 			`layout.tsrx(4,${line.indexOf(name) + 1}): error TS2304: Cannot find name '${name}'.`,
+		);
+	}
+});
+
+it('reports errors in import types, import options, declared signatures and key remapping in .tsrx files', () => {
+	fs.writeFileSync(
+		path.join(workspace, 'store.ts'),
+		'export type Store<T> = { value: T };\nexport function create<T>(): T { return null!; }\n',
+	);
+	const lines = [
+		"export type A = import('./store.ts').Store<MissingA>;",
+		"export type B = typeof import('./store.ts').create<MissingB>;",
+		"export type M = import('./store.ts');",
+		"export const data = import('./store.ts', { with: { type: MissingC } });",
+		"export const lazy = import.defer('./store.ts', { with: { type: MissingD } });",
+		'export declare function request(options: MissingE): void;',
+		'export function overload(options: MissingF): void; export function overload(options: unknown) {}',
+		'export type Keys<T> = { [K in keyof T as MissingG]: T[K] };',
+		'export type Named<T> = { [K in keyof T as Capitalize<number>]: T[K] };',
+		'export type Indexed<T> = { [K in keyof T as T[K]]: 1 };',
+		'export type Literal<T> = { [K in keyof T as {}]: 1 };',
+		'export type Tuple<T> = { [K in keyof T as [K]]: 1 };',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	for (const [index, name] of /** @type {const} */ ([
+		[0, 'MissingA'],
+		[1, 'MissingB'],
+		[3, 'MissingC'],
+		[4, 'MissingD'],
+		[5, 'MissingE'],
+		[6, 'MissingF'],
+		[7, 'MissingG'],
+	])) {
+		expect(result.output).toContain(
+			`${at(index, name)}: error TS2304: Cannot find name '${name}'.`,
+		);
+	}
+	expect(result.output).toContain(
+		`${at(2, 'import(')}: error TS1340: Module './store.ts' does not refer to a type, but is used as a type here. Did you mean 'typeof import('./store.ts')'?`,
+	);
+	expect(result.output).toContain(
+		`${at(8, 'number')}: error TS2344: Type 'number' does not satisfy the constraint 'string'.`,
+	);
+	for (const [index, type] of /** @type {const} */ ([
+		[9, 'T[K]'],
+		[10, '{}'],
+		[11, '[K]'],
+	])) {
+		expect(result.output).toContain(
+			`${at(index, type)}: error TS2322: Type '${type}' is not assignable to type 'string | number | symbol'.`,
+		);
+	}
+});
+
+it('reports a failed satisfies check on its keyword in .tsrx files', () => {
+	const lines = [
+		'declare const count: number; declare function load(): number;',
+		'export const a = 1 satisfies string; export const b = count satisfies string; export const c = load() satisfies string;',
+		'export function read() { return count as unknown as number satisfies string; }',
+		'export function View() @{ const shown = count satisfies string; <div>{shown}</div> }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts1360 = "error TS1360: Type 'number' does not satisfy the expected type 'string'.";
+	for (const [index, line] of lines.entries()) {
+		for (const match of line.matchAll(/satisfies/g)) {
+			expect(result.output).toContain(
+				`layout.tsrx(${index + 4},${/** @type {number} */ (match.index) + 1}): ${ts1360}`,
+			);
+		}
+	}
+});
+
+it('reports an error on a literal that starts a sequence expression in .tsrx files', () => {
+	const lines = [
+		'declare const plain: {};',
+		'export function run() { return (0, plain); }',
+		"export const text = ('s', plain);",
+		'export const sum = (1 + 2, plain);',
+		'export const name = (plain, plain);',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts2695 = 'error TS2695: Left side of comma operator is unused and has no side effects.';
+	for (const [index, operand] of /** @type {const} */ ([
+		[1, '0,'],
+		[2, "'s'"],
+		[3, '1 + 2'],
+		[4, 'plain,'],
+	])) {
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${lines[index].indexOf(operand) + 1}): ${ts2695}`,
 		);
 	}
 });
@@ -462,6 +616,79 @@ it('reports errors on private class fields in .tsrx files', () => {
 	);
 });
 
+it('reports a missing return on a composite return type in .tsrx files', () => {
+	const lines = [
+		'export class Returns<T> { list(): number[] {} shape(): { a: number } {} keys(): keyof T {} later(): Promise<number> {} either(): number | string {} pair(): [number, string] {} plain(): number {} }',
+		'export function listed(): string[] {}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts2355 =
+		"error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.";
+	for (const [index, type] of /** @type {const} */ ([
+		[0, 'number[]'],
+		[0, '{ a: number }'],
+		[0, 'keyof T'],
+		[0, 'Promise<number>'],
+		[0, 'number | string'],
+		[0, '[number, string]'],
+		[0, 'number {}'],
+		[1, 'string[]'],
+	])) {
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${lines[index].indexOf(type) + 1}): ${ts2355}`,
+		);
+	}
+});
+
+it('reports a non-null superclass that is not a constructor in .tsrx files', () => {
+	const lines = [
+		'declare const maybe: {} | undefined; declare const registry: { get(name: string): {} | undefined };',
+		"export class A extends maybe! {} export class B extends registry.get('Base')! {}",
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const base of ['maybe!', "registry.get('Base')!"]) {
+		expect(result.output).toContain(
+			`layout.tsrx(5,${lines[1].indexOf(base) + 1}): error TS2507: Type '{}' is not a constructor function type.`,
+		);
+	}
+});
+
+it('reports computed property name errors whatever is inside the brackets in .tsrx files', () => {
+	const lines = [
+		'declare const o: {}; declare function f(): string; declare const key: "m";',
+		'export const tight = { [o]: 1 }; export const spaced = { [ o ]: 1 }; export const commented = { [/* c */ o]: 1 };',
+		'export const multiline = { [',
+		'\to',
+		']: 1 };',
+		'export class Field { [ f() ]: number = 1; }',
+		'export type Literal = { [ f() ]: number };',
+		'class Base { [key](): number { return 1; } } export class Sub extends Base { [ key ](): string { return ""; } }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	const ts2464 =
+		"error TS2464: A computed property name must be of type 'string', 'number', 'symbol', or 'any'.";
+	for (const key of ['[o]', '[ o ]', '[/* c */ o]']) {
+		expect(result.output).toContain(`${at(1, key)}: ${ts2464}`);
+	}
+	expect(result.output).toContain(`${at(2, '[')}: ${ts2464}`);
+	expect(result.output).toContain(
+		`${at(5, '[')}: error TS1166: A computed property name in a class property declaration must have a simple literal type or a 'unique symbol' type.`,
+	);
+	expect(result.output).toContain(
+		`${at(6, '[')}: error TS1170: A computed property name in a type literal must refer to an expression whose type is a literal type or a 'unique symbol' type.`,
+	);
+	// TypeScript quotes the property name from the generated code, which prints `[key]`.
+	expect(result.output).toContain(`${at(7, '[ key ]')}: error TS2416: Property '[key]' in type`);
+});
+
 it('reports a missing return on a primitive return type in .tsrx files', () => {
 	const line = 'export class Model { value(): number {} }';
 	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${line}\n`);
@@ -470,6 +697,49 @@ it('reports a missing return on a primitive return type in .tsrx files', () => {
 	expect(result.output).toContain(
 		`layout.tsrx(4,${line.indexOf('number') + 1}): error TS2355: A function whose declared type is neither 'undefined', 'void', nor 'any' must return a value.`,
 	);
+});
+
+it('applies block TypeScript directives and optional binding patterns as TypeScript does in .tsrx files', () => {
+	const lines = [
+		'declare const bad: string;',
+		'/* @ts-expect-error */',
+		'export const a: number = bad;',
+		'/* @ts-ignore */',
+		'export const b: number = bad;',
+		'/* @ts-expect-error */ /** docs */',
+		'export const c: number = bad;',
+		'/* explanation',
+		'@ts-expect-error */',
+		'export const d: number = bad;',
+		'/* @ts-expect-error */',
+		'/* plain */',
+		'export const e: number = bad;',
+		'// @ts-expect-error',
+		'/* plain */',
+		'export const f: number = bad;',
+		'export function g(x: number) {',
+		"\t/* @ts-ignore */ if (x) { const y: number = 'bad'; return y; }",
+		'\treturn 0;',
+		'}',
+		'declare function optional({ a }?: { a: number }): void; optional();',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	const ts2322 = "error TS2322: Type 'string' is not assignable to type 'number'.";
+	const ts2578 = "error TS2578: Unused '@ts-expect-error' directive.";
+	// The diagnostics tsc reports for the same code. A block comment after a
+	// directive ends its reach, and a directive on the line of the error covers
+	// the line after it.
+	expect(result.output.trim().split('\n')).toEqual([
+		`${at(10, '/*')}: ${ts2578}`,
+		`${at(12, 'e:')}: ${ts2322}`,
+		`${at(13, '//')}: ${ts2578}`,
+		`${at(15, 'f:')}: ${ts2322}`,
+		`${at(17, 'y:')}: ${ts2322}`,
+	]);
+	expect(result.status).toBe(2);
 });
 
 it('reports a superclass expression that is not a constructor in .tsrx files', () => {
@@ -483,6 +753,24 @@ it('reports a superclass expression that is not a constructor in .tsrx files', (
 			`layout.tsrx(4,${line.lastIndexOf(base) + 1}): error TS2507: Type '{}' is not a constructor function type.`,
 		);
 	}
+});
+
+it('reports a missing or unknown prop of a dynamic tag component in .tsrx files', () => {
+	const lines = [
+		'const Card = (props: { title: string }) => <div>{props.title}</div>;',
+		'export function Missing() @{ const C = Card; <{C} /> }',
+		'export function Unknown() @{ const C = Card; <{C} title="x" extra={1} /> }',
+		'export function Correct() @{ const C = Card; <{C} title="x" /> }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	// TypeScript reports them on the generated name of the lowered tag, which
+	// maps to the authored `{C}`.
+	expect(result.output.match(/^layout\.tsrx\(\d+,\d+\): error TS\d+/gm)).toEqual([
+		`layout.tsrx(5,${lines[1].indexOf('{C}') + 1}): error TS2769`,
+		`layout.tsrx(6,${lines[2].indexOf('{C}') + 1}): error TS2769`,
+	]);
+	expect(result.status).toBe(2);
 });
 
 it('reports errors on a whole call or parenthesized expression in .tsrx files', () => {
@@ -513,6 +801,188 @@ it('reports errors on a whole call or parenthesized expression in .tsrx files', 
 	}
 });
 
+it('keeps a static index signature static in .tsrx files and their declarations', () => {
+	const lines = [
+		'export class Registry { static [key: string]: number; static [key: string]: string }',
+		'export class Store { static [key: string]: number; static count = 1 }',
+		"export const missing = new Store()['y'];",
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	// Two static signatures are not duplicates, and an instance has no signature.
+	expect(result.output).not.toContain('TS2374');
+	expect(result.output).toContain(
+		`layout.tsrx(6,${lines[2].indexOf('new') + 1}): error TS7053: Element implicitly has an 'any' type`,
+	);
+
+	run_cli('native', [
+		'-p',
+		'tsconfig.json',
+		'--declaration',
+		'--emitDeclarationOnly',
+		'--outDir',
+		'dist',
+	]);
+	const declaration = fs.readFileSync(path.join(workspace, 'dist', 'layout.d.ts'), 'utf8');
+	expect(declaration).toContain('static [key: string]: number;');
+	expect(declaration).toContain('static [key: string]: string;');
+	expect(declaration).not.toMatch(/^\s*\[key: string\]/m);
+});
+
+it('reports errors on an array inside an array and on an empty type literal in .tsrx files', () => {
+	const lines = [
+		'declare function g<T extends string>(): void; g<{}>();',
+		'export const t = [ {}, [] ] satisfies number[]; export const u = [[]] satisfies number[];',
+		'export const v: number[] = [ [ 1 ] ];',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {number} */ offset) =>
+		`layout.tsrx(${index + 4},${offset + 1})`;
+	expect(result.output).toContain(
+		`${at(0, lines[0].indexOf('{}'))}: error TS2344: Type '{}' does not satisfy the constraint 'string'.`,
+	);
+	for (const [index, offset, type] of /** @type {const} */ ([
+		[1, lines[1].indexOf('{}'), '{}'],
+		[1, lines[1].indexOf('[]'), '[]'],
+		[1, lines[1].indexOf('[]]'), '[]'],
+		[2, lines[2].indexOf('[ 1 ]'), '[number]'],
+	])) {
+		expect(result.output).toContain(
+			`${at(index, offset)}: error TS2322: Type '${type}' is not assignable to type 'number'.`,
+		);
+	}
+});
+
+it('reports errors after a comment inside an array or object literal where they are written in .tsrx files', () => {
+	// The printer leaves the comments out, so the literal is shorter in the
+	// generated code than in the source.
+	const lines = [
+		'declare const o: { a: number };',
+		'export const x = [ /*comment*/ 1 as string ];',
+		"export const y: number[] = [ /* c */ o.a + 'x' ];",
+		'export const z = [ /* c */ {} + 1 ];',
+		"export const v: number[] = [ /* long comment here */ true ? 'a' : 'b' ];",
+		'export const w = { /* comment */ a: 1 as string };',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	for (const [index, text, code] of /** @type {const} */ ([
+		[1, '1 as', 'TS2352'],
+		[2, 'o.a', 'TS2322'],
+		[3, '{} +', 'TS2365'],
+		[4, 'true', 'TS2322'],
+		[5, '1 as', 'TS2352'],
+	])) {
+		expect(result.output).toContain(`${at(index, text)}: error ${code}:`);
+	}
+});
+
+it('reports errors on a whole spread in .tsrx files', () => {
+	const lines = [
+		'declare const n: number; declare const s: string | undefined;',
+		'export const a = { ...n }; export const b = { ...s }; export const c = { /* c */ ...s };',
+		"export const d: number[] = [ ...['x'] ];",
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts2698 = 'error TS2698: Spread types may only be created from object types.';
+	for (const offset of [
+		lines[1].indexOf('...n'),
+		lines[1].indexOf('...s'),
+		lines[1].lastIndexOf('...s'),
+	]) {
+		expect(result.output).toContain(`layout.tsrx(5,${offset + 1}): ${ts2698}`);
+	}
+	expect(result.output).toContain(
+		`layout.tsrx(6,${lines[2].indexOf('...') + 1}): error TS2322: Type 'string' is not assignable to type 'number'.`,
+	);
+});
+
+it('reports an unreachable break or continue in place in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	// An arrow maps its whole span, and the printer adds a blank line after `return;`.
+	const lines = [
+		'export const b = () => { while (true) { return; break; } };',
+		'export const c = () => { for (const x of [1]) { return; continue; } };',
+		'export const i = function () { while (true) { return; break; } };',
+		'export function j() { while (true) { return; break; } }',
+		'export function L() @{',
+		'\tconst loop = () => { while (true) { return; break; } };',
+		'\t<p onClick={loop} />',
+		'}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const [index, text] of /** @type {const} */ ([
+		[0, 'break'],
+		[1, 'continue'],
+		[2, 'break'],
+		[3, 'break'],
+		[5, 'break'],
+	])) {
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1}): error TS7027: Unreachable code detected.`,
+		);
+	}
+});
+
+it('reports duplicate index signatures in place in .tsrx files', () => {
+	const lines = [
+		'export type T = { [x: string]: string; [x: string]: number };',
+		'export type U = { /*comment*/ [x: string]: string; [x: string]: number };',
+		'export class C { readonly [k: string]: number; [k: string]: string }',
+		'export interface I { readonly [k: number]: 1; [k: number]: 2 }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const [index, text, occurrence] of /** @type {const} */ ([
+		[0, '[x', 1],
+		[0, '[x', 2],
+		[1, '[x', 1],
+		[1, '[x', 2],
+		[2, 'readonly', 1],
+		[2, '[k', 2],
+		[3, 'readonly', 1],
+		[3, '[k', 2],
+	])) {
+		let offset = -1;
+		for (let count = 0; count < occurrence; count++)
+			offset = lines[index].indexOf(text, offset + 1);
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${offset + 1}): error TS2374: Duplicate index signature for type`,
+		);
+	}
+});
+
+it('reports no duplicate for a static and an instance index signature in .tsrx files', () => {
+	// Two signatures of the same key type are duplicates only on the same side.
+	const lines = [
+		'export class A { static [k: string]: number; [k: string]: string }',
+		'export class B { [k: string]: string; static [k: string]: number }',
+		'export class C { static [k: string]: number; [k: string]: boolean; [k: string]: number }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts2374 = result.output.split('\n').filter((line) => line.includes('error TS2374'));
+	expect(ts2374.map((line) => line.slice(0, line.indexOf(':')))).toEqual([
+		`layout.tsrx(6,${lines[2].indexOf('[k: string]: boolean') + 1})`,
+		`layout.tsrx(6,${lines[2].lastIndexOf('[k: string]') + 1})`,
+	]);
+});
+
 it('reports errors on a bare this in .tsrx files', () => {
 	const line =
 		'export function readValue() { return this; } class Base {} export class Derived extends Base { constructor() { this; super(); } }';
@@ -525,4 +995,227 @@ it('reports errors on a bare this in .tsrx files', () => {
 	expect(result.output).toContain(
 		`layout.tsrx(4,${line.lastIndexOf('this') + 1}): error TS17009: 'super' must be called before accessing 'this' in the constructor of a derived class.`,
 	);
+});
+
+// Two CLI runs, emit then consume.
+it(
+	'leaves the editor-only platform globals out of emitted declarations',
+	{ timeout: 60_000 },
+	() => {
+		const source =
+			"export function value() {\n\tif (import.meta.env.platform.web) {\n\t\treturn 'web';\n\t}\n\treturn 'native';\n}\n";
+		// An authored global augmentation stays in the declaration output.
+		fs.writeFileSync(
+			path.join(workspace, 'a.tsrx'),
+			`${source}declare global {\n\tinterface Window {\n\t\tapp: string;\n\t}\n}\n`,
+		);
+		fs.writeFileSync(path.join(workspace, 'b.tsrx'), source);
+		fs.writeFileSync(
+			path.join(workspace, 'tsconfig.emit.json'),
+			JSON.stringify({
+				extends: './tsconfig.json',
+				tsrx: { platform: 'web' },
+				compilerOptions: {
+					declaration: true,
+					emitDeclarationOnly: true,
+					outDir: 'dist',
+					skipLibCheck: false,
+				},
+				include: ['a.tsrx', 'b.tsrx'],
+			}),
+		);
+		const emitted = run_cli('native', ['-p', 'tsconfig.emit.json']);
+		expect(emitted.output).toBe('');
+		expect(emitted.status).toBe(0);
+		const declaration = fs.readFileSync(path.join(workspace, 'dist', 'a.d.ts'), 'utf8');
+		expect(declaration).toContain('export declare function value()');
+		expect(declaration).toContain('interface Window');
+		expect(declaration).not.toContain('ImportMeta');
+		expect(fs.readFileSync(path.join(workspace, 'dist', 'b.d.ts'), 'utf8')).not.toContain(
+			'declare global',
+		);
+
+		fs.writeFileSync(
+			path.join(workspace, 'consumer.ts'),
+			"import { value as a } from './dist/a.js';\nimport { value as b } from './dist/b.js';\nexport const result = [a(), b()];\n",
+		);
+		fs.writeFileSync(
+			path.join(workspace, 'tsconfig.consume.json'),
+			JSON.stringify({
+				compilerOptions: {
+					module: 'ESNext',
+					moduleResolution: 'Bundler',
+					target: 'ES2022',
+					strict: true,
+					skipLibCheck: false,
+					types: [],
+					noEmit: true,
+				},
+				include: ['consumer.ts'],
+			}),
+		);
+		const consumed = spawnSync(
+			process.execPath,
+			[tsc_path, '-p', 'tsconfig.consume.json', '--pretty', 'false'],
+			{ cwd: workspace, encoding: 'utf8', timeout: 30_000 },
+		);
+		expect(consumed.stdout + consumed.stderr).toBe('');
+		expect(consumed.status).toBe(0);
+	},
+);
+
+it('gives .tsrx files the module format of their own project in a solution build', () => {
+	// `-b` creates every project's program with one compiler host, and the
+	// Bundler project builds before the NodeNext one.
+	/** @param {string} name @param {string} module @param {string} file @param {string} source */
+	const add_project = (name, module, file, source) => {
+		fs.mkdirSync(path.join(workspace, name));
+		fs.writeFileSync(
+			path.join(workspace, name, 'tsconfig.json'),
+			JSON.stringify({
+				tsrx: { compiler: '@tsrx/preact' },
+				compilerOptions: {
+					composite: true,
+					outDir: 'dist',
+					module,
+					moduleResolution: module === 'NodeNext' ? 'NodeNext' : 'Bundler',
+					target: 'ES2022',
+					strict: true,
+					skipLibCheck: true,
+					types: [],
+				},
+				include: [file],
+			}),
+		);
+		fs.writeFileSync(path.join(workspace, name, file), source);
+	};
+	add_project('bundler', 'ESNext', 'index.ts', 'export const value = 1;\n');
+	add_project('nodenext', 'NodeNext', 'meta.tsrx', 'export const url = import.meta.url;\n');
+	fs.writeFileSync(
+		path.join(workspace, 'tsconfig.json'),
+		JSON.stringify({ files: [], references: [{ path: './bundler' }, { path: './nodenext' }] }),
+	);
+
+	const result = run_cli('native', ['-b', 'tsconfig.json']);
+	expect(result.output).toBe('');
+	expect(result.status).toBe(0);
+});
+
+it('reports errors that start at a yield, a rest parameter or a nested export as namespace in .tsrx files', () => {
+	const lines = [
+		'export function* plain() { const value = yield 1; return value; }',
+		'export function bad(...args: number) {} export class K { m(...args: number) {} }',
+		'export function List<T>(...items: T) @{ <ul /> }',
+		'function nested() { export as namespace A; }',
+		'export function* View() @{ @if (yield 1) { <div /> } }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {number} */ offset) =>
+		`layout.tsrx(${index + 4},${offset + 1})`;
+	for (const index of [0, 4]) {
+		expect(result.output).toContain(
+			`${at(index, lines[index].indexOf('yield'))}: error TS7057: 'yield' expression implicitly results in an 'any' type because its containing generator lacks a return-type annotation.`,
+		);
+	}
+	for (const [index, offset] of [
+		[1, lines[1].indexOf('...')],
+		[1, lines[1].lastIndexOf('...')],
+		[2, lines[2].indexOf('...')],
+	]) {
+		expect(result.output).toContain(
+			`${at(index, offset)}: error TS2370: A rest parameter must be of an array type.`,
+		);
+	}
+	expect(result.output).toContain(
+		`${at(3, lines[3].indexOf('export'))}: error TS1316: Global module exports may only appear at top level.`,
+	);
+});
+
+it('reports unreachable code on a statement that ends with an element in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	const lines = [
+		'let x: unknown; declare function foo(): void;',
+		'export function a() { return; x = <div></div>; }',
+		'export function b() { return; x = <br />; }',
+		'export function c() { return; true ? <div /> : <span />; }',
+		'export function d() { return; foo(); }',
+		'export function e() {',
+		'\treturn;',
+		'\tx = <span>x</span>',
+		'}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const [index, text] of /** @type {const} */ ([
+		[1, 'x ='],
+		[2, 'x ='],
+		[3, 'true'],
+		[4, 'foo'],
+		[7, 'x ='],
+	])) {
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1}): error TS7027: Unreachable code detected.`,
+		);
+	}
+});
+
+it('reports errors that start at a statement keyword or a binding pattern in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	config.compilerOptions.noUnusedLocals = true;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	const lines = [
+		'let x: unknown; declare function foo(): void;',
+		'export function a() @{ const { p, q } = { p: 1, q: 2 }; <p /> }',
+		'export function b() { const p = 1, q = 2; }',
+		'export function c() { if (typeof x === "strng") {} }',
+		'export function d() { return; const y = 1; }',
+		'export function e() { return; let y = 1, z = 2; }',
+		'export function f() { return; if (x) {} }',
+		'export function g() { return; while (x) {} }',
+		'export function h() { return; throw 1; }',
+		'export function i() { return; try {} finally {} }',
+		'export function j() { return; do {} while (x); }',
+		'export function k() { return; debugger; }',
+		'export function l() { return; typeof x; }',
+		'export function m() { return; return 1; }',
+		'export function n() { return; new Date(); }',
+		'export function o() { return; switch (x) {} }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	expect(result.output).toContain(
+		`${at(1, '{ p')}: error TS6198: All destructured elements are unused.`,
+	);
+	expect(result.output).toContain(`${at(2, 'const')}: error TS6199: All variables are unused.`);
+	expect(result.output).toContain(`${at(5, 'let')}: error TS6199: All variables are unused.`);
+	expect(result.output).toContain(
+		`${at(3, 'typeof')}: error TS2367: This comparison appears to be unintentional`,
+	);
+	for (const [index, text] of /** @type {const} */ ([
+		[4, 'const'],
+		[5, 'let'],
+		[6, 'if'],
+		[7, 'while'],
+		[8, 'throw'],
+		[9, 'try'],
+		[10, 'do'],
+		[11, 'debugger'],
+		[12, 'typeof'],
+		[13, 'return 1'],
+		[14, 'new'],
+		[15, 'switch'],
+	])) {
+		expect(result.output).toContain(`${at(index, text)}: error TS7027: Unreachable code detected.`);
+	}
 });

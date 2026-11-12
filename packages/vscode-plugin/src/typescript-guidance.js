@@ -7,7 +7,11 @@ import {
 import {
 	TSDK_SETTING_NAMES,
 	USE_TSGO_SETTINGS,
+	on_running_compiler_reported,
 	project_typescript,
+	running_compiler,
+	runs_compiler,
+	supersede_running_compiler,
 	typescript_7_compiler,
 	typescript_7_on,
 	typescript_7_server_extension,
@@ -30,11 +34,14 @@ const FIX_COMMAND = 'tsrx.typescript.fix';
  * - `typescript-7-missing`: TypeScript 7 is on, which turns VS Code's own TypeScript
  *   off, but only the TypeScript 7 Nightly extension is installed, which has no server.
  *
- * `project` is the `typescript` package the file's project installs.
+ * `project` is the TypeScript package the file's project installs. `workspace_tsdk_ignored`
+ * says that the server runs another compiler than the one a `tsdk` setting in the
+ * workspace names, because the user has not allowed that setting.
  * @typedef {{
  * 	kind: 'vscode' | 'typescript-7' | 'typescript-7-unsupported' | 'typescript-7-missing',
  * 	version?: string,
- * 	project?: { version: string, directory: string },
+ * 	project?: { name?: string, version: string, directory: string },
+ * 	workspace_tsdk_ignored?: boolean,
  * }} TypeScriptStatus
  */
 
@@ -47,11 +54,21 @@ export function typescript_status(uri) {
 	if (!typescript_7_on()) return { kind: 'vscode', project };
 	const compiler = typescript_7_compiler();
 	if (!compiler) return { kind: 'typescript-7-missing', project };
-	const supported = compiler.version === 'unknown' || has_content_mapper_protocol(compiler.version);
+	// What the settings predict is all there is until the server reports, and on extension
+	// 1.0.1, which never does.
+	const running = running_compiler();
+	const version = running?.version ?? compiler.version;
+	const supported =
+		version === 'unknown' || version === 'local' || has_content_mapper_protocol(version);
 	return {
 		kind: supported ? 'typescript-7' : 'typescript-7-unsupported',
-		version: compiler.version,
+		version,
 		project,
+		workspace_tsdk_ignored:
+			compiler.scope === 'workspace' &&
+			running !== undefined &&
+			!running.superseded &&
+			!runs_compiler(running, compiler),
 	};
 }
 
@@ -91,6 +108,13 @@ const TURN_OFF_TYPESCRIPT_7 = {
 };
 
 /** @type {Action} */
+const SELECT_TYPESCRIPT_VERSION = {
+	id: 'select-typescript-version',
+	label: 'Select TypeScript Version',
+	run: () => vscode.commands.executeCommand('typescript.native-preview.selectVersion'),
+};
+
+/** @type {Action} */
 const LEARN_MORE = {
 	id: 'learn-more',
 	label: 'Learn More',
@@ -100,9 +124,9 @@ const LEARN_MORE = {
 /**
  * The TypeScript 7.1 a "Use Project TypeScript" click points the TypeScript 7
  * extension at, and where it writes `js/ts.tsdk.path`:
- * - The open folder's own `node_modules/typescript`: the user settings get
- *   `node_modules/typescript`, the README's setting. The extension uses a user setting
- *   without asking, and the relative path serves every project opened later.
+ * - The open folder's own package: the user settings get its path, such as
+ *   `node_modules/typescript`. The extension uses a user setting without asking, and
+ *   the relative path serves every project opened later.
  * - Otherwise the nearest one to the file, as in a monorepo package: the workspace
  *   settings get its path from the folder. The extension asks once to allow a
  *   workspace setting.
@@ -114,9 +138,11 @@ const LEARN_MORE = {
 export function project_typescript_target(status) {
 	const root = workspace_typescript();
 	if (root && has_content_mapper_protocol(root.version)) {
-		return workspace_tsdk_set()
-			? { version: root.version, value: 'node_modules/typescript', target: 'workspace' }
-			: { version: root.version, value: 'node_modules/typescript', target: 'user' };
+		return {
+			version: root.version,
+			value: `node_modules/${root.name}`,
+			target: workspace_tsdk_set() ? 'workspace' : 'user',
+		};
 	}
 	const project = status.project;
 	if (!project || !has_content_mapper_protocol(project.version)) return undefined;
@@ -176,6 +202,17 @@ export function notice_for(status) {
 				actions: [INSTALL_TYPESCRIPT_7, LEARN_MORE],
 			};
 		case 'typescript-7-unsupported': {
+			// Writing the setting again would change nothing: the TypeScript 7 extension's
+			// version picker is what allows it.
+			if (status.workspace_tsdk_ignored) {
+				return {
+					id: 'typescript-7-unsupported',
+					severity: 'warning',
+					title: 'Fix type checking in .tsrx files',
+					message: `TypeScript 7 uses version ${status.version}. This version cannot type-check .tsrx files. The workspace settings name another compiler, which TypeScript 7 has not been allowed to use. To allow it, click Select TypeScript Version and choose Use Workspace Version. That also turns TypeScript 7 on in the workspace settings.`,
+					actions: [SELECT_TYPESCRIPT_VERSION, TURN_OFF_TYPESCRIPT_7],
+				};
+			}
 			const target = project_typescript_target(status);
 			if (target) {
 				return {
@@ -325,6 +362,9 @@ export function activate_typescript_guidance(context) {
 		const compiler = compiler_key();
 		if (compiler === last_compiler) return;
 		last_compiler = compiler;
+		// The old server's report, compared with the new setting, would look like a setting
+		// the user has not allowed, until the restart below reports.
+		supersede_running_compiler();
 		if (!typescript_7_on() || !typescript_7_server_extension()) return;
 		void vscode.commands.executeCommand(
 			typescript_7_compiler()?.scope === 'workspace'
@@ -336,6 +376,7 @@ export function activate_typescript_guidance(context) {
 	update();
 	context.subscriptions.push(
 		item,
+		on_running_compiler_reported(update),
 		vscode.window.onDidChangeActiveTextEditor(update),
 		vscode.extensions.onDidChange(() => {
 			last_compiler = compiler_key();
@@ -362,7 +403,10 @@ export function activate_typescript_guidance(context) {
 			});
 			// The version pickers: VS Code's own while it serves TypeScript files, else the
 			// TypeScript 7 extension's, which only exists when that extension is installed.
-			if (status?.kind === 'vscode' || typescript_7_server_extension()) {
+			const has_picker = notice.actions.some(
+				(action) => action.id === SELECT_TYPESCRIPT_VERSION.id,
+			);
+			if (!has_picker && (status?.kind === 'vscode' || typescript_7_server_extension())) {
 				items.push({
 					label: 'Select TypeScript Version…',
 					run: () =>
