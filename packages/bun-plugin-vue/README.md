@@ -21,8 +21,8 @@ await Bun.build({
 });
 ```
 
-The plugin compiles `.tsrx` modules with `@tsrx/vue`, runs the downstream
-`vue-jsx-vapor` transform, strips the remaining TypeScript syntax with Bun, and
+The plugin compiles `.tsrx` modules with `@tsrx/vue`, runs `vue-jsx-vapor`'s
+macros and Vapor transform, strips the remaining TypeScript syntax with Bun, and
 emits sibling-scoped `<style>` blocks (each styles its siblings and everything
 below them) as virtual CSS modules.
 
@@ -50,7 +50,11 @@ Bun's runtime resolves, has no Vapor APIs such as `template`.
 
 ## Options
 
-- `vapor`: options forwarded to `vue-jsx-vapor`.
+- `vapor`: options forwarded to `vue-jsx-vapor`. As in the Vite plugin, its macros
+  run by default (`macros: false` turns them off), their `include` and `exclude`
+  options see a module as `<file>.tsrx.tsx`, and the plugin serves the helper
+  modules they import. `defineStyle()` stylesheets must be CSS, since Bun can't
+  compile Sass, Less or Stylus.
 - `runtimeImports`: helper import mode (`'compiler'` by default, or `'direct'` for
   standalone runtime imports).
 - `platform`: optional override/fallback for the compile-time platform. Normally
