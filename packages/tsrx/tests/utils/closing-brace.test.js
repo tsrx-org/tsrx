@@ -330,7 +330,7 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
 				'3:0',
 			],
-			['{ const', TS_ERRORS.UNEXPECTED_TOKEN, '1:7'],
+			['{ const', TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, '1:7'],
 			['{ let', TS_ERRORS.STRICT_MODE_RESERVED_WORD, '1:2'],
 		];
 		const outcomes = await parse_in_worker(

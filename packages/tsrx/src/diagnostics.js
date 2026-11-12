@@ -806,6 +806,7 @@ export const TS_ERRORS = {
 	},
 
 	// Declarations
+	VARIABLE_DECLARATION_EXPECTED: { code: 'TS1134', message: 'Variable declaration expected.' },
 	VARIABLE_DECLARATION_LIST_EMPTY: {
 		code: 'TS1123',
 		message: 'Variable declaration list cannot be empty.',
@@ -907,10 +908,6 @@ export const TS_ERRORS = {
 	AWAIT_USING_OUTSIDE_ASYNC: {
 		code: 'TS2852',
 		message: 'Await using cannot appear outside of async function',
-	},
-	FOR_OF_LET: {
-		code: 'TS1134',
-		message: "The left-hand side of a for-of loop may not start with 'let'.",
 	},
 	FOR_IN_INITIALIZER: {
 		code: 'TS1189',
@@ -1109,8 +1106,6 @@ function upstream_lookup_rows() {
 		[/^Unsyntactic break$/, 'TS1105'],
 		// acorn: parseBreakContinueStatement
 		[/^Unsyntactic continue$/, 'TS1104'],
-		// acorn: parseForStatement
-		TS_ERRORS.FOR_OF_LET,
 		// acorn: parseForAfterInit
 		[/^Using declaration is not allowed in for-in loops$/, 'TS1493'],
 		// acorn: parseReturnStatement

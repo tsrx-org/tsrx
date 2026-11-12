@@ -768,7 +768,7 @@ let E;`,
 	await using a = b;
 }`,
 	},
-	{ error: TS_ERRORS.FOR_OF_LET, source: `for (let.a of b) {}` },
+	{ error: TS_ERRORS.VARIABLE_DECLARATION_EXPECTED, source: `for (let.a of b) {}` },
 	{ error: TS_ERRORS.FOR_IN_INITIALIZER, source: `for (var a = 1 in b) {}` },
 	{ error: TS_ERRORS.FOR_OF_INITIALIZER, source: `for (let a = 1 of b) {}` },
 	{ error: TS_ERRORS.MISSING_CATCH_OR_FINALLY, source: `try {}` },
