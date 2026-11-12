@@ -2,7 +2,7 @@
 
 import path from 'node:path';
 import { existsSync, statSync } from 'node:fs';
-import { findTsconfig, getExtendsChain } from 'get-tsconfig';
+import { findTsconfig, getExtendsChain, getTsconfig } from 'get-tsconfig';
 import { validate_platform } from './transform/platform.js';
 
 /**
@@ -180,4 +180,16 @@ export function resolveBuildPlatform(options = {}) {
 	}
 
 	return configured_platform ?? explicit_platform;
+}
+
+/**
+ * Read the effective `compilerOptions.jsx` of the nearest tsconfig, searching
+ * up from a source file or directory and following `extends`.
+ *
+ * @param {string} search_path
+ * @param {Map<string, any>} [cache]
+ * @returns {string | undefined}
+ */
+export function resolveTsconfigJsx(search_path, cache = new Map()) {
+	return getTsconfig(search_path, { cache })?.config.compilerOptions?.jsx;
 }
