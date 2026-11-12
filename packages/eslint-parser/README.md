@@ -68,6 +68,17 @@ The parser:
 3. Returns the ESTree AST to ESLint
 4. Allows ESLint rules to analyze TSRX-specific patterns
 
+### Dynamic Tags
+
+Rules read an element's name as a JSX name. For a dynamic tag, they get one that
+mirrors the tag's expression: `<{as}>` is the `JSXIdentifier` `as`, and
+`<{ui.Box}>` is the `JSXMemberExpression` `ui.Box`. An expression that no JSX name
+can show, such as `<{'div'}>`, `<{icons[name]}>` or `<{getTag()}>`, gets the
+synthetic name `tsrx-dynamic-tag`. The name spans the braces, and the element
+keeps `isDynamic: true`. The expression container moves to `tagExpression`, where
+rules still lint the code and scope analysis reads it, so `no-unused-vars` and
+`no-undef` see the variables it uses.
+
 ## Supported Syntax
 
 The parser supports TSRX syntax including:
