@@ -8,6 +8,20 @@ import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformanc
 /** @import { CompileDiagnosticsHarness, CompileHarness } from '../../types/index' */
 
 /**
+ * Each first-party target's `jsx.classValue`.
+ *
+ * @type {Record<string, 'text' | 'text-true' | 'text-both' | 'list'>}
+ */
+const CLASS_VALUE_KINDS = {
+	react: 'text',
+	preact: 'text-true',
+	// The shared tests compile Hono for its server renderer.
+	hono: 'text-both',
+	solid: 'list',
+	vue: 'list',
+};
+
+/**
  * @param {string} haystack
  * @param {string} needle
  * @returns {number}
@@ -84,6 +98,40 @@ function virtual_semantic_diagnostics(code, extra_options = {}) {
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] control flow followed by another output node`, () => {
+		// A code block renders one node. The parser reports the second output node and
+		// keeps the control flow before it among the setup statements, which the loose
+		// compile used to print unlowered: it threw instead of reporting the error (#197).
+		it.each([
+			['@for', '@for (const item of items) {\n\t\t<li>{item}</li>\n\t}'],
+			['@if', '@if (items.length) {\n\t\t<li>{items[0]}</li>\n\t}'],
+			[
+				'@switch',
+				'@switch (items.length) {\n\t\t@case 1: {\n\t\t\t<li>{items[0]}</li>\n\t\t}\n\t}',
+			],
+			['@try', '@try {\n\t\t<li>{items[0]}</li>\n\t} @catch (error) {\n\t\t<b />\n\t}'],
+		])('reports the fragment error after %s and keeps its body', (_directive, control_flow) => {
+			for (const source of [
+				`export function List({ items }: { items: string[] }) @{\n\t${control_flow}\n\t<p>done</p>\n}\n`,
+				`export const List = ({ items }: { items: string[] }) => @{\n\t${control_flow}\n\t<p>done</p>\n};\n`,
+				`export function List({ items }: { items: string[] }) @{\n\t<ul>@{\n\t${control_flow}\n\t<p>done</p>\n\t}</ul>\n}\n`,
+			]) {
+				const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx', {
+					loose: true,
+				});
+
+				expect(
+					errors.map((error) => [error.code, error.pos]),
+					source,
+				).toContainEqual([TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT.code, source.indexOf('<p>done')]);
+				expect(errors.filter((error) => error.type === 'fatal')).toEqual([]);
+				expect(virtual_parse_diagnostics(code), code).toEqual([]);
+				const li = source.indexOf('li>');
+				expect(mappings.some((mapping) => mapping.sourceOffsets[0] === li)).toBe(true);
+			}
+		});
+	});
+
 	describe(`[${name}] virtual code for syntax newer than ES2022`, () => {
 		it('keeps a hashbang as the first line and maps the code after it', () => {
 			const source = `#!/usr/bin/env node
@@ -253,6 +301,21 @@ export function App() @{
 			expect(virtual_parse_diagnostics(code)).toEqual([]);
 			expect(code).toContain('void <style data-tsrx-apply={theme.$class} />');
 			expect(code).toContain('void <style></style>');
+		});
+
+		it('reports a theme that applies itself instead of overflowing the stack', () => {
+			for (const options of [undefined, { loose: true }]) {
+				const { code, errors } = compile_to_volar_mappings(
+					'export const theme = <style apply={theme} />;',
+					'App.tsrx',
+					options,
+				);
+
+				expect(errors.map((error) => error.code)).toEqual([
+					DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
+				]);
+				expect(virtual_parse_diagnostics(code)).toEqual([]);
+			}
 		});
 
 		it('recovers an unclosed <style> in loose type-only compile without losing mappings', function () {
@@ -1764,7 +1827,11 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('const Inline = (props: { x: string }) => <div>{props.x}</div>;');
+			expect(code).toContain(
+				name === 'vue'
+					? 'const Inline = defineVaporComponent((props: { x: string }) => <div>{props.x}</div>);'
+					: 'const Inline = (props: { x: string }) => <div>{props.x}</div>;',
+			);
 			expect(code).not.toContain('function Inline');
 		});
 
@@ -1776,7 +1843,11 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('const Inline = function (props: { x: string })');
+			expect(code).toContain(
+				name === 'vue'
+					? 'const Inline = defineVaporComponent(function (props: { x: string })'
+					: 'const Inline = function (props: { x: string })',
+			);
 			expect(code).toContain('<div>{props.x}</div>');
 			expect(code).not.toContain('function Inline');
 		});
@@ -1803,7 +1874,7 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 
 			expect(code).toContain('menuAlt2');
 			expect(code).toContain('items.push');
-			expect(code).toContain('return children(items);');
+			expect(code).toContain('return <>{children(items)}</>;');
 		});
 
 		it('lowers expression-bodied function component props', () => {
@@ -1823,7 +1894,7 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 			expect(code).toContain('children={({ items }: { items: JSX.Element[] }) => <ul>');
 			expect(code).toContain(
 				name === 'solid'
-					? '<For each={items}>'
+					? '<For each={items} keyed={false}>'
 					: name === 'vue'
 						? '<VaporFor in={items}'
 						: '__map_iterable(items, (item, i)',
@@ -2227,6 +2298,9 @@ export function runSharedCompileTests({
 	name,
 	classAttrName,
 	generatedClassAttrName = classAttrName,
+	classJoin = CLASS_VALUE_KINDS[name] ?? null,
+	// Solid and Vue compile an authored `className` to `class`.
+	classNameAttr = name === 'solid' || name === 'vue' ? 'class' : 'className',
 }) {
 	const componentClassAttrName = name === 'react' ? 'className' : 'class';
 	const componentClassParam =
@@ -2237,8 +2311,21 @@ export function runSharedCompileTests({
 	runSharedPlatformTests({ compile, name });
 
 	runSharedComponentLoopControlFlowTests({ compile, name });
-	runSharedScopedStyleTests({ compile, name, classAttrName, generatedClassAttrName });
-	runSharedScopedStyleConformanceTests({ compile, name, classAttrName, generatedClassAttrName });
+	runSharedScopedStyleTests({
+		compile,
+		name,
+		classAttrName,
+		generatedClassAttrName,
+		classJoin,
+		classNameAttr,
+	});
+	runSharedScopedStyleConformanceTests({
+		compile,
+		name,
+		classAttrName,
+		generatedClassAttrName,
+		classJoin,
+	});
 
 	describe(`[${name}] import phases`, () => {
 		it('preserves deferred imports in compiled output', () => {
@@ -2766,7 +2853,9 @@ export function App() @{
 				'App.tsrx',
 			);
 
-			expect(code).toContain('export default defineVaporComponent(function App()');
+			// `export default function App` also binds `App` in the module.
+			expect(code).toContain('const App = defineVaporComponent(function App()');
+			expect(code).toContain('export default App;');
 			expect(code).toContain("{'Hello world'}");
 		});
 
@@ -3169,6 +3258,15 @@ break"}</p>
 			const { code } = compile('export const query = sql<Row>`select 1`;', 'App.tsrx');
 
 			expect(code).toContain('export const query = sql<Row>`select 1`;');
+		});
+
+		it('prints the type annotation of a binding pattern parameter once', () => {
+			const { code } = compile(
+				'function f([a]: A, { b }: B, [c]: C = [], ...[d]: D) {}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('function f([a]: A, { b }: B, [c]: C = [], ...[d]: D) {}');
 		});
 
 		it('preserves optional markers in tuple members and function parameters', () => {
@@ -4350,6 +4448,264 @@ export function App() @{
 				expect(code).not.toContain('== null');
 			},
 		);
+	});
+
+	describe(`[${name}] static JSX hoisting`, () => {
+		/**
+		 * Runs compiled output with JSX elements as `{ type, props }` objects
+		 * and returns what its `result` export returns. An import is a string
+		 * that names it when it is capitalized, and otherwise a function that
+		 * returns its argument; a default import is a module of the same kind.
+		 * @param {string} code
+		 * @returns {unknown}
+		 */
+		function run_result(code) {
+			const { outputText } = ts.transpileModule(code, {
+				fileName: 'App.tsx',
+				compilerOptions: {
+					jsx: ts.JsxEmit.React,
+					jsxFactory: 'h',
+					jsxFragmentFactory: 'Fragment',
+					module: ts.ModuleKind.CommonJS,
+					target: ts.ScriptTarget.ES2022,
+				},
+			});
+			/** @param {unknown} type @param {object | null} props @param {unknown[]} children */
+			const h = (type, props, ...children) => ({
+				type,
+				props: { ...props, ...(children.length ? { children } : {}) },
+			});
+			/**
+			 * @param {string} specifier
+			 * @returns {object}
+			 */
+			const require = (specifier) =>
+				new Proxy(
+					{},
+					{
+						get: (_, key) =>
+							key === '__esModule'
+								? true
+								: key === 'default'
+									? require(`${specifier}.default`)
+									: typeof key === 'string' && /^[A-Z]/.test(key)
+										? `${specifier}.${key}`
+										: (/** @type {unknown} */ value) => value,
+					},
+				);
+			const module = { exports: /** @type {Record<string, any>} */ ({}) };
+			new Function('h', 'Fragment', 'require', 'module', 'exports', outputText)(
+				h,
+				'Fragment',
+				require,
+				module,
+				module.exports,
+			);
+			return module.exports.result();
+		}
+
+		it.each([
+			[
+				'the class it is in (#204)',
+				"class Screen {\n\tstatic Tag = 'div';\n\trender() {\n\t\treturn <Screen.Tag>hello</Screen.Tag>;\n\t}\n}\nexport const result = () => new Screen().render().type;",
+				'div',
+			],
+			[
+				'the class expression it is in',
+				"const C = class Screen {\n\tstatic Tag = 'nce';\n\trender() {\n\t\treturn <Screen.Tag>hello</Screen.Tag>;\n\t}\n};\nexport const result = () => new C().render().type;",
+				'nce',
+			],
+			[
+				'this',
+				"class Screen {\n\tTag = 'span';\n\trender() {\n\t\treturn <this.Tag>hello</this.Tag>;\n\t}\n}\nexport const result = () => new Screen().render().type;",
+				'span',
+			],
+			[
+				'super',
+				"const base = { Tag: 'sup' };\nconst screen = {\n\t__proto__: base,\n\trender() {\n\t\treturn <super.Tag>hello</super.Tag>;\n\t},\n};\nexport const result = () => screen.render().type;",
+				'sup',
+			],
+			[
+				'a const declared after it',
+				"function App() {\n\treturn <div><Late>hello</Late></div>;\n}\nconst Late = 'late';\nexport const result = () => App().props.children[0].type;",
+				'late',
+			],
+			[
+				'a binding of the static block it is in',
+				"let made: any;\nclass Holder {\n\tstatic {\n\t\tconst Tag = 'sb';\n\t\tfunction App() {\n\t\t\treturn <Tag>hello</Tag>;\n\t\t}\n\t\tmade = App;\n\t}\n}\nexport const result = () => made().type;",
+				'sb',
+			],
+			[
+				'a var assigned after it',
+				"var Tag: any;\nfunction App() {\n\treturn <Tag>hello</Tag>;\n}\nTag = 'va';\nexport const result = () => App().type;",
+				'va',
+			],
+			[
+				'a let reassigned after it',
+				"let Tag: any = 'first';\nfunction App() {\n\treturn <Tag>hello</Tag>;\n}\nTag = 'second';\nexport const result = () => App().type;",
+				'second',
+			],
+			[
+				'a property assigned to a function declaration after it',
+				"function App() {\n\treturn <Menu.Item>hello</Menu.Item>;\n}\nfunction Menu() {}\nMenu.Item = 'mi';\nexport const result = () => App().type;",
+				'mi',
+			],
+			[
+				'a property assigned to a const declared before it',
+				"const Menu = (props: any) => props;\nfunction App() {\n\treturn <div><Menu.Item>hello</Menu.Item></div>;\n}\n(Menu as any).Item = 'ci';\nexport const result = () => App().props.children[0].type;",
+				'ci',
+			],
+			[
+				'a property that Object.assign gives a const declared before it',
+				"function MenuRoot(props: any) {\n\treturn props;\n}\nconst Menu = Object.assign(MenuRoot, {});\nfunction App() {\n\treturn <div><Menu.Item>hello</Menu.Item></div>;\n}\nObject.assign(Menu, { Item: 'oa' });\nexport const result = () => App().props.children[0].type;",
+				'oa',
+			],
+			[
+				'a property assigned to a class declared before it',
+				"class Menu {}\nfunction App() {\n\treturn <Menu.Item>hello</Menu.Item>;\n}\n(Menu as any).Item = 'cp';\nexport const result = () => App().type;",
+				'cp',
+			],
+			[
+				'an import alias declared after it',
+				"namespace N {\n\texport const Tag = 'ie';\n}\nfunction App() {\n\treturn <Tag>hello</Tag>;\n}\nimport Tag = N.Tag;\nexport const result = () => App().type;",
+				'ie',
+			],
+			[
+				'a const of an earlier case in its switch (#1160)',
+				"const Tag: any = 'outer';\nfunction make(k: number): any {\n\tswitch (k) {\n\t\tcase 1:\n\t\t\tconst Tag: any = 'case';\n\t\tcase 2:\n\t\t\treturn <Tag>ok</Tag>;\n\t}\n}\nexport const result = () => make(1).type;",
+				'case',
+			],
+			[
+				'the inner name of its dotted namespace (#1160)',
+				"const Foo = 'outer';\nnamespace Outer {\n\texport function Foo() {\n\t\treturn null;\n\t}\n}\nnamespace Outer.Foo {\n\texport function App() {\n\t\treturn <Foo>ok</Foo>;\n\t}\n}\nexport const result = () => Outer.Foo.App().type === Outer.Foo;",
+				true,
+			],
+			[
+				'an export of another declaration of its namespace',
+				"const Foo = 'outer';\nnamespace Outer {\n\texport function Foo() {\n\t\treturn null;\n\t}\n}\nnamespace Outer {\n\texport function App() {\n\t\treturn <Foo>ok</Foo>;\n\t}\n}\nexport const result = () => Outer.App().type === Outer.Foo;",
+				true,
+			],
+			[
+				'a middle name of its dotted namespace',
+				"const Foo = 'outer';\nnamespace Outer {\n\texport function Foo() {\n\t\treturn null;\n\t}\n}\nnamespace Outer.Foo.Bar {\n\texport function App() {\n\t\treturn <Foo>ok</Foo>;\n\t}\n}\nexport const result = () => Outer.Foo.Bar.App().type === Outer.Foo;",
+				true,
+			],
+		])(
+			'leaves JSX whose tag reads %s in place, reading it at render time',
+			(_case, source, expected) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(code).not.toContain('__static');
+				expect(run_result(code)).toBe(expected);
+			},
+		);
+
+		it('leaves the static JSX of a component inside another function in place', () => {
+			// Its statics would go to module level, which only the components a
+			// top-level statement holds outside any other function reach
+			const { code } = compile(
+				'function outer() {\n\tfunction App() {\n\t\treturn <div>hi</div>;\n\t}\n\treturn App();\n}\nexport const result = () => outer().type;',
+				'App.tsrx',
+			);
+			expect(code).not.toContain('__static');
+			expect(run_result(code)).toBe('div');
+		});
+
+		it('leaves the static JSX of a component in a namespace in place', () => {
+			// Inside a namespace body, a name can read an export of any declaration
+			// of the namespace, which module level can't see
+			const { code } = compile(
+				'namespace N {\n\texport function App() {\n\t\treturn <div>hi</div>;\n\t}\n}\nexport const result = () => N.App().type;',
+				'App.tsrx',
+			);
+			expect(code).not.toContain('__static');
+			expect(run_result(code)).toBe('div');
+		});
+
+		it.each(['_tsrx_spread_props_1', 'App__spread_props1'])(
+			'names the spread temporary of a component inside a method apart from a %s the author wrote',
+			(user_name) => {
+				const { code } = compile(
+					'export class Holder {\n' +
+						'\tmake() {\n' +
+						'\t\tfunction App(props: any) {\n' +
+						`\t\t\tconst ${user_name} = 'mine';\n` +
+						`\t\t\treturn <div {...props.rest} ref={props.r} title={${user_name}} />;\n` +
+						'\t\t}\n' +
+						'\t\treturn App;\n' +
+						'\t}\n' +
+						'}\n' +
+						'export const result = () => {\n' +
+						"\tconst element = new Holder().make()({ rest: { id: 'spread' }, r: null });\n" +
+						'\treturn [element.props.id, element.props.title];\n' +
+						'};',
+					'App.tsrx',
+				);
+				expect(run_result(code)).toEqual(['spread', 'mine']);
+			},
+		);
+
+		it.each([
+			[
+				'a const declared before it',
+				"const Tag = 'section';\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport const result = () => App().props.children[0].type;",
+				'section',
+			],
+			[
+				'a member of an import',
+				"import * as ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport const result = () => App().props.children[0].type;",
+				'./ui.Button',
+			],
+			[
+				'a member of a default import',
+				"import ui from './ui';\nfunction App() {\n\treturn <div><ui.Button>hello</ui.Button></div>;\n}\nexport const result = () => App().props.children[0].type;",
+				'./ui.default.Button',
+			],
+			[
+				'a function declared after it',
+				'function App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfunction Tag() {\n\treturn null;\n}\nexport const result = () => App().props.children[0].type === Tag;',
+				true,
+			],
+			[
+				'a class declared before it',
+				'class Box {}\nfunction App() {\n\treturn <div><Box>hello</Box></div>;\n}\nexport const result = () => App().props.children[0].type === Box;',
+				true,
+			],
+			[
+				'a re-exported import',
+				"import { Tag } from './tag';\nexport { Tag };\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport const result = () => App().props.children[0].type;",
+				'./tag.Tag',
+			],
+		])('hoists JSX whose tag reads %s', (_case, source, expected) => {
+			const { code } = compile(source, 'App.tsrx');
+			// Solid and Vue never hoist JSX with a component in it
+			if (['react', 'preact', 'hono'].includes(name)) {
+				expect(code).toContain('const App__static1 = <div>');
+			}
+			expect(run_result(code)).toBe(expected);
+		});
+
+		it('hoists an intrinsic tag that shares its name with a later binding', () => {
+			const { code } = compile(
+				'function App() {\n\treturn <div>hello</div>;\n}\nconst div = 1;\nexport const result = () => App().type;',
+				'App.tsrx',
+			);
+			expect(code).toContain('const App__static1 = <div>hello</div>;');
+			expect(run_result(code)).toBe('div');
+		});
+
+		it.each([
+			[
+				'an expression container',
+				'export function App() @{\n\t<div>{<script type="application/json">{"a":1}</script>}</div>\n}',
+			],
+			[
+				'a component prop',
+				'function Slot({ content }: { content: unknown }) {\n\treturn content;\n}\nexport function App() @{\n\t<Slot content={<script type="application/json">{"a":1}</script>} />\n}',
+			],
+		])('keeps the body of a raw script in %s of static JSX (#845)', (_case, source) => {
+			const { code } = compile(source, 'App.tsrx');
+			expect(code).toContain(`'{"a":1}'`);
+		});
 	});
 
 	describe(`[${name}] native raw HTML props`, () => {

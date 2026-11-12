@@ -213,12 +213,6 @@ export function tsx_with_ts_locations(
 			}
 			/** @type {NonNullable<typeof base.Program>} */ (base.Program)(node, context);
 		},
-		ArrayPattern: (node, context) => {
-			/** @type {NonNullable<typeof base.ArrayPattern>} */ (base.ArrayPattern)(node, context);
-			if (node.typeAnnotation) {
-				context.visit(node.typeAnnotation);
-			}
-		},
 		// esrap's tsx printer writes `<T,>` for every one-parameter list, but
 		// only an arrow needs it: TSX reads `<T>(…) => …` as a JSX tag. Other
 		// lists print as written.

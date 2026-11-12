@@ -18,6 +18,10 @@
       "types": "./types/error-boundary.d.ts",
       "default": "./src/error-boundary.js"
     },
+    "./try-body": {
+      "types": "./types/try-body.d.ts",
+      "default": "./src/try-body.js"
+    },
     "./ref": {
       "types": "./types/ref.d.ts",
       "default": "./src/ref.js"
