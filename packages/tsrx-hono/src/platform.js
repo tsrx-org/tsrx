@@ -11,6 +11,7 @@ import {
 	builders as b,
 	createJsxTransform,
 	DIAGNOSTIC_CODES,
+	ERROR_BOUNDARY_INTERNAL_NAME,
 	error,
 	extractIdentifiers,
 	findFirstTopLevelAwait,
@@ -207,14 +208,14 @@ function create_hono_error_boundary(try_content, fallback_fn, ctx, node) {
 		...fallback_fn,
 		params: fallback_fn.params.slice(0, 1),
 	});
-	const name = b.jsx_id('TsrxErrorBoundary');
+	const name = b.jsx_id(ERROR_BOUNDARY_INTERNAL_NAME);
 	const fallback_render = b.jsx_attribute(
 		b.jsx_id('fallbackRender'),
 		b.jsx_expression_container(hono_fallback_fn),
 	);
 	return b.jsx_element_fresh(
 		b.jsx_opening_element(name, [fallback_render], false),
-		b.jsx_closing_element(b.jsx_id('TsrxErrorBoundary')),
+		b.jsx_closing_element(b.jsx_id(ERROR_BOUNDARY_INTERNAL_NAME)),
 		[try_content],
 	);
 }

@@ -123,7 +123,7 @@ describe('@tsrx/preact basic', () => {
 		);
 
 		expect(code).toMatch(
-			/<Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
+			/<__Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
 		);
 	});
 
@@ -141,7 +141,7 @@ describe('@tsrx/preact basic', () => {
 		);
 
 		expect(code).not.toContain('TsrxTryBody');
-		expect(code).toMatch(/<Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
+		expect(code).toMatch(/<__Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
 	});
 
 	it('keeps a @pending body that awaits inline', () => {
@@ -157,7 +157,7 @@ describe('@tsrx/preact basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toMatch(/<Suspense fallback=\{await \(async \(\) => \{/);
+		expect(code).toMatch(/<__Suspense fallback=\{await \(async \(\) => \{/);
 	});
 
 	it('imports TsrxErrorBoundary from @tsrx/preact/error-boundary when try/catch is used', () => {

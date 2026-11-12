@@ -33,6 +33,7 @@ import {
 	collectParamBindings as collect_param_bindings,
 	collectStatementBindings as collect_statement_bindings,
 	extractJsxSetupDeclarations as extract_jsx_setup_declarations,
+	insertAfterDirectives as insert_after_directives,
 	isInterleavedBody as is_interleaved_body_core,
 	isCapturableJsxChild as is_capturable_jsx_child,
 	captureJsxChild,
@@ -2191,25 +2192,25 @@ function inject_solid_imports(program, transform_context) {
 	const ref_prop_source = transform_context.platform.imports.refProp;
 
 	if (transform_context.needs_normalize_spread_props && ref_prop_source) {
-		program.body.unshift(
+		insert_after_directives(program, [
 			b.import_declaration(
 				[b.import_specifier('normalize_spread_props', NORMALIZE_SPREAD_PROPS_INTERNAL_NAME)],
 				ref_prop_source,
 			),
-		);
+		]);
 	}
 
 	if (transform_context.needs_spread_ref_bags && ref_prop_source) {
-		program.body.unshift(
+		insert_after_directives(program, [
 			b.import_declaration(
 				[b.import_specifier('spread_ref_bags', SPREAD_REF_BAGS_INTERNAL_NAME)],
 				ref_prop_source,
 			),
-		);
+		]);
 	}
 
 	if (transform_context.needs_normalize_spread_props_for_ref_attr && ref_prop_source) {
-		program.body.unshift(
+		insert_after_directives(program, [
 			b.import_declaration(
 				[
 					b.import_specifier(
@@ -2219,25 +2220,25 @@ function inject_solid_imports(program, transform_context) {
 				],
 				ref_prop_source,
 			),
-		);
+		]);
 	}
 
 	if (transform_context.needs_merge_spread_class && ref_prop_source) {
-		program.body.unshift(
+		insert_after_directives(program, [
 			b.import_declaration(
 				[b.import_specifier('merge_spread_class', MERGE_SPREAD_CLASS_INTERNAL_NAME)],
 				ref_prop_source,
 			),
-		);
+		]);
 	}
 
 	if (transform_context.needs_join_scope_class && ref_prop_source) {
-		program.body.unshift(
+		insert_after_directives(program, [
 			b.import_declaration(
 				[b.import_specifier('join_scope_class', JOIN_SCOPE_CLASS_INTERNAL_NAME)],
 				ref_prop_source,
 			),
-		);
+		]);
 	}
 
 	const needed = [];
@@ -2259,7 +2260,7 @@ function inject_solid_imports(program, transform_context) {
 
 	if (specifiers.length === 0) return;
 
-	program.body.unshift(b.imports(specifiers, 'solid-js'));
+	insert_after_directives(program, [b.imports(specifiers, 'solid-js')]);
 }
 
 // =====================================================================

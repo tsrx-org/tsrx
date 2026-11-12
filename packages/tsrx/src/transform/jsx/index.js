@@ -857,7 +857,7 @@ export function createJsxTransform(platform) {
 			transformed_program = { ...transformed_program, body: [...transformed_program.body] };
 		}
 		if (type_only_style_anchors.length > 0) {
-			transformed_program.body.unshift(...type_only_style_anchors);
+			insert_after_directives(transformed_program, type_only_style_anchors);
 		}
 		let expanded = expand_component_helpers(transformed_program);
 		if (transform_context.has_local_helpers) {
@@ -1074,17 +1074,46 @@ function lower_dynamic_jsx_element(node, transform_context) {
 function inject_dynamic_import(program, transform_context) {
 	const factory = transform_context.platform.imports.dynamicFactory;
 	if (transform_context.needs_dynamic_factory && factory?.name && factory.source) {
-		program.body.unshift(
+		insert_after_directives(program, [
 			b.import_declaration(
 				[b.import_specifier(factory.name, DYNAMIC_FACTORY_LOCAL)],
 				factory.source,
 			),
-		);
+		]);
 	}
 	const source = transform_context.platform.imports.dynamic;
 	if (!transform_context.needs_dynamic_element || !source) return;
-	program.body.unshift(
+	insert_after_directives(program, [
 		b.import_declaration([b.import_specifier('Dynamic', DYNAMIC_IMPORT_LOCAL)], source),
+	]);
+}
+
+/**
+ * Insert generated top-level statements ahead of the module's own code but
+ * after its directive prologue. A statement above `'use client'` (or any
+ * other directive) turns the directive into a plain expression.
+ *
+ * @param {AST.Program} program
+ * @param {AST.Program['body']} statements
+ * @returns {void}
+ */
+export function insert_after_directives(program, statements) {
+	let index = 0;
+	while (index < program.body.length && is_directive_statement(program.body[index])) {
+		index += 1;
+	}
+	program.body.splice(index, 0, ...statements);
+}
+
+/**
+ * @param {AST.Program['body'][number]} statement
+ * @returns {boolean}
+ */
+function is_directive_statement(statement) {
+	return (
+		statement.type === 'ExpressionStatement' &&
+		statement.expression.type === 'Literal' &&
+		typeof statement.expression.value === 'string'
 	);
 }
 
@@ -5703,7 +5732,7 @@ function is_key_attribute(attr) {
  * @returns {AST.TSRXJSXElement}
  */
 function keyed_fragment(children, loop_key) {
-	const name = b.jsx_id('Fragment');
+	const name = b.jsx_id(FRAGMENT_INTERNAL_NAME);
 
 	return b.jsx_element_fresh(
 		b.jsx_opening_element(name, [create_loop_key_attribute(loop_key)]),
@@ -5822,7 +5851,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 				transform_context,
 			);
 			result = create_jsx_element(
-				'Suspense',
+				SUSPENSE_INTERNAL_NAME,
 				[b.jsx_attribute(fallback_name, fallback_content)],
 				[result],
 			);
@@ -5908,7 +5937,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 				transform_context,
 			);
 			result = create_jsx_element(
-				'TsrxErrorBoundary',
+				ERROR_BOUNDARY_INTERNAL_NAME,
 				[
 					b.jsx_attribute(fallback_name, to_jsx_expression_container(fallback_fn)),
 					...(boundary_content
@@ -6047,19 +6076,12 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	/** @type {AST.ImportDeclaration[]} */
 	const imports = [];
 
-	if (
-		transform_context.needs_fragment &&
-		platform.imports.fragment &&
-		!has_named_value_import(program, platform.imports.fragment, 'Fragment')
-	) {
-		imports.push(b.imports([['Fragment', 'Fragment']], platform.imports.fragment));
+	if (transform_context.needs_fragment && platform.imports.fragment) {
+		imports.push(b.imports([['Fragment', FRAGMENT_INTERNAL_NAME]], platform.imports.fragment));
 	}
 
-	if (
-		transform_context.needs_suspense &&
-		!has_named_value_import(program, suspense_source, 'Suspense')
-	) {
-		imports.push(b.imports([['Suspense', 'Suspense']], suspense_source));
+	if (transform_context.needs_suspense) {
+		imports.push(b.imports([['Suspense', SUSPENSE_INTERNAL_NAME]], suspense_source));
 	}
 
 	if (
@@ -6078,7 +6100,10 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 
 	if (transform_context.needs_error_boundary) {
 		imports.push(
-			b.imports([['TsrxErrorBoundary', 'TsrxErrorBoundary']], platform.imports.errorBoundary),
+			b.imports(
+				[['TsrxErrorBoundary', ERROR_BOUNDARY_INTERNAL_NAME]],
+				platform.imports.errorBoundary,
+			),
 		);
 	}
 
@@ -6171,35 +6196,8 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	}
 
 	if (imports.length > 0) {
-		program.body.unshift(...imports);
+		insert_after_directives(program, imports);
 	}
-}
-
-/**
- * Whether the module already imports the value `name` from `source` under the
- * same local name, which the generated JSX can use as is. Injecting it again
- * would declare the binding twice.
- *
- * @param {AST.Program} program
- * @param {string} source
- * @param {string} name
- * @returns {boolean}
- */
-function has_named_value_import(program, source, name) {
-	return program.body.some(
-		(statement) =>
-			statement.type === 'ImportDeclaration' &&
-			statement.source.value === source &&
-			statement.importKind !== 'type' &&
-			statement.specifiers.some(
-				(specifier) =>
-					specifier.type === 'ImportSpecifier' &&
-					specifier.importKind !== 'type' &&
-					specifier.imported.type === 'Identifier' &&
-					specifier.imported.name === name &&
-					specifier.local.name === name,
-			),
-	);
 }
 
 /**
@@ -6912,6 +6910,15 @@ export const NORMALIZE_SPREAD_PROPS_INTERNAL_NAME = '__normalize_spread_props';
 export const NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME =
 	'__normalize_spread_props_for_ref_attr';
 export const SPREAD_REF_BAGS_INTERNAL_NAME = '__spread_ref_bags';
+/**
+ * Local aliases for the components the transform imports itself: `Suspense`
+ * for `@pending`, `TsrxErrorBoundary` for `@catch`, and `Fragment` for keyed
+ * fragment rows. An authored binding of the public name, imported or local,
+ * then neither collides with the import nor replaces the generated element.
+ */
+export const SUSPENSE_INTERNAL_NAME = '__Suspense';
+export const ERROR_BOUNDARY_INTERNAL_NAME = '__TsrxErrorBoundary';
+export const FRAGMENT_INTERNAL_NAME = '__Fragment';
 /**
  * Point a generated node at the DIRECTIVE KEYWORD that produced it.
  *
