@@ -833,6 +833,45 @@ function end_after_parentheses(input, node) {
 	return end;
 }
 
+/**
+ * Whether `node` is a function declaration, or an overload's signature.
+ * @param {AST.Node} node
+ */
+function is_function_declaration(node) {
+	return node.type === 'FunctionDeclaration' || node.type === 'TSDeclareFunction';
+}
+
+/**
+ * Whether TypeScript's binder takes the expression of a default export or
+ * `export =` for an alias of what it names (`exportAssignmentIsAlias`): a name,
+ * a property of one (`a.b`, `a?.b`), or a class. TypeScript reads parentheses
+ * as a node of their own, so a parenthesized name isn't one.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_alias_expression(node) {
+	return (
+		(node.type === 'ClassExpression' && !node.metadata?.parenthesized) ||
+		is_entity_name_expression(node)
+	);
+}
+
+/**
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_entity_name_expression(node) {
+	if (node.metadata?.parenthesized) return false;
+	if (node.type === 'Identifier') return true;
+	if (node.type === 'ChainExpression') return is_entity_name_expression(node.expression);
+	return (
+		node.type === 'MemberExpression' &&
+		!node.computed &&
+		node.property.type === 'Identifier' &&
+		is_entity_name_expression(node.object)
+	);
+}
+
 /** @type {WeakMap<Record<string, boolean>, Map<string, number>>} */
 const argument_clash_first_positions = new WeakMap();
 /** @type {WeakMap<Record<string, boolean>, Set<string>>} */
@@ -4900,130 +4939,169 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Report the exports of the module that TypeScript's binder declares
-			 * twice: a name that two export specifiers or `export * as` export, TS2300
-			 * `Duplicate identifier '…'.`, and a default export that can't merge with
-			 * an earlier one, TS2528 `A module cannot have multiple default exports.`,
-			 * as `export default 1; export default 2;` (#882). acorn-typescript turned
-			 * acorn's check off, since TypeScript merges some declarations of a name.
-			 * Like TypeScript's binder, this goes through the exports in order, and a
-			 * declaration that can't share the symbol of the name with the ones before
-			 * it reports each of them and itself, at its name, or at `export`. They
-			 * are checker errors: a strict parse throws the first, and a collecting one
-			 * records them.
+			 * Report the exports that TypeScript's binder declares twice, in the module
+			 * and in each namespace or ambient module, whose exports are its own: a
+			 * name that two export specifiers, `export * as` or `export =` export,
+			 * TS2300 `Duplicate identifier '…'.`, and a default export that can't merge
+			 * with an earlier one, TS2528 `A module cannot have multiple default
+			 * exports.`, as `export default 1; export default 2;` (#882, #1161).
+			 * acorn-typescript turned acorn's check off, since TypeScript merges some
+			 * declarations of a name. They are checker errors: a strict parse throws
+			 * the first, and a collecting one records them.
 			 * @param {AST.Program} program
 			 */
 			#reportDuplicateExports(program) {
-				/** @type {Map<string, { flags: number, declarations: number[] }>} */
-				const symbols = new Map();
 				/** @type {Array<{ position: number, error: Diagnostic }>} */
 				const found = [];
-				/** @type {Set<number>} */
+				this.#findDuplicateExports(program.body, found);
+				found.sort((a, b) => a.position - b.position);
+				for (const { position, error } of found) {
+					if (!this.#collect) this.#throwError(position, error);
+					this.#recordCheckerLevelError(position, position + 1, error);
+				}
+			}
+
+			/**
+			 * Add to `found` the exports of `body`, a module's or a namespace's
+			 * statements, that TypeScript's binder declares twice, and those of each
+			 * namespace in it. Like the binder, this declares the function declarations
+			 * first, then the other statements in order. A declaration that can't share
+			 * the symbol of its name with the ones before it reports each of them and
+			 * itself, at its name, or at `export`: TS2528 when it's a default export
+			 * (not `export * as default`), and otherwise TS2300, with each one's name as
+			 * written. A declaration reports a message once.
+			 * @param {AST.Node[]} body
+			 * @param {Array<{ position: number, error: Diagnostic }>} found
+			 */
+			#findDuplicateExports(body, found) {
+				/** @type {Map<string, { flags: number, declarations: Array<{ position: number, name: string }> }>} */
+				const symbols = new Map();
+				/** @type {Set<string>} */
 				const reported = new Set();
 				/**
-				 * @param {string} name
+				 * @param {string} key The name it declares: `default` for a default
+				 *   export, `export=` for `export =`
+				 * @param {string} name The name as written, for TS2300
 				 * @param {number} position
 				 * @param {number} includes
 				 * @param {number} excludes
+				 * @param {boolean} default_export
 				 */
-				const declare = (name, position, includes, excludes) => {
-					const symbol = symbols.get(name);
+				const declare = (key, name, position, includes, excludes, default_export) => {
+					const declaration = { position, name };
+					const symbol = symbols.get(key);
 					if (!symbol) {
-						symbols.set(name, { flags: includes, declarations: [position] });
+						symbols.set(key, { flags: includes, declarations: [declaration] });
 						return;
 					}
 					if ((symbol.flags & excludes) === 0) {
 						symbol.flags |= includes;
-						symbol.declarations.push(position);
+						symbol.declarations.push(declaration);
 						return;
 					}
-					const error =
-						name === 'default'
+					for (const other of [...symbol.declarations, declaration]) {
+						const error = default_export
 							? TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS
-							: TS_ERRORS.DUPLICATE_IDENTIFIER(name);
-					for (const at of [...symbol.declarations, position]) {
-						if (reported.has(at)) continue;
-						reported.add(at);
-						found.push({ position: at, error });
+							: TS_ERRORS.DUPLICATE_IDENTIFIER(other.name);
+						const id = `${other.position} ${error.message}`;
+						if (reported.has(id)) continue;
+						reported.add(id);
+						found.push({ position: other.position, error });
 					}
 				};
-				/** @param {AST.Identifier | AST.Literal} name */
-				const name_of = (name) =>
-					name.type === 'Identifier'
-						? name.name
-						: this.input.slice(/** @type {number} */ (name.start), name.end);
-				for (const statement of program.body) {
+				/**
+				 * The name an export specifier or `export * as` exports. A string name is
+				 * the name it spells.
+				 * @param {AST.Identifier | AST.Literal} exported
+				 * @param {boolean} specifier Whether an export specifier exports it, which
+				 *   as `default` is a default export
+				 */
+				const declare_alias = (exported, specifier) => {
+					const start = /** @type {number} */ (exported.start);
+					const key = exported.type === 'Identifier' ? exported.name : String(exported.value);
+					const name = this.input.slice(start, exported.end);
+					declare(key, name, start, SYMBOL_ALIAS, SYMBOL_ALIAS, specifier && key === 'default');
+				};
+				/**
+				 * The expression of a default export or `export =`, which can't share its
+				 * symbol: an alias when it's a name or a class (see `is_alias_expression`),
+				 * reported at a name, and otherwise at `export`.
+				 * @param {string} key
+				 * @param {AST.Node} statement
+				 * @param {AST.Node} expression
+				 */
+				const declare_expression = (key, statement, expression) => {
+					const named = expression.type === 'Identifier' && !expression.metadata?.parenthesized;
+					declare(
+						key,
+						key,
+						/** @type {number} */ ((named ? expression : statement).start),
+						is_alias_expression(expression) ? SYMBOL_ALIAS : SYMBOL_PROPERTY,
+						~0,
+						key === 'default',
+					);
+				};
+				/** @param {AST.Node} statement */
+				const declare_statement = (statement) => {
 					if (statement.type === 'ExportDefaultDeclaration') {
 						const declaration = /** @type {AST.Node} */ (statement.declaration);
 						const id = /** @type {{ id?: AST.Identifier | null }} */ (declaration).id;
 						const at = /** @type {number} */ ((id ?? statement).start);
-						if (
-							declaration.type === 'FunctionDeclaration' ||
-							declaration.type === 'TSDeclareFunction'
-						) {
+						if (is_function_declaration(declaration)) {
 							declare(
+								'default',
 								'default',
 								at,
 								SYMBOL_FUNCTION,
 								SYMBOL_VALUE & ~(SYMBOL_FUNCTION | SYMBOL_VALUE_MODULE | SYMBOL_CLASS),
+								true,
 							);
 						} else if (declaration.type === 'ClassDeclaration') {
 							declare(
+								'default',
 								'default',
 								at,
 								SYMBOL_CLASS,
 								(SYMBOL_VALUE | SYMBOL_TYPE) &
 									~(SYMBOL_VALUE_MODULE | SYMBOL_INTERFACE | SYMBOL_FUNCTION),
+								true,
 							);
 						} else if (declaration.type === 'TSInterfaceDeclaration') {
 							declare(
 								'default',
+								'default',
 								at,
 								SYMBOL_INTERFACE,
 								SYMBOL_TYPE & ~(SYMBOL_INTERFACE | SYMBOL_CLASS),
+								true,
 							);
 						} else {
-							// An expression, an alias when it's a name, which TypeScript reports at
-							// the name.
-							let expression = declaration;
-							while (expression.type === 'MemberExpression' && !expression.computed) {
-								expression = expression.object;
-							}
-							const alias = expression.type === 'Identifier';
-							declare(
-								'default',
-								/** @type {number} */ (
-									(declaration.type === 'Identifier' ? declaration : statement).start
-								),
-								alias ? SYMBOL_ALIAS : SYMBOL_PROPERTY,
-								~0,
-							);
+							declare_expression('default', statement, declaration);
 						}
+					} else if (statement.type === 'TSExportAssignment') {
+						declare_expression('export=', statement, statement.expression);
 					} else if (statement.type === 'ExportNamedDeclaration' && !statement.declaration) {
 						for (const specifier of statement.specifiers) {
-							const exported = /** @type {AST.Identifier | AST.Literal} */ (specifier.exported);
-							declare(
-								name_of(exported),
-								/** @type {number} */ (exported.start),
-								SYMBOL_ALIAS,
-								SYMBOL_ALIAS,
-							);
+							declare_alias(/** @type {AST.Identifier | AST.Literal} */ (specifier.exported), true);
 						}
 					} else if (statement.type === 'ExportAllDeclaration' && statement.exported) {
-						const exported = /** @type {AST.Identifier | AST.Literal} */ (statement.exported);
-						declare(
-							name_of(exported),
-							/** @type {number} */ (exported.start),
-							SYMBOL_ALIAS,
-							SYMBOL_ALIAS,
-						);
+						declare_alias(/** @type {AST.Identifier | AST.Literal} */ (statement.exported), false);
 					}
+				};
+				/** @param {AST.Node} statement */
+				const exports_function = (statement) =>
+					statement.type === 'ExportDefaultDeclaration' &&
+					is_function_declaration(/** @type {AST.Node} */ (statement.declaration));
+				for (const statement of body) {
+					if (exports_function(statement)) declare_statement(statement);
 				}
-				found.sort((a, b) => a.position - b.position);
-				for (const { position, error } of found) {
-					const end = position + 1;
-					if (!this.#collect) this.#throwError(position, error);
-					this.#recordCheckerLevelError(position, end, error);
+				for (const statement of body) {
+					if (!exports_function(statement)) declare_statement(statement);
+					/** @type {AST.Node | null | undefined} */
+					let module =
+						statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+					while (module?.type === 'TSModuleDeclaration') module = module.body;
+					if (module?.type === 'TSModuleBlock') this.#findDuplicateExports(module.body, found);
 				}
 			}
 
@@ -11776,10 +11854,15 @@ export function TSRXPlugin(config) {
 				}
 				this.next();
 				const has_clause = this.type !== tt.string;
+				// Named bindings or a namespace import follow a default import, which
+				// `{}` leaves no specifier for.
+				let bindings_after_default = false;
 				if (!has_clause) {
 					node.specifiers = [];
 					node.source = /** @type {AST.Literal} */ (this.parseExprAtom());
 				} else {
+					bindings_after_default =
+						tokenIsIdentifier(this.type) && this.lookahead().type === tt.comma;
 					node.specifiers = this.parseImportSpecifiers();
 					this.expectContextual('from');
 					if (this.type === tt.string) {
@@ -11819,14 +11902,10 @@ export function TSRXPlugin(config) {
 					) {
 						this.#raiseCheckerError(phase_start, TS_ERRORS.IMPORT_SOURCE_NAMED);
 					}
-				} else if (
-					node.importKind === 'type' &&
-					node.specifiers.length > 1 &&
-					node.specifiers[0].type === 'ImportDefaultSpecifier'
-				) {
+				} else if (node.importKind === 'type' && bindings_after_default) {
 					// TypeScript's checker error for `import type a, { b } from "m"`, at
-					// `type` (#881). acorn-typescript's `parseImport`, which this replaces,
-					// raised it.
+					// `type` (#881), and for `import type a, {} from "m"` (#1161).
+					// acorn-typescript's `parseImport`, which this replaces, raised it.
 					this.#raiseCheckerError(type_start, TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED);
 				}
 				this.parseMaybeImportAttributes(node);

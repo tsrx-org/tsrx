@@ -10623,13 +10623,22 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			match: { type: 'ExportDefaultDeclaration', declaration: { value: 2 } },
 		},
 		{
-			// At the name of a declaration or of an exported name.
+			// At the name of a declaration or of an exported name. The function comes
+			// first, so `export { b as default }` merges with it (#1161).
 			source: 'export default a;\nlet b;\nexport { b as default };\nexport default function f() {}',
 			errors: [
 				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'a;'],
-				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'default }'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'f() {}'],
 			],
 			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '1:15'],
+		},
+		{
+			source: 'let a, b;\nexport { a as default };\nexport { b as default };',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'default };\nexport'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'default };'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '2:14'],
 		},
 		{
 			source: 'let a, c;\nexport { a as b, c as b };\nexport * as b from "m";',
@@ -10645,6 +10654,68 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				specifiers: [{ exported: { name: 'b' } }, { exported: { name: 'b' } }],
 			},
 		},
+		// `export =` declares the name `export=` (#1161).
+		{
+			source: 'let x = 1, y = 2;\nexport = x;\nexport = y;',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'x;'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'y;'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '2:9'],
+		},
+		// A string name is the name it spells.
+		{
+			source: 'let a = 1, c = 2;\nexport { a as "b" };\nexport { c as b };',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, '"b"'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'b };'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '2:14'],
+		},
+		// `export * as default` exports a name, which isn't a default export.
+		{
+			source: 'export * as default from "m";\nexport * as default from "n";',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'default from "m"'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'default from "n"'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:12'],
+		},
+		// TypeScript's binder declares a function before the other statements.
+		{
+			source: 'declare const x: unknown;\nexport default x;\nexport default function f() {}',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'x;'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'f()'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '2:15'],
+		},
+		// A parenthesized name is an expression to TypeScript, reported at `export`.
+		{
+			source: 'let a = 1, c = 1;\nexport default (a);\nexport default c;',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default (a)'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'c;'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '2:0'],
+		},
+		// Each namespace and ambient module has exports of its own.
+		{
+			source: 'declare namespace N { const a: number; export { a }; export { a }; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a }; export'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a }; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:48'],
+		},
+		{
+			source: 'declare module "m" {\n\texport default 1;\n\texport default 2;\n}',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 1'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 2'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '2:1'],
+		},
 		// A type-only import with a default and named bindings (#881).
 		{
 			source: "import type a, { b } from 'a';",
@@ -10656,6 +10727,14 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				importKind: 'type',
 				specifiers: [{ type: 'ImportDefaultSpecifier' }, { type: 'ImportSpecifier' }],
 			},
+		},
+		{
+			// Empty named bindings too (#1161).
+			source: "import type a, {} from 'a';",
+			errors: [[TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, 'type a']],
+			throws: [TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, '1:7'],
+			pick: first,
+			match: { type: 'ImportDeclaration', specifiers: [{ type: 'ImportDefaultSpecifier' }] },
 		},
 		// `import type` on an import alias, at the declaration (#785).
 		{
@@ -12634,6 +12713,66 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	it('names the property of `import.<name>` without its escapes, as TypeScript does', () => {
 		expect(() => parseModule('import.f\\u006fo();', 'App.tsrx')).toThrow(
 			"'foo' is not a valid meta-property for keyword 'import'.",
+		);
+	});
+
+	it('reports a duplicate export as TypeScript names it, once for each conflict', () => {
+		// Each declaration by its name as written, a string name in its quotes.
+		// The third export conflicts with the first as a default export, after the
+		// second conflicted with it as a name (#1161).
+		/** @type {Array<[source: string, errors: Array<[message: string, at: string]>]>} */
+		const cases = [
+			[
+				"let a = 1, c = 2;\nexport { a as 'b' };\nexport { c as b };",
+				[
+					["Duplicate identifier ''b''.", "'b'"],
+					["Duplicate identifier 'b'.", 'b };'],
+				],
+			],
+			[
+				'let x = 1;\nexport { x as default };\nexport * as default from "m";\nexport default 1;',
+				[
+					["Duplicate identifier 'default'.", 'default };'],
+					['A module cannot have multiple default exports.', 'default };'],
+					["Duplicate identifier 'default'.", 'default from'],
+					['A module cannot have multiple default exports.', 'export default 1'],
+				],
+			],
+		];
+		for (const [source, expected] of cases) {
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'a.ts', { collect: true, errors });
+			expect(
+				errors.map(({ message, pos }, i) => [
+					message,
+					source.slice(pos, (pos ?? 0) + (expected[i]?.[1].length ?? 0)),
+				]),
+				source,
+			).toEqual(expected);
+		}
+	});
+
+	it("leaves to TypeScript's checker the duplicate exports its binder allows", async () => {
+		// A default export of an expression that isn't a name (TS2323 from the
+		// checker), and a name that a function declaration exports too.
+		const sources = [
+			'let a = 1, c = 1;\nexport default (a);\nexport { c as default };',
+			'let a = { b: 1 }, c = 1;\nexport default a!.b;\nexport { c as default };',
+			'export default 1;\nexport * as default from "m";',
+			'export * as default from "m";\nexport default function f() {}',
+		];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) =>
+				[undefined, ...collect_modes].map((options) => ({ source, options })),
+			),
+		);
+
+		expect(outcomes).toEqual(
+			sources.flatMap(() => [
+				{ ok: true, errors: undefined },
+				...collect_modes.map(() => ({ ok: true, errors: [] })),
+			]),
 		);
 	});
 
