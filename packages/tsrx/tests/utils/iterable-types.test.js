@@ -3,6 +3,7 @@ import { check_types } from '../shared/type-diagnostics.js';
 
 const IMPORT = `import {
 	type IterationValue,
+	iterable_to_array,
 	map_iterable,
 	map_iterable_async,
 } from '../tsrx-runtime/types/iterable.js';`;
@@ -43,6 +44,18 @@ describe('iterable helper types', () => {
 		expect(types.fromUnion).toBe('(string | number)[]');
 		expect(types.fromMixed).toBe('(string | boolean)[]');
 		expect(types.settled).toBe('(string | number)[]');
+	});
+
+	it('types iterable_to_array as an array of the source items', () => {
+		const { errors, types } = check_types(`${IMPORT}
+			declare const items: string[] | number[];
+			const fromSet = iterable_to_array(new Set<string>());
+			const fromUnion = iterable_to_array(items);
+		`);
+
+		expect(errors).toEqual([]);
+		expect(types.fromSet).toBe('string[]');
+		expect(types.fromUnion).toBe('(string | number)[]');
 	});
 
 	it('resolves the async helper to the settled item array', () => {

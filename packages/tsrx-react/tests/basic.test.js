@@ -4,6 +4,7 @@ import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedAnonymousComponentTests,
+	runSharedArrayRefTests,
 	runSharedCatchErrorTypeTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -66,6 +67,12 @@ runSharedCatchErrorTypeTests({
 	jsx_import_source: 'react',
 });
 runSharedCodeBlockChildrenTests({ compile, name: 'react' });
+runSharedArrayRefTests({
+	compile,
+	compile_to_volar_mappings,
+	name: 'react',
+	merge: 'merge_element_refs',
+});
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'react' });
 runSharedAnonymousComponentTests({ compile, name: 'react' });
 
@@ -1115,7 +1122,7 @@ describe('@tsrx/react basic', () => {
 			`function TodoList({ items }: { items: { text: string }[] }) @{
 				<ul>
 					@{
-						var a = 3 < 4;
+						const a = 3 < 4;
 					}
 				</ul>
 			}`,
@@ -1124,7 +1131,7 @@ describe('@tsrx/react basic', () => {
 
 		expect(code).toContain('function TodoList');
 		expect(code).toContain('return <ul>{(() => {');
-		expect(code).toContain('var a = 3 < 4;');
+		expect(code).toContain('const a = 3 < 4;');
 		expect(code).toContain('return null;');
 	});
 

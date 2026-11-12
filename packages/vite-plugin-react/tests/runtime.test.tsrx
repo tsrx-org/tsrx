@@ -9,10 +9,13 @@ import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/scrip
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
 import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
+import { runArrayRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-ref';
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
 import { runStaticContainersRuntimeTests } from '@tsrx/core/test-harness/runtime/static-containers';
 import { StaticContainers } from '@tsrx/core/test-harness/runtime/static-containers-components.tsrx';
+import { runAssignedImportMemberRuntimeTests } from '@tsrx/core/test-harness/runtime/assigned-import-member';
+import { AssignedImportMember } from '@tsrx/core/test-harness/runtime/assigned-import-member-components.tsrx';
 import { runGeneratedImportBindingsRuntimeTests } from '@tsrx/core/test-harness/runtime/generated-import-bindings';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
@@ -886,6 +889,22 @@ function SpreadRefListRenderApp() @{
 			{count}
 		</button>
 		<button className="ref-list-replace" onClick={() => setReplaced(true)}>
+			{'replace'}
+		</button>
+	</>
+}
+
+function ArrayRefRenderApp() @{
+	const [count, setCount] = useState(0);
+	const [replaced, setReplaced] = useState(false);
+	const last_ref = replaced ? bag_replaced_ref : bag_second_ref;
+
+	<>
+		<input className="inline-ref-list" data-count={count} ref={[bag_first_ref, last_ref]} />
+		<button className="inline-ref-list-rerender" onClick={() => setCount(count + 1)}>
+			{count}
+		</button>
+		<button className="inline-ref-list-replace" onClick={() => setReplaced(true)}>
 			{'replace'}
 		</button>
 	</>
@@ -1986,6 +2005,26 @@ describe('tsrx-react runtime', () => {
 		]);
 	});
 
+	it('applies an inline ref list again only when one of its refs changes', async () => {
+		spread_ref_render_log.length = 0;
+		await render(ArrayRefRenderApp);
+		expect(spread_ref_render_log).toEqual(['bag-first:attach', 'bag-second:attach']);
+
+		spread_ref_render_log.length = 0;
+		await click('.inline-ref-list-rerender');
+		await click('.inline-ref-list-rerender');
+		expect(container.querySelector('.inline-ref-list')!.getAttribute('data-count')).toBe('2');
+		expect(spread_ref_render_log).toEqual([]);
+
+		await click('.inline-ref-list-replace');
+		expect(spread_ref_render_log).toEqual([
+			'bag-first:detach',
+			'bag-second:detach',
+			'bag-first:attach',
+			'bag-replaced:attach',
+		]);
+	});
+
 	it("keeps each element's ref cleanups when elements share a bag", async () => {
 		shared_bag_log.length = 0;
 		await render(SharedRefBagApp);
@@ -2684,7 +2723,9 @@ runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
 runArraySpreadRefRuntimeTests();
+runArrayRefRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();
 runStaticContainersRuntimeTests({ Host: StaticContainersHost, click });
+runAssignedImportMemberRuntimeTests({ AssignedImportMember });
 runGeneratedImportBindingsRuntimeTests();

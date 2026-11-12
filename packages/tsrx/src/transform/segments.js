@@ -714,6 +714,111 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map the start and the end of a node as the two points of one mapping, for
+	 * diagnostics only. Volar maps a range only when both of its ends fall in one
+	 * mapping, and points have no length, so a range inside the node still maps
+	 * through its own tokens.
+	 * @param {AST.Node} node
+	 * @param {string} start_text The text the node starts with.
+	 * @returns {CodeMapping | undefined}
+	 */
+	function push_points_mapping(node, start_text) {
+		if (!has_location(node)) return;
+		const mapping = declaration_mapping(node, start_text);
+		if (!mapping) return;
+		const generated_start = mapping.generatedOffsets[0];
+		mapping.sourceOffsets = [node.start, node.end];
+		mapping.generatedOffsets = [generated_start, generated_start + mapping.generatedLengths[0]];
+		mapping.lengths = [0, 0];
+		mapping.generatedLengths = [0, 0];
+		mappings.push(mapping);
+		return mapping;
+	}
+
+	/**
+	 * Map a literal for errors TypeScript reports on all of it (TS2344 on the
+	 * `{}` of `g<{}>()`, TS2322 on the `[]` of `[ {}, [] ]`), which the printer
+	 * respaces. A mapping over the whole literal would also map every position
+	 * inside it by offset, which is wrong wherever the printed text differs,
+	 * for example after a comment the printer leaves out. Instead:
+	 *
+	 * - Its start and its end are the two points of one diagnostics-only
+	 *   mapping (see {@link push_points_mapping}).
+	 * - Its brackets are mapped with no Volar feature at all. The TypeScript 7
+	 *   content mapper drops points, which have no length, but turns any
+	 *   mapping into a span that places diagnostics, and joins a span without
+	 *   features to its neighbours. Volar ignores a mapping without features;
+	 *   with diagnostics on, a bracket's end would also catch a range that
+	 *   starts right after it.
+	 * @param {AST.Node} node
+	 * @param {string} open
+	 * @param {string} close
+	 * @returns {void}
+	 */
+	function push_literal_mappings(node, open, close) {
+		if (!has_location(node)) return;
+		if (!push_points_mapping(node, open)) return;
+		const opening = find_source_token(source_tokens, open, node.start, 'after');
+		const closing = find_source_token(source_tokens, close, node.end, 'before');
+		if (opening?.start !== node.start || closing?.end !== node.end) return;
+		push_position_only_token(opening, open);
+		push_position_only_token(closing, close);
+	}
+
+	/**
+	 * Map a source token where the printer writes it, with no Volar feature, as
+	 * a place for TypeScript 7 diagnostics (see {@link push_literal_mappings}).
+	 * @param {Parse.Token} token
+	 * @param {string} text
+	 * @returns {void}
+	 */
+	function push_position_only_token(token, text) {
+		if (!token.loc || generated_offset_for_text(token.loc.start, text) === undefined) return;
+		tokens.push({ source: text, generated: text, loc: token.loc, metadata: {}, mappingData: {} });
+	}
+
+	/**
+	 * Map a statement TypeScript reports on as a whole (TS7027 on an unreachable
+	 * `break;`) like a literal: its start and its end, `;` included, as the
+	 * points of one diagnostics-only mapping, and its keyword for TypeScript 7.
+	 * Separate token mappings for the keyword and the `;` would lose to a mapping
+	 * around the statement, such as an arrow function's, which holds both ends
+	 * and maps them by offset.
+	 * @param {AST.Node} node
+	 * @param {string} keyword
+	 * @returns {void}
+	 */
+	function push_statement_mappings(node, keyword) {
+		if (!has_location(node)) return;
+		const mapping = push_points_mapping(node, keyword);
+		if (!mapping) return;
+		if (source[node.end - 1] !== ';' && generated_code[mapping.generatedOffsets[1]] === ';') {
+			mapping.generatedOffsets[1]++;
+		}
+		const token = find_source_token(source_tokens, keyword, node.start, 'after');
+		if (token && token.start === node.start) push_position_only_token(token, keyword);
+	}
+
+	/**
+	 * Map a type member TypeScript reports on as a whole (TS2374 on a duplicate
+	 * index signature) the same way: its start and its end as the points of one
+	 * diagnostics-only mapping, and its first token for TypeScript 7. The printer
+	 * writes a `;` after each member, which TypeScript counts in the member.
+	 * @param {AST.Node} node
+	 * @returns {void}
+	 */
+	function push_member_mappings(node) {
+		if (!has_location(node)) return;
+		const first = source_tokens?.find((token) => token.start === node.start);
+		if (!first) return;
+		const text = source.slice(first.start, first.end);
+		const mapping = push_points_mapping(node, text);
+		if (!mapping) return;
+		if (generated_code[mapping.generatedOffsets[1]] === ';') mapping.generatedOffsets[1]++;
+		push_position_only_token(first, text);
+	}
+
+	/**
 	 * Map the first `text` token at or after `from` that lies inside `node`.
 	 * @param {string} text
 	 * @param {number} from
@@ -724,6 +829,33 @@ export function convert_source_map_to_mappings(
 		const keyword = find_source_token(source_tokens, text, from, 'after');
 		if (keyword?.loc && keyword.start < node.end) {
 			tokens.push({ source: text, generated: text, loc: keyword.loc, metadata: {} });
+		}
+	}
+
+	/**
+	 * TypeScript reports some errors on a whole statement, up to its `;` (TS7027
+	 * on unreachable code), and Volar drops a diagnostic whose end no mapping
+	 * covers. Map the `;` the printer writes after a statement: an authored one
+	 * to itself, and one the printer adds to the end of the statement.
+	 * @param {AST.Node} node
+	 * @returns {void}
+	 */
+	function push_statement_end_mapping(node) {
+		if (!has_location(node)) return;
+		const authored = source[node.end - 1] === ';';
+		const { line, column } = node.loc.end;
+		for (const generated of src_to_gen_map.get(`${line}:${column}`) ?? []) {
+			const end = loc_to_offset(generated.line, generated.column, gen_line_offsets);
+			const semicolon = authored ? end - 1 : end;
+			if (generated_code[semicolon] !== ';') continue;
+			mappings.push({
+				sourceOffsets: [authored ? node.end - 1 : node.end],
+				lengths: [authored ? 1 : 0],
+				generatedOffsets: [semicolon],
+				generatedLengths: [1],
+				data: { ...mapping_data_verify_only, customData: {} },
+			});
+			return;
 		}
 	}
 
@@ -899,7 +1031,7 @@ export function convert_source_map_to_mappings(
 	// We have to visit everything in generated order to maintain correct indices
 
 	walk(ast, null, {
-		_(node, { visit }) {
+		_(node, { visit, path }) {
 			add_line_comments_mapping(node);
 			add_preserved_comment_mappings(node);
 
@@ -1285,22 +1417,14 @@ export function convert_source_map_to_mappings(
 						gen_line_offsets,
 						closing ? mapping_data_verify_only : mapping_data_verify_complete,
 					);
-					// The generated code includes a semicolon after the closing or self-closed tag
-					// We're extending the mapping to include the semicolon
-					// because the diagnostics errors can include the whole element
-					// and we need to account for the semicolon as it's a part of the diagnostic
-					// At the same time, we could've instead applied this logic to the whole `node` element
-					// but since we already map the opening - start, we just need the proper end
-					// and it was causing some issues with mappings
-					mapping.generatedLengths = [mapping.generatedLengths[0] + 1];
 					if (!closing && opening.selfClosing) {
-						const generated_close_length = '/>;'.length;
-						mapping.sourceOffsets = [target_node.end - 2];
-						mapping.lengths = ['/>'.length];
+						const close_length = '/>'.length;
+						mapping.sourceOffsets = [target_node.end - close_length];
+						mapping.lengths = [close_length];
 						mapping.generatedOffsets = [
-							mapping.generatedOffsets[0] + mapping.generatedLengths[0] - generated_close_length,
+							mapping.generatedOffsets[0] + mapping.generatedLengths[0] - close_length,
 						];
-						mapping.generatedLengths = [generated_close_length];
+						mapping.generatedLengths = [close_length];
 					}
 					// Loose recovery adds a closing tag, with no source position, to a tag
 					// left unclosed (#978), and the closing tags around it can then be
@@ -1484,6 +1608,10 @@ export function convert_source_map_to_mappings(
 					for (const declarator of node.declarations) {
 						visit(declarator);
 					}
+				}
+				// The head of a `for` loop has no `;` of its own.
+				if (!/^For(?:In|Of)?Statement$/.test(path.at(-1)?.type ?? '')) {
+					push_statement_end_mapping(node);
 				}
 				return;
 			} else if (node.type === 'VariableDeclarator') {
@@ -1793,11 +1921,7 @@ export function convert_source_map_to_mappings(
 
 				return;
 			} else if (node.type === 'ObjectExpression' || node.type === 'ObjectPattern') {
-				if (node.type === 'ObjectExpression' && has_location(node)) {
-					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
-					);
-				}
+				if (node.type === 'ObjectExpression') push_literal_mappings(node, '{', '}');
 
 				// Visit properties in order
 				if (node.properties) {
@@ -1830,6 +1954,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'ArrayExpression' || node.type === 'ArrayPattern') {
+				if (node.type === 'ArrayExpression') push_literal_mappings(node, '[', ']');
 				// Visit elements in order
 				if (node.elements) {
 					for (const element of node.elements) {
@@ -1920,6 +2045,7 @@ export function convert_source_map_to_mappings(
 				if (node.expression) {
 					visit(node.expression);
 				}
+				push_statement_end_mapping(node);
 				return;
 			} else if (node.type === 'BlockStatement' || node.type === 'Program') {
 				// Visit body statements in order
@@ -2048,6 +2174,22 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'SpreadElement' || node.type === 'RestElement') {
+				// TypeScript reports some errors on a whole rest parameter (TS2370 on a
+				// type that is not an array), which starts at the `...`.
+				if (node.type === 'RestElement' && has_location(node)) {
+					push_source_keyword_token('...', node.start, node);
+				}
+				// TypeScript reports some errors on a whole spread (TS2698 on
+				// `{ ...value }` when the value is not an object), so it maps like a
+				// literal: its ends as points, and its `...` for TypeScript 7.
+				if (
+					node.type === 'SpreadElement' &&
+					has_location(node) &&
+					push_points_mapping(node, '...')
+				) {
+					const ellipsis = find_source_token(source_tokens, '...', node.start, 'after');
+					if (ellipsis && ellipsis.start === node.start) push_position_only_token(ellipsis, '...');
+				}
 				// Visit the argument
 				if (node.argument) {
 					visit(node.argument);
@@ -2069,21 +2211,23 @@ export function convert_source_map_to_mappings(
 					visit(node.argument);
 				}
 
-				// An `await` the compiler added around a generated closure has no
-				// authored keyword to map.
-				if (node.type === 'AwaitExpression' && node.loc) {
-					const max_len = 'await'.length;
-					// We need a mapping for diagnostics but only on the 'await' keyword
-					const mapping = get_mapping_from_node(
-						node,
-						src_to_gen_map,
-						gen_line_offsets,
-						mapping_data_verify_only,
-						max_len,
-						max_len,
-					);
-
-					mappings.push(mapping);
+				// An `await` the compiler added around a generated closure, or a
+				// `yield*` that delegates to a generated generator, has no authored
+				// keyword to map. The keyword maps for diagnostics only, from where
+				// its own text is printed: a lowered `@if (yield 1)` prints the
+				// expression in parentheses that share its start.
+				if (has_location(node)) {
+					const text = node.type === 'AwaitExpression' ? 'await' : 'yield';
+					const keyword = find_source_token(source_tokens, text, node.start, 'after');
+					if (keyword?.loc && keyword.start < node.end) {
+						tokens.push({
+							source: text,
+							generated: text,
+							loc: keyword.loc,
+							metadata: {},
+							mappingData: mapping_data_verify_only,
+						});
+					}
 				}
 				return;
 			} else if (node.type === 'ChainExpression') {
@@ -2123,6 +2267,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'BreakStatement' || node.type === 'ContinueStatement') {
+				push_statement_mappings(node, node.type === 'BreakStatement' ? 'break' : 'continue');
 				// Visit label if present
 				if (node.label) {
 					visit(node.label);
@@ -2372,6 +2517,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSTypeLiteral') {
+				push_literal_mappings(node, '{', '}');
 				// Object type literal { foo: string }
 				if (node.members) {
 					for (const member of node.members) {
@@ -2435,6 +2581,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSIndexSignature') {
+				push_member_mappings(node);
 				// Index signature [key: string]: Type
 				if (node.parameters) {
 					for (const param of node.parameters) {
@@ -2729,6 +2876,19 @@ export function convert_source_map_to_mappings(
 				return;
 			} else if (node.type === 'TSNamespaceExportDeclaration') {
 				// TypeScript namespace export: export as namespace foo;
+				if (has_location(node)) {
+					// TypeScript reports a nested one (TS1316) on the whole statement,
+					// up to the `;` the printer writes whether or not the source has one.
+					const mapping = declaration_mapping(node, EXPORT_KEYWORD);
+					if (mapping) {
+						const end = mapping.generatedOffsets[0] + mapping.generatedLengths[0];
+						if (generated_code[end] === ';') mapping.generatedLengths[0]++;
+						mappings.push(mapping);
+					}
+					push_source_keyword_token('export', node.start, node);
+					push_source_keyword_token('as', node.start, node);
+					push_source_keyword_token('namespace', node.start, node);
+				}
 				if (node.id) {
 					visit(node.id);
 				}
