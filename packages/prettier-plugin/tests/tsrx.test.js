@@ -2365,6 +2365,11 @@ describe('parse errors', () => {
 `,
 		);
 		await expectFormat('declare import x from "m";', 'import x from "m";\n');
+		// Exports TypeScript's binder declares twice (#882).
+		await expectFormat(
+			'export default 1;\nexport default 2;',
+			'export default 1;\nexport default 2;\n',
+		);
 		// Nor modifiers or decorators before a class `static` block (#885).
 		await expectFormat('class A { public static {} }', 'class A {\n  static {}\n}\n');
 		await expectFormat('class A { abstract static {} }', 'class A {\n  static {}\n}\n');
@@ -2472,6 +2477,10 @@ describe('parse errors', () => {
 				'1:23',
 			],
 			['import.foo;', 'TS17012', '1:8'],
+			// #881, #785, #784.
+			['import type a, { b } from "a";', TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, '1:8'],
+			['import type A = B.C;', TS_ERRORS.IMPORT_ALIAS_IMPORT_TYPE, '1:1'],
+			['declare function f(): void {}', TS_ERRORS.AMBIENT_IMPLEMENTATION, '1:28'],
 			['import.foo("x");', TS_ERRORS.IMPORT_META_PROPERTY_CALL, '1:8'],
 			['import defer a from "m";', TS_ERRORS.IMPORT_DEFER_DEFAULT, '1:8'],
 			['import defer { a } from "m";', TS_ERRORS.IMPORT_DEFER_NAMED, '1:8'],

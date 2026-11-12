@@ -49,8 +49,13 @@ const BROKEN_MARKUP_CODES = new Set([
  * appear, `async` with `declare` or in a `declare` context (TS1040),
  * `declare` before a `using` declaration, `import.<name>` other than
  * `import.meta`, or a call of it other than `import.defer()` or
- * `import.source()` (TS17012, TS18061), and a default or named binding in
- * a deferred import (`import defer a from "m"`, TS18058 and TS18059).
+ * `import.source()` (TS17012, TS18061), a default or named binding in
+ * a deferred import (`import defer a from "m"`, TS18058 and TS18059), a
+ * type-only import with both (`import type a, { b } from "m"`, TS1363),
+ * `import type` on an import alias (TS1392), and a function body in an
+ * ambient context (TS1183). Prettier rejects that one after `declare`
+ * (`declare function f() {}`, which its tree prints wrong), and the plugin in
+ * a `declare namespace` too.
  *
  * It formats the others, and leaves out what its tree has no place for, as the
  * output does: a repeated modifier, a modifier in a block, `declare` before an
@@ -80,6 +85,9 @@ const REJECTED_CODES = new Set([
 	'TS18061',
 	'TS18058',
 	'TS18059',
+	'TS1363',
+	'TS1392',
+	'TS1183',
 ]);
 
 /**

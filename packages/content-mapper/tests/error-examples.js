@@ -818,6 +818,20 @@ let a = 2;`,
 }`,
 	},
 	{ error: TS_ERRORS.STRICT_MODE_RESERVED_WORD, source: `var let = 1;` },
+	{
+		error: TS_ERRORS.DUPLICATE_IDENTIFIER,
+		source: `let a = 1;
+let c = 2;
+export { a as b, c as b };`,
+	},
+	{
+		error: TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS,
+		source: `export default 1;
+export default 2;`,
+	},
+	{ error: TS_ERRORS.AMBIENT_IMPLEMENTATION, source: `declare function f(): void {}` },
+	{ error: TS_ERRORS.IMPORT_ALIAS_IMPORT_TYPE, source: `import type A = B.C;` },
+	{ error: TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, source: `import type a, { b } from 'a';` },
 	{ error: TS_ERRORS.STRICT_MODE_RESERVED_WORD_IN_CLASS, source: `class let {}` },
 	{ error: TS_ERRORS.IMPORT_META_PROPERTY_CALL, source: `import.foo();` },
 	{ error: TS_ERRORS.OPTIONAL_CHAIN_TAGGED_TEMPLATE, source: 'a?.<T>`c`;' },

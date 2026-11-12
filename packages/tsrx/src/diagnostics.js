@@ -849,6 +849,22 @@ export const TS_ERRORS = {
 		code: 'TS2567',
 		message: 'Enum declarations can only merge with namespace or other enum declarations.',
 	},
+	/** `name` is the name, or a string name in its quotes. */
+	DUPLICATE_IDENTIFIER: with_values('TS2300', (name) => `Duplicate identifier '${name}'.`),
+	// A second default export that TypeScript's binder can't merge with the first
+	MULTIPLE_DEFAULT_EXPORTS: {
+		code: 'TS2528',
+		message: 'A module cannot have multiple default exports.',
+	},
+	AMBIENT_IMPLEMENTATION: {
+		code: 'TS1183',
+		message: 'An implementation cannot be declared in ambient contexts.',
+	},
+	IMPORT_ALIAS_IMPORT_TYPE: { code: 'TS1392', message: "An import alias cannot use 'import type'" },
+	TYPE_IMPORT_DEFAULT_AND_NAMED: {
+		code: 'TS1363',
+		message: 'A type-only import can specify a default import or named bindings, but not both.',
+	},
 	// TSRX's wording of a name redeclared in a module's or function's scope
 	DECLARED_IN_SCOPE: with_values(
 		'TS2300',
@@ -1397,7 +1413,7 @@ function upstream_lookup_rows() {
 		// acorn-typescript: parseVarStatement, parseClassField
 		UPSTREAM_ERRORS.AMBIENT_INITIALIZER,
 		// acorn-typescript: parseFunctionBody
-		[/^An implementation cannot be declared in ambient contexts\.$/, 'TS1183'],
+		TS_ERRORS.AMBIENT_IMPLEMENTATION,
 		// acorn-typescript: tsParseModifiers
 		TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
 		// acorn-typescript: tsParseModifiers
@@ -1479,10 +1495,7 @@ function upstream_lookup_rows() {
 			'TS1005',
 		],
 		// acorn-typescript: parseImport
-		[
-			/^A type-only import can specify a default import or named bindings, but not both\.$/,
-			'TS1363',
-		],
+		TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED,
 		// acorn-typescript: parseTypeOnlyImportExportSpecifier
 		[
 			/^The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement\.$/,

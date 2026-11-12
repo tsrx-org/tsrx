@@ -10577,6 +10577,80 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			valid: "import b from 'a';\nimport a from 'b';",
 			pick: last,
 		},
+		// Exports TypeScript's binder declares twice (#882).
+		{
+			source: 'export default 1;\nexport default 2;',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 1'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 2'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '1:0'],
+			pick: last,
+			match: { type: 'ExportDefaultDeclaration', declaration: { value: 2 } },
+		},
+		{
+			// At the name of a declaration or of an exported name.
+			source: 'export default a;\nlet b;\nexport { b as default };\nexport default function f() {}',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'a;'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'default }'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '1:15'],
+		},
+		{
+			source: 'let a, c;\nexport { a as b, c as b };\nexport * as b from "m";',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'b, c'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'b };'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'b from'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '2:14'],
+			pick: (program) => program.body[1],
+			match: {
+				type: 'ExportNamedDeclaration',
+				specifiers: [{ exported: { name: 'b' } }, { exported: { name: 'b' } }],
+			},
+		},
+		// A type-only import with a default and named bindings (#881).
+		{
+			source: "import type a, { b } from 'a';",
+			errors: [[TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, 'type a']],
+			throws: [TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, '1:7'],
+			pick: first,
+			match: {
+				type: 'ImportDeclaration',
+				importKind: 'type',
+				specifiers: [{ type: 'ImportDefaultSpecifier' }, { type: 'ImportSpecifier' }],
+			},
+		},
+		// `import type` on an import alias, at the declaration (#785).
+		{
+			source: 'import type A = B.C;',
+			errors: [[TS_ERRORS.IMPORT_ALIAS_IMPORT_TYPE, 'import type']],
+			throws: [TS_ERRORS.IMPORT_ALIAS_IMPORT_TYPE, '1:0'],
+			pick: first,
+			match: { type: 'TSImportEqualsDeclaration', importKind: 'type' },
+		},
+		{
+			source: 'export import type A = B.C;',
+			errors: [[TS_ERRORS.IMPORT_ALIAS_IMPORT_TYPE, 'export import']],
+			throws: [TS_ERRORS.IMPORT_ALIAS_IMPORT_TYPE, '1:0'],
+		},
+		// A function body in an ambient context, at the body (#784).
+		{
+			source: 'declare function f(): void {}',
+			errors: [[TS_ERRORS.AMBIENT_IMPLEMENTATION, '{}']],
+			throws: [TS_ERRORS.AMBIENT_IMPLEMENTATION, '1:27'],
+			pick: first,
+			match: { declare: true, id: { name: 'f' }, body: { type: 'BlockStatement' } },
+		},
+		{
+			source: 'declare namespace N {\n\tfunction f() {\n\t\treturn 1;\n\t}\n}',
+			errors: [[TS_ERRORS.AMBIENT_IMPLEMENTATION, '{\n\t\treturn']],
+			throws: [TS_ERRORS.AMBIENT_IMPLEMENTATION, '2:14'],
+			pick: namespace_statement,
+			match: { type: 'FunctionDeclaration', body: { body: [{ type: 'ReturnStatement' }] } },
+		},
 		{
 			source: 'class A { abstract m(): void; }',
 			errors: [[UPSTREAM_ERRORS.ABSTRACT_METHOD_IN_CLASS, 'abstract m']],

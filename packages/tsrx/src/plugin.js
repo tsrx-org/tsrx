@@ -427,6 +427,19 @@ function is_pattern_parameter_expression(node) {
 
 // acorn's one error for an import or export inside a block.
 const NESTED_IMPORT_EXPORT = "'import' and 'export' may only appear at the top level";
+// acorn-typescript's error for `import type A = B.C` (see `raise`).
+const IMPORT_ALIAS_IMPORT_TYPE = "An import alias can not use 'import type'.";
+// TypeScript's binder flags for what an export declares, and the flags of the
+// declarations each can't share a symbol with (see `#reportDuplicateExports`).
+const SYMBOL_PROPERTY = 1 << 2;
+const SYMBOL_FUNCTION = 1 << 4;
+const SYMBOL_CLASS = 1 << 5;
+const SYMBOL_INTERFACE = 1 << 6;
+const SYMBOL_VALUE_MODULE = 1 << 9;
+const SYMBOL_ALIAS = 1 << 21;
+// `SymbolFlags.Value` and `SymbolFlags.Type`, as TypeScript 5.9 computes them.
+const SYMBOL_VALUE = 111551;
+const SYMBOL_TYPE = 788968;
 // acorn-typescript's error for modifiers before a class `static` block, and the
 // properties its modifiers set on the block's node.
 const STATIC_BLOCK_MODIFIERS = 'Static class blocks cannot have any modifier.';
@@ -1402,6 +1415,8 @@ export function TSRXPlugin(config) {
 			#bodilessPrivateMethods = new WeakMap();
 			// How many classes the parser is in (see `parseClass`).
 			#classDepth = 0;
+			// Where the import alias being read starts (see `raise`).
+			#importEqualsStart = -1;
 			// Where the last variable declarator ended, and where the expression of
 			// the last expression statement or `throw` started (see `semicolon`).
 			#declaratorEnd = -1;
@@ -1453,6 +1468,7 @@ export function TSRXPlugin(config) {
 				const finished = super.finishNode(node, type);
 				// See `semicolon`.
 				if (type === 'VariableDeclarator') this.#declaratorEnd = this.lastTokEnd;
+				if (type === 'Program') this.#reportDuplicateExports(/** @type {AST.Program} */ (finished));
 				this.#reportAwaitInNamespace(finished);
 				if (DECORATABLE_NODE_TYPES.has(type)) {
 					// acorn-typescript sets `decorators` only when there is one. Give every
@@ -4407,6 +4423,16 @@ export function TSRXPlugin(config) {
 					// See `parseClassElement`.
 					this.#staticBlockModifiers = true;
 					return /** @type {never} */ (undefined);
+				} else if (message === IMPORT_ALIAS_IMPORT_TYPE) {
+					// TypeScript's checker error, at the declaration (#785).
+					this.#raiseCheckerError(this.#importEqualsStart, TS_ERRORS.IMPORT_ALIAS_IMPORT_TYPE);
+					return /** @type {never} */ (undefined);
+				} else if (kind === TS_ERRORS.AMBIENT_IMPLEMENTATION) {
+					// TypeScript's checker error, at the body, where acorn-typescript raises
+					// it at the function's start; acorn-typescript goes on to read the
+					// body (#784).
+					this.#raiseCheckerError(this.start, TS_ERRORS.AMBIENT_IMPLEMENTATION);
+					return /** @type {never} */ (undefined);
 				} else if (message === NESTED_IMPORT_EXPORT) {
 					// TypeScript reports each kind of import or export with its own error.
 					this.#raiseCheckerError(position, nested_import_export_error(this.input, position));
@@ -4809,6 +4835,134 @@ export function TSRXPlugin(config) {
 					if (table) return null;
 				}
 				return null;
+			}
+
+			/**
+			 * Report the exports of the module that TypeScript's binder declares
+			 * twice: a name that two export specifiers or `export * as` export, TS2300
+			 * `Duplicate identifier '…'.`, and a default export that can't merge with
+			 * an earlier one, TS2528 `A module cannot have multiple default exports.`,
+			 * as `export default 1; export default 2;` (#882). acorn-typescript turned
+			 * acorn's check off, since TypeScript merges some declarations of a name.
+			 * Like TypeScript's binder, this goes through the exports in order, and a
+			 * declaration that can't share the symbol of the name with the ones before
+			 * it reports each of them and itself, at its name, or at `export`. They
+			 * are checker errors: a strict parse throws the first, and a collecting one
+			 * records them.
+			 * @param {AST.Program} program
+			 */
+			#reportDuplicateExports(program) {
+				/** @type {Map<string, { flags: number, declarations: number[] }>} */
+				const symbols = new Map();
+				/** @type {Array<{ position: number, error: Diagnostic }>} */
+				const found = [];
+				/** @type {Set<number>} */
+				const reported = new Set();
+				/**
+				 * @param {string} name
+				 * @param {number} position
+				 * @param {number} includes
+				 * @param {number} excludes
+				 */
+				const declare = (name, position, includes, excludes) => {
+					const symbol = symbols.get(name);
+					if (!symbol) {
+						symbols.set(name, { flags: includes, declarations: [position] });
+						return;
+					}
+					if ((symbol.flags & excludes) === 0) {
+						symbol.flags |= includes;
+						symbol.declarations.push(position);
+						return;
+					}
+					const error =
+						name === 'default'
+							? TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS
+							: TS_ERRORS.DUPLICATE_IDENTIFIER(name);
+					for (const at of [...symbol.declarations, position]) {
+						if (reported.has(at)) continue;
+						reported.add(at);
+						found.push({ position: at, error });
+					}
+				};
+				/** @param {AST.Identifier | AST.Literal} name */
+				const name_of = (name) =>
+					name.type === 'Identifier'
+						? name.name
+						: this.input.slice(/** @type {number} */ (name.start), name.end);
+				for (const statement of program.body) {
+					if (statement.type === 'ExportDefaultDeclaration') {
+						const declaration = /** @type {AST.Node} */ (statement.declaration);
+						const id = /** @type {{ id?: AST.Identifier | null }} */ (declaration).id;
+						const at = /** @type {number} */ ((id ?? statement).start);
+						if (
+							declaration.type === 'FunctionDeclaration' ||
+							declaration.type === 'TSDeclareFunction'
+						) {
+							declare(
+								'default',
+								at,
+								SYMBOL_FUNCTION,
+								SYMBOL_VALUE & ~(SYMBOL_FUNCTION | SYMBOL_VALUE_MODULE | SYMBOL_CLASS),
+							);
+						} else if (declaration.type === 'ClassDeclaration') {
+							declare(
+								'default',
+								at,
+								SYMBOL_CLASS,
+								(SYMBOL_VALUE | SYMBOL_TYPE) &
+									~(SYMBOL_VALUE_MODULE | SYMBOL_INTERFACE | SYMBOL_FUNCTION),
+							);
+						} else if (declaration.type === 'TSInterfaceDeclaration') {
+							declare(
+								'default',
+								at,
+								SYMBOL_INTERFACE,
+								SYMBOL_TYPE & ~(SYMBOL_INTERFACE | SYMBOL_CLASS),
+							);
+						} else {
+							// An expression, an alias when it's a name, which TypeScript reports at
+							// the name.
+							let expression = declaration;
+							while (expression.type === 'MemberExpression' && !expression.computed) {
+								expression = expression.object;
+							}
+							const alias = expression.type === 'Identifier';
+							declare(
+								'default',
+								/** @type {number} */ (
+									(declaration.type === 'Identifier' ? declaration : statement).start
+								),
+								alias ? SYMBOL_ALIAS : SYMBOL_PROPERTY,
+								~0,
+							);
+						}
+					} else if (statement.type === 'ExportNamedDeclaration' && !statement.declaration) {
+						for (const specifier of statement.specifiers) {
+							const exported = /** @type {AST.Identifier | AST.Literal} */ (specifier.exported);
+							declare(
+								name_of(exported),
+								/** @type {number} */ (exported.start),
+								SYMBOL_ALIAS,
+								SYMBOL_ALIAS,
+							);
+						}
+					} else if (statement.type === 'ExportAllDeclaration' && statement.exported) {
+						const exported = /** @type {AST.Identifier | AST.Literal} */ (statement.exported);
+						declare(
+							name_of(exported),
+							/** @type {number} */ (exported.start),
+							SYMBOL_ALIAS,
+							SYMBOL_ALIAS,
+						);
+					}
+				}
+				found.sort((a, b) => a.position - b.position);
+				for (const { position, error } of found) {
+					const end = position + 1;
+					if (!this.#collect) this.#throwError(position, error);
+					this.#recordCheckerLevelError(position, end, error);
+				}
 			}
 
 			/**
@@ -11425,6 +11579,7 @@ export function TSRXPlugin(config) {
 				/** @type {'defer' | 'source' | null} */
 				let phase = null;
 				let phase_start = -1;
+				let type_start = -1;
 				node.importKind = 'value';
 				this.importOrExportOuterKind = 'value';
 				if (tokenIsIdentifier(enterHead.type) || this.match(tt.star) || this.match(tt.braceL)) {
@@ -11463,6 +11618,7 @@ export function TSRXPlugin(config) {
 						// name and compares its text (`parseImportDeclarationOrImportEqualsDeclaration`),
 						// without TS1260. acorn-typescript's `ts_eatContextualWithState`
 						// declined an escaped `type`, and the name after it was unexpected.
+						type_start = enterHead.start;
 						this.next();
 						this.importOrExportOuterKind = 'type';
 						node.importKind = 'type';
@@ -11532,6 +11688,15 @@ export function TSRXPlugin(config) {
 					) {
 						this.#raiseCheckerError(phase_start, TS_ERRORS.IMPORT_SOURCE_NAMED);
 					}
+				} else if (
+					node.importKind === 'type' &&
+					node.specifiers.length > 1 &&
+					node.specifiers[0].type === 'ImportDefaultSpecifier'
+				) {
+					// TypeScript's checker error for `import type a, { b } from "m"`, at
+					// `type` (#881). acorn-typescript's `parseImport`, which this replaces,
+					// raised it.
+					this.#raiseCheckerError(type_start, TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED);
 				}
 				this.parseMaybeImportAttributes(node);
 				this.semicolon();
@@ -12313,7 +12478,14 @@ export function TSRXPlugin(config) {
 					this.importOrExportOuterKind = 'type';
 					this.next();
 				}
-				return super.tsParseImportEqualsDeclaration(node, isExport);
+				// See `raise`.
+				const outer = this.#importEqualsStart;
+				this.#importEqualsStart = /** @type {number} */ (node.start);
+				try {
+					return super.tsParseImportEqualsDeclaration(node, isExport);
+				} finally {
+					this.#importEqualsStart = outer;
+				}
 			}
 
 			/**

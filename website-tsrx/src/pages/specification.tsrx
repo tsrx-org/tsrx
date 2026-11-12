@@ -806,6 +806,7 @@ const TYPESCRIPT_ERROR_CODES = [
 	"TS2492  Cannot redeclare identifier '{0}' in catch clause.",
 	"TS2523  'yield' expressions cannot be used in a parameter initializer.",
 	"TS2524  'await' expressions cannot be used in a parameter initializer.",
+	'TS2528  A module cannot have multiple default exports.',
 	'TS2567  Enum declarations can only merge with namespace or other enum declarations.',
 	'TS2657  JSX expressions must have one parent element.',
 	"TS2660  'super' can only be referenced in members of derived classes or object literal expressions.",
