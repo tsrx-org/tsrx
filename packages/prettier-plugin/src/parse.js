@@ -412,6 +412,15 @@ class Adapter {
 			return this.visit(node.typeAnnotation);
 		}
 
+		// A modifier the core parser's tree leaves out, which Prettier's own
+		// parser rejects (`declare public class A {}` in a `declare namespace`).
+		// TypeScript reports only the declaration's first modifier error, which
+		// the parser records, and keeps the others in the metadata.
+		const dropped = node.metadata?.dropped_modifiers?.find((/** @type {ParseError} */ error) =>
+			isRejected(error, this.text),
+		);
+		if (dropped) throw createParseError(dropped);
+
 		// The core parser attaches comments itself; Prettier attaches them again
 		// from `program.comments`.
 		delete node.leadingComments;

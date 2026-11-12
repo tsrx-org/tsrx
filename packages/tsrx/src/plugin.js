@@ -7196,10 +7196,10 @@ export function TSRXPlugin(config) {
 			 * (`reportObviousModifierErrors`, see `#modifierError`). TypeScript's
 			 * checker reports a `declare` before it first: TS1038 in an ambient
 			 * namespace or module (`ambient`), or TS1184 in a block, at the `declare`.
-			 * Then a collecting parse records `abstract`'s own error too, as the tree
-			 * leaves it out, so that the formatter refuses the code (see
+			 * Then the declaration's metadata keeps `abstract`'s own error, as the
+			 * tree leaves it out, so that the formatter refuses the code (see
 			 * `#raiseModifierErrors`). These are checker errors: a strict parse throws
-			 * the first.
+			 * the first, and a collecting one records it.
 			 * @param {number} start
 			 * @param {AST.Node | undefined} declaration
 			 * @param {boolean} block
@@ -7225,7 +7225,17 @@ export function TSRXPlugin(config) {
 					return;
 				}
 				this.#raiseCheckerError(declare_start, first);
-				if (!this.#throwsCheckerErrors()) this.#recordCheckerLevelError(start, start + 1, error);
+				// `abstract`'s own error, which TypeScript doesn't report beside the
+				// first, for the formatter (see `#raiseModifierErrors`) (#961).
+				if (this.#collect && declaration) {
+					/** @type {CompileError[]} */
+					const dropped = [];
+					this.#report_recoverable_error_range(start, start + 1, error, dropped);
+					declaration.metadata = {
+						...declaration.metadata,
+						dropped_modifiers: [...(declaration.metadata?.dropped_modifiers ?? []), ...dropped],
+					};
+				}
 			}
 
 			/**
@@ -7783,11 +7793,13 @@ export function TSRXPlugin(config) {
 			/**
 			 * Report the modifiers of `declaration` as TypeScript's checker does, after
 			 * it's parsed, as TypeScript reports syntax errors in it first. A strict
-			 * parse throws the error TypeScript reports (`#modifierError`). A
-			 * collecting parse records it, and for each modifier the tree leaves out
-			 * the error TypeScript reports for that one once the first is fixed
-			 * (`dropped_modifier_error`), so that the formatter refuses the code
-			 * instead of printing it without the modifier.
+			 * parse throws the error TypeScript reports (`#modifierError`), and a
+			 * collecting parse records it, and nothing more, as TypeScript reports one
+			 * error for a declaration's modifiers (#961). For each modifier the tree
+			 * leaves out, the declaration's metadata keeps the error TypeScript
+			 * reports for that one once the first is fixed (`dropped_modifier_error`),
+			 * so that the formatter refuses the code instead of printing it without
+			 * the modifier.
 			 *
 			 * An exported global augmentation is TS2668 first, at the first modifier,
 			 * as `parseExportDeclaration` reports it without modifiers. A statement
@@ -7825,6 +7837,8 @@ export function TSRXPlugin(config) {
 				}
 				if (found) this.#raiseCheckerError(found.start, found.error);
 				if (!this.#collect) return;
+				/** @type {CompileError[]} */
+				const dropped = [];
 				/** @type {Set<string>} */
 				const kept = new Set();
 				for (const modifier of modifiers) {
@@ -7846,11 +7860,15 @@ export function TSRXPlugin(config) {
 					const duplicate = modifiers.some(
 						(other) => other.start < modifier.start && other.value === value,
 					);
-					this.#recordCheckerLevelError(
+					this.#report_recoverable_error_range(
 						modifier.start,
 						modifier.start + 1,
 						dropped_modifier_error(value, kind, context.block, duplicate),
+						dropped,
 					);
+				}
+				if (dropped.length > 0) {
+					declaration.metadata = { ...declaration.metadata, dropped_modifiers: dropped };
 				}
 			}
 

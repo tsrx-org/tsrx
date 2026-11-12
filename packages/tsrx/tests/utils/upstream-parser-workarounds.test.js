@@ -3459,11 +3459,16 @@ class A {}`,
 		}
 	});
 
-	it('records an error for each modifier the tree leaves out, which the formatter refuses', async () => {
-		/** @type {Array<[source: string, errors: Array<[pos: number, error: ErrorKind]>]>} */
+	it('records the first modifier error only, and keeps the others for the formatter (#961)', () => {
+		// TypeScript reports one error for a declaration's modifiers. For each
+		// modifier the tree leaves out, the declaration's metadata keeps the error
+		// TypeScript reports for it once the first is fixed, which the formatter
+		// refuses the code with.
+		/** @type {Array<[source: string, first: [pos: number, error: ErrorKind], dropped: Array<[pos: number, error: ErrorKind]>]>} */
 		const cases = [
 			[
 				'public private class A {}',
+				[0, TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT],
 				[
 					[0, TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT],
 					[7, TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT],
@@ -3471,33 +3476,55 @@ class A {}`,
 			],
 			[
 				'abstract export public class A {}',
-				[
-					[9, TS_ERRORS.MODIFIER_MUST_PRECEDE],
-					[16, TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT],
-				],
+				[9, TS_ERRORS.MODIFIER_MUST_PRECEDE],
+				[[16, TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT]],
 			],
 			[
 				'async export class A {}',
-				[
-					[6, TS_ERRORS.MODIFIER_MUST_PRECEDE],
-					[0, TS_ERRORS.MODIFIER_CANNOT_BE_USED_HERE],
-				],
+				[6, TS_ERRORS.MODIFIER_MUST_PRECEDE],
+				[[0, TS_ERRORS.MODIFIER_CANNOT_BE_USED_HERE]],
 			],
 			[
 				'declare accessor class A {}',
-				[
-					[8, TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH],
-					[8, TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED],
-				],
+				[8, TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH],
+				[[8, TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED]],
+			],
+			[
+				'declare namespace N {\n\tdeclare public class A {}\n}',
+				[23, TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT],
+				[[31, TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT]],
+			],
+			[
+				'declare namespace N {\n\tdeclare abstract function f(): void;\n}',
+				[23, TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT],
+				[[31, TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED]],
+			],
+			[
+				'declare global {\n\tdeclare readonly class A {}\n}',
+				[18, TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT],
+				[[26, TS_ERRORS.READONLY_MODIFIER_NOT_ALLOWED]],
 			],
 		];
-		const outcomes = await parseBothModes(cases.map(([source]) => source));
-		for (const [index, { source, collect }] of outcomes.entries()) {
-			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
+		for (const [source, [pos, error], dropped] of cases) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code: code_of(error), pos }),
+			);
+			/** @type {CompileError[]} */
+			const errors = [];
+			const ast = parseModule(source, 'App.tsrx', { collect: true, errors });
 			expect(
-				collect.errors?.map((error) => [error.pos, error.code]),
+				errors.map((error) => [error.pos, error.code]),
 				source,
-			).toEqual(cases[index][1].map(([pos, error]) => [pos, code_of(error)]));
+			).toEqual([[pos, code_of(error)]]);
+			/** @type {Array<[number | undefined, string | undefined]>} */
+			const kept = [];
+			JSON.stringify(ast, (key, value) => {
+				if (key === 'dropped_modifiers') {
+					for (const entry of value) kept.push([entry.pos, entry.code]);
+				}
+				return key === 'parent' ? undefined : value;
+			});
+			expect(kept, source).toEqual(dropped.map(([pos, error]) => [pos, code_of(error)]));
 		}
 	});
 

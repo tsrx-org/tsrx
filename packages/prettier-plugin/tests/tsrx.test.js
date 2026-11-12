@@ -2554,6 +2554,19 @@ describe('parse errors', () => {
 				TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED,
 				'2:3',
 			],
+			// TypeScript reports TS1038 only there, which the parser records; the
+			// modifier the tree leaves out comes from the declaration's metadata
+			// (#961).
+			[
+				'declare namespace N {\n  declare public class A {}\n}',
+				TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT('public'),
+				'2:11',
+			],
+			[
+				'declare global {\n  declare readonly class A {}\n}',
+				TS_ERRORS.READONLY_MODIFIER_NOT_ALLOWED,
+				'2:11',
+			],
 			// A parameter property on a method or a constructor overload (#886).
 			['class A { m(public a) {} }', TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '1:13'],
 			[

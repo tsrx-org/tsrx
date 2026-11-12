@@ -12206,13 +12206,9 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: block_statement,
 		},
 		{
-			// At the first modifier, then `abstract`'s own error, which the tree
-			// leaves out, for the formatter to refuse.
+			// At the first modifier only, as TypeScript reports it (#961).
 			source: '{\n\tdeclare abstract function f(): void;\n}',
-			errors: [
-				[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'declare abstract'],
-				[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'abstract function'],
-			],
+			errors: [[TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'declare abstract']],
 			throws: [TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:1'],
 			valid: 'declare function f(): void;',
 			pick: block_statement,
@@ -12269,13 +12265,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '1:7'],
 		},
 		// TypeScript reports the first of `abstract` and `declare` in an ambient
-		// namespace, TS1242 or TS1038.
+		// namespace, TS1242 or TS1038, and only that one (#961).
 		{
 			source: 'declare namespace N {\n\tdeclare abstract function f(): void;\n}',
-			errors: [
-				[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare abstract'],
-				[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract function'],
-			],
+			errors: [[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare abstract']],
 			throws: [TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, '2:1'],
 		},
 		{
@@ -12285,10 +12278,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			source: 'declare namespace N {\n\texport declare abstract function f(): void;\n}',
-			errors: [
-				[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare abstract'],
-				[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract function'],
-			],
+			errors: [[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare abstract']],
 			throws: [TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, '2:8'],
 		},
 		{
@@ -12327,12 +12317,9 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, '3:11'],
 		},
 		{
-			// Before the error for `abstract`, as TypeScript reports the first.
+			// Without the error for `abstract`, as TypeScript reports the first only.
 			source: 'declare global {\n\tdeclare abstract interface I {}\n}',
-			errors: [
-				[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare abstract'],
-				[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract interface'],
-			],
+			errors: [[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'declare abstract']],
 			throws: [TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, '2:1'],
 		},
 		// Modifiers or decorators before a class `static` block (#885).
