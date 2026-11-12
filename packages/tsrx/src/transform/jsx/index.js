@@ -7041,12 +7041,18 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
  * @returns {string}
  */
 function create_own_ref_name(transform_context) {
-	if (transform_context.helper_state) {
-		return create_helper_name(transform_context.helper_state, 'ref');
-	}
-
-	transform_context.local_statement_component_index += 1;
-	return `_tsrx_ref_${transform_context.local_statement_component_index}`;
+	/** @type {string} */
+	let name;
+	do {
+		if (transform_context.helper_state) {
+			name = create_helper_name(transform_context.helper_state, 'ref');
+		} else {
+			transform_context.local_statement_component_index += 1;
+			name = `_tsrx_ref_${transform_context.local_statement_component_index}`;
+		}
+		// Like a spread temporary, it skips any name the author wrote.
+	} while (source_mentions_identifier(transform_context.source, name));
+	return name;
 }
 
 /**

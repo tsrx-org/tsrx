@@ -2194,6 +2194,22 @@ describe('destructuring', () => {
 			);
 		});
 
+		it('names the bound own ref apart from an authored binding of that name', () => {
+			const { code } = compile(
+				`export function App(props: any) @{
+					const App__ref1 = 'mine';
+					<input ref={props.r} {...props.rest} title={App__ref1} />
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain("const App__ref1 = 'mine';");
+			expect(code).not.toContain('let App__ref1;');
+			expect(code).toContain('let App__ref2;');
+			expect(code).toContain('title={App__ref1}');
+			expect(code).toContain('ref={__mergeRefs(App__ref2, App__spread_props3?.ref)}');
+		});
+
 		it('imports the spread normalizers that return their copy and share merged refs', () => {
 			const { code } = compile(
 				`export function App() @{
