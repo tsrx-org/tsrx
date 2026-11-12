@@ -54,7 +54,7 @@ ts_native: &ts_native 7.1.0-dev.20260930.4
 # server's native backend run without that API.
 ts_supported: &ts_supported ^5.9.3 || ^6.0.0 || ^7.1.0-dev.20260923.1
 ts_eslint_parser: &ts_eslint_parser ^8.56.1
-esrap_common: &esrap_common ^2.3.2
+esrap_common: &esrap_common ^2.4.0
 
 packages:
   - packages/*
@@ -65,6 +65,11 @@ packages:
 
 overrides:
   esrap: *esrap_common
+  # The published Ripple compiler and the @tsrx/core 0.2 it uses still pass
+  # esrap's `boundaryTokens`, which esrap 2.4 removed; their editor mappings
+  # need esrap 2.3 until a Ripple release adopts the `tokens` option.
+  '@tsrx/ripple>esrap': 2.3.2
+  '@tsrx/core@<0.5>esrap': 2.3.2
   semver: ^7.7.4
   # Solid 2.0 SSR alignment: vite-plugin-solid@3.0.0-next.5 pulls
   # babel-preset-solid@2.0.0-beta.7 transitively (→ babel-plugin-jsx-dom-expressions
