@@ -94,6 +94,28 @@ export const DIAGNOSTIC_CODES = {
 	TOP_LEVEL_AWAIT_USE_SERVER: 'TSRX2025',
 	/** An `@catch` reset parameter on a target whose error boundary has none. */
 	TARGET_CATCH_RESET_UNSUPPORTED: 'TSRX2026',
+	/** An `@for` head that assigns to existing variables, or declares its loop variable with `var` or `using`. */
+	FOR_HEAD: 'TSRX2027',
+	/** A component read above its declaration on a target that compiles it to a constant, where moving the declaration up would change what it reads. */
+	TARGET_COMPONENT_READ_BEFORE_DECLARATION: 'TSRX2028',
+	/** A destructured prop default the target's component compiler drops. */
+	TARGET_PROP_DEFAULT_UNSUPPORTED: 'TSRX2029',
+	/** A `var` declared in a nested `@{ … }` block or an `@if`, `@for`, `@switch` or `@try` body, outside any function or class in it. */
+	DIRECTIVE_BODY_VAR: 'TSRX2030',
+	/** A destructured prop key the target's component compiler reads as another prop, or leaves out. */
+	TARGET_PROP_KEY_UNSUPPORTED: 'TSRX2031',
+	/** A binding of a name the target's toolchain finds by name: Vue's `defineVaporComponent`. */
+	TARGET_RESERVED_NAME: 'TSRX2032',
+	/** Type arguments after a dynamic tag (`<{Tag}<T> />`). */
+	DYNAMIC_TAG_TYPE_ARGUMENTS: 'TSRX2033',
+	/** A `yield` in a template value the target's JSX compiler moves into an effect, getter or callback. */
+	TARGET_TEMPLATE_YIELD_UNSUPPORTED: 'TSRX2034',
+	/**
+	 * A warning: a `@{ … }` with no output whose only statement is an
+	 * expression there only for its value, such as `<p>@{user.name}</p>`, so
+	 * it renders nothing.
+	 */
+	CODE_BLOCK_EXPRESSION_ONLY: 'TSRX2035',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -121,6 +143,8 @@ export const DIAGNOSTIC_CODES = {
 	CSS_IMPORT: 'TSRX3012',
 	/** CSS in a `<style>` block that doesn't parse. */
 	CSS_SYNTAX: 'TSRX3013',
+	/** A `<style>` block in a child expression container (`{<style>…</style>}`), which renders its class map. */
+	STYLE_IN_EXPRESSION_CONTAINER: 'TSRX3014',
 
 	/** A recognized `import.meta.env.platform.*` flag is used without a selected platform. */
 	PLATFORM_REQUIRED: 'TSRX4001',
@@ -287,6 +311,16 @@ function tsrx_with_values(key, message) {
 }
 
 /**
+ * The advice that ends Vue's destructured-props errors: read the prop where it
+ * is used, so it stays reactive, as `example` does when there is one.
+ * @param {string} example
+ * @returns {string}
+ */
+function read_prop_where_used(example) {
+	return `Take the props as a \`props\` parameter and read the prop where you use it instead${example ? `, for example \`${example}\`` : ''}, or derive it in a \`computed\`.`;
+}
+
+/**
  * The errors only TSRX reports, each with its code from
  * {@link DIAGNOSTIC_CODES}, named by its key.
  * A code can have several messages, one for each form of the mistake.
@@ -296,6 +330,15 @@ export const TSRX_ERRORS = {
 	UNCLOSED_TAG: tsrx_with_values(
 		'UNCLOSED_TAG',
 		(tag) => `Unclosed tag '<${tag}>'. Expected '</${tag}>' before end of template.`,
+	),
+	/**
+	 * An unclosed tag that is a lone type parameter before a `(`, as in
+	 * `<T>(x) => x`. `parameter` is the type parameter, with its `const`.
+	 */
+	UNCLOSED_TAG_GENERIC_ARROW: tsrx_with_values(
+		'UNCLOSED_TAG',
+		(tag, parameter) =>
+			`Unclosed tag '<${tag}>'. Expected '</${tag}>' before end of template. To write a generic arrow function, add a trailing comma, as in \`<${parameter},>() => ...\`.`,
 	),
 	MISMATCHED_CLOSING_TAG: tsrx_with_values(
 		'MISMATCHED_CLOSING_TAG',
@@ -394,6 +437,10 @@ export const TSRX_ERRORS = {
 		'DYNAMIC_TAG_EXPRESSION',
 		'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
 	),
+	DYNAMIC_TAG_TYPE_ARGUMENTS: tsrx(
+		'DYNAMIC_TAG_TYPE_ARGUMENTS',
+		'A dynamic tag takes no type arguments. Declare a typed alias before the element: `const Typed = Tag<T>;`, then `<{Typed} />`.',
+	),
 	FOR_OF_ONLY: tsrx(
 		'FOR_OF_ONLY',
 		'TSRX `@for` currently supports `for...of` loops in template output.',
@@ -414,9 +461,27 @@ export const TSRX_ERRORS = {
 		'FOR_OF_ONLY',
 		'Do...while loops are not supported in TSRX templates. Move the do...while loop into a function.',
 	),
+	FOR_HEAD_ASSIGNMENT: tsrx(
+		'FOR_HEAD',
+		'TSRX `@for` must declare its loop variable, as in `@for (const item of items)`, not assign to an existing variable or property.',
+	),
+	FOR_HEAD_VAR: tsrx(
+		'FOR_HEAD',
+		"TSRX `@for` does not support `var` loop variables, since its loop variable can't be read after the loop. Declare it with `const` or `let`, as in `@for (const item of items)`.",
+	),
+	/** `kind` is `using` or `await using`. */
+	FOR_HEAD_USING: tsrx_with_values(
+		'FOR_HEAD',
+		(kind) =>
+			`TSRX \`@for\` does not support \`${kind}\` loop variables. Declare the resource in the loop body instead: \`@for (const item of items) { ${kind} resource = item; ... }\`.`,
+	),
+	DIRECTIVE_BODY_VAR: tsrx(
+		'DIRECTIVE_BODY_VAR',
+		"TSRX does not support `var` declarations in a nested `@{ … }` block or an `@if`, `@for`, `@switch` or `@try` body, since the variable can't be read outside it. Declare it with `const` or `let`.",
+	),
 	MULTIPLE_REFS: tsrx(
 		'MULTIPLE_REFS',
-		'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single array-valued ref such as `ref={[a, b]}` where the target framework supports multiple refs.',
+		'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single ref list such as `ref={[a, b]}`, which applies every ref in it.',
 	),
 	INVALID_HTML_NESTING: tsrx_with_values(
 		'INVALID_HTML_NESTING',
@@ -438,11 +503,31 @@ export const TSRX_ERRORS = {
 		(target) =>
 			`${target} TSRX does not support \`await\` here: this part of the template renders through a callback the target calls, so its result cannot be awaited. Await the value in the component body, or move it into an async child component.`,
 	),
+	/** `target` is the target's name. For a target whose components can't be async. */
+	TARGET_COMPONENT_AWAIT_UNSUPPORTED: tsrx_with_values(
+		'TARGET_AWAIT_UNSUPPORTED',
+		(target) => `${target} TSRX components do not support \`await\`.`,
+	),
+	HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED: tsrx(
+		'TARGET_AWAIT_UNSUPPORTED',
+		'Hono JSX DOM does not support top-level `await` in components. Use `use(promise)` with `<Suspense>` instead.',
+	),
+	/** For an `async` component that a Hono DOM module renders. */
+	HONO_DOM_ASYNC_COMPONENT_UNSUPPORTED: tsrx(
+		'TARGET_AWAIT_UNSUPPORTED',
+		'Hono JSX DOM does not support async components. Use `use(promise)` with `<Suspense>` instead.',
+	),
 	/** `target` is the target's name. */
 	TARGET_YIELD_UNSUPPORTED: tsrx_with_values(
 		'TARGET_YIELD_UNSUPPORTED',
 		(target) =>
 			`${target} TSRX does not support \`yield\` here: this part of the template runs in a callback, which cannot yield from the enclosing generator. Yield the value in the function body first.`,
+	),
+	/** `target` is the target's name. For Solid and Vue, whose JSX compilers move some template values into effects. */
+	TARGET_TEMPLATE_YIELD_UNSUPPORTED: tsrx_with_values(
+		'TARGET_TEMPLATE_YIELD_UNSUPPORTED',
+		(target) =>
+			`${target} TSRX does not support \`yield\` in this part of the template: ${target}'s JSX compiler evaluates it in an effect, a getter or a callback, which cannot yield from the enclosing generator. Yield the value before the template, as in \`const value = yield …;\`, and use \`value\` in it.`,
 	),
 	/** `target` is the target's name. */
 	TARGET_SUPER_UNSUPPORTED: tsrx_with_values(
@@ -458,6 +543,90 @@ export const TSRX_ERRORS = {
 	TOP_LEVEL_AWAIT_USE_SERVER: tsrx(
 		'TOP_LEVEL_AWAIT_USE_SERVER',
 		'Top-level `await` in TSRX functions requires a module-level `"use server"` directive.',
+	),
+	/** Hono's ErrorBoundary calls its fallback with the error only. */
+	TARGET_CATCH_RESET_UNSUPPORTED: tsrx(
+		'TARGET_CATCH_RESET_UNSUPPORTED',
+		'Hono JSX ErrorBoundary does not provide a reset callback. Use `@catch (error)` without a reset parameter.',
+	),
+	/** `target` is the target's name, and `name` the component's. */
+	TARGET_COMPONENT_READ_BEFORE_DECLARATION: tsrx_with_values(
+		'TARGET_COMPONENT_READ_BEFORE_DECLARATION',
+		(target, name) =>
+			`'${name}' is read here before its declaration. ${target} TSRX compiles the component to a constant, which is not hoisted like a function, and moving its declaration above this read would change what its prop defaults read. Move the declaration of '${name}' above this read.`,
+	),
+	/**
+	 * `target` is the target's name, `name` the prop's, and `example`, which can
+	 * be empty, an expression that reads the prop where it is used. Only Vue's
+	 * vue-jsx-vapor drops defaults.
+	 */
+	TARGET_PROP_DEFAULT_UNSUPPORTED: tsrx_with_values(
+		'TARGET_PROP_DEFAULT_UNSUPPORTED',
+		(target, name, example) =>
+			`${target} TSRX cannot keep this default for '${name}': vue-jsx-vapor turns destructured prop defaults into prop options and drops any default that is not a literal, an identifier, an object or array literal, or a function, so '${name}' would be undefined. ${read_prop_where_used(example)}`,
+	),
+	/**
+	 * `target` is the target's name, `path` the value's path in the props (such
+	 * as `s.a`), and `example`, which can be empty, an expression that reads the
+	 * value where it is used.
+	 */
+	TARGET_PROP_NESTED_DEFAULT_UNSUPPORTED: tsrx_with_values(
+		'TARGET_PROP_DEFAULT_UNSUPPORTED',
+		(target, path, example) =>
+			`${target} TSRX cannot keep this default for '${path}': vue-jsx-vapor applies a default inside a destructured prop only when the whole prop is missing, so it is lost whenever the prop is passed without this value. ${read_prop_where_used(example)}`,
+	),
+	/**
+	 * `target` is the target's name, and `fallback` the parameter's default as
+	 * written. Only Vue's vue-jsx-vapor skips a props parameter with a default.
+	 */
+	TARGET_PROPS_PARAM_DEFAULT: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, fallback) =>
+			`${target} TSRX cannot read a props parameter with a default: vue-jsx-vapor skips it, so this component gets no props. Remove \`= ${fallback}\`; Vue always passes a props object.`,
+	),
+	/**
+	 * `target` is the target's name, and `path` the path in the props of the
+	 * value the rest element destructures (such as `t`).
+	 */
+	TARGET_PROP_NESTED_REST: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, path) =>
+			`${target} TSRX cannot read this rest element inside '${path}': vue-jsx-vapor doesn't keep it as the rest of '${path}'. It gives the last rest element in the props pattern the component's attrs, an array's rest element the whole array, and any other the rest of '${path}' only as it was at setup. ${read_prop_where_used('')}`,
+	),
+	/**
+	 * `target` is the target's name, `name` the computed key, and `example`,
+	 * which can be empty, an expression that reads the prop where it is used.
+	 * Only Vue's vue-jsx-vapor reads a destructured prop by its key's name.
+	 */
+	TARGET_PROP_KEY_COMPUTED: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, name, example) =>
+			`${target} TSRX cannot read this computed prop key: vue-jsx-vapor reads \`[${name}]\` as the prop '${name}', whatever '${name}' holds. ${read_prop_where_used(example)}`,
+	),
+	/**
+	 * `target` is the target's name, `key` the key as written, and `example`,
+	 * which can be empty, an expression that reads the prop where it is used.
+	 */
+	TARGET_PROP_KEY_UNSUPPORTED: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, key, example) =>
+			`${target} TSRX cannot read the prop at \`${key}\`: vue-jsx-vapor reads a destructured prop only by a key that is a name, so this binding never gets the prop. ${read_prop_where_used(example)}`,
+	),
+	DEFINE_VAPOR_COMPONENT_BINDING: tsrx(
+		'TARGET_RESERVED_NAME',
+		"Vue TSRX does not allow a binding named `defineVaporComponent`. vue-jsx-vapor finds components by calls to that exact name, and the compiler wraps each component in the one from 'vue-jsx-vapor', so the name can't be declared again or shadowed. Rename this binding.",
+	),
+	// A warning. This one is for a child of an element or fragment, where the
+	// `@` may have been meant as text.
+	CODE_BLOCK_EXPRESSION_CHILD: tsrx(
+		'CODE_BLOCK_EXPRESSION_ONLY',
+		"This @{…} is a code block, not '@' text and an expression: it runs the expression as a statement and renders nothing. To render '@' and the value, write {`@${value}`} or {'@' + value}; for the value alone, write {value}.",
+	),
+	// A warning. This one is for anywhere else: a function body, a value, or
+	// the output of another `@{ … }` or a directive body.
+	CODE_BLOCK_EXPRESSION_ONLY: tsrx(
+		'CODE_BLOCK_EXPRESSION_ONLY',
+		'This @{…} code block holds only an expression statement, so it renders nothing. To render the value, end the block with output, such as @{ <>{value}</> }.',
 	),
 
 	// TSRX3xxx
@@ -514,6 +683,10 @@ export const TSRX_ERRORS = {
 	CSS_IMPORT: tsrx(
 		'CSS_IMPORT',
 		"@import is not supported in <style> blocks: the imported rules would not be scoped. Share scoped styles with an assigned block (const theme = <style>…</style>) and apply={theme}. For global CSS, use :global in the block, or import the stylesheet in JavaScript: import './global.css'.",
+	),
+	STYLE_IN_EXPRESSION_CONTAINER: tsrx(
+		'STYLE_IN_EXPRESSION_CONTAINER',
+		'A <style> block inside an expression container, such as {<style>…</style>}, evaluates to its class map, so as a child it styles nothing. Remove the braces to write a standalone block in the element or fragment it styles: <><style>…</style><div>…</div></>. To reuse the block, assign it: const theme = <style>…</style>.',
 	),
 
 	// TSRX4xxx
@@ -950,6 +1123,12 @@ export const TS_ERRORS = {
 		code: 'TS7060',
 		message:
 			'This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma, as in `<T,>() => ...`.',
+	},
+	/** A type assertion written `<T>x` in a `.mts` or `.cts` file. */
+	RESERVED_TYPE_ASSERTION: {
+		code: 'TS7059',
+		message:
+			'This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead.',
 	},
 };
 
@@ -1447,10 +1626,7 @@ function upstream_lookup_rows() {
 		// acorn-typescript: tsParseTypeAssertion
 		TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER,
 		// acorn-typescript: tsParseTypeAssertion
-		[
-			/^This syntax is reserved in files with the \.mts or \.cts extension\. Use an `as` expression instead\.$/,
-			'TS7059',
-		],
+		TS_ERRORS.RESERVED_TYPE_ASSERTION,
 		// acorn-typescript: tsParsePropertyOrMethodSignature
 		[/^A 'set' accessor cannot have an optional parameter\.$/, 'TS1051'],
 		// acorn-typescript: tsParsePropertyOrMethodSignature

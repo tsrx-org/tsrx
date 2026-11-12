@@ -11,7 +11,11 @@ import {
 	is_transparent_expression_wrapper,
 	is_tsrx_render_output_node,
 } from '../utils/ast.js';
-import { validate_forgotten_statement_container, validate_jsx_spread_child } from './validation.js';
+import {
+	validate_code_block_expression_only,
+	validate_forgotten_statement_container,
+	validate_jsx_spread_child,
+} from './validation.js';
 import { create_scopes, ScopeRoot } from '../scope.js';
 import { analyze_styles } from './style-analyze.js';
 
@@ -76,6 +80,8 @@ function visit_render_output(node, { next, path, state }) {
 		state.function &&
 		!(state.function_body_is_code_block && state.function.body === node) &&
 		!state.inside_template_output &&
+		// The parser reported it as a second output (TSRX2011, TSRX2012).
+		!node.metadata?.misplaced_output &&
 		is_free_floating_template(node, path)
 	) {
 		validate_forgotten_statement_container(
@@ -92,6 +98,22 @@ function visit_render_output(node, { next, path, state }) {
 	// render node itself is retained by the code block, and establishes template
 	// context for its own descendants when this visitor reaches it.
 	next({ ...state, inside_template_output: node.type !== 'JSXCodeBlock' });
+}
+
+/**
+ * @param {AST.JSXCodeBlock} node
+ * @param {{ next: (state?: TSRXAnalysisState) => unknown, path: AST.Node[], state: TSRXAnalysisState }} context
+ */
+function visit_code_block(node, context) {
+	const { path, state } = context;
+	validate_code_block_expression_only(
+		node,
+		path.at(-1),
+		state.filename,
+		state.collect ? state.errors : undefined,
+		state.comments,
+	);
+	visit_render_output(node, context);
 }
 
 /**
@@ -134,7 +156,7 @@ const visitors = {
 	JSXElement: visit_render_output,
 	JSXFragment: visit_render_output,
 	JSXStyleElement: visit_render_output,
-	JSXCodeBlock: visit_render_output,
+	JSXCodeBlock: visit_code_block,
 	JSXIfExpression: visit_render_output,
 	JSXForExpression: visit_render_output,
 	JSXSwitchExpression: visit_render_output,

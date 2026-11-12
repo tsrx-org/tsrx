@@ -251,7 +251,9 @@ describe('error codes', () => {
 }`,
 			],
 			['TSRX2013', 'const a = <div>{...items}</div>;'],
+			['TSRX2035', 'const a = <p>@{user.name}</p>;'],
 			['TSRX2014', 'const a = <{x ? A : B} />;'],
+			['TSRX2033', 'const a = <{Tag}<T> />;'],
 			[
 				'TSRX3001',
 				`function App() @{
@@ -339,6 +341,12 @@ function App() @{
 		<style>p { color: red; </style>
 		<p />
 	</>
+}`,
+			],
+			[
+				'TSRX3014',
+				`function App() @{
+	<div>{<style>p {}</style>}</div>
 }`,
 			],
 			['TSRX4003', "import a from 'a' with { type: 'json', type: 'json' };"],

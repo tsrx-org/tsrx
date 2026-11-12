@@ -24,7 +24,7 @@
     "@tsrx/react": "workspace:*"
   },
   "peerDependencies": {
-    "next": ">=15.3.0"
+    "next": ">=16.2.0"
   },
   "peerDependenciesMeta": {
     "next": {
