@@ -114,6 +114,41 @@ export function tsx_with_ts_locations(
 	const preserve_owner_comments = type_only && preserve_comments;
 	/** @type {Set<string> | null} */
 	const emitted_comments = preserve_comments ? new Set() : null;
+	/**
+	 * The statements that the editor output ends without a `;`, as the source
+	 * does. TypeScript writes the code of an edit with or without `;` as most
+	 * statements of the file do, and TypeScript 7 offers a completion at the end
+	 * of a name only inside text that is the same in both files (#1064). A `;`
+	 * stays where the next line could continue the statement.
+	 * @type {WeakSet<AST.Node>}
+	 */
+	const semicolon_free = new WeakSet();
+
+	/**
+	 * Find the statements of `node`'s statement list that end without `;`.
+	 * @param {AST.Node} node
+	 */
+	const mark_semicolon_free = (node) => {
+		if (!type_only || source === undefined) return;
+		const statements =
+			node.type === 'SwitchCase'
+				? node.consequent
+				: STATEMENT_LISTS.has(node.type)
+					? /** @type {AST.Program | AST.BlockStatement} */ (node).body
+					: null;
+		if (!Array.isArray(statements)) return;
+		/** @type {AST.Node | null} */
+		let next = null;
+		for (let index = statements.length - 1; index >= 0; index--) {
+			const statement = statements[index];
+			const owner = semicolon_free_statement(statement, source);
+			// A statement the compiler prints in two places is decided for each.
+			if (owner && (!next || starts_with_word(next))) semicolon_free.add(owner);
+			else if (owner) semicolon_free.delete(owner);
+			// The printer leaves out empty statements.
+			if (statement.type !== 'EmptyStatement') next = statement;
+		}
+	};
 
 	/**
 	 * @param {AST.CommentWithLocation} comment
@@ -210,6 +245,50 @@ export function tsx_with_ts_locations(
 		}
 	};
 
+	/**
+	 * Elements and fragments that print in parentheses. TSX reads an element
+	 * only as a unary operand: `<b>ok</b>.type` is the element followed by a
+	 * separate `.type` statement, and `class A extends <div /> {}` doesn't
+	 * parse. So an element needs its parentheses as the object of a member,
+	 * call, tagged-template, `!` or type-argument suffix (an instantiation
+	 * expression), a `new` callee, or a superclass. TSX also reads a `<` right
+	 * after an element as the start of another element, so an element that
+	 * ends the left operand of `<` needs them too (see
+	 * `element_before_less_than`). The build parse drops the source's
+	 * parentheses, and esrap ranks an element as a primary expression, which
+	 * it never wraps there. The editor parse keeps them as a
+	 * `ParenthesizedExpression`, which prints them.
+	 * @type {WeakSet<AST.Node>}
+	 */
+	const parenthesized_elements = new WeakSet();
+
+	/**
+	 * @template {AST.Node} T
+	 * @param {((node: T, context: ESRap.Context) => void) | undefined} print
+	 * @param {T} node
+	 * @param {AST.Node | null | undefined} operand
+	 * @param {ESRap.Context} context
+	 */
+	const print_with_element_operand = (print, node, operand, context) => {
+		const wrap = operand?.type === 'JSXElement' || operand?.type === 'JSXFragment';
+		if (wrap) parenthesized_elements.add(operand);
+		/** @type {NonNullable<typeof print>} */ (print)(node, context);
+		if (wrap) parenthesized_elements.delete(operand);
+	};
+
+	/**
+	 * @template {AST.Node} T
+	 * @param {((node: T, context: ESRap.Context) => void) | undefined} print
+	 * @param {T} node
+	 * @param {ESRap.Context} context
+	 */
+	const print_element = (print, node, context) => {
+		const wrap = parenthesized_elements.has(node);
+		if (wrap) context.write('(');
+		/** @type {NonNullable<typeof print>} */ (print)(node, context);
+		if (wrap) context.write(')');
+	};
+
 	const leading_preserved = (/** @type {AST.Program} */ program) => {
 		if (!preserve_comments || !comments?.length) return [];
 		// Injected statements (dynamic-import/try-import prepends) carry no
@@ -243,6 +322,27 @@ export function tsx_with_ts_locations(
 			}
 			/** @type {NonNullable<typeof base.Program>} */ (base.Program)(node, context);
 		},
+		// The editor output writes an import as it is in the source: TypeScript 7
+		// applies an Organize Imports edit only to text that is the same in both
+		// files. An import the compiler changed prints in esrap's layout.
+		ImportDeclaration: (node, context) => {
+			const names =
+				type_only && source !== undefined ? import_names_as_written(node, source) : null;
+			if (!names || source === undefined) {
+				/** @type {NonNullable<typeof base.ImportDeclaration>} */ (base.ImportDeclaration)(
+					node,
+					context,
+				);
+				return;
+			}
+			let offset = /** @type {number} */ (node.start);
+			for (const name of names) {
+				write_source_text(source.slice(offset, name.start), context);
+				context.visit(name);
+				offset = name.end;
+			}
+			write_source_text(source.slice(offset, node.end), context);
+		},
 		ArrayPattern: (node, context) => {
 			print_binding_pattern(
 				/** @type {NonNullable<typeof base.ArrayPattern>} */ (base.ArrayPattern),
@@ -261,6 +361,10 @@ export function tsx_with_ts_locations(
 		// parentheses, so `('use strict');` became a directive.
 		// UPSTREAM(sveltejs/esrap#246): remove once a release includes the fix
 		ExpressionStatement: (node, context) => {
+			if (semicolon_free.has(node)) {
+				context.visit(node.expression);
+				return;
+			}
 			const expression = node.expression;
 			if (
 				!('directive' in node && typeof node.directive === 'string') &&
@@ -276,6 +380,39 @@ export function tsx_with_ts_locations(
 				node,
 				context,
 			);
+		},
+		// esrap's printers of these statements end them with `;`.
+		VariableDeclaration: (node, context) => {
+			if (!semicolon_free.has(node)) {
+				/** @type {NonNullable<typeof base.VariableDeclaration>} */ (base.VariableDeclaration)(
+					node,
+					context,
+				);
+				return;
+			}
+			if (node.declare) {
+				write_keyword('declare', node, context);
+				context.write(' ');
+				context.write(node.kind);
+			} else {
+				write_keyword(node.kind, node, context);
+			}
+			context.write(' ');
+			context.visit(node.declarations[0]);
+		},
+		ReturnStatement: (node, context) => {
+			if (!semicolon_free.has(node)) {
+				/** @type {NonNullable<typeof base.ReturnStatement>} */ (base.ReturnStatement)(
+					node,
+					context,
+				);
+				return;
+			}
+			write_keyword('return', node, context);
+			if (node.argument) {
+				context.write(' ');
+				context.visit(node.argument);
+			}
 		},
 		// esrap's tsx printer writes `<T,>` for every one-parameter list, but
 		// only an arrow needs it: TSX reads `<T>(…) => …` as a JSX tag. Other
@@ -308,6 +445,17 @@ export function tsx_with_ts_locations(
 		TSInterfaceDeclaration: (node, context) => {
 			/** @type {NonNullable<typeof base.TSInterfaceDeclaration>} */ (base.TSInterfaceDeclaration)(
 				{ ...node, body: { ...node.body, loc: undefined } },
+				context,
+			);
+		},
+		// esrap writes `readonly` but not `static` before an index signature (up to
+		// at least esrap 2.4.0), which would turn a static signature into an
+		// instance one (#1253).
+		// UPSTREAM(sveltejs/esrap, not reported yet): remove once a release prints `static`
+		TSIndexSignature: (node, context) => {
+			if (/** @type {{ static?: boolean }} */ (node).static) context.write('static ');
+			/** @type {NonNullable<typeof base.TSIndexSignature>} */ (base.TSIndexSignature)(
+				node,
 				context,
 			);
 		},
@@ -399,6 +547,31 @@ export function tsx_with_ts_locations(
 			}
 			context.write('>');
 		},
+		JSXElement: (node, context) => print_element(base.JSXElement, node, context),
+		JSXFragment: (node, context) => print_element(base.JSXFragment, node, context),
+		MemberExpression: (node, context) =>
+			print_with_element_operand(base.MemberExpression, node, node.object, context),
+		CallExpression: (node, context) =>
+			print_with_element_operand(base.CallExpression, node, node.callee, context),
+		NewExpression: (node, context) =>
+			print_with_element_operand(base.NewExpression, node, node.callee, context),
+		TaggedTemplateExpression: (node, context) =>
+			print_with_element_operand(base.TaggedTemplateExpression, node, node.tag, context),
+		BinaryExpression: (node, context) =>
+			print_with_element_operand(
+				base.BinaryExpression,
+				node,
+				node.operator === '<' ? element_before_less_than(node.left) : null,
+				context,
+			),
+		TSNonNullExpression: (node, context) =>
+			print_with_element_operand(base.TSNonNullExpression, node, node.expression, context),
+		TSInstantiationExpression: (node, context) =>
+			print_with_element_operand(base.TSInstantiationExpression, node, node.expression, context),
+		ClassDeclaration: (node, context) =>
+			print_with_element_operand(base.ClassDeclaration, node, node.superClass, context),
+		ClassExpression: (node, context) =>
+			print_with_element_operand(base.ClassExpression, node, node.superClass, context),
 		// esrap's TSExpressionWithTypeArguments printer only emits `expression`,
 		// dropping interface heritage arguments such as the `<T>` in
 		// `interface Foo<T> extends Bar<T> {}`. Besides changing the declaration's
@@ -479,6 +652,7 @@ export function tsx_with_ts_locations(
 			}
 		},
 		_(node, context, visit) {
+			mark_semicolon_free(node);
 			if (preserve_owner_comments) write_leading_comments(node, context);
 			// esrap's `_` maps the start and end of every located node. A program's
 			// start would map the source's first character to an import a target
@@ -529,6 +703,283 @@ const COMMENT_OWNER_NODE_TYPES = new Set([
 /** @type {WeakSet<AST.Node>} */
 const arrow_type_parameters = new WeakSet();
 
+const STATEMENT_LISTS = new Set(['Program', 'BlockStatement', 'StaticBlock', 'TSModuleBlock']);
+
+/**
+ * Statements that print starting with a keyword or a name, which no statement
+ * before them continues into across a line break. Not a block: TypeScript
+ * reads `(c)` and a `{` on the next line as an arrow function without `=>`.
+ */
+const WORD_STATEMENTS = new Set([
+	'BreakStatement',
+	'ClassDeclaration',
+	'ContinueStatement',
+	'DebuggerStatement',
+	'DoWhileStatement',
+	'ExportAllDeclaration',
+	'ExportDefaultDeclaration',
+	'ExportNamedDeclaration',
+	'ForInStatement',
+	'ForOfStatement',
+	'ForStatement',
+	'FunctionDeclaration',
+	'IfStatement',
+	'ImportDeclaration',
+	'LabeledStatement',
+	'ReturnStatement',
+	'SwitchStatement',
+	'ThrowStatement',
+	'TryStatement',
+	'TSDeclareFunction',
+	'TSEnumDeclaration',
+	'TSExportAssignment',
+	'TSImportEqualsDeclaration',
+	'TSInterfaceDeclaration',
+	'TSModuleDeclaration',
+	'TSNamespaceExportDeclaration',
+	'TSTypeAliasDeclaration',
+	'VariableDeclaration',
+	'WhileStatement',
+]);
+
+/**
+ * The node whose printer writes the `;` of `statement`, when the source ends
+ * the statement without one: a statement whose source ends with its last
+ * expression or declarator, or the `return` the compiler adds around a
+ * template's output. An expression statement keeps its `;` unless it starts
+ * with a name or keyword, which the printer never wraps in parentheses.
+ * @param {AST.Node} statement
+ * @param {string} source
+ * @returns {AST.Node | null}
+ */
+function semicolon_free_statement(statement, source) {
+	if (statement.type === 'ReturnStatement') {
+		if (has_location(statement) && source.startsWith('return', statement.start)) {
+			const end = statement.argument ? statement.argument.end : statement.start + 'return'.length;
+			return statement.end === end ? statement : null;
+		}
+		return has_location(statement) || has_location(statement.argument) ? statement : null;
+	}
+	if (!has_location(statement)) return null;
+	switch (statement.type) {
+		case 'ExpressionStatement':
+			return has_location(statement.expression) &&
+				statement.end === statement.expression.end &&
+				expression_starts_with_word(statement.expression)
+				? statement
+				: null;
+		case 'VariableDeclaration':
+			return ends_with_declarator(statement, source) ? statement : null;
+		case 'ExportNamedDeclaration':
+			return statement.declaration?.type === 'VariableDeclaration' &&
+				ends_with_declarator(statement.declaration, source)
+				? statement.declaration
+				: null;
+	}
+	return null;
+}
+
+/**
+ * Whether an authored declaration of one variable ends with its declarator.
+ * A declaration the compiler adds can carry the location of other code.
+ * @param {AST.VariableDeclaration} node
+ * @param {string} source
+ * @returns {boolean}
+ */
+function ends_with_declarator(node, source) {
+	const [declarator] = node.declarations;
+	return (
+		node.declarations.length === 1 &&
+		has_location(node) &&
+		has_location(declarator) &&
+		node.end === declarator.end &&
+		source.startsWith(node.declare ? 'declare' : node.kind, node.start)
+	);
+}
+
+/**
+ * @param {AST.Node} node a statement
+ * @returns {boolean}
+ */
+function starts_with_word(node) {
+	if (node.type === 'ExpressionStatement') {
+		return (
+			typeof (/** @type {{ directive?: unknown }} */ (node).directive) !== 'string' &&
+			expression_starts_with_word(node.expression)
+		);
+	}
+	return WORD_STATEMENTS.has(node.type);
+}
+
+/**
+ * Whether the printed expression starts with a keyword or a name: `new`,
+ * `await`, `typeof`, `true`, or a chain of member accesses and calls on a
+ * name, also as the left operand of an operator.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function expression_starts_with_word(node) {
+	switch (node.type) {
+		case 'NewExpression':
+		case 'AwaitExpression':
+		case 'YieldExpression':
+			return true;
+		case 'UnaryExpression':
+			return /^[a-z]/.test(node.operator);
+		case 'AssignmentExpression':
+		case 'BinaryExpression':
+		case 'LogicalExpression':
+			return is_name_chain(node.left);
+		case 'ConditionalExpression':
+			return is_name_chain(node.test);
+		case 'TSAsExpression':
+		case 'TSSatisfiesExpression':
+			return is_name_chain(node.expression);
+		case 'UpdateExpression':
+			return !node.prefix && is_name_chain(node.argument);
+		case 'ChainExpression':
+		case 'TSInstantiationExpression':
+			return is_name_chain(node.expression);
+		case 'Literal':
+			return /^(?:true|false|null)$/.test(node.raw ?? '');
+	}
+	return is_name_chain(node);
+}
+
+/**
+ * A name, `this`, `super`, `import(…)` or `import.meta`, or member accesses
+ * and calls on one: the printer never wraps them in parentheses.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_name_chain(node) {
+	while (true) {
+		switch (node.type) {
+			case 'Identifier':
+			case 'ThisExpression':
+			case 'Super':
+			case 'ImportExpression':
+			case 'MetaProperty':
+				return true;
+			case 'MemberExpression':
+				node = node.object;
+				break;
+			case 'CallExpression':
+				node = node.callee;
+				break;
+			case 'TaggedTemplateExpression':
+				node = node.tag;
+				break;
+			case 'TSNonNullExpression':
+				node = node.expression;
+				break;
+			default:
+				return false;
+		}
+	}
+}
+
+/**
+ * Write a keyword the way esrap's `token` does: mapped to the source token
+ * when there is one, with the end of the keyword after it.
+ * @param {string} keyword
+ * @param {AST.Node} node
+ * @param {ESRap.Context} context
+ */
+function write_keyword(keyword, node, context) {
+	context.write(keyword);
+	if (node.loc) context.location(node.loc.start.line, node.loc.start.column + keyword.length);
+}
+
+/**
+ * The text of an import around its names: spaces, comments, and the keywords
+ * and punctuation of the import syntax.
+ */
+const regex_import_text_token =
+	/\s+|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\/|[{},*:;]|[\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*|[^]/gu;
+const regex_spaces_or_comment = /^(?:\s|\/\/|\/\*)/;
+const regex_line_break = /[\n\r\u2028\u2029]/;
+const IMPORT_SYNTAX = new Set([
+	'{',
+	'}',
+	',',
+	'*',
+	':',
+	';',
+	'import',
+	'defer',
+	'source',
+	'type',
+	'typeof',
+	'as',
+	'from',
+	'with',
+	'assert',
+]);
+
+/**
+ * The names, module string and attribute keys and values of an import that
+ * the compiler did not change, in source order, or `null` when it changed the
+ * import: a name has no location or another spelling, or the text between two
+ * names holds more than the import syntax, as after a removed name.
+ * @param {AST.ImportDeclaration | AST.TSRXImportDeclaration} node
+ * @param {string} source
+ * @returns {Array<AST.Node & AST.NodeWithLocation> | null}
+ */
+function import_names_as_written(node, source) {
+	if (!has_location(node)) return null;
+	/** @type {AST.Node[]} */
+	const nodes = [];
+	for (const specifier of node.specifiers) {
+		if (!has_location(specifier)) return null;
+		if (specifier.type === 'ImportSpecifier') nodes.push(specifier.imported);
+		nodes.push(specifier.local);
+	}
+	nodes.push(node.source);
+	for (const attribute of node.attributes ?? []) nodes.push(attribute.key, attribute.value);
+
+	/** @type {Array<AST.Node & AST.NodeWithLocation>} */
+	const names = [];
+	for (const name of nodes) {
+		if (!has_location(name)) return null;
+		const text = source.slice(name.start, name.end);
+		const printed =
+			name.type === 'Identifier' ? name.name : name.type === 'Literal' ? name.raw : undefined;
+		if (printed !== text) return null;
+		// A name written once (`{ a }`) is both the imported and the local name.
+		if (!names.some((other) => other.start === name.start)) names.push(name);
+	}
+	names.sort((a, b) => a.start - b.start);
+
+	let offset = /** @type {number} */ (node.start);
+	for (const name of [...names, null]) {
+		const end = name ? name.start : /** @type {number} */ (node.end);
+		if (end < offset) return null;
+		let line_break = false;
+		for (const [token] of source.slice(offset, end).matchAll(regex_import_text_token)) {
+			if (!IMPORT_SYNTAX.has(token) && !regex_spaces_or_comment.test(token)) return null;
+			// TypeScript reads `with` or `assert` after a line break as a new
+			// statement.
+			if ((token === 'with' || token === 'assert') && line_break) return null;
+			line_break ||= regex_line_break.test(token);
+		}
+		if (name) offset = name.end;
+	}
+	return names;
+}
+
+/**
+ * Write source text one token at a time, so that each keyword and punctuation
+ * maps to its source token.
+ * @param {string} text
+ * @param {ESRap.Context} context
+ */
+function write_source_text(text, context) {
+	for (const [token] of text.matchAll(regex_import_text_token)) {
+		context.write(token);
+	}
+}
+
 /**
  * esrap prints a binding pattern's type annotation but not the `?` of an
  * optional one, `{ a }?: T` in a declared function or a signature, which then
@@ -547,6 +998,49 @@ function print_binding_pattern(print, node, context) {
 	print({ ...node, typeAnnotation: undefined }, context);
 	context.write('?');
 	if (node.typeAnnotation) context.visit(node.typeAnnotation);
+}
+
+/**
+ * The precedence esrap gives each binary operator that binds at least as
+ * tightly as `<`. esrap wraps any looser operand of these in parentheses.
+ * @type {Record<string, number>}
+ */
+const TIGHT_BINARY_PRECEDENCE = {
+	'<': 9,
+	'>': 9,
+	'<=': 9,
+	'>=': 9,
+	in: 9,
+	instanceof: 9,
+	'<<': 10,
+	'>>': 10,
+	'>>>': 10,
+	'+': 11,
+	'-': 11,
+	'*': 12,
+	'/': 12,
+	'%': 12,
+	'**': 13,
+};
+
+/**
+ * The element or fragment that `node` ends with when esrap prints it as the
+ * left operand of `<`, with no parentheses after it: `<b />` in `<b /> < x`
+ * and `x + <b /> < y`. A unary operand (`!<b /> < y`) is fine, as is an
+ * operand esrap wraps (`(x == <b />) < y`).
+ * @param {AST.Node} node
+ * @param {number} [min_precedence] The precedence below which esrap wraps
+ * `node`.
+ * @returns {AST.Node | null}
+ */
+function element_before_less_than(node, min_precedence = TIGHT_BINARY_PRECEDENCE['<']) {
+	if (node.type === 'JSXElement' || node.type === 'JSXFragment') return node;
+	if (node.type !== 'BinaryExpression') return null;
+	const precedence = TIGHT_BINARY_PRECEDENCE[node.operator];
+	if (precedence === undefined || precedence < min_precedence) return null;
+	// A right operand needs to bind more tightly to go unwrapped, except in
+	// right-associative `**`.
+	return element_before_less_than(node.right, node.operator === '**' ? precedence : precedence + 1);
 }
 
 /**
