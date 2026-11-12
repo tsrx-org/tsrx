@@ -47,11 +47,32 @@ const visitorKeys: Record<string, string[]> = {
  */
 class TSRXReferencer extends Referencer {
 	#tsrx_for_by_loop = new Map<any, any>();
+	#var_heads = new Set<any>();
 
 	JSXForExpression(node: any): void {
 		this.#tsrx_for_by_loop.set(node.loop, node);
+		// TSRX runs each iteration in a callback, so the loop has a scope of its
+		// own whatever its head declares. eslint-scope opens one only for a
+		// `let` or `const` head.
+		const head = node.loop.type === 'ForStatement' ? node.loop.init : node.loop.left;
+		if (head?.type !== 'VariableDeclaration' || head.kind === 'var') {
+			(this as any).scopeManager.__nestForScope(node.loop);
+		}
+		if (head?.kind === 'var') this.#var_heads.add(head);
 		this.visit(node.loop);
 		if (node.empty) this.visit(node.empty);
+	}
+
+	VariableDeclaration(node: any): void {
+		if (!this.#var_heads.has(node)) {
+			super.VariableDeclaration(node);
+			return;
+		}
+		// A `var` head declares the variable in the loop's scope, as `let` does.
+		node.declarations.forEach((declaration: any, index: number) => {
+			this.visitVariableDeclaration(this.currentScope(), 'Variable', node, index);
+			if (declaration.init) this.visit(declaration.init);
+		});
 	}
 
 	close(node: any): void {
@@ -101,6 +122,14 @@ const LOOP_FIELDS: Record<string, string[]> = {
 	ForInStatement: ['left', 'right', 'body'],
 	ForOfStatement: ['await', 'left', 'right', 'body'],
 };
+
+const SIGNATURE_TYPES = new Set([
+	'TSFunctionType',
+	'TSConstructorType',
+	'TSCallSignatureDeclaration',
+	'TSConstructSignatureDeclaration',
+	'TSMethodSignature',
+]);
 
 /**
  * Keep this hook for small ESLint-only AST normalizations. Returns the `JSXText`
@@ -156,6 +185,13 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 			node.loop = loop;
 		}
 
+		// typescript-eslint names the parameters of a function type or signature
+		// `params`, and rules such as `max-params` read that name. It is not
+		// enumerable, so traversal still visits each parameter once.
+		if (SIGNATURE_TYPES.has(node.type) && node.parameters) {
+			Object.defineProperty(node, 'params', { value: node.parameters, configurable: true });
+		}
+
 		// Like espree, a template element spans its delimiters: `` `a${ ``, `` }b` ``.
 		if (node.type === 'TemplateElement') {
 			const end_offset = node.tail ? 1 : 2;
@@ -191,7 +227,7 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
  * Recursively walks the AST and ensures all nodes have range and loc properties
  * ESLint's scope analyzer requires these properties on ALL nodes
  */
-function ensure_node_properties(node: any, code: string): void {
+function ensure_node_properties(node: any, locate: Locate): void {
 	if (!node || typeof node !== 'object') {
 		return;
 	}
@@ -203,38 +239,7 @@ function ensure_node_properties(node: any, code: string): void {
 
 	// Ensure loc property exists
 	if (!node.loc && node.start !== undefined && node.end !== undefined) {
-		const lines = code.split('\n');
-		let current_pos = 0;
-		let start_line = 1;
-		let start_column = 0;
-		let end_line = 1;
-		let end_column = 0;
-
-		for (let i = 0; i < lines.length; i++) {
-			const line_length = lines[i].length + 1;
-			if (current_pos + line_length > node.start) {
-				start_line = i + 1;
-				start_column = node.start - current_pos;
-				break;
-			}
-			current_pos += line_length;
-		}
-
-		current_pos = 0;
-		for (let i = 0; i < lines.length; i++) {
-			const line_length = lines[i].length + 1;
-			if (current_pos + line_length > node.end) {
-				end_line = i + 1;
-				end_column = node.end - current_pos;
-				break;
-			}
-			current_pos += line_length;
-		}
-
-		node.loc = {
-			start: { line: start_line, column: start_column },
-			end: { line: end_line, column: end_column },
-		};
+		node.loc = locate(node.start, node.end);
 	}
 
 	for (const key in node) {
@@ -244,9 +249,9 @@ function ensure_node_properties(node: any, code: string): void {
 
 		const value = node[key];
 		if (Array.isArray(value)) {
-			value.forEach((child) => ensure_node_properties(child, code));
+			value.forEach((child) => ensure_node_properties(child, locate));
 		} else if (value && typeof value === 'object' && value.type) {
-			ensure_node_properties(value, code);
+			ensure_node_properties(value, locate);
 		}
 	}
 }
@@ -548,9 +553,9 @@ export function parseForESLint(code: string, options?: Linter.ParserOptions): Pa
 		const texts = normalize_tsrx_ast_for_eslint(ast, code);
 
 		// Recursively ensure all nodes have range and loc properties
-		ensure_node_properties(ast, code);
-
 		const locate = create_locator(code);
+		ensure_node_properties(ast, locate);
+
 		const eslint_comments = to_eslint_comments(code, comments, locate);
 
 		// Create a properly structured AST object ensuring all required properties exist

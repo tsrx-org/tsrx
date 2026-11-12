@@ -267,4 +267,103 @@ export function A({ items }) @{
 			"6: no-undef: 'item' is not defined.",
 		]);
 	});
+
+	it('scopes a @for with a var or bare head to the loop', () => {
+		const code = `export function A({ items }) @{
+	let target;
+	<ul>
+		@for (var item of items; index i) { <li>{item}{i}</li> } @empty { <p>{item}{i}</p> }
+		@for (var other of items; index i) { <li>{other}{i}</li> }
+		@for (target of items; index j) { <li>{j}</li> } @empty { <p>{target}{j}</p> }
+	</ul>
+}`;
+		expect(lint(code, { rules: { 'no-undef': 'error', 'no-redeclare': 'error' } })).toEqual([
+			"4: no-undef: 'item' is not defined.",
+			"4: no-undef: 'i' is not defined.",
+			"6: no-undef: 'j' is not defined.",
+		]);
+	});
+
+	it('locates the loop of a @for with any line break', () => {
+		for (const line_break of ['\n', '\r\n', '\r', ' ']) {
+			const code = [
+				'export function A({ items }) @{',
+				'\t<ul>',
+				'\t\t@for (const item of items) { <li>{item}</li> }',
+				'\t</ul>',
+				'}',
+			].join(line_break);
+			const tsrx_for = (parseForESLint(code, { filePath: 'App.tsrx' }).ast as any).body[0]
+				.declaration.body.render.children[1];
+			expect(tsrx_for.loc.start).toEqual({ line: 3, column: 2 });
+			expect(tsrx_for.loop.loc).toEqual({
+				start: { line: 3, column: 3 },
+				end: { line: 3, column: 48 },
+			});
+		}
+	});
+
+	it('gives TypeScript function types the params ESLint reads', () => {
+		const code = `type Fn = (a: number, b: string, c: boolean) => void;
+type Ctor = new (a, b, c) => object;
+interface Api {
+	(a, b, c): void;
+	new (a, b, c): Api;
+	method(a, b, c): void;
+}
+export function Button(props: { onPress?: () => void }) @{
+	<button onClick={props.onPress}>{'ok'}</button>
+}`;
+		expect(lint(code, { rules: { 'max-params': ['error', 2] } })).toEqual([
+			'1: max-params: Function has too many parameters (3). Maximum allowed is 2.',
+		]);
+		const [fn, ctor, api] = (parseForESLint(code, { filePath: 'App.tsrx' }).ast as any).body;
+		for (const node of [fn.typeAnnotation, ctor.typeAnnotation, ...api.body.body]) {
+			expect(node.params.map((param: any) => param.name)).toEqual(['a', 'b', 'c']);
+		}
+	});
+
+	it('gives jsx-ast-utils a {name} shorthand attribute as a JSXAttribute', () => {
+		// jsx-ast-utils' `propName` and `getPropValue`, which eslint-plugin-react
+		// and eslint-plugin-jsx-a11y call on every attribute that is not a spread.
+		const prop_name = (prop: any) => {
+			if (prop.type !== 'JSXAttribute') {
+				throw new Error('The prop must be a JSXAttribute collected by the AST parser.');
+			}
+			return prop.name.name;
+		};
+		const prop_value = (prop: any) => {
+			if (prop.value === null) return true;
+			const value =
+				prop.value.type === 'JSXExpressionContainer' ? prop.value.expression : prop.value;
+			return value.type === 'Identifier' ? value.name : value.value;
+		};
+		const props: string[] = [];
+		const messages = lint(
+			`export function App({ onClick }) @{
+	<button {onClick} type="submit" />
+}`,
+			{
+				plugins: {
+					probe: {
+						rules: {
+							props: {
+								create: (context) => ({
+									JSXOpeningElement(node: any) {
+										for (const prop of node.attributes) {
+											props.push(`${prop_name(prop)}=${prop_value(prop)}`);
+										}
+									},
+								}),
+							},
+						},
+					},
+				},
+				rules: { 'no-unused-vars': 'error', 'probe/props': 'error' },
+			},
+		);
+
+		expect(messages).toEqual([]);
+		expect(props).toEqual(['onClick=onClick', 'type=submit']);
+	});
 });
