@@ -398,6 +398,28 @@ export const d: number = bad;
 			expect(code).toContain('/** Docs. */ export const e = 1;');
 		});
 
+		it('keeps a block directive whose last line starts with a star', () => {
+			// TypeScript trims the start of a block comment's last line before it
+			// looks for the directive there, so ` * @ts-expect-error` is one.
+			const source = `declare const bad: string;
+/*
+ * @ts-expect-error */
+export const a: number = bad;
+export function A() @{
+	<div>
+		{/*
+		  * @ts-ignore */}
+		<span title={1 as string} />
+	</div>
+}
+`;
+			const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(code).toContain('/*\n * @ts-expect-error */\nexport const a');
+			expect(code).toMatch(/\{\/\*\n\s*\* @ts-ignore \*\/\}/);
+		});
+
 		it('leaves out a directive on the line where its statement starts', () => {
 			// It covers the source line after it, which the printed statement does
 			// not keep: here the printer splits the statement over several lines.

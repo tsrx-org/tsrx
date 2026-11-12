@@ -113,7 +113,9 @@ export function should_preserve_jsx_tooling_comment(comment) {
 /**
  * Whether TypeScript reads a comment as a `@ts-expect-error` or `@ts-ignore`
  * directive: a line comment that starts with one, or a block comment whose
- * last line does, after any `/` and `*` (TypeScript's `commentDirectiveRegEx`).
+ * last line does, after any leading whitespace, `/` and `*`. TypeScript tests
+ * its `commentDirectiveRegEx` on the line with its start trimmed, so a last
+ * line ` * @ts-expect-error` counts.
  * @param {AST.CommentWithLocation} comment
  * @returns {boolean}
  */
@@ -122,7 +124,7 @@ export function is_ts_suppression_directive(comment) {
 		return /^\/?\s*@ts-(?:expect-error|ignore)/.test(comment.value);
 	}
 	const last_line = `/*${comment.value}`.split(regex_line_terminator_global).at(-1) ?? '';
-	return /^[/*]*\s*@ts-(?:expect-error|ignore)/.test(last_line);
+	return /^[/*]*\s*@ts-(?:expect-error|ignore)/.test(last_line.trimStart());
 }
 
 /**

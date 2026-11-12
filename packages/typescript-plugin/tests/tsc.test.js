@@ -806,6 +806,24 @@ it('applies a TypeScript directive to the first line of a statement over several
 	expect(result.status).toBe(2);
 });
 
+it('applies a block TypeScript directive whose last line starts with a star in .tsrx files', () => {
+	// TypeScript trims the start of a block comment's last line before it looks
+	// for the directive there.
+	const lines = [
+		'declare const bad: string;',
+		'/*',
+		' * @ts-expect-error */',
+		'export const a: number = bad;',
+		'/* Explanation.',
+		'   * @ts-ignore */',
+		'export const b: number = bad;',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.output).toBe('');
+	expect(result.status).toBe(0);
+});
+
 it('reports a superclass expression that is not a constructor in .tsrx files', () => {
 	const line =
 		'function createBase() { return {}; } export class Model extends createBase() {} export class Cast extends (Model as unknown as {}) {}';
