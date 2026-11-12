@@ -41,7 +41,7 @@ export interface TsrxReactTurbopackCssRule {
 		all: Array<unknown>;
 	};
 	loaders: Array<string | TsrxReactTurbopackLoader>;
-	type: 'css';
+	as: '*.css';
 }
 
 export declare function create_tsrx_react_turbopack_rule(
