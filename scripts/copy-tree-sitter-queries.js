@@ -31,9 +31,20 @@ function createTarget(name, subdir, lang) {
 }
 
 /** @type {Target[]} */
-const targets = [createTarget('zed', 'languages', 'tsrx'), createTarget('nvim', 'queries', 'tsrx')];
+const allTargets = [
+	createTarget('zed', 'languages', 'tsrx'),
+	createTarget('nvim', 'queries', 'tsrx'),
+];
 
-const extraIndentFiles = targets.map((v) => v.indentVariant);
+const extraIndentFiles = allTargets.map((v) => v.indentVariant);
+
+// Zed builds the grammar at the commit pinned in packages/zed-plugin/extension.toml,
+// and a query that names a node or token that grammar lacks fails to load, which
+// turns off highlighting. So Zed's copy changes only with `--zed`, which
+// `sync-zed-grammar-rev.js` passes when it moves the pin. Neovim builds the
+// grammar from the repository's default branch and always takes these queries.
+const includeZed = process.argv.includes('--zed');
+const targets = allTargets.filter((target) => includeZed || target.name !== 'zed');
 
 /**
  * @param {string[]} files
@@ -65,6 +76,12 @@ try {
 		);
 
 		console.log(`[copy-tree-sitter-queries] Updated ${target.name} queries`);
+	}
+
+	if (!includeZed) {
+		console.log(
+			'[copy-tree-sitter-queries] Left zed queries as they are: they follow the grammar rev in packages/zed-plugin/extension.toml, and pnpm sync-zed-grammar-rev copies them when it moves the rev',
+		);
 	}
 } catch (error) {
 	console.error(`[copy-tree-sitter-queries] ${/** @type {Error} */ (error).message}`);
