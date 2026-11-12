@@ -2621,6 +2621,9 @@ function references_scope_bindings(node, scope_bindings, referenced_bindings) {
  * Hoisting prevents React from recreating the element on every render, allowing
  * the reconciler to skip diffing when it sees the same element identity.
  *
+ * A static element that an expression container renders is hoisted too,
+ * wherever the container sits in the rendered JSX (#81).
+ *
  * @param {ESTreeJSX.JSXRenderChild[]} render_nodes
  * @param {TransformContext} transform_context
  */
@@ -2629,35 +2632,236 @@ function hoist_static_render_nodes(render_nodes, transform_context) {
 
 	for (let i = 0; i < render_nodes.length; i++) {
 		const node = render_nodes[i];
-		if (node.type !== 'JSXElement') continue;
-		if (!is_hoist_safe_jsx_node(node)) continue;
-		if (is_bare_component_invocation(node)) {
-			// `<Helper />` with no attributes and no children is just an
-			// invocation reference. Hoisting it would produce
-			// `const App__staticN = <Helper />` aliases that bloat the output
-			// without enabling React's element-identity fast path (the helper
-			// isn't memoized, so the parent re-invokes it every render either
-			// way). Inline the reference at the call site instead.
-			continue;
-		}
-		if (
-			transform_context.platform.hooks?.canHoistStaticNode &&
-			!transform_context.platform.hooks.canHoistStaticNode(node, transform_context)
-		) {
-			continue;
-		}
-		if (references_scope_bindings(node, transform_context.available_bindings)) continue;
-		if (reads_unhoistable_tag(node, transform_context.hoistable_tags())) continue;
-
-		const name = create_helper_name(transform_context.helper_state, 'static');
-		const id = create_generated_identifier(name);
-
-		transform_context.helper_state.statics.push(
-			b.const(id, lower_static_script_bodies(node, transform_context)),
-		);
-
-		render_nodes[i] = to_jsx_expression_container(clone_identifier(id), node);
+		const id = hoist_static_jsx(node, transform_context);
+		render_nodes[i] = id
+			? to_jsx_expression_container(id, node)
+			: hoist_static_jsx_in_containers(node, false, transform_context);
 	}
+}
+
+/**
+ * Moves `node` to a module-level static when it is a static element, and
+ * returns an identifier that reads the static.
+ *
+ * @param {AST.Node} node
+ * @param {TransformContext} transform_context
+ * @returns {AST.Identifier | null}
+ */
+function hoist_static_jsx(node, transform_context) {
+	const helper_state = transform_context.helper_state;
+	if (!helper_state || node.type !== 'JSXElement') return null;
+	if (!is_hoist_safe_jsx_node(node)) return null;
+	if (is_bare_component_invocation(node)) {
+		// `<Helper />` with no attributes and no children is just an
+		// invocation reference. Hoisting it would produce
+		// `const App__staticN = <Helper />` aliases that bloat the output
+		// without enabling React's element-identity fast path (the helper
+		// isn't memoized, so the parent re-invokes it every render either
+		// way). Inline the reference at the call site instead.
+		return null;
+	}
+	if (
+		transform_context.platform.hooks?.canHoistStaticNode &&
+		!transform_context.platform.hooks.canHoistStaticNode(node, transform_context)
+	) {
+		return null;
+	}
+	if (references_scope_bindings(node, transform_context.available_bindings)) return null;
+	if (reads_unhoistable_tag(node, transform_context.hoistable_tags())) return null;
+
+	// Skip a name the source already uses, so the static can't redeclare or be
+	// shadowed by an authored `App__static1`.
+	/** @type {string} */
+	let name;
+	do {
+		name = create_helper_name(helper_state, 'static');
+	} while (source_mentions_identifier(transform_context.source, name));
+	const id = create_generated_identifier(name);
+	helper_state.statics.push(b.const(id, lower_static_script_bodies(node, transform_context)));
+	return clone_identifier(id);
+}
+
+/**
+ * Hoists an element that an expression container renders, unless it has a
+ * `key`. When a branch decides whether it renders (`conditional`), only host
+ * elements are hoisted: a static reads its tags when the module loads, and a
+ * component or member tag that the render may never reach (`<ui.Button>` in
+ * `{false && …}`) can be uninitialized there, as in a cyclic import.
+ *
+ * @param {AST.Node} node
+ * @param {boolean} conditional
+ * @param {TransformContext} transform_context
+ * @returns {AST.Identifier | null}
+ */
+function hoist_contained_static_jsx(node, conditional, transform_context) {
+	if (node.type !== 'JSXElement' || has_key_attribute(node)) return null;
+	if (conditional && reads_tag_binding(node)) return null;
+	return hoist_static_jsx(node, transform_context);
+}
+
+/**
+ * Returns `node` with the static elements that its expression containers
+ * render hoisted: a container in an element's or a fragment's children or in
+ * an attribute value, through `?:`, `&&`, `||` and `??` branches and nested
+ * containers. A bare child of a dynamic element stays in place, and the walk
+ * doesn't enter a function or any other expression, so `{items.map(() =>
+ * <li />)}` keeps its JSX. (A function whose returned JSX is lowered as render
+ * output, such as a render helper in the component body, gets its own pass.)
+ * Each node on the way to a hoisted element is copied rather than changed,
+ * since the parsed tree that editor features read can hold the same nodes.
+ *
+ * @template {AST.Node} T
+ * @param {T} node
+ * @param {boolean} conditional whether a branch above decides if `node` renders
+ * @param {TransformContext} transform_context
+ * @returns {T}
+ */
+function hoist_static_jsx_in_containers(node, conditional, transform_context) {
+	/** @type {AST.Node} */
+	const current = node;
+	if (current.type === 'JSXElement') {
+		const { openingElement } = current;
+		const attributes = map_changed(openingElement.attributes, (attribute) => {
+			if (
+				attribute.type !== 'JSXAttribute' ||
+				attribute.value?.type !== 'JSXExpressionContainer' ||
+				(attribute.name.type === 'JSXIdentifier' &&
+					(attribute.name.name === 'key' || attribute.name.name === 'ref'))
+			) {
+				return attribute;
+			}
+			const value = hoist_static_jsx_in_containers(attribute.value, conditional, transform_context);
+			return value === attribute.value ? attribute : { ...attribute, value };
+		});
+		const children = map_changed(current.children, (child) =>
+			hoist_static_jsx_in_containers(child, conditional, transform_context),
+		);
+		if (attributes === openingElement.attributes && children === current.children) return node;
+		return /** @type {T} */ ({
+			...current,
+			openingElement:
+				attributes === openingElement.attributes
+					? openingElement
+					: { ...openingElement, attributes },
+			children,
+		});
+	}
+	if (current.type === 'JSXFragment') {
+		const children = map_changed(current.children, (child) =>
+			hoist_static_jsx_in_containers(child, conditional, transform_context),
+		);
+		return children === current.children ? node : /** @type {T} */ ({ ...current, children });
+	}
+	if (
+		current.type === 'JSXExpressionContainer' &&
+		current.expression.type !== 'JSXEmptyExpression'
+	) {
+		const expression = hoist_static_jsx_in_expression(
+			current.expression,
+			conditional,
+			transform_context,
+		);
+		return expression === current.expression ? node : /** @type {T} */ ({ ...current, expression });
+	}
+	return node;
+}
+
+/**
+ * Returns `expression`, a container's value, as a static's identifier when it
+ * is a static element, or with the static elements it renders through branches
+ * and containers hoisted. A fragment keeps its children: each static child is
+ * hoisted on its own, as in a component's top-level fragment, so the children
+ * React sees keep their shape.
+ *
+ * @param {AST.Expression} expression
+ * @param {boolean} conditional
+ * @param {TransformContext} transform_context
+ * @returns {AST.Expression}
+ */
+function hoist_static_jsx_in_expression(expression, conditional, transform_context) {
+	switch (expression.type) {
+		case 'JSXElement':
+			return (
+				hoist_contained_static_jsx(expression, conditional, transform_context) ??
+				hoist_static_jsx_in_containers(expression, conditional, transform_context)
+			);
+		case 'JSXFragment': {
+			const children = map_changed(expression.children, (child) => {
+				const id = hoist_contained_static_jsx(child, conditional, transform_context);
+				return id
+					? to_jsx_expression_container(id, child)
+					: hoist_static_jsx_in_containers(child, conditional, transform_context);
+			});
+			return children === expression.children ? expression : { ...expression, children };
+		}
+		case 'ConditionalExpression': {
+			const consequent = hoist_static_jsx_in_expression(
+				expression.consequent,
+				true,
+				transform_context,
+			);
+			const alternate = hoist_static_jsx_in_expression(
+				expression.alternate,
+				true,
+				transform_context,
+			);
+			return consequent === expression.consequent && alternate === expression.alternate
+				? expression
+				: { ...expression, consequent, alternate };
+		}
+		case 'LogicalExpression': {
+			const right = hoist_static_jsx_in_expression(expression.right, true, transform_context);
+			return right === expression.right ? expression : { ...expression, right };
+		}
+		case 'ParenthesizedExpression': {
+			const inner = hoist_static_jsx_in_expression(
+				expression.expression,
+				conditional,
+				transform_context,
+			);
+			return inner === expression.expression ? expression : { ...expression, expression: inner };
+		}
+		default:
+			return expression;
+	}
+}
+
+/**
+ * `items` mapped through `map`, or `items` itself when no item changed.
+ *
+ * @template T
+ * @param {T[]} items
+ * @param {(item: T) => T} map
+ * @returns {T[]}
+ */
+function map_changed(items, map) {
+	const mapped = items.map(map);
+	return mapped.some((item, index) => item !== items[index]) ? mapped : items;
+}
+
+/**
+ * @param {AST.TSRXJSXElement} element
+ * @returns {boolean}
+ */
+function has_key_attribute(element) {
+	return element.openingElement.attributes.some(
+		(attribute) =>
+			attribute.type === 'JSXAttribute' &&
+			attribute.name.type === 'JSXIdentifier' &&
+			attribute.name.name === 'key',
+	);
+}
+
+/**
+ * Whether `node` has a tag that reads a binding: a component, or a member tag
+ * such as `<ui.Button>`.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function reads_tag_binding(node) {
+	if (node.type === 'JSXOpeningElement' && !is_intrinsic_tag(node.name)) return true;
+	return child_nodes(node).some(reads_tag_binding);
 }
 
 /**
@@ -2671,6 +2875,9 @@ function hoist_static_render_nodes(render_nodes, transform_context) {
  * import is hoisted. A tag that starts with `this`, `super`, a local binding,
  * a binding that can be reassigned (`let`, `var`, an enum, a namespace, an
  * import alias), or a name the module does not bind stays at render time.
+ * Known limitation: a function declaration can still be reassigned
+ * (`Tag = Replacement`), and a static keeps the function it read when the
+ * module loaded.
  *
  * @param {AST.Program} program
  * @returns {Map<number, boolean>}
@@ -6128,6 +6335,10 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	// so it gets the normalizers that return their copy: handing back the
 	// original bag would make the copy read its getters a second time.
 	const copies_spread = transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place';
+	// Those normalizers merge a bag's refs as `merge_element_refs` does when the
+	// platform lets elements share a merged ref.
+	const shares_merged_refs =
+		!transform_context.typeOnly && transform_context.platform.jsx?.shareMergedRefs === true;
 
 	/** @type {Map<string, AST.ImportSpecifier[]>} */
 	const ref_imports = new Map();
@@ -6137,9 +6348,7 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			merge_refs_source,
 			b.import_specifier(
-				!transform_context.typeOnly && transform_context.platform.jsx?.shareMergedRefs
-					? 'merge_element_refs'
-					: 'mergeRefs',
+				shares_merged_refs ? 'merge_element_refs' : 'mergeRefs',
 				MERGE_REFS_INTERNAL_NAME,
 			),
 		);
@@ -6166,7 +6375,11 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			normalize_spread_props_source,
 			b.import_specifier(
-				copies_spread ? 'copy_spread_props' : 'normalize_spread_props',
+				copies_spread
+					? shares_merged_refs
+						? 'copy_spread_props_sharing_refs'
+						: 'copy_spread_props'
+					: 'normalize_spread_props',
 				NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 			),
 		);
@@ -6177,7 +6390,11 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			normalize_spread_props_for_ref_attr_source,
 			b.import_specifier(
-				copies_spread ? 'copy_spread_props_for_ref_attr' : 'normalize_spread_props_for_ref_attr',
+				copies_spread
+					? shares_merged_refs
+						? 'copy_spread_props_for_ref_attr_sharing_refs'
+						: 'copy_spread_props_for_ref_attr'
+					: 'normalize_spread_props_for_ref_attr',
 				NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 			),
 		);
@@ -6393,8 +6610,9 @@ function transform_element_attributes_dispatch(attrs, transform_context, element
 export function is_component_like_element(element) {
 	const name = element?.openingElement?.name;
 	if (!name) return false;
-	if (name.type === 'Identifier') return /^[A-Z]/.test(name.name);
-	if (name.type === 'JSXIdentifier') return /^[A-Z]/.test(name.name);
+	// As in `is_component_jsx_name`, only a lowercase first letter makes a host tag.
+	if (name.type === 'Identifier') return !/^[a-z]/.test(name.name);
+	if (name.type === 'JSXIdentifier') return !/^[a-z]/.test(name.name);
 	if (name.type === 'MemberExpression') return true;
 	if (name.type === 'JSXMemberExpression') return true;
 	return false;
@@ -6406,7 +6624,7 @@ export function is_component_like_element(element) {
  */
 function is_component_like_jsx_name(name) {
 	if (!name) return false;
-	if (name.type === 'JSXIdentifier') return /^[A-Z]/.test(name.name);
+	if (name.type === 'JSXIdentifier') return !/^[a-z]/.test(name.name);
 	if (name.type === 'JSXMemberExpression') return true;
 	return false;
 }

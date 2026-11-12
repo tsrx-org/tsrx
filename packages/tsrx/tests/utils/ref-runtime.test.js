@@ -5,6 +5,8 @@ import {
 	apply_ref_value,
 	copy_spread_props,
 	copy_spread_props_for_ref_attr,
+	copy_spread_props_for_ref_attr_sharing_refs,
+	copy_spread_props_sharing_refs,
 	create_ref_prop,
 	join_scope_class,
 	merge_element_refs,
@@ -1024,6 +1026,23 @@ describe('merge_element_refs', () => {
 		expect(merge_element_refs(first, second, third)).toBe(merge_element_refs(first, second, third));
 	});
 
+	it('keys a ref list by the refs in it', () => {
+		const a = () => {};
+		const b = () => {};
+		const c = () => {};
+
+		const merged = merge_element_refs([a, b], c);
+		expect(merge_element_refs([a, b], c)).toBe(merged);
+		expect(merge_element_refs(a, [b, [c]])).toBe(merged);
+		expect(merge_element_refs([a], undefined)).toBe(a);
+
+		// A list whose refs change gets a new callback.
+		const list = [a];
+		const first = merge_element_refs(list, c);
+		list[0] = b;
+		expect(merge_element_refs(list, c)).not.toBe(first);
+	});
+
 	it('leaves out a value that is not a ref, such as the false of `cond && cb`', () => {
 		const callback = () => {};
 		const object = { current: null };
@@ -1410,6 +1429,43 @@ describe('spread ref normalization', () => {
 		);
 		expect(Object.keys(copied)).toEqual(['title', 'ref']);
 		expect(copied.ref).toBeUndefined();
+	});
+
+	it('gives a new bag with the same refs the same merged ref when sharing refs', () => {
+		/** @param {object | null} _node */
+		const own = (_node) => {};
+		const object = { current: null };
+		const named = create_ref_prop(() => own);
+		/** @param {Record<string, unknown>} bag */
+		const ref_of = (bag) =>
+			/** @type {Record<string, unknown>} */ (copy_spread_props_sharing_refs(bag)).ref;
+		/** @param {Record<string, unknown>} bag */
+		const attr_ref_of = (bag) =>
+			/** @type {Record<string, unknown>} */ (copy_spread_props_for_ref_attr_sharing_refs(bag)).ref;
+
+		const merged = ref_of({ title: '1', ref: own, extra: named });
+		expect(typeof merged).toBe('function');
+		expect(ref_of({ title: '2', ref: own, extra: named })).toBe(merged);
+		// An inline list is keyed by its refs, not by the new array.
+		expect(ref_of({ ref: [own, object], extra: named })).toBe(
+			ref_of({ ref: [own, object], extra: named }),
+		);
+		expect(attr_ref_of({ title: '3', ref: own, extra: named })).toBe(merged);
+		expect(ref_of({ ref: object, extra: named })).not.toBe(merged);
+		expect(ref_of({ ref: false, extra: named })).toBe(named);
+		expect(ref_of({ ref: object })).toBe(object);
+
+		const attr_bag = copy_spread_props_for_ref_attr_sharing_refs({ title: '4', extra: named });
+		expect(Object.keys(attr_bag)).toEqual(['title']);
+		expect(/** @type {Record<string, unknown>} */ (attr_bag).ref).toBe(named);
+
+		// Without sharing, each bag's refs merge into a new callback.
+		const own_ref = /** @type {Record<string, unknown>} */ (
+			copy_spread_props({ ref: own, extra: named })
+		).ref;
+		expect(
+			/** @type {Record<string, unknown>} */ (copy_spread_props({ ref: own, extra: named })).ref,
+		).not.toBe(own_ref);
 	});
 
 	it('preserves explicit ordinary-ref reads, source state, and the selected ref value', () => {
