@@ -204,7 +204,8 @@ export function detect_target_handler(input = {}) {
  *   collect?: boolean,
  *   loose?: boolean,
  *   includeCode?: boolean,
- *   mode?: 'client' | 'server'
+ *   mode?: 'client' | 'server',
+ *   resolvePlatform?: boolean
  * }} input
  */
 export function compile_tsrx_handler(input) {
@@ -219,7 +220,8 @@ export function compile_tsrx_handler(input) {
  *   cwd?: string,
  *   collect?: boolean,
  *   loose?: boolean,
- *   mode?: 'client' | 'server'
+ *   mode?: 'client' | 'server',
+ *   resolvePlatform?: boolean
  * }} input
  */
 export function analyze_tsrx_handler(input) {
@@ -547,7 +549,9 @@ export function createTSRXMcpServer(options = {}) {
 			},
 		},
 		async (input) => {
-			const output = await compile_tsrx_handler(remote ? { ...input, cwd: undefined } : input);
+			const output = await compile_tsrx_handler(
+				remote ? { ...input, cwd: undefined, resolvePlatform: false } : input,
+			);
 			if (remote) output.cwd = 'remote';
 			return {
 				content: [{ type: 'text', text: json_text(output) }],
@@ -615,7 +619,9 @@ export function createTSRXMcpServer(options = {}) {
 			},
 		},
 		async (input) => {
-			const output = await analyze_tsrx_handler(remote ? { ...input, cwd: undefined } : input);
+			const output = await analyze_tsrx_handler(
+				remote ? { ...input, cwd: undefined, resolvePlatform: false } : input,
+			);
 			if (remote) output.cwd = 'remote';
 			return {
 				content: [{ type: 'text', text: json_text(output) }],

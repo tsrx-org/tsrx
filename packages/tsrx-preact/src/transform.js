@@ -31,22 +31,30 @@ const preact_platform = {
 		// type-only transform keeps the `Dynamic` component shape (types only).
 		dynamicFactory: {},
 		errorBoundary: '@tsrx/preact/error-boundary',
+		tryBody: '@tsrx/preact/try-body',
 		mergeRefs: '@tsrx/preact/ref',
 		refProp: '@tsrx/preact/ref',
 		forOfIterableHelper: '@tsrx/preact/runtime/iterable',
 	},
 	directRuntimeImports: {
 		errorBoundary: '@tsrx/preact-runtime/error-boundary',
+		tryBody: '@tsrx/preact-runtime/try-body',
 		mergeRefs: '@tsrx/preact-runtime/ref',
 		refProp: '@tsrx/preact-runtime/ref',
 		forOfIterableHelper: '@tsrx/preact-runtime/iterable',
 	},
 	jsx: {
 		rewriteClassAttr: false,
+		// Preact reads a class from either prop.
+		hostSpreadClassProps: ['class', 'className'],
+		// Preact renders `class={true}` as `true`. (`className={false}` renders
+		// `false` too, which the shared join leaves out.)
+		classValue: 'text-true',
 		multiRefStrategy: 'merge-refs',
 		// No `shareMergedRefs`: Preact stores a ref's cleanup on the function, so
 		// elements sharing one merged ref would run each other's cleanups.
 		hostSpreadRefBinding: 'in-place',
+		pendingFallback: 'try-body',
 		// preact-render-to-string escapes a string child of `<script>` like
 		// text; `dangerouslySetInnerHTML` renders the body as written on the
 		// client and the server.

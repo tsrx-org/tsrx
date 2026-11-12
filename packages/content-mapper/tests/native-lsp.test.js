@@ -69,8 +69,20 @@ export function WithComponent() @{
 	<p>{helperB()}<Button label="x" /></p>
 }
 `;
+const STATEMENT_TSRX = `import { helperA } from './lib';
+
+export function Statement() @{
+	helperA();
+	const value = helperB;
+	<p>{value}</p>
+}
+`;
 const NO_IMPORTS_TSRX = `export function NoImports() @{
 	<p>{helperB()}</p>
+}
+`;
+const FLAGGED_NO_IMPORTS_TSRX = `export function FlaggedNoImports() @{
+	<p>{helperB()}{String(import.meta.env.platform.web)}</p>
 }
 `;
 /** Imports with several names and type names, some of them unused. */
@@ -100,7 +112,9 @@ function workspace_files() {
 	files['mixed.ts'] = MIXED_TS;
 	files['NewLine.tsrx'] = NEW_LINE_TSRX;
 	files['NoImports.tsrx'] = NO_IMPORTS_TSRX;
+	files['FlaggedNoImports.tsrx'] = FLAGGED_NO_IMPORTS_TSRX;
 	files['WithComponent.tsrx'] = WITH_COMPONENT_TSRX;
+	files['Statement.tsrx'] = STATEMENT_TSRX;
 	files['Extend.tsrx'] = EXTEND_TSRX;
 	files['Fresh.tsrx'] = FRESH_TSRX;
 	files['sub/tsconfig.json'] = JSON.stringify(
@@ -516,6 +530,31 @@ import def from './mixed';
 	});
 
 	it.each([
+		['source.removeUnusedImports', "import Button from './Button.tsrx';\n"],
+		['source.organizeImports', "import Button from './Button.tsrx';\n"],
+		[
+			'source.sortImports',
+			"import Button from './Button.tsrx';\nimport Panel from './Panel.tsrx';\n",
+		],
+	])('applies %s in a module that keeps a platform flag', async (kind, imports) => {
+		// The shared platform globals are referenced by a directive, not imported, so
+		// the module's last import stays its own and its edits still map. A module
+		// with an import or export also gets no generated `export {};`, which
+		// Organize and Sort Imports would rewrite in generated code (#1207).
+		const source = [
+			"import Panel from './Panel.tsrx';",
+			"import Button from './Button.tsrx';",
+			'',
+			'export default function Flagged() @{',
+			'\t<Button label={String(import.meta.env.platform.web)} />',
+			'}',
+			'',
+		].join('\n');
+		const edits = await source_action_edits('Flagged.tsrx', source, kind);
+		expect(apply_edits(source, edits)).toBe(imports + source.slice(source.indexOf('\nexport')));
+	});
+
+	it.each([
 		[
 			'on a new line, sorted before the other import',
 			'NewLine.tsrx',
@@ -527,6 +566,34 @@ import def from './mixed';
 		[
 			'into a file without imports whose generated code starts like the source',
 			'NoImports.tsrx',
+			{
+				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+				newText: 'import { helperB } from "./lib";\n\n',
+			},
+		],
+		[
+			// The `<` of the tag maps with other features than `helperB`, which ended the span
+			// of `helperB` at the cursor, and TypeScript 7 offered no auto-import there.
+			'on a new line when the template uses a component tag (#1028)',
+			'WithComponent.tsrx',
+			{
+				range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
+				newText: "import { helperB } from './lib';\n",
+			},
+		],
+		[
+			// The generated code adds a blank line after the `;`, which ended the span of
+			// `helperB` at the cursor before the next span (#1064).
+			'into an existing import from a statement in a template body',
+			'Statement.tsrx',
+			{
+				range: { start: { line: 0, character: 16 }, end: { line: 0, character: 16 } },
+				newText: ', helperB',
+			},
+		],
+		[
+			'into a file without imports that keeps a platform flag',
+			'FlaggedNoImports.tsrx',
 			{
 				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
 				newText: 'import { helperB } from "./lib";\n\n',
@@ -548,23 +615,6 @@ import def from './mixed';
 		const resolved = await client.request('completionItem/resolve', item);
 		expect(resolved.additionalTextEdits ?? item.additionalTextEdits).toEqual([edit]);
 		client.close(file);
-	});
-
-	it('offers no auto-import that needs a new line when the template uses a component tag (#1028)', async () => {
-		// A `.tsx` file with the same code gets the candidate, and so does this file
-		// without the `<Button />` tag.
-		client.open('WithComponent.tsrx', files['WithComponent.tsrx']);
-		await client.diagnostics('WithComponent.tsrx').catch(() => undefined);
-		const completion = await client.request('textDocument/completion', {
-			...at(client, files, 'WithComponent.tsrx', 'helperB', 'helperB'.length),
-			context: { triggerKind: 1 },
-		});
-		expect(
-			completion.items.filter(
-				(/** @type {{ label: string }} */ entry) => entry.label === 'helperB',
-			),
-		).toEqual([]);
-		client.close('WithComponent.tsrx');
 	});
 
 	it('reports a compile error at the authored construct and keeps importers resolving', async () => {

@@ -68,6 +68,34 @@ The parser:
 3. Returns the ESTree AST to ESLint
 4. Allows ESLint rules to analyze TSRX-specific patterns
 
+### Dynamic Tags
+
+Rules read an element's name as a JSX name. For a dynamic tag, they get one that
+mirrors the tag's expression: `<{as}>` is the `JSXIdentifier` `as`, and
+`<{ui.Box}>` is the `JSXMemberExpression` `ui.Box`. An expression that no JSX name
+can show, such as `<{'div'}>`, `<{icons[name]}>` or `<{getTag()}>`, gets the
+synthetic name `tsrx-dynamic-tag`. The name spans the braces, and the element
+keeps `isDynamic: true`. The expression container moves to `tagExpression`, where
+rules still lint the code and scope analysis reads it, so `no-unused-vars` and
+`no-undef` see the variables it uses.
+
+### Rule Fixes TSRX Can't Take
+
+Some `eslint-plugin-react` fixes write JSX that TSRX reads differently than TSX
+does. The parser can't prevent them:
+
+- `react/jsx-curly-brace-presence` unwraps a string child into text. TSRX text can
+  start a directive (`@if (`, `@for (`, `@switch (`) or a `//` comment, so
+  `{'@for (item of items)'}` stops parsing, and `{'// note'}` on its own line
+  becomes a comment. Use `tsrx/jsx-curly-brace-presence` from
+  [`@tsrx/eslint-plugin`](https://github.com/tsrx-org/tsrx/tree/main/packages/eslint-plugin)
+  instead: it has the same options, and keeps those braces. Its `react`
+  configuration swaps it in for `.tsrx` files.
+- `react/jsx-tag-spacing` with `closingSlash: 'always'` writes `< /p>`, which
+  neither TSRX nor TypeScript reads as a closing tag. With
+  `afterOpening: 'always'` it writes `< br />`, which TSRX reads as text inside an
+  element. Keep both options at `'never'`, their default.
+
 ## Supported Syntax
 
 The parser supports TSRX syntax including:
@@ -101,6 +129,60 @@ The parser will successfully parse this and allow ESLint rules (like those from
 - Missing statement-container markers
 - Invalid rendering control flow
 - And more
+
+## Known Limitations
+
+Some core ESLint rules miss part of what TSRX syntax does. The parser can't change
+these without misdescribing the source to other rules:
+
+- `no-unused-vars` reports an unused `@for` index, but its "Remove unused
+  variable" suggestion deletes only the name.
+  `@for (const item of items; index i)` becomes
+  `@for (const item of items; index )`, which doesn't parse. `--fix` never applies
+  suggestions, but editors offer them. Remove the whole `; index i` clause
+  instead.
+- `no-await-in-loop` doesn't report an `await` in a `@for` key, such as
+  `key await load(item)`, though the key runs once per item, as the body does. It
+  does report an `await` in the body.
+- Code path analysis runs the arms of a `@switch` one after another, not as
+  alternatives. After an arm that ends in `throw`, `no-unreachable` reports the
+  arms and code that follow it. Rules built on code paths treat every arm as
+  always running, so `react-hooks/rules-of-hooks` doesn't report a hook called in
+  a `@case` body. A `switch` statement would add a path from each case into the
+  next, and `no-fallthrough` would then report each `@case` but the last that can
+  reach its end. The arms of `@if` don't have this problem, so when an arm throws,
+  an `@if`/`@else if` chain gets the right code paths.
+- Code path analysis runs the blocks of a `@try` one after another: the body,
+  `@pending`, then `@catch`. In TSRX, a `@catch` renders when the `@try` body
+  throws, and `@pending` shows while it suspends, so these reports can be false:
+  - After a body that throws, `no-unreachable` reports `@pending`, the `@catch`
+    and the code after the `@try`. After a `@pending` that throws, it reports the
+    `@catch` and the code after the `@try`, and after a `@catch` that throws, such
+    as one that rethrows, the code after the `@try`.
+  - `no-unreachable-loop` reports a `@for` that holds a `@try` whose body or
+    `@catch` throws, as if the loop could run only once.
+  - `react-hooks/rules-of-hooks` reports as conditional a hook after a `@try`
+    whose body or `@catch` throws.
+  - `no-useless-assignment` treats an assignment in the body as overwritten by one
+    in `@catch`. It also treats a value set before the `@try` as overwritten when
+    the body or `@pending` assigns it, though the `@catch` reads it.
+
+  `rules-of-hooks` also misses a hook such as `useState` called in `@catch`,
+  though React fails on it. A `try` statement would fix these, but it would put
+  the body inside a `try`, which the React, Preact and Hono output doesn't have.
+  `rules-of-hooks` would then report as conditional every hook after the body's
+  first call, member access or identifier, except `use()`, which react-hooks 6.1.1
+  and 7.1.1 report anywhere in the body as inside a try/catch block.
+
+  The React, Preact and Hono output differs from that model, so some of these
+  reports hold there: it runs `@pending`'s code before the body on every render,
+  and a throw in the body's own code, rather than in a component the body renders,
+  ends the render without reaching the `@catch`.
+
+- `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
+  `@else`, `@else if` or `@for` body that holds a single statement, such as
+  `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
+  doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
 
 ## Related Packages
 
