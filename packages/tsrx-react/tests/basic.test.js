@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -59,6 +60,7 @@ runSharedCompileTests({
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'react' });
 runSharedCodeBlockChildrenTests({ compile, name: 'react' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'react' });
+runSharedAnonymousComponentTests({ compile, name: 'react' });
 
 /**
  * @import { CodeMapping } from '@tsrx/core/types';

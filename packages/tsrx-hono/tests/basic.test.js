@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -29,6 +30,7 @@ runSharedCompileDiagnosticsTests({
 	name: 'hono',
 });
 runSharedCodeBlockChildrenTests({ compile: compileServer, name: 'hono' });
+runSharedAnonymousComponentTests({ compile: compileServer, name: 'hono' });
 runSharedHookBodyTests({
 	compile: compileServer,
 	compile_to_volar_mappings: compileServerToVolarMappings,
@@ -47,6 +49,7 @@ runSharedCompileDiagnosticsTests({
 	name: 'hono-dom',
 });
 runSharedCodeBlockChildrenTests({ compile: compileDom, name: 'hono-dom' });
+runSharedAnonymousComponentTests({ compile: compileDom, name: 'hono-dom' });
 runSharedClassFunctionComponentTests({
 	compile: compileDom,
 	compile_to_volar_mappings: compileDomToVolarMappings,

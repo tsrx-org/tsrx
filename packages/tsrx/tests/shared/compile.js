@@ -1813,7 +1813,11 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('const Inline = (props: { x: string }) => <div>{props.x}</div>;');
+			expect(code).toContain(
+				name === 'vue'
+					? 'const Inline = defineVaporComponent((props: { x: string }) => <div>{props.x}</div>);'
+					: 'const Inline = (props: { x: string }) => <div>{props.x}</div>;',
+			);
 			expect(code).not.toContain('function Inline');
 		});
 
@@ -1825,7 +1829,11 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('const Inline = function (props: { x: string })');
+			expect(code).toContain(
+				name === 'vue'
+					? 'const Inline = defineVaporComponent(function (props: { x: string })'
+					: 'const Inline = function (props: { x: string })',
+			);
 			expect(code).toContain('<div>{props.x}</div>');
 			expect(code).not.toContain('function Inline');
 		});
@@ -1852,7 +1860,7 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 
 			expect(code).toContain('menuAlt2');
 			expect(code).toContain('items.push');
-			expect(code).toContain('return children(items);');
+			expect(code).toContain('return <>{children(items)}</>;');
 		});
 
 		it('lowers expression-bodied function component props', () => {
@@ -1872,7 +1880,7 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 			expect(code).toContain('children={({ items }: { items: JSX.Element[] }) => <ul>');
 			expect(code).toContain(
 				name === 'solid'
-					? '<For each={items}>'
+					? '<For each={items} keyed={false}>'
 					: name === 'vue'
 						? '<VaporFor in={items}'
 						: '__map_iterable(items, (item, i)',
