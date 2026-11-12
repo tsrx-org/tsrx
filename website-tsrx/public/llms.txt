@@ -1558,6 +1558,16 @@ thrown value (`e.message`), not Solid's error accessor (`e()`). Read props as
 `props.name` (or split them with `splitProps`) rather than destructuring them, so
 Solid's getter-based prop reactivity is preserved.
 
+In a generator, a `yield` in a template value that Solid's JSX compiler moves
+into an effect, a getter or a callback is a compile error (TSRX2034). Yield the
+value before the template instead: `const title = yield bag.title;`. The check
+follows babel-preset-solid's DOM output. With `tsrxSolid({ ssr: true })`, set
+as you set `solid({ ssr: true })`, a server build also follows the hydratable
+SSR output, which moves more values, such as most attributes beside a host
+spread. `@tsrx/bun-plugin-solid` does the same when its `solid` options have
+`generate: 'ssr'` and `hydratable: true`. The editor, server builds with the
+option off, and the Rspack plugin follow the DOM output only.
+
 ### Vue
 
 Vue output targets `vue-jsx-vapor` and `defineVaporComponent(...)`. It supports

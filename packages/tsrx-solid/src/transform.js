@@ -18,6 +18,7 @@
 
 import { walk } from 'zimmerframe';
 import { find_deferred_template_yields } from './template-yield.js';
+import { find_deferred_server_template_yields } from './template-yield.js';
 import {
 	DIAGNOSTIC_CODES,
 	DYNAMIC_FACTORY_LOCAL,
@@ -191,6 +192,18 @@ const solid_platform = {
 };
 
 export const transform = createJsxTransform(solid_platform);
+
+/**
+ * The transform for a server build (`compile`'s `ssr` option). It differs only
+ * in TSRX2034, which also follows babel-preset-solid's SSR output.
+ */
+export const transform_for_server = createJsxTransform({
+	...solid_platform,
+	hooks: {
+		...solid_platform.hooks,
+		findDeferredTemplateYields: find_deferred_server_template_yields,
+	},
+});
 
 /**
  * @param {AST.TSRXAwaitNode} await_node
