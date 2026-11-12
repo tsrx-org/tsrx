@@ -25,6 +25,10 @@
     "./dynamic": {
       "types": "./types/dynamic.d.ts"
     },
+    "./try-body": {
+      "types": "./types/try-body.d.ts",
+      "default": "./src/try-body.js"
+    },
     "./ref": {
       "types": "./types/ref.d.ts",
       "default": "./src/ref.js"

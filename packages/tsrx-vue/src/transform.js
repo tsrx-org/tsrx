@@ -18,11 +18,24 @@ import {
 	has_location,
 	IDENTIFIER_OBFUSCATION_PREFIX,
 	is_component_like_element,
+	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 	MERGE_REFS_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	setLocation,
+	TSRX_ERRORS,
 } from '@tsrx/core';
+
+/** The local name of Vue's `computed` in a keyed slot that destructures its item. */
+const VUE_COMPUTED_INTERNAL_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'vapor_computed';
+/** The `computed` such a slot destructures its item in, numbered per slot. */
+const VAPOR_BINDINGS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'vapor_bindings';
+/**
+ * How many slots each compile has given a bindings `computed`, so each slot's
+ * has its own name and a nested slot's can't capture the outer slot's names.
+ * @type {WeakMap<TransformContext, number>}
+ */
+const vapor_bindings_counts = new WeakMap();
 
 /**
  * Minimal Vue platform descriptor consumed by `createJsxTransform`.
@@ -54,6 +67,10 @@ const vue_platform = {
 	},
 	jsx: {
 		rewriteClassAttr: false,
+		// `class` also takes an object or a list.
+		classValue: 'list',
+		// A static `className` renders as a `classname` attribute.
+		rewriteClassNameAttr: true,
 		multiRefStrategy: 'merge-refs',
 		hostSpreadRefStrategy: 'explicit-ref-attr',
 		// vue-jsx-vapor escapes a string child into its HTML template, where a
@@ -90,8 +107,8 @@ const vue_platform = {
 		},
 		renderForOf: (node, loop_params, body_statements, ctx) =>
 			render_for_of_as_vapor_for(node, loop_params, body_statements, ctx),
-		createPendingBoundary(try_content, fallback_content) {
-			return create_vapor_pending_boundary(try_content, fallback_content);
+		createPendingBoundary(try_content, fallback_content, ctx) {
+			return create_vapor_pending_boundary(try_content, fallback_content, ctx);
 		},
 		createErrorFallbackComponent(catch_body_nodes, catch_params, ctx, node) {
 			// Only the runtime `@pending` boundary renders the component (see
@@ -115,16 +132,11 @@ const vue_platform = {
 			const fallback_component = info?.fallbackComponent ?? null;
 			const default_slot = ctx.typeOnly
 				? b.arrow([], jsx_child_to_expression(raw_try_content))
-				: create_sync_error_boundary_slot(
-						raw_try_content,
-						fallback_fn,
-						fallback_component,
-						node.block,
-						node,
-					);
+				: create_error_boundary_slot(raw_try_content, fallback_fn, node);
 			const suspense = create_vapor_pending_boundary_from_default_slot(
 				default_slot,
 				fallback_content,
+				ctx,
 			);
 			const boundary = create_vapor_error_boundary(suspense, fallback_fn);
 			for (const statement of fallback_component?.setup_statements ?? []) {
@@ -160,23 +172,29 @@ export const transform = createJsxTransform(vue_platform);
 /**
  * @param {ESTreeJSX.JSXRenderNode} try_content
  * @param {ESTreeJSX.JSXRenderNode} fallback_content
+ * @param {TransformContext} ctx
  * @returns {AST.TSRXJSXElement}
  */
-function create_vapor_pending_boundary(try_content, fallback_content) {
+function create_vapor_pending_boundary(try_content, fallback_content, ctx) {
 	return create_vapor_pending_boundary_from_default_slot(
 		b.arrow([], jsx_child_to_expression(try_content)),
 		fallback_content,
+		ctx,
 	);
 }
 
 /**
  * @param {AST.ArrowFunctionExpression} default_slot
  * @param {ESTreeJSX.JSXRenderNode} fallback_content
+ * @param {TransformContext} ctx
  * @returns {AST.TSRXJSXElement}
  */
-function create_vapor_pending_boundary_from_default_slot(default_slot, fallback_content) {
+function create_vapor_pending_boundary_from_default_slot(default_slot, fallback_content, ctx) {
 	const fallback_expression = jsx_child_to_expression(fallback_content);
-	const slots_properties = [b.init('_', b.literal(1)), b.init('default', default_slot)];
+	const slots_properties = [b.init('default', default_slot)];
+	// Vue's stable-slots flag isn't a slot, so `Suspense`'s JSX slot types reject
+	// it in the type-only output.
+	if (!ctx.typeOnly) slots_properties.unshift(b.init('_', b.literal(1)));
 
 	if (fallback_expression.type !== 'Literal' || fallback_expression.value !== null) {
 		slots_properties.push(b.init('fallback', b.arrow([], fallback_expression)));
@@ -212,78 +230,23 @@ function create_module_scoped_error_fallback_component(catch_body_nodes, catch_p
 }
 
 /**
- * Catch synchronous setup errors directly in the Suspense default slot so
- * Suspense can still observe async children while `catch` handles immediate
- * render failures.
+ * Render the try body in the Suspense default slot through its own error
+ * boundary. Suspense mounts its default content after the outer boundary has
+ * rendered, so an error thrown there, while setting up or from a rejected
+ * async child, has to be caught inside the slot. A boundary there, unlike a
+ * plain `try`, also gives `@catch` a `reset` that renders the body again.
  *
  * @param {ESTreeJSX.JSXRenderNode} content
  * @param {AST.ArrowFunctionExpression} fallback_fn
- * @param {JsxHelperComponent | null} fallback_component
- * @param {AST.BlockStatement} source_block
  * @param {AST.TryStatement} source_try
  * @returns {AST.ArrowFunctionExpression}
  */
-function create_sync_error_boundary_slot(
-	content,
-	fallback_fn,
-	fallback_component,
-	source_block,
-	source_try,
-) {
-	const error_id = create_generated_identifier('_error');
-	const content_expression = jsx_child_to_expression(content);
-	const fallback_expression = fallback_component
-		? create_fallback_component_element(fallback_component, fallback_fn, [
-				error_id,
-				b.arrow([], b.block([])),
-			])
-		: b.call(b.parenthesized(fallback_fn), clone_identifier(error_id), b.arrow([], b.block([])));
-	const try_block = setLocation(
-		b.block([b.return(content_expression)]),
-		has_location(source_block) ? source_block : undefined,
-		true,
+function create_error_boundary_slot(content, fallback_fn, source_try) {
+	const boundary = create_vapor_error_boundary(content, clone_ast_node(fallback_fn, false));
+	return b.arrow(
+		[],
+		setLocation(boundary, has_location(source_try) ? source_try : undefined, true),
 	);
-	const try_statement = setLocation(
-		b.try(
-			try_block,
-			b.catch_clause(error_id, null, b.block([b.return(fallback_expression)])),
-			null,
-			null,
-		),
-		has_location(source_try) ? source_try : undefined,
-		true,
-	);
-	return b.arrow([], b.block([try_statement]));
-}
-
-/**
- * @param {JsxHelperComponent} fallback_component
- * @param {AST.ArrowFunctionExpression} fallback_fn
- * @param {AST.Expression[]} [replacement_args]
- * @returns {AST.TSRXJSXElement}
- */
-function create_fallback_component_element(fallback_component, fallback_fn, replacement_args = []) {
-	const element = clone_ast_node(fallback_component.component_element, false);
-	/** @type {Map<string, AST.Expression>} */
-	const replacements = new Map();
-	for (let i = 0; i < fallback_fn.params.length && i < replacement_args.length; i += 1) {
-		const param = fallback_fn.params[i];
-		if (param?.type === 'Identifier') {
-			replacements.set(param.name, replacement_args[i]);
-		}
-	}
-
-	for (const attr of element.openingElement?.attributes ?? []) {
-		if (attr.type !== 'JSXAttribute' || attr.name.type !== 'JSXIdentifier') continue;
-		const attr_name = attr.name.name;
-		if (!attr_name || !replacements.has(attr_name)) continue;
-		attr.value = to_jsx_expression_container(
-			/** @type {AST.Expression} */ (replacements.get(attr_name)),
-			attr.value ?? attr,
-		);
-	}
-
-	return element;
 }
 
 /**
@@ -486,12 +449,11 @@ function hoist_component_bindings(statements, ctx) {
 		const passed = result.slice(first_read, index);
 		if (initializer_reads_declared(declaration, passed)) {
 			error(
-				`'${name}' is read here before its declaration. Vue TSRX compiles the component to a constant, which is not hoisted like a function, and moving its declaration above this read would change what its prop defaults read. Move the declaration of '${name}' above this read.`,
+				TSRX_ERRORS.TARGET_COMPONENT_READ_BEFORE_DECLARATION(ctx.platform.name, name),
 				ctx.filename,
 				read,
 				ctx.errors,
 				ctx.comments,
-				DIAGNOSTIC_CODES.TARGET_COMPONENT_READ_BEFORE_DECLARATION,
 			);
 			continue;
 		}
@@ -808,6 +770,16 @@ function initializer_reads_declared(declaration, passed) {
 			node.id
 		) {
 			declared.add(node.id.name);
+		} else if (
+			// An enum, a namespace or an `import x = …` alias compiles to a binding
+			// it sets when it runs; an ambient or type-only one has no code.
+			(node.type === 'TSEnumDeclaration' ||
+				node.type === 'TSModuleDeclaration' ||
+				(node.type === 'TSImportEqualsDeclaration' && node.importKind !== 'type')) &&
+			!('declare' in node && node.declare) &&
+			node.id.type === 'Identifier'
+		) {
+			declared.add(node.id.name);
 		}
 		collect_function_var_names(statement, declared);
 		collect_assigned_names(statement, declared);
@@ -835,24 +807,64 @@ function collect_assigned_names(value, names) {
 	}
 	const node = /** @type {AST.Node} */ (value);
 	if (typeof node.type !== 'string') return;
-	/** @type {AST.Node | null} */
-	let target = null;
-	if (node.type === 'AssignmentExpression') target = node.left;
-	else if (node.type === 'UpdateExpression') target = node.argument;
-	else if (
+	if (node.type === 'AssignmentExpression') collect_assigned_target(node.left, names);
+	else if (node.type === 'UpdateExpression') collect_assigned_target(node.argument, names);
+	else if (node.type === 'UnaryExpression' && node.operator === 'delete') {
+		collect_assigned_target(node.argument, names);
+	} else if (
 		(node.type === 'ForInStatement' || node.type === 'ForOfStatement') &&
 		node.left.type !== 'VariableDeclaration'
 	) {
-		target = node.left;
-	}
-	if (target) {
-		while (target.type === 'MemberExpression') target = target.object;
-		collect_pattern_names(target, names);
+		collect_assigned_target(node.left, names);
 	}
 	const record = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (node));
 	for (const key of Object.keys(record)) {
 		if (key === 'metadata' || key === 'loc' || key === 'start' || key === 'end') continue;
 		collect_assigned_names(record[key], names);
+	}
+}
+
+/**
+ * The bindings an assignment target writes or mutates: each name in a
+ * pattern, and the object a member target belongs to, seen through
+ * parentheses, optional chains and TypeScript wrappers such as
+ * `(cfg as any).size` and `cfg!.size`.
+ *
+ * @param {AST.Node | null | undefined} target
+ * @param {Set<string>} names
+ * @returns {void}
+ */
+function collect_assigned_target(target, names) {
+	if (!target) return;
+	switch (target.type) {
+		case 'Identifier':
+			names.add(target.name);
+			return;
+		case 'MemberExpression':
+			collect_assigned_target(/** @type {AST.Node} */ (target.object), names);
+			return;
+		case 'RestElement':
+			collect_assigned_target(target.argument, names);
+			return;
+		case 'AssignmentPattern':
+			collect_assigned_target(target.left, names);
+			return;
+		case 'ArrayPattern':
+			for (const element of target.elements) collect_assigned_target(element, names);
+			return;
+		case 'ObjectPattern':
+			for (const property of target.properties) {
+				collect_assigned_target(property.type === 'Property' ? property.value : property, names);
+			}
+			return;
+	}
+	if (
+		(target.type === 'ParenthesizedExpression' ||
+			target.type === 'ChainExpression' ||
+			RUNTIME_TS_NODE_TYPES.has(target.type)) &&
+		'expression' in target
+	) {
+		collect_assigned_target(/** @type {AST.Node} */ (target.expression), names);
 	}
 }
 
@@ -928,6 +940,7 @@ function wrap_native_function_component(fn, source, ctx, path) {
 
 	ctx.needs_define_vapor_component = true;
 	validate_prop_defaults(fn, ctx);
+	validate_props_param(fn, ctx);
 	if (!ctx.typeOnly) {
 		fn = read_children_from_default_slot(fn, name, ctx);
 	}
@@ -988,22 +1001,251 @@ function validate_prop_defaults(fn, ctx) {
 			continue;
 		}
 		const name = property.key.name;
-		const fallback = property.value.right;
-		const written =
-			ctx.source && fallback.start != null && fallback.end != null
-				? ctx.source.slice(fallback.start, fallback.end)
-				: null;
-		const example =
-			written && !written.includes('\n') ? `const ${name} = props.${name} ?? ${written}` : null;
 		error(
-			`Vue TSRX cannot keep this default for '${name}': vue-jsx-vapor turns destructured prop defaults into prop options and drops any default that is not a literal, an identifier, an object or array literal, or a function, so '${name}' would be undefined. Read the prop in the body instead${example ? `, for example \`${example}\`` : ''}.`,
+			TSRX_ERRORS.TARGET_PROP_DEFAULT_UNSUPPORTED(
+				ctx.platform.name,
+				name,
+				get_prop_read_example(property.value, `props.${name}`, ctx),
+			),
 			ctx.filename,
-			fallback,
+			property.value.right,
 			ctx.errors,
 			ctx.comments,
-			DIAGNOSTIC_CODES.TARGET_PROP_DEFAULT_UNSUPPORTED,
 		);
 	}
+}
+
+/**
+ * Check a component's props parameter the way vue-jsx-vapor's props macro
+ * reads it (TSRX2031, and TSRX2029 for a default inside a prop):
+ *
+ * - It skips a props parameter with a default (`{ s } = {}`), so the
+ *   component gets no prop options and Vue passes it no props.
+ * - It reads destructured props by name, and reads only keys that are names:
+ *   it reads `{ [k]: v }` as the prop `k`, whatever `k` holds, and leaves out
+ *   any other key (`{ 'a-b': v }`, `{ [1]: v }`), so its binding never gets
+ *   the prop. That holds at every level, and a pattern with no key it reads
+ *   also gets no prop options.
+ * - Inside a prop, it applies a default only when the whole prop is missing.
+ * - It doesn't keep a rest element inside a prop as the rest of that prop:
+ *   the pattern's last rest element gets the component's attrs, an array's
+ *   gets the whole array, and any other gets the rest as it was at setup.
+ *
+ * @param {AST.Function} fn
+ * @param {TransformContext} ctx
+ * @returns {void}
+ */
+function validate_props_param(fn, ctx) {
+	const param = fn.params[0];
+	if (param?.type === 'AssignmentPattern') {
+		error(
+			TSRX_ERRORS.TARGET_PROPS_PARAM_DEFAULT(ctx.platform.name, get_inline_text(param.right, ctx)),
+			ctx.filename,
+			param.right,
+			ctx.errors,
+			ctx.comments,
+		);
+		return;
+	}
+	if (param?.type === 'ObjectPattern') validate_prop_keys(param, 'props', false, ctx);
+}
+
+/**
+ * @param {AST.RestElement} rest a rest element inside a prop
+ * @param {string} object how the body reads the value it destructures
+ * @param {TransformContext} ctx
+ * @returns {void}
+ */
+function report_prop_rest(rest, object, ctx) {
+	error(
+		TSRX_ERRORS.TARGET_PROP_NESTED_REST(ctx.platform.name, get_prop_path(object)),
+		ctx.filename,
+		rest,
+		ctx.errors,
+		ctx.comments,
+	);
+}
+
+/**
+ * @param {AST.ObjectPattern} pattern
+ * @param {string} object how the body reads the value the pattern destructures
+ * @param {boolean} nested whether the pattern is inside a prop
+ * @param {TransformContext} ctx
+ * @returns {void}
+ */
+function validate_prop_keys(pattern, object, nested, ctx) {
+	for (const property of pattern.properties) {
+		if (property.type === 'RestElement') {
+			// The pattern's own rest element gets the attrs: the props it doesn't
+			// declare.
+			if (nested) report_prop_rest(property, object, ctx);
+			continue;
+		}
+		const key = property.key;
+		if (!property.computed && key.type === 'Identifier') {
+			validate_prop_value(
+				property.value,
+				join_prop_member(object, `.${key.name}`, nested),
+				nested,
+				ctx,
+			);
+			continue;
+		}
+		const written = get_inline_text(key, ctx);
+		const example = get_prop_read_example(
+			property.value,
+			join_prop_member(object, get_prop_member_access(key, written, !nested), nested),
+			ctx,
+		);
+		error(
+			property.computed && key.type === 'Identifier'
+				? TSRX_ERRORS.TARGET_PROP_KEY_COMPUTED(ctx.platform.name, key.name, example)
+				: TSRX_ERRORS.TARGET_PROP_KEY_UNSUPPORTED(
+						ctx.platform.name,
+						property.computed ? `[${written}]` : written,
+						example,
+					),
+			ctx.filename,
+			key,
+			ctx.errors,
+			ctx.comments,
+		);
+	}
+}
+
+/**
+ * Check the pattern a prop, or a value inside one, is destructured with. A
+ * prop's own default is checked as TSRX2029 by `validate_prop_defaults`.
+ *
+ * @param {AST.Pattern} pattern
+ * @param {string} object how the body reads the value
+ * @param {boolean} nested whether the value is inside a prop
+ * @param {TransformContext} ctx
+ * @returns {void}
+ */
+function validate_prop_value(pattern, object, nested, ctx) {
+	if (pattern.type === 'AssignmentPattern') {
+		if (nested) {
+			error(
+				TSRX_ERRORS.TARGET_PROP_NESTED_DEFAULT_UNSUPPORTED(
+					ctx.platform.name,
+					get_prop_path(object),
+					get_prop_read_example(pattern, object, ctx),
+				),
+				ctx.filename,
+				pattern.right,
+				ctx.errors,
+				ctx.comments,
+			);
+		}
+		validate_prop_value(pattern.left, object, nested, ctx);
+	} else if (pattern.type === 'ObjectPattern') {
+		validate_prop_keys(pattern, object, true, ctx);
+	} else if (pattern.type === 'ArrayPattern') {
+		pattern.elements.forEach((element, index) => {
+			if (element?.type === 'RestElement') {
+				report_prop_rest(element, object, ctx);
+			} else if (element) {
+				validate_prop_value(element, join_prop_member(object, `[${index}]`, true), true, ctx);
+			}
+		});
+	}
+}
+
+/**
+ * Read a member of a prop's value with optional chaining, since the prop
+ * itself can be missing.
+ *
+ * @param {string} object
+ * @param {string} member `.name` or `[key]`
+ * @param {boolean} nested whether `object` is a prop's value, not the props
+ * @returns {string}
+ */
+function join_prop_member(object, member, nested) {
+	return nested
+		? `${object}?.${member.startsWith('.') ? member.slice(1) : member}`
+		: object + member;
+}
+
+/**
+ * A value's path in the props as the messages show it, such as `s.a`.
+ *
+ * @param {string} object
+ * @returns {string}
+ */
+function get_prop_path(object) {
+	return object.slice('props.'.length).replace(/\?\.(\[)?/g, (_, bracket) => bracket ?? '.');
+}
+
+/**
+ * How the body reads the member at `key`. Vue camelizes a prop's name, so a
+ * top-level `'a-b'` prop is `props.aB`.
+ *
+ * @param {AST.Expression | AST.PrivateIdentifier} key
+ * @param {string} written the key as written
+ * @param {boolean} top whether the key names a prop
+ * @returns {string}
+ */
+function get_prop_member_access(key, written, top) {
+	const name =
+		key.type === 'Literal' && typeof key.value === 'string'
+			? key.value
+			: key.type === 'TemplateLiteral' && key.expressions.length === 0
+				? key.quasis[0].value.cooked
+				: null;
+	if (name == null) return `[${written}]`;
+	const member = top ? name.replace(/-(\w)/g, (_, letter) => letter.toUpperCase()) : name;
+	return /^[A-Za-z_$][\w$]*$/.test(member) ? `.${member}` : `[${JSON.stringify(member)}]`;
+}
+
+/**
+ * An expression that reads the value at `access` where it is used, with the
+ * pattern's default, or an empty string when the pattern binds more than a
+ * name or its default spans lines.
+ *
+ * @param {AST.Pattern} value
+ * @param {string} access
+ * @param {TransformContext} ctx
+ * @returns {string}
+ */
+function get_prop_read_example(value, access, ctx) {
+	if (value.type === 'Identifier') return `{${access}}`;
+	if (value.type !== 'AssignmentPattern' || value.left.type !== 'Identifier') return '';
+	const fallback = get_source_text(value.right, ctx);
+	// A default replaces only `undefined`, so `??`, which also replaces `null`,
+	// would not read the same.
+	return fallback === null ? '' : `{${access} === undefined ? ${fallback} : ${access}}`;
+}
+
+/**
+ * A node's source text, on one line.
+ *
+ * @param {AST.Node} node
+ * @param {TransformContext} ctx
+ * @returns {string}
+ */
+function get_inline_text(node, ctx) {
+	if (ctx.source && node.start != null && node.end != null) {
+		return ctx.source.slice(node.start, node.end).replace(/\s*\n\s*/g, ' ');
+	}
+	return node.type === 'Identifier'
+		? node.name
+		: node.type === 'Literal'
+			? String(node.value)
+			: '…';
+}
+
+/**
+ * @param {AST.Node} node
+ * @param {TransformContext} ctx
+ * @returns {string | null} the node's source text, when it is on one line
+ */
+function get_source_text(node, ctx) {
+	const text =
+		ctx.source && node.start != null && node.end != null
+			? ctx.source.slice(node.start, node.end)
+			: null;
+	return text && !text.includes('\n') ? text : null;
 }
 
 /**
@@ -1538,7 +1780,7 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 		: (find_jsx_key_expression(rendered) ?? (node.index ? clone_ast_node(node.index) : null));
 
 	const slot = key_expression
-		? create_keyed_vapor_for_slot(loop_params, rendered)
+		? create_keyed_vapor_for_slot(loop_params, rendered, transform_context)
 		: { params: loop_params, body: rendered, expression: true };
 	if (!slot) {
 		return null;
@@ -1547,7 +1789,7 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 	transform_context.needs_vapor_for = true;
 
 	if (key_expression) {
-		strip_top_level_jsx_keys(slot.body);
+		strip_top_level_jsx_keys(slot.rendered ?? slot.body);
 	}
 
 	const attributes = [
@@ -1695,7 +1937,7 @@ function strip_top_level_jsx_keys(node) {
 
 /**
  * @param {AST.Pattern[]} loop_params
- * @param {AST.Expression} body
+ * @param {AST.Expression | AST.BlockStatement} body
  * @param {boolean} expression
  * @returns {AST.ArrowFunctionExpression}
  */
@@ -1711,9 +1953,10 @@ function create_loop_callback(loop_params, body, expression) {
 /**
  * @param {AST.Pattern[]} loop_params
  * @param {AST.Expression} rendered
- * @returns {{ params: AST.Pattern[], body: AST.Expression, expression: boolean } | null}
+ * @param {TransformContext} transform_context
+ * @returns {{ params: AST.Pattern[], body: AST.Expression | AST.BlockStatement, expression: boolean, rendered?: AST.Expression } | null}
  */
-function create_keyed_vapor_for_slot(loop_params, rendered) {
+function create_keyed_vapor_for_slot(loop_params, rendered, transform_context) {
 	if (loop_params[0]?.type === 'Identifier') {
 		return {
 			params: loop_params,
@@ -1723,6 +1966,16 @@ function create_keyed_vapor_for_slot(loop_params, rendered) {
 	}
 
 	const item_ref = create_generated_identifier('__vapor_item');
+	if (contains_array_pattern(loop_params[0])) {
+		transform_context.needs_vapor_computed = true;
+		return create_destructured_keyed_vapor_for_slot(
+			loop_params,
+			rendered,
+			item_ref,
+			transform_context,
+		);
+	}
+
 	const item_ref_value = create_value_member_expression(item_ref);
 	const replacements = create_pattern_replacements(loop_params[0], item_ref_value);
 	if (!replacements) {
@@ -1744,14 +1997,105 @@ function create_keyed_vapor_for_slot(loop_params, rendered) {
 }
 
 /**
+ * A keyed slot for an item pattern that property reads can't stand in for:
+ * an array pattern destructures through the item's iterator, so `[a, b]` of
+ * a `Set` or a string is not `item[0]` and `item[1]`. The slot destructures
+ * the item with the authored pattern in a `computed`, which runs once per
+ * item value and keeps the row's reads reactive, and reads each name from it.
+ *
+ * @param {AST.Pattern[]} loop_params
+ * @param {AST.Expression} rendered
+ * @param {AST.Identifier} item_ref
+ * @param {TransformContext} transform_context
+ * @returns {{ params: AST.Pattern[], body: AST.BlockStatement, expression: boolean, rendered: AST.Expression }}
+ */
+function create_destructured_keyed_vapor_for_slot(
+	loop_params,
+	rendered,
+	item_ref,
+	transform_context,
+) {
+	const count = (vapor_bindings_counts.get(transform_context) ?? 0) + 1;
+	vapor_bindings_counts.set(transform_context, count);
+	const bindings_ref = create_generated_identifier(`${VAPOR_BINDINGS_NAME}_${count}`);
+	/** @type {Set<string>} */
+	const names = new Set();
+	collect_pattern_names(loop_params[0], names);
+
+	/** @type {Map<string, AST.Expression>} */
+	const replacements = new Map();
+	for (const name of names) {
+		replacements.set(
+			name,
+			b.member(create_value_member_expression(bindings_ref), create_generated_identifier(name)),
+		);
+	}
+
+	const bindings = b.const(
+		bindings_ref,
+		b.call(
+			VUE_COMPUTED_INTERNAL_NAME,
+			b.arrow(
+				[],
+				b.block([
+					// A default in the pattern reads the index through its ref too.
+					b.const(
+						rewrite_vapor_for_keyed_slot_refs(loop_params[0], loop_params.slice(1)),
+						create_value_member_expression(item_ref),
+					),
+					b.return(
+						b.object([...names].map((name) => b.prop('init', b.id(name), b.id(name), false, true))),
+					),
+				]),
+			),
+		),
+	);
+	const rewritten_rendered = rewrite_vapor_for_keyed_slot_refs(
+		rendered,
+		loop_params.slice(1),
+		replacements,
+	);
+
+	return {
+		params: [item_ref, ...loop_params.slice(1)],
+		body: b.block([bindings, b.return(rewritten_rendered)]),
+		expression: false,
+		rendered: rewritten_rendered,
+	};
+}
+
+/**
+ * @param {AST.Node | null} node
+ * @returns {boolean}
+ */
+function contains_array_pattern(node) {
+	if (!node) return false;
+	switch (node.type) {
+		case 'ArrayPattern':
+			return true;
+		case 'ObjectPattern':
+			return node.properties.some((property) =>
+				contains_array_pattern(property.type === 'RestElement' ? property : property.value),
+			);
+		case 'AssignmentPattern':
+			return contains_array_pattern(node.left);
+		case 'RestElement':
+			return contains_array_pattern(node.argument);
+		default:
+			return false;
+	}
+}
+
+/**
  * Vue's `VaporFor` passes plain item values to unkeyed slots, but keyed slots
  * receive shallow refs so row instances can update in place. Match that runtime
  * shape by reading loop params through `.value` inside the slot body.
  *
- * @param {AST.Expression} node
+ * @template {AST.Node} T
+ * @param {T} node
  * @param {AST.Pattern[]} loop_params
  * @param {Map<string, AST.Expression>} [replacements]
- * @returns {AST.Expression}
+ * @returns {T}
  */
 function rewrite_vapor_for_keyed_slot_refs(node, loop_params, replacements = new Map()) {
 	const loop_param_names = new Set();
@@ -1763,14 +2107,29 @@ function rewrite_vapor_for_keyed_slot_refs(node, loop_params, replacements = new
 		return node;
 	}
 
-	return /** @type {AST.Expression} */ (
+	return /** @type {T} */ (
 		walk(
 			node,
-			{ loop_param_names, shadowed_names: new Set() },
+			{ loop_param_names, shadowed_names: new Set(), in_type: false },
 			{
+				_(child, { state, next }) {
+					// A type names no runtime value, so a type parameter or type
+					// reference spelled like a loop param stays as written; only a
+					// `typeof` in a type reads the param.
+					if (child.type === 'TSTypeQuery') {
+						next({ ...state, in_type: false });
+					} else if (is_type_only_node(child)) {
+						next({ ...state, in_type: true });
+					} else {
+						next();
+					}
+				},
 				Identifier(identifier, { path, state, next }) {
 					const parent = path.at(-1);
 					if (
+						!state.in_type &&
+						// `typeof Types.item` reads `Types`; `item` is a member name.
+						!(parent?.type === 'TSQualifiedName' && parent.right === identifier) &&
 						(state.loop_param_names.has(identifier.name) || replacements.has(identifier.name)) &&
 						!state.shadowed_names.has(identifier.name) &&
 						parent &&
@@ -1791,6 +2150,28 @@ function rewrite_vapor_for_keyed_slot_refs(node, loop_params, replacements = new
 				BlockStatement: rewrite_block_shadowed_refs,
 			},
 		)
+	);
+}
+
+/**
+ * Whether `node` is TypeScript type syntax: a type annotation, type parameters
+ * or arguments, the type of an `as`, `satisfies`, or `<T>` assertion, or a
+ * type alias or interface declaration.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_type_only_node(node) {
+	return (
+		node.type === 'TSTypeAnnotation' ||
+		node.type === 'TSTypeAliasDeclaration' ||
+		node.type === 'TSInterfaceDeclaration' ||
+		node.type === 'TSTypeParameterDeclaration' ||
+		node.type === 'TSTypeParameterInstantiation' ||
+		node.type === 'TSTypeReference' ||
+		node.type === 'TSTypeLiteral' ||
+		node.type === 'TSTypeOperator' ||
+		/^TS[A-Za-z]*(Type|Keyword)$/.test(node.type)
 	);
 }
 
@@ -1945,7 +2326,9 @@ function collect_function_var_names(node, names) {
 		node.type === 'FunctionExpression' ||
 		node.type === 'ArrowFunctionExpression' ||
 		node.type === 'ClassDeclaration' ||
-		node.type === 'ClassExpression'
+		node.type === 'ClassExpression' ||
+		// A namespace's `var`s are its own.
+		node.type === 'TSModuleDeclaration'
 	) {
 		return;
 	}
@@ -2210,6 +2593,12 @@ function inject_vue_imports(program, transform_context) {
 		ensure_named_import(program, 'vue-jsx-vapor', 'VaporFor');
 	}
 
+	if (transform_context.needs_vapor_computed) {
+		// Its own declaration: an authored `import type` or `import * as` from
+		// 'vue' can't take a value specifier.
+		program.body.unshift(b.imports([['computed', VUE_COMPUTED_INTERNAL_NAME, 'value']], 'vue'));
+	}
+
 	if (transform_context.needs_use_slots) {
 		ensure_named_import(program, 'vue', 'useSlots', USE_SLOTS_INTERNAL_NAME);
 	}
@@ -2228,6 +2617,15 @@ function inject_vue_imports(program, transform_context) {
 
 	if (transform_context.needs_merge_refs && merge_refs_source) {
 		ensure_named_import(program, merge_refs_source, 'mergeRefs', MERGE_REFS_INTERNAL_NAME);
+	}
+
+	if (transform_context.needs_join_scope_class && ref_prop_source) {
+		ensure_named_import(
+			program,
+			ref_prop_source,
+			'join_scope_class',
+			JOIN_SCOPE_CLASS_INTERNAL_NAME,
+		);
 	}
 
 	if (transform_context.needs_normalize_spread_props && ref_prop_source) {
@@ -2250,6 +2648,12 @@ function inject_vue_imports(program, transform_context) {
 }
 
 /**
+ * Import `name` as `local` from `source` unless a named value import of
+ * `source` already has it, in any declaration: an authored
+ * `import { Suspense } from 'vue'` can follow the keyed slot's `computed`
+ * import. Otherwise add it to the first named value import of `source`, or
+ * give it an import of its own.
+ *
  * @param {import('estree').Program} program
  * @param {string} source
  * @param {string} name
@@ -2257,12 +2661,17 @@ function inject_vue_imports(program, transform_context) {
  * @returns {void}
  */
 function ensure_named_import(program, source, name, local = name) {
+	/** @type {import('estree').ImportDeclaration | undefined} */
+	let first;
 	for (const statement of program.body) {
-		// A type-only import is erased, and so would a value specifier added to it.
+		if (statement.type !== 'ImportDeclaration' || statement.source?.value !== source) {
+			continue;
+		}
+		// A type-only import is erased from the build, and a namespace import
+		// takes no named specifiers: the helper gets an import of its own.
 		if (
-			statement.type !== 'ImportDeclaration' ||
-			statement.source?.value !== source ||
-			/** @type {{ importKind?: string }} */ (statement).importKind === 'type'
+			statement.importKind === 'type' ||
+			statement.specifiers.some((specifier) => specifier.type === 'ImportNamespaceSpecifier')
 		) {
 			continue;
 		}
@@ -2270,16 +2679,21 @@ function ensure_named_import(program, source, name, local = name) {
 		const has_specifier = statement.specifiers.some(
 			(specifier) =>
 				specifier.type === 'ImportSpecifier' &&
-				/** @type {{ importKind?: string }} */ (specifier).importKind !== 'type' &&
+				specifier.importKind !== 'type' &&
 				specifier.imported?.type === 'Identifier' &&
 				specifier.imported.name === name &&
 				specifier.local?.name === local,
 		);
 
-		if (!has_specifier) {
-			statement.specifiers.push(create_import_specifier(name, local));
+		if (has_specifier) {
+			return;
 		}
 
+		first ??= statement;
+	}
+
+	if (first) {
+		first.specifiers.push(create_import_specifier(name, local));
 		return;
 	}
 

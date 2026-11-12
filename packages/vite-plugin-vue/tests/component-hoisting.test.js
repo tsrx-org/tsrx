@@ -98,6 +98,25 @@ function Card({ s = cfg.size }: { s?: number }) {
 }
 export { Card };`,
 
+	'computed-key.tsrx': `const k = 's';
+function Card({ [k]: v = 3 }: { s?: number }) {
+	const el = <div>{v}</div>;
+	return el;
+}
+export { Card };`,
+
+	'literal-key.tsrx': `function Card({ ['s']: v = 3 }: { s?: number }) {
+	const el = <div>{v}</div>;
+	return el;
+}
+export { Card };`,
+
+	'nested-default.tsrx': `function Card({ s: { a = 3 } }: { s: { a?: number } }) {
+	const el = <div>{a}</div>;
+	return el;
+}
+export { Card };`,
+
 	'kept-default.tsrx': `const SIZE = 3;
 function Card({ s = SIZE, t = [1] }: { s?: number; t?: number[] }) {
 	const el = <div>{s}</div>;
@@ -147,6 +166,26 @@ describe('[vue] destructured prop defaults', () => {
 	it('reports TSRX2029 for a default vue-jsx-vapor would drop', async () => {
 		await expect(load('dropped-default.tsrx')).rejects.toThrow(
 			"Vue TSRX cannot keep this default for 's'",
+		);
+	});
+});
+
+describe('[vue] destructured prop keys', () => {
+	it('reports TSRX2031 for a computed key vue-jsx-vapor reads as another prop', async () => {
+		await expect(load('computed-key.tsrx')).rejects.toThrow(
+			"vue-jsx-vapor reads `[k]` as the prop 'k'",
+		);
+	});
+
+	it('reports TSRX2031 for a key that is not a name, which vue-jsx-vapor leaves out', async () => {
+		// Alone, it would leave the component without prop options, so Vue would
+		// pass it no props at all.
+		await expect(load('literal-key.tsrx')).rejects.toThrow("cannot read the prop at `['s']`");
+	});
+
+	it('reports TSRX2029 for a default inside a prop, applied only when the prop is missing', async () => {
+		await expect(load('nested-default.tsrx')).rejects.toThrow(
+			"Vue TSRX cannot keep this default for 's.a'",
 		);
 	});
 });
