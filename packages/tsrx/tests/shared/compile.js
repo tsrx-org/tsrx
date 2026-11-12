@@ -2446,6 +2446,10 @@ export function runSharedCompileTests({
 		componentClassAttrName === 'className'
 			? '{ className }: { className?: string }'
 			: '{ class: className }: { class?: string }';
+	// Solid and Vue Vapor JSX evaluates to a DOM node, so these targets leave
+	// static JSX in place rather than hoist one node that every use would
+	// share (#1236, #1240).
+	const hoistsStaticJsx = !['solid', 'vue'].includes(name);
 
 	runSharedPlatformTests({ compile, name });
 
@@ -3985,10 +3989,17 @@ export function App() @{
 			);
 
 			expect(code).not.toContain('return;');
-			expect(code).toMatch(/function FragmentReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/function TsxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
-			expect(code).toMatch(/function TsrxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+			if (hoistsStaticJsx) {
+				expect(code).toMatch(/function FragmentReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/function TsxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
+				expect(code).toMatch(/function TsrxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+			} else {
+				expect(code).not.toContain('__static');
+				expect(code).toMatch(/function FragmentReturn\(\) {\s+return <><div>fragment<\/div><\/>;/);
+				expect(code).toMatch(/function TsxReturn\(\) {\s+return <><div>tsx<\/div><\/>;/);
+				expect(code).toMatch(/function TsrxReturn\(\) {\s+return <><div>tsrx<\/div><\/>;/);
+			}
 		});
 
 		it('keeps special fragment returns inside component prop arrow functions', () => {
@@ -4012,12 +4023,19 @@ export function App() @{
 			);
 
 			expect(code).not.toContain('return;');
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>fragment<\/div>;/);
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsx<\/div>;/);
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
-			expect(code).toMatch(/fragment={\(\) => {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/tsx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/tsrx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+			if (hoistsStaticJsx) {
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>fragment<\/div>;/);
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsx<\/div>;/);
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
+				expect(code).toMatch(/fragment={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/tsx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/tsrx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+			} else {
+				expect(code).not.toContain('__static');
+				expect(code).toMatch(/fragment={\(\) => {\s+return <><div>fragment<\/div><\/>;/);
+				expect(code).toMatch(/tsx={\(\) => {\s+return <><div>tsx<\/div><\/>;/);
+				expect(code).toMatch(/tsrx={\(\) => {\s+return <><div>tsrx<\/div><\/>;/);
+			}
 		});
 
 		it('parses semicolon-less JSX returns in component prop arrow functions', () => {
@@ -4653,10 +4671,10 @@ export function App() @{
 			).toThrow();
 		});
 
-		it.runIf(['react', 'preact', 'solid'].includes(name))(
+		it.runIf(['react', 'preact'].includes(name))(
 			`[${name}] hoists direct JSX text and static expression sibling combo to a static`,
 			() => {
-				// React/Preact/Solid hoist child-free static JSX to a module-level
+				// React/Preact hoist child-free static JSX to a module-level
 				// constant so the element identity is stable across renders.
 				const { code } = compile(
 					`export function App() @{
@@ -4668,6 +4686,21 @@ export function App() @{
 				expect(code).toContain('hello');
 				expect(code).toContain("{'hello'}");
 				expect(code).toContain('return App__static1');
+				expect(code).not.toContain('== null');
+			},
+		);
+
+		it.runIf(name === 'solid')(
+			`[${name}] leaves direct JSX text and static expression sibling combo in place`,
+			() => {
+				const { code } = compile(
+					`export function App() @{
+						<b>hello {'hello'}</b>
+					}`,
+					'App.tsrx',
+				);
+				expect(code).toContain("return <b>hello {'hello'}</b>;");
+				expect(code).not.toContain('__static');
 				expect(code).not.toContain('== null');
 			},
 		);
@@ -4900,8 +4933,8 @@ export function App() @{
 			],
 		])('hoists JSX whose tag reads %s', (_case, source, expected) => {
 			const { code } = compile(source, 'App.tsrx');
-			// Solid and Vue never hoist JSX with a component in it
-			if (['react', 'preact', 'hono'].includes(name)) {
+			// Solid and Vue never hoist
+			if (hoistsStaticJsx) {
 				expect(code).toContain('const App__static1 = <div>');
 			}
 			expect(run_result(code)).toBe(expected);
@@ -4912,7 +4945,9 @@ export function App() @{
 				'function App() {\n\treturn <div>hello</div>;\n}\nconst div = 1;\nexport const result = () => App().type;',
 				'App.tsrx',
 			);
-			expect(code).toContain('const App__static1 = <div>hello</div>;');
+			if (hoistsStaticJsx) {
+				expect(code).toContain('const App__static1 = <div>hello</div>;');
+			}
 			expect(run_result(code)).toBe('div');
 		});
 

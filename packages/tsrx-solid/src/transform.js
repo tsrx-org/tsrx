@@ -43,7 +43,6 @@ import {
 	clone_ast_node,
 	clone_identifier,
 	clone_jsx_name,
-	contains_component_jsx,
 	create_generated_identifier,
 	create_null_literal,
 	get_for_of_iteration_params,
@@ -143,16 +142,11 @@ const solid_platform = {
 			needs_untrack: false,
 			needs_normalize_spread_props: false,
 		}),
-		canHoistStaticNode(node) {
-			// Solid's reactive runtime doesn't reuse JSX-element identity the
-			// way React does, so hoisting `<Component />` references to module
-			// level pays no runtime cost — it just creates an extra `const`
-			// that aliases a component invocation (e.g. `App__static1 =
-			// <Child />`). Truly-static DOM trees like
-			// `<span>Hello</span>` still benefit from being hoisted out of
-			// the per-render closure, so we only veto hoisting when the
-			// subtree contains a *component* JSX element. Same logic Vue uses.
-			return !contains_component_jsx(node);
+		canHoistStaticNode() {
+			// Solid JSX evaluates to a DOM node, so a module-level static would
+			// be one node that every use moves into place. Solid's compiler
+			// already hoists the parsed template and clones it per evaluation.
+			return false;
 		},
 		validateComponentAwait: (await_expression, _component, ctx, _requires, source) => {
 			const await_start = get_await_keyword_start(await_expression, source);
