@@ -379,7 +379,8 @@ const merged_element_refs = { next: undefined, ref: undefined };
  * Merge the refs of one compiled element into its `ref`. A single ref comes back
  * as itself, and the same refs give back the same callback, so a JSX runtime
  * that applies a `ref` again whenever its identity changes applies them once
- * rather than on every render.
+ * rather than on every render. A ref list counts as the refs in it, so an
+ * inline `[a, b]` written each render gives back the same callback too.
  *
  * Every element given the same refs shares the callback, so only a runtime
  * that keeps a ref's cleanup per element can use it (React, Hono): Preact
@@ -391,10 +392,20 @@ const merged_element_refs = { next: undefined, ref: undefined };
  * @returns {RefValue<T>}
  */
 export function merge_element_refs(...refs) {
-	// Only a function or an object is a ref; `ref={cond && cb}` may be `false`.
-	const live = refs.filter(
-		(ref) => typeof ref === 'function' || (typeof ref === 'object' && ref !== null),
-	);
+	return merge_shared_ref_list(refs);
+}
+
+/**
+ * `merge_element_refs` for a ref list the caller has already collected.
+ *
+ * @template [T=Element]
+ * @param {RefValue<T>[]} refs
+ * @returns {RefValue<T>}
+ */
+function merge_shared_ref_list(refs) {
+	/** @type {RefValue<T>[]} */
+	const live = [];
+	collect_live_refs(refs, live);
 	if (live.length < 2) {
 		return live[0];
 	}
@@ -410,6 +421,26 @@ export function merge_element_refs(...refs) {
 		entry = child;
 	}
 	return (entry.ref ??= merge_ref_list(live));
+}
+
+/**
+ * Collect the refs of a list, and of the lists in it, so the cache keys an
+ * inline `ref: [a, b]` by `a` and `b` rather than by a new array each render.
+ * Only a function or an object is a ref; `ref={cond && cb}` may be `false`.
+ *
+ * @template T
+ * @param {readonly RefValue<T>[]} refs
+ * @param {RefValue<T>[]} live
+ * @returns {void}
+ */
+function collect_live_refs(refs, live) {
+	for (const ref of refs) {
+		if (is_array(ref)) {
+			collect_live_refs(ref, live);
+		} else if (typeof ref === 'function' || (typeof ref === 'object' && ref !== null)) {
+			live.push(ref);
+		}
+	}
 }
 
 /**
@@ -468,7 +499,7 @@ function collect_ref_cleanups(ref_value, node, cleanups) {
  * @returns {SpreadProps | SpreadFalsy}
  */
 export function normalize_spread_props(props, ...outer_refs) {
-	return normalize_spread(props, outer_refs, false);
+	return normalize_spread(props, outer_refs, false, merge_ref_list);
 }
 
 /**
@@ -481,16 +512,33 @@ export function normalize_spread_props(props, ...outer_refs) {
  * @returns {SpreadProps | SpreadFalsy}
  */
 export function copy_spread_props(props, ...outer_refs) {
-	return normalize_spread(props, outer_refs, true);
+	return normalize_spread(props, outer_refs, true, merge_ref_list);
+}
+
+/**
+ * `copy_spread_props` that merges a bag's refs as `merge_element_refs` does, so
+ * a new bag with the same refs gets the same `ref` and a JSX runtime that
+ * applies a `ref` again whenever its identity changes leaves it applied. As
+ * with `merge_element_refs`, only a runtime that keeps a ref's cleanup per
+ * element can use it (React, Hono).
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {...RefValue<Element>} outer_refs
+ * @returns {SpreadProps | SpreadFalsy}
+ */
+export function copy_spread_props_sharing_refs(props, ...outer_refs) {
+	return normalize_spread(props, outer_refs, true, merge_shared_ref_list);
 }
 
 /**
  * @param {object | SpreadFalsy} props
  * @param {Array<RefValue<Element>>} outer_refs a rest array owned by the caller
  * @param {boolean} copy return the normalized copy even with nothing to merge
+ * @param {(refs: RefValue<Element>[]) => RefValue<Element>} merge merges an
+ *   owned list of the bag's refs into one
  * @returns {SpreadProps | SpreadFalsy}
  */
-function normalize_spread(props, outer_refs, copy) {
+function normalize_spread(props, outer_refs, copy, merge) {
 	// A non-object carries no refs to collect. Returning it unchanged leaves the
 	// spread to treat it exactly as a native JSX spread would.
 	if (props === null || (typeof props !== 'object' && typeof props !== 'function')) {
@@ -571,13 +619,13 @@ function normalize_spread(props, outer_refs, copy) {
 		if (existing_ref != null) {
 			outer_refs.unshift(existing_ref);
 		}
-		merged_ref = merge_ref_list(outer_refs);
+		merged_ref = merge(outer_refs);
 	} else if (existing_ref == null && outer_refs.length === 0) {
 		// A single collected ref survives unchanged without merge machinery.
 		// `refs` holds only `is_ref_prop`-verified non-null entries, so a lone
 		// entry can be returned directly instead of routing through
-		// `merge_ref_list`'s nullish filtering.
-		merged_ref = refs.length === 1 ? refs[0] : merge_ref_list(refs);
+		// `merge`'s filtering.
+		merged_ref = refs.length === 1 ? refs[0] : merge(refs);
 	} else {
 		if (existing_ref != null) {
 			refs.unshift(existing_ref);
@@ -585,7 +633,7 @@ function normalize_spread(props, outer_refs, copy) {
 		if (outer_refs.length !== 0) {
 			refs.push(...outer_refs);
 		}
-		merged_ref = merge_ref_list(refs);
+		merged_ref = merge(refs);
 	}
 	if (merged_ref !== undefined) {
 		next.ref = merged_ref;
@@ -605,7 +653,7 @@ function normalize_spread(props, outer_refs, copy) {
  * @returns {SpreadProps | Exclude<SpreadFalsy, null | undefined | void>}
  */
 export function normalize_spread_props_for_ref_attr(props, ...outer_refs) {
-	return hide_spread_ref(normalize_spread(props, outer_refs, false));
+	return hide_spread_ref(normalize_spread(props, outer_refs, false, merge_ref_list));
 }
 
 /**
@@ -617,7 +665,19 @@ export function normalize_spread_props_for_ref_attr(props, ...outer_refs) {
  * @returns {SpreadProps | Exclude<SpreadFalsy, null | undefined | void>}
  */
 export function copy_spread_props_for_ref_attr(props, ...outer_refs) {
-	return hide_spread_ref(normalize_spread(props, outer_refs, true));
+	return hide_spread_ref(normalize_spread(props, outer_refs, true, merge_ref_list));
+}
+
+/**
+ * `copy_spread_props_for_ref_attr` that merges a bag's refs as
+ * `merge_element_refs` does; see `copy_spread_props_sharing_refs`.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {...RefValue<Element>} outer_refs
+ * @returns {SpreadProps | Exclude<SpreadFalsy, null | undefined | void>}
+ */
+export function copy_spread_props_for_ref_attr_sharing_refs(props, ...outer_refs) {
+	return hide_spread_ref(normalize_spread(props, outer_refs, true, merge_shared_ref_list));
 }
 
 /**

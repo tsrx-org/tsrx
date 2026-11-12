@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { use, useState } from 'hono/jsx';
 import { createContext, render, useContext } from 'hono/jsx/dom';
 import { Style, createCssContext, css } from 'hono/css';
+import { create_ref_prop } from '@tsrx/hono/ref';
 import {
 	NullishSpreadRefApp,
 	NullishSpreadRefInIfApp,
@@ -257,6 +258,35 @@ function SpreadRefRenderApp() @{
 		</button>
 		<button class="spread-ref-swap" onClick={() => setSwapped(true)}>
 			{'swap'}
+		</button>
+	</>
+}
+
+const bag_first_ref = log_spread_ref('bag-first');
+const bag_second_ref = log_spread_ref('bag-second');
+const bag_replaced_ref = log_spread_ref('bag-replaced');
+const own_refs_ref = log_spread_ref('own-refs');
+const named_ref = create_ref_prop(() => log_spread_ref('named'));
+const stable_ref_list = [bag_first_ref, bag_second_ref];
+
+function SpreadRefsRenderApp() @{
+	const [count, setCount] = useState(0);
+	const [replaced, setReplaced] = useState(false);
+	const bag_ref = replaced ? bag_replaced_ref : bag_first_ref;
+
+	<>
+		<input
+			class="own-refs"
+			ref={own_refs_ref}
+			{...{ 'data-count': count, ref: bag_ref, extra: named_ref }}
+		/>
+		<input class="bag-refs" {...{ 'data-count': count, ref: bag_ref, extra: named_ref }} />
+		<input class="ref-list" ref={own_refs_ref} {...{ 'data-count': count, ref: stable_ref_list }} />
+		<button class="spread-refs-rerender" onClick={() => setCount(count + 1)}>
+			{count}
+		</button>
+		<button class="spread-refs-replace" onClick={() => setReplaced(true)}>
+			{'replace'}
 		</button>
 	</>
 }
@@ -644,6 +674,47 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 
 		await click('.spread-ref-swap');
 		expect(spread_ref_render_log).toEqual(['swap-first:detach', 'swap-second:attach']);
+	});
+
+	it("applies a spread bag's several refs again only when one of them changes", async () => {
+		async function click(selector: string) {
+			(container.querySelector(selector) as HTMLButtonElement).click();
+			await Promise.resolve();
+		}
+
+		spread_ref_render_log.length = 0;
+		render(<SpreadRefsRenderApp />, container);
+		expect(spread_ref_render_log).toEqual([
+			'own-refs:attach',
+			'bag-first:attach',
+			'named:attach',
+			'bag-first:attach',
+			'named:attach',
+			'own-refs:attach',
+			'bag-first:attach',
+			'bag-second:attach',
+		]);
+
+		spread_ref_render_log.length = 0;
+		await click('.spread-refs-rerender');
+		await click('.spread-refs-rerender');
+		expect(container.querySelector('.spread-refs-rerender')?.textContent).toBe('2');
+		expect(container.querySelector('.bag-refs')?.getAttribute('data-count')).toBe('2');
+		expect(spread_ref_render_log).toEqual([]);
+
+		await click('.spread-refs-replace');
+		expect(spread_ref_render_log).toEqual([
+			'own-refs:detach',
+			'bag-first:detach',
+			'named:detach',
+			'own-refs:attach',
+			'bag-replaced:attach',
+			'named:attach',
+			'bag-first:detach',
+			'named:detach',
+			'bag-replaced:attach',
+			'named:attach',
+		]);
 	});
 
 	const spread_bag = { id: 'first', title: 'First' };

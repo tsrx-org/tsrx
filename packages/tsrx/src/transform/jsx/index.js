@@ -6128,6 +6128,10 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	// so it gets the normalizers that return their copy: handing back the
 	// original bag would make the copy read its getters a second time.
 	const copies_spread = transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place';
+	// Those normalizers merge a bag's refs as `merge_element_refs` does when the
+	// platform lets elements share a merged ref.
+	const shares_merged_refs =
+		!transform_context.typeOnly && transform_context.platform.jsx?.shareMergedRefs === true;
 
 	/** @type {Map<string, AST.ImportSpecifier[]>} */
 	const ref_imports = new Map();
@@ -6137,9 +6141,7 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			merge_refs_source,
 			b.import_specifier(
-				!transform_context.typeOnly && transform_context.platform.jsx?.shareMergedRefs
-					? 'merge_element_refs'
-					: 'mergeRefs',
+				shares_merged_refs ? 'merge_element_refs' : 'mergeRefs',
 				MERGE_REFS_INTERNAL_NAME,
 			),
 		);
@@ -6166,7 +6168,11 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			normalize_spread_props_source,
 			b.import_specifier(
-				copies_spread ? 'copy_spread_props' : 'normalize_spread_props',
+				copies_spread
+					? shares_merged_refs
+						? 'copy_spread_props_sharing_refs'
+						: 'copy_spread_props'
+					: 'normalize_spread_props',
 				NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 			),
 		);
@@ -6177,7 +6183,11 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			normalize_spread_props_for_ref_attr_source,
 			b.import_specifier(
-				copies_spread ? 'copy_spread_props_for_ref_attr' : 'normalize_spread_props_for_ref_attr',
+				copies_spread
+					? shares_merged_refs
+						? 'copy_spread_props_for_ref_attr_sharing_refs'
+						: 'copy_spread_props_for_ref_attr'
+					: 'normalize_spread_props_for_ref_attr',
 				NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 			),
 		);
