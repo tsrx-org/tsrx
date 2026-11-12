@@ -362,6 +362,12 @@ export class TSRXVirtualCode {
 	originalCode = '';
 	/** @type {AST.Program | null} */
 	sourceAst = null;
+	/**
+	 * The `<script>` bodies of code (not data blocks) the transform appends to the
+	 * generated TSX as blocks; empty while the file has a fatal compile error.
+	 * @type {EmbeddedRegion[]}
+	 */
+	scriptRegions = [];
 	/** @type {boolean} */
 	isDotCompletionMode = false;
 	/** @type {unknown[]} */
@@ -414,6 +420,7 @@ export class TSRXVirtualCode {
 		this.fatalErrors = [];
 		this.usageErrors = [];
 		this.sourceAst = null;
+		this.scriptRegions = [];
 		this.isDotCompletionMode = false;
 
 		// Check if a single "." was typed using changeRange
@@ -498,7 +505,7 @@ export class TSRXVirtualCode {
 		if (result.fatalError) {
 			logError('TSRX compilation failed for', this.fileName, ':', result.fatalError);
 			if (process.env.TSRX_TSC === 'true') {
-				logTSRXErrors(this.fileName, [result.fatalError]);
+				logTSRXErrors(this.fileName, [result.fatalError], newCode);
 			}
 			this.fatalErrors.push(result.fatalError);
 			files_with_fatal_compile_error.add(normalize_file_name_key(this.fileName));
@@ -515,9 +522,10 @@ export class TSRXVirtualCode {
 			this.mappings = result.mappings;
 			this.usageErrors = result.errors;
 			this.sourceAst = result.sourceAst;
+			this.scriptRegions = result.scriptRegions;
 
 			if (process.env.TSRX_TSC === 'true' && result.errors.length > 0) {
-				logTSRXErrors(this.fileName, result.errors);
+				logTSRXErrors(this.fileName, result.errors, newCode);
 			}
 
 			if (result.cssRegions.length > 0) {
@@ -712,22 +720,74 @@ function clamp_offset(offset, length) {
 }
 
 /**
+ * @typedef {{
+ * 	message?: unknown,
+ * 	code?: unknown,
+ * 	severity?: unknown,
+ * 	type?: unknown,
+ * 	pos?: unknown,
+ * 	loc?: { line?: unknown, column?: unknown, start?: { line?: unknown, column?: unknown } },
+ * }} LoggedDiagnostic
+ */
+
+/**
+ * Mirrors compiler diagnostics to stderr under `tsrx-tsc`. The line follows
+ * tsc's `file(line,col): error TS2339: message` convention — position when the
+ * diagnostic has one, then severity and the diagnostic `code` — so output is
+ * greppable by code and actionable by position. A thrown (fatal) error stops
+ * the compile, so it prints as an error whatever its `severity`, as the
+ * language server shows it.
  * @param {string} file_name
  * @param {ReadonlyArray<unknown>} errors
+ * @param {string} source the compiled text, which a diagnostic's `pos` indexes
  */
-function logTSRXErrors(file_name, errors) {
+function logTSRXErrors(file_name, errors, source) {
 	for (const error of errors) {
-		const message =
-			error && typeof error === 'object' && 'message' in error
-				? String(/** @type {{ message: unknown }} */ (error).message)
-				: String(error);
-		const key = `${file_name}\0${message}`;
+		const details =
+			error && typeof error === 'object' ? /** @type {LoggedDiagnostic} */ (error) : undefined;
+		const message = details && 'message' in details ? String(details.message) : String(error);
+		const severity =
+			details?.severity === 'warning' && details.type !== 'fatal' ? 'warning' : 'error';
+		const code =
+			typeof details?.code === 'string' && details.code.length > 0 ? details.code : undefined;
+		const label = code === undefined ? severity : `${severity} ${code}`;
+		const start = diagnostic_start(details, source);
+		const position = start ? `(${start.line},${start.column + 1})` : '';
+		const key = `${file_name}\0${position}\0${label}\0${message}`;
 		if (loggedCompilationFailures.has(key)) {
 			continue;
 		}
 		loggedCompilationFailures.add(key);
-		console.error(`[tsrx-tsc] ${file_name}: ${message}`);
+		console.error(`[tsrx-tsc] ${file_name}${position}: ${label}: ${message}`);
 	}
+}
+
+const LINE_BREAK = /\r\n?|[\n\u2028\u2029]/g;
+
+/**
+ * Where a diagnostic starts, as a 1-based line and a 0-based column. A
+ * collected error's `loc` is a range, and a parse error acorn throws gives its
+ * position as `loc` itself (`{ line, column }`). A diagnostic without `loc`,
+ * such as one a consumer compiler builds with only `pos` and `end`, is placed
+ * by `pos` in `source`, breaking lines where tsc does.
+ * @param {LoggedDiagnostic | undefined} details
+ * @param {string} source
+ * @returns {{ line: number, column: number } | undefined}
+ */
+function diagnostic_start(details, source) {
+	const start = details?.loc?.start ?? details?.loc;
+	if (typeof start?.line === 'number' && typeof start?.column === 'number') {
+		return { line: start.line, column: start.column };
+	}
+	const pos = details?.pos;
+	if (typeof pos !== 'number' || pos < 0 || pos > source.length) return undefined;
+	let line = 1;
+	let line_start = 0;
+	for (const match of source.slice(0, pos).matchAll(LINE_BREAK)) {
+		line++;
+		line_start = match.index + match[0].length;
+	}
+	return { line, column: pos - line_start };
 }
 
 /**
