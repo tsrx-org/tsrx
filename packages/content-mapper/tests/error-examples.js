@@ -777,6 +777,24 @@ let a = 2;`,
 }`,
 	},
 	{
+		error: TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT,
+		source: `declare namespace N {
+	declare class A {}
+}`,
+	},
+	{
+		error: TS_ERRORS.MODIFIER_ON_CONSTRUCTOR,
+		source: `class A {
+	static constructor() {}
+}`,
+	},
+	{
+		error: TS_ERRORS.DECORATORS_NOT_VALID_HERE,
+		source: `class A {
+	@dec static {}
+}`,
+	},
+	{
 		error: UPSTREAM_ERRORS.DECORATED_CONSTRUCTOR,
 		source: `class A {
 	@dec constructor() {}
@@ -829,7 +847,6 @@ export const WITHOUT_EXAMPLE = new Map(
 			TSRX_ERRORS.RESERVED_IDENTIFIER_PREFIX,
 			"Raised only through core helpers that targets outside this repository call (Ripple, Octane); none of this repository's targets reaches it.",
 		],
-		[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'No source found (#961).'],
 		[
 			TS_ERRORS.DECLARED_IN_SCOPE,
 			'No source found: the parser rejects a name declared twice in one scope first (#964).',

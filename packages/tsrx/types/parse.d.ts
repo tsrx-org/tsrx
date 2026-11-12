@@ -1933,11 +1933,15 @@ export namespace Parse {
 		 * @param isGenerator Whether generator method
 		 * @param isAsync Whether async method
 		 * @param allowDirectSuper Whether super() allowed
+		 * @param inClassScope Whether a class member (@sveltejs/acorn-typescript)
+		 * @param method The class member, for a class method (@sveltejs/acorn-typescript)
 		 */
 		parseMethod(
 			isGenerator: boolean,
 			isAsync?: boolean,
 			allowDirectSuper?: boolean,
+			inClassScope?: boolean,
+			method?: AST.MethodDefinition,
 		): AST.FunctionExpression;
 
 		// ============================================================
