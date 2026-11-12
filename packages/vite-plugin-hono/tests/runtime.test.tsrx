@@ -9,6 +9,12 @@ import {
 } from '@tsrx/core/test-harness/runtime/nullish-spread-ref-components.tsrx';
 import {
 	NestedSpreadRefOrderApp,
+	RefBeforeAttributeApp,
+	RefBeforeSpreadApp,
+	SpreadClearsRefApp,
+	SpreadGetterApp,
+	SpreadGetterOwnRefApp,
+	SpreadGetterRefApp,
 	SpreadRefOrderApp,
 	SpreadsRefOrderApp,
 	spread_ref_order_nodes,
@@ -38,6 +44,11 @@ import {
 	ScriptBracesApp,
 	script_body_cases,
 } from '@tsrx/core/test-harness/runtime/script-body-components.tsrx';
+import {
+	ForOfSourceApp,
+	ForOfSourceEmptyApp,
+	for_of_source_cases,
+} from '@tsrx/core/test-harness/runtime/for-of-sources-components.tsrx';
 
 let container: HTMLDivElement;
 let resolveValue: (value: string) => void;
@@ -154,6 +165,19 @@ function BoundaryApp() @{
 	}
 }
 
+function loadOrThrow(): string {
+	throw new Error('body boom');
+}
+
+function BodyThrowBoundaryApp() @{
+	@try {
+		const value = loadOrThrow();
+		<p class="ok">{value}</p>
+	} @catch (error) {
+		<p class="error">{error.message}</p>
+	}
+}
+
 const ThemeContext = createContext('light');
 
 function ThemeLabel() @{
@@ -200,6 +224,45 @@ function ConditionalSpreadApp(props: { enabled: boolean }) @{
 			{...(props.enabled ? { disabled: true } : null)}
 		/>
 	</>
+}
+
+const SCOPE_HASH = expect.stringMatching(/^tsrx-[0-9a-f]+$/);
+
+type SpreadBag = Record<string, unknown> | null | undefined;
+
+function SpreadClassApp({ bag }: { bag?: SpreadBag }) @{
+	<>
+		<style>
+			span {
+				color: rgb(0, 128, 0);
+			}
+		</style>
+		<span data-probe="spread" {...bag} />
+		<span data-probe="class-before" class="base" {...bag} />
+		<span data-probe="class-name-before" className="base" {...bag} />
+		<span data-probe="class-after" {...bag} class="last" />
+		<span data-probe="class-name-after" {...bag} className="last" />
+	</>
+}
+
+function ReactiveSpreadClassApp({ bags }: { bags: SpreadBag[] }) @{
+	const [index, setIndex] = useState(0);
+
+	<>
+		<style>
+			span {
+				color: rgb(0, 128, 0);
+			}
+		</style>
+		<span data-probe="spread" {...bags[index]} />
+		<span data-probe="class-before" class="base" {...bags[index]} />
+		<button data-probe="next" onClick={() => setIndex(index + 1)} />
+	</>
+}
+
+function classes(probe: string): string[] {
+	const element = container.querySelector(`[data-probe="${probe}"]`) as HTMLElement;
+	return element.className.split(' ');
 }
 
 describe('@tsrx/vite-plugin-hono DOM runtime', () => {
@@ -258,6 +321,12 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		expect(container.innerHTML).toBe('<p class="error">boom</p>');
 	});
 
+	it('catches a throw from a @try body setup statement', () => {
+		render(<BodyThrowBoundaryApp />, container);
+
+		expect(container.innerHTML).toBe('<p class="error">body boom</p>');
+	});
+
 	// oxc, which compiles the target's JSX, trims a non-breaking space at the
 	// edge of a line, like TypeScript
 	for (const [label, selector, html] of [
@@ -288,6 +357,23 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			render(<JsxTextCharactersApp />, container);
 
 			expect(container.querySelector(selector)?.textContent).toBe(text);
+		});
+	}
+
+	// `@for` walks its source the way `for...of` does.
+	for (const [label, make, rows] of for_of_source_cases) {
+		it(`renders the items of ${label} in @for`, () => {
+			render(<ForOfSourceApp items={make()} />, container);
+			expect(
+				Array.from(container.querySelectorAll('.for-of-source li'), (li) => li.textContent),
+			).toEqual(rows);
+		});
+
+		it(`renders ${label} in @for with @empty`, () => {
+			render(<ForOfSourceEmptyApp items={make()} />, container);
+			expect(
+				Array.from(container.querySelectorAll('.for-of-source-empty li'), (li) => li.textContent),
+			).toEqual(rows.length > 0 ? rows : ['empty']);
 		});
 	}
 
@@ -333,6 +419,44 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 				(name) => element?.closest(`[${name}]`)?.getAttribute(name) ?? null,
 			);
 			expect(values).toEqual(['1', '2', '3']);
+			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
+		});
+	}
+
+	for (const [label, App, selector, refCalls] of [
+		['without a ref', SpreadGetterApp, '.spread-getter', 0],
+		['beside a ref', SpreadGetterRefApp, '.spread-getter-ref', 1],
+		['whose bag carries a ref', SpreadGetterOwnRefApp, '.spread-getter-own-ref', 1],
+	] as const) {
+		it(`reads a spread getter once ${label}`, () => {
+			spread_ref_order_nodes.length = 0;
+			render(<App />, container);
+
+			const element = container.querySelector(selector);
+			expect(element?.getAttribute('title')).toBe('1');
+			expect(element?.getAttribute('data-reads')).toBe('1');
+			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
+		});
+	}
+
+	it("lets a later spread's `ref: undefined` clear an earlier spread's ref", () => {
+		spread_ref_order_nodes.length = 0;
+		render(<SpreadClearsRefApp />, container);
+
+		expect(container.querySelector('.spread-clears-ref')).not.toBeNull();
+		expect(spread_ref_order_nodes).toEqual([]);
+	});
+
+	for (const [label, App, selector, refCalls] of [
+		['a spread', RefBeforeSpreadApp, '.ref-before-spread', 2],
+		['a later attribute', RefBeforeAttributeApp, '.ref-before-attribute', 1],
+	] as const) {
+		it(`evaluates a ref before ${label} in authored order`, () => {
+			spread_ref_order_nodes.length = 0;
+			render(<App />, container);
+
+			const element = container.querySelector(selector);
+			expect(element?.getAttribute('data-ready')).toBe('true');
 			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
 		});
 	}
@@ -422,6 +546,79 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			expect(inputs.map((input) => input.disabled)).toEqual([enabled, enabled, enabled]);
 			expect(conditional_spread_and_node).toBe(inputs[1]);
 			expect(conditional_spread_null_node).toBe(inputs[2]);
+		});
+	}
+
+	for (const key of ['class', 'className'] as const) {
+		it(`keeps the class a host spread supplies as \`${key}\` beside the scope hash`, () => {
+			render(<SpreadClassApp bag={{ [key]: 'from-spread', id: 'spread-id' }} />, container);
+
+			expect(classes('spread')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-before')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-name-before')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-after')).toEqual(['last', SCOPE_HASH]);
+			expect(classes('class-name-after')).toEqual(['last', SCOPE_HASH]);
+			expect(container.querySelector('[data-probe="spread"]')?.id).toBe('spread-id');
+		});
+
+		it(`updates the class a host spread supplies as \`${key}\``, async () => {
+			render(
+				<ReactiveSpreadClassApp bags={[{ [key]: 'one' }, { [key]: 'two' }, { id: 'none' }]} />,
+				container,
+			);
+			const next = container.querySelector('[data-probe="next"]') as HTMLButtonElement;
+
+			expect(classes('spread')).toEqual(['one', SCOPE_HASH]);
+			expect(classes('class-before')).toEqual(['one', SCOPE_HASH]);
+			next.click();
+			await Promise.resolve();
+			expect(classes('spread')).toEqual(['two', SCOPE_HASH]);
+			expect(classes('class-before')).toEqual(['two', SCOPE_HASH]);
+			next.click();
+			await Promise.resolve();
+			expect(classes('spread')).toEqual([SCOPE_HASH]);
+			expect(classes('class-before')).toEqual(['base', SCOPE_HASH]);
+		});
+	}
+
+	// Hono renders the class prop with a value.
+	for (const bag of [
+		{ class: 'from-spread', className: undefined },
+		{ className: 'from-spread', class: undefined },
+	]) {
+		it(`keeps the class a host spread supplies beside an undefined ${Object.keys(bag)[1]}`, () => {
+			render(<SpreadClassApp bag={bag} />, container);
+
+			expect(classes('spread')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-before')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-name-before')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-after')).toEqual(['last', SCOPE_HASH]);
+			expect(classes('class-name-after')).toEqual(['last', SCOPE_HASH]);
+		});
+	}
+
+	// Like the object Hono DOM's `css` returns.
+	it('joins a class object with a toString beside the scope hash', () => {
+		render(<SpreadClassApp bag={{ class: { toString: () => 'from-object' } }} />, container);
+
+		expect(classes('spread')).toEqual(['from-object', SCOPE_HASH]);
+		expect(classes('class-name-before')).toEqual(['from-object', SCOPE_HASH]);
+	});
+
+	for (const [label, bag] of [
+		['without a class', { id: 'spread-id' }],
+		['with an undefined class', { class: undefined }],
+		['of an omitted bag', undefined],
+	] as const) {
+		it(`keeps the scope hash beside a host spread ${label}`, () => {
+			render(<SpreadClassApp bag={bag} />, container);
+
+			const base = bag && 'class' in bag ? [] : ['base'];
+			expect(classes('spread')).toEqual([SCOPE_HASH]);
+			expect(classes('class-before')).toEqual([...base, SCOPE_HASH]);
+			expect(classes('class-name-before')).toEqual([...base, SCOPE_HASH]);
+			expect(classes('class-after')).toEqual(['last', SCOPE_HASH]);
+			expect(classes('class-name-after')).toEqual(['last', SCOPE_HASH]);
 		});
 	}
 });
