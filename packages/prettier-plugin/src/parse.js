@@ -2,7 +2,7 @@
  * @import { ParserOptions } from 'prettier'
  */
 
-import { DIAGNOSTIC_CODES, parseModule } from '@tsrx/core';
+import { DIAGNOSTIC_CODES, parseModule, TS_ERRORS } from '@tsrx/core';
 import { parsers as acornParsers } from 'prettier/plugins/acorn';
 
 /**
@@ -47,9 +47,15 @@ const BROKEN_MARKUP_CODES = new Set([
  * class member, a class member's modifier before a module element
  * (`public class A {}`), `readonly`, `accessor` or `async` where they can't
  * appear, `async` with `declare` or in a `declare` context (TS1040),
- * `declare` before a `using` declaration, a call of `import.<name>` other
- * than `import.defer()` or `import.source()`, and a default or named binding in
- * a deferred import (`import defer a from "m"`, TS18058 and TS18059).
+ * `declare` before a `using` declaration, `import.<name>` other than
+ * `import.meta`, or a call of it other than `import.defer()` or
+ * `import.source()` (TS17012, TS18061), a default or named binding in
+ * a deferred import (`import defer a from "m"`, TS18058 and TS18059), a
+ * type-only import with both (`import type a, { b } from "m"`, TS1363),
+ * `import type` on an import alias (TS1392), and a function body in an
+ * ambient context (TS1183). Prettier rejects that one after `declare`
+ * (`declare function f() {}`, which its tree prints wrong), and the plugin in
+ * a `declare namespace` too.
  *
  * It formats the others, and leaves out what its tree has no place for, as the
  * output does: a repeated modifier, a modifier in a block, `declare` before an
@@ -76,8 +82,12 @@ const REJECTED_CODES = new Set([
 	'TS1491',
 	'TS1495',
 	'TS17012',
+	'TS18061',
 	'TS18058',
 	'TS18059',
+	'TS1363',
+	'TS1392',
+	'TS1183',
 ]);
 
 /**
@@ -96,6 +106,45 @@ function isModifierBeforeExport(error, text) {
 }
 
 /**
+ * Whether `error` is for `abstract` before a declaration other than a class in
+ * a block (`function f() { abstract interface I {} }`): TS1184, which TypeScript
+ * reports there before TS1242. Prettier's `typescript` parser rejects
+ * `abstract` before anything but a class wherever it is, as the plugin does
+ * outside a block (TS1242).
+ * @param {ParseError} error
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isAbstractInBlock(error, text) {
+	return (
+		error.code === 'TS1184' &&
+		error.pos !== undefined &&
+		text.startsWith('abstract', error.pos) &&
+		// Not modifiers before a class `static` block, which the tree leaves out,
+		// as Prettier's does.
+		!regex_static_block_modifiers.test(text.slice(error.pos))
+	);
+}
+
+/** Modifiers, then a class `static` block's `static {`, with comments between them. */
+const regex_static_block_modifiers =
+	/^(?:(?:abstract|accessor|declare|override|private|protected|public|readonly)(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)+static(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*\{/u;
+
+/**
+ * Whether `error` is for decorators on a class `static` block (`@dec static
+ * {}`, TS1206), which Prettier's `typescript` parser leaves out, as the plugin
+ * does, instead of rejecting them as it does decorators elsewhere.
+ * @param {ParseError} error
+ * @returns {boolean}
+ */
+function isStaticBlockDecorator(error) {
+	return (
+		error.code === TS_ERRORS.DECORATORS_NOT_VALID_HERE.code &&
+		error.message === TS_ERRORS.DECORATORS_NOT_VALID_HERE.message
+	);
+}
+
+/**
  * @param {ParseError} error
  * @param {string} text
  * @returns {boolean}
@@ -104,8 +153,9 @@ function isRejected(error, text) {
 	return (
 		!!error.code &&
 		(BROKEN_MARKUP_CODES.has(error.code) ||
-			REJECTED_CODES.has(error.code) ||
-			isModifierBeforeExport(error, text))
+			(REJECTED_CODES.has(error.code) && !isStaticBlockDecorator(error)) ||
+			isModifierBeforeExport(error, text) ||
+			isAbstractInBlock(error, text))
 	);
 }
 
@@ -421,6 +471,9 @@ class Adapter {
 			case 'Program':
 			case 'StaticBlock':
 			case 'TSModuleBlock':
+				// Prettier's `typescript` parser leaves out a `static` block's
+				// decorators (see `isStaticBlockDecorator`).
+				if (node.type === 'StaticBlock') delete node.decorators;
 				node.body = node.body.map(plainStatement);
 				break;
 			case 'IfStatement':

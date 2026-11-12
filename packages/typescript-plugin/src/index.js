@@ -7,6 +7,11 @@ import {
 } from '@volar/typescript/lib/quickstart/languageServicePluginCommon.js';
 import { getTsrxLanguagePlugin } from './language.js';
 import { with_tsrx_module_format_in_registry } from './module-format.js';
+import {
+	with_completion_import_edits,
+	with_top_of_file_import_edits,
+	with_top_of_file_imports,
+} from './plugin-auto-imports.js';
 import { without_typescript_diagnostics_on_compile_error } from './plugin-diagnostics.js';
 import { with_jsx_closing_tags } from './plugin-jsx-closing-tag.js';
 import { with_whole_file_import_edits } from './plugin-organize-imports.js';
@@ -18,13 +23,14 @@ import {
 /**
  * The Volar language each decorated language service maps through, for the
  * methods Volar's own proxy leaves out (`with_jsx_closing_tags`) or maps
- * differently (`with_whole_file_import_edits`).
+ * differently (`with_whole_file_import_edits`, `with_completion_import_edits`).
  * @type {WeakMap<object, import('@volar/language-core').Language<string>>}
  */
 const languages = new WeakMap();
 
 /**
- * The language service each Volar proxy wraps, for `with_whole_file_import_edits`.
+ * The language service each Volar proxy wraps, for `with_whole_file_import_edits`
+ * and `with_completion_import_edits`.
  * @type {WeakMap<object, import('typescript').LanguageService>}
  */
 const originals = new WeakMap();
@@ -80,10 +86,19 @@ const plugin = (modules) => {
 			}
 			const decorated = info.languageService;
 			const get_language = () => languages.get(decorated);
+			const get_original = () => originals.get(decorated);
 			return with_jsx_closing_tags(
-				with_whole_file_import_edits(
-					without_typescript_diagnostics_on_compile_error(decorated),
-					() => originals.get(decorated),
+				with_top_of_file_import_edits(
+					with_completion_import_edits(
+						with_whole_file_import_edits(
+							without_typescript_diagnostics_on_compile_error(decorated),
+							get_original,
+							get_language,
+						),
+						get_original,
+						get_language,
+					),
+					ts,
 					get_language,
 				),
 				get_language,
@@ -106,12 +121,16 @@ function decorate(ts, info, config_file_name) {
 			getTsrxLanguagePlugin({ ts, configFileName: config_file_name, configHost: ts.sys }),
 		],
 	};
-	const { proxy, initialize } = createProxyLanguageService(info.languageService);
-	originals.set(proxy, info.languageService);
+	/** @type {import('@volar/language-core').Language<string> | undefined} */
+	let language;
+	const original = with_top_of_file_imports(info.languageService, ts, () => language);
+	const { proxy, initialize } = createProxyLanguageService(original);
+	originals.set(proxy, original);
 	info.languageService = proxy;
-	createLanguageCommon(created, ts, info, (language) => {
-		languages.set(proxy, language);
-		initialize(language);
+	createLanguageCommon(created, ts, info, (created_language) => {
+		language = created_language;
+		languages.set(proxy, created_language);
+		initialize(created_language);
 	});
 	return created;
 }
