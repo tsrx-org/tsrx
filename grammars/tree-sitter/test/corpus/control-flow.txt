@@ -183,6 +183,58 @@ const List = ({ items }) => <>
             close_tag: (jsx_closing_fragment)))))))
 
 ==================
+Using Declarations In A Template Scope And For-of
+==================
+
+export function App() @{
+  using res = open();
+  <ul>
+    @for (using item of items) {
+      <li>{item}</li>
+    }
+  </ul>
+}
+
+---
+
+(program
+  (export_statement
+    (function_declaration
+      name: (identifier)
+      parameters: (formal_parameters)
+      body: (jsx_statement_container
+        statement: (using_declaration
+          (variable_declarator
+            name: (identifier)
+            (initializer
+              (call_expression
+                function: (identifier)
+                arguments: (arguments)))))
+        children: (jsx_element
+          open_tag: (jsx_opening_element
+            name: (jsx_element_name
+              (identifier)))
+          children: (jsx_for_expression
+            (identifier)
+            right: (identifier)
+            body: (jsx_template_block
+              children: (jsx_element
+                open_tag: (jsx_opening_element
+                  name: (jsx_element_name
+                    (identifier)))
+                children: (jsx_expression
+                  (component_statement
+                    (expression_statement
+                      (identifier))))
+                close_tag: (jsx_closing_element
+                  name: (jsx_element_name
+                    (identifier)))))
+            (jsx_text))
+          close_tag: (jsx_closing_element
+            name: (jsx_element_name
+              (identifier))))))))
+
+==================
 If Statement in Template
 ==================
 

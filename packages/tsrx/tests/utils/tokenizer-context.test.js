@@ -1,9 +1,12 @@
 /** @import * as AST from 'estree' */
 /** @import { ParseOptions } from '../../types/index' */
 /** @import { ErrorKind } from '../shared/errors.js' */
+/** @import { Parse } from '../../types/parse' */
 
 import { describe, expect, it } from 'vitest';
 import { TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
+import { createParser } from '../../src/parse/index.js';
+import { TSRXPlugin } from '../../src/plugin.js';
 import { thrown } from '../shared/errors.js';
 import { parse_in_worker, parse_in_worker_with_ast } from '../shared/parse-in-worker.js';
 
@@ -331,10 +334,10 @@ describe('`</` after an operand (#586)', () => {
 	it('starts a closing tag, as in TSX, so the expression ends there', async () => {
 		// TypeScript reports `',' expected` at the `</`.
 		await expect_errors([
-			['const b = a </re/.test(c);', TS_ERRORS.UNEXPECTED_TOKEN, '</'],
+			['const b = a </re/.test(c);', TS_ERRORS.TOKEN_EXPECTED, '</'],
 			[
 				'function App() { return <div>@{\n  const x = 3</div>/\n  <>{x}</>\n}</div>; }',
-				TS_ERRORS.UNEXPECTED_TOKEN,
+				TS_ERRORS.TOKEN_EXPECTED,
 				'</div>/',
 			],
 		]);
@@ -401,7 +404,7 @@ describe('what follows an element (#426)', () => {
 		for (const value of ['<b />', '<b>x</b>', '<>x</>', '@{ <b /> }', '@if (x) { <b /> }']) {
 			for (const next of ['.foo', '?.foo', '!', '(x)', '[0]', '`t`']) {
 				const before = `const e = ${value}`;
-				cases.push([`${before}${next};`, TS_ERRORS.UNEXPECTED_TOKEN, before.length]);
+				cases.push([`${before}${next};`, TS_ERRORS.TOKEN_EXPECTED, before.length]);
 			}
 		}
 		await expect_errors(cases);
@@ -524,7 +527,7 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 				return text(cases[index][0], node?.superTypeParameters ?? node?.typeArguments);
 			}),
 		).toEqual(cases.map(([, typeArguments]) => typeArguments));
-		await expect_errors([['x = class {}</div>;', TS_ERRORS.UNEXPECTED_TOKEN, '</']]);
+		await expect_errors([['x = class {}</div>;', TS_ERRORS.TOKEN_EXPECTED, '</']]);
 	});
 
 	it('reads type arguments right after a class or function expression', async () => {
@@ -606,13 +609,122 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 	it('still takes no type arguments after an element, and reports a tag after a class or function expression where TypeScript does', async () => {
 		await expect_errors([
 			// An element isn't a left-hand-side expression (#426).
-			['const e = <b /><T>;', TS_ERRORS.UNEXPECTED_TOKEN, '<T>'],
-			['const e = @{ <b /> }<T>;', TS_ERRORS.UNEXPECTED_TOKEN, '<T>'],
+			['const e = <b /><T>;', TS_ERRORS.TOKEN_EXPECTED, '<T>'],
+			['const e = @{ <b /> }<T>;', TS_ERRORS.TOKEN_EXPECTED, '<T>'],
 			// TypeScript reports these at the same token.
 			['const f = function () {} <div />;', TS_ERRORS.UNEXPECTED_TOKEN, '>;'],
-			['x = class {}<div>a</div>;', TS_ERRORS.UNEXPECTED_TOKEN, '</'],
+			['x = class {}<div>a</div>;', TS_ERRORS.TOKEN_EXPECTED, '</'],
 			['x = <div>{function () {}</div>', TS_ERRORS.TOKEN_EXPECTED, '</'],
 		]);
+	});
+});
+
+/**
+ * The deepest the tokenizer's context stack gets while `source` is parsed.
+ * @param {string} source
+ */
+function max_context_depth(source) {
+	let deepest = 0;
+	/** @type {Parse.AcornPlugin} */
+	const measure = (Parser) =>
+		class extends Parser {
+			nextToken() {
+				super.nextToken();
+				deepest = Math.max(deepest, this.context.length);
+			}
+		};
+	createParser(TSRXPlugin(), measure)(source, 'App.tsrx');
+	return deepest;
+}
+
+describe('the token context stack after sibling directives (#1194)', () => {
+	it.each([
+		'@if (c) { <i /> }',
+		'@if (c) { <i /> } @else { <b /> }',
+		'@if (c) { <i /> } @else if (d) { <b /> } @else { <u /> }',
+		'@for (const x of xs) { <i /> }',
+		'@for (const x of xs) { <i /> } @empty { <b /> }',
+		'@switch (v) { @case 1: { <i /> } @default: { <b /> } }',
+		'@try { <i /> } @catch (e) { <b /> }',
+		'@try { <i /> } @pending { <b /> } @catch (e) { <u /> }',
+	])('follows nesting, not the number of siblings, after `%s`', (directive) => {
+		/** @param {number} count */
+		const depth = (count) =>
+			max_context_depth(
+				`export function App() @{\n\t<div>\n${Array(count).fill(directive).join('\n')}\n\t</div>\n}\n`,
+			);
+
+		// Every later directive copies the stack, so a deeper stack per sibling
+		// makes parse time grow with the square of the sibling count.
+		expect(depth(40)).toBe(depth(2));
+	});
+});
+
+describe('the token after a directive in expression position (#1217)', () => {
+	const directives = [
+		'@if (c) {}',
+		'@if (c) {} @else {}',
+		'@if (c) {} @else if (d) {} @else {}',
+		'@for (const a of b) { <b>{a}</b> }',
+		'@for (const a of b) {} @empty {}',
+		'@switch (k) { @default: {} }',
+		'@try {} @catch (e) {}',
+		'@try {} @pending {} @catch (e) {}',
+	];
+
+	/**
+	 * The node types in `value`, depth first, with an `<i />` element or a
+	 * directive as `Value`.
+	 * @param {unknown} value
+	 * @returns {string[]}
+	 */
+	function outline(value) {
+		if (!value || typeof value !== 'object') return [];
+		if (Array.isArray(value)) return value.flatMap(outline);
+		const node = /** @type {AST.Node & Record<string, any>} */ (value);
+		if (
+			is_directive(node.type) ||
+			(node.type === 'JSXElement' &&
+				node.openingElement.name.type === 'JSXIdentifier' &&
+				node.openingElement.name.name === 'i')
+		) {
+			return ['Value'];
+		}
+		return [
+			...(typeof node.type === 'string' ? [node.type] : []),
+			...Object.keys(node)
+				.filter((key) => key !== 'loc' && key !== 'metadata')
+				.flatMap((key) => outline(node[key])),
+		];
+	}
+
+	it('reads what follows the enclosing `)` or `}` as it does after an element', async () => {
+		const shapes = [
+			'const x = (%s) / 2;',
+			'const x = foo(%s) / 2;',
+			'const x = foo(%s, 1) / 2;',
+			'const x = (%s) <= y;',
+			'const s = `${(%s)}x`;',
+			'const s = `${%s}x`;',
+			'const o = { a: %s } / 2;',
+			'export function App() @{\n\t<div title={(%s) / 2} />\n}',
+			'export function App() @{\n\t<div>{(%s) / 2}</div>\n}',
+			'export function App() @{\n\tconst v = (%s) / 2;\n\t<b>{v}</b>\n}',
+			'const e = <div>{(%s) / 2}</div>;',
+		];
+		const values = ['<i />', ...directives];
+		const sources = shapes.flatMap((shape) => values.map((value) => shape.replace('%s', value)));
+		const programs = await parse_all(sources);
+		expect(programs.map(outline)).toEqual(
+			sources.map((_, index) => outline(programs[index - (index % values.length)])),
+		);
+	});
+
+	it.each(directives)('leaves the context stack as it found it after `foo(%s)`', (directive) => {
+		/** @param {number} count */
+		const depth = (count) => max_context_depth(Array(count).fill(`foo(${directive});`).join('\n'));
+
+		expect(depth(40)).toBe(depth(2));
 	});
 });
 
