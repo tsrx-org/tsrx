@@ -155,7 +155,7 @@ describe('platform options across build integrations', () => {
 			}
 
 			const turbopack = tsrxReactTurbopack({ turbopack: { root } });
-			expect(turbopack.turbopack.rules['*.tsrx'][0].loaders[0]).toMatchObject({
+			expect(turbopack.turbopack.rules['*.tsrx'][1].loaders[0]).toMatchObject({
 				options: { platform: 'ios' },
 			});
 		} finally {
@@ -195,7 +195,7 @@ describe('platform options across build integrations', () => {
 				turbopack: { root },
 				typescript: { tsconfigPath: 'tsconfig.native.json' },
 			});
-			expect(next_config.turbopack.rules['*.tsrx'][0].loaders[0]).toMatchObject({
+			expect(next_config.turbopack.rules['*.tsrx'][1].loaders[0]).toMatchObject({
 				options: { platform: 'ios' },
 			});
 		} finally {

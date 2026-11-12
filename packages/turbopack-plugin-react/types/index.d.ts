@@ -36,6 +36,14 @@ export interface TsrxReactTurbopackRule {
 	as: '*.tsx';
 }
 
+export interface TsrxReactTurbopackClientRule {
+	condition: {
+		all: Array<unknown>;
+	};
+	loaders: string[];
+	as: '*?tsrx-client&lang.tsx';
+}
+
 export interface TsrxReactTurbopackCssRule {
 	condition: {
 		all: Array<unknown>;
@@ -47,6 +55,8 @@ export interface TsrxReactTurbopackCssRule {
 export declare function create_tsrx_react_turbopack_rule(
 	options?: TsrxReactTurbopackOptions,
 ): TsrxReactTurbopackRule;
+
+export declare function create_tsrx_react_turbopack_client_rule(): TsrxReactTurbopackClientRule;
 
 export declare function create_tsrx_react_turbopack_css_rule(
 	options?: TsrxReactTurbopackOptions,
