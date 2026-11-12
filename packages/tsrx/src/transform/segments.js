@@ -878,6 +878,31 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map the start and the end of a statement as the two points of one
+	 * mapping, for diagnostics only. TypeScript reports unreachable code
+	 * (TS7027) on a whole loop, and Volar maps a range only when both of its
+	 * ends fall in one mapping. A mapping over the whole statement would also
+	 * contain every range inside it and map them by offset, which is wrong when
+	 * the printed statement differs from the source (`for (;;)` is printed
+	 * `for (; ; )`). The points have no length, so a diagnostic inside the
+	 * statement maps through its own tokens.
+	 * @param {AST.Node} node
+	 * @param {string} keyword
+	 * @returns {void}
+	 */
+	function push_statement_points_mapping(node, keyword) {
+		if (!has_location(node)) return;
+		const mapping = declaration_mapping(node, keyword);
+		if (!mapping) return;
+		const generated_start = mapping.generatedOffsets[0];
+		mapping.sourceOffsets = [node.start, node.end];
+		mapping.generatedOffsets = [generated_start, generated_start + mapping.generatedLengths[0]];
+		mapping.lengths = [0, 0];
+		mapping.generatedLengths = [0, 0];
+		mappings.push(mapping);
+	}
+
+	/**
 	 * Map the `}` that ends a block, for diagnostics only, so that unreachable
 	 * code (TS7027) that ends with the block keeps its end.
 	 * @param {AST.Node | null | undefined} node
@@ -1784,7 +1809,7 @@ export function convert_source_map_to_mappings(
 				}
 
 				if (node.consequent) {
-					if (node.consequent.loc) {
+					if (node.consequent.type === 'BlockStatement' && node.consequent.loc) {
 						// We're mapping only the brackets because mapping the whole thing
 						// would be way too broad and causes
 						// issues with partial mapping of something inside the body that we need
@@ -1828,7 +1853,7 @@ export function convert_source_map_to_mappings(
 				}
 
 				if (node.alternate) {
-					if (node.alternate.loc) {
+					if (node.alternate.type === 'BlockStatement' && node.alternate.loc) {
 						tokens.push(
 							{
 								source: '{',
@@ -1881,10 +1906,7 @@ export function convert_source_map_to_mappings(
 				if (node.body) {
 					visit(node.body);
 				}
-
-				mappings.push(
-					get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
-				);
+				push_statement_points_mapping(node, 'for');
 				return;
 			} else if (node.type === 'ForOfStatement' || node.type === 'ForInStatement') {
 				push_statement_keyword_token(node, 'for');
@@ -1916,10 +1938,25 @@ export function convert_source_map_to_mappings(
 					visit(node.empty);
 				}
 
-				if (has_location(node)) {
-					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
-					);
+				// A TSRX loop with an `index` or `@empty` keeps its mapping over the
+				// whole loop, which target printers may rely on. A plain loop maps
+				// only its ends, as a `for (;;)` does.
+				if (
+					/** @type {AST.ForOfStatement} */ (node).index ||
+					(node.type === 'ForOfStatement' && node.empty)
+				) {
+					if (has_location(node)) {
+						mappings.push(
+							get_mapping_from_node(
+								node,
+								src_to_gen_map,
+								gen_line_offsets,
+								mapping_data_verify_only,
+							),
+						);
+					}
+				} else {
+					push_statement_points_mapping(node, 'for');
 				}
 
 				return;

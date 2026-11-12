@@ -171,6 +171,14 @@ describe('error examples through TypeScript 7', () => {
 			client.open(file, example.source);
 			const diagnostics = await client.diagnostics(file);
 			client.close(file);
+			if (example.warning) {
+				// The mapper leaves a warning out, and with it the directive that
+				// would hide TypeScript's errors around it.
+				expect(
+					diagnostics.filter((d) => d.source === DIAGNOSTIC_SOURCE || d.severity === 1),
+				).toEqual([]);
+				return;
+			}
 			const known = KNOWN_PROBLEMS.get(example.error);
 			const shown = diagnostics
 				.map((d) => `${d.source}${d.code} ${d.range.start.line}:${d.range.start.character}`)

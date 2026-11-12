@@ -140,4 +140,18 @@ export function f() { return 1; f(); }`;
 			'10:33 tsrx/no-unreachable',
 		]);
 	});
+
+	it('lints a file that compiles with a TSRX warning', () => {
+		// `@{user.name}` is TSRX2035, a warning, which mustn't fail the parse.
+		const messages = new Linter().verify(
+			`export function UserName({ user }: { user: { name: string } }) @{
+	<p>@{user.name}</p>
+}
+`,
+			plugin.configs.recommended,
+			'UserName.tsrx',
+		);
+
+		expect(messages).toEqual([]);
+	});
 });

@@ -9,6 +9,10 @@ import { describe, expect, it } from 'vitest';
 // calls it, then Vite's TypeScript strip, and checks that TSRX2034 appears
 // exactly when the result fails to parse as a module. A babel-preset-solid
 // release that compiles one of these differently fails here.
+//
+// #1291: with `ssr: true`, as `@tsrx/vite-plugin-solid` compiles a server
+// build, TSRX2034 must appear exactly when the server build (SSR output) or
+// its client build (DOM output) fails, since either fails the app.
 
 const require = createRequire(import.meta.url);
 const solid_require = createRequire(require.resolve('vite-plugin-solid'));
@@ -371,13 +375,551 @@ const PROBES = [
 ];
 
 /**
+ * Shapes aimed at the SSR output: a host spread beside other attributes or
+ * with children, `textContent` beside dynamic values, and an element in an
+ * attribute value. The server-build check also runs every probe above.
+ *
+ * @type {Array<[string, string]>}
+ */
+const SERVER_PROBES = [
+	// A textarea's value is rendered as its content.
+	[
+		"a textarea's value before a prop:value",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={yield bag.t} prop:value="x" />;\n}',
+	],
+	[
+		"a textarea's defaultValue before a prop:defaultValue",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea defaultValue={yield bag.t} prop:defaultValue="x" />;\n}',
+	],
+	[
+		"a textarea's static value before a prop:value",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={yield t} prop:value="x" />;\n}',
+	],
+	[
+		"a textarea's dynamic value",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={yield bag.t} />;\n}',
+	],
+	[
+		"a textarea's static value",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={yield t} />;\n}',
+	],
+	[
+		"a textarea's value with an element in it",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={[yield t, <b />]} />;\n}',
+	],
+	[
+		"a textarea's value beside a dynamic attribute",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea title={bag.x} value={yield t} />;\n}',
+	],
+	// A content property with no value doesn't fill the slot; one of the same
+	// name still replaces an earlier one.
+	[
+		'spread parent: textContent then valueless textContent',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t} textContent /></div>;\n}',
+	],
+	[
+		'spread parent: textContent then valueless innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t} innerHTML /></div>;\n}',
+	],
+	[
+		'spread parent: textContent then valueless innerText',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t} innerText /></div>;\n}',
+	],
+	[
+		'spread parent: textContent then valueless children',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t} children /></div>;\n}',
+	],
+	[
+		'spread parent: innerHTML then valueless textContent',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerHTML={yield t} textContent /></div>;\n}',
+	],
+	[
+		'spread parent: innerHTML then valueless innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerHTML={yield t} innerHTML /></div>;\n}',
+	],
+	[
+		'spread parent: innerHTML then valueless innerText',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerHTML={yield t} innerText /></div>;\n}',
+	],
+	[
+		'spread parent: innerHTML then valueless children',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerHTML={yield t} children /></div>;\n}',
+	],
+	[
+		'spread parent: innerText then valueless textContent',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerText={yield t} textContent /></div>;\n}',
+	],
+	[
+		'spread parent: innerText then valueless innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerText={yield t} innerHTML /></div>;\n}',
+	],
+	[
+		'spread parent: innerText then valueless innerText',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerText={yield t} innerText /></div>;\n}',
+	],
+	[
+		'spread parent: innerText then valueless children',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p innerText={yield t} children /></div>;\n}',
+	],
+	[
+		'spread parent: children then valueless textContent',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p children={yield t} textContent /></div>;\n}',
+	],
+	[
+		'spread parent: children then valueless innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p children={yield t} innerHTML /></div>;\n}',
+	],
+	[
+		'spread parent: children then valueless innerText',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p children={yield t} innerText /></div>;\n}',
+	],
+	[
+		'spread parent: children then valueless children',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p children={yield t} children /></div>;\n}',
+	],
+	[
+		'grouping: textContent then valueless innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <p title={bag.x} textContent={yield t} innerHTML />;\n}',
+	],
+	[
+		'spread parent: textContent then innerHTML literal',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t} innerHTML="x" /></div>;\n}',
+	],
+	[
+		'spread parent: title then valueless title',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p title={yield t} title /></div>;\n}',
+	],
+	[
+		'root: dyn title then valueless title',
+		'export function* f(bag: any, t: any) {\n\treturn <p title={yield bag.t} title />;\n}',
+	],
+	// One content slot: the last content property fills it.
+	[
+		"a textContent a later innerHTML replaces, in a spread's children",
+		returning('<div {...bag}><p textContent={yield t} innerHTML="x" /></div>'),
+	],
+	[
+		"a children attribute a later innerText replaces, in a spread's children",
+		returning('<div {...bag}><p children={yield t} innerText="x" /></div>'),
+	],
+	[
+		"an innerHTML a later textContent replaces, in a spread's children",
+		returning('<div {...bag}><p innerHTML={yield t} textContent="x" /></div>'),
+	],
+	[
+		"a dynamic innerHTML after a textContent, in a spread's children",
+		returning('<div {...bag}><p textContent="x" innerHTML={yield bag.t} /></div>'),
+	],
+	// Where the SSR output's names, drops and arrows differ from the DOM output's.
+	[
+		'a value before a prop:value',
+		'export function* f(bag: any, t: any) {\n\treturn <input value={yield bag.t} prop:value="x" />;\n}',
+	],
+	[
+		'a checked before a prop:checked',
+		'export function* f(bag: any, t: any) {\n\treturn <input checked={yield bag.t} prop:checked={true} />;\n}',
+	],
+	[
+		'a defaultValue before a prop:defaultValue',
+		'export function* f(bag: any, t: any) {\n\treturn <input defaultValue={yield bag.t} prop:defaultValue="x" />;\n}',
+	],
+	[
+		"a select's static value before a prop:value",
+		'export function* f(bag: any, t: any) {\n\treturn <select value={yield t} prop:value="x" />;\n}',
+	],
+	[
+		'a static value before a prop:value',
+		'export function* f(bag: any, t: any) {\n\treturn <input value={yield t} prop:value="x" />;\n}',
+	],
+	[
+		"an event handler in a noscript's dynamic child",
+		'export function* f(bag: any, t: any) {\n\treturn <noscript>{bag.x && <button onClick={yield t} />}</noscript>;\n}',
+	],
+	[
+		'an event handler in an element in a host element with a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><button onClick={yield t} /></div>;\n}',
+	],
+	[
+		'a prop: value in an element in a host element with a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><input prop:value={yield t} /></div>;\n}',
+	],
+	[
+		'a dropped textContent in an element in a host element with a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><p textContent={yield t}>x</p></div>;\n}',
+	],
+	[
+		'a ref in an element in a host element with a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag}><b ref={yield t} /></div>;\n}',
+	],
+	[
+		"a $key in a textarea's replaced child",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={bag.v}>{<div $key={bag.x && (yield t)} />}</textarea>;\n}',
+	],
+	[
+		"a textarea's replaced dynamic child",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={bag.v}>{yield bag.t}</textarea>;\n}',
+	],
+	[
+		"a textarea's replaced static child",
+		'export function* f(bag: any, t: any) {\n\treturn <textarea value={bag.v}>{yield t}</textarea>;\n}',
+	],
+	[
+		'an event handler in a ternary child',
+		'export function* f(bag: any, t: any) {\n\treturn <div>{bag.x ? <button onClick={yield t} /> : null}</div>;\n}',
+	],
+	[
+		'an array ref in a ternary child',
+		'export function* f(bag: any, t: any) {\n\treturn <div>{bag.x ? <b ref={[yield t]} /> : null}</div>;\n}',
+	],
+	[
+		'a textContent a later one replaces',
+		'export function* f(bag: any, t: any) {\n\treturn <p textContent={yield bag.t} textContent="x" />;\n}',
+	],
+	[
+		'a textContent that replaces a static one',
+		'export function* f(bag: any, t: any) {\n\treturn <p textContent="x" textContent={yield bag.t} />;\n}',
+	],
+	[
+		'an element in a textContent array',
+		'export function* f(bag: any, t: any) {\n\treturn <p textContent={[yield t, <b />]} />;\n}',
+	],
+	[
+		'a dynamic textContent on its own',
+		'export function* f(bag: any, t: any) {\n\treturn <p textContent={yield bag.t} />;\n}',
+	],
+	[
+		'a dynamic innerHTML',
+		'export function* f(bag: any, t: any) {\n\treturn <p innerHTML={yield bag.t} />;\n}',
+	],
+	[
+		'a dynamic children attribute on its own',
+		'export function* f(bag: any, t: any) {\n\treturn <div children={yield bag.t} />;\n}',
+	],
+	[
+		'a dynamic children attribute on a noscript',
+		'export function* f(bag: any, t: any) {\n\treturn <noscript children={yield bag.t} />;\n}',
+	],
+	// `$key`, a `<noscript>`'s children and parameter properties, where the
+	// SSR output differs from the DOM's or babel's scope from the declarations.
+	[
+		'a first $key beside a later $key, which the SSR output renames',
+		'export function* f(bag: any, t: any) {\n\treturn <div $key={yield bag.x} $key="second" />;\n}',
+	],
+	[
+		'a first $key beside a later _key',
+		'export function* f(bag: any, t: any) {\n\treturn <div $key={yield bag.x} _key="second" />;\n}',
+	],
+	[
+		'textContent beside a $key a later _key replaces',
+		returning('<p $key={bag.k} _key="x" textContent={yield t} />'),
+	],
+	['textContent beside a dynamic $key', returning('<p $key={bag.k} textContent={yield t} />')],
+	[
+		'a _key before a $key',
+		'export function* f(bag: any, t: any) {\n\treturn <div _key={yield bag.x} $key="k" />;\n}',
+	],
+	[
+		'a second $key',
+		'export function* f(bag: any, t: any) {\n\treturn <div $key="k" $key={yield bag.x} />;\n}',
+	],
+	[
+		'a dynamic $key, which the SSR output renders',
+		'export function* f(bag: any, t: any) {\n\treturn <div $key={yield bag.x} />;\n}',
+	],
+	['a static $key', 'export function* f(bag: any, t: any) {\n\treturn <div $key={yield t} />;\n}'],
+	[
+		'a $key beside a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag} $key={yield bag.x} />;\n}',
+	],
+	[
+		'a static $key beside a spread',
+		'export function* f(bag: any, t: any) {\n\treturn <div {...bag} $key={yield t} />;\n}',
+	],
+	[
+		'a static $key in a ternary arm',
+		'export function* f(bag: any, t: any) {\n\treturn t ? <div $key={yield t} /> : null;\n}',
+	],
+	[
+		'a dynamic $key in a ternary arm',
+		'export function* f(bag: any, t: any) {\n\treturn t ? <div $key={yield bag.x} /> : null;\n}',
+	],
+	[
+		"a noscript's dynamic child, which the SSR output renders",
+		'export function* f(bag: any, t: any) {\n\treturn <noscript>{yield bag.t}</noscript>;\n}',
+	],
+	[
+		"a noscript's static child in a ternary arm",
+		'export function* f(bag: any, t: any) {\n\treturn t ? <noscript>{yield t}</noscript> : null;\n}',
+	],
+	[
+		"a noscript's dynamic child in a ternary arm",
+		'export function* f(bag: any, t: any) {\n\treturn t ? <noscript>{yield bag.t}</noscript> : null;\n}',
+	],
+	[
+		'textContent beside String(1) and a parameter property named String',
+		'class C {\n\tconstructor(public String: any) {\n\t\tfunction* f(t: any) {\n\t\t\treturn <div title={String(1)} textContent={yield t} />;\n\t\t}\n\t}\n}',
+	],
+	[
+		'textContent beside String(1) and a readonly parameter property named String',
+		'class C {\n\tconstructor(private readonly String: any = 1) {\n\t\tfunction* f(t: any) {\n\t\t\treturn <div title={String(1)} textContent={yield t} />;\n\t\t}\n\t}\n}',
+	],
+	[
+		'textContent beside String(1) and a constructor parameter named String',
+		'class C {\n\tconstructor(String: any) {\n\t\tfunction* f(t: any) {\n\t\t\treturn <div title={String(1)} textContent={yield t} />;\n\t\t}\n\t}\n}',
+	],
+	[
+		'textContent beside String(1) and a type import named String',
+		"import type { String } from 'x';\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}",
+	],
+	// TypeScript declarations babel's scope does or doesn't bind.
+	[
+		'textContent beside String(1) and `namespace String {}`',
+		'namespace String {}\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}',
+	],
+	[
+		'textContent beside String(1) and `enum String { A }`',
+		'enum String { A }\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}',
+	],
+	[
+		'textContent beside String(1) and `declare class String {}`',
+		'declare class String {}\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}',
+	],
+	[
+		'textContent beside String(1) and `declare function String(): string;`',
+		'declare function String(): string;\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}',
+	],
+	[
+		'textContent beside String(1) and `import String = Foo.Bar;`',
+		'import String = Foo.Bar;\nexport function* f(t: any) {\n\treturn <div title={String(1)} textContent={yield t} />;\n}',
+	],
+	// Values the SSR check counts as maybe folded, beside `yield`s the DOM
+	// output moves.
+	[
+		'a branch a constant decides, which the SSR check counts as maybe folded',
+		'const on = true;\nexport function* f(bag: any) {\n\treturn <input title={on && (yield bag.t)} />;\n}',
+	],
+	[
+		'a ternary arm a constant decides',
+		'const off = false;\nexport function* f(bag: any) {\n\treturn <input title={off ? 0 : (yield bag.title)} />;\n}',
+	],
+	[
+		'a child guarded by a destructured value',
+		'export function* f(bag: any) {\n\tconst { off } = bag;\n\treturn <div>{off && (yield bag.t)}</div>;\n}',
+	],
+	[
+		'a child guarded by a let',
+		'export function* f(bag: any) {\n\tlet off = false;\n\treturn <div>{off && (yield bag.t)}</div>;\n}',
+	],
+	[
+		'a child guarded by a constant',
+		'const off = false;\nexport function* f(bag: any) {\n\treturn <div>{off && (yield bag.t)}</div>;\n}',
+	],
+	// Reported in a server build: the SSR output moves the value into an arrow.
+	[
+		"a host spread beside an attribute (#1291's shape)",
+		returning('<input {...bag} title={yield 1} />'),
+	],
+	[
+		"a host spread beside a ref (#246's shape), returned",
+		returning("<input {...{}} ref={() => {}} title={yield 'title'} />"),
+	],
+	['an attribute before a host spread', returning('<input title={yield t} {...bag} />')],
+	['a host spread beside a static attribute', returning('<input {...(yield t)} title="x" />')],
+	['a child of a host element with a spread', returning('<div {...bag}>{yield t}</div>')],
+	[
+		'an element in a host element with a spread',
+		returning('<div {...bag}><b title={yield t} /></div>'),
+	],
+	['a children prop beside a spread', returning('<div {...bag} children={yield t} />')],
+	['textContent beside a spread', returning('<p {...bag} textContent={yield t} />')],
+	['a stateful property beside a spread', returning('<input {...bag} checked={yield t} />')],
+	["a textarea's value beside a spread", returning('<textarea {...bag} value={yield t} />')],
+	['a host spread in an element', returning('<div><input {...bag} title={yield t} /></div>')],
+	[
+		'textContent beside a dynamic attribute',
+		returning('<p title={bag.title} textContent={yield t} />'),
+	],
+	[
+		"textContent after a sibling's dynamic attribute",
+		returning('<div><p title={bag.title} /><p textContent={yield t} /></div>'),
+	],
+	[
+		"textContent before a sibling's dynamic class",
+		returning('<div><p textContent={yield t} /><p class={bag.c} /></div>'),
+	],
+	['an attribute value with an element in it', returning('<input title={(yield t) && <b />} />')],
+	['an attribute value with a fragment in it', returning('<input title={[yield t, <>x</>]} />')],
+	['a spread in the output of a @{ … } body', template("<input {...bag} title={yield 'title'} />")],
+	[
+		'textContent beside a short circuit that reads a member',
+		returning('<div title={bag.x || 1} textContent={yield t} />'),
+	],
+	[
+		'textContent beside a short circuit on a parameter',
+		returning('<div title={t || bag.x} textContent={yield t} />'),
+	],
+	[
+		'textContent beside the type of a member',
+		returning('<div title={typeof bag.x} textContent={yield t} />'),
+	],
+	[
+		'textContent beside a call to an imported binding named like a global',
+		`import Number = require('./number');\n${returning('<div title={Number(1)} textContent={yield t} />')}`,
+	],
+	[
+		'textContent beside a reassigned binding',
+		`export function* f(bag: any, t: any) {\n\tlet on = true;\n\ton = bag.on;\n\treturn <div title={on && bag.x} textContent={yield t} />;\n}`,
+	],
+	[
+		'a branch a reassigned binding leaves open',
+		`let on = false;\non = true;\n${returning('<div {...bag} title={on && (yield t)} />')}`,
+	],
+	// The compiler folds only to a string, number or boolean.
+	[
+		'a short circuit to null beside a spread',
+		returning('<div {...bag} title={null && (yield t)} />'),
+	],
+	['a boolean child of a spread', returning('<div {...bag}>{true || (yield t)}</div>')],
+	[
+		'the last of two attributes of a name',
+		returning('<p title={bag.x} title={[yield t, <b />]} />'),
+	],
+	[
+		'textContent after the last of two attributes of a name',
+		returning('<div><p title="s" title={bag.x} /><p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent beside a call a local binding shadows',
+		`export function* f(bag: any, t: any) {\n\tconst String = (x: any) => x;\n\treturn <div title={String(1)} textContent={yield t} />;\n}`,
+	],
+	[
+		'textContent beside a short circuit a literal leaves open',
+		returning('<div title={false || bag.x} textContent={yield t} />'),
+	],
+	[
+		'textContent beside a conditional a literal test sends to a member',
+		returning("<div title={0 ? 'a' : bag.x} textContent={yield t} />"),
+	],
+	// Exempt: both outputs evaluate the value in place, or leave it out.
+	['an event handler beside a spread', returning('<button {...bag} onClick={yield t} />')],
+	['a prop: value beside a spread', returning('<input {...bag} prop:value={yield t} />')],
+	[
+		'a live value beside its default and a spread',
+		returning('<input {...bag} value={yield t} defaultValue="x" />'),
+	],
+	[
+		"a textarea's children beside its value and a spread",
+		returning('<textarea {...bag} value={bag.value}>{yield t}</textarea>'),
+	],
+	['textContent on its own', returning('<p textContent={yield t} />')],
+	['textContent beside a static attribute', returning('<p title={t} textContent={yield t} />')],
+	[
+		'textContent after a live value',
+		returning('<div><input value={bag.value} /><p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent after a host spread',
+		returning('<div title={bag.title}><p {...bag} /><p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent after an expression child',
+		returning('<div><p title={bag.title} />{true}<p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent on an element with children',
+		returning('<div title={bag.title} textContent={yield t}>child</div>'),
+	],
+	["a textarea's value", returning('<textarea value={yield t} />')],
+	[
+		'an attribute value with an empty fragment in it',
+		returning('<input title={[yield t, <></>]} />'),
+	],
+	[
+		'the first of two attributes of a name',
+		returning('<p title={[yield t, <b />]} title={bag.x} />'),
+	],
+	[
+		'textContent after the first of two attributes of a name',
+		returning('<div><p title={bag.x} title="s" /><p textContent={yield t} /></div>'),
+	],
+	// The compiler folds a value it can evaluate into a literal first.
+	[
+		'textContent beside a member of a literal',
+		returning("<div title={{ x: 'a'.length }} textContent={yield t} />"),
+	],
+	[
+		'textContent beside a folded call',
+		returning('<div title={String(1)} textContent={yield t} />'),
+	],
+	[
+		'textContent beside a folded short circuit',
+		returning('<div title={true || bag.x} textContent={yield t} />'),
+	],
+	// A folded value takes a `yield` in a branch that never runs with it.
+	['a folded value beside a spread', returning('<div {...bag} title={true || (yield t)} />')],
+	['a folded child of a spread', returning('<div {...bag}>{true ? "x" : (yield t)}</div>')],
+	['a folded value with an element in it', returning('<div title={true || [yield t, <b />]} />')],
+	[
+		'a folded array beside a spread',
+		returning('<div {...bag} title={[1] + (true || (yield t))} />'),
+	],
+	[
+		'a branch a module constant rules out',
+		`const off = false;\n${returning('<div {...bag} title={off && (yield t)} />')}`,
+	],
+	[
+		'a branch a module var rules out',
+		`var off = false;\n${returning('<div {...bag} title={off && (yield t)} />')}`,
+	],
+	[
+		'textContent beside a constant whose name is declared twice',
+		`const on = true;\nfunction g(on: any) {\n\treturn on;\n}\n${returning('<div title={on || bag.x} textContent={yield t} />')}`,
+	],
+	[
+		'a branch a local constant rules out',
+		`export function* f(bag: any, t: any) {\n\tconst off = false;\n\treturn <div {...bag} title={off && (yield t)} />;\n}`,
+	],
+	// The SSR output writes a falsy textContent into the template as text.
+	[
+		'textContent after a false one',
+		returning('<div><p textContent={false} /><p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent after an undefined one',
+		returning('<div><p textContent={undefined} /><p textContent={yield t} /></div>'),
+	],
+	// A name declared elsewhere in the module doesn't shadow one here.
+	[
+		'a global call whose name is a parameter elsewhere',
+		`function g(String: any) {\n\treturn String;\n}\n${returning('<div title={String(1)} textContent={yield t} />')}`,
+	],
+	[
+		'a global call whose name a namespace body declares',
+		`namespace N {\n\tconst String = (x: any) => x;\n}\n${returning('<div title={String(1)} textContent={yield t} />')}`,
+	],
+	[
+		'a global call whose name is only declared',
+		`declare const String: any;\n${returning('<div title={String(1)} textContent={yield t} />')}`,
+	],
+	[
+		"a global call in a parameter's default, beside the body's var of that name",
+		`function outer(\n\tg = function* (bag: any, t: any) {\n\t\treturn <div title={String(1)} textContent={yield t} />;\n\t},\n) {\n\tvar String = (x: any) => x;\n\treturn g;\n}`,
+	],
+	[
+		'a constant whose name a loop elsewhere reassigns',
+		`function g() {\n\tfor (let i = 0; i < 1; i++) {}\n}\nconst i = 2;\n${returning('<div title={String(i)} textContent={yield t} />')}`,
+	],
+];
+
+/**
  * @param {string} code
+ * @param {{ generate: 'dom' | 'ssr', hydratable: boolean }} [options]
  * @returns {Promise<boolean>}
  */
-async function builds(code) {
+async function builds(code, options = { generate: 'dom', hydratable: false }) {
 	const compiled = await transformAsync(code, {
 		filename: 'probe.tsx',
-		presets: [[solid_preset, { generate: 'dom', hydratable: false }]],
+		presets: [[solid_preset, options]],
 		parserOpts: { plugins: ['jsx', 'decorators', 'typescript'] },
 		babelrc: false,
 		configFile: false,
@@ -397,5 +939,23 @@ describe('TSRX2034 matches what babel-preset-solid compiles (#259)', () => {
 		const reported = errors.some((error) => error.code === 'TSRX2034');
 		expect(errors.filter((error) => error.code !== 'TSRX2034')).toEqual([]);
 		expect({ reported, builds: await builds(code) }).toEqual({ reported, builds: !reported });
+	});
+});
+
+describe('in a server build, TSRX2034 matches what babel-preset-solid compiles for it or its client (#1291)', () => {
+	it.each([...PROBES, ...SERVER_PROBES])('%s', async (_label, source) => {
+		const { code, errors } = compile(source, 'Probe.tsrx', { collect: true, ssr: true });
+		const reported = errors.some((error) => error.code === 'TSRX2034');
+		// Every `yield` a client build reports is reported here too.
+		const client = compile(source, 'Probe.tsrx', { collect: true }).errors;
+		expect(errors.map((error) => error.pos)).toEqual(
+			expect.arrayContaining(client.map((error) => error.pos)),
+		);
+		expect(errors.filter((error) => error.code !== 'TSRX2034')).toEqual([]);
+		// vite-plugin-solid's `ssr` option compiles both builds as hydratable.
+		const fails =
+			!(await builds(code, { generate: 'ssr', hydratable: true })) ||
+			!(await builds(code, { generate: 'dom', hydratable: true }));
+		expect({ reported, fails }).toEqual({ reported, fails: reported });
 	});
 });

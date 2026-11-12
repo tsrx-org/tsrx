@@ -475,6 +475,142 @@ describe('@tsrx/mcp compile helpers', () => {
 		expect(result.errors.length).toBeGreaterThan(0);
 		expect(result.errors[0].message).toMatch(/Expected closing tag/);
 		expect(result.errors[0].code).toBe(DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG);
+		expect(result.errors[0].severity).toBe('error');
+	});
+
+	it('marks an error the compiler throws as an error', async () => {
+		const result = await compile_tsrx({
+			code: 'function A() { return <><div>hi</>; }',
+			filename: 'Unclosed.tsrx',
+			target: 'react',
+			cwd: react_fixture,
+			collect: false,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.errors).toEqual([
+			expect.objectContaining({
+				code: DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG,
+				severity: 'error',
+			}),
+		]);
+	});
+
+	// `@tsrx/ripple` is a catalog dependency built on an older `@tsrx/core`,
+	// without TSRX2035.
+	it.each(target_fixtures.filter(({ target }) => target !== 'ripple'))(
+		'reports a statement-only @{...} on the $target target as a warning that does not fail the compile',
+		async ({ cwd }) => {
+			const result = await compile_tsrx({
+				code: `export function UserName({ user }: { user: { name: string } }) @{
+	<p>@{user.name}</p>
+}`,
+				filename: 'UserName.tsrx',
+				cwd,
+			});
+
+			expect(result.ok).toBe(true);
+			expect(result.errors).toEqual([
+				expect.objectContaining({
+					code: DIAGNOSTIC_CODES.CODE_BLOCK_EXPRESSION_ONLY,
+					severity: 'warning',
+					loc: expect.objectContaining({ start: { line: 2, column: 4 } }),
+				}),
+			]);
+		},
+	);
+
+	it('fails a compile on an error even next to a warning', async () => {
+		const result = await compile_tsrx({
+			code: `export function UserName({ user }: { user: { name: string } }) @{
+	<p>@{user.name}</p>
+}
+export function Spread({ items }: { items: string[] }) @{
+	<div>{...items}</div>
+}`,
+			filename: 'UserName.tsrx',
+			target: 'react',
+			cwd: react_fixture,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.errors.map(({ code, severity }) => ({ code, severity }))).toEqual([
+			{ code: DIAGNOSTIC_CODES.CODE_BLOCK_EXPRESSION_ONLY, severity: 'warning' },
+			{ code: DIAGNOSTIC_CODES.JSX_SPREAD_CHILD, severity: 'error' },
+		]);
+	});
+
+	it('still gives error advice for an error it has no hint for, next to a warning it has one for', async () => {
+		const result = await analyze_tsrx({
+			code: `export function UserName({ user }: { user: { name: string } }) @{
+	<p>@{user.name}</p>
+}
+export function Spread({ items }: { items: string[] }) @{
+	<div>{...items}</div>
+}`,
+			filename: 'UserName.tsrx',
+			target: 'react',
+			cwd: react_fixture,
+		});
+
+		expect(result.ok).toBe(false);
+		expect(result.advice.map(({ kind, severity }) => ({ kind, severity }))).toEqual([
+			{ kind: 'code-block-expression-only', severity: 'warning' },
+			{ kind: 'compiler-diagnostic', severity: 'error' },
+		]);
+	});
+
+	it('gives warning advice, not a clean bill, for a statement-only @{...}', async () => {
+		const result = await analyze_tsrx({
+			code: `export function UserName({ user }: { user: { name: string } }) @{
+	<p>@{user.name}</p>
+}`,
+			filename: 'UserName.tsrx',
+			target: 'react',
+			cwd: react_fixture,
+		});
+
+		expect(result.ok).toBe(true);
+		expect(result.advice).toEqual([
+			expect.objectContaining({
+				kind: 'code-block-expression-only',
+				severity: 'warning',
+				documentation: [
+					'tsrx://docs/text-and-template-expressions.md',
+					'tsrx://docs/expression-values.md',
+				],
+			}),
+		]);
+	});
+
+	it('gives general warning advice for a warning it has no hint for', () => {
+		const result = analyze_tsrx_result({
+			code: '',
+			compileResult: {
+				ok: true,
+				target: 'react',
+				compilerPackage: '@tsrx/react',
+				filename: 'App.tsrx',
+				cwd: react_fixture,
+				errors: [
+					{
+						message: "'.a' is never referenced",
+						code: 'octane-style-unused-selector',
+						severity: 'warning',
+						type: 'usage',
+						fileName: 'App.tsrx',
+						pos: null,
+						end: null,
+						raisedAt: null,
+						loc: null,
+					},
+				],
+			},
+		});
+
+		expect(result.advice).toEqual([
+			expect.objectContaining({ kind: 'compiler-diagnostic', severity: 'warning' }),
+		]);
 	});
 
 	it('normalizes compiler failures into structured diagnostics', async () => {
@@ -882,6 +1018,38 @@ describe('@tsrx/mcp compile helpers', () => {
 					}),
 				]),
 			);
+		} finally {
+			await rm(temp_dir, { recursive: true, force: true });
+		}
+	});
+
+	it('validates a file whose only finding is a warning', async () => {
+		const temp_dir = await mkdtemp(join(tmpdir(), 'tsrx-mcp-'));
+		const filePath = join(temp_dir, 'UserName.tsrx');
+
+		try {
+			// As the official formatter prints `<p>@{user.name}</p>`.
+			await writeFile(
+				filePath,
+				`export function UserName({ user }: { user: { name: string } }) @{
+	<p>@{
+		user.name;
+	}</p>
+}
+`,
+				'utf8',
+			);
+			const result = await validate_tsrx_file({ filePath, cwd: react_fixture });
+
+			expect(result.format?.check).toBe(true);
+			expect(result.compile?.ok).toBe(true);
+			expect(result.compile?.errors).toEqual([
+				expect.objectContaining({
+					code: DIAGNOSTIC_CODES.CODE_BLOCK_EXPRESSION_ONLY,
+					severity: 'warning',
+				}),
+			]);
+			expect(result.ok).toBe(true);
 		} finally {
 			await rm(temp_dir, { recursive: true, force: true });
 		}
