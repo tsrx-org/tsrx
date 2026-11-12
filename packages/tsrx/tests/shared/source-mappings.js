@@ -428,6 +428,35 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		});
 	});
 
+	describe(`[${name}] computed key brackets`, () => {
+		it.each([
+			['class A { [k]() {} }', '[k]'],
+			['class A { [ k ]() {} }', '[ k ]'],
+			['class A { [/* c */ k]() {} }', '[/* c */ k]'],
+			['const o = { [\n\tk\n]: 1 };', '[\n\tk\n]'],
+			// The decorator's argument holds the first `[` inside the member.
+			[
+				'function dec(...args: unknown[]) { return () => {}; }\nclass A { @dec([1]) [k]() {} }',
+				'[k]',
+			],
+		])('maps the brackets of %j', (code, key) => {
+			const source = `declare const k: string;\n${code}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const source_offset = source.lastIndexOf(key);
+			const mapping = result.mappings.find(
+				(candidate) =>
+					candidate.sourceOffsets[0] === source_offset && candidate.lengths[0] === key.length,
+			);
+			assert(mapping, `no mapping covers ${JSON.stringify(key)}`);
+			const generated_start = mapping.generatedOffsets[0];
+			const generated = result.code.slice(
+				generated_start,
+				generated_start + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+			);
+			expect(generated.startsWith('[') && generated.endsWith(']')).toBe(true);
+		});
+	});
+
 	describe(`[${name}] source mappings do not crash for`, () => {
 		/**
 		 * @param {string} source
@@ -1330,6 +1359,28 @@ function C() @{
 			expect_class_keyword_mapping(`class Store {
 	value = 1;
 }`);
+		});
+
+		it.each([
+			['decorated', 'declare function dec(...args: unknown[]): any;\n@dec class Store {}'],
+			[
+				'exported decorated',
+				'declare function dec(...args: unknown[]): any;\nexport @dec class Store {}',
+			],
+			['abstract', 'abstract class Store {}'],
+			['declared', 'declare class Store {}'],
+			['expression', 'const Store = class {};'],
+		])('maps the class keyword of a %s class', (_kind, source) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const source_class_offset = source.search(/\bclass\b/);
+			const generated_class_offset = result.code.search(/\bclass\b/);
+			const mapping = find_exact_mapping(
+				result.mappings,
+				source_class_offset,
+				generated_class_offset,
+				'class'.length,
+			);
+			expect(mapping).toBeDefined();
 		});
 
 		it('maps anonymous default class keywords', () => {
