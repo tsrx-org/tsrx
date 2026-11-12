@@ -993,9 +993,6 @@ export const WITHOUT_EXAMPLE = new Map(
  */
 export const KNOWN_PROBLEMS = new Map(
 	/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([
-		// The generated code keeps the tag unclosed, so TypeScript reports it too
-		// (TS17008), a syntax error that no directive hides.
-		[TSRX_ERRORS.UNCLOSED_TAG_GENERIC_ARROW, { problem: 'typescript', issue: 978 }],
 		[TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED, { problem: 'twice', issue: 980 }],
 		// The statement's keywords have no mapping, so the directive covers only `A`.
 		[TS_ERRORS.NESTED_GLOBAL_EXPORT, { problem: 'typescript', issue: 979 }],
