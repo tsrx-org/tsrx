@@ -20,7 +20,6 @@ import { walk } from 'zimmerframe';
 import { find_deferred_template_yields } from './template-yield.js';
 import { find_deferred_server_template_yields } from './template-yield.js';
 import {
-	DIAGNOSTIC_CODES,
 	DYNAMIC_FACTORY_LOCAL,
 	DYNAMIC_IMPORT_LOCAL,
 	isReference as is_reference,
@@ -1852,27 +1851,30 @@ function try_statement_to_jsx_child(node, transform_context) {
 	const pending = node.pending;
 	const handler = node.handler;
 	const finalizer = node.finalizer;
+	const reported = transform_context.errors?.length ?? 0;
 
 	if (finalizer) {
 		error(
-			'Solid TSRX does not support JavaScript `try/finally` in component templates. `finally` is not part of TSRX control flow; move the try/finally into a function if you need cleanup logic.',
+			TSRX_ERRORS.TEMPLATE_TRY_FINALLY(transform_context.platform.name),
 			transform_context.filename,
 			finalizer,
 			transform_context.errors,
 			transform_context.comments,
-			DIAGNOSTIC_CODES.TEMPLATE_TRY_FINALLY,
 		);
 	}
 
 	if (!pending && !handler) {
-		error(
-			'Solid try statements must have a `pending` or `catch` block.',
-			transform_context.filename,
-			node,
-			transform_context.errors,
-			transform_context.comments,
-			DIAGNOSTIC_CODES.TEMPLATE_TRY_HANDLER,
-		);
+		// A JavaScript `try` without `catch` has a `finally`. One error is enough
+		// for the statement, unless `@tsrx-ignore` suppressed the one above.
+		if ((transform_context.errors?.length ?? 0) === reported) {
+			error(
+				TSRX_ERRORS.TEMPLATE_TRY_HANDLER,
+				transform_context.filename,
+				node,
+				transform_context.errors,
+				transform_context.comments,
+			);
+		}
 		return to_jsx_expression_container(create_null_literal());
 	}
 

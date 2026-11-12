@@ -347,6 +347,23 @@ export function C(props: { items: string[] }) @{
 `,
 	},
 	{
+		// Solid lowers a statement that throws into its reactive render forms, and
+		// those have no `finally`. The parser rejects a `finally` after `@try`.
+		error: TSRX_ERRORS.TEMPLATE_TRY_FINALLY,
+		source: `export function C(props: { bad: boolean }) @{
+	try {
+		if (props.bad) throw new Error('bad');
+	} catch {
+		console.log('caught');
+	} finally {
+		console.log('done');
+	}
+	<p>ok</p>
+}
+`,
+		compiler: '@tsrx/solid',
+	},
+	{
 		error: TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED,
 		source: `export async function C(props: { load: (error: unknown) => Promise<string> }) @{
 	@try {
@@ -1026,12 +1043,8 @@ export const WITHOUT_EXAMPLE = new Map(
 			"Raised only through core helpers that targets outside this repository call (Ripple, Octane); none of this repository's targets reaches it.",
 		],
 		[
-			TSRX_ERRORS.TEMPLATE_TRY_FINALLY,
-			'The parser rejects `finally` after an `@try` block (TS1012) first.',
-		],
-		[
 			TSRX_ERRORS.TEMPLATE_TRY_HANDLER,
-			'The parser reports an `@try` without `@catch` or `@pending` (TSRX1010) first.',
+			'The parser reports an `@try` without `@catch` or `@pending` (TSRX1010) first. A JavaScript `try` that Solid lowers has a `catch` or a `finally`, and without `catch` Solid reports only TEMPLATE_TRY_FINALLY for it.',
 		],
 		[
 			TSRX_ERRORS.TOP_LEVEL_AWAIT_USE_SERVER,
@@ -1040,6 +1053,14 @@ export const WITHOUT_EXAMPLE = new Map(
 		[
 			TSRX_ERRORS.HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED,
 			"Only the Hono DOM compiler reports it, and this package doesn't depend on `@tsrx/hono`; its tests check it.",
+		],
+		[
+			TSRX_ERRORS.HONO_DOM_ASYNC_COMPONENT_UNSUPPORTED,
+			"Only the Hono DOM compiler reports it, and this package doesn't depend on `@tsrx/hono`; its tests check it.",
+		],
+		[
+			TSRX_ERRORS.TARGET_CATCH_RESET_UNSUPPORTED,
+			"Only the Hono compilers report it, and this package doesn't depend on `@tsrx/hono`; its tests check it.",
 		],
 		[
 			TSRX_ERRORS.RESERVED_IDENTIFIER_PREFIX,

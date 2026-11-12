@@ -1082,6 +1082,54 @@ describe('@tsrx/solid basic', () => {
 			expect(code).not.toContain('try {');
 		});
 
+		// A statement that throws lowers into Solid's reactive render forms, which
+		// have no `finally` (#1202: these used messages outside the error tables).
+		it.each([
+			['try/catch/finally', ' catch {}'],
+			// Without `catch` it has no handler either, but one error is enough.
+			['try/finally', ''],
+		])('rejects a JavaScript %s that throws with one core try error', (_label, handler) => {
+			const source = `export function App(props: { bad: boolean }) @{
+				try {
+					if (props.bad) throw new Error('bad');
+				}${handler} finally {
+					console.log('done');
+				}
+				<p>ok</p>
+			}`;
+			const TRY_FINALLY = expect.objectContaining({
+				...TSRX_ERRORS.TEMPLATE_TRY_FINALLY('Solid'),
+				pos: source.indexOf('finally') + 'finally '.length,
+			});
+			expect(() => compile(source, 'App.tsrx')).toThrow(TRY_FINALLY);
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([TRY_FINALLY]);
+			expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([TRY_FINALLY]);
+		});
+
+		// The statement still lowers to nothing, so suppressing the `finally` error
+		// must leave the missing-handler one, as before (#1228 review).
+		it('still reports a throwing try/finally whose finally error is ignored', () => {
+			const source = `export function App(props: { bad: boolean }) @{
+				try {
+					if (props.bad) throw new Error('bad');
+				}
+				// @tsrx-ignore
+				finally {
+					console.log('done');
+				}
+				<p>ok</p>
+			}`;
+			expect(() => compile(source, 'App.tsrx')).toThrow(
+				expect.objectContaining(TSRX_ERRORS.TEMPLATE_TRY_FINALLY('Solid')),
+			);
+			const TRY_HANDLER = expect.objectContaining({
+				...TSRX_ERRORS.TEMPLATE_TRY_HANDLER,
+				pos: source.indexOf('try'),
+			});
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([TRY_HANDLER]);
+			expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([TRY_HANDLER]);
+		});
+
 		it('rejects return statements inside template @if branches', () => {
 			expect(() =>
 				compile(
