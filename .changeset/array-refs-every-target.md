@@ -5,6 +5,7 @@
 '@tsrx/preact': patch
 '@tsrx/hono': patch
 '@tsrx/vue': patch
+'@tsrx/vue-runtime': patch
 ---
 
 A ref list written on an element, `ref={[a, b]}`, now calls every ref in it on
