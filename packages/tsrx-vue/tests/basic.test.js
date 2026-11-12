@@ -1,6 +1,7 @@
 import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -50,6 +51,7 @@ runSharedCodeBlockChildrenTests({ compile, name: 'vue' });
 runSharedClassFunctionComponentTests({ compile, compile_to_volar_mappings, name: 'vue' });
 runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'vue' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'vue' });
+runSharedAnonymousComponentTests({ compile, name: 'vue' });
 
 describe('@tsrx/vue basic', () => {
 	it('merges defineVaporComponent into existing vue imports', () => {
@@ -66,6 +68,685 @@ describe('@tsrx/vue basic', () => {
 		expect(code).toContain("import { ref } from 'vue';");
 		expect(code).toContain("import { defineVaporComponent } from 'vue-jsx-vapor';");
 		expect(code.match(/defineVaporComponent/g)).toHaveLength(2);
+	});
+
+	it('wraps arrow components that contain nested functions', () => {
+		const { code } = compile(
+			`const Handler = ({ label, onPick }) => <button onClick={() => onPick(label)}>{label}</button>;
+			const List = ({ items }) => {
+				return <ul>{items.map((item) => <li>{item}</li>)}</ul>;
+			};
+			const parts = { Item: ({ label }) => <b onClick={() => label}>{label}</b> };`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('const Handler = defineVaporComponent(({ label, onPick }) =>');
+		expect(code).toContain('const List = defineVaporComponent(({ items }) =>');
+		expect(code).toContain('Item: defineVaporComponent(({ label }) =>');
+	});
+
+	it('wraps a default-exported component that contains a nested function', () => {
+		const { code } = compile(
+			`export default function App() @{
+				const pick = () => 1;
+				<button onClick={pick}>x</button>
+			}`,
+			'App.tsrx',
+		);
+
+		// The declaration also binds `App` in the module, so keep that binding.
+		expect(code).toContain('const App = defineVaporComponent(function App()');
+		expect(code).toContain('export default App;');
+		expect(code).not.toContain('export default const');
+	});
+
+	it('wraps components that return JSX through a local variable', () => {
+		const { code } = compile(
+			`function Card({ title }: { title: string }) {
+				const element = <div class="card" title={title} />;
+				return element;
+			}
+
+			function Badge({ on }: { on: boolean }) {
+				let element;
+				if (on) element = <b />;
+				else element = <i />;
+				return element;
+			}
+
+			function Factory() {
+				const value = { a: 1 };
+				return value;
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('const Card = defineVaporComponent(function Card(');
+		expect(code).toContain('const Badge = defineVaporComponent(function Badge(');
+		expect(code).toContain('function Factory() {');
+		expect(code).not.toContain('defineVaporComponent(function Factory');
+	});
+
+	it('wraps a returned local binding that holds JSX anywhere, like a returned expression', () => {
+		const { code } = compile(
+			`function Columns() {
+				return [{ header: <b>Name</b> }];
+			}
+
+			function Config() {
+				const config = { icon: <i />, label: 'x' };
+				return config;
+			}`,
+			'App.tsrx',
+		);
+
+		// The direct return was already wrapped; the local binding follows the same rule.
+		expect(code).toContain('const Columns = defineVaporComponent(function Columns(');
+		expect(code).toContain('const Config = defineVaporComponent(function Config(');
+	});
+
+	it('moves a wrapped component above the first statement that reads it', () => {
+		const { code } = compile(
+			`export { Inner };
+			type InnerType = typeof Inner;
+
+			export function App() @{
+				<Inner label="app" />
+			}
+
+			export const registry = { inner: Inner };
+			const LABEL = 'label';
+
+			export function Inner({ label = 'fixed' }: { label?: string }) @{
+				<span>{label}{LABEL}</span>
+			}
+
+			function make() {
+				return <Nested />;
+				function Nested() {
+					return <i />;
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		const inner = code.indexOf('export const Inner = defineVaporComponent');
+		expect(inner).toBeGreaterThan(-1);
+		expect(inner).toBeLessThan(code.indexOf('export const registry'));
+		// Reads that run later (exports, types, function bodies) keep the source order.
+		expect(code.indexOf('export { Inner }')).toBeLessThan(inner);
+		expect(code.indexOf('type InnerType')).toBeLessThan(inner);
+		expect(code.indexOf('export const App')).toBeLessThan(inner);
+		expect(code.indexOf('const Nested = defineVaporComponent')).toBeLessThan(
+			code.indexOf('return <Nested />'),
+		);
+	});
+
+	it('does not move a component for reads that do not run while the module loads', () => {
+		const { code } = compile(
+			`class Holder {
+				comp = Inner;
+				method() {
+					return Inner;
+				}
+			}
+			const DEBUG = false;
+			if (DEBUG) console.log(Inner);
+			const ready = DEBUG && Inner;
+			{
+				const Inner = 'shadow';
+				console.log(Inner);
+			}
+			try {
+				run();
+			} catch (Inner) {
+				console.log(Inner);
+			}
+			const PREFIX = 'p';
+			export function Inner({ label = PREFIX }: { label?: string }) @{
+				<span>{label}</span>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeGreaterThan(
+			code.indexOf("const PREFIX = 'p'"),
+		);
+	});
+
+	it('counts a read in a branch whose condition a nested scope redeclares', () => {
+		const { code } = compile(
+			`const DEBUG = false;
+			{
+				const DEBUG = true;
+				if (DEBUG) console.log(Inner);
+			}
+			export function Inner() @{
+				<i />
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('const DEBUG = true'),
+		);
+	});
+
+	it('moves a component past a read in a static class field or a reachable branch', () => {
+		const { code } = compile(
+			`class Holder {
+				static comp = Inner;
+			}
+			if (window.debug) console.log(Inner);
+			export function Inner({ label = 'x' }: { label?: string }) @{
+				<span>{label}</span>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('class Holder'),
+		);
+	});
+
+	it('reports a mutation through a parenthesized TypeScript wrapper in the editor too', () => {
+		const { errors } = compile_to_volar_mappings(
+			`const cfg = { size: 1 };
+const registry = { card: Card };
+(cfg as any).size = 2;
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.code)).toEqual(['TSRX2028']);
+	});
+
+	it("moves a component past a namespace's own var", () => {
+		const { code } = compile(
+			`const X = 'outer';
+export const registry = { inner: Inner };
+namespace Types { var X = 1; }
+export function Inner({ x = X }: { x?: string }) @{
+	<span>{x}</span>
+}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('export const registry'),
+		);
+	});
+
+	it('moves a component past an ambient enum or namespace its prop default reads', () => {
+		const { code } = compile(
+			`export const registry = { inner: Inner };
+declare enum Size { S }
+declare namespace Defaults { const label: string; }
+export function Inner({ size = Size, ns = Defaults }: { size?: unknown; ns?: unknown }) @{
+	<span>{String(size)}{String(ns)}</span>
+}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('export const registry'),
+		);
+	});
+
+	it('reports a read above a component whose prop default reads a binding it would move past', () => {
+		for (const [source, read_line] of [
+			[
+				`export const registry = { inner: Inner };
+const PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}`,
+				1,
+			],
+			[
+				`class Holder {
+	static comp = Inner;
+}
+var PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}`,
+				2,
+			],
+			[
+				`const registry = { card: Card };
+const DEFAULT = 'x';
+function Card({ title = DEFAULT }: { title?: string }) {
+	const el = <div>{title}</div>;
+	return el;
+}`,
+				1,
+			],
+			// Assigned, updated or mutated in the statements it would move past.
+			[
+				`let size = 1;
+const registry = { card: Card };
+size = 2;
+function Card({ s = size }: { s?: number }) {
+	const el = <div>{s}</div>;
+	return el;
+}`,
+				2,
+			],
+			[
+				`let size = 1;
+const registry = { card: Card };
+size++;
+export function Card({ s = size }: { s?: number }) @{
+	<div>{s}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+cfg.size = 2;
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			// Mutated through a TypeScript wrapper.
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+(cfg as any).size = 2;
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`let cfg: { size: number } | null = { size: 1 };
+const registry = { card: Card };
+cfg!.size = 2;
+export function Card({ s = cfg }: { s?: { size: number } | null }) @{
+	<div>{s?.size}</div>
+}`,
+				2,
+			],
+			// Mutated through a pattern, `delete` or a parenthesized chain.
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+[cfg.size] = [2];
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+({ size: (cfg as any).size } = { size: 2 });
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg: { size?: number } = { size: 1 };
+const registry = { card: Card };
+delete cfg.size;
+export function Card({ s = cfg }: { s?: { size?: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg = { nested: { size: 1 } };
+const registry = { card: Card };
+(cfg?.nested).size = 2;
+export function Card({ s = cfg }: { s?: { nested: { size: number } } }) @{
+	<div>{s.nested.size}</div>
+}`,
+				2,
+			],
+			// An enum, a namespace or an `import x = …` alias compiles to a
+			// binding set when it runs.
+			[
+				`export const registry = { inner: Inner };
+enum Size { S = 1 }
+export function Inner({ size = Size }: { size?: unknown }) @{
+	<span>{String(size)}</span>
+}`,
+				1,
+			],
+			[
+				`export const registry = { inner: Inner };
+namespace Defaults { export const label = 'p'; }
+export function Inner({ ns = Defaults }: { ns?: unknown }) @{
+	<span>{String(ns)}</span>
+}`,
+				1,
+			],
+			[
+				`namespace Defaults { export const label = 'p'; }
+export const registry = { inner: Inner };
+import Label = Defaults.label;
+export function Inner({ label = Label }: { label?: string }) @{
+	<span>{label}</span>
+}`,
+				2,
+			],
+		]) {
+			/** @type {any} */
+			let thrown = null;
+			try {
+				compile(source, 'App.tsrx');
+			} catch (error) {
+				thrown = error;
+			}
+			const name = source.includes('Card') ? 'Card' : 'Inner';
+			expect(thrown, source).toBeInstanceOf(Error);
+			expect(thrown.code).toBe('TSRX2028');
+			expect(thrown.message).toContain(`'${name}' is read here before its declaration.`);
+			expect(thrown.message).toContain(`Move the declaration of '${name}' above this read.`);
+			expect(thrown.loc.start.line).toBe(read_line);
+		}
+
+		const { errors } = compile_to_volar_mappings(
+			`export const registry = { inner: Inner };
+const PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.code)).toEqual(['TSRX2028']);
+	});
+
+	it('accepts the destructured prop defaults vue-jsx-vapor keeps', () => {
+		for (const fallback of [
+			"'x'",
+			'1',
+			'true',
+			'null',
+			'undefined',
+			'SIZE',
+			'[]',
+			'{ a: 1 }',
+			'() => 1',
+			'function () { return 1; }',
+			'(2 as number)',
+			'SIZE!',
+		]) {
+			const source = `const SIZE = 2;
+export function Card({ s = ${fallback} }: { s?: unknown }) @{
+	<div>{String(s)}</div>
+}`;
+			expect(() => compile(source, 'App.tsrx'), fallback).not.toThrow();
+		}
+	});
+
+	it('reports a destructured prop default vue-jsx-vapor drops', () => {
+		for (const fallback of [
+			'cfg.size',
+			'Math.max(3, 4)',
+			'`t`',
+			'-1',
+			'SIZE + 1',
+			'/x/',
+			'10n',
+			'SIZE ? 1 : 2',
+			'(SIZE satisfies number)',
+		]) {
+			for (const source of [
+				`const cfg = { size: 1 };
+const SIZE = 2;
+export function Card({ s = ${fallback} }: { s?: unknown }) @{
+	<div>{String(s)}</div>
+}`,
+				// A component main left unwrapped, newly wrapped here.
+				`const cfg = { size: 1 };
+const SIZE = 2;
+function Card({ s = ${fallback} }: { s?: unknown }) {
+	const el = <div>{String(s)}</div>;
+	return el;
+}`,
+			]) {
+				/** @type {any} */
+				let thrown = null;
+				try {
+					compile(source, 'App.tsrx');
+				} catch (error) {
+					thrown = error;
+				}
+				expect(thrown, `${fallback}\n${source}`).toBeInstanceOf(Error);
+				expect(thrown.code).toBe('TSRX2029');
+				expect(thrown.message).toContain("Vue TSRX cannot keep this default for 's'");
+				expect(thrown.message).toContain('read the prop where you use it instead');
+				expect(thrown.loc.start.line).toBe(3);
+			}
+		}
+
+		const { errors } = compile_to_volar_mappings(
+			`const cfg = { size: 1 };
+export function Card({ s = cfg.size }: { s?: number }) @{
+	<div>{s}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.code)).toEqual(['TSRX2029']);
+		expect(errors[0].message).toContain(
+			'for example `{props.s === undefined ? cfg.size : props.s}`, or derive it in a `computed`.',
+		);
+
+		const renamed = compile_to_volar_mappings(
+			`const cfg = { size: 1 };
+export function Card({ s: size = cfg.size }: { s?: number }) @{
+	<div>{size}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(renamed.errors[0].message).toContain(
+			'for example `{props.s === undefined ? cfg.size : props.s}`',
+		);
+	});
+
+	it('reports a destructured prop key vue-jsx-vapor reads as another prop or leaves out', () => {
+		for (const [params, key, message, example] of [
+			// vue-jsx-vapor reads a computed name as the prop with that name.
+			[
+				'{ [k]: v = cfg.size }',
+				'k',
+				"reads `[k]` as the prop 'k'",
+				'{props[k] === undefined ? cfg.size : props[k]}',
+			],
+			[
+				'{ [k]: v = 3 }',
+				'k',
+				"reads `[k]` as the prop 'k'",
+				'{props[k] === undefined ? 3 : props[k]}',
+			],
+			['{ [k]: v }', 'k', "reads `[k]` as the prop 'k'", '{props[k]}'],
+			['{ t, [k]: v }', 'k', "reads `[k]` as the prop 'k'", '{props[k]}'],
+			['{ [k]: { a: v } }', 'k', "reads `[k]` as the prop 'k'", null],
+			['{ t: { [k]: v } }', 'k', "reads `[k]` as the prop 'k'", '{props.t?.[k]}'],
+			['{ t: [{ [k]: v }] }', 'k', "reads `[k]` as the prop 'k'", '{props.t?.[0]?.[k]}'],
+			// It leaves out any other key. With no key it reads, the component gets no
+			// prop options, so Vue passes it no props.
+			["{ ['s']: v = 3 }", "'s'", "the prop at `['s']`", '{props.s === undefined ? 3 : props.s}'],
+			["{ ['s']: v, t }", "'s'", "the prop at `['s']`", '{props.s}'],
+			["{ 's': v }", "'s'", "the prop at `'s'`", '{props.s}'],
+			[
+				"{ 'a-b': v = 1, t }",
+				"'a-b'",
+				"the prop at `'a-b'`",
+				'{props.aB === undefined ? 1 : props.aB}',
+			],
+			['{ [1]: v }', '1', 'the prop at `[1]`', '{props[1]}'],
+			['{ [`s`]: v, ...rest }', '`s`', 'the prop at `[`s`]`', '{props.s}'],
+			['{ [obj.k]: v }', 'obj.k', 'the prop at `[obj.k]`', '{props[obj.k]}'],
+			["{ [k + '']: v }", "k + ''", "the prop at `[k + '']`", "{props[k + '']}"],
+			["{ t: { 's': v } }", "'s'", "the prop at `'s'`", '{props.t?.s}'],
+			["{ t: { 'a-b': v } }", "'a-b'", "the prop at `'a-b'`", '{props.t?.["a-b"]}'],
+		]) {
+			const source = `const cfg = { size: 1 };
+const k = 's';
+const obj = { k: 's' };
+export function Card(${params}: any) @{
+	<div>{String(v)}</div>
+}`;
+			/** @type {any} */
+			let thrown = null;
+			try {
+				compile(source, 'App.tsrx');
+			} catch (error) {
+				thrown = error;
+			}
+			expect(thrown, params).toBeInstanceOf(Error);
+			expect(thrown.code, params).toBe('TSRX2031');
+			expect(thrown.message, params).toContain(message);
+			expect(thrown.message, params).toContain('read the prop where you use it instead');
+			if (example) expect(thrown.message, params).toContain(`for example \`${example}\``);
+			else expect(thrown.message, params).not.toContain('for example');
+			expect(thrown.loc.start, params).toEqual({
+				line: 4,
+				column: 'export function Card('.length + params.indexOf(key),
+			});
+
+			const { errors } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(
+				errors.map((error) => error.code),
+				params,
+			).toEqual(['TSRX2031']);
+		}
+
+		// A key that spans lines is shown on one line.
+		const { errors } = compile_to_volar_mappings(
+			`const k = 's';
+export function Card({ t, [k +
+	'']: v }: any) @{
+	<div>{String(v)}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.message)).toEqual([
+			expect.stringContaining("the prop at `[k + '']`"),
+		]);
+	});
+
+	it('reports a default inside a destructured prop, which vue-jsx-vapor applies only to a missing prop', () => {
+		for (const [params, fallback, path, example] of [
+			[
+				'{ s: { a: v = cfg.size } }',
+				'cfg.size',
+				's.a',
+				'{props.s?.a === undefined ? cfg.size : props.s?.a}',
+			],
+			['{ s: { a: v = 3 } }', '3', 's.a', '{props.s?.a === undefined ? 3 : props.s?.a}'],
+			['{ s: [v = 1] }', '1', 's[0]', '{props.s?.[0] === undefined ? 1 : props.s?.[0]}'],
+			['{ s: { t: { a } = {} } }', '{}', 's.t', null],
+		]) {
+			const source = `const cfg = { size: 1 };
+export function Card(${params}: any) @{
+	<div>{String(v)}</div>
+}`;
+			const { errors } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(
+				errors.map((error) => error.code),
+				params,
+			).toEqual(['TSRX2029']);
+			expect(errors[0].message, params).toContain(
+				`cannot keep this default for '${path}': vue-jsx-vapor applies a default inside a destructured prop only when the whole prop is missing`,
+			);
+			if (example) expect(errors[0].message, params).toContain(`for example \`${example}\``);
+			else expect(errors[0].message, params).not.toContain('for example');
+			expect(errors[0].loc.start, params).toEqual({
+				line: 2,
+				column: 'export function Card('.length + params.indexOf(fallback),
+			});
+		}
+	});
+
+	it('reports a props parameter with a default, which vue-jsx-vapor skips', () => {
+		for (const [param, fallback] of [
+			['{ s: v }: { s?: number } = {}', '{}'],
+			['props: { s?: number } = { s: 1 }', '{ s: 1 }'],
+		]) {
+			const { errors } = compile_to_volar_mappings(
+				`export function Card(${param}) @{
+	<div>{String(v)}</div>
+}`,
+				'App.tsrx',
+			);
+			expect(
+				errors.map((error) => error.code),
+				param,
+			).toEqual(['TSRX2031']);
+			expect(errors[0].message, param).toContain(
+				`cannot read a props parameter with a default: vue-jsx-vapor skips it, so this component gets no props. Remove \`= ${fallback}\`; Vue always passes a props object.`,
+			);
+			expect(errors[0].loc.start, param).toEqual({
+				line: 1,
+				column: 'export function Card('.length + param.lastIndexOf(fallback),
+			});
+		}
+	});
+
+	it("reports a rest element inside a prop that vue-jsx-vapor doesn't give the rest of it", () => {
+		for (const [params, rests, path] of [
+			// The last rest element of the pattern gets the component's attrs.
+			['{ t: { a, ...r } }', ['...r'], 't'],
+			['{ t: [a, ...r] }', ['...r'], 't'],
+			// An array's rest element gets the whole array.
+			['{ t: [a, ...r], ...rest }', ['...r'], 't'],
+			// Any other gets the rest as it was at setup.
+			['{ t: { a, ...r }, ...rest }', ['...r'], 't'],
+			['{ t: [{ a, ...r }], ...rest }', ['...r'], 't[0]'],
+			['{ t: { a, ...r }, u: { b, ...q } }', ['...r', '...q'], null],
+		]) {
+			const { errors } = compile_to_volar_mappings(
+				`export function Card(${params}: any) @{
+	<div>{String(a)}</div>
+}`,
+				'App.tsrx',
+			);
+			expect(
+				errors.map((error) => error.code),
+				params,
+			).toEqual(rests.map(() => 'TSRX2031'));
+			if (path) {
+				expect(errors[0].message, params).toContain(
+					`cannot read this rest element inside '${path}': vue-jsx-vapor doesn't keep it as the rest of '${path}'.`,
+				);
+			}
+			expect(
+				errors.map((error) => error.loc.start),
+				params,
+			).toEqual(
+				rests.map((rest) => ({
+					line: 1,
+					column: 'export function Card('.length + params.indexOf(rest),
+				})),
+			);
+		}
+	});
+
+	it('accepts destructured props vue-jsx-vapor reads as written', () => {
+		for (const params of [
+			'{ s: v, t = 1 }',
+			'{ s: [v, w] }',
+			'{ s: { a: v } }',
+			// A prop's own default, which vue-jsx-vapor keeps for an object literal.
+			'{ s: { a: v } = {} }',
+			// The pattern's own rest element gets the attrs, which are the props it
+			// doesn't declare.
+			'{ s: v, ...rest }',
+			'{ ...rest }',
+		]) {
+			const source = `export function Card(${params}: any) @{
+	<div>{String(v)}</div>
+}`;
+			expect(() => compile(source, 'App.tsrx'), params).not.toThrow();
+		}
 	});
 
 	it('rejects the removed `&{ ... }` lazy destructuring syntax', () => {
@@ -175,6 +856,107 @@ describe('@tsrx/vue basic', () => {
 		expect(code).toContain(`class="card ${cssHash}"`);
 		expect(css).toContain(`.card.${cssHash}`);
 		expect(css).toContain('color: red;');
+	});
+
+	// Vue's `mergeProps` joins `class` across attributes and spreads itself.
+	it('compiles an authored className on a host element to class', () => {
+		const source = `export function App(props) @{
+				const Tag = Child;
+				<>
+					<div className="x" />
+					<div className={props.c} />
+					<div class="a" className="b" />
+					<div class="a" className={props.c} />
+					<div class="a" {...props.bag} className={props.d} />
+					<div className="a" className="b" />
+					<Child className="kept" />
+					<ui.Child className="member" />
+					<{Tag} className="dynamic" />
+				</>
+			}`;
+		const { code } = compile(source, 'App.tsrx');
+
+		expect(code).toContain('<div class="x" />');
+		expect(code).toContain('<div class={props.c} />');
+		expect(code).toContain('<div class="a b" />');
+		expect(code).toContain('<div class={["a", props.c]} />');
+		// With a spread between, `className` stays where it is written, so the
+		// last class written still wins over the spread's.
+		expect(code).toMatch(
+			/<div class="a" \{\.\.\.[^}]+\}(?: ref=\{[^}]+\})? class=\{props\.d\} \/>/,
+		);
+		// Two `className` attributes stay two attributes.
+		expect(code).toContain('<div class="a" class="b" />');
+		// A component, member tag or dynamic tag may read `className`.
+		expect(code).toContain('<Child className="kept" />');
+		expect(code).toContain('<ui.Child className="member" />');
+		expect(code).toContain('className="dynamic"');
+
+		// The type-only print renames it too, so it type-checks against `class`,
+		// and maps the generated `class` back to the authored `className`.
+		const { code: type_only, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+		expect(type_only).toContain('<div class={props.c} />');
+		expect(type_only).toContain('<div class={["a", props.c]} />');
+		// TypeScript reports two `class` attributes even across a spread.
+		expect(type_only).toMatch(/<div class=\{\["a", props\.d\]\} \{\.\.\./);
+		expect(type_only).toContain('<Child className="kept" />');
+		expect(type_only).toContain('className="dynamic"');
+		for (const authored of ['className={props.c}', 'className={props.d}', 'className="x"']) {
+			const at = source.indexOf(authored);
+			const mapping = mappings.find((entry) => entry.sourceOffsets[0] === at);
+			expect(mapping).toMatchObject({ lengths: [9], generatedLengths: [5] });
+			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
+			expect(type_only.slice(generated, generated + 5)).toBe('class');
+			expect(mapping?.data).toMatchObject({ verification: true, semantic: true, navigation: true });
+		}
+	});
+
+	for (const [label, existing] of [
+		['a namespace import', "import * as ref from '@tsrx/vue/ref';"],
+		['a type-only import', "import type { RefValue } from '@tsrx/vue/ref';"],
+	]) {
+		it(`imports a scope class helper on its own beside ${label} of the same module`, () => {
+			const { code } = compile(
+				`${existing}
+
+				export function App(props: { c?: string }) @{
+					<>
+						<style>span { color: red; }</style>
+						<span class={props.c} />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain(existing);
+			expect(code).toContain(
+				"import { join_scope_class as __join_scope_class } from '@tsrx/vue/ref';",
+			);
+		});
+	}
+
+	it('leaves host spreads as written beside the scope classes', () => {
+		const { code, cssHash } = compile(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span class="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('merge_spread_class');
+		expect(code).toMatch(
+			new RegExp(`<span \\{\\.\\.\\.(\\w+)\\} ref=\\{\\1\\?\\.ref\\} class="${cssHash}" />`),
+		);
 	});
 
 	it('applies scoped css hashes and keeps type selectors for dynamic tags', () => {
@@ -687,6 +1469,164 @@ describe('@tsrx/vue basic', () => {
 		expect(code).not.toContain('<Fragment');
 	});
 
+	it('destructures a keyed array pattern from the item, not by index (#938)', () => {
+		const { code, errors } = compile(
+			`function App({ rows }: { rows: Iterable<string>[] }) @{
+				@for (const [first, second = 'none'] of rows; key first) {
+					<p>{first}|{second}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain("<VaporFor in={rows} getKey={([first, second = 'none']) => first}>");
+		expect(code).toMatch(
+			/const _\$_vapor_bindings_1 = _\$_vapor_computed\(\(\) => \{\s*const \[first, second = 'none'\] = __vapor_item\.value;\s*return \{ first, second \};/,
+		);
+		expect(code).toContain('{_$_vapor_bindings_1.value.first}|{_$_vapor_bindings_1.value.second}');
+		expect(code).not.toContain('__vapor_item.value[0]');
+		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
+	});
+
+	it('imports computed for a keyed array pattern beside type and namespace imports of vue', () => {
+		for (const authored of [
+			"import type { Ref } from 'vue';",
+			"import * as Vue from 'vue';",
+			"import { type Ref, ref } from 'vue';",
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function App({ rows }: { rows: string[][] }) @{
+					@for (const [first] of rows; key first) {
+						<p>{first}</p>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code, authored).toContain("import { computed as _$_vapor_computed } from 'vue';");
+		}
+	});
+
+	it('imports Suspense once, as a value, beside the computed import and authored vue imports', () => {
+		for (const [authored, suspense_import] of [
+			["import { Suspense } from 'vue';", "import { Suspense } from 'vue';"],
+			[
+				"import type { Ref } from 'vue';",
+				"import { computed as _$_vapor_computed, Suspense } from 'vue';",
+			],
+			[
+				"import * as Vue from 'vue';",
+				"import { computed as _$_vapor_computed, Suspense } from 'vue';",
+			],
+			[
+				"import { ref } from 'vue';\nimport { Suspense } from 'vue';",
+				"import { Suspense } from 'vue';",
+			],
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function Data() @{
+					<i />
+				}
+				function App({ rows }: { rows: string[][] }) @{
+					<div>
+						@for (const [first] of rows; key first) {
+							<p>{first}</p>
+						}
+						@try {
+							<Data />
+						} @pending {
+							<p>{'loading'}</p>
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual([suspense_import]);
+			expect(code, authored).toMatch(/^import \{ computed as _\$_vapor_computed\b/);
+		}
+	});
+
+	it('imports Suspense on its own beside a type-only or namespace import of vue', () => {
+		for (const authored of [
+			"import type { Ref } from 'vue';",
+			"import * as Vue from 'vue';",
+			"import type { Ref } from 'vue';\nimport * as Vue from 'vue';",
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function Data() @{
+					<i />
+				}
+				function App() @{
+					@try {
+						<Data />
+					} @pending {
+						<p>{'loading'}</p>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual([
+				"import { Suspense } from 'vue';",
+			]);
+		}
+	});
+
+	it('leaves type parameters and type references in a keyed slot alone (#922)', () => {
+		const { code, errors } = compile(
+			`function List({ items }: { items: { id: string; label: string }[] }) @{
+				<ul>
+					@for (const item of items; key item.id) {
+						<button onClick={function <item>(x: item, y: typeof item): item[] { return [x as item]; }}>{item.label}</button>
+					}
+				</ul>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain('function <item>(x: item, y: typeof item.value): item[] {');
+		expect(code).toContain('return [x as item];');
+		expect(code).toContain('{item.value.label}');
+		expect(code).not.toContain('<item.value>');
+	});
+
+	it('leaves type declarations and qualified type queries in a keyed slot alone (#922)', () => {
+		const { code, errors } = compile(
+			`function List({ items, Types }: { items: { id: string; label: string }[]; Types: { item: string } }) @{
+				<ul>
+					@for (const item of items; key item.id) {
+						<button onClick={() => {
+							type item = string;
+							interface Row { label: item }
+							const typed: typeof Types.item = item.label;
+							return typed satisfies item;
+						}}>{item.label}</button>
+					}
+				</ul>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain('type item = string;');
+		expect(code).toContain('interface Row {');
+		expect(code).toContain('label: item');
+		expect(code).toContain('const typed: typeof Types.item = item.value.label;');
+		expect(code).toContain('return typed satisfies item;');
+	});
+
 	it('falls back without injecting VaporFor for keyed destructuring patterns it cannot rewrite', () => {
 		const { code } = compile(
 			`function App({ items, keyName }: { items: Array<Record<string, string>>, keyName: string }) @{
@@ -770,6 +1710,26 @@ describe('@tsrx/vue basic', () => {
 		expect(code).not.toContain('Suspense');
 	});
 
+	it('renders a @try inside element children as a boundary component', () => {
+		const { code } = compile(
+			`function App() @{
+				<div class="wrap">
+					@try {
+						<Child />
+					} @catch (error) {
+						<p>{'Failed'}</p>
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		// A component instance registers the boundary's error hook; a plain call
+		// has none.
+		expect(code).toContain('{<TsrxErrorBoundary fallback=');
+		expect(code).not.toContain('TsrxErrorBoundary({');
+	});
+
 	it('does not generate a catch fallback component without @pending', () => {
 		const { code } = compile(
 			`export function App() @{
@@ -837,6 +1797,10 @@ describe('@tsrx/vue basic', () => {
 		expect(code.match(/error\.message/g)).toHaveLength(1);
 		expect(code).toContain('StatementBodyHook');
 		expect(code).toContain('suffix={suffix}');
+		// The Suspense default slot renders the body through its own boundary,
+		// so `reset` works for errors thrown there.
+		expect(code).toMatch(/default: \(\) => <TsrxErrorBoundary fallback=\{\(error, reset\) => \{/);
+		expect(code).not.toContain('reset={() => {}}');
 
 		const error_boundary_index = code.indexOf('<TsrxErrorBoundary');
 		const suspense_index = code.indexOf('<Suspense');
@@ -863,6 +1827,118 @@ describe('@tsrx/vue basic', () => {
 		);
 		expect(code).toContain('fallback={(error, _reset) => {');
 		expect(code.match(/return <App__StatementBodyHook1 \/>;/g)).toHaveLength(2);
+	});
+
+	describe('names the catch helper of a component inside another scope with its component prefix', () => {
+		const try_block = `@try {
+						<span>{'Loaded'}</span>
+					} @pending {
+						<span>{'Loading'}</span>
+					} @catch (error) {
+						<span>{StatementBodyHook1}</span>
+					}`;
+
+		it.each([
+			[
+				'a function',
+				`export function makeApp() {
+					function App() @{
+						const StatementBodyHook1 = 'mine';
+						${try_block}
+					}
+					return App;
+				}`,
+			],
+			[
+				'a namespace',
+				`export namespace Views {
+					export function App() @{
+						const StatementBodyHook1 = 'mine';
+						${try_block}
+					}
+				}`,
+			],
+		])('beside a setup local of the bare name, inside %s', (_label, source) => {
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code.match(/(?:const|let|var|function) StatementBodyHook1\b/g)).toEqual([
+				'const StatementBodyHook1',
+			]);
+			expect(code).toContain(
+				'const App__StatementBodyHook1 = defineVaporComponent(function App__StatementBodyHook1(',
+			);
+			expect(code).toContain('<App__StatementBodyHook1 StatementBodyHook1={StatementBodyHook1} />');
+		});
+
+		it('without shadowing a binding of the bare name in the enclosing function', () => {
+			const { code } = compile(
+				`export function makeApp() {
+					const StatementBodyHook1 = 'mine';
+					function App() @{
+						${try_block}
+					}
+					return App;
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code.match(/(?:const|let|var|function) StatementBodyHook1\b/g)).toEqual([
+				'const StatementBodyHook1',
+			]);
+			expect(code).toContain(
+				'const App__StatementBodyHook1 = defineVaporComponent(function App__StatementBodyHook1() {',
+			);
+			expect(code).toContain('return <App__StatementBodyHook1 />;');
+		});
+
+		it.each([
+			[
+				'inside a function',
+				`export function makeApp() {
+					const App__StatementBodyHook1 = 'mine';
+					function App() @{
+						${try_block.replace('{StatementBodyHook1}', '{App__StatementBodyHook1}')}
+					}
+					return App;
+				}`,
+			],
+			[
+				'at module level',
+				`const App__StatementBodyHook1 = 'mine';
+				export function App() @{
+					${try_block.replace('{StatementBodyHook1}', '{App__StatementBodyHook1}')}
+				}`,
+			],
+		])('skipping a prefixed name the source already uses, %s', (_label, source) => {
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code.match(/(?:const|let|var|function) App__StatementBodyHook1\b/g)).toEqual([
+				'const App__StatementBodyHook1',
+			]);
+			expect(code).toContain(
+				'const App__StatementBodyHook2 = defineVaporComponent(function App__StatementBodyHook2() {',
+			);
+			expect(code).toContain('return <span>{App__StatementBodyHook1}</span>;');
+			expect(code).toContain('return <App__StatementBodyHook2 />;');
+		});
+
+		it('skipping a prefixed name the source already uses when the component name has a $', () => {
+			const { code } = compile(
+				`const App$__StatementBodyHook1 = 'mine';
+				export function App$() @{
+					${try_block.replace('{StatementBodyHook1}', '{App$__StatementBodyHook1}')}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code.match(/(?:const|let|var|function) App\$__StatementBodyHook1\b/g)).toEqual([
+				'const App$__StatementBodyHook1',
+			]);
+			expect(code).toContain(
+				'const App$__StatementBodyHook2 = defineVaporComponent(function App$__StatementBodyHook2() {',
+			);
+			expect(code).toContain('return <span>{App$__StatementBodyHook1}</span>;');
+		});
 	});
 
 	it('keeps try/pending/catch Suspense lowering valid in type-only output', () => {

@@ -46,7 +46,10 @@ export function App() @{
 The DOM validator diagnoses explicit async component references that it can
 resolve statically within the module. It does not infer arbitrary Promise returns,
 inter-module values, or object members that may have been overwritten by unknown
-spreads or computed properties.
+spreads or computed properties. It also stays silent about a member that may be
+replaced before render: one written through any name, or one whose object reaches
+code the validator does not follow, such as a function argument, a method call, a
+component prop, or an object or array that holds it.
 
 ## Scripts
 
