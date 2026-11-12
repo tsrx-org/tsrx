@@ -461,6 +461,174 @@ export function Inner({ label = PREFIX }: { label?: string }) @{
 		expect(errors.map((error) => error.code)).toEqual(['TSRX2028']);
 	});
 
+	it('reads props.children from the default slot when no children prop is passed', () => {
+		const { code } = compile(
+			`function Card(props: { title: string; children?: JSX.Element }) @{
+				<section>
+					<h2>{props.title}</h2>
+					{props.children}
+				</section>
+			}
+
+			const Box = ({ children: kids }) => <div>{kids}</div>;
+
+			function Panel(props: { children?: JSX.Element }) @{
+				const { children } = props;
+				<aside>{children}</aside>
+			}
+
+			function Plain(props: { title: string }) @{
+				<h2>{props.title}</h2>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain("import { useSlots as _$_useSlots } from 'vue';");
+		// Each render site renders the slot; nested children win over the prop.
+		expect(code).toContain(
+			'const Card = defineVaporComponent(function Card(props: { title: string; children?: JSX.Element }) {\n\tconst _$_Card_slots = _$_useSlots();',
+		);
+		expect(code).toContain('{_$_Card_slots.default?.() ?? props.children}');
+		expect(code).toContain('{_$_Box_slots.default?.() ?? kids}');
+		expect(code).toContain('const { children } = props;');
+		expect(code).toContain('<aside>{_$_Panel_slots.default?.() ?? children}</aside>');
+		expect(code.match(/_\$_useSlots\(\)/g)).toHaveLength(3);
+	});
+
+	it('tests whether the slot exists where a read only tests the children', () => {
+		const { code } = compile(
+			`function Maybe(props: { children?: JSX.Element }) @{
+				<div>{props.children ? <p>{props.children}</p> : null}{!props.children && 'empty'}</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			'{_$_Maybe_slots.default ?? props.children\n\t\t\t? <p>{_$_Maybe_slots.default?.() ?? props.children}</p>',
+		);
+		expect(code).toContain("{!(_$_Maybe_slots.default ?? props.children) && 'empty'}");
+	});
+
+	it('tests whether the slot exists in comparisons with null or undefined and in Boolean()', () => {
+		const { code } = compile(
+			`function Maybe(props: { children?: JSX.Element }) @{
+				<div>
+					{props.children != null ? <p>{props.children}</p> : null}
+					{Boolean(props.children) && 'some'}
+					{undefined === props.children ? 'none' : 'some'}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('(_$_Maybe_slots.default ?? props.children) != null');
+		expect(code).toContain('<p>{_$_Maybe_slots.default?.() ?? props.children}</p>');
+		expect(code).toContain('Boolean(_$_Maybe_slots.default ?? props.children)');
+		expect(code).toContain('undefined === (_$_Maybe_slots.default ?? props.children)');
+	});
+
+	it('moves any children default into its reads, so TSRX2029 does not apply to it', () => {
+		const { code } = compile(
+			`function Card({ children = <i /> }: { children?: JSX.Element }) @{
+				<div>{children}</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			'<div>{_$_Card_slots.default?.() ?? (children === void 0 ? <i /> : children)}</div>',
+		);
+	});
+
+	it('falls back from the slot to the prop to a destructured children default', () => {
+		const { code } = compile(
+			`function Card({ children = 'none' }: { children?: string }) @{
+				<p>{children}</p>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('function Card({ children }: { children?: string })');
+		// Like the destructuring default, it replaces only `undefined`, so an
+		// explicit `children={null}` stays `null`.
+		expect(code).toContain(
+			"<p>{_$_Card_slots.default?.() ?? (children === void 0 ? 'none' : children)}</p>",
+		);
+	});
+
+	it('names the slot per component, so a nested component reads its own and the outer slot', () => {
+		const { code } = compile(
+			`function Outer(props: { children?: JSX.Element }) @{
+				function Inner(p: { children?: JSX.Element }) @{
+					<span>{p.children}{props.children}</span>
+				}
+				<Inner><b /></Inner>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			'{_$_Inner_slots.default?.() ?? p.children}{_$_Outer_slots.default?.() ?? props.children}',
+		);
+	});
+
+	it('keeps authored slot names, type-only imports, catch parameters and deletes intact', () => {
+		const { code } = compile(
+			`import type { useSlots } from 'vue';
+			import { useSlots as mySlots } from './slots';
+			const __slots = mySlots();
+
+			export function Card(props: { children?: JSX.Element }) @{
+				delete props.children;
+				<i>{props.children}{__slots.default()}</i>
+			}
+
+			export function Other({ children }: { children?: JSX.Element }) @{
+				try {
+					JSON.parse('x');
+				} catch (children) {
+					console.log(children);
+				}
+				for (const children of [1]) console.log(children);
+				<i>{children}</i>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain("import { useSlots as _$_useSlots } from 'vue';");
+		expect(code).toContain("import type { useSlots } from 'vue';");
+		expect(code).toContain('delete props.children;');
+		expect(code).toContain('{_$_Card_slots.default?.() ?? props.children}{__slots.default()}');
+		expect(code).toContain('} catch(children) {\n\t\tconsole.log(children);');
+		expect(code).toContain('for (const children of [1]) console.log(children);');
+		expect(code).toContain('<i>{_$_Other_slots.default?.() ?? children}</i>');
+	});
+
+	it('leaves children reads alone when props is shadowed', () => {
+		const { code } = compile(
+			`function Card(props) @{
+				const read = (props) => props.children;
+				<div onClick={read}>{'x'}</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('const read = (props) => props.children;');
+		expect(code).not.toContain('useSlots');
+	});
+
+	it('keeps props.children as written in Volar TSX', () => {
+		const { code } = compile_to_volar_mappings(
+			`function Card(props: { children?: JSX.Element }) @{
+				<section>{props.children}</section>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('{props.children}');
+		expect(code).not.toContain('useSlots');
+	});
+
 	it('accepts the destructured prop defaults vue-jsx-vapor keeps', () => {
 		for (const fallback of [
 			"'x'",
