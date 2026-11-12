@@ -686,7 +686,7 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="template-structure">
 							<h2 class="section-heading">Statement containers</h2>
 							<p class="section-body">
-								When a template scope mixes TypeScript setup with rendered output, wrap the setup in
+								When a template scope mixes TypeScript setup with rendered output, wrap the setup in{' '}
 								<code class="inline-code">{'@{...}'}</code>. TSRX treats everything before the final
 								renderable child as script, then the container must finish with exactly one output
 								node.
@@ -706,21 +706,16 @@ export const FeaturesPage = () => @{
 								JavaScript.
 							</p>
 							<p class="section-body muted">
-								Control-flow bodies are implicit statement containers too:
-								<code class="inline-code">@if</code>,<code class="inline-code">@for</code>,
-								<code class="inline-code">@switch</code>, and
-								<code class="inline-code">@try</code>
-								arms all use
-								<code class="inline-code">{'{}'}</code>
-								blocks.
+								Control-flow bodies are implicit statement containers too:{' '}
+								<code class="inline-code">@if</code>, <code class="inline-code">@for</code>,{' '}
+								<code class="inline-code">@switch</code>, and <code class="inline-code">@try</code>{' '}
+								arms all use <code class="inline-code">{'{}'}</code> blocks.
 							</p>
 							<p class="section-body muted">
-								If you write setup statements and then a bare JSX element inside a normal
-								<code class="inline-code">{'{}'}</code>
-								function body, the compiler will ask you to add the missing
-								<code class="inline-code">@</code>. Plain braces are JavaScript; statement-container
-								braces are
-								<code class="inline-code">{'@{...}'}</code>.
+								If you write setup statements and then a bare JSX element inside a normal{' '}
+								<code class="inline-code">{'{}'}</code> function body, the compiler will ask you to
+								add the missing <code class="inline-code">@</code>. Plain braces are JavaScript;
+								statement-container braces are <code class="inline-code">{'@{...}'}</code>.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={TEMPLATE_STRUCTURE_HTML} />
@@ -733,36 +728,26 @@ export const FeaturesPage = () => @{
 								a <code class="inline-code">.tsrx</code> file: in a template, in a control-flow
 								body, in JSX returned from a regular function, and in module-level JSX. They are
 								comments, not rendered text, so you can annotate element bodies and control-flow
-								branches without wrapping the note in braces. A comment renders like
-								<code class="inline-code">{'{/* … */}'}</code>
-								in TSX. A<code class="inline-code">{'/*'}</code>
-								starts a comment anywhere in text. A<code class="inline-code">{'//'}</code>
-								after whitespace, at the start of a line, or right after a tag starts a comment that
-								runs to the end of the line, a closing tag included, so
-								<code class="inline-code">{'<p>a // note</p>'}</code>
-								on one line leaves the
-								<code class="inline-code">{'<p>'}</code>
-								unclosed. One that touches text, as in
-								<code class="inline-code">{'https://example.com'}</code>, stays text.
+								branches without wrapping the note in braces. A comment renders like{' '}
+								<code class="inline-code">{'{/* … */}'}</code> in TSX. A{' '}
+								<code class="inline-code">{'/*'}</code> starts a comment anywhere in text. A{' '}
+								<code class="inline-code">{'//'}</code> after whitespace, at the start of a line, or
+								right after a tag starts a comment that runs to the end of the line, a closing tag
+								included, so <code class="inline-code">{'<p>a // note</p>'}</code> on one line
+								leaves the <code class="inline-code">{'<p>'}</code> unclosed. One that touches text,
+								as in <code class="inline-code">{'https://example.com'}</code>, stays text.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={COMMENTS_HTML} />
 							</pre>
 							<p class="section-body">
-								This differs from TSX, where
-								<code class="inline-code">{'/* … */'}</code>
-								and a line starting with
-								<code class="inline-code">{'//'}</code>
-								between children are text, and
-								<code class="inline-code">{'{/* … */}'}</code>
-								is the only comment. TSX pasted into a<code class="inline-code">.tsrx</code>
-								file can render differently, most often a code sample in
-								<code class="inline-code">{'<pre>'}</code>
-								or
+								This differs from TSX, where <code class="inline-code">{'/* … */'}</code> and a line
+								starting with <code class="inline-code">{'//'}</code> between children are text, and{' '}
+								<code class="inline-code">{'{/* … */}'}</code> is the only comment. TSX pasted into
+								a <code class="inline-code">.tsrx</code> file can render differently, most often a
+								code sample in <code class="inline-code">{'<pre>'}</code> or{' '}
 								<code class="inline-code">{'<code>'}</code>. To show text that looks like a comment,
-								write its first
-								<code class="inline-code">/</code>
-								as the character reference
+								write its first <code class="inline-code">/</code> as the character reference{' '}
 								<code class="inline-code">{'&#47;'}</code>, or write the text as a string in braces:
 							</p>
 							<pre class="code-block">
@@ -772,12 +757,10 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="prop-shorthands">
 							<h2 class="section-heading">Prop shorthands</h2>
 							<p class="section-body">
-								When a prop name matches the variable you're passing, you can use the shorthand
-								<code class="inline-code">{'{name}'}</code>
-								instead of
+								When a prop name matches the variable you're passing, you can use the shorthand{' '}
+								<code class="inline-code">{'{name}'}</code> instead of{' '}
 								<code class="inline-code">{'name={name}'}</code>. This works for any attribute or
-								prop — including event handlers like
-								<code class="inline-code">{'{onClick}'}</code>.
+								prop — including event handlers like <code class="inline-code">{'{onClick}'}</code>.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={SHORTHAND_HTML} />
@@ -795,27 +778,23 @@ export const FeaturesPage = () => @{
 							</pre>
 							<p class="section-body">
 								This applies to all block-like contexts: statement containers and control flow
-								branches (<code class="inline-code">@if</code>,<code class="inline-code">@for</code>
-								,<code class="inline-code">@switch</code>,<code class="inline-code">@try</code>
+								branches (<code class="inline-code">@if</code>,{' '}
+								<code class="inline-code">@for</code>, <code class="inline-code">@switch</code>,{' '}
+								<code class="inline-code">@try</code>
 								). Each one has its own scope.
 							</p>
 						</section>
 						<section class="doc-section" id="if">
 							<h2 class="section-heading">Conditional rendering</h2>
 							<p class="section-body">
-								Use
-								<code class="inline-code">@if</code>/<code class="inline-code">else if</code>/
-								<code class="inline-code">else</code>
-								template expressions directly inside templates, or return them directly from a
-								component. Branches render their template output, while ordinary
-								<code class="inline-code">if</code>
-								statements in setup stay plain JavaScript for guard returns. Direct
-								<code class="inline-code">return</code>,<code class="inline-code">continue</code>,
-								and
-								<code class="inline-code">break</code>
-								are not allowed inside
-								<code class="inline-code">@if</code>
-								template branches.
+								Use <code class="inline-code">@if</code>/<code class="inline-code">else if</code>/
+								<code class="inline-code">else</code> template expressions directly inside
+								templates, or return them directly from a component. Branches render their template
+								output, while ordinary <code class="inline-code">if</code> statements in setup stay
+								plain JavaScript for guard returns. Direct <code class="inline-code">return</code>,{' '}
+								<code class="inline-code">continue</code>, and{' '}
+								<code class="inline-code">break</code> are not allowed inside{' '}
+								<code class="inline-code">@if</code> template branches.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={IF_HTML} />
@@ -824,37 +803,26 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="for">
 							<h2 class="section-heading">List rendering</h2>
 							<p class="section-body">
-								Render lists with
-								<code class="inline-code">{'@for (... of ...)'}</code>
-								loops. TSRX extends the syntax with optional
-								<code class="inline-code">index</code>
-								and
-								<code class="inline-code">key</code>
-								clauses so you don't need separate counters or key-extraction boilerplate. The
-								optional
-								<code class="inline-code">@empty</code>
+								Render lists with <code class="inline-code">{'@for (... of ...)'}</code> loops. TSRX
+								extends the syntax with optional <code class="inline-code">index</code> and{' '}
+								<code class="inline-code">key</code> clauses so you don't need separate counters or
+								key-extraction boilerplate. The optional <code class="inline-code">@empty</code>{' '}
 								branch renders when the iterable has no items.
 							</p>
 							<p class="section-body">
-								Filter the collection before passing it to
-								<code class="inline-code">@for</code>
-								when some items should not render. Use
-								<code class="inline-code">@empty</code>
-								for the no-items branch. Direct
-								<code class="inline-code">continue</code>,<code class="inline-code">break</code>,
-								and
-								<code class="inline-code">return</code>
-								statements are not allowed in
-								<code class="inline-code">@for</code>
-								template loop bodies; nested functions keep ordinary JavaScript control flow.
+								Filter the collection before passing it to <code class="inline-code">@for</code>{' '}
+								when some items should not render. Use <code class="inline-code">@empty</code> for
+								the no-items branch. Direct <code class="inline-code">continue</code>,{' '}
+								<code class="inline-code">break</code>, and <code class="inline-code">return</code>{' '}
+								statements are not allowed in <code class="inline-code">@for</code> template loop
+								bodies; nested functions keep ordinary JavaScript control flow.
 							</p>
 							<p class="section-body">
-								Other JavaScript loops are not template rendering constructs: regular
-								<code class="inline-code">for</code>,<code class="inline-code">for...in</code>,
-								<code class="inline-code">while</code>, and
-								<code class="inline-code">do...while</code>
-								are rejected in TSRX template scope. Move imperative loops into a nested function or
-								effect, or render collections with
+								Other JavaScript loops are not template rendering constructs: regular{' '}
+								<code class="inline-code">for</code>, <code class="inline-code">for...in</code>,{' '}
+								<code class="inline-code">while</code>, and{' '}
+								<code class="inline-code">do...while</code> are rejected in TSRX template scope.
+								Move imperative loops into a nested function or effect, or render collections with{' '}
 								<code class="inline-code">{'@for (... of ...)'}</code>.
 							</p>
 							<pre class="code-block">
@@ -864,18 +832,11 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="switch">
 							<h2 class="section-heading">Switch statements</h2>
 							<p class="section-body">
-								Multi-branch rendering uses an
-								<code class="inline-code">@switch</code>
-								template expression. Each
-								<code class="inline-code">case</code>
-								or
-								<code class="inline-code">default</code>
-								has its own
-								<code class="inline-code">{'{}'}</code>
-								body, cases never fall through, and
-								<code class="inline-code">break</code>
-								and
-								<code class="inline-code">return</code>
+								Multi-branch rendering uses an <code class="inline-code">@switch</code> template
+								expression. Each <code class="inline-code">case</code> or{' '}
+								<code class="inline-code">default</code> has its own{' '}
+								<code class="inline-code">{'{}'}</code> body, cases never fall through, and{' '}
+								<code class="inline-code">break</code> and <code class="inline-code">return</code>{' '}
 								are invalid inside the case body.
 							</p>
 							<pre class="code-block">
@@ -885,22 +846,18 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="try">
 							<h2 class="section-heading">Error boundaries</h2>
 							<p class="section-body">
-								Wrap components in
-								<code class="inline-code">@try</code>/<code class="inline-code">catch</code>
-								to create error boundaries. If a child component throws, the catch block renders its
-								fallback children.
+								Wrap components in <code class="inline-code">@try</code>/
+								<code class="inline-code">catch</code> to create error boundaries. If a child
+								component throws, the catch block renders its fallback children.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={TRY_HTML} />
 							</pre>
 							<p class="section-body">
-								The
-								<code class="inline-code">catch</code>
-								block also receives a<code class="inline-code">reset</code>
-								function as its second argument. Calling
-								<code class="inline-code">reset()</code>
-								clears the error state and re-renders the children, which is useful for building
-								retry UIs:
+								The <code class="inline-code">catch</code> block also receives a{' '}
+								<code class="inline-code">reset</code> function as its second argument. Calling{' '}
+								<code class="inline-code">reset()</code> clears the error state and re-renders the
+								children, which is useful for building retry UIs:
 							</p>
 							<pre class="code-block">
 								<code innerHTML={TRY_RESET_HTML} />
@@ -909,49 +866,36 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="async-boundaries">
 							<h2 class="section-heading">Async boundaries</h2>
 							<p class="section-body">
-								Wrap a component subtree in
-								<code class="inline-code">@try</code>/<code class="inline-code">pending</code>/
-								<code class="inline-code">catch</code>
-								to handle async children. While a lazy child or resource is in flight, the
-								<code class="inline-code">pending</code>
-								branch renders; when it resolves, the
-								<code class="inline-code">@try</code>
-								body takes over; if it rejects — or any child throws synchronously —
-								<code class="inline-code">catch</code>
-								runs. Both
-								<code class="inline-code">pending</code>
-								and
-								<code class="inline-code">catch</code>
+								Wrap a component subtree in <code class="inline-code">@try</code>/
+								<code class="inline-code">pending</code>/<code class="inline-code">catch</code> to
+								handle async children. While a lazy child or resource is in flight, the{' '}
+								<code class="inline-code">pending</code> branch renders; when it resolves, the{' '}
+								<code class="inline-code">@try</code> body takes over; if it rejects — or any child
+								throws synchronously — <code class="inline-code">catch</code> runs. Both{' '}
+								<code class="inline-code">pending</code> and <code class="inline-code">catch</code>{' '}
 								are optional and can be used independently. Each branch follows the same
 								setup-then-one-output rule as a statement container.
 							</p>
 							<p class="section-body">
-								Async work itself is expressed using the target's own lazy-loading primitive —
-								<code class="inline-code">lazy()</code>
-								from
-								<code class="inline-code">react</code>,<code class="inline-code">octane</code>,
-								<code class="inline-code">preact/compat</code>, or
-								<code class="inline-code">solid-js</code>,
-								<code class="inline-code">defineVaporAsyncComponent()</code>
-								on Vue Vapor, and
-								<code class="inline-code">trackAsync()</code>
-								on Ripple. In Solid, Vue, and Ripple targets, returned TSRX templates are
-								synchronous and do not allow inline
-								<code class="inline-code">await</code>. On React and Preact, template-body
-								<code class="inline-code">await</code>
-								is supported and TSRX emits an async component function. An
-								<code class="inline-code">await</code>
-								inside an
-								<code class="inline-code">@for</code>,<code class="inline-code">@switch</code>, or
-								<code class="inline-code">@if</code>
-								body is awaited by that component, and a loop body finishes one item before it
-								starts the next.
+								Async work itself is expressed using the target's own lazy-loading primitive —{' '}
+								<code class="inline-code">lazy()</code> from <code class="inline-code">react</code>,{' '}
+								<code class="inline-code">octane</code>,{' '}
+								<code class="inline-code">preact/compat</code>, or{' '}
+								<code class="inline-code">solid-js</code>,{' '}
+								<code class="inline-code">defineVaporAsyncComponent()</code> on Vue Vapor, and{' '}
+								<code class="inline-code">trackAsync()</code> on Ripple. In Solid, Vue, and Ripple
+								targets, returned TSRX templates are synchronous and do not allow inline{' '}
+								<code class="inline-code">await</code>. On React and Preact, template-body{' '}
+								<code class="inline-code">await</code> is supported and TSRX emits an async
+								component function. An <code class="inline-code">await</code> inside an{' '}
+								<code class="inline-code">@for</code>, <code class="inline-code">@switch</code>, or{' '}
+								<code class="inline-code">@if</code> body is awaited by that component, and a loop
+								body finishes one item before it starts the next.
 							</p>
 							<p class="section-body muted">
-								React/Preact note:
-								<code class="inline-code">for await...of</code>
-								is not supported inside component templates. Use an upstream async helper and render
-								the resolved data.
+								React/Preact note: <code class="inline-code">for await...of</code> is not supported
+								inside component templates. Use an upstream async helper and render the resolved
+								data.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={ASYNC_BOUNDARY_HTML} />
@@ -960,104 +904,86 @@ export const FeaturesPage = () => @{
 						<section class="doc-section" id="dynamic">
 							<h2 class="section-heading">Dynamic elements and components</h2>
 							<p class="section-body">
-								Use the dynamic tag syntax
-								<code class="inline-code">{'<{expression}>'}</code>
-								when the host element tag or component constructor is selected at runtime. The
-								expression can evaluate to a string tag name like
-								<code class="inline-code">'section'</code>
-								or a component value, and the closing tag repeats the same expression:
+								Use the dynamic tag syntax <code class="inline-code">{'<{expression}>'}</code> when
+								the host element tag or component constructor is selected at runtime. The expression
+								can evaluate to a string tag name like <code class="inline-code">'section'</code> or
+								a component value, and the closing tag repeats the same expression:{' '}
 								<code class="inline-code">{'</{expression}>'}</code>. No import is required; each
 								target compiler lowers the tag to its own runtime helper.
 							</p>
 							<p class="section-body">
-								The tag expression is an identifier, a member access such as
-								<code class="inline-code">props.as</code>
-								or
+								The tag expression is an identifier, a member access such as{' '}
+								<code class="inline-code">props.as</code> or{' '}
 								<code class="inline-code">registry[name]</code>, or a string literal. Anything more,
 								such as a conditional, a call, or a cast, is an error: compute the tag above the
-								element instead, as
-								<code class="inline-code">Body</code>
-								is below, and use the result.
+								element instead, as <code class="inline-code">Body</code> is below, and use the
+								result.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={DYNAMIC_HTML} />
 							</pre>
 							<p class="section-body muted">
-								The example uses React's
-								<code class="inline-code">className</code>
-								prop. Ripple, Preact, Solid, and Vue use
-								<code class="inline-code">class</code>
-								for host classes. Removed dynamic tag forms like
-								<code class="inline-code">{'<@tag />'}</code>
-								and
-								<code class="inline-code">{'<@Component />'}</code>
-								are not part of current TSRX.
+								The example uses React's <code class="inline-code">className</code> prop. Ripple,
+								Preact, Solid, and Vue use <code class="inline-code">class</code> for host classes.
+								Removed dynamic tag forms like <code class="inline-code">{'<@tag />'}</code> and{' '}
+								<code class="inline-code">{'<@Component />'}</code> are not part of current TSRX.
 							</p>
 						</section>
 						<section class="doc-section" id="scoped-styles">
 							<h2 class="section-heading">Scoped styles</h2>
 							<p class="section-body">
-								A<code class="inline-code">{'<style>'}</code>
-								block styles only the elements next to it and below it. The compiler rewrites every
-								selector in the block to also require a hash class: a class it adds to each element
-								the block reaches, so the block's selectors match only there. Rules never leak into
-								child components.
+								A <code class="inline-code">{'<style>'}</code> block styles only the elements next
+								to it and below it. The compiler rewrites every selector in the block to also
+								require a hash class: a class it adds to each element the block reaches, so the
+								block's selectors match only there. Rules never leak into child components.
 							</p>
 							<h3 class="subsection-heading">
 								A block styles its siblings and everything below them
 							</h3>
 							<p class="section-body">
-								A<code class="inline-code">{'<style>'}</code>
-								block is a child of an element or a fragment. It styles the other children of that
-								list and everything below them. It never styles the element that contains it. To
-								style an element, put the block and the element side by side in a fragment.
+								A <code class="inline-code">{'<style>'}</code> block is a child of an element or a
+								fragment. It styles the other children of that list and everything below them. It
+								never styles the element that contains it. To style an element, put the block and
+								the element side by side in a fragment.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={SCOPED_STYLES_HTML} />
 							</pre>
 							<p class="section-body">
-								Every element gets the hash class of each scope around it, outer first. The outer
-								<code class="inline-code">div</code>, the
-								<code class="inline-code">section</code>, and the trailing
-								<code class="inline-code">p</code>
-								get the hash class of scope A; the nested
-								<code class="inline-code">div</code>
-								gets A and B. Outer rules reach into nested scopes; inner rules never reach out.
-								Elements returned from a callback such as
-								<code class="inline-code">{'items.map((item) => <li />)'}</code>
-								are outside the scope and get no hash class.
+								Every element gets the hash class of each scope around it, outer first. The outer{' '}
+								<code class="inline-code">div</code>, the <code class="inline-code">section</code>,
+								and the trailing <code class="inline-code">p</code> get the hash class of scope A;
+								the nested <code class="inline-code">div</code> gets A and B. Outer rules reach into
+								nested scopes; inner rules never reach out. Elements returned from a callback such
+								as <code class="inline-code">{'items.map((item) => <li />)'}</code> are outside the
+								scope and get no hash class.
 							</p>
 							<h3 class="subsection-heading">Sibling blocks share one hash class</h3>
 							<p class="section-body">
-								Several blocks in one children list share one hash class, so the
-								<code class="inline-code">{'p { margin: 0; }'}</code>
-								block above is part of scope A. A nested children list with blocks of its own is a
-								nested scope with its own hash class. A block can sit anywhere in its list; only the
-								list it sits in decides what it styles.
+								Several blocks in one children list share one hash class, so the{' '}
+								<code class="inline-code">{'p { margin: 0; }'}</code> block above is part of scope
+								A. A nested children list with blocks of its own is a nested scope with its own hash
+								class. A block can sit anywhere in its list; only the list it sits in decides what
+								it styles.
 							</p>
 							<h3 class="subsection-heading">Put a block and its output in one fragment</h3>
 							<p class="section-body">
-								A<code class="inline-code">{'@{ ... }'}</code>
-								body and every
-								<code class="inline-code">@if</code>,<code class="inline-code">@for</code>,
-								<code class="inline-code">@switch</code>, or
-								<code class="inline-code">@try</code>
-								branch render exactly one output node, and a
-								<code class="inline-code">{'<style>'}</code>
-								block counts as an output node. A block beside the output is an error, and a block
-								that is the only output styles nothing. Wrap the block and the output it styles in a
-								fragment.
+								A <code class="inline-code">{'@{ ... }'}</code> body and every{' '}
+								<code class="inline-code">@if</code>, <code class="inline-code">@for</code>,{' '}
+								<code class="inline-code">@switch</code>, or <code class="inline-code">@try</code>{' '}
+								branch render exactly one output node, and a{' '}
+								<code class="inline-code">{'<style>'}</code> block counts as an output node. A block
+								beside the output is an error, and a block that is the only output styles nothing.
+								Wrap the block and the output it styles in a fragment.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={STYLE_FRAGMENT_HTML} />
 							</pre>
 							<h3 class="subsection-heading">Raw CSS needs a template around it</h3>
 							<p class="section-body">
-								Raw CSS in
-								<code class="inline-code">{'<style>'}</code>
-								is TSRX template syntax. A block with CSS in it needs a
-								<code class="inline-code">{'@{ ... }'}</code>
-								body or a control-flow branch somewhere above it. In plain TSX, write
+								Raw CSS in <code class="inline-code">{'<style>'}</code> is TSRX template syntax. A
+								block with CSS in it needs a <code class="inline-code">{'@{ ... }'}</code> body or a
+								control-flow branch somewhere above it. In plain TSX, write{' '}
 								<code class="inline-code">{'<style>{css}</style>'}</code>: that is an ordinary
 								element with an expression child. The compiler leaves it untouched, gives it no hash
 								class, and never scopes it.
@@ -1068,34 +994,26 @@ export const FeaturesPage = () => @{
 								output last wins. Outer scopes come before the scopes nested in them, even when the
 								nested scope is written first. A scope's blocks stay together as one group, in
 								source order. Sibling scopes follow source order. An applied theme comes before the
-								block that applies it. In the first example, the nested block makes its
-								<code class="inline-code">div</code>
-								bold without disturbing the color the outer block set.
+								block that applies it. In the first example, the nested block makes its{' '}
+								<code class="inline-code">div</code> bold without disturbing the color the outer
+								block set.
 							</p>
 							<h3 class="subsection-heading">A block in a branch styles only that branch</h3>
 							<p class="section-body">
-								A<code class="inline-code">{'<style>'}</code>
-								block inside an
-								<code class="inline-code">@if</code>
-								or
-								<code class="inline-code">@for</code>
-								branch applies only to the elements that branch renders. Its CSS is still always
-								part of the file's stylesheet, whether or not the branch ever renders, because CSS
-								is static. Rules you want everywhere belong outside the branch.
+								A <code class="inline-code">{'<style>'}</code> block inside an{' '}
+								<code class="inline-code">@if</code> or <code class="inline-code">@for</code> branch
+								applies only to the elements that branch renders. Its CSS is still always part of
+								the file's stylesheet, whether or not the branch ever renders, because CSS is
+								static. Rules you want everywhere belong outside the branch.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={CONTROL_FLOW_STYLES_HTML} />
 							</pre>
 							<p class="section-body">
-								<code class="inline-code">.status</code>
-								sits outside the branches and reaches both of them.
-								<code class="inline-code">.ok</code>
-								matches only the
-								<code class="inline-code">p</code>
-								in the ready branch and
-								<code class="inline-code">.wait</code>
-								only the
-								<code class="inline-code">p</code>
+								<code class="inline-code">.status</code> sits outside the branches and reaches both
+								of them. <code class="inline-code">.ok</code> matches only the{' '}
+								<code class="inline-code">p</code> in the ready branch and{' '}
+								<code class="inline-code">.wait</code> only the <code class="inline-code">p</code>{' '}
 								in the other one, and both rules are in the stylesheet at all times.
 							</p>
 							<h3 class="subsection-heading">Unused selectors are removed</h3>
@@ -1107,98 +1025,78 @@ export const FeaturesPage = () => @{
 							</p>
 							<h3 class="subsection-heading">Escape the scope with :global()</h3>
 							<p class="section-body">
-								<code class="inline-code">:global(...)</code>
-								marks the wrapped part of a selector as unscoped: it gets no hash class. Everything
-								outside the parentheses is still scoped, so where the
-								<code class="inline-code">:global</code>
-								sits decides how far the rule can reach. The block form
-								<code class="inline-code">{':global { ... }'}</code>
-								does the same for every rule inside it, and both forms work with CSS nesting.
+								<code class="inline-code">:global(...)</code> marks the wrapped part of a selector
+								as unscoped: it gets no hash class. Everything outside the parentheses is still
+								scoped, so where the <code class="inline-code">:global</code> sits decides how far
+								the rule can reach. The block form{' '}
+								<code class="inline-code">{':global { ... }'}</code> does the same for every rule
+								inside it, and both forms work with CSS nesting.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={GLOBAL_STYLES_HTML} />
 							</pre>
 							<p class="section-body">
-								A bare
-								<code class="inline-code">:global(.toast)</code>
-								is a plain page-wide rule. It matches anywhere: ancestors, siblings, other
-								components, exactly like a rule in a global stylesheet. A scoped prefix,
+								A bare <code class="inline-code">:global(.toast)</code> is a plain page-wide rule.
+								It matches anywhere: ancestors, siblings, other components, exactly like a rule in a
+								global stylesheet. A scoped prefix,{' '}
 								<code class="inline-code">.card :global(.footnote)</code>, reaches only elements
-								below your scoped
-								<code class="inline-code">.card</code>, a child component's internals included; it
-								can never climb up. A leading
-								<code class="inline-code">:global(.theme-dark) .card</code>
-								styles your own element only when an ancestor carries the class, and a compound
-								<code class="inline-code">.card:global(.is-open)</code>
-								styles your own element with a class another library toggles on it. A
-								<code class="inline-code">:global</code>
-								in the middle of a selector is the
-								<code class="inline-code">TSRX3011</code>
-								error: it may only start or end a selector. A
-								<code class="inline-code">{':global { ... }'}</code>
-								block drops its wrapper, leaving a comment behind, and everything inside it is
-								unscoped: at the top level it is several page-wide rules at once, and nested under a
-								scoped rule such as
-								<code class="inline-code">.card</code>
-								it reaches only below that element, exactly like the prefixed
-								<code class="inline-code">.card :global(.footnote)</code>. Plain nesting without
-								<code class="inline-code">:global</code>
-								scopes both parts.
+								below your scoped <code class="inline-code">.card</code>, a child component's
+								internals included; it can never climb up. A leading{' '}
+								<code class="inline-code">:global(.theme-dark) .card</code> styles your own element
+								only when an ancestor carries the class, and a compound{' '}
+								<code class="inline-code">.card:global(.is-open)</code> styles your own element with
+								a class another library toggles on it. A <code class="inline-code">:global</code> in
+								the middle of a selector is the <code class="inline-code">TSRX3011</code> error: it
+								may only start or end a selector. A{' '}
+								<code class="inline-code">{':global { ... }'}</code> block drops its wrapper,
+								leaving a comment behind, and everything inside it is unscoped: at the top level it
+								is several page-wide rules at once, and nested under a scoped rule such as{' '}
+								<code class="inline-code">.card</code> it reaches only below that element, exactly
+								like the prefixed <code class="inline-code">.card :global(.footnote)</code>. Plain
+								nesting without <code class="inline-code">:global</code> scopes both parts.
 							</p>
 							<h3 class="subsection-heading">Scoped rules beat bare global rules</h3>
 							<p class="section-body">
-								A scoped rule adds one hash class to its first compound only; later compounds get
-								<code class="inline-code">{':where(.<hash>)'}</code>, which adds no specificity, so
-								<code class="inline-code">.card .title</code>
-								becomes
-								<code class="inline-code">{'.card.<hash> .title:where(.<hash>)'}</code>. That makes
-								<code class="inline-code">:global</code>
-								predictable: a scoped
-								<code class="inline-code">.note</code>
-								(0,2,0) beats a bare
-								<code class="inline-code">:global(.note)</code>
-								(0,1,0) from anywhere on the page; a<code class="inline-code">theme.$class</code>
-								or class-map rule carries its hash too, so it also beats a bare global; and a
-								prefixed
-								<code class="inline-code">.card :global(.note)</code>
-								(0,3,0) beats a child component's own
-								<code class="inline-code">.note</code>
-								rule (0,2,0). At equal specificity the later stylesheet in module order wins.
+								A scoped rule adds one hash class to its first compound only; later compounds get{' '}
+								<code class="inline-code">{':where(.<hash>)'}</code>, which adds no specificity, so{' '}
+								<code class="inline-code">.card .title</code> becomes{' '}
+								<code class="inline-code">{'.card.<hash> .title:where(.<hash>)'}</code>. That makes{' '}
+								<code class="inline-code">:global</code> predictable: a scoped{' '}
+								<code class="inline-code">.note</code> (0,2,0) beats a bare{' '}
+								<code class="inline-code">:global(.note)</code> (0,1,0) from anywhere on the page; a{' '}
+								<code class="inline-code">theme.$class</code> or class-map rule carries its hash
+								too, so it also beats a bare global; and a prefixed{' '}
+								<code class="inline-code">.card :global(.note)</code> (0,3,0) beats a child
+								component's own <code class="inline-code">.note</code> rule (0,2,0). At equal
+								specificity the later stylesheet in module order wins.
 							</p>
 							<h3 class="subsection-heading">Pass a class to a child instead of reaching in</h3>
 							<p class="section-body">
-								To let a child component pick up your styles, pass
-								<code class="inline-code">theme.$class</code>
-								or a class-map entry such as
-								<code class="inline-code">theme.note</code>
-								as a prop. The dependency is visible in code, the child decides which of its
-								elements receive it, renaming a class inside the child cannot silently break the
-								parent, and the hash keeps the rule on the elements that carry it. With
-								<code class="inline-code">:global</code>
-								the child has no say and cannot see who styles it. Keep
-								<code class="inline-code">:global</code>
+								To let a child component pick up your styles, pass{' '}
+								<code class="inline-code">theme.$class</code> or a class-map entry such as{' '}
+								<code class="inline-code">theme.note</code> as a prop. The dependency is visible in
+								code, the child decides which of its elements receive it, renaming a class inside
+								the child cannot silently break the parent, and the hash keeps the rule on the
+								elements that carry it. With <code class="inline-code">:global</code> the child has
+								no say and cannot see who styles it. Keep <code class="inline-code">:global</code>{' '}
 								for a child you cannot change: a third-party component, or rendered HTML and
 								markdown. Always put a scoped selector in front so the rule cannot reach ancestors
 								or unrelated components, and keep it narrow: it overrides the child's own rules by
-								specificity. To style several of the child's classes, nest one
-								<code class="inline-code">{':global { ... }'}</code>
-								block under your scoped selector, so the prefix is written once.
+								specificity. To style several of the child's classes, nest one{' '}
+								<code class="inline-code">{':global { ... }'}</code> block under your scoped
+								selector, so the prefix is written once.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={GLOBAL_VS_CLASS_HTML} />
 							</pre>
 							<p class="section-body">
-								Page-wide rules such as
-								<code class="inline-code">body</code>, resets, and fonts belong in a
-								<code class="inline-code">.css</code>
-								file. A bare
-								<code class="inline-code">:global</code>
-								selector or a top-level
-								<code class="inline-code">{':global { ... }'}</code>
-								block works, but it is a global stylesheet hidden inside a component. Never write a
-								bare
-								<code class="inline-code">:global</code>
-								selector for anything but page-level elements.
+								Page-wide rules such as <code class="inline-code">body</code>, resets, and fonts
+								belong in a <code class="inline-code">.css</code> file. A bare{' '}
+								<code class="inline-code">:global</code> selector or a top-level{' '}
+								<code class="inline-code">{':global { ... }'}</code> block works, but it is a global
+								stylesheet hidden inside a component. Never write a bare{' '}
+								<code class="inline-code">:global</code> selector for anything but page-level
+								elements.
 							</p>
 							<table class="decision-table">
 								<thead>
@@ -1211,33 +1109,29 @@ export const FeaturesPage = () => @{
 									<tr>
 										<td>Style my own elements</td>
 										<td>
-											A<code class="inline-code">{'<style>'}</code>
-											block beside them; nothing global
+											A <code class="inline-code">{'<style>'}</code> block beside them; nothing
+											global
 										</td>
 									</tr>
 									<tr>
 										<td>Let a child component pick up my styles</td>
 										<td>
-											Pass
-											<code class="inline-code">theme.$class</code>
-											or
-											<code class="inline-code">theme.card</code>
-											as a prop
+											Pass <code class="inline-code">theme.$class</code> or{' '}
+											<code class="inline-code">theme.card</code> as a prop
 										</td>
 									</tr>
 									<tr>
 										<td>Style a child I cannot change (third-party component, rendered HTML)</td>
 										<td>
-											<code class="inline-code">.wrapper :global(.their-class)</code>, or
-											<code class="inline-code">{'.wrapper { :global { ... } }'}</code>
-											for several classes; scoped prefix first, keep it narrow
+											<code class="inline-code">.wrapper :global(.their-class)</code>, or{' '}
+											<code class="inline-code">{'.wrapper { :global { ... } }'}</code> for several
+											classes; scoped prefix first, keep it narrow
 										</td>
 									</tr>
 									<tr>
 										<td>React to page-level state</td>
 										<td>
-											<code class="inline-code">:global(.theme-dark) .card</code>
-											or
+											<code class="inline-code">:global(.theme-dark) .card</code> or{' '}
 											<code class="inline-code">{":global([data-theme='dark']) .card"}</code>
 										</td>
 									</tr>
@@ -1249,14 +1143,11 @@ export const FeaturesPage = () => @{
 									</tr>
 									<tr>
 										<td>
-											Page-wide rules:
-											<code class="inline-code">body</code>, resets, fonts
+											Page-wide rules: <code class="inline-code">body</code>, resets, fonts
 										</td>
 										<td>
-											A<code class="inline-code">.css</code>
-											file; a bare
-											<code class="inline-code">:global(body)</code>
-											only for page-level elements
+											A <code class="inline-code">.css</code> file; a bare{' '}
+											<code class="inline-code">:global(body)</code> only for page-level elements
 										</td>
 									</tr>
 								</tbody>
@@ -1266,56 +1157,44 @@ export const FeaturesPage = () => @{
 							</h3>
 							<p class="section-body">
 								Keyframes are scoped by default: the compiler adds the style block's hash to each
-								animation name and rewrites matching
-								<code class="inline-code">animation</code>
-								and
-								<code class="inline-code">animation-name</code>
-								references in that block. To share keyframes across components, prefix the name in
-								the declaration with
+								animation name and rewrites matching <code class="inline-code">animation</code> and{' '}
+								<code class="inline-code">animation-name</code> references in that block. To share
+								keyframes across components, prefix the name in the declaration with{' '}
 								<code class="inline-code">-global-</code>.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={GLOBAL_KEYFRAMES_HTML} />
 							</pre>
 							<p class="section-body">
-								The compiler emits
-								<code class="inline-code">@keyframes -global-fadeIn</code>
-								as
+								The compiler emits <code class="inline-code">@keyframes -global-fadeIn</code> as{' '}
 								<code class="inline-code">@keyframes fadeIn</code>, without a hash. Other style
-								blocks can use
-								<code class="inline-code">animation: fadeIn 1s</code>
-								or
-								<code class="inline-code">animation-name: fadeIn</code>
-								once the defining stylesheet is loaded. Only the keyframe name is global; selectors
-								such as
-								<code class="inline-code">.child</code>
-								remain sibling-scoped.
+								blocks can use <code class="inline-code">animation: fadeIn 1s</code> or{' '}
+								<code class="inline-code">animation-name: fadeIn</code> once the defining stylesheet
+								is loaded. Only the keyframe name is global; selectors such as{' '}
+								<code class="inline-code">.child</code> remain sibling-scoped.
 							</p>
 							<p class="section-body muted">
-								React note: TSRX keeps authored attributes as written. Use
-								<code class="inline-code">className</code>
-								on React host elements and React component props, just like ordinary JSX. The hash
-								class the compiler adds still goes out through React's
-								<code class="inline-code">className</code>.
+								React note: TSRX keeps authored attributes as written. Use{' '}
+								<code class="inline-code">className</code> on React host elements and React
+								component props, just like ordinary JSX. The hash class the compiler adds still goes
+								out through React's <code class="inline-code">className</code>.
 							</p>
 						</section>
 						<section class="doc-section" id="style-composition">
 							<h2 class="section-heading">Style composition</h2>
 							<p class="section-body">
-								Assign a<code class="inline-code">{'<style>'}</code>
-								block to a variable to get a theme you can hand to other scopes and components.
+								Assign a <code class="inline-code">{'<style>'}</code> block to a variable to get a
+								theme you can hand to other scopes and components.
 							</p>
 							<h3 class="subsection-heading">Assigning a block gives you an object</h3>
 							<p class="section-body">
-								Assigning a<code class="inline-code">{'<style>'}</code>
-								expression to a variable turns it into an object instead of a scoped block. The
-								object has
+								Assigning a <code class="inline-code">{'<style>'}</code> expression to a variable
+								turns it into an object instead of a scoped block. The object has{' '}
 								<code class="inline-code">$class</code>, the block's own hash class, plus one key
 								per class selector whose value is the hash class and the class name together. Pass
-								those strings to child components through
-								<code class="inline-code">class</code>, or
-								<code class="inline-code">className</code>
-								for React components. The block can live at module scope or inside a component body.
+								those strings to child components through <code class="inline-code">class</code>, or{' '}
+								<code class="inline-code">className</code> for React components. The block can live
+								at module scope or inside a component body.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={THEME_CLASS_HTML} />
@@ -1323,26 +1202,21 @@ export const FeaturesPage = () => @{
 							<h3 class="subsection-heading">An assigned block keeps every selector</h3>
 							<p class="section-body">
 								Every assigned block is a theme. It keeps every selector, element and descendant
-								selectors included, and none is removed as unused:
-								<code class="inline-code">$class</code>
-								is an ordinary string that destructuring, props, and return values carry anywhere,
-								and
-								<code class="inline-code">apply</code>
+								selectors included, and none is removed as unused:{' '}
+								<code class="inline-code">$class</code> is an ordinary string that destructuring,
+								props, and return values carry anywhere, and <code class="inline-code">apply</code>{' '}
 								can stamp it on scopes in other modules. An element that carries a class entry such
-								as
-								<code class="inline-code">styles.card</code>
-								carries the hash too, so the block's element rules match it as well.
+								as <code class="inline-code">styles.card</code> carries the hash too, so the block's
+								element rules match it as well.
 							</p>
 							<h3 class="subsection-heading">apply adds a theme to a whole scope</h3>
 							<p class="section-body">
-								<code class="inline-code">{'<style apply={theme} />'}</code>
-								adds the theme's
-								<code class="inline-code">$class</code>
-								to every element of the scope it sits in, so the theme's element and descendant
-								rules reach those elements as if the theme had been written there. A self-closed
-								apply adds no hash class of its own.
-								<code class="inline-code">{'<style apply={theme}>...</style>'}</code>
-								does both: it applies the theme and declares a scoped block in one go.
+								<code class="inline-code">{'<style apply={theme} />'}</code> adds the theme's{' '}
+								<code class="inline-code">$class</code> to every element of the scope it sits in, so
+								the theme's element and descendant rules reach those elements as if the theme had
+								been written there. A self-closed apply adds no hash class of its own.{' '}
+								<code class="inline-code">{'<style apply={theme}>...</style>'}</code> does both: it
+								applies the theme and declares a scoped block in one go.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={STYLE_APPLY_HTML} />
@@ -1351,70 +1225,59 @@ export const FeaturesPage = () => @{
 							<p class="section-body">
 								A theme's CSS is output before the block that applies it, and a theme must be
 								declared before any block that applies it. So a rule written in the applying scope
-								beats the theme's rule at equal specificity: the
-								<code class="inline-code">div</code>
-								above is black, not green. A theme from the same module is written into the output
-								as a string literal; an imported theme is read at runtime through
-								<code class="inline-code">theme.$class</code>.
+								beats the theme's rule at equal specificity: the{' '}
+								<code class="inline-code">div</code> above is black, not green. A theme from the
+								same module is written into the output as a string literal; an imported theme is
+								read at runtime through <code class="inline-code">theme.$class</code>.
 							</p>
 							<h3 class="subsection-heading">Themes compose</h3>
 							<p class="section-body">
-								A theme can apply another theme, and
-								<code class="inline-code">{'apply={[a, b]}'}</code>
-								applies several in order. The resulting
-								<code class="inline-code">$class</code>
-								lists the applied themes' classes first and the block's own hash class last, so a
-								composed theme reaches an element with everything it was built from.
+								A theme can apply another theme, and{' '}
+								<code class="inline-code">{'apply={[a, b]}'}</code> applies several in order. The
+								resulting <code class="inline-code">$class</code> lists the applied themes' classes
+								first and the block's own hash class last, so a composed theme reaches an element
+								with everything it was built from.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={THEME_COMPOSITION_HTML} />
 							</pre>
 							<h3 class="subsection-heading">
-								Opt single elements in with
-								<code class="inline-code">$class</code>
+								Opt single elements in with <code class="inline-code">$class</code>
 							</h3>
 							<p class="section-body">
-								<code class="inline-code">apply</code>
-								is all or nothing for a scope. To pick elements instead, put
-								<code class="inline-code">theme.$class</code>
-								on them. Reading
-								<code class="inline-code">$class</code>
-								anywhere in the module makes the block a theme, so its element and descendant rules
-								are kept, and only the elements that carry the class match them. The value is a
-								plain string, so a child component can take it through a prop and put it on its own
-								elements, where it comes before the child's own hash class.
+								<code class="inline-code">apply</code> is all or nothing for a scope. To pick
+								elements instead, put <code class="inline-code">theme.$class</code> on them. Reading{' '}
+								<code class="inline-code">$class</code> anywhere in the module makes the block a
+								theme, so its element and descendant rules are kept, and only the elements that
+								carry the class match them. The value is a plain string, so a child component can
+								take it through a prop and put it on its own elements, where it comes before the
+								child's own hash class.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={THEME_OPT_IN_HTML} />
 							</pre>
 							<p class="section-body">
-								Prefer
-								<code class="inline-code">$class</code>
-								when a theme should reach a handful of elements, or elements the parent does not
-								render itself, and
-								<code class="inline-code">apply</code>
-								when it should reach a whole scope. The two combine. Listing several themes'
-								<code class="inline-code">$class</code>
-								values on one element composes them there the way
-								<code class="inline-code">{'apply={[a, b]}'}</code>
-								composes them on a scope.
+								Prefer <code class="inline-code">$class</code> when a theme should reach a handful
+								of elements, or elements the parent does not render itself, and{' '}
+								<code class="inline-code">apply</code> when it should reach a whole scope. The two
+								combine. Listing several themes' <code class="inline-code">$class</code> values on
+								one element composes them there the way{' '}
+								<code class="inline-code">{'apply={[a, b]}'}</code> composes them on a scope.
 							</p>
 							<h3 class="subsection-heading">Cascade layers pass through</h3>
 							<p class="section-body">
-								<code class="inline-code">@layer</code>
-								rules inside a block are kept as written, and the selectors inside them are still
-								scoped, so a codebase that already orders its layers can keep doing so.
+								<code class="inline-code">@layer</code> rules inside a block are kept as written,
+								and the selectors inside them are still scoped, so a codebase that already orders
+								its layers can keep doing so.
 							</p>
 							<pre class="code-block">
 								<code innerHTML={STYLE_LAYER_HTML} />
 							</pre>
 							<p class="section-body muted">
-								Why not build scoping on
-								<code class="inline-code">@layer</code>? Layers order rules globally: every
-								participant has to agree on layer names and declare their order up front, and a
-								layer cannot be attached to one subtree of elements. Sibling scoping gives an order
-								you can read off the file, and
-								<code class="inline-code">apply</code>
+								Why not build scoping on <code class="inline-code">@layer</code>? Layers order rules
+								globally: every participant has to agree on layer names and declare their order up
+								front, and a layer cannot be attached to one subtree of elements. Sibling scoping
+								gives an order you can read off the file, and <code class="inline-code">apply</code>{' '}
 								adds classes, so a theme reaches exactly the elements of one scope.
 							</p>
 						</section>

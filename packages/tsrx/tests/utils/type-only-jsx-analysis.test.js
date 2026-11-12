@@ -246,6 +246,41 @@ function generator_module(body) {
 }
 
 /**
+ * Runs a module's runtime output, with JSX elements as plain
+ * `{ type, props }` objects and every import a function that returns its
+ * first argument.
+ * @param {{ code: string }} compiled
+ * @returns {Record<string, any>}
+ */
+function run_module({ code }) {
+	const { outputText } = ts.transpileModule(code, {
+		compilerOptions: {
+			jsx: ts.JsxEmit.React,
+			jsxFactory: 'h',
+			jsxFragmentFactory: 'Fragment',
+			module: ts.ModuleKind.CommonJS,
+			// Lowers `await using`, which Node does not run natively yet
+			target: ts.ScriptTarget.ES2022,
+		},
+	});
+	/** @param {unknown} type @param {Record<string, unknown> | null} props @param {unknown[]} children */
+	const h = (type, props, ...children) => ({
+		type,
+		props: children.length ? { ...props, children } : { ...props },
+	});
+	const imports = new Proxy({}, { get: () => (/** @type {unknown} */ value) => value });
+	const module = { exports: {} };
+	new Function('h', 'Fragment', 'require', 'module', 'exports', outputText)(
+		h,
+		'Fragment',
+		() => imports,
+		module,
+		module.exports,
+	);
+	return module.exports;
+}
+
+/**
  * @param {string} code
  * @returns {ts.SourceFile}
  */
@@ -531,10 +566,176 @@ describe('type-only JSX analysis', () => {
 				// delegated `yield` results from; nothing runs it.
 				expect(with_this.code).toMatch(type_only ? /\}\)\(\)/ : /\}\)\.call\(this\)/);
 				expect(with_arguments.code).toMatch(
-					type_only ? /\}\)\(\)/ : /\}\)\.apply\(this, arguments\)/,
+					type_only ? /\}\)\(\)/ : /\}\)\.call\(this, arguments\)/,
 				);
 			},
 		);
+
+		it('keeps the receiver of a JSX tag that reads this (#502)', () => {
+			const { View } = run_module(
+				compile_source(
+					'export class View {\n' +
+						'\tWidget = () => null;\n' +
+						'\t*render() {\n' +
+						"\t\treturn @if (true) { const message = yield 'ready'; <this.Widget message={message} /> };\n" +
+						'\t}\n' +
+						'}\n',
+					false,
+				),
+			);
+			const view = new View();
+			const iterator = view.render();
+
+			expect(iterator.next()).toEqual({ value: 'ready', done: false });
+			const { value, done } = iterator.next('resumed');
+			expect(done).toBe(true);
+			expect(value.type).toBe(view.Widget);
+			expect(value.props.message).toBe('resumed');
+		});
+
+		it('shares the enclosing arguments object with the generated generator (#264)', () => {
+			const { makeInput } = run_module(
+				compile_source(
+					'export function* makeInput(label: string) {\n' +
+						'\tconst original = arguments;\n' +
+						"\tconst element = label ? <input {...{}} ref={() => {}} data-same={yield ({ arguments }).arguments === original} title={yield (arguments[0] = 'changed')} /> : null;\n" +
+						'\treturn { element, label: arguments[0] };\n' +
+						'}\n',
+					false,
+					IN_PLACE_PLATFORM,
+				),
+			);
+			const iterator = makeInput('initial');
+
+			expect(iterator.next()).toEqual({ value: true, done: false });
+			expect(iterator.next('same').value).toBe('changed');
+			const { value, done } = iterator.next('resumed');
+			expect(done).toBe(true);
+			expect(value.element.props).toMatchObject({ 'data-same': 'same', title: 'resumed' });
+			expect(value.label).toBe('changed');
+		});
+
+		it.each([
+			['the enclosing function', "\tconst __arguments = 'mine';\n\treturn @if (true) {", ''],
+			['the branch', '\treturn @if (true) {', " const __arguments = 'mine';"],
+		])(
+			'reads a __arguments declared in %s as written, not as the arguments parameter (#264)',
+			(_where, opening, declaration) => {
+				const { g } = run_module(
+					compile_source(
+						'export function* g(label: string) {\n' +
+							`${opening}${declaration} const x = yield 1; <div user={__arguments} first={arguments[0]} x={x} /> };\n` +
+							'}\n',
+						false,
+					),
+				);
+				const iterator = g('initial');
+				iterator.next();
+				expect(iterator.next('resumed').value.props).toEqual({
+					user: 'mine',
+					first: 'initial',
+					x: 'resumed',
+				});
+			},
+		);
+
+		it('renames only the references to the enclosing arguments (#264)', () => {
+			const { g } = run_module(
+				compile_source(
+					'export function* g(label: string) {\n' +
+						'\treturn @if (true) {\n' +
+						'\t\tenum Key { arguments = 7 }\n' +
+						'\t\tconst typed: { arguments: number } = { arguments: 3 };\n' +
+						'\t\tconst x = yield Key.arguments;\n' +
+						'\t\t<div key_value={Key.arguments} typed={typed.arguments} first={arguments[0]} x={x} />\n' +
+						'\t};\n' +
+						'}\n',
+					false,
+				),
+			);
+			const iterator = g('initial');
+
+			expect(iterator.next().value).toBe(7);
+			expect(iterator.next('resumed').value.props).toEqual({
+				key_value: 7,
+				typed: 3,
+				first: 'initial',
+				x: 'resumed',
+			});
+		});
+
+		it('passes the enclosing arguments to a JSX tag that reads it (#264)', () => {
+			const { g } = run_module(
+				compile_source(
+					'export function* g(components: { Widget: unknown }) {\n' +
+						'\t(arguments as any).Widget = components.Widget;\n' +
+						"\treturn @if (true) { const value = yield 'ready'; <arguments.Widget value={value} /> };\n" +
+						'}\n',
+					false,
+				),
+			);
+			const Widget = () => null;
+			const iterator = g({ Widget });
+			iterator.next();
+			const { value } = iterator.next('resumed');
+
+			expect(value.type).toBe(Widget);
+			expect(value.props.value).toBe('resumed');
+		});
+
+		it.each([
+			[
+				'@switch case',
+				'@switch (1) { @case 1: { const title = yield* prompts(); <div>{title}</div> } }',
+			],
+			['@if branch', '@if (true) { const title = yield* prompts(); <div>{title}</div> }'],
+		])(
+			'delegates to an async iterable from a closure in an async generator (%s, #265)',
+			async (_name, directive) => {
+				const compiled = compile_source(
+					"async function* prompts() { yield 'question'; return 'answer'; }\n" +
+						`export async function* sample() { return ${directive}; }\n`,
+					false,
+				);
+				expect(compiled.errors).toEqual([]);
+				expect(compiled.code).toContain('yield* (async function* () {');
+
+				const iterator = run_module(compiled).sample();
+				expect(await iterator.next()).toEqual({ value: 'question', done: false });
+				const { value, done } = await iterator.next();
+				expect(done).toBe(true);
+				expect(value).toMatchObject({ type: 'div', props: { children: ['answer'] } });
+			},
+		);
+
+		it('awaits a closure that holds an await using declaration (#501)', async () => {
+			const compiled = compile_source(
+				'export async function App({ resource }: { resource: AsyncDisposable | null }) @{\n' +
+					'\t<div>\n' +
+					'\t\t@if (resource) {\n' +
+					'\t\t\tawait using handle = resource;\n' +
+					'\t\t\t<span>{String(handle)}</span>\n' +
+					'\t\t}\n' +
+					'\t</div>\n' +
+					'}\n',
+				false,
+			);
+			expect(compiled.errors).toEqual([]);
+			expect(compiled.code).toContain('await (async () => {');
+
+			/** @type {string[]} */
+			const disposed = [];
+			const resource = {
+				[Symbol.asyncDispose]: async () => disposed.push('resource'),
+				toString: () => 'handle',
+			};
+			const element = await run_module(compiled).App({ resource });
+			expect(disposed).toEqual(['resource']);
+			expect(element).toMatchObject({
+				type: 'div',
+				props: { children: [{ type: 'span', props: { children: ['handle'] } }] },
+			});
+		});
 
 		it('delegates to a closure made both async and a generator without awaiting it', () => {
 			const source = generator_module(
