@@ -5,7 +5,13 @@
 /** @import { ErrorKind } from '../shared/errors.js' */
 
 import { describe, expect, it } from 'vitest';
-import { acorn, analyzeTsrx, isLayoutWhitespace, parseModule } from '../../src/index.js';
+import {
+	acorn,
+	analyzeTsrx,
+	getCommentHandlers,
+	isLayoutWhitespace,
+	parseModule,
+} from '../../src/index.js';
 import { TS_ERRORS, TSRX_ERRORS, UPSTREAM_ERRORS } from '../../src/diagnostics.js';
 import { node_children } from '../../src/utils/ast.js';
 import { code_of, error_with, line_column, thrown } from '../shared/errors.js';
@@ -2677,7 +2683,8 @@ abc
 		);
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2709,7 +2716,8 @@ abc
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2753,7 +2761,8 @@ export function App() @{
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2784,7 +2793,8 @@ export function App() @{
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2811,7 +2821,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 		expect(ast.body.map((statement) => statement.type)).toEqual(['VariableDeclaration']);
 
 		const style = find_first(ast, function (node) {
@@ -2836,7 +2847,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2871,7 +2883,8 @@ export function App() @{ <div /> }`;
 		);
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const section = find_first(ast, function (node) {
 			return (
@@ -2899,7 +2912,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2924,7 +2938,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const div = find_first(ast, function (node) {
 			return (
@@ -2942,6 +2957,31 @@ export function App() @{ <div /> }`;
 		expect(child(div, 0, 'JSXStyleElement').unclosed).toBe(true);
 		expect(div.unclosed).toBeFalsy();
 		expect(div.closingElement).toBeTruthy();
+	});
+
+	// A loose parse, the editor's, recovers unclosed and mismatched markup and
+	// reports it where a collecting parse does (#978).
+	it.each([
+		['export function C() @{\n\t<div>\n}\n', 'TSRX1001'],
+		['export function C() @{\n\t<div><span></div>\n}\n', 'TSRX1002'],
+		['export function C() {\n\treturn <div>;\n}\n', 'TSRX1001'],
+		[
+			'export function C() @{\n\t<main>\n\t\t<section>\n\t\t\t<p>x\n\t\t</section>\n\t</main>\n}\n',
+			'TSRX1002',
+		],
+		['export const a = <><div>;\n', 'TSRX1001'],
+	])('reports the broken markup of %j in a loose parse, as when collecting', (source, code) => {
+		/** @type {CompileError[]} */
+		const loose = [];
+		/** @type {CompileError[]} */
+		const collected = [];
+		parseModule(source, 'App.tsrx', { loose: true, collect: true, errors: loose });
+		parseModule(source, 'App.tsrx', { collect: true, errors: collected });
+
+		/** @param {CompileError[]} errors */
+		const reported = (errors) => errors.map((error) => [error.code, error.pos, error.end]);
+		expect(new Set(loose.map((error) => error.code))).toEqual(new Set([code]));
+		expect(reported(loose)).toEqual(reported(collected));
 	});
 
 	it('parses module-scope style expressions followed by JavaScript statements', () => {
@@ -4826,6 +4866,51 @@ foo();`;
 		expect(directive.empty).toBeNull();
 	});
 
+	it('parses an element with 20,000 children without running out of stack (#1188)', () => {
+		const count = 20_000;
+		// Elements, text, expressions, and code blocks: all but the text are a
+		// child each
+		const children = Array.from(
+			{ length: count },
+			(_, i) => [`<i>${i}</i>`, `t${i}`, `{${i}}`, `@{ const v = ${i}; <b>{v}</b> }`][i % 4],
+		).join('\n');
+		/** @type {Array<[label: string, source: string]>} */
+		const cases = [
+			['a returned element', `export function App() {\n\treturn <div>\n${children}\n</div>;\n}`],
+			['an element in a code block', `export function App() @{\n\t<div>\n${children}\n</div>\n}`],
+			[
+				'a fragment in a directive body',
+				`export function App() @{\n\t<main>@if (a) {\n<>\n${children}\n</>\n}</main>\n}`,
+			],
+			[
+				'an element in a child container',
+				`export function App() @{\n\t<main>{<div>\n${children}\n</div>}</main>\n}`,
+			],
+		];
+		for (const [label, source] of cases) {
+			for (const options of [
+				undefined,
+				{ collect: true, errors: [], comments: [] },
+				{ loose: true, errors: [], comments: [] },
+			]) {
+				const parent = /** @type {any} */ (
+					find_first(
+						parseModule(source, 'App.tsrx', options),
+						(node) =>
+							(node.type === 'JSXElement' || node.type === 'JSXFragment') &&
+							/** @type {any} */ (node).children.length > count,
+					)
+				);
+				expect(
+					parent?.children.filter((/** @type {AST.Node} */ child) => child.type !== 'JSXText')
+						.length,
+					label,
+				).toBe((count / 4) * 3);
+				expect(options?.errors ?? [], label).toEqual([]);
+			}
+		}
+	});
+
 	it('ends an element body of if, else, a loop or a label at its `;` (#924)', () => {
 		/** @type {Array<[source: string, types: string[]]>} */
 		const cases = [
@@ -4954,6 +5039,39 @@ else <b />;`,
 			(node) => node.type === 'JSXForExpression',
 		);
 		expect(loop).toMatchObject({ index: { name: 'i' }, key: { type: 'MemberExpression' } });
+	});
+
+	it('reads an element right after `key` in an @for head (#1146)', () => {
+		/** @type {Array<[head: string, key: string]>} */
+		const cases = [
+			['key <b />', 'JSXElement'],
+			['index i; key <b />', 'JSXElement'],
+			['key<b />', 'JSXElement'],
+			['key <b>{x}</b>', 'JSXElement'],
+			['key <></>', 'JSXFragment'],
+			['key <T,>(x: T) => x', 'ArrowFunctionExpression'],
+			['key /a/.source + x', 'BinaryExpression'],
+		];
+		for (const [head, key] of cases) {
+			for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+				const loop = find_first(
+					parseModule(
+						`export function A(props: { xs: string[] }) @{
+	<ul>
+		@for (const x of props.xs; ${head}) {
+			<li>{x}</li>
+		}
+	</ul>
+}`,
+						'A.tsrx',
+						options,
+					),
+					(node) => node.type === 'JSXForExpression',
+				);
+				expect(loop, head).toMatchObject({ key: { type: key } });
+				expect(options?.errors ?? [], head).toEqual([]);
+			}
+		}
 	});
 
 	it('parses @for inside a statement-container fragment output with JSX siblings', () => {
@@ -6827,6 +6945,52 @@ describe('division and private fields in template JS positions', () => {
 	});
 });
 
+describe('raw-text <style> elements', () => {
+	// A closing tag can have whitespace before its `>` in JSX, as `</script >`
+	// ends a script (#793).
+	it('ends the body at `</style`, optional whitespace, and `>`', async () => {
+		const closings = ['</style>', '</style >', '</style\n\t\t>', '</style\t\f\r >'];
+		const sources = closings.map(
+			(closing) => `export function App() @{
+	<>
+		<style>.a { color: red; }${closing}
+		<div class="a" />
+	</>
+}`,
+		);
+		const outcomes = await parse_in_worker_with_ast(sources.map((source) => ({ source })));
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const closing = closings[index];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(closing)} threw ${outcome.message}`);
+			const style = /** @type {AST.JSXStyleElement & AST.NodeWithLocation} */ (
+				find_first(outcome.ast, (node) => node.type === 'JSXStyleElement')
+			);
+			const closing_element = /** @type {AST.NodeWithLocation} */ (
+				/** @type {unknown} */ (style.closingElement)
+			);
+			expect(sources[index].slice(closing_element.start, closing_element.end)).toBe(closing);
+			expect(
+				find_first(outcome.ast, (node) => node.type === 'JSXElement'),
+				closing,
+			).toMatchObject({ openingElement: { name: { name: 'div' } } });
+		}
+	});
+});
+
+describe("a closing tag that doesn't match the open element", () => {
+	it("names a fragment's closing tag `</>` in the mismatch it reports (#712)", () => {
+		for (const source of [
+			'const a = <b>x</>;',
+			'export function App() @{\n\t<div><b>x</></div>\n}',
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				"Expected closing tag to match opening tag. Expected '</b>' but found '</>'",
+			);
+		}
+	});
+});
+
 describe('raw-text <script> elements', () => {
 	it('captures the body verbatim as `content`, with no children', () => {
 		const script = findElement(
@@ -7311,6 +7475,233 @@ namespace N {
 
 		expect(staticBlock?.innerComments?.map((comment) => comment.value)).toEqual([' static']);
 		expect(moduleBlock?.innerComments?.map((comment) => comment.value)).toEqual([' namespace']);
+	});
+
+	/**
+	 * Count the characters that string scans examine while `run` runs. It
+	 * covers `RegExp#exec`, which `test` and the string methods that take a
+	 * regex (`match`, `matchAll`, `replace`, `replaceAll`, `search`, `split`)
+	 * call once it is replaced, and `String#includes`, `indexOf`,
+	 * `lastIndexOf`, and `split` by a string. A scan is charged from where it
+	 * starts to the end of its match, or to the end of the input when it fails;
+	 * `split` by a string is charged the whole input. A failing regex that can
+	 * match only where it starts (`^` without `m`, or sticky) is charged the
+	 * rest of the input as well, unless it is one repeated character class, as
+	 * in `/^\s*$/`, which stops at the first character outside the class.
+	 * Loops written by hand are not counted.
+	 * @param {() => void} run
+	 * @returns {number}
+	 */
+	function count_scanned_characters(run) {
+		const { exec } = RegExp.prototype;
+		const { includes, indexOf, lastIndexOf, split } = String.prototype;
+		const one_class_run = /^\^(\\[sSdDwW]|\[(?:\\.|[^\]\\])*\])[*+]\$?$/;
+		let scanned = 0;
+		RegExp.prototype.exec = function (/** @type {string} */ input) {
+			const text = String(input);
+			const start = this.global || this.sticky ? this.lastIndex : 0;
+			const match = exec.call(this, text);
+			if (match) {
+				scanned += match.index + match[0].length - start;
+			} else if ((this.source.startsWith('^') && !this.multiline) || this.sticky) {
+				const one_class = exec.call(one_class_run, this.source);
+				const run = one_class
+					? exec.call(
+							new RegExp(
+								`^${one_class[1]}*`,
+								[...this.flags].filter((flag) => flag !== 'g' && flag !== 'y').join(''),
+							),
+							text.slice(start),
+						)
+					: null;
+				scanned += run ? Math.min(run[0].length + 1, text.length - start) : text.length - start;
+			} else {
+				scanned += text.length - start;
+			}
+			return match;
+		};
+		/**
+		 * @param {string} text
+		 * @param {string} search
+		 * @param {number} from
+		 * @param {number} found
+		 */
+		const charge = (text, search, from, found) => {
+			scanned += found < 0 ? text.length - from : found + search.length - from;
+		};
+		String.prototype.includes = function (/** @type {string} */ search, position = 0) {
+			const found = indexOf.call(this, search, position);
+			charge(String(this), search, position, found);
+			return found >= 0;
+		};
+		String.prototype.indexOf = function (/** @type {string} */ search, position = 0) {
+			const found = indexOf.call(this, search, position);
+			charge(String(this), search, position, found);
+			return found;
+		};
+		String.prototype.lastIndexOf = function (/** @type {string} */ search, position = Infinity) {
+			const found = lastIndexOf.call(this, search, position);
+			const from = Math.min(position, this.length);
+			scanned += found < 0 ? from : from - found;
+			return found;
+		};
+		String.prototype.split = function (/** @type {any} */ separator, /** @type {any} */ limit) {
+			// A regex separator splits through `exec`, which counts it
+			if (!(separator instanceof RegExp)) scanned += this.length;
+			return split.call(this, separator, limit);
+		};
+		try {
+			run();
+		} finally {
+			RegExp.prototype.exec = exec;
+			String.prototype.includes = includes;
+			String.prototype.indexOf = indexOf;
+			String.prototype.lastIndexOf = lastIndexOf;
+			String.prototype.split = split;
+		}
+		return scanned;
+	}
+
+	it.each([
+		[
+			'functions',
+			(/** @type {number} */ i) => `export function f${i}(value) { return value + ${i}; }`,
+		],
+		['assignments without parentheses', (/** @type {number} */ i) => `x${i} = ${i};`],
+	])(
+		'scans the code before a distant comment once, not once per statement, after %s (#990)',
+		(_, statement) => {
+			/** @param {number} count */
+			const scan = (count) => {
+				const source =
+					Array.from({ length: count }, (_, i) => statement(i)).join('\n') +
+					'\n// A final comment\n';
+				/** @type {AST.Program | undefined} */
+				let ast;
+				const scanned = count_scanned_characters(() => {
+					ast = parseModule(source, 'App.ts');
+				});
+				expect(ast?.body.at(-1)?.trailingComments?.map((comment) => comment.value)).toEqual([
+					' A final comment',
+				]);
+				return scanned;
+			};
+
+			// Twice the statements is about twice the work; rescanning the rest of
+			// the file from every statement is four times the work
+			expect(scan(800)).toBeLessThan(3 * scan(400));
+		},
+	);
+
+	/**
+	 * Count the elements that `Array#indexOf`, `Array#includes`, and
+	 * `Array#some` look at while `run` runs: from where a search starts to its
+	 * match, or to the end of the array when there is none.
+	 * @param {() => void} run
+	 * @returns {number}
+	 */
+	function count_array_searches(run) {
+		const { indexOf, includes, some } = Array.prototype;
+		let compared = 0;
+		/**
+		 * @param {unknown[]} array
+		 * @param {unknown} search
+		 * @param {number} from
+		 */
+		const charge = (array, search, from) => {
+			const found = indexOf.call(array, search, from);
+			compared += found < 0 ? array.length - from : found + 1 - from;
+		};
+		Array.prototype.indexOf = function (search, from = 0) {
+			charge(this, search, from);
+			return indexOf.call(this, search, from);
+		};
+		Array.prototype.includes = function (search, from = 0) {
+			charge(this, search, from);
+			return includes.call(this, search, from);
+		};
+		Array.prototype.some = function (predicate, this_arg) {
+			return some.call(this, (...args) => {
+				compared++;
+				return predicate.apply(this_arg, args);
+			});
+		};
+		try {
+			run();
+		} finally {
+			Array.prototype.indexOf = indexOf;
+			Array.prototype.includes = includes;
+			Array.prototype.some = some;
+		}
+		return compared;
+	}
+
+	/** @type {Array<[string, (i: number) => string, (entries: string) => string]>} */
+	const long_lists = [
+		['statements', (i) => `x${i} = ${i};`, (entries) => entries],
+		['array elements', (i) => `x${i} = ${i},`, (entries) => `[\n${entries}\n];`],
+		['object properties', (i) => `k${i}: ${i},`, (entries) => `({\n${entries}\n});`],
+		[
+			'code block statements',
+			(i) => `x${i} = ${i};`,
+			(entries) => `export function App() @{\n${entries}\n<div />\n}`,
+		],
+		['parameters', (i) => `a${i},`, (entries) => `function f(\n${entries}\n) {}`],
+		['call arguments', (i) => `${i},`, (entries) => `f(\n${entries}\n);`],
+		[
+			'attributes',
+			(i) => `a${i}="${i}"`,
+			(entries) => `export function App() @{\n<div\n${entries}\n/>\n}`,
+		],
+		['specifiers', (i) => `a${i},`, (entries) => `export {\n${entries}\n} from './a';`],
+		['template literal expressions', (i) => `\${${i}}`, (entries) => `const t = \`${entries}\`;`],
+		[
+			'children before a comment in an element',
+			(i) => `<b>${i}</b>`,
+			(entries) => `export function App() @{\n<div>\n${entries}\n{/* c */}\n</div>\n}`,
+		],
+	];
+
+	it.each(long_lists)(
+		'finds each of many %s among its siblings without searching them (#1163)',
+		(_, entry, list) => {
+			/** @param {number} count */
+			const search = (count) => {
+				const source =
+					list(Array.from({ length: count }, (_, i) => entry(i)).join('\n')) +
+					'\n// A final comment\n';
+				/** @type {AST.Program | undefined} */
+				let ast;
+				const compared = count_array_searches(() => {
+					ast = parseModule(source, 'App.tsrx');
+				});
+				expect(ast?.body.at(-1)?.trailingComments?.map((comment) => comment.value)).toEqual([
+					' A final comment',
+				]);
+				return compared;
+			};
+
+			// Searching a list for each of its entries is four times the work
+			expect(search(800)).toBeLessThan(3 * search(400));
+		},
+	);
+
+	it('leaves a comment after a root node with no parent where it is', () => {
+		const source = 'a + b; // c';
+		/** @type {AST.CommentWithLocation[]} */
+		const comments = [];
+		const { onComment, add_comments } = getCommentHandlers(source, comments);
+		const program = acorn.parse(source, {
+			ecmaVersion: 'latest',
+			locations: true,
+			// It reads the locations, which `locations: true` always passes
+			onComment: /** @type {import('acorn').Options['onComment']} */ (onComment),
+		});
+		const expression = /** @type {AST.ExpressionStatement} */ (program.body[0]).expression;
+
+		add_comments(expression);
+		expect(expression.trailingComments).toBeUndefined();
+		expect(comments.map((comment) => comment.value)).toEqual([' c']);
 	});
 });
 
@@ -10277,13 +10668,22 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			match: { type: 'ExportDefaultDeclaration', declaration: { value: 2 } },
 		},
 		{
-			// At the name of a declaration or of an exported name.
+			// At the name of a declaration or of an exported name. The function comes
+			// first, so `export { b as default }` merges with it (#1161).
 			source: 'export default a;\nlet b;\nexport { b as default };\nexport default function f() {}',
 			errors: [
 				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'a;'],
-				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'default }'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'f() {}'],
 			],
 			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '1:15'],
+		},
+		{
+			source: 'let a, b;\nexport { a as default };\nexport { b as default };',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'default };\nexport'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'default };'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '2:14'],
 		},
 		{
 			source: 'let a, c;\nexport { a as b, c as b };\nexport * as b from "m";',
@@ -10299,6 +10699,68 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				specifiers: [{ exported: { name: 'b' } }, { exported: { name: 'b' } }],
 			},
 		},
+		// `export =` declares the name `export=` (#1161).
+		{
+			source: 'let x = 1, y = 2;\nexport = x;\nexport = y;',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'x;'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'y;'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '2:9'],
+		},
+		// A string name is the name it spells.
+		{
+			source: 'let a = 1, c = 2;\nexport { a as "b" };\nexport { c as b };',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, '"b"'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'b };'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '2:14'],
+		},
+		// `export * as default` exports a name, which isn't a default export.
+		{
+			source: 'export * as default from "m";\nexport * as default from "n";',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'default from "m"'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'default from "n"'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:12'],
+		},
+		// TypeScript's binder declares a function before the other statements.
+		{
+			source: 'declare const x: unknown;\nexport default x;\nexport default function f() {}',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'x;'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'f()'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '2:15'],
+		},
+		// A parenthesized name is an expression to TypeScript, reported at `export`.
+		{
+			source: 'let a = 1, c = 1;\nexport default (a);\nexport default c;',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default (a)'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'c;'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '2:0'],
+		},
+		// Each namespace and ambient module has exports of its own.
+		{
+			source: 'declare namespace N { const a: number; export { a }; export { a }; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a }; export'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a }; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:48'],
+		},
+		{
+			source: 'declare module "m" {\n\texport default 1;\n\texport default 2;\n}',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 1'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 2'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '2:1'],
+		},
 		// A type-only import with a default and named bindings (#881).
 		{
 			source: "import type a, { b } from 'a';",
@@ -10310,6 +10772,14 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				importKind: 'type',
 				specifiers: [{ type: 'ImportDefaultSpecifier' }, { type: 'ImportSpecifier' }],
 			},
+		},
+		{
+			// Empty named bindings too (#1161).
+			source: "import type a, {} from 'a';",
+			errors: [[TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, 'type a']],
+			throws: [TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, '1:7'],
+			pick: first,
+			match: { type: 'ImportDeclaration', specifiers: [{ type: 'ImportDefaultSpecifier' }] },
 		},
 		// `import type` on an import alias, at the declaration (#785).
 		{
@@ -12288,6 +12758,66 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		);
 	});
 
+	it('reports a duplicate export as TypeScript names it, once for each conflict', () => {
+		// Each declaration by its name as written, a string name in its quotes.
+		// The third export conflicts with the first as a default export, after the
+		// second conflicted with it as a name (#1161).
+		/** @type {Array<[source: string, errors: Array<[message: string, at: string]>]>} */
+		const cases = [
+			[
+				"let a = 1, c = 2;\nexport { a as 'b' };\nexport { c as b };",
+				[
+					["Duplicate identifier ''b''.", "'b'"],
+					["Duplicate identifier 'b'.", 'b };'],
+				],
+			],
+			[
+				'let x = 1;\nexport { x as default };\nexport * as default from "m";\nexport default 1;',
+				[
+					["Duplicate identifier 'default'.", 'default };'],
+					['A module cannot have multiple default exports.', 'default };'],
+					["Duplicate identifier 'default'.", 'default from'],
+					['A module cannot have multiple default exports.', 'export default 1'],
+				],
+			],
+		];
+		for (const [source, expected] of cases) {
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'a.ts', { collect: true, errors });
+			expect(
+				errors.map(({ message, pos }, i) => [
+					message,
+					source.slice(pos, (pos ?? 0) + (expected[i]?.[1].length ?? 0)),
+				]),
+				source,
+			).toEqual(expected);
+		}
+	});
+
+	it("leaves to TypeScript's checker the duplicate exports its binder allows", async () => {
+		// A default export of an expression that isn't a name (TS2323 from the
+		// checker), and a name that a function declaration exports too.
+		const sources = [
+			'let a = 1, c = 1;\nexport default (a);\nexport { c as default };',
+			'let a = { b: 1 }, c = 1;\nexport default a!.b;\nexport { c as default };',
+			'export default 1;\nexport * as default from "m";',
+			'export * as default from "m";\nexport default function f() {}',
+		];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) =>
+				[undefined, ...collect_modes].map((options) => ({ source, options })),
+			),
+		);
+
+		expect(outcomes).toEqual(
+			sources.flatMap(() => [
+				{ ok: true, errors: undefined },
+				...collect_modes.map(() => ({ ok: true, errors: [] })),
+			]),
+		);
+	});
+
 	it('records no strict mode reserved word where TypeScript checks none', async () => {
 		// In an ambient context, or as the name an export specifier exports.
 		const sources = [
@@ -13234,6 +13764,48 @@ describe('JSX whitespace in template text', () => {
 			'a space after a closing tag in a setup statement of an @case',
 			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tconst a = <div><b>1</b> 2<i /></div>;\n\t\t\t\t<p>{a}</p>\n\t\t\t}\n\t\t}\n\t</main>\n}',
 			['<b>', ' 2', '<i>'],
+		],
+		// An element in a directive header reads its text as anywhere else (#649)
+		[
+			'text before an element in an element in an @for header',
+			'export const App = () => @for (const item of [<div>Hello<b /></div>]) { <>{item}</> };',
+			['Hello', '<b>'],
+		],
+		[
+			'text before an element in an element in an @for header inside an element',
+			'export const App = () => <main>@for (const item of [<div>Hello<b /></div>]) { <>{item}</> }</main>;',
+			['Hello', '<b>'],
+		],
+		[
+			'a space after a closing tag in an element in an @for header inside an element',
+			'export const App = () => <main>@for (const item of [<div><b>1</b> 2</div>]) { <>{item}</> }</main>;',
+			['<b>', ' 2'],
+		],
+		[
+			'text before an element in an element in an @if header inside an element',
+			'export const App = () => <main>@if ([<div>Hello<b /></div>].length) { <p /> }</main>;',
+			['Hello', '<b>'],
+		],
+		[
+			'text before an element in an element in an @case test',
+			'export const App = () => <main>@switch (x) { @case <div>Hello<b /></div>: { <p /> } }</main>;',
+			['Hello', '<b>'],
+		],
+		[
+			'a `/` and a `#` in an element in an @for header inside an element',
+			'export const App = () => <main>@for (const item of [<div>5/2 #x<b /></div>]) { <>{item}</> }</main>;',
+			['5/2 #x', '<b>'],
+		],
+		// The code after a self-closing element in a header stays the header's
+		[
+			'text after an @for whose header holds a self-closing element',
+			'export const App = () => <div>@for (const item of [<b />]) { <>{item}</> } after</div>;',
+			['JSXForExpression', ' after'],
+		],
+		[
+			'text after an @if whose header holds a self-closing element',
+			'export const App = () => <div>@if (<b /> != null) { <p /> } after</div>;',
+			['JSXIfExpression', ' after'],
 		],
 		// A spread attribute's argument stays code
 		[

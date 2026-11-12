@@ -1,5 +1,8 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
+	runSharedCatchErrorTypeTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -13,6 +16,7 @@ import { compile as compileServer } from '../src/index.js';
 import { compile_to_volar_mappings as compileServerToVolarMappings } from '../src/index.js';
 import { compile as compileDom } from '../src/dom.js';
 import { compile_to_volar_mappings as compileDomToVolarMappings } from '../src/dom.js';
+import { hono_dom_validation_work } from '../src/platform.js';
 import * as honoServerRuntime from '../src/index.js';
 import * as honoDomRuntime from '../src/dom.js';
 
@@ -28,7 +32,14 @@ runSharedCompileDiagnosticsTests({
 	compile_to_volar_mappings: compileServerToVolarMappings,
 	name: 'hono',
 });
+runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings: compileServerToVolarMappings,
+	name: 'hono',
+	package_dir: fileURLToPath(new URL('..', import.meta.url)),
+	jsx_import_source: 'hono/jsx',
+});
 runSharedCodeBlockChildrenTests({ compile: compileServer, name: 'hono' });
+runSharedAnonymousComponentTests({ compile: compileServer, name: 'hono' });
 runSharedHookBodyTests({
 	compile: compileServer,
 	compile_to_volar_mappings: compileServerToVolarMappings,
@@ -46,7 +57,14 @@ runSharedCompileDiagnosticsTests({
 	compile_to_volar_mappings: compileDomToVolarMappings,
 	name: 'hono-dom',
 });
+runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings: compileDomToVolarMappings,
+	name: 'hono-dom',
+	package_dir: fileURLToPath(new URL('..', import.meta.url)),
+	jsx_import_source: 'hono/jsx/dom',
+});
 runSharedCodeBlockChildrenTests({ compile: compileDom, name: 'hono-dom' });
+runSharedAnonymousComponentTests({ compile: compileDom, name: 'hono-dom' });
 runSharedClassFunctionComponentTests({
 	compile: compileDom,
 	compile_to_volar_mappings: compileDomToVolarMappings,
@@ -77,10 +95,70 @@ describe('removed lazy destructuring', () => {
 	});
 });
 
+describe('@tsrx/hono @pending fallback', () => {
+	// Hono's DOM renderer can't recover from a `Suspense` fallback component
+	// that throws, so Hono keeps the fallback an expression the parent
+	// evaluates while rendering, where an enclosing `@catch` catches the throw.
+	it.each([
+		['server', compileServer],
+		['dom', compileDom],
+	])('%s compiler keeps the @pending body inline', (_name, compile) => {
+		const { code } = compile(
+			`export function App() @{
+				@try {
+					<Child />
+				} @pending {
+					const label = loadLabel();
+					<p>{label}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(/<__Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
+	});
+});
+
 describe('@tsrx/hono server compiler', () => {
 	it('does not expose the compiler-only Dynamic helper at runtime', () => {
 		expect(honoServerRuntime).not.toHaveProperty('Dynamic');
 		expect(honoDomRuntime).not.toHaveProperty('Dynamic');
+	});
+
+	// Hono renders `className` as `class`, so a spread's class moves to the
+	// name of the element's class attribute.
+	it('keeps the class a host spread passes beside the scope classes', () => {
+		const { code, cssHash } = compileServer(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span className="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(
+			/import \{\s*merge_spread_class as __merge_spread_class,[^}]*\} from '@tsrx\/hono\/ref'/,
+		);
+		expect(code).toContain(
+			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", "className", "text-both"))} />`,
+		);
+		expect(code).toContain(
+			`<span className="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "className", "class", "text-both"))} />`,
+		);
+		// A spread before the class attribute drops its class, so its
+		// `className` can't override the attribute.
+		expect(code).toContain(
+			`<span {...__normalize_spread_props(__merge_spread_class(props, null, "class", "className"))} class="last ${cssHash}" />`,
+		);
 	});
 
 	it('emits Hono server JSX helpers and preserves async components', () => {
@@ -103,9 +181,9 @@ describe('@tsrx/hono server compiler', () => {
 		expect(code).toContain("from '@tsrx/hono/error-boundary'");
 		expect(code).toContain("from '@tsrx/hono/runtime/iterable'");
 		expect(code).toContain('export async function App');
-		expect(code).toContain('<Suspense');
-		expect(code).toContain('<TsrxErrorBoundary');
-		expect(code).toContain('<TsrxErrorBoundary fallbackRender={');
+		expect(code).toContain('<__Suspense');
+		expect(code).toContain('<__TsrxErrorBoundary');
+		expect(code).toContain('<__TsrxErrorBoundary fallbackRender={');
 		expect(code).not.toContain('_reset');
 		expect(code).toContain('class="item"');
 	});
@@ -228,6 +306,233 @@ describe('@tsrx/hono DOM compiler', () => {
 		'const UI = { [key]: () => <span />, App: async () => <div /> }; <UI.App />;',
 	])('diagnoses a final known async object member: %s', (source) => {
 		expect(() => compileDom(source, 'App.tsrx')).toThrow(/does not support async components/);
+	});
+
+	it.each([
+		'const registry = UI; registry.App = () => <span />; <UI.App />;',
+		'const registry = UI as any; registry["App"] = () => <span />; <UI.App />;',
+		'let registry; registry = UI; registry.App = () => <span />; <UI.App />;',
+		'const first = UI; const second = first; second.App = () => <span />; <UI.App />;',
+		'const registry = UI; registry.App = () => <span />; const view = UI; <view.App />;',
+		'const registry = flag ? UI : fallback; registry.App = () => <span />; <UI.App />;',
+		'const registry = UI.nested; registry.App = () => <span />; <UI.nested.App />;',
+		'const { nested } = UI; nested.App = () => <span />; <UI.nested.App />;',
+		'Object.assign(UI, { App: () => <span /> }); <UI.App />;',
+		'Object.assign(UI.nested, { App: () => <span /> }); <UI.nested.App />;',
+		'const registry = UI; Object.assign(registry, { App: () => <span /> }); <UI.App />;',
+		'Object.defineProperty(UI, "App", { value: () => <span /> }); <UI.App />;',
+		'Reflect.set(UI, "App", () => <span />); <UI.App />;',
+		'let registry; registry ??= UI; registry.App = () => <span />; <UI.App />;',
+		'let registry = load(); registry ||= UI; registry.App = () => <span />; <UI.App />;',
+		'let registry = {}; registry = load(); registry ||= UI; registry.App = () => <span />; <UI.App />;',
+		'for (let registry of [{}]) { registry &&= UI; registry.App = () => <span />; } <UI.App />;',
+		'for (let registry in { key: 1 }) { registry &&= UI; registry.App = () => <span />; } <UI.App />;',
+		'for (let registry = {}; registry; registry = null) { registry &&= UI; registry.App = () => <span />; } <UI.App />;',
+		'function List() @{ <ul>@for (let registry of [{}]) { registry &&= UI; registry.App = () => <span />; <li /> }</ul> } <UI.App />;',
+	])('does not diagnose a member overwritten through an alias or writer call: %s', (update) => {
+		const source = `const UI = { App: async () => <div />, nested: { App: async () => <div /> } };
+			${update}`;
+		expect(() => compileDom(source, 'App.tsrx')).not.toThrow();
+		expect(compileDom(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
+		expect(compileDomToVolarMappings(source, 'App.tsrx').errors).toEqual([]);
+	});
+
+	it.each([
+		'const registry = UI; <registry.App />;',
+		'const copy = { ...UI }; copy.App = () => <span />; <UI.App />;',
+		'Object.assign({}, UI, { App: () => <span /> }); <UI.App />;',
+		'const Other = { App: () => <span /> }; Object.assign(Other, UI); <UI.App />;',
+		'let registry = UI; registry = { App: () => <span /> }; <UI.App />;',
+		'const { ...copy } = UI; copy.App = () => <span />; <UI.App />;',
+		'let copy; ({ ...copy } = UI); copy.App = () => <span />; <UI.App />;',
+		'let registry = { App: () => <span /> }; registry ||= UI; registry.App = () => <span />; <UI.App />;',
+		'let registry = { App: () => <span /> }; registry ??= UI; registry.App = () => <span />; <UI.App />;',
+		'let registry; registry &&= UI; Object.assign(registry, { App: () => <span /> }); <UI.App />;',
+	])('still diagnoses an async member that no write can replace: %s', (update) => {
+		const source = `const UI = { App: async () => <div /> };
+			${update}`;
+		const async_error = expect.objectContaining({
+			message: expect.stringContaining('does not support async components'),
+		});
+		expect(() => compileDom(source, 'App.tsrx')).toThrow(/does not support async components/);
+		expect(compileDom(source, 'App.tsrx', { collect: true }).errors).toEqual([async_error]);
+		expect(compileDomToVolarMappings(source, 'App.tsrx').errors).toEqual([async_error]);
+	});
+
+	it.each([
+		'function patch(target: { App: () => any }) { target.App = () => <span />; } patch(UI); <UI.App />;',
+		'const box = { ui: UI }; box.ui.App = () => <span />; <UI.App />;',
+		'const list = [UI]; list[0].App = () => <span />; <UI.App />;',
+		'patch(UI.nested); <UI.nested.App />;',
+		'patch({ ui: UI }); <UI.App />;',
+		'patch(...[UI]); <UI.App />;',
+		'patch(UI[key]); <UI.nested.App />;',
+		'new Patcher(UI); <UI.App />;',
+		'patch`${UI}`; <UI.App />;',
+		'UI.init(); <UI.App />;',
+		'[UI].forEach((registry) => { registry.App = () => <span />; }); <UI.App />;',
+		'for (const registry of [UI]) registry.App = () => <span />; <UI.App />;',
+		'function List() @{ <ul>@for (const registry of [UI]) { registry.App = () => <span />; <li /> }</ul> } <UI.App />;',
+		'const holder = {}; holder.ui = UI; holder.ui.App = () => <span />; <UI.App />;',
+		'globalThis.registry = UI; <UI.App />;',
+		'cache.set("ui", UI); <UI.App />;',
+		'Reflect.set(holder, "ui", UI); <UI.App />;',
+		'Object.assign(holder, { ui: UI }); <UI.App />;',
+		'class Box { ui = UI; } <UI.App />;',
+		'const view = <Patch registry={UI} />; <UI.App />;',
+		'const box = { ui: UI }; const view = <Patch {...box} />; <UI.App />;',
+		'const view = <Patch {...{ ui: UI }} />; <UI.App />;',
+		'const view = <Patch {...UI} />; <UI.nested.App />;',
+		'function patch(target = UI) { target.App = () => <span />; } patch(); <UI.App />;',
+		'const { registry = UI } = {}; registry.App = () => <span />; <UI.App />;',
+		'const registry = (load(), UI); registry.App = () => <span />; <UI.App />;',
+		'const get = () => UI; get().App = () => <span />; <UI.App />;',
+		'function get() { return UI; } get().App = () => <span />; <UI.App />;',
+		'(flag ? UI : other).App = () => <span />; <UI.App />;',
+		'[UI][0].App = () => <span />; <UI.App />;',
+		'const console = { log: patch }; console.log(UI); <UI.App />;',
+		'const registry = UI; patch(registry); <UI.App />;',
+		'const { nested } = UI; patch(nested); <UI.nested.App />;',
+		'const box = { ui: UI }; patch(box.ui); <UI.App />;',
+		'const view = <div ref={UI} />; <UI.App />;',
+		'const [, registry] = [other, UI]; patch(registry); <UI.App />;',
+		'const [, registry] = [...others, UI]; patch(registry); <UI.App />;',
+		'const Reg = { App: async () => <div />, init() { this.App = () => <span />; } }; Reg.init(); <Reg.App />;',
+		'Object.values(UI)[1].App = () => <span />; <UI.nested.App />;',
+		'Object.entries(UI).forEach(([, value]) => { value.App = () => <span />; }); <UI.nested.App />;',
+		'Object.getOwnPropertyDescriptor(UI, "nested").value.App = () => <span />; <UI.nested.App />;',
+		'const frozen = Object.freeze(UI); frozen.nested.App = () => <span />; <UI.nested.App />;',
+		'JSON.stringify(UI, (key, value) => { if (value?.App) value.App = () => <span />; return value; }); <UI.App />;',
+		'JSON.stringify(UI, replacer); <UI.App />;',
+	])('does not diagnose a registry that escapes to code the check cannot follow: %s', (update) => {
+		const source = `const UI = { App: async () => <div />, nested: { App: async () => <div /> } };
+			${update}`;
+		expect(() => compileDom(source, 'App.tsrx')).not.toThrow();
+		expect(compileDom(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
+		expect(compileDomToVolarMappings(source, 'App.tsrx').errors).toEqual([]);
+	});
+
+	it.each([
+		'console.log(UI, UI.App); <UI.App />;',
+		'JSON.stringify(UI); Object.keys(UI); Array.isArray(UI); String(UI); <UI.App />;',
+		'JSON.stringify(UI, null, 2); JSON.stringify(UI, ["App"]); JSON.stringify(UI, undefined); <UI.App />;',
+		'Object.keys({ ui: UI }); <UI.App />;',
+		'if (UI.App && typeof UI === "object" && "App" in UI) {} <UI.App />;',
+		'const label = `${UI}`; <UI.App />;',
+		'memo(UI.App); <UI.App />;',
+		'patch(UI[key]); <UI.App />;',
+		'UI.App.toString(); UI.hasOwnProperty("App"); <UI.App />;',
+		'const view = <Card render={UI.App} />; <UI.App />;',
+		'const box = { ui: UI }; <box.ui.App />;',
+		'const list = [UI]; console.log(list); <UI.App />;',
+		'patch({ ...UI }); <UI.App />;',
+		'export { UI }; <UI.App />;',
+		'const Page = async () => <div />; register(Page); <Page />;',
+		'const Page = UI.App; register(Page); <Page />;',
+		'const { App } = UI; register(App); <App />;',
+		'const registry = UI; memo(registry.App); <UI.App />;',
+		'const items = UI.items; items.map((item) => item.name); <UI.App />;',
+		'const box = { ui: UI }; patch(box.label); <UI.App />;',
+		'const view = <div title={UI.title} style={{ color: UI.color }}>{UI}</div>; <UI.App />;',
+		'const box = { ui: UI }; const view = <div {...box} />; <UI.App />;',
+		'const view = <Patch {...UI} />; <UI.App />;',
+		'function List() @{ <ul>@for (const item of UI.items) { <li>{item.name}</li> }</ul> } <UI.App />;',
+		'UI.App.displayName = "App"; <UI.App />;',
+		'const Page = async () => <div />; Page.displayName = "Page"; <Page />;',
+		'const Page = async () => <div />; Object.assign(Page, { displayName: "Page" }); <Page />;',
+		'export const result = UI.App(); <UI.App />;',
+		'const [, registry] = [UI, other]; patch(registry); <UI.App />;',
+		'Object.freeze(UI); Object.values(UI); Object.entries(UI); Reflect.getPrototypeOf(UI); <UI.App />;',
+	])('still diagnoses an async member that is only read or copied: %s', (update) => {
+		const source = `const UI = { App: async () => <div /> };
+			${update}`;
+		const async_error = expect.objectContaining({
+			message: expect.stringContaining('does not support async components'),
+		});
+		expect(() => compileDom(source, 'App.tsrx')).toThrow(/does not support async components/);
+		expect(compileDom(source, 'App.tsrx', { collect: true }).errors).toEqual([async_error]);
+		expect(compileDomToVolarMappings(source, 'App.tsrx').errors).toEqual([async_error]);
+	});
+
+	it('keeps every path the registry itself exposes, however many', () => {
+		// Only paths passed on through aliases are merged past a limit.
+		const calls = Array.from({ length: 20 }, (_, index) => `patch(UI.k${index});`).join(' ');
+		const source = `const UI: any = { nested: { App: async () => <div /> } };
+			${calls}
+			<UI.nested.App />;`;
+		expect(() => compileDom(source, 'App.tsrx')).toThrow(/does not support async components/);
+	});
+
+	/**
+	 * The check's work for one DOM compile, counted rather than timed.
+	 * @param {string} source
+	 */
+	function count_validation_work(source) {
+		hono_dom_validation_work.resolution_steps = 0;
+		hono_dom_validation_work.exposure_updates = 0;
+		expect(compileDom(source, 'App.tsrx', { collect: true }).errors).toHaveLength(1);
+		return { ...hono_dom_validation_work };
+	}
+
+	it('bounds the work when aliases are reassigned from each other', () => {
+		// Each reassignment adds a member path per element to the other alias, so
+		// unbounded paths multiply with every round: without the bound, two
+		// elements of the second form don't finish.
+		expect(
+			count_validation_work(`const UI: any = { App: async () => <div /> };
+let a: any = UI;
+let b: any = UI;
+a = [b.a.a, b.b.b];
+b = [a.a.a, a.b.b];
+sink(a.x.x);
+<UI.App />;`).exposure_updates,
+		).toBeLessThan(100);
+		/** @param {number} count */
+		const source = (count) => {
+			const members = ['a.a', 'b.b', 'c.c', 'd.d'].slice(0, count);
+			return `const UI: any = { App: async () => <div /> };
+let a: any = UI;
+let b: any = UI;
+a = { ${members.map((member, index) => `[k${index}]: b.${member}`).join(', ')} };
+b = { ${members.map((member, index) => `[k${index}]: a.${member}`).join(', ')} };
+sink(a.x.x);
+<UI.App />;`;
+		};
+		expect(count_validation_work(source(4)).exposure_updates).toBeLessThan(
+			10 * count_validation_work(source(1)).exposure_updates,
+		);
+	});
+
+	it('resolves method calls through a long alias chain in linear work', () => {
+		// Each call checks whether its callee is an arrow function; resolving
+		// every one from scratch through the chain took quadratic work.
+		/** @param {number} count */
+		const source = (count) => {
+			const aliases = Array.from({ length: count }, (_, index) =>
+				index ? `const a${index} = a${index - 1};` : 'const a0 = UI;',
+			);
+			const calls = Array.from({ length: count }, (_, index) => `a${index}.App();`);
+			return `const UI = { App: async () => <div /> };
+${aliases.join('\n')}
+${calls.join('\n')}
+<UI.App />;`;
+		};
+		expect(count_validation_work(source(1000)).resolution_steps).toBeLessThan(
+			15 * count_validation_work(source(100)).resolution_steps,
+		);
+	});
+
+	it('does not cache a resolution the cycle guard cut short', () => {
+		// Resolving `<A.x />` reaches `A.y` while `A` is still being resolved.
+		expect(() =>
+			compileDom(
+				`const A = { x: B, y: async () => <div /> };
+var B = A.y;
+false && <A.x />;
+<A.y />;`,
+				'App.tsrx',
+			),
+		).toThrow(/does not support async components/);
 	});
 
 	it('rejects an async component referenced by a dynamic tag', () => {

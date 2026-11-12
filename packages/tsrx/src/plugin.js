@@ -69,6 +69,13 @@ const regex_space_and_comments = /(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\
  */
 
 /**
+ * An open namespace or module body, at `depth` in the scope stack, and the
+ * export specifiers in it that name what it hasn't declared yet (see
+ * `tsParseModuleBlock`). `scope` is the body's scope, kept once it has one.
+ * @typedef {{ depth: number, scope: Parse.Scope | null, ids: AST.Identifier[] }} ModuleBodyExports
+ */
+
+/**
  * The kinds of declaration TypeScript's checker tells apart when it checks
  * their modifiers.
  * @typedef {'class' | 'function' | 'variable' | 'using' | 'await using' | 'enum' | 'interface' | 'type' | 'module' | 'import'} ModifiedDeclarationKind
@@ -392,6 +399,17 @@ function get_error_message(message) {
 }
 
 /**
+ * Mark `node`, a `@{ … }` body's output, as one that a later output or
+ * statement displaced, whose mistake TSRX2011 or TSRX2012 reports. The
+ * analysis doesn't report it again as unused output (TSRX2010, #981).
+ * @param {AST.Node} node
+ */
+function mark_misplaced_output(node) {
+	node.metadata ??= { path: [] };
+	node.metadata.misplaced_output = true;
+}
+
+/**
  * Whether an arrow function's parameter, read as an expression before `=>`,
  * becomes a binding pattern, with or without a type annotation and a default.
  * @param {AST.Node} node
@@ -663,10 +681,11 @@ const TS_SCOPE_TS_MODULE = 1 << 21;
 // `var` in a block below them is declared: a module or script, a function, and
 // a class static block. A namespace's body is one too (see `#isSymbolTable`).
 const TABLE_SCOPE_FLAGS = SCOPE_TOP | SCOPE_FUNCTION | SCOPE_CLASS_STATIC_BLOCK;
-// acorn-typescript's binding type for a type alias's name, and its flag for an
-// enum's.
+// acorn-typescript's binding type for a type alias's name, its flag for an
+// enum's, and its flag for a name that only an export specifier can see.
 const BIND_TS_TYPE = 6;
 const BIND_FLAGS_TS_ENUM = 256;
+const BIND_FLAGS_TS_EXPORT_ONLY = 1024;
 // acorn's flags for `parseFunction`: a function declaration, whose name is
 // optional (after `export default`).
 const FUNC_STATEMENT = 1;
@@ -872,6 +891,45 @@ function end_after_parentheses(input, node) {
 	return end;
 }
 
+/**
+ * Whether `node` is a function declaration, or an overload's signature.
+ * @param {AST.Node} node
+ */
+function is_function_declaration(node) {
+	return node.type === 'FunctionDeclaration' || node.type === 'TSDeclareFunction';
+}
+
+/**
+ * Whether TypeScript's binder takes the expression of a default export or
+ * `export =` for an alias of what it names (`exportAssignmentIsAlias`): a name,
+ * a property of one (`a.b`, `a?.b`), or a class. TypeScript reads parentheses
+ * as a node of their own, so a parenthesized name isn't one.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_alias_expression(node) {
+	return (
+		(node.type === 'ClassExpression' && !node.metadata?.parenthesized) ||
+		is_entity_name_expression(node)
+	);
+}
+
+/**
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_entity_name_expression(node) {
+	if (node.metadata?.parenthesized) return false;
+	if (node.type === 'Identifier') return true;
+	if (node.type === 'ChainExpression') return is_entity_name_expression(node.expression);
+	return (
+		node.type === 'MemberExpression' &&
+		!node.computed &&
+		node.property.type === 'Identifier' &&
+		is_entity_name_expression(node.object)
+	);
+}
+
 /** @type {WeakMap<Record<string, boolean>, Map<string, number>>} */
 const argument_clash_first_positions = new WeakMap();
 /** @type {WeakMap<Record<string, boolean>, Set<string>>} */
@@ -927,6 +985,9 @@ function can_start_tag_after_lt(input, index) {
 
 /** The start of an end tag for a script, in any letter case. */
 const regex_script_end_tag_start = /<\/script/giu;
+
+/** A style's end tag: `</style`, optional whitespace, then `>`. */
+const regex_style_end_tag = /<\/style[\t\n\f\r ]*>/u;
 
 /**
  * HTML's whitespace: tab, line feed, form feed, carriage return, and space.
@@ -1305,6 +1366,8 @@ export function TSRXPlugin(config) {
 			#filename = null;
 			/** @type {WeakMap<object, { names: Set<string>, lengths: number[] }>} */
 			#localExportNamesByScope = new WeakMap();
+			/** @type {ModuleBodyExports[]} */
+			#moduleBodyExports = [];
 			#functionBodyDepth = 0;
 			#allowExpressionContainerTrailingSemicolon = false;
 			#jsxAttributeValueExpressionDepth = 0;
@@ -1424,6 +1487,16 @@ export function TSRXPlugin(config) {
 			/** @type {AST.NodeWithLocation | null}	*/
 			#lastClauseKeywordSpan = null;
 			#templateControlFlowTryDepth = 0;
+			// Where the statement being read starts: the depth of the tokenizer's
+			// context stack, and how many `[` are open (see `#parseJSXControlFlowValue`).
+			#statementContextDepth = 0;
+			#statementOpenBrackets = 0;
+			// How many `[` of array literals, array patterns and computed members are
+			// open. Unlike `(`, `{` and `${`, a `[` pushes no tokenizer context.
+			#openBrackets = 0;
+			// While a directive in brackets is read, the depth of the context stack
+			// that its bodies close at (see `#parseJSXControlFlowValue`), or -1.
+			#bracketedDirectiveDepth = -1;
 			/** @type {Parse.Parser['context']} */
 			context = [b_stat];
 			/** @type {AST.NativeTSRXTemplateNode | null} */
@@ -1444,10 +1517,16 @@ export function TSRXPlugin(config) {
 			// What enclosed each element when it started: `this.labels` and its length
 			// (see `#insideSwitchStartedAfter`), and the setup-statement depths (see
 			// `#elementStart`).
-			/** @type {WeakMap<AST.Node, { labels: Parse.Parser['labels'], labelsLength: number, scriptDepth: number, switchCaseScriptDepth: number, scriptJSXDepth: number }>} */
+			/** @type {WeakMap<AST.Node, { labels: Parse.Parser['labels'], labelsLength: number, scriptDepth: number, switchCaseScriptDepth: number, scriptJSXDepth: number, header: number | false }>} */
 			#elementStarts = new WeakMap();
 			#readingJSXControlFlowDirectiveKeyword = false;
+			// While a directive header (`@if (…)`, `@for (…)`, a `@case` test, …) is
+			// read, a number that tells that header apart from any other: an element
+			// opened in a header records it (see `#elementStart`), so the element's
+			// own children are still read as template text. `false` otherwise.
+			/** @type {number | false} */
 			#readingJSXControlFlowHeader = false;
+			#controlFlowHeaders = 0;
 			// Set while `@for` reads its statement, until `parseForStatement` takes it:
 			// the loop whose head may end with `index` and `key` clauses.
 			#readingForDirective = false;
@@ -1667,6 +1746,8 @@ export function TSRXPlugin(config) {
 				// the enclosing template from `#path` so the body tokenizes as code (not
 				// JSX raw text); render nodes re-establish their own path via `parseElement`.
 				const enclosing_context = this.context;
+				// How deep the stack was before the `{`, already read, pushed its context.
+				const depth_before_brace = enclosing_context.length - this.#currentTokenContextCount();
 				const enclosing_path = this.#path;
 				this.context = enclosing_context.filter(
 					(context) =>
@@ -1696,10 +1777,18 @@ export function TSRXPlugin(config) {
 				if (exitStrict) {
 					this.strict = false;
 				}
-				this.exprAllowed = true;
+				// After the last body of a directive in brackets, the next token is an
+				// operator (`(@if (c) {} / 2)`). After any other body of it, the next
+				// token is its clause's `@`, which reads the same either way.
+				this.exprAllowed = depth_before_brace !== this.#bracketedDirectiveDepth;
+				// The `}` popped the context of the `{` from the body's copy of the
+				// stack, so drop it from the enclosing stack too. Left there, every
+				// directive body would leave one entry behind, and each later sibling
+				// directive would copy a longer stack (#1194).
 				this.context = enclosing_context;
+				this.#truncateContext(depth_before_brace);
 				const previous_reading_header = this.#readingJSXControlFlowHeader;
-				this.#readingJSXControlFlowHeader = true;
+				this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 				try {
 					this.next();
 				} finally {
@@ -1753,8 +1842,9 @@ export function TSRXPlugin(config) {
 			 * statement of a `@{ … }` or directive body; `switchCaseScriptDepth` is
 			 * `#parsingJSXSwitchCaseScriptStatementDepth`, raised by one of an `@case`.
 			 * `scriptJSXDepth` is `#scriptJSXElementDepth` (see
-			 * `#insideScriptJSXElement`). A node that no element start recorded counts
-			 * from 0.
+			 * `#insideScriptJSXElement`). `header` is the directive header being read
+			 * (see `#readingJSXControlFlowHeader`). A node that no element start
+			 * recorded counts from 0.
 			 * @param {AST.Node} node
 			 */
 			#elementStart(node) {
@@ -1765,8 +1855,21 @@ export function TSRXPlugin(config) {
 						scriptDepth: 0,
 						switchCaseScriptDepth: 0,
 						scriptJSXDepth: 0,
+						header: false,
 					}
 				);
+			}
+
+			/**
+			 * Whether a directive header is being read that started after `node`, so
+			 * the position is in that header's code. In an element opened in the
+			 * header (`@for (const x of [<b>a<i /></b>])`), it is that element's
+			 * children.
+			 * @param {AST.Node | undefined} node
+			 */
+			#readingHeaderStartedAfter(node) {
+				const header = this.#readingJSXControlFlowHeader;
+				return header !== false && (!node || header !== this.#elementStart(node).header);
 			}
 
 			/**
@@ -2481,8 +2584,11 @@ export function TSRXPlugin(config) {
 			) {
 				if (
 					this.#closingNativeTemplateNode ||
+					// A type is never text. acorn-typescript reads type arguments with
+					// the context stack emptied (`tsInNoContext`), so without this a tag's
+					// `<T, U>` read as text after `T`.
+					this.inType ||
 					this.#readingJSXControlFlowDirectiveKeyword ||
-					this.#readingJSXControlFlowHeader ||
 					(!allow_inside_expression_container && this.#jsxExpressionContainerDepth > 0)
 				) {
 					return false;
@@ -2492,7 +2598,7 @@ export function TSRXPlugin(config) {
 					return false;
 				}
 				const current_template_node = this.#currentNativeTemplateNode();
-				if (!current_template_node) {
+				if (!current_template_node || this.#readingHeaderStartedAfter(current_template_node)) {
 					return false;
 				}
 				// Code that started after the innermost element, a setup statement, isn't
@@ -2558,8 +2664,9 @@ export function TSRXPlugin(config) {
 				}
 				// Just past a self-closing tag's `/>`: that element has no body, so any
 				// following raw text belongs to an enclosing template, not to it. With no
-				// enclosing template (e.g. a top-level `return <div />`), the trailing
-				// text is plain JS and must not be read as template raw text.
+				// enclosing template (e.g. a top-level `return <div />`), or one opened
+				// before the directive header the element is in (`@for (…; key <b />)`),
+				// the trailing text is plain JS and must not be read as template raw text.
 				// Inter-token whitespace has already advanced `pos`; `lastTokEnd` still
 				// identifies the consumed `>`, which whitespace or a comment can separate
 				// from the `/` (`<div / >`).
@@ -2574,7 +2681,7 @@ export function TSRXPlugin(config) {
 					const enclosing = this.#path.findLast(
 						(node) => node !== opening && this.#isNativeTemplateNode(node),
 					);
-					if (!enclosing) {
+					if (!enclosing || this.#readingHeaderStartedAfter(enclosing)) {
 						return false;
 					}
 					return true;
@@ -2907,7 +3014,8 @@ export function TSRXPlugin(config) {
 			 * @param {AST.Node[]} flat
 			 */
 			#parseCodeBlockBody(flat) {
-				let render_seen = false;
+				/** @type {AST.Node | null} */
+				let last_render = null;
 				while (this.type !== tt.braceR && this.type !== tt.eof) {
 					// A bare `;` is an empty statement carrying no meaning. JSX render
 					// output does not consume a trailing `;`, so one written after the
@@ -2920,26 +3028,28 @@ export function TSRXPlugin(config) {
 					}
 					if (this.#atRenderNodeStart()) {
 						const render_node = this.#parseCodeBlockRenderNode();
-						if (render_seen) {
+						if (last_render) {
 							this.#report_recoverable_error_range(
 								/** @type {number} */ (render_node.start),
 								/** @type {number} */ (render_node.end),
 								TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT,
 							);
+							mark_misplaced_output(last_render);
 						}
 						flat.push(render_node);
-						render_seen = true;
+						last_render = render_node;
 						continue;
 					}
 					const statement = this.#parseCodeBlockSetupStatement();
 					if (statement) {
-						if (render_seen) {
+						if (last_render) {
 							// A statement after the rendered output: code must come first.
 							this.#report_recoverable_error_range(
 								/** @type {number} */ (statement.start),
 								/** @type {number} */ (statement.end),
 								TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT,
 							);
+							mark_misplaced_output(last_render);
 						}
 						flat.push(statement);
 					}
@@ -3040,10 +3150,70 @@ export function TSRXPlugin(config) {
 						return this.#parseCodeBlock();
 					}
 					if (this.#isJSXControlFlowDirectiveAt(this.start)) {
-						return this.#parseJSXControlFlowExpression();
+						return this.#parseJSXControlFlowValue();
 					}
 				}
 				return super.parseExprAtom(refDestructuringErrors, forInit, forNew);
+			}
+
+			/**
+			 * A directive in expression position: in parentheses (`(@if … {}) / 2`),
+			 * an argument, a property value, or a template literal's `${ }`. The
+			 * directive reads its keyword, header and bodies with a statement context
+			 * on top of the stack, and pushes one when the enclosing `(`, `{` or `${`
+			 * context is on top instead. The token after the directive's last `}` is
+			 * read before the directive returns, with that statement context still
+			 * there, so a `)` or `}` pops it in place of its own context. What follows
+			 * then reads in the wrong mode: a `/` as a regular expression, a `<` as a
+			 * tag, the rest of a template literal as code (#1217). Put the enclosing
+			 * stack back and read that token again.
+			 *
+			 * In brackets opened in the statement being read (`(`, `[`, `{` or `${`),
+			 * the statement can't end right after the directive, so the token after
+			 * it is an operator, as after an element: `(a = @if (c) {} / 2) => a`,
+			 * `foo(@if (c) {} < y)`, `[@if (c) {} / 2]`. Elsewhere a semicolon can be
+			 * inserted after the directive, and a `/` or `<` on the next line starts
+			 * the next statement (`const x = @if (c) { <b /> }\n/re/.test(s);`), so
+			 * that token is read as the start of an expression, as after a block.
+			 * @returns {AST.JSXTemplateDirective}
+			 */
+			#parseJSXControlFlowValue() {
+				const enclosing_context = this.context;
+				const in_brackets =
+					enclosing_context.length > this.#statementContextDepth ||
+					this.#openBrackets > this.#statementOpenBrackets;
+				// The directive filters the stack before it checks the top, and filtering
+				// again changes nothing.
+				this.#filterTemplateScriptContexts();
+				const pushes_statement_context = this.curContext() !== b_stat;
+				const outer_bracketed_directive_depth = this.#bracketedDirectiveDepth;
+				this.#bracketedDirectiveDepth = in_brackets
+					? this.context.length + (pushes_statement_context ? 1 : 0)
+					: -1;
+				let node;
+				try {
+					node = this.#parseJSXControlFlowExpression();
+				} finally {
+					this.#bracketedDirectiveDepth = outer_bracketed_directive_depth;
+				}
+				if (pushes_statement_context) {
+					const loc = get_line_info(this, this.start);
+					this.context = enclosing_context;
+					this.pos = this.start;
+					this.curLine = loc.line;
+					this.lineStart = this.start - loc.column;
+					// As it was read, after the `}`.
+					this.type = tt.braceR;
+					this.exprAllowed = !in_brackets;
+					const previous_reading_header = this.#readingJSXControlFlowHeader;
+					this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
+					try {
+						this.nextToken();
+					} finally {
+						this.#readingJSXControlFlowHeader = previous_reading_header;
+					}
+				}
+				return node;
 			}
 
 			/**
@@ -3180,7 +3350,7 @@ export function TSRXPlugin(config) {
 					this.#templateControlFlowBlockDepth++;
 					let node;
 					const previous_reading_header = this.#readingJSXControlFlowHeader;
-					this.#readingJSXControlFlowHeader = true;
+					this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 					this.#readingForDirective = true;
 					try {
 						node = /** @type {AST.JSXForExpression} */ (
@@ -3395,7 +3565,7 @@ export function TSRXPlugin(config) {
 			#parseTemplateIfStatement() {
 				const node = /** @type {AST.IfStatement} */ (this.startNode());
 				const previous_reading_header = this.#readingJSXControlFlowHeader;
-				this.#readingJSXControlFlowHeader = true;
+				this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 				try {
 					this.next();
 					node.test = this.parseParenExpression();
@@ -3424,7 +3594,7 @@ export function TSRXPlugin(config) {
 			#parseJSXSwitchExpression(start, startLoc) {
 				const node = /** @type {AST.SwitchStatement} */ (this.startNodeAt(start, startLoc));
 				const previous_reading_header = this.#readingJSXControlFlowHeader;
-				this.#readingJSXControlFlowHeader = true;
+				this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 				try {
 					this.next();
 					node.discriminant = this.parseParenExpression();
@@ -3455,7 +3625,7 @@ export function TSRXPlugin(config) {
 						// itself starts before the leading whitespace.
 						current.keyword = this.#lastClauseKeywordSpan;
 						const previous_reading_header = this.#readingJSXControlFlowHeader;
-						this.#readingJSXControlFlowHeader = true;
+						this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 						try {
 							if (isCase) {
 								current.test = this.parseExpression();
@@ -3515,6 +3685,10 @@ export function TSRXPlugin(config) {
 				}
 
 				this.exitScope();
+				// As after a directive body (see `#parseTemplateControlFlowBlock`).
+				if (this.context.length === this.#bracketedDirectiveDepth) {
+					this.exprAllowed = false;
+				}
 				this.next();
 				this.labels.pop();
 				return this.#finishJSXControlFlowExpression(
@@ -3694,9 +3868,9 @@ export function TSRXPlugin(config) {
 			 * Read a raw-text element body: capture everything between the opening `>`
 			 * and the closing tag verbatim (never as template markup), synthesize the
 			 * closing element, and restore the tokenizer state past it. Shared by
-			 * `<style>` and `<script>`. A `<style>` body ends at the literal
-			 * `</style>`; a `<script>` body ends where HTML ends it (see
-			 * `#findScriptBodyEnd`).
+			 * `<style>` and `<script>`. A `<style>` body ends at `</style`, optional
+			 * whitespace, then `>`, as a closing tag can be written in JSX; a
+			 * `<script>` body ends where HTML ends it (see `#findScriptBodyEnd`).
 			 *
 			 * Without a closing tag the element is unclosed and the rest of the input
 			 * is its body, except that in loose mode inside a template the body stops
@@ -3715,13 +3889,12 @@ export function TSRXPlugin(config) {
 			 * @returns {string} The raw body text
 			 */
 			#parseRawTextElement(open, node, tagName, contextDepth) {
-				const closeTag = `</${tagName}>`;
 				const contentStart = open.end;
 				const input = this.input.slice(contentStart);
 				const parent = this.#path.at(-2);
 				const insideTemplate = this.#isNativeTemplateNode(parent);
 				let relativeCloseStart = -1;
-				let closeTagLength = closeTag.length;
+				let closeTagLength = 0;
 				if (tagName === 'script') {
 					const close = this.#findScriptBodyEnd(contentStart);
 					if (close) {
@@ -3729,7 +3902,11 @@ export function TSRXPlugin(config) {
 						closeTagLength = close.end - close.start;
 					}
 				} else {
-					relativeCloseStart = input.indexOf(closeTag);
+					const close = regex_style_end_tag.exec(input);
+					if (close) {
+						relativeCloseStart = close.index;
+						closeTagLength = close[0].length;
+					}
 				}
 				const unclosed = relativeCloseStart === -1;
 
@@ -4292,11 +4469,13 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * An unclosed or mismatched tag (TSRX1001, TSRX1002). A strict parse
+			 * throws it. Collecting records it, and so does a loose parse (the
+			 * editor's), which also goes on to recover the markup.
 			 * @param {number} position
 			 * @param {Diagnostic} message
 			 */
 			#report_broken_markup_error(position, message) {
-				if (this.#loose) return;
 				if (this.#collect) {
 					this.#report_recoverable_error(position, message);
 					return;
@@ -4870,130 +5049,169 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Report the exports of the module that TypeScript's binder declares
-			 * twice: a name that two export specifiers or `export * as` export, TS2300
-			 * `Duplicate identifier '…'.`, and a default export that can't merge with
-			 * an earlier one, TS2528 `A module cannot have multiple default exports.`,
-			 * as `export default 1; export default 2;` (#882). acorn-typescript turned
-			 * acorn's check off, since TypeScript merges some declarations of a name.
-			 * Like TypeScript's binder, this goes through the exports in order, and a
-			 * declaration that can't share the symbol of the name with the ones before
-			 * it reports each of them and itself, at its name, or at `export`. They
-			 * are checker errors: a strict parse throws the first, and a collecting one
-			 * records them.
+			 * Report the exports that TypeScript's binder declares twice, in the module
+			 * and in each namespace or ambient module, whose exports are its own: a
+			 * name that two export specifiers, `export * as` or `export =` export,
+			 * TS2300 `Duplicate identifier '…'.`, and a default export that can't merge
+			 * with an earlier one, TS2528 `A module cannot have multiple default
+			 * exports.`, as `export default 1; export default 2;` (#882, #1161).
+			 * acorn-typescript turned acorn's check off, since TypeScript merges some
+			 * declarations of a name. They are checker errors: a strict parse throws
+			 * the first, and a collecting one records them.
 			 * @param {AST.Program} program
 			 */
 			#reportDuplicateExports(program) {
-				/** @type {Map<string, { flags: number, declarations: number[] }>} */
-				const symbols = new Map();
 				/** @type {Array<{ position: number, error: Diagnostic }>} */
 				const found = [];
-				/** @type {Set<number>} */
+				this.#findDuplicateExports(program.body, found);
+				found.sort((a, b) => a.position - b.position);
+				for (const { position, error } of found) {
+					if (!this.#collect) this.#throwError(position, error);
+					this.#recordCheckerLevelError(position, position + 1, error);
+				}
+			}
+
+			/**
+			 * Add to `found` the exports of `body`, a module's or a namespace's
+			 * statements, that TypeScript's binder declares twice, and those of each
+			 * namespace in it. Like the binder, this declares the function declarations
+			 * first, then the other statements in order. A declaration that can't share
+			 * the symbol of its name with the ones before it reports each of them and
+			 * itself, at its name, or at `export`: TS2528 when it's a default export
+			 * (not `export * as default`), and otherwise TS2300, with each one's name as
+			 * written. A declaration reports a message once.
+			 * @param {AST.Node[]} body
+			 * @param {Array<{ position: number, error: Diagnostic }>} found
+			 */
+			#findDuplicateExports(body, found) {
+				/** @type {Map<string, { flags: number, declarations: Array<{ position: number, name: string }> }>} */
+				const symbols = new Map();
+				/** @type {Set<string>} */
 				const reported = new Set();
 				/**
-				 * @param {string} name
+				 * @param {string} key The name it declares: `default` for a default
+				 *   export, `export=` for `export =`
+				 * @param {string} name The name as written, for TS2300
 				 * @param {number} position
 				 * @param {number} includes
 				 * @param {number} excludes
+				 * @param {boolean} default_export
 				 */
-				const declare = (name, position, includes, excludes) => {
-					const symbol = symbols.get(name);
+				const declare = (key, name, position, includes, excludes, default_export) => {
+					const declaration = { position, name };
+					const symbol = symbols.get(key);
 					if (!symbol) {
-						symbols.set(name, { flags: includes, declarations: [position] });
+						symbols.set(key, { flags: includes, declarations: [declaration] });
 						return;
 					}
 					if ((symbol.flags & excludes) === 0) {
 						symbol.flags |= includes;
-						symbol.declarations.push(position);
+						symbol.declarations.push(declaration);
 						return;
 					}
-					const error =
-						name === 'default'
+					for (const other of [...symbol.declarations, declaration]) {
+						const error = default_export
 							? TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS
-							: TS_ERRORS.DUPLICATE_IDENTIFIER(name);
-					for (const at of [...symbol.declarations, position]) {
-						if (reported.has(at)) continue;
-						reported.add(at);
-						found.push({ position: at, error });
+							: TS_ERRORS.DUPLICATE_IDENTIFIER(other.name);
+						const id = `${other.position} ${error.message}`;
+						if (reported.has(id)) continue;
+						reported.add(id);
+						found.push({ position: other.position, error });
 					}
 				};
-				/** @param {AST.Identifier | AST.Literal} name */
-				const name_of = (name) =>
-					name.type === 'Identifier'
-						? name.name
-						: this.input.slice(/** @type {number} */ (name.start), name.end);
-				for (const statement of program.body) {
+				/**
+				 * The name an export specifier or `export * as` exports. A string name is
+				 * the name it spells.
+				 * @param {AST.Identifier | AST.Literal} exported
+				 * @param {boolean} specifier Whether an export specifier exports it, which
+				 *   as `default` is a default export
+				 */
+				const declare_alias = (exported, specifier) => {
+					const start = /** @type {number} */ (exported.start);
+					const key = exported.type === 'Identifier' ? exported.name : String(exported.value);
+					const name = this.input.slice(start, exported.end);
+					declare(key, name, start, SYMBOL_ALIAS, SYMBOL_ALIAS, specifier && key === 'default');
+				};
+				/**
+				 * The expression of a default export or `export =`, which can't share its
+				 * symbol: an alias when it's a name or a class (see `is_alias_expression`),
+				 * reported at a name, and otherwise at `export`.
+				 * @param {string} key
+				 * @param {AST.Node} statement
+				 * @param {AST.Node} expression
+				 */
+				const declare_expression = (key, statement, expression) => {
+					const named = expression.type === 'Identifier' && !expression.metadata?.parenthesized;
+					declare(
+						key,
+						key,
+						/** @type {number} */ ((named ? expression : statement).start),
+						is_alias_expression(expression) ? SYMBOL_ALIAS : SYMBOL_PROPERTY,
+						~0,
+						key === 'default',
+					);
+				};
+				/** @param {AST.Node} statement */
+				const declare_statement = (statement) => {
 					if (statement.type === 'ExportDefaultDeclaration') {
 						const declaration = /** @type {AST.Node} */ (statement.declaration);
 						const id = /** @type {{ id?: AST.Identifier | null }} */ (declaration).id;
 						const at = /** @type {number} */ ((id ?? statement).start);
-						if (
-							declaration.type === 'FunctionDeclaration' ||
-							declaration.type === 'TSDeclareFunction'
-						) {
+						if (is_function_declaration(declaration)) {
 							declare(
+								'default',
 								'default',
 								at,
 								SYMBOL_FUNCTION,
 								SYMBOL_VALUE & ~(SYMBOL_FUNCTION | SYMBOL_VALUE_MODULE | SYMBOL_CLASS),
+								true,
 							);
 						} else if (declaration.type === 'ClassDeclaration') {
 							declare(
+								'default',
 								'default',
 								at,
 								SYMBOL_CLASS,
 								(SYMBOL_VALUE | SYMBOL_TYPE) &
 									~(SYMBOL_VALUE_MODULE | SYMBOL_INTERFACE | SYMBOL_FUNCTION),
+								true,
 							);
 						} else if (declaration.type === 'TSInterfaceDeclaration') {
 							declare(
 								'default',
+								'default',
 								at,
 								SYMBOL_INTERFACE,
 								SYMBOL_TYPE & ~(SYMBOL_INTERFACE | SYMBOL_CLASS),
+								true,
 							);
 						} else {
-							// An expression, an alias when it's a name, which TypeScript reports at
-							// the name.
-							let expression = declaration;
-							while (expression.type === 'MemberExpression' && !expression.computed) {
-								expression = expression.object;
-							}
-							const alias = expression.type === 'Identifier';
-							declare(
-								'default',
-								/** @type {number} */ (
-									(declaration.type === 'Identifier' ? declaration : statement).start
-								),
-								alias ? SYMBOL_ALIAS : SYMBOL_PROPERTY,
-								~0,
-							);
+							declare_expression('default', statement, declaration);
 						}
+					} else if (statement.type === 'TSExportAssignment') {
+						declare_expression('export=', statement, statement.expression);
 					} else if (statement.type === 'ExportNamedDeclaration' && !statement.declaration) {
 						for (const specifier of statement.specifiers) {
-							const exported = /** @type {AST.Identifier | AST.Literal} */ (specifier.exported);
-							declare(
-								name_of(exported),
-								/** @type {number} */ (exported.start),
-								SYMBOL_ALIAS,
-								SYMBOL_ALIAS,
-							);
+							declare_alias(/** @type {AST.Identifier | AST.Literal} */ (specifier.exported), true);
 						}
 					} else if (statement.type === 'ExportAllDeclaration' && statement.exported) {
-						const exported = /** @type {AST.Identifier | AST.Literal} */ (statement.exported);
-						declare(
-							name_of(exported),
-							/** @type {number} */ (exported.start),
-							SYMBOL_ALIAS,
-							SYMBOL_ALIAS,
-						);
+						declare_alias(/** @type {AST.Identifier | AST.Literal} */ (statement.exported), false);
 					}
+				};
+				/** @param {AST.Node} statement */
+				const exports_function = (statement) =>
+					statement.type === 'ExportDefaultDeclaration' &&
+					is_function_declaration(/** @type {AST.Node} */ (statement.declaration));
+				for (const statement of body) {
+					if (exports_function(statement)) declare_statement(statement);
 				}
-				found.sort((a, b) => a.position - b.position);
-				for (const { position, error } of found) {
-					const end = position + 1;
-					if (!this.#collect) this.#throwError(position, error);
-					this.#recordCheckerLevelError(position, end, error);
+				for (const statement of body) {
+					if (!exports_function(statement)) declare_statement(statement);
+					/** @type {AST.Node | null | undefined} */
+					let module =
+						statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
+					while (module?.type === 'TSModuleDeclaration') module = module.body;
+					if (module?.type === 'TSModuleBlock') this.#findDuplicateExports(module.body, found);
 				}
 			}
 
@@ -5273,6 +5491,8 @@ export function TSRXPlugin(config) {
 				const outer_hold = this.#hold.held;
 				/** @type {AST.Pattern[]} */
 				let params;
+				const array = close === tt.bracketR;
+				if (array) this.#openBrackets++;
 				try {
 					params = this.#collect
 						? this.#parseBindingListPastRestElement(
@@ -5295,6 +5515,7 @@ export function TSRXPlugin(config) {
 					this.#readingGenericArrowParameters = outer_generic_arrow;
 					this.#parameterList = outer_list;
 					this.#setHeld(outer_hold);
+					if (array) this.#openBrackets--;
 				}
 				if (list?.deferred.length) deferred_parameter_errors.set(params, list.deferred);
 				if (list?.held.length) this.#reportParameterList(params, list.held);
@@ -5704,6 +5925,24 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * The reverse where an expression starts after a name: `key` in an `@for`
+			 * head is a name, so the `<` after it reads as less-than, or as the start
+			 * of type arguments. Read it again as a tag start (as acorn reads a
+			 * `/` there again as a regular expression), so `key <b />` is an element,
+			 * unless it opens a generic arrow function (`key <T,>(x: T) => x`).
+			 */
+			#readLessThanAsTagStart() {
+				if (this.type !== tt.relational || this.value !== '<') return;
+				if (
+					!can_start_tag_after_lt(this.input, this.start) ||
+					looks_like_generic_arrow(this.input, this.start)
+				) {
+					return;
+				}
+				this.finishToken(tstt.jsxTagStart);
+			}
+
+			/**
 			 * acorn-typescript reads the type parameters of a function type, a
 			 * constructor type, or a call, construct or method signature
 			 * (`tsFillSignature`) without the `const` modifier, which TypeScript takes
@@ -5884,6 +6123,14 @@ export function TSRXPlugin(config) {
 			 * A function declaration that isn't exported: TypeScript binds it before
 			 * the other statements of its list (see `declareName`). One after
 			 * `export default` (`FUNC_NULLABLE_ID`) or `export` is exported.
+			 *
+			 * acorn-typescript declares the name of an ambient function declaration,
+			 * which has no body, only at the top level, so in a `declare namespace` or
+			 * `declare module` body no scope had it and `export { f }` there failed as
+			 * undefined. Declare it in the scope it's in, as acorn-typescript does at
+			 * the top level, where only an export specifier sees it. Upstream's fix,
+			 * sveltejs/acorn-typescript#110, skips its own `checkLocalExport` in a
+			 * nested scope instead, which TSRX's override replaces.
 			 * @type {Parse.Parser['parseFunction']}
 			 */
 			parseFunction(node, statement, allowExpressionBody, isAsync, forInit) {
@@ -5895,11 +6142,26 @@ export function TSRXPlugin(config) {
 				) {
 					this.#declaration = { kind: 'function', scope: this.currentScope() };
 				}
+				/** @type {AST.FunctionDeclaration | AST.FunctionExpression} */
+				let parsed;
 				try {
-					return super.parseFunction(node, statement, allowExpressionBody, isAsync, forInit);
+					parsed = super.parseFunction(node, statement, allowExpressionBody, isAsync, forInit);
 				} finally {
 					this.#declaration = outer;
 				}
+				if (
+					statement & FUNC_STATEMENT &&
+					this.isAmbientContext &&
+					parsed.id &&
+					!(this.currentScope().flags & SCOPE_TOP)
+				) {
+					this.declareName(
+						parsed.id.name,
+						/** @type {Parse.BindingType[keyof Parse.BindingType]} */ (BIND_FLAGS_TS_EXPORT_ONLY),
+						/** @type {number} */ (parsed.id.start),
+					);
+				}
+				return parsed;
 			}
 
 			/**
@@ -8766,8 +9028,8 @@ export function TSRXPlugin(config) {
 					(code === CharCode.numberSign || code === CharCode.slash) &&
 					this.#functionBodyDepth === 0 &&
 					this.#jsxExpressionContainerDepth === 0 &&
-					!this.#readingJSXControlFlowHeader &&
 					this.#isNativeTemplateNode(template_parent) &&
+					!this.#readingHeaderStartedAfter(template_parent) &&
 					(!this.#openingNativeTemplateNode ||
 						this.#openingNativeTemplateNode === template_parent) &&
 					!(
@@ -9076,15 +9338,24 @@ export function TSRXPlugin(config) {
 						return this.#parseGenericArrowFunction(startPos, parse);
 					}
 				}
-				return super.parseSubscript(
-					base,
-					startPos,
-					startLoc,
-					noCalls,
-					maybeAsyncArrow,
-					optionalChained,
-					forInit,
-				);
+				// The `[` of a computed member (`a[i]`, `a?.[i]`).
+				const computed =
+					this.type === tt.bracketL ||
+					(this.type === tt.questionDot && this.lookaheadCharCode() === CharCode.openBracket);
+				if (computed) this.#openBrackets++;
+				try {
+					return super.parseSubscript(
+						base,
+						startPos,
+						startLoc,
+						noCalls,
+						maybeAsyncArrow,
+						optionalChained,
+						forInit,
+					);
+				} finally {
+					if (computed) this.#openBrackets--;
+				}
 			}
 
 			/**
@@ -9127,10 +9398,13 @@ export function TSRXPlugin(config) {
 					close === tt.parenR && async_arguments?.start === this.lastTokStart
 						? async_arguments
 						: NON_PARAMETER_LIST;
+				const array = close === tt.bracketR;
+				if (array) this.#openBrackets++;
 				try {
 					return super.parseExprList(close, allowTrailingComma, allowEmpty, refDestructuringErrors);
 				} finally {
 					this.#expressionList = outer;
+					if (array) this.#openBrackets--;
 				}
 			}
 
@@ -10035,21 +10309,71 @@ export function TSRXPlugin(config) {
 			 * This is needed because submodules create nested scopes, but exports
 			 * from within submodules should still be valid if the identifier is
 			 * declared in the submodule scope (not just the top-level module scope).
+			 * In a namespace or module body, a name that isn't declared yet is
+			 * checked again when the body ends (see `tsParseModuleBlock`).
 			 * @type {Parse.Parser['checkLocalExport']}
 			 */
 			checkLocalExport(id) {
-				const { name } = id;
-				if (this.hasImport(name)) return;
-				// Check all scopes in the scope stack, not just the top-level scope
-				for (let i = this.scopeStack.length - 1; i >= 0; i--) {
-					if (this.#scopeDeclaredNames(this.scopeStack[i]).has(name)) {
-						// Found in a scope, remove from undefinedExports if it was added
-						delete this.undefinedExports[name];
-						return;
-					}
+				if (this.#isExportDeclared(id.name)) return;
+				const body = this.#moduleBodyExports.at(-1);
+				if (body && body.depth === this.scopeStack.length - 1) {
+					body.scope = this.currentScope();
+					body.ids.push(id);
+					return;
 				}
 				// Not found in any scope, add to undefinedExports for later error
-				this.undefinedExports[name] = id;
+				this.undefinedExports[id.name] = id;
+			}
+
+			/**
+			 * Whether an export specifier can name `name` here: an import, or a name
+			 * declared in a scope on the stack or in `body`, a namespace or module
+			 * body that has ended.
+			 * @param {string} name
+			 * @param {Parse.Scope | null} [body]
+			 */
+			#isExportDeclared(name, body = null) {
+				if (this.hasImport(name)) return true;
+				if (body && this.#scopeDeclaredNames(body).has(name)) return true;
+				for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+					if (this.#scopeDeclaredNames(this.scopeStack[i]).has(name)) return true;
+				}
+				return false;
+			}
+
+			/**
+			 * The `{ … }` body of a namespace or module. An export list in it can
+			 * name a declaration that comes later in the body, as in TypeScript, so
+			 * a name that `checkLocalExport` can't see yet is checked again when the
+			 * body ends. acorn-typescript leaves the body's scope with acorn's own
+			 * `exitScope`, past any override, so the check is made here. A name still
+			 * not declared is checked again at the end of the enclosing body, if
+			 * there is one, whose later declarations it can name too. Otherwise it's
+			 * recorded as undefined, and acorn reports it at the end of the program,
+			 * at the specifier.
+			 * @type {Parse.Parser['tsParseModuleBlock']}
+			 */
+			tsParseModuleBlock() {
+				/** @type {ModuleBodyExports} */
+				const body = { depth: this.scopeStack.length, scope: null, ids: [] };
+				this.#moduleBodyExports.push(body);
+				let block;
+				try {
+					block = super.tsParseModuleBlock();
+				} finally {
+					this.#moduleBodyExports.pop();
+				}
+				const outer = this.#moduleBodyExports.at(-1);
+				for (const id of body.ids) {
+					if (this.#isExportDeclared(id.name, body.scope)) continue;
+					if (outer) {
+						outer.scope ??= this.scopeStack[outer.depth];
+						outer.ids.push(id);
+					} else {
+						this.undefinedExports[id.name] = id;
+					}
+				}
+				return block;
 			}
 
 			/**
@@ -10307,6 +10631,7 @@ export function TSRXPlugin(config) {
 
 					if (this.isContextual('key')) {
 						this.next(); // consume 'key'
+						this.#readLessThanAsTagStart();
 						/** @type {AST.ForOfStatement} */ (node).key = this.parseExpression();
 					}
 
@@ -10945,6 +11270,9 @@ export function TSRXPlugin(config) {
 							}
 							const paramStart = skip_whitespace_from(this.input, this.start);
 							if (this.input.charCodeAt(paramStart) === CharCode.openParen) {
+								// Read as code, the `(` pushed its context. Drop it, or reading the
+								// `(` again leaves a second one and a statement context under it.
+								this.#truncateContext(this.context.length - this.#currentTokenContextCount());
 								this.pos = paramStart;
 								this.start = paramStart;
 								this.startLoc = get_line_info(this, paramStart);
@@ -10966,7 +11294,7 @@ export function TSRXPlugin(config) {
 								this.startNodeAt(clauseStart, clauseStartLoc)
 							);
 							const previous_reading_header = this.#readingJSXControlFlowHeader;
-							this.#readingJSXControlFlowHeader = true;
+							this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 							try {
 								if (this.eat(tt.parenL)) {
 									const param = this.parseBindingAtom();
@@ -11471,10 +11799,15 @@ export function TSRXPlugin(config) {
 				const opening_template_node = this.#openingNativeTemplateNode;
 				let pushed_opening_template_node = false;
 				// `>` reads the next token: the first child, or, after `/>`, the token
-				// after the element. Outside a template that token is code, so a
-				// self-closing element stays off `#path` (`<span /> / 2` divides).
+				// after the element. Outside a template, or in a directive header that
+				// started after the enclosing element (`@for (…; key <b />)`), that token
+				// is code, so a self-closing element stays off `#path` (`<span /> / 2`
+				// divides).
+				const enclosing_node = this.#path.at(-1);
 				const reads_next_token_as_code =
-					node.selfClosing && !this.#isNativeTemplateNode(this.#path.at(-1));
+					node.selfClosing &&
+					(!this.#isNativeTemplateNode(enclosing_node) ||
+						this.#readingHeaderStartedAfter(enclosing_node));
 				if (opening_template_node) {
 					// The enclosing `parseElement` started this node before the opening tag
 					// said what it is; stamp its shape now that the tag has been read.
@@ -11565,6 +11898,7 @@ export function TSRXPlugin(config) {
 					scriptDepth: this.#templateScriptParsingDepth,
 					switchCaseScriptDepth: this.#parsingJSXSwitchCaseScriptStatementDepth,
 					scriptJSXDepth: this.#scriptJSXElementDepth,
+					header: this.#readingJSXControlFlowHeader,
 				});
 				if (tag_value_context_depth >= 0) {
 					this.#tagValueElements.add(node);
@@ -11680,10 +12014,9 @@ export function TSRXPlugin(config) {
 					}
 
 					// A balanced element must leave the tokenizer context exactly where it
-					// began. The body (especially a control-flow block) can leave residue
-					// above the children context — the children tc_expr plus a spurious
-					// b_stat from an @if/@for block save-restore — which the old single
-					// tc_expr pop missed when the b_stat sat on top. In expression position,
+					// began. The body can leave residue above the children context, such as
+					// the children tc_expr, which the old single tc_expr pop missed when
+					// another context sat on top of it. In expression position,
 					// unwind back to the pre-element depth so the following JS token (e.g. a
 					// comma/brace closing an enclosing object) tokenizes as code, not text.
 					const parent = this.#path.at(-1);
@@ -11733,265 +12066,277 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['parseTemplateBody']}
 			 */
 			parseTemplateBody(body) {
-				const current_template_node = this.#currentNativeTemplateNode();
-				if (!current_template_node) return;
-				current_template_node.metadata ??= { path: [] };
-				current_template_node.metadata.templateMode = 'template';
-				this.#readSkippedTemplateText(body);
+				// One child per turn: a loop rather than recursion, so that the stack
+				// grows with the nesting of elements, not the number of children
+				while (true) {
+					const current_template_node = this.#currentNativeTemplateNode();
+					if (!current_template_node) return;
+					current_template_node.metadata ??= { path: [] };
+					current_template_node.metadata.templateMode = 'template';
+					this.#readSkippedTemplateText(body);
 
-				if (this.#atCodeBlockStart()) {
-					const at_index = skip_whitespace_from(this.input, this.start);
-					if (this.start !== at_index) {
-						this.#addSkippedTemplateText(body, this.start, at_index);
-						const loc = get_line_info(this, at_index);
-						const at_position = new acorn.Position(loc.line, loc.column);
-						this.pos = at_index;
-						this.start = at_index;
-						this.startLoc = at_position;
-						this.curLine = loc.line;
-						this.lineStart = at_index - loc.column;
+					if (this.#atCodeBlockStart()) {
+						const at_index = skip_whitespace_from(this.input, this.start);
+						if (this.start !== at_index) {
+							this.#addSkippedTemplateText(body, this.start, at_index);
+							const loc = get_line_info(this, at_index);
+							const at_position = new acorn.Position(loc.line, loc.column);
+							this.pos = at_index;
+							this.start = at_index;
+							this.startLoc = at_position;
+							this.curLine = loc.line;
+							this.lineStart = at_index - loc.column;
+						}
+						body.push(this.#parseCodeBlock());
+						continue;
 					}
-					body.push(this.#parseCodeBlock());
-					this.parseTemplateBody(body);
-					return;
-				}
 
-				if (this.type === tt.braceL) {
-					body.push(this.#parseNativeTemplateExpressionContainer());
-				} else if (this.type === tstt.jsxText) {
-					this.#parseTemplateRawText(body);
-				} else if (this.#isJSXControlFlowDirectiveStart()) {
-					body.push(this.#parseJSXControlFlowExpression());
-				} else if (this.type === tt.braceR) {
-					// Leaving a native template body. We may still be in TSX/JSX tokenization
-					// context (e.g. after parsing markup), but the closing `}` is a JS token.
-					// If we don't reset this here, the following `next()` can read EOF using
-					// `jsx_readToken()` and throw "Unterminated JSX contents".
-					while (this.curContext() === tstc.tc_expr) {
-						this.#popContext();
-					}
-					return;
-				} else if (this.type === tstt.jsxTagStart) {
-					const startPos = this.start;
-					const startLoc = this.startLoc;
-					this.next();
-					if (this.value === '/' || this.type === tt.slash) {
-						// Consume '/'
-						this.next();
-
-						const closingNode = this.startNodeAt(startPos, startLoc);
-						// Whether the element's parent is a template node, so that the token
-						// after the `>` is the parent's text. In a `{ … }` container only a
-						// parent opened in the container counts: above it, the container's
-						// expression goes on. Nor does a parent opened before the code the
-						// element is in (see `#elementStart`), whose text that code isn't.
-						const parent_template_node = this.#path
-							.slice(this.#containerPathBaseline(), -1)
-							.findLast((node) => this.#isNativeTemplateNode(node));
-						const inside_parent_template =
-							!!parent_template_node &&
-							this.#templateScriptParsingDepth <=
-								this.#elementStart(parent_template_node).scriptDepth;
-						this.#closingNativeTemplateNode = true;
-						/** @type {ReturnType<Parse.Parser['jsx_parseElementName']>} */
-						let closingName;
-						try {
-							closingName = this.jsx_parseElementName();
-						} finally {
-							this.#closingNativeTemplateNode = false;
+					if (this.type === tt.braceL) {
+						body.push(this.#parseNativeTemplateExpressionContainer());
+					} else if (this.type === tstt.jsxText) {
+						this.#parseTemplateRawText(body);
+					} else if (this.#isJSXControlFlowDirectiveStart()) {
+						body.push(this.#parseJSXControlFlowExpression());
+					} else if (this.type === tt.braceR) {
+						// Leaving a native template body. We may still be in TSX/JSX tokenization
+						// context (e.g. after parsing markup), but the closing `}` is a JS token.
+						// If we don't reset this here, the following `next()` can read EOF using
+						// `jsx_readToken()` and throw "Unterminated JSX contents".
+						while (this.curContext() === tstc.tc_expr) {
+							this.#popContext();
 						}
-						if (closingName) {
-							/** @type {ESTreeJSX.TSRXJSXClosingElement} */ (closingNode).name = closingName;
-						}
-						const current = /** @type {ESTreeJSX.JSXFragment | ESTreeJSX.JSXElement} */ (
-							this.#path[this.#path.length - 1]
-						);
-						const current_name = this.#isNativeTemplateNode(current)
-							? current.type === 'JSXFragment'
-								? ''
-								: current.openingElement?.name
-									? this.getElementName(current.openingElement.name)
-									: null
-							: null;
-						const closing_name_str = !closingName
-							? ''
-							: closingName.type === 'JSXNamespacedName'
-								? closingName.namespace.name + ':' + closingName.name.name
-								: this.getElementName(closingName);
-						if (!(inside_parent_template && current_name === closing_name_str)) {
-							this.#closingNativeTemplateNode = true;
-						}
-						// `>` reads the token after the element. When the element closes and no
-						// template encloses it, or in its host's opening tag as an attribute
-						// value without braces, that token is code: the element leaves `#path`
-						// (`<b>x</b> / 2` divides; it is popped for good below), and the
-						// tokenizer context returns to where the element began, as after a
-						// balanced closing tag, dropping residue its body left (a control-flow
-						// block's contexts). parseElement keeps the contexts the token pushes.
-						const closes_outside_template =
-							this.#isNativeTemplateNode(current) &&
-							current_name === closing_name_str &&
-							(!this.#isNativeTemplateNode(this.#path.at(-2)) ||
-								this.#tagValueElements.has(current));
-						if (closes_outside_template) {
-							this.#path.pop();
-							const context_depth = this.#elementContextDepths.get(current);
-							if (context_depth !== undefined && this.context.length > context_depth) {
-								this.#truncateContext(context_depth);
-								this.exprAllowed = false;
-							}
-						}
-						try {
-							this.expect(tstt.jsxTagEnd);
-						} finally {
-							if (closes_outside_template) {
-								this.#path.push(current);
-							}
-						}
-						this.#closingNativeTemplateNode = false;
-						const closingElement =
-							/** @type {ESTreeJSX.TSRXJSXClosingElement & AST.NodeWithLocation} */ (
-								this.finishNode(
-									closingNode,
-									closingName ? 'JSXClosingElement' : 'JSXClosingFragment',
-								)
-							);
-						if (this.#isDynamicJSXElementName(closingElement.name)) {
-							closingElement.isDynamic = true;
-						}
-
-						// Validate that the closing tag matches the opening tag
-						const currentElement = /** @type {AST.NativeTSRXTemplateNode} */ (
-							this.#path[this.#path.length - 1]
-						);
-						if (!this.#isNativeTemplateNode(currentElement)) {
-							this.raise(this.start, TSRX_ERRORS.UNEXPECTED_CLOSING_TAG);
-						}
-
-						/** @type {string | null} */
-						let openingTagName;
-						/** @type {string | null} */
-						let closingTagName;
-
-						if (currentElement.type === 'JSXFragment') {
-							openingTagName = '';
-							closingTagName = !closingElement.name
-								? ''
-								: closingElement.name.type === 'JSXNamespacedName'
-									? closingElement.name.namespace.name + ':' + closingElement.name.name.name
-									: this.getElementName(closingElement.name);
-						} else {
-							openingTagName = currentElement.openingElement?.name
-								? this.getElementName(currentElement.openingElement.name)
-								: null;
-							closingTagName = closingElement.name
-								? closingElement.name?.type === 'JSXNamespacedName'
-									? closingElement.name.namespace.name + ':' + closingElement.name.name.name
-									: this.getElementName(closingElement.name)
-								: null;
-						}
-
-						if (openingTagName !== closingTagName) {
-							// A closing tag that matches no open element on the path is not a
-							// mismatch we can recover from by marking ancestors unclosed — it is
-							// simply an unexpected closing tag (e.g. `<div></span>`).
-							const normalized_closing_name = closingTagName ?? '';
-							const matches_open_element = this.#path.some((node) => {
-								const elem = /** @type {AST.NativeTSRXTemplateNode} */ (node);
-								if (!this.#isNativeTemplateNode(elem)) return false;
-								const elemName =
-									elem.type === 'JSXFragment'
-										? ''
-										: elem.openingElement?.name
-											? this.getElementName(elem.openingElement.name)
-											: null;
-								return elemName === normalized_closing_name;
-							});
-							if (!matches_open_element && this.#collect) {
-								this.raise(closingElement.start, TSRX_ERRORS.UNEXPECTED_CLOSING_TAG);
-							}
-							// this will throw if not collecting errors
-							this.#report_broken_markup_error(
-								closingElement.start,
-								TSRX_ERRORS.MISMATCHED_CLOSING_TAG(String(openingTagName), String(closingTagName)),
-							);
-							// Loop through all unclosed elements on the stack
-							while (this.#path.length > 0) {
-								const elem = /** @type {AST.NativeTSRXTemplateNode} */ (
-									this.#path[this.#path.length - 1]
-								);
-
-								// Stop at non-template boundaries.
-								if (!this.#isNativeTemplateNode(elem)) {
-									break;
-								}
-
-								const elemName =
-									elem.type === 'JSXFragment'
-										? ''
-										: elem.openingElement?.name
-											? this.getElementName(elem.openingElement.name)
-											: null;
-
-								// Found matching opening tag
-								if (elemName === closingTagName) {
-									break;
-								}
-
-								// Mark as unclosed and adjust location
-								elem.unclosed = true;
-								/** @type {AST.NodeWithLocation} */ (elem).loc.end = {
-									.../** @type {AST.SourceLocation} */ (
-										elem.type === 'JSXFragment' ? elem.openingFragment.loc : elem.openingElement.loc
-									).end,
-								};
-								elem.end =
-									elem.type === 'JSXFragment' ? elem.openingFragment.end : elem.openingElement.end;
-
-								this.#path.pop(); // Remove from stack
-							}
-						}
-
-						const elementToClose = /** @type {AST.NativeTSRXTemplateNode} */ (
-							this.#path[this.#path.length - 1]
-						);
-						if (this.#isNativeTemplateNode(elementToClose)) {
-							const elementToCloseName =
-								elementToClose.type === 'JSXFragment'
-									? ''
-									: elementToClose.openingElement?.name
-										? this.getElementName(elementToClose.openingElement.name)
-										: null;
-							if (elementToCloseName === closingTagName) {
-								if (elementToClose.type === 'JSXFragment') {
-									elementToClose.closingFragment = this.#toClosingFragment(closingElement);
-								} else {
-									elementToClose.closingElement = closingElement;
-								}
-							}
-						}
-
-						this.#path.pop();
 						return;
-					}
-					const node = this.parseElement();
-					if (node !== null) {
-						body.push(node);
-					}
-				} else if (this.type === tt.eof) {
-					return;
-				} else {
-					const start = this.start;
-					const type = this.type;
-					const end = this.#parseTemplateRawText(body);
-					// Text that reads nothing and leaves the same token would be read
-					// again until the stack runs out.
-					if (end === start && this.start === start && this.type === type) {
-						this.unexpected(start);
+					} else if (this.type === tstt.jsxTagStart) {
+						const startPos = this.start;
+						const startLoc = this.startLoc;
+						this.next();
+						if (this.value === '/' || this.type === tt.slash) {
+							// Consume '/'
+							this.next();
+
+							const closingNode = this.startNodeAt(startPos, startLoc);
+							// Whether the element's parent is a template node, so that the token
+							// after the `>` is the parent's text. In a `{ … }` container only a
+							// parent opened in the container counts: above it, the container's
+							// expression goes on. Nor does a parent opened before the code the
+							// element is in (see `#elementStart`), whose text that code isn't, or
+							// before the directive header it is in.
+							const parent_template_node = this.#path
+								.slice(this.#containerPathBaseline(), -1)
+								.findLast((node) => this.#isNativeTemplateNode(node));
+							const inside_parent_template =
+								!!parent_template_node &&
+								this.#templateScriptParsingDepth <=
+									this.#elementStart(parent_template_node).scriptDepth &&
+								!this.#readingHeaderStartedAfter(parent_template_node);
+							this.#closingNativeTemplateNode = true;
+							/** @type {ReturnType<Parse.Parser['jsx_parseElementName']>} */
+							let closingName;
+							try {
+								closingName = this.jsx_parseElementName();
+							} finally {
+								this.#closingNativeTemplateNode = false;
+							}
+							if (closingName) {
+								/** @type {ESTreeJSX.TSRXJSXClosingElement} */ (closingNode).name = closingName;
+							}
+							const current = /** @type {ESTreeJSX.JSXFragment | ESTreeJSX.JSXElement} */ (
+								this.#path[this.#path.length - 1]
+							);
+							const current_name = this.#isNativeTemplateNode(current)
+								? current.type === 'JSXFragment'
+									? ''
+									: current.openingElement?.name
+										? this.getElementName(current.openingElement.name)
+										: null
+								: null;
+							const closing_name_str = !closingName
+								? ''
+								: closingName.type === 'JSXNamespacedName'
+									? closingName.namespace.name + ':' + closingName.name.name
+									: this.getElementName(closingName);
+							if (!(inside_parent_template && current_name === closing_name_str)) {
+								this.#closingNativeTemplateNode = true;
+							}
+							// `>` reads the token after the element. When the element closes and no
+							// template encloses it, or in its host's opening tag as an attribute
+							// value without braces, that token is code: the element leaves `#path`
+							// (`<b>x</b> / 2` divides; it is popped for good below), and the
+							// tokenizer context returns to where the element began, as after a
+							// balanced closing tag, dropping residue its body left (a control-flow
+							// block's contexts). parseElement keeps the contexts the token pushes.
+							const parent_node = this.#path.at(-2);
+							const closes_outside_template =
+								this.#isNativeTemplateNode(current) &&
+								current_name === closing_name_str &&
+								(!this.#isNativeTemplateNode(parent_node) ||
+									this.#readingHeaderStartedAfter(parent_node) ||
+									this.#tagValueElements.has(current));
+							if (closes_outside_template) {
+								this.#path.pop();
+								const context_depth = this.#elementContextDepths.get(current);
+								if (context_depth !== undefined && this.context.length > context_depth) {
+									this.#truncateContext(context_depth);
+									this.exprAllowed = false;
+								}
+							}
+							try {
+								this.expect(tstt.jsxTagEnd);
+							} finally {
+								if (closes_outside_template) {
+									this.#path.push(current);
+								}
+							}
+							this.#closingNativeTemplateNode = false;
+							const closingElement =
+								/** @type {ESTreeJSX.TSRXJSXClosingElement & AST.NodeWithLocation} */ (
+									this.finishNode(
+										closingNode,
+										closingName ? 'JSXClosingElement' : 'JSXClosingFragment',
+									)
+								);
+							if (this.#isDynamicJSXElementName(closingElement.name)) {
+								closingElement.isDynamic = true;
+							}
+
+							// Validate that the closing tag matches the opening tag
+							const currentElement = /** @type {AST.NativeTSRXTemplateNode} */ (
+								this.#path[this.#path.length - 1]
+							);
+							if (!this.#isNativeTemplateNode(currentElement)) {
+								this.raise(this.start, TSRX_ERRORS.UNEXPECTED_CLOSING_TAG);
+							}
+
+							/** @type {string | null} */
+							let openingTagName;
+							/** @type {string | null} */
+							let closingTagName;
+
+							if (currentElement.type === 'JSXFragment') {
+								openingTagName = '';
+								closingTagName = !closingElement.name
+									? ''
+									: closingElement.name.type === 'JSXNamespacedName'
+										? closingElement.name.namespace.name + ':' + closingElement.name.name.name
+										: this.getElementName(closingElement.name);
+							} else {
+								openingTagName = currentElement.openingElement?.name
+									? this.getElementName(currentElement.openingElement.name)
+									: null;
+								closingTagName = closingElement.name
+									? closingElement.name?.type === 'JSXNamespacedName'
+										? closingElement.name.namespace.name + ':' + closingElement.name.name.name
+										: this.getElementName(closingElement.name)
+									: null;
+							}
+
+							if (openingTagName !== closingTagName) {
+								// A closing tag that matches no open element on the path is not a
+								// mismatch we can recover from by marking ancestors unclosed — it is
+								// simply an unexpected closing tag (e.g. `<div></span>`).
+								const normalized_closing_name = closingTagName ?? '';
+								const matches_open_element = this.#path.some((node) => {
+									const elem = /** @type {AST.NativeTSRXTemplateNode} */ (node);
+									if (!this.#isNativeTemplateNode(elem)) return false;
+									const elemName =
+										elem.type === 'JSXFragment'
+											? ''
+											: elem.openingElement?.name
+												? this.getElementName(elem.openingElement.name)
+												: null;
+									return elemName === normalized_closing_name;
+								});
+								if (!matches_open_element && this.#collect) {
+									this.raise(closingElement.start, TSRX_ERRORS.UNEXPECTED_CLOSING_TAG);
+								}
+								// this will throw if not collecting errors
+								this.#report_broken_markup_error(
+									closingElement.start,
+									TSRX_ERRORS.MISMATCHED_CLOSING_TAG(
+										String(openingTagName),
+										normalized_closing_name,
+									),
+								);
+								// Loop through all unclosed elements on the stack
+								while (this.#path.length > 0) {
+									const elem = /** @type {AST.NativeTSRXTemplateNode} */ (
+										this.#path[this.#path.length - 1]
+									);
+
+									// Stop at non-template boundaries.
+									if (!this.#isNativeTemplateNode(elem)) {
+										break;
+									}
+
+									const elemName =
+										elem.type === 'JSXFragment'
+											? ''
+											: elem.openingElement?.name
+												? this.getElementName(elem.openingElement.name)
+												: null;
+
+									// Found matching opening tag
+									if (elemName === closingTagName) {
+										break;
+									}
+
+									// Mark as unclosed and adjust location
+									elem.unclosed = true;
+									/** @type {AST.NodeWithLocation} */ (elem).loc.end = {
+										.../** @type {AST.SourceLocation} */ (
+											elem.type === 'JSXFragment'
+												? elem.openingFragment.loc
+												: elem.openingElement.loc
+										).end,
+									};
+									elem.end =
+										elem.type === 'JSXFragment'
+											? elem.openingFragment.end
+											: elem.openingElement.end;
+
+									this.#path.pop(); // Remove from stack
+								}
+							}
+
+							const elementToClose = /** @type {AST.NativeTSRXTemplateNode} */ (
+								this.#path[this.#path.length - 1]
+							);
+							if (this.#isNativeTemplateNode(elementToClose)) {
+								const elementToCloseName =
+									elementToClose.type === 'JSXFragment'
+										? ''
+										: elementToClose.openingElement?.name
+											? this.getElementName(elementToClose.openingElement.name)
+											: null;
+								if (elementToCloseName === closingTagName) {
+									if (elementToClose.type === 'JSXFragment') {
+										elementToClose.closingFragment = this.#toClosingFragment(closingElement);
+									} else {
+										elementToClose.closingElement = closingElement;
+									}
+								}
+							}
+
+							this.#path.pop();
+							return;
+						}
+						const node = this.parseElement();
+						if (node !== null) {
+							body.push(node);
+						}
+					} else if (this.type === tt.eof) {
+						return;
+					} else {
+						const start = this.start;
+						const type = this.type;
+						const end = this.#parseTemplateRawText(body);
+						// Text that reads nothing and leaves the same token would be read
+						// again until the stack runs out.
+						if (end === start && this.start === start && this.type === type) {
+							this.unexpected(start);
+						}
 					}
 				}
-
-				this.parseTemplateBody(body);
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix
@@ -12177,10 +12522,15 @@ export function TSRXPlugin(config) {
 				}
 				this.next();
 				const has_clause = this.type !== tt.string;
+				// Named bindings or a namespace import follow a default import, which
+				// `{}` leaves no specifier for.
+				let bindings_after_default = false;
 				if (!has_clause) {
 					node.specifiers = [];
 					node.source = /** @type {AST.Literal} */ (this.parseExprAtom());
 				} else {
+					bindings_after_default =
+						tokenIsIdentifier(this.type) && this.lookahead().type === tt.comma;
 					node.specifiers = this.parseImportSpecifiers();
 					this.expectContextual('from');
 					if (this.type === tt.string) {
@@ -12220,14 +12570,10 @@ export function TSRXPlugin(config) {
 					) {
 						this.#raiseCheckerError(phase_start, TS_ERRORS.IMPORT_SOURCE_NAMED);
 					}
-				} else if (
-					node.importKind === 'type' &&
-					node.specifiers.length > 1 &&
-					node.specifiers[0].type === 'ImportDefaultSpecifier'
-				) {
+				} else if (node.importKind === 'type' && bindings_after_default) {
 					// TypeScript's checker error for `import type a, { b } from "m"`, at
-					// `type` (#881). acorn-typescript's `parseImport`, which this replaces,
-					// raised it.
+					// `type` (#881), and for `import type a, {} from "m"` (#1161).
+					// acorn-typescript's `parseImport`, which this replaces, raised it.
 					this.#raiseCheckerError(type_start, TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED);
 				}
 				this.parseMaybeImportAttributes(node);
@@ -12452,16 +12798,24 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Records the statement's `context` (see `#inStatementList`).
+			 * Records the statement's `context` (see `#inStatementList`), and where it
+			 * starts, for `#parseJSXControlFlowValue`. Its first token is already
+			 * read, and may have pushed a context.
 			 * @type {Parse.Parser['parseStatement']}
 			 */
 			parseStatement(context, topLevel, exports) {
 				const outer = this.#statementContext;
+				const outer_context_depth = this.#statementContextDepth;
+				const outer_open_brackets = this.#statementOpenBrackets;
 				this.#statementContext = context ?? null;
+				this.#statementContextDepth = this.context.length - this.#currentTokenContextCount();
+				this.#statementOpenBrackets = this.#openBrackets;
 				try {
 					return this.#parseStatement(context, topLevel, exports);
 				} finally {
 					this.#statementContext = outer;
+					this.#statementContextDepth = outer_context_depth;
+					this.#statementOpenBrackets = outer_open_brackets;
 				}
 			}
 

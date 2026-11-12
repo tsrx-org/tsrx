@@ -2479,6 +2479,8 @@ describe('parse errors', () => {
 			['import.foo;', 'TS17012', '1:8'],
 			// #881, #785, #784.
 			['import type a, { b } from "a";', TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, '1:8'],
+			// #1161: empty named bindings too.
+			['import type a, {} from "a";', TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, '1:8'],
 			['import type A = B.C;', TS_ERRORS.IMPORT_ALIAS_IMPORT_TYPE, '1:1'],
 			['declare function f(): void {}', TS_ERRORS.AMBIENT_IMPLEMENTATION, '1:28'],
 			['import.foo("x");', TS_ERRORS.IMPORT_META_PROPERTY_CALL, '1:8'],
