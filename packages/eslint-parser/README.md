@@ -132,26 +132,29 @@ The parser will successfully parse this and allow ESLint rules (like those from
 
 ## Known Limitations
 
-Some core ESLint rules miss part of what TSRX syntax does. The parser can't change
-these without misdescribing the source to other rules:
+Some core ESLint rules miss part of what TSRX syntax does, and the parser can't
+change that without misdescribing the source to other rules.
+[`@tsrx/eslint-plugin`](https://www.npmjs.com/package/@tsrx/eslint-plugin) has
+TSRX versions of these rules. Its `js` configuration, for `js.configs.recommended`
+users, uses `tsrx/no-unused-vars` and `tsrx/no-unreachable` for `.tsrx` files:
 
 - `no-unused-vars` reports an unused `@for` index, but its "Remove unused
-  variable" suggestion deletes only the name.
-  `@for (const item of items; index i)` becomes
-  `@for (const item of items; index )`, which doesn't parse. `--fix` never applies
-  suggestions, but editors offer them. Remove the whole `; index i` clause
-  instead.
-- `no-await-in-loop` doesn't report an `await` in a `@for` key, such as
-  `key await load(item)`, though the key runs once per item, as the body does. It
-  does report an `await` in the body.
+  variable" suggestion deletes only the name, and `index )` doesn't parse.
+  `tsrx/no-unused-vars` removes the whole `; index i` clause.
+- `no-await-in-loop` doesn't report an `await` in a `@for` key, though the key
+  runs once per item. `tsrx/no-await-in-loop` does: use it for `.tsrx` files if
+  you turn on `no-await-in-loop`.
 - Code path analysis runs the arms of a `@switch` one after another, not as
   alternatives. After an arm that ends in `throw`, `no-unreachable` reports the
-  arms and code that follow it. Rules built on code paths treat every arm as
-  always running, so `react-hooks/rules-of-hooks` doesn't report a hook called in
-  a `@case` body. A `switch` statement would add a path from each case into the
-  next, and `no-fallthrough` would then report each `@case` but the last that can
-  reach its end. The arms of `@if` don't have this problem, so when an arm throws,
-  an `@if`/`@else if` chain gets the right code paths.
+  arms and code that follow it. `tsrx/no-unreachable` treats the arms as
+  alternatives.
+
+Other rules built on code paths still treat every `@switch` arm as always running.
+For example, `react-hooks/rules-of-hooks` doesn't report a hook called in a
+`@case` body. The arms of `@if` get their own code paths.
+
+No TSRX rule covers these:
+
 - Code path analysis runs the blocks of a `@try` one after another: the body,
   `@pending`, then `@catch`. In TSRX, a `@catch` renders when the `@try` body
   throws, and `@pending` shows while it suspends, so these reports can be false:
