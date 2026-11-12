@@ -14,7 +14,7 @@ const rule: Rule.RuleModule = {
 		schema: [],
 	},
 	create(context) {
-		const checkForOfKey = (node: AST.ForOfStatement | AST.JSXForExpression) => {
+		const checkForOfKey = (node: AST.JSXForExpression) => {
 			const key = node.key;
 			if (!key) {
 				return;
@@ -25,11 +25,6 @@ const rule: Rule.RuleModule = {
 				const identifier = reference.identifier as Rule.Node & AST.Identifier;
 				const [identifier_start, identifier_end] = identifier.range!;
 				if (reference.resolved || identifier_start < start || identifier_end > end) {
-					continue;
-				}
-
-				// ESLint's scope analysis does not know the loop's `index` binding.
-				if (identifier.name === node.index?.name) {
 					continue;
 				}
 
@@ -47,11 +42,9 @@ const rule: Rule.RuleModule = {
 			}
 		};
 
-		// `@for (... ; key X)` loops parse to `JSXForExpression`, while the bare
-		// `for (... ; key X)` form parses to `ForOfStatement`. Both carry the same
-		// `key` shape, so validate either node type.
+		// The ESLint parser's scope manager resolves the key in the loop's scope,
+		// where the loop's variable and `index` are declared.
 		return {
-			ForOfStatement: checkForOfKey,
 			JSXForExpression: checkForOfKey,
 		};
 	},
