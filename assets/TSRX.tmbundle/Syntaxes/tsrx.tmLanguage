@@ -5725,7 +5725,7 @@
 				</dict>
 			</dict>
 			<key>end</key>
-			<string>(&lt;/)(script)\s*(&gt;)|(&lt;/)(script)\s*$</string>
+			<string>(&lt;/)(script)[\t\n\f\r ]*(&gt;)|(&lt;/)(script)[\t\n\f\r ]*$</string>
 			<key>endCaptures</key>
 			<dict>
 				<key>1</key>
@@ -5772,7 +5772,7 @@
 					<key>contentName</key>
 					<string>source.ts</string>
 					<key>end</key>
-					<string>(?=&lt;/script\s*(?:&gt;|$))</string>
+					<string>(?=&lt;/script[\t\n\f\r ]*(?:&gt;|$))</string>
 					<key>patterns</key>
 					<array>
 						<dict>
@@ -5832,7 +5832,7 @@
 				</dict>
 			</dict>
 			<key>end</key>
-			<string>(/&gt;)|(&lt;/)(style)\s*(&gt;)|(&lt;/)(style)\s*$</string>
+			<string>(/&gt;)|(&lt;/)(style)[\t\n\f\r ]*(&gt;)|(&lt;/)(style)[\t\n\f\r ]*$</string>
 			<key>endCaptures</key>
 			<dict>
 				<key>1</key>
@@ -5884,7 +5884,7 @@
 					<key>contentName</key>
 					<string>source.css</string>
 					<key>end</key>
-					<string>(?=&lt;/style\s*(?:&gt;|$))</string>
+					<string>(?=&lt;/style[\t\n\f\r ]*(?:&gt;|$))</string>
 					<key>patterns</key>
 					<array>
 						<dict>

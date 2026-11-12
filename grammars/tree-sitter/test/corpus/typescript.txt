@@ -324,6 +324,82 @@ async function load() {
               (identifier))))))))
 
 ==================================
+Call Expressions With Type Arguments After A Parenthesized Or New Callee
+==================================
+
+const a = (f)<T>(x);
+const b = (obj.m)<A, B>(x);
+const c = new Foo()<T>(x);
+const d = new Foo<T>(x);
+const e = (f) < a > b;
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (call_expression
+          function: (parenthesized_expression
+            (identifier))
+          type_arguments: (type_arguments
+            (type
+              (identifier)))
+          arguments: (arguments
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (call_expression
+          function: (parenthesized_expression
+            (member_expression
+              object: (identifier)
+              property: (identifier)))
+          type_arguments: (type_arguments
+            (type
+              (identifier))
+            (type
+              (identifier)))
+          arguments: (arguments
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (call_expression
+          function: (new_expression
+            constructor: (identifier)
+            arguments: (arguments))
+          type_arguments: (type_arguments
+            (type
+              (identifier)))
+          arguments: (arguments
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (new_expression
+          constructor: (identifier)
+          type_arguments: (type_arguments
+            (type
+              (identifier)))
+          arguments: (arguments
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (binary_expression
+          left: (binary_expression
+            left: (parenthesized_expression
+              (identifier))
+            right: (identifier))
+          right: (identifier))))))
+
+==================================
 As And Satisfies With Array Types
 ==================================
 
@@ -380,6 +456,266 @@ const first = (value as T[])[0];
                   (type
                     (identifier))))))
           index: (number))))))
+
+==================================
+As And Satisfies With Union And Intersection Types
+==================================
+
+const a = x as A | B;
+const b = x satisfies A | B[];
+const c = x as A & B[];
+const d = x as A | B & C;
+const e = (x as A) | b;
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (as_expression
+          (identifier)
+          (type
+            (union_type
+              (type
+                (identifier))
+              (type
+                (identifier))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (satisfies_expression
+          (identifier)
+          (type
+            (union_type
+              (type
+                (identifier))
+              (type
+                (array_type
+                  (type
+                    (identifier))))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (as_expression
+          (identifier)
+          (type
+            (intersection_type
+              (type
+                (identifier))
+              (type
+                (array_type
+                  (type
+                    (identifier))))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (as_expression
+          (identifier)
+          (type
+            (union_type
+              (type
+                (identifier))
+              (type
+                (intersection_type
+                  (type
+                    (identifier))
+                  (type
+                    (identifier))))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (binary_expression
+          left: (parenthesized_expression
+            (as_expression
+              (identifier)
+              (type
+                (identifier))))
+          right: (identifier))))))
+
+==================================
+Negative Number Literal Types
+==================================
+
+type Offset = 0 | -1;
+const step = x as 1 | -1;
+const big = x satisfies -1n | 1n;
+const diff = a - 1;
+
+---
+
+(program
+  (type_alias_declaration
+    name: (type_identifier
+      (type_identifier))
+    value: (type
+      (union_type
+        (type
+          (literal_type
+            (number)))
+        (type
+          (literal_type
+            (number))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (as_expression
+          (identifier)
+          (type
+            (union_type
+              (type
+                (literal_type
+                  (number)))
+              (type
+                (literal_type
+                  (number)))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (satisfies_expression
+          (identifier)
+          (type
+            (union_type
+              (type
+                (literal_type
+                  (number)))
+              (type
+                (literal_type
+                  (number)))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (binary_expression
+          left: (identifier)
+          right: (number))))))
+
+==================================
+Template Literal Types
+==================================
+
+type Id = `id-${number}`;
+type Pair = `${A}-${B | C}`;
+const key = x as Id | `b\`${string}`;
+const text = `a${b}`;
+
+---
+
+(program
+  (type_alias_declaration
+    name: (type_identifier
+      (type_identifier))
+    value: (type
+      (template_literal_type
+        (template_type
+          (type
+            (predefined_type))))))
+  (type_alias_declaration
+    name: (type_identifier
+      (type_identifier))
+    value: (type
+      (template_literal_type
+        (template_type
+          (type
+            (identifier)))
+        (template_type
+          (type
+            (union_type
+              (type
+                (identifier))
+              (type
+                (identifier))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (as_expression
+          (identifier)
+          (type
+            (union_type
+              (type
+                (identifier))
+              (type
+                (template_literal_type
+                  (escape_sequence)
+                  (template_type
+                    (type
+                      (predefined_type)))))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (template_string
+          (template_substitution
+            (identifier)))))))
+
+==================================
+Constructor Types
+==================================
+
+type Make = new (a: A) => B;
+type Base = abstract new <T>() => T;
+const ctor = x as A | (new () => B);
+const made = new Foo(a);
+
+---
+
+(program
+  (type_alias_declaration
+    name: (type_identifier
+      (type_identifier))
+    value: (type
+      (constructor_type
+        (formal_parameters
+          (required_parameter
+            pattern: (identifier)
+            (type
+              (identifier))))
+        (type
+          (identifier)))))
+  (type_alias_declaration
+    name: (type_identifier
+      (type_identifier))
+    value: (type
+      (constructor_type
+        (type_parameters
+          (type_parameter
+            (identifier)))
+        (formal_parameters)
+        (type
+          (identifier)))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (as_expression
+          (identifier)
+          (type
+            (union_type
+              (type
+                (identifier))
+              (type
+                (parenthesized_type
+                  (type
+                    (constructor_type
+                      (formal_parameters)
+                      (type
+                        (identifier))))))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (new_expression
+          constructor: (identifier)
+          arguments: (arguments
+            (identifier)))))))
 
 ==================================
 Generic Arrow Functions

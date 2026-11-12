@@ -205,6 +205,7 @@
 ; Literals
 (string) @string
 (template_string) @string
+(template_literal_type) @string
 
 (number) @number
 (true) @constant.builtin.boolean
@@ -225,6 +226,9 @@
 (binary_expression operator: _ @operator)
 (augmented_assignment_expression operator: _ @operator)
 (update_expression operator: _ @operator)
+(union_type "|" @operator)
+(intersection_type "&" @operator)
+(literal_type "-" @operator)
 
 ; Control flow keywords
 [
@@ -333,6 +337,10 @@
   "}" @keyword.control)
 
 (template_substitution
+  "${" @punctuation.special
+  "}" @punctuation.special)
+
+(template_type
   "${" @punctuation.special
   "}" @punctuation.special)
 

@@ -6569,7 +6569,7 @@
           "name": "entity.name.tag.js"
         }
       },
-      "end": "(/>)|(</)(style)\\s*(>)|(</)(style)\\s*$",
+      "end": "(/>)|(</)(style)[\\t\\n\\f\\r ]*(>)|(</)(style)[\\t\\n\\f\\r ]*$",
       "endCaptures": {
         "1": {
           "name": "punctuation.definition.tag.end.js"
@@ -6598,7 +6598,7 @@
               "name": "punctuation.definition.tag.end.js"
             }
           },
-          "end": "(?=</style\\s*(?:>|$))",
+          "end": "(?=</style[\\t\\n\\f\\r ]*(?:>|$))",
           "contentName": "source.css",
           "patterns": [
             {
@@ -6631,7 +6631,7 @@
           "name": "entity.name.tag.js"
         }
       },
-      "end": "(</)(script)\\s*(>)|(</)(script)\\s*$",
+      "end": "(</)(script)[\\t\\n\\f\\r ]*(>)|(</)(script)[\\t\\n\\f\\r ]*$",
       "endCaptures": {
         "1": {
           "name": "punctuation.definition.tag.begin.js"
@@ -6657,7 +6657,7 @@
               "name": "punctuation.definition.tag.end.js"
             }
           },
-          "end": "(?=</script\\s*(?:>|$))",
+          "end": "(?=</script[\\t\\n\\f\\r ]*(?:>|$))",
           "contentName": "source.ts",
           "patterns": [
             {

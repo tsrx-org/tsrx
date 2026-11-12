@@ -22,13 +22,14 @@ const PREC = {
 	MEMBER: 15,
 };
 
+// Every type operator binds tighter than `as` and `satisfies` (PREC.REL), so
+// the type after them is read whole, as TypeScript reads it: `x as A | B[]` is
+// `x as (A | B[])`, not `(x as A) | B` and then an index.
 const TYPE_PREC = {
-	UNION: 1,
-	INTERSECTION: 2,
-	OPERATOR: 3,
-	// Above `as` and `satisfies` (PREC.REL), so `x as T[]` keeps the `[]` in its
-	// type instead of indexing `x as T`.
-	POSTFIX: PREC.REL + 1,
+	UNION: PREC.REL + 1,
+	INTERSECTION: PREC.REL + 2,
+	OPERATOR: PREC.REL + 3,
+	POSTFIX: PREC.REL + 4,
 };
 
 module.exports = grammar({
@@ -144,6 +145,7 @@ module.exports = grammar({
 		[$.jsx_try_expression],
 		[$.jsx_element_name, $.jsx_non_namespaced_element_name, $.type_parameter],
 		[$.expression, $._type_arguments_callee],
+		[$.template_string, $.template_literal_type],
 	],
 
 	rules: {
@@ -1237,9 +1239,12 @@ module.exports = grammar({
 			),
 
 		// A call with type arguments has a member, call or other primary
-		// expression as its callee, so a prefix operator applies to the whole call:
-		// `!f<T>(x)` negates the call and `await f<T>(x)` awaits it.
-		_type_arguments_callee: ($) => $.primary_expression,
+		// expression, a parenthesized expression or a `new` expression as its
+		// callee, so a prefix operator applies to the whole call: `!f<T>(x)`
+		// negates the call and `await f<T>(x)` awaits it. `(f)<T>(x)` and
+		// `new Foo()<T>(x)` call the result.
+		_type_arguments_callee: ($) =>
+			choice($.primary_expression, $.parenthesized_expression, $.new_expression),
 
 		new_expression: ($) =>
 			prec.right(
@@ -1592,7 +1597,9 @@ module.exports = grammar({
 				$.union_type,
 				$.intersection_type,
 				$.function_type,
+				$.constructor_type,
 				$.literal_type,
+				$.template_literal_type,
 				$.parenthesized_type,
 				$.type_query,
 				$.index_type_query,
@@ -1642,7 +1649,24 @@ module.exports = grammar({
 
 		function_type: ($) => seq(optional($.type_parameters), $.formal_parameters, '=>', $.type),
 
-		literal_type: ($) => choice($.number, $.string, $.true, $.false, $.null),
+		constructor_type: ($) =>
+			seq(
+				optional('abstract'),
+				'new',
+				optional($.type_parameters),
+				$.formal_parameters,
+				'=>',
+				$.type,
+			),
+
+		// A negative number is a literal type too: `0 | -1`.
+		literal_type: ($) => choice(seq('-', $.number), $.number, $.string, $.true, $.false, $.null),
+
+		// `` `id-${number}` ``: a template whose substitutions are types.
+		template_literal_type: ($) =>
+			seq('`', repeat(choice($._template_chars, $.escape_sequence, $.template_type)), '`'),
+
+		template_type: ($) => seq('${', $.type, '}'),
 
 		parenthesized_type: ($) => seq('(', $.type, ')'),
 
