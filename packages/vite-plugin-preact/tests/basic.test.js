@@ -140,4 +140,45 @@ describe('@tsrx/vite-plugin-preact basic', () => {
 
 		expect(modules).toEqual([raw_module]);
 	});
+
+	it('keeps the stylesheet when a styled file imported only as `?raw` stops compiling', async () => {
+		const plugin = tsrxPreact();
+		const id = '/virtual/Example.tsrx';
+		const css_module = { id: `${id}?tsrx-css&lang.css` };
+		/** @type {unknown[]} */
+		const invalidated = [];
+		await plugin.transform(
+			`export function Example() @{
+				<>
+					<style>.a { color: red; }</style>
+					<p class="a">hi</p>
+				</>
+			}`,
+			id,
+		);
+
+		// Vite keeps the stylesheet module of the earlier component import after
+		// the file's importers switch to `?raw`.
+		const broken_source = 'export function Example() @{ <section>';
+		const ctx = {
+			file: id,
+			modules: [{ id }, { id: `${id}?raw` }, css_module],
+			read: async () => broken_source,
+			server: {
+				moduleGraph: {
+					/** @param {string} module_id */
+					getModuleById: (module_id) => (module_id === css_module.id ? css_module : undefined),
+					/** @param {unknown} module */
+					invalidateModule: (module) => invalidated.push(module),
+				},
+			},
+		};
+		const handle_hot_update = /** @type {(ctx: any) => Promise<any[]>} */ (plugin.handleHotUpdate);
+
+		await expect(handle_hot_update(ctx)).resolves.toBe(ctx.modules);
+		expect(invalidated).toEqual([]);
+		expect(plugin.load(css_module.id)).toContain('color: red;');
+		// A component import still reports the error when Vite transforms it again.
+		await expect(plugin.transform(broken_source, id)).rejects.toThrow("Unclosed tag '<section>'");
+	});
 });

@@ -133,6 +133,68 @@ const active = import.meta.env.platform.web;`;
 		expect(result.code).toBe(source.replace('import.meta.env.platform.web', 'true'));
 	});
 
+	it('reads comment-like JSX text in ordinary JSX and TSX as text', () => {
+		const jsx = 'export default function Page() { return <main><pre>/*</pre></main>; }';
+		const tsx = 'export default function Page() { return <main><pre>// docs</pre></main>; }';
+
+		for (const filename of ['page.jsx', 'page.js', 'page.mjs', 'page.cjs']) {
+			expect(replacePlatformFlags(jsx, filename, 'web').code).toBe(jsx);
+		}
+		expect(replacePlatformFlags(tsx, 'page.tsx', 'web').code).toBe(tsx);
+	});
+
+	it('replaces a flag in an expression container between comment-like JSX text', () => {
+		const source = 'export const Note = () => <pre>/* {import.meta.env.platform.web} */ @if</pre>;';
+		const result = replacePlatformFlags(source, 'Note.tsx', 'web');
+
+		expect(result.code).toBe('export const Note = () => <pre>/* {true} */ @if</pre>;');
+	});
+
+	it('reads a constrained or defaulted generic arrow function in TSX', () => {
+		const constrained = `const pick = <T extends object>(o: T) => o;
+export const Note = () => <pre>/* {import.meta.env.platform.web} */</pre>;`;
+		const defaulted = `const pick = <T = string>(o: T) => o;
+export const Note = () => <pre>// docs</pre>;`;
+
+		expect(replacePlatformFlags(constrained, 'Note.tsx', 'web').code).toBe(
+			constrained.replace('import.meta.env.platform.web', 'true'),
+		);
+		expect(replacePlatformFlags(defaulted, 'Note.tsx', 'web').code).toBe(defaulted);
+	});
+
+	it('reports a syntax error after a constrained generic arrow function where it is', () => {
+		const source = `const pick = <T extends object>(o: T) => o;
+const = 1;`;
+
+		expect(() => replacePlatformFlags(source, 'pick.tsx', 'web')).toThrow('Unexpected token (2:6)');
+	});
+
+	it('reports the TSX syntax error when neither parser reads the module', () => {
+		const source = `export const Note = () => <pre>/*</pre>;
+const = 1;`;
+
+		expect(() => replacePlatformFlags(source, 'page.tsx', 'web')).toThrow('Unexpected token (2:6)');
+	});
+
+	it('reads angle-bracket type assertions in TypeScript modules without JSX', () => {
+		const source = `const count = <number>(value as unknown);
+const active = import.meta.env.platform.web;`;
+
+		for (const filename of ['count.ts', 'count.mts', 'count.cts']) {
+			const result = replacePlatformFlags(source, filename, 'web');
+			expect(result.code).toBe(source.replace('import.meta.env.platform.web', 'true'));
+		}
+	});
+
+	it('replaces flags in a module that uses syntax only the TSRX parser reads', () => {
+		const source = `import defer * as feature from './feature.js';
+const lazy = import('./lazy.js',);
+const active = import.meta.env.platform.ios;`;
+		const result = replacePlatformFlags(source, 'feature.ts', 'ios');
+
+		expect(result.code).toBe(source.replace('import.meta.env.platform.ios', 'true'));
+	});
+
 	it('preserves an incoming map when there is nothing to rewrite', () => {
 		const source = 'export const ready = true;';
 		const incoming = {
