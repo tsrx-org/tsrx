@@ -95,7 +95,7 @@ describe('@tsrx/turbopack-plugin-react loader', () => {
 		expect(output.startsWith("'use client';")).toBe(true);
 	});
 
-	it('injects a sibling CSS import for component-local style blocks', async () => {
+	it('injects a relative sibling CSS import for component-local style blocks', async () => {
 		const { context, promise } = create_loader_context('/virtual/App.tsrx');
 
 		tsrx_react_turbopack_loader.call(
@@ -116,7 +116,9 @@ describe('@tsrx/turbopack-plugin-react loader', () => {
 		const { err, output, map } = await promise;
 
 		expect(err).toBeNull();
-		expect(output).toContain('import "/virtual/App.tsrx?tsrx-css&lang.css";');
+		// Turbopack rejects server-relative (absolute) import specifiers.
+		expect(output).toContain('import "./App.tsrx?tsrx-css&lang.css";');
+		expect(output).not.toContain('/virtual/App.tsrx?tsrx-css');
 		expect(output).toContain('export function App()');
 		expect(map).toBeTruthy();
 	});
@@ -146,7 +148,7 @@ describe('@tsrx/turbopack-plugin-react loader', () => {
 		expect(err).toBeNull();
 		expect(output.indexOf('./reset.css')).toBeGreaterThan(-1);
 		expect(output.indexOf('./reset.css')).toBeLessThan(
-			output.indexOf('import "/virtual/App.tsrx?tsrx-css&lang.css";'),
+			output.indexOf('import "./App.tsrx?tsrx-css&lang.css";'),
 		);
 	});
 
@@ -175,7 +177,7 @@ describe('@tsrx/turbopack-plugin-react loader', () => {
 		expect(err).toBeNull();
 		expect(output.startsWith("'use client';")).toBe(true);
 		expect(output.indexOf("'use client';")).toBeLessThan(
-			output.indexOf('import "/virtual/App.tsrx?tsrx-css&lang.css";'),
+			output.indexOf('import "./App.tsrx?tsrx-css&lang.css";'),
 		);
 	});
 
@@ -242,7 +244,9 @@ describe('@tsrx/turbopack-plugin-react config helper', () => {
 		expect(rule.condition).toEqual({
 			all: [{ not: 'foreign' }, { query: '?tsrx-css&lang.css' }],
 		});
-		expect(rule.type).toBe('css');
+		// Next only gives server components' CSS a stylesheet link for `*.css` modules.
+		expect(rule.as).toBe('*.css');
+		expect(rule).not.toHaveProperty('type');
 		expect(rule.loaders).toHaveLength(1);
 		expect(rule.loaders[0]).toContain('packages/turbopack-plugin-react/src/css-loader.js');
 	});
@@ -280,7 +284,7 @@ describe('@tsrx/turbopack-plugin-react config helper', () => {
 			condition: {
 				all: [{ not: 'foreign' }, { query: '?tsrx-css&lang.css' }],
 			},
-			type: 'css',
+			as: '*.css',
 		});
 	});
 
@@ -315,7 +319,7 @@ describe('@tsrx/turbopack-plugin-react config helper', () => {
 			condition: {
 				all: [{ not: 'foreign' }, { query: '?tsrx-css&lang.css' }],
 			},
-			type: 'css',
+			as: '*.css',
 		});
 		expect(config.turbopack.rules['*.tsrx'][2]).toEqual({
 			loaders: ['custom-loader'],
