@@ -769,6 +769,26 @@ describe('@tsrx/vue basic', () => {
 		expect(code).not.toContain('Suspense');
 	});
 
+	it('renders a @try inside element children as a boundary component', () => {
+		const { code } = compile(
+			`function App() @{
+				<div class="wrap">
+					@try {
+						<Child />
+					} @catch (error) {
+						<p>{'Failed'}</p>
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		// A component instance registers the boundary's error hook; a plain call
+		// has none.
+		expect(code).toContain('{<TsrxErrorBoundary fallback=');
+		expect(code).not.toContain('TsrxErrorBoundary({');
+	});
+
 	it('does not generate a catch fallback component without @pending', () => {
 		const { code } = compile(
 			`export function App() @{
@@ -836,6 +856,10 @@ describe('@tsrx/vue basic', () => {
 		expect(code.match(/error\.message/g)).toHaveLength(1);
 		expect(code).toContain('StatementBodyHook');
 		expect(code).toContain('suffix={suffix}');
+		// The Suspense default slot renders the body through its own boundary,
+		// so `reset` works for errors thrown there.
+		expect(code).toMatch(/default: \(\) => <TsrxErrorBoundary fallback=\{\(error, reset\) => \{/);
+		expect(code).not.toContain('reset={() => {}}');
 
 		const error_boundary_index = code.indexOf('<TsrxErrorBoundary');
 		const suspense_index = code.indexOf('<Suspense');
