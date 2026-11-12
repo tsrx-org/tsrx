@@ -16,6 +16,7 @@ import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtim
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runLocalHelperNamesRuntimeTests } from '@tsrx/core/test-harness/runtime/local-helper-names';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -1808,6 +1809,8 @@ describe('tsrx-vue runtime', () => {
 		expect(container.querySelector('.async-pending')).toBeNull();
 		expect(container.querySelector('.async-resolved')).toBeNull();
 	});
+
+	runLocalHelperNamesRuntimeTests();
 });
 
 const HandlerArrow = ({ label, onPick }: { label: string; onPick: (label: string) => void }) => (
