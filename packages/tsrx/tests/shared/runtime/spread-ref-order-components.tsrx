@@ -46,3 +46,57 @@ export function SpreadsRefOrderApp() @{
 		ref={capture}
 	/>
 }
+
+function getter_bag(extra: object = {}) {
+	const counter = { reads: 0 };
+	const bag = Object.assign(
+		{
+			get title() {
+				return String(++counter.reads);
+			},
+		},
+		extra,
+	);
+	return [counter, bag] as const;
+}
+
+export function SpreadGetterApp() @{
+	const [counter, bag] = getter_bag();
+	<input class="spread-getter" {...bag} data-reads={String(counter.reads)} />
+}
+
+export function SpreadGetterRefApp() @{
+	const [counter, bag] = getter_bag();
+	<input class="spread-getter-ref" {...bag} data-reads={String(counter.reads)} ref={capture} />
+}
+
+export function SpreadClearsRefApp() @{
+	<div class="spread-clears-ref" {...{ ref: capture }} {...{ ref: undefined }} />
+}
+
+export function SpreadGetterOwnRefApp() @{
+	const [counter, bag] = getter_bag({ ref: capture });
+	<input class="spread-getter-own-ref" {...bag} data-reads={String(counter.reads)} />
+}
+
+export function RefBeforeSpreadApp() @{
+	let ready = false;
+	function init_ref() {
+		ready = true;
+		return capture;
+	}
+	<div
+		class="ref-before-spread"
+		ref={init_ref()}
+		{...{ 'data-ready': String(ready), ref: capture }}
+	/>
+}
+
+export function RefBeforeAttributeApp() @{
+	let ready = false;
+	function init_ref() {
+		ready = true;
+		return capture;
+	}
+	<div class="ref-before-attribute" {...{}} ref={init_ref()} data-ready={String(ready)} />
+}

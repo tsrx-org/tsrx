@@ -108,6 +108,8 @@ export function features_from_mapping_data(data) {
  * `import { a } from './x';` is one edit-safe span rather than four tokens
  * with unmapped punctuation between them. TypeScript only applies text edits
  * (auto-import, rename, code actions) that fit inside a single Verbatim span.
+ * Identical text left between spans with different feature bits then maps
+ * without features (see {@link map_identical_gaps}).
  * @param {readonly CodeMapping[]} mappings
  * @param {string} generated_text
  * @param {string} original_text
@@ -197,8 +199,12 @@ export function to_span_mappings(mappings, generated_text, original_text, option
 	}
 
 	selected.sort((left, right) => left.generatedStart - right.generatedStart);
-	return extend_verbatim_spans_over_whitespace(
-		coalesce_verbatim_spans(selected, generated_text, original_text),
+	return map_identical_gaps(
+		extend_verbatim_spans_over_whitespace(
+			coalesce_verbatim_spans(selected, generated_text, original_text),
+			generated_text,
+			original_text,
+		),
 		generated_text,
 		original_text,
 	).map((candidate) => [
@@ -279,6 +285,48 @@ export function extend_verbatim_spans_over_whitespace(spans, generated_text, ori
 		}
 	}
 	return spans;
+}
+
+/**
+ * Give the text that follows a Verbatim span, and is identical in the generated
+ * and the original file up to the next span in either file, a Verbatim span of
+ * its own with no feature bits. TypeScript 7 offers no auto-import completion at
+ * the end of a span that unmapped text separates from the next span, such as at
+ * `helperB` in `{helperB()}<Button />`: the `<` of a tag maps with other features
+ * than `helperB`, so `()}` joins neither span (#1028). The text keeps no features
+ * of its neighbours, as when it was unmapped.
+ * @param {Candidate[]} spans Sorted by generated start, non-overlapping.
+ * @param {string} generated_text
+ * @param {string} original_text
+ * @returns {Candidate[]}
+ */
+export function map_identical_gaps(spans, generated_text, original_text) {
+	/** @type {Candidate[]} */
+	const result = [];
+	for (let index = 0; index < spans.length; index++) {
+		const span = spans[index];
+		result.push(span);
+		const next = spans[index + 1];
+		if (span.kind !== SpanMapKind.Verbatim || !next) continue;
+		let length = 0;
+		while (
+			span.generatedEnd + length < next.generatedStart &&
+			span.originalEnd + length < next.originalStart &&
+			generated_text[span.generatedEnd + length] === original_text[span.originalEnd + length]
+		) {
+			length++;
+		}
+		if (length === 0) continue;
+		result.push({
+			generatedStart: span.generatedEnd,
+			generatedEnd: span.generatedEnd + length,
+			originalStart: span.originalEnd,
+			originalEnd: span.originalEnd + length,
+			kind: SpanMapKind.Verbatim,
+			features: SpanMapFeature.None,
+		});
+	}
+	return result;
 }
 
 const identifier_part = /[\p{ID_Continue}$\u200c\u200d]/u;
