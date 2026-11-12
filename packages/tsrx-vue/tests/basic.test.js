@@ -953,8 +953,11 @@ export function Card(${params}: any) @{
 		);
 
 		expect(code).not.toContain('merge_spread_class');
+		// The spread binds its ref bag in place, so it stays reactive (#864).
 		expect(code).toMatch(
-			new RegExp(`<span \\{\\.\\.\\.(\\w+)\\} ref=\\{\\1\\?\\.ref\\} class="${cssHash}" />`),
+			new RegExp(
+				`<span \\{\\.\\.\\.\\((\\w+) = __normalize_spread_props_for_ref_attr\\(props\\)\\)\\} ref=\\{\\1\\?\\.ref\\} class="${cssHash}" />`,
+			),
 		);
 	});
 
@@ -1186,10 +1189,10 @@ export function Card(${params}: any) @{
 
 		expect(code).toContain("from '@tsrx/vue/ref'");
 		expect(code).toContain('{...{ input_ref: input }}');
+		expect(code).toContain('let Child__spread_props1;');
 		expect(code).toContain(
-			'let Child__spread_props1 = __normalize_spread_props_for_ref_attr(props);',
+			'{...(Child__spread_props1 = __normalize_spread_props_for_ref_attr(props))}',
 		);
-		expect(code).toContain('{...Child__spread_props1}');
 		expect(code).toContain('ref={Child__spread_props1?.ref}');
 		expect(code.match(/__normalize_spread_props_for_ref_attr\(/g)).toHaveLength(1);
 	});
@@ -1223,14 +1226,14 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
+		expect(code).toContain('let App__spread_props1;');
+		expect(code).toContain('let App__spread_props2;');
 		expect(code).toContain(
-			'let App__spread_props1 = __normalize_spread_props_for_ref_attr(first);',
+			'{...(App__spread_props1 = __normalize_spread_props_for_ref_attr(first))}',
 		);
 		expect(code).toContain(
-			'let App__spread_props2 = __normalize_spread_props_for_ref_attr(second);',
+			'{...(App__spread_props2 = __normalize_spread_props_for_ref_attr(second))}',
 		);
-		expect(code).toContain('{...App__spread_props1}');
-		expect(code).toContain('{...App__spread_props2}');
 		expect(code).toContain(
 			'ref={__mergeRefs(App__spread_props1?.ref, App__spread_props2?.ref, cb)}',
 		);
@@ -1238,6 +1241,21 @@ export function Card(${params}: any) @{
 		expect(code).not.toContain('create_ref_prop');
 		expect(code).not.toContain('__normalize_spread_props(first, cb)');
 		expect(code).not.toContain('__normalize_spread_props(second, cb)');
+	});
+
+	it('merges a ref written before a host spread last, as vue-jsx-vapor applies it', () => {
+		const { code } = compile(
+			`function App() @{
+			const bag = {};
+			function cb(_node) {}
+			<input ref={cb} {...bag} />
+		}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			'<input {...(App__spread_props1 = __normalize_spread_props_for_ref_attr(bag))} ref={__mergeRefs(cb, App__spread_props1?.ref)} />',
+		);
 	});
 
 	it('rejects multiple ref={...} attributes on the same element', () => {
