@@ -26,7 +26,7 @@
  *
  * @import * as AST from 'estree'
  * @import * as ESTreeJSX from 'estree-jsx'
- * @import { CompileError, JsxTransformContext as TransformContext } from '../../../types/index'
+ * @import { CompileError, JsxTransformContext as TransformContext, ScopeClassJoin, SpreadClassOptions } from '../../../types/index'
  */
 
 import { analyze_css } from '../../analyze/css-analyze.js';
@@ -46,6 +46,8 @@ import {
 } from '../../utils/ast.js';
 import {
 	add_scope_classes,
+	has_scope_class_join,
+	has_spread_class_merge,
 	is_composite_jsx_element,
 	prepare_stylesheet_for_render,
 } from '../scoping.js';
@@ -63,6 +65,8 @@ import { set_node_path_metadata } from './helpers.js';
  * @typedef {{
  *   ctx: TransformContext,
  *   class_attr_name: 'class' | 'className',
+ *   spread_class: SpreadClassOptions | null,
+ *   class_join: ScopeClassJoin,
  *   static_classes: Map<AST.JSXStyleElement, string | null>,
  *   ref_sink: AST.Statement[],
  * }} StyleScopeState `ref_sink` collects the `<style ref>` setup statements
@@ -85,6 +89,19 @@ export function prepare_style_scopes(program, ctx) {
 		ctx,
 		class_attr_name:
 			ctx.platform.jsx.classAttrName ?? (ctx.platform.jsx.rewriteClassAttr ? 'className' : 'class'),
+		// Types don't depend on a spread's class, so the type-only print keeps
+		// spreads as written.
+		spread_class:
+			!ctx.typeOnly && ctx.platform.imports.refProp && ctx.platform.jsx.hostSpreadClassProps
+				? {
+						props: ctx.platform.jsx.hostSpreadClassProps,
+						kind: ctx.platform.jsx.classValue ?? null,
+						printed_apart: ctx.platform.jsx.classPropsPrintedApart === true,
+					}
+				: null,
+		// The type-only print keeps the template literal, which types as a string.
+		class_join:
+			!ctx.typeOnly && ctx.platform.imports.refProp ? (ctx.platform.jsx.classValue ?? null) : null,
 		static_classes: new Map(),
 		ref_sink: [],
 	};
@@ -760,8 +777,24 @@ function stamp_node(node, scope, state) {
 					scope.hash ? [scope.hash] : [],
 					scope.applied,
 					state.class_attr_name,
+					state.spread_class,
+					state.class_join,
 				)
 			: node;
+	if (
+		out !== node &&
+		state.spread_class &&
+		has_spread_class_merge(/** @type {AST.TSRXJSXElement} */ (out))
+	) {
+		state.ctx.needs_merge_spread_class = true;
+	}
+	if (
+		out !== node &&
+		state.class_join &&
+		has_scope_class_join(/** @type {AST.TSRXJSXElement} */ (out))
+	) {
+		state.ctx.needs_join_scope_class = true;
+	}
 	return rewrite_children(out, state, (child) => stamp_node(child, scope, state));
 }
 
