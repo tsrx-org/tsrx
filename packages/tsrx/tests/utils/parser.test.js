@@ -13189,7 +13189,9 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		// written before `export` and after it at the first; and a static block's
 		// decorators or modifiers before the checker errors in the block, but not
 		// before a syntax error there.
-		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
+		// A collecting parse records an unclosed tag at its name, and a strict one
+		// throws it at the end of its template (#1288): `collected_at`.
+		/** @type {Array<[source: string, error: ErrorKind, at: string, collected_at?: string]>} */
 		const cases = [
 			['function f(a, b, b, a) {}', TS_ERRORS.ARGUMENT_NAME_CLASH, 'a, b, b'],
 			['class A { m(x, public x) {} }', TS_ERRORS.ARGUMENT_NAME_CLASH, 'x, public'],
@@ -13258,7 +13260,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				TS_ERRORS.DECORATORS_NOT_VALID_HERE,
 				'@dec',
 			],
-			['class A { public static { <div> } }', TSRX_ERRORS.UNCLOSED_TAG, '} }'],
+			['class A { public static { <div> } }', TSRX_ERRORS.UNCLOSED_TAG, '} }', 'div'],
 			[
 				'function f(public x, y = (() => { const q; })()) {}',
 				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
@@ -13274,13 +13276,16 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
 		);
 
-		for (const [index, [source, error, at]] of cases.entries()) {
+		for (const [index, [source, error, at, collected_at = at]] of cases.entries()) {
 			const strict = outcomes[2 * index];
 			const collected = outcomes[2 * index + 1];
 			expect(strict, source).toEqual(thrown(error, source.indexOf(at)));
 			if (!collected.ok) throw new Error(`${source} threw ${collected.message}`);
 			const first = collected.errors?.[0];
-			expect([first?.code, first?.pos], source).toEqual([code_of(error), source.indexOf(at)]);
+			expect([first?.code, first?.pos], source).toEqual([
+				code_of(error),
+				source.indexOf(collected_at),
+			]);
 		}
 	});
 
