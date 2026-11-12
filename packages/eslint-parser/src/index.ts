@@ -296,6 +296,17 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 			node.statement = statement;
 		}
 
+		// The parser accepts a plain `try` with only a `pending` block. It compiles
+		// to a `try` with neither a `catch` nor a `finally`, which isn't JavaScript,
+		// and code path analysis throws on it.
+		if (node.type === 'TryStatement' && !node.handler && !node.finalizer) {
+			throw to_eslint_parse_error({
+				message: 'Missing catch or finally clause',
+				loc: node.loc,
+				start: node.start,
+			});
+		}
+
 		// Rules read a tag name as a JSX name, and crash on the expression
 		// container of a dynamic tag. They see a name that mirrors it instead, and
 		// the container moves to `tagExpression`, where rules still lint the code

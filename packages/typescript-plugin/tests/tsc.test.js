@@ -468,12 +468,13 @@ process.exit(Number(process.env.TSRX_TEST_EXIT ?? 0));
 });
 
 // The editor's loose compile, which tsrx-tsc runs, reports unclosed and
-// mismatched tags as a collecting compile does (#978).
+// mismatched tags as a collecting compile does (#978), an unclosed tag at its
+// name (#1288).
 it.each([
 	[
 		'an unclosed tag',
 		'\t<div>{title}\n',
-		"(3,1): error TSRX1001: Unclosed tag '<div>'. Expected '</div>' before end of template.",
+		"(2,3): error TSRX1001: Unclosed tag '<div>'. Expected '</div>' before end of template.",
 	],
 	[
 		'a mismatched closing tag',

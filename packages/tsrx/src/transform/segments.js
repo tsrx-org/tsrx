@@ -3119,18 +3119,19 @@ function add_diagnostic_mappings(
 		);
 		if (generated_start === null) continue;
 
+		// The anchor stays on its generated line. The source token isn't in the
+		// generated code, so running past the line would map unrelated code.
+		const line_end = generated_code.indexOf('\n', generated_start);
+		const room = (line_end === -1 ? generated_code.length : line_end) - generated_start;
+
 		diagnostic_mappings.push({
 			sourceOffsets: [start],
 			generatedOffsets: [generated_start],
 			lengths: [length],
-			generatedLengths: [
-				generated_code.length === 0
-					? 0
-					: Math.max(1, Math.min(length, generated_code.length - generated_start)),
-			],
+			generatedLengths: [generated_code.length === 0 ? 0 : Math.max(1, Math.min(length, room))],
 			data: {
 				...mapping_data_verify_only,
-				customData: {},
+				customData: { diagnosticAnchor: true },
 			},
 		});
 	}
@@ -3217,7 +3218,9 @@ function get_nearest_generated_offset_from_source_line_map(
 	const generated_offset =
 		loc_to_offset(position.line, position.column, gen_line_offsets) +
 		('sourceColumn' in position ? loc.column - position.sourceColumn : 0);
-	return Math.max(0, Math.min(generated_offset, generated_code.length - 1));
+	// The column only carries over on the generated line of the code it's from.
+	const next_line = gen_line_offsets[position.line] ?? generated_code.length;
+	return Math.max(0, Math.min(generated_offset, next_line - 1, generated_code.length - 1));
 }
 
 /**
