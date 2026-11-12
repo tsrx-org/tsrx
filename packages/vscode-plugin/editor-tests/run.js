@@ -312,6 +312,9 @@ async function run_scenario(scenario, index) {
 		'--skip-welcome',
 		'--skip-release-notes',
 		'--disable-telemetry',
+		// The test instance is the installed app. Without this, its updater can check for an
+		// update while the scenarios run and try to install it over the app.
+		'--disable-updates',
 		`--extensionDevelopmentPath=${harness}`,
 		`--extensionTestsPath=${path.join(harness, 'checks.cjs')}`,
 		project,
