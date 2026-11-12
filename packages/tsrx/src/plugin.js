@@ -2504,6 +2504,10 @@ export function TSRXPlugin(config) {
 			) {
 				if (
 					this.#closingNativeTemplateNode ||
+					// A type is never text. acorn-typescript reads type arguments with
+					// the context stack emptied (`tsInNoContext`), so without this a tag's
+					// `<T, U>` read as text after `T`.
+					this.inType ||
 					this.#readingJSXControlFlowDirectiveKeyword ||
 					(!allow_inside_expression_container && this.#jsxExpressionContainerDepth > 0)
 				) {
