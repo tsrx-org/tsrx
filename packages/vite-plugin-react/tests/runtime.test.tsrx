@@ -2,6 +2,7 @@ import type { MockInstance } from 'vitest';
 import { useState, use } from 'react';
 import { mergeRefs } from '@tsrx/react/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
+import { runForOfSourcesRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-sources';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
 import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace';
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
@@ -9,6 +10,7 @@ import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
+import { runGeneratedImportBindingsRuntimeTests } from '@tsrx/core/test-harness/runtime/generated-import-bindings';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -16,6 +18,8 @@ const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'async fail',
 	'rejected',
 	'inner error',
+	'body boom',
+	'pending boom',
 	'The above error occurred in the <',
 	'React will try to recreate this component tree from scratch using the error boundary you provided',
 ];
@@ -511,6 +515,34 @@ function ForKeyedSwitchApp() @{
 	</>
 }
 
+let nested_row_mounts = 0;
+
+function NestedRow({ id }: { id: string }) @{
+	const [mount] = useState(() => ++nested_row_mounts);
+
+	<li className="nested-row">{`${id}:${mount}`}</li>
+}
+
+function ForKeyedNestedForApp() @{
+	const [groups, setGroups] = useState([
+		{ id: 'a', children: ['a1', 'a2'] },
+		{ id: 'b', children: ['b1'] },
+	]);
+
+	<>
+		<ul>
+			@for (const group of groups; key group.id) {
+				@for (const child of group.children; index i) {
+					<NestedRow id={child} />
+				}
+			}
+		</ul>
+		<button className="reverse-keyed-nested-for" onClick={() => setGroups([...groups].reverse())}>
+			{'reverse'}
+		</button>
+	</>
+}
+
 // ── For-of over a Set ──
 
 function ForOverSetApp() @{
@@ -766,6 +798,47 @@ function MultiSpreadExplicitRefApp() @{
 	/>
 }
 
+// ── Refs beside a host spread across renders ──
+
+const spread_ref_render_log: string[] = [];
+
+function log_spread_ref(name: string) {
+	return (node: HTMLInputElement | null) => {
+		spread_ref_render_log.push(`${name}:${node ? 'attach' : 'detach'}`);
+	};
+}
+
+const own_before_ref = log_spread_ref('own-before');
+const own_after_ref = log_spread_ref('own-after');
+const own_beside_ref = log_spread_ref('own-beside');
+const bag_beside_ref = log_spread_ref('bag-beside');
+const swap_first_ref = log_spread_ref('swap-first');
+const swap_second_ref = log_spread_ref('swap-second');
+const plain_bag = { title: 'bag' };
+const ref_bag = { title: 'bag', ref: bag_beside_ref };
+
+function SpreadRefRenderApp() @{
+	const [count, setCount] = useState(0);
+	const [swapped, setSwapped] = useState(false);
+
+	<>
+		<input className="own-before" ref={own_before_ref} {...plain_bag} />
+		<input className="own-after" {...plain_bag} ref={own_after_ref} />
+		<input className="own-beside" ref={own_beside_ref} data-count={count} {...ref_bag} />
+		<input
+			className="swap"
+			ref={swapped ? swap_second_ref : swap_first_ref}
+			{...{ 'data-count': count }}
+		/>
+		<button className="spread-ref-rerender" onClick={() => setCount(count + 1)}>
+			{count}
+		</button>
+		<button className="spread-ref-swap" onClick={() => setSwapped(true)}>
+			{'swap'}
+		</button>
+	</>
+}
+
 // ── Conditional host spreads ──
 
 let conditional_spread_and_node: HTMLInputElement | null = null;
@@ -830,8 +903,8 @@ function ThrowingChild() @{
 function ErrorBoundaryApp() @{
 	@try {
 		<ThrowingChild />
-	} @catch (err: Error) {
-		<p className="caught">{err.message}</p>
+	} @catch (err) {
+		<p className="caught">{(err as Error).message}</p>
 	}
 }
 
@@ -851,9 +924,9 @@ function ErrorToggleApp() @{
 	<>
 		@try {
 			<MaybeThrow shouldThrow={fail} />
-		} @catch (err: Error, reset: () => void) {
+		} @catch (err, reset: () => void) {
 			<>
-				<p className="caught">{err.message}</p>
+				<p className="caught">{(err as Error).message}</p>
 				<button
 					className="reset"
 					onClick={() => {
@@ -901,8 +974,8 @@ function SuspenseErrorApp(props: { promise: Promise<string> }) @{
 		<AsyncChild promise={props.promise} />
 	} @pending {
 		<p className="pending">{'loading...'}</p>
-	} @catch (err: Error) {
-		<p className="caught">{err.message}</p>
+	} @catch (err) {
+		<p className="caught">{(err as Error).message}</p>
 	}
 }
 
@@ -913,9 +986,9 @@ function ErrorResetApp(props: { promise: Promise<string> }) @{
 		<AsyncChild promise={props.promise} />
 	} @pending {
 		<p className="pending">{'loading...'}</p>
-	} @catch (err: Error, reset: () => void) {
+	} @catch (err, reset: () => void) {
 		<>
-			<p className="caught">{err.message}</p>
+			<p className="caught">{(err as Error).message}</p>
 			<button className="retry" onClick={() => reset()}>
 				{'retry'}
 			</button>
@@ -936,12 +1009,12 @@ function NestedTryApp() @{
 		<div className="outer">
 			@try {
 				<InnerThrow />
-			} @catch (err: Error) {
-				<p className="inner-caught">{err.message}</p>
+			} @catch (err) {
+				<p className="inner-caught">{(err as Error).message}</p>
 			}
 		</div>
-	} @catch (err: Error) {
-		<p className="outer-caught">{err.message}</p>
+	} @catch (err) {
+		<p className="outer-caught">{(err as Error).message}</p>
 	}
 }
 
@@ -974,7 +1047,7 @@ function IfInsideTryApp() @{
 			} @else {
 				<p className="branch-b">{'alternate'}</p>
 			}
-		} @catch (err: Error) {
+		} @catch (err) {
 			<p className="caught">{'error'}</p>
 		}
 		<button className="toggle" onClick={() => setShow(!show)}>
@@ -995,13 +1068,329 @@ function ForInsideTryApp() @{
 					{item}
 				</span>
 			}
-		} @catch (err: Error) {
+		} @catch (err) {
 			<p className="caught">{'error'}</p>
 		}
 		<button className="add" onClick={() => setItems([...items, 'z'])}>
 			{'add'}
 		</button>
 	</>
+}
+
+// ── Setup statements inside the try body ──
+
+function InlineUseApp(props: { promise: Promise<string> }) @{
+	@try {
+		const data = use(props.promise);
+		<p className="resolved">{data}</p>
+	} @pending {
+		<p className="pending">{'loading...'}</p>
+	}
+}
+
+function loadOrThrow(fail: boolean) {
+	if (fail) throw new Error('body boom');
+	return 'loaded';
+}
+
+function BodyThrowApp() @{
+	const [fail, setFail] = useState(true);
+
+	@try {
+		const result = loadOrThrow(fail);
+		<p className="ok">{result}</p>
+	} @catch (err, reset: () => void) {
+		<button
+			className="reset"
+			onClick={() => {
+				setFail(false);
+				reset();
+			}}
+		>
+			{(err as Error).message}
+		</button>
+	}
+}
+
+// ── Distinct try sites rendered in one slot ──
+
+function SameHookCountArmsApp() @{
+	const [first, setFirst] = useState(true);
+
+	<>
+		<button className="flip" onClick={() => setFirst(!first)}>
+			{'flip'}
+		</button>
+		@if (first) {
+			@try {
+				const [label] = useState('A');
+				<p className="arm">{label}</p>
+			} @catch (err) {
+				<p className="caught">{(err as Error).message}</p>
+			}
+		} @else {
+			@try {
+				const [label] = useState('B');
+				<p className="arm">{label}</p>
+			} @catch (err) {
+				<p className="caught">{(err as Error).message}</p>
+			}
+		}
+	</>
+}
+
+function DifferentHookCountArmsApp() @{
+	const [first, setFirst] = useState(true);
+
+	<>
+		<button className="flip" onClick={() => setFirst(!first)}>
+			{'flip'}
+		</button>
+		@if (first) {
+			@try {
+				const [label] = useState('A');
+				<p className="arm">{label}</p>
+			} @catch (err) {
+				<p className="caught">{(err as Error).message}</p>
+			}
+		} @else {
+			@try {
+				const [label] = useState('B');
+				const [suffix] = useState('!');
+				<p className="arm">{label + suffix}</p>
+			} @catch (err) {
+				<p className="caught">{(err as Error).message}</p>
+			}
+		}
+	</>
+}
+
+function UnkeyedTryRowsApp() @{
+	const [items, setItems] = useState(['a', 'b', 'c']);
+
+	<>
+		<button className="drop-first" onClick={() => setItems(items.slice(1))}>
+			{'drop'}
+		</button>
+		<ul>
+			@for (const item of items) {
+				@try {
+					<li className="try-row">{item}</li>
+				} @catch (err) {
+					<li className="caught">{(err as Error).message}</li>
+				}
+			}
+		</ul>
+	</>
+}
+
+// ── Try/catch with a thrown non-Error value ──
+
+function ValueThrower(props: { value: unknown }): never {
+	throw props.value;
+}
+
+function ThrownValueApp(props: { value: unknown }) @{
+	const [fail, setFail] = useState(true);
+
+	@try {
+		@if (fail) {
+			<ValueThrower value={props.value} />
+		} @else {
+			<p className="ok">{'recovered'}</p>
+		}
+	} @catch (err, reset: () => void) {
+		<button
+			className="reset"
+			onClick={() => {
+				setFail(false);
+				reset();
+			}}
+		>
+			{'caught ' + String(err)}
+		</button>
+	}
+}
+
+// ── The @pending body runs only while the try body suspends ──
+
+let pendingBodyRuns = 0;
+
+function pendingLabel(): string {
+	pendingBodyRuns++;
+	return 'loading';
+}
+
+function pendingBoom(): string {
+	pendingBodyRuns++;
+	throw new Error('pending boom');
+}
+
+function PendingSuspender(props: { promise: Promise<string> }) @{
+	const value = use(props.promise);
+	<p className="resolved">{value}</p>
+}
+
+function PendingNotSuspendedApp() @{
+	const [count, setCount] = useState(0);
+
+	<>
+		<button className="bump" onClick={() => setCount(count + 1)}>
+			{'bump'}
+		</button>
+		@try {
+			<p className="ready">{'ready ' + count}</p>
+		} @pending {
+			const label = pendingLabel();
+			<p className="pending">{label}</p>
+		}
+	</>
+}
+
+function PendingSuspendedApp(props: { promise: Promise<string> }) @{
+	@try {
+		<PendingSuspender promise={props.promise} />
+	} @pending {
+		const label = pendingLabel();
+		<p className="pending">{label}</p>
+	}
+}
+
+function ThrowingPendingNotSuspendedApp() @{
+	@try {
+		<p className="ready">{'ready'}</p>
+	} @pending {
+		const label = pendingBoom();
+		<p className="pending">{label}</p>
+	} @catch (err) {
+		<p className="caught">{(err as Error).message}</p>
+	}
+}
+
+function ThrowingPendingApp(props: { promise: Promise<string> }) @{
+	@try {
+		<PendingSuspender promise={props.promise} />
+	} @pending {
+		const label = pendingBoom();
+		<p className="pending">{label}</p>
+	} @catch (err) {
+		<p className="caught">{(err as Error).message}</p>
+	}
+}
+
+function ThrowingPendingOuterCatchApp(props: { promise: Promise<string> }) @{
+	@try {
+		<div className="outer">
+			@try {
+				<PendingSuspender promise={props.promise} />
+			} @pending {
+				const label = pendingBoom();
+				<p className="pending">{label}</p>
+			}
+		</div>
+	} @catch (err) {
+		<p className="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+let pendingStateInits = 0;
+
+function PendingHookApp(props: { promises: Promise<string>[] }) @{
+	const [step, setStep] = useState(0);
+
+	<>
+		<button className="next" onClick={() => setStep(step + 1)}>
+			{'next'}
+		</button>
+		@try {
+			@if (step === 0) {
+				<p className="ready">{'ready'}</p>
+			} @else {
+				<PendingSuspender promise={props.promises[step - 1]} />
+			}
+		} @pending {
+			const [label] = useState(() => {
+				pendingStateInits++;
+				return 'waiting ' + pendingStateInits;
+			});
+			<p className="pending">{label}</p>
+		}
+	</>
+}
+
+import { createContext, useContext } from 'react';
+
+const PendingThemeContext = createContext('light');
+
+function PendingContextApp(props: { promise: Promise<string> }) @{
+	<PendingThemeContext.Provider value="dark">
+		@try {
+			<PendingSuspender promise={props.promise} />
+		} @pending {
+			const theme = useContext(PendingThemeContext);
+			<p className="pending">{theme}</p>
+		}
+	</PendingThemeContext.Provider>
+}
+
+function PendingParentStateApp(props: { promise: Promise<string> }) @{
+	const [count, setCount] = useState(0);
+
+	<>
+		<button className="bump" onClick={() => setCount(count + 1)}>
+			{'bump'}
+		</button>
+		@try {
+			<PendingSuspender promise={props.promise} />
+		} @pending {
+			const label = 'waiting ' + count;
+			<p className="pending">{label}</p>
+		}
+	</>
+}
+
+function StaticPendingApp(props: { promise: Promise<string> }) @{
+	@try {
+		<PendingSuspender promise={props.promise} />
+	} @pending {
+		<p className="pending">{'static loading'}</p>
+	}
+}
+
+function PendingRowsApp(props: { rows: { id: string; promise: Promise<string> }[] }) @{
+	<div className="rows">
+		@for (const row of props.rows; key row.id) {
+			@try {
+				<PendingSuspender promise={row.promise} />
+			} @pending {
+				const label = 'loading ' + row.id;
+				<p className="pending">{label}</p>
+			}
+		}
+	</div>
+}
+
+function SuspendingPendingApp(props: { body: Promise<string>; label: Promise<string> }) @{
+	@try {
+		<div className="outer">
+			@try {
+				<PendingSuspender promise={props.body} />
+			} @pending {
+				const label = use(props.label);
+				<p className="inner-pending">{label}</p>
+			}
+		</div>
+	} @pending {
+		<p className="outer-pending">{'outer loading'}</p>
+	}
+}
+
+function deferred_promise(): { promise: Promise<string>; resolve: (value: string) => void } {
+	let resolve!: (value: string) => void;
+	const promise = new Promise<string>((r) => {
+		resolve = r;
+	});
+	return { promise, resolve };
 }
 
 // ── Explicit hook component inside control flow ──
@@ -1387,6 +1776,28 @@ describe('tsrx-react runtime', () => {
 		expect(container.querySelector('.multi-spread-explicit-ref')!.hasAttribute('ref')).toBe(false);
 	});
 
+	it('applies refs beside a host spread again only when a ref changes', async () => {
+		spread_ref_render_log.length = 0;
+		await render(SpreadRefRenderApp);
+		expect(spread_ref_render_log).toEqual([
+			'own-before:attach',
+			'own-after:attach',
+			'own-beside:attach',
+			'bag-beside:attach',
+			'swap-first:attach',
+		]);
+
+		spread_ref_render_log.length = 0;
+		await click('.spread-ref-rerender');
+		await click('.spread-ref-rerender');
+		expect(text('.spread-ref-rerender')).toBe('2');
+		expect(container.querySelector('.own-beside')!.getAttribute('data-count')).toBe('2');
+		expect(spread_ref_render_log).toEqual([]);
+
+		await click('.spread-ref-swap');
+		expect(spread_ref_render_log).toEqual(['swap-first:detach', 'swap-second:attach']);
+	});
+
 	for (const enabled of [false, true]) {
 		it(`renders conditional host spreads when the condition is ${enabled}`, async () => {
 			conditional_spread_and_node = null;
@@ -1458,6 +1869,23 @@ describe('tsrx-react runtime', () => {
 		expect(
 			Array.from(container.querySelectorAll('.continue-item'), (item) => item.textContent),
 		).toEqual(['a', 'c']);
+	});
+
+	it('keeps row state with its group when a keyed loop renders a nested @for (#181)', async () => {
+		const rows = () =>
+			Array.from(container.querySelectorAll('.nested-row'), (row) => row.textContent);
+
+		nested_row_mounts = 0;
+		await render(ForKeyedNestedForApp);
+		expect(rows()).toEqual(['a1:1', 'a2:2', 'b1:3']);
+
+		// Each group's rows move with it: their keys only tell rows within a
+		// group apart.
+		await click('.reverse-keyed-nested-for');
+		expect(rows()).toEqual(['b1:3', 'a1:1', 'a2:2']);
+		expect(
+			console_error_spy?.mock.calls.some((args) => String(args[0]).includes('unique "key"')),
+		).toBe(false);
 	});
 
 	for (const [directive, App, reverse] of [
@@ -1696,6 +2124,229 @@ describe('tsrx-react runtime', () => {
 		expect(container.querySelectorAll('.try-item')[2].textContent).toBe('z');
 	});
 
+	// ── Setup statements inside the try body ──
+
+	it('shows pending fallback for use() called in the try body', async () => {
+		let resolve_fn: (value: string) => void;
+		const promise = new Promise<string>((r) => {
+			resolve_fn = r;
+		});
+
+		await render(InlineUseApp, { promise });
+		expect(text('.pending')).toBe('loading...');
+
+		await act(async () => {
+			resolve_fn('inline');
+		});
+		expect(text('.resolved')).toBe('inline');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('catches a synchronous throw from a try body setup statement', async () => {
+		await render(BodyThrowApp);
+		expect(text('.reset')).toBe('body boom');
+
+		await click('.reset');
+		expect(text('.ok')).toBe('loaded');
+		expect(container.querySelector('.reset')).toBeNull();
+	});
+
+	// ── Distinct try sites rendered in one slot ──
+
+	it('gives each try site in an if/else its own body state', async () => {
+		await render(SameHookCountArmsApp);
+		expect(text('.arm')).toBe('A');
+
+		await click('.flip');
+		expect(text('.arm')).toBe('B');
+		expect(container.querySelector('.caught')).toBeNull();
+	});
+
+	it('switches between try sites whose bodies call different hooks', async () => {
+		await render(DifferentHookCountArmsApp);
+		expect(text('.arm')).toBe('A');
+
+		await click('.flip');
+		expect(text('.arm')).toBe('B!');
+		expect(container.querySelector('.caught')).toBeNull();
+
+		await click('.flip');
+		expect(text('.arm')).toBe('A');
+	});
+
+	it('renders try sites in a loop without a key without duplicate keys', async () => {
+		await render(UnkeyedTryRowsApp);
+		expect([...container.querySelectorAll('.try-row')].map((row) => row.textContent)).toEqual([
+			'a',
+			'b',
+			'c',
+		]);
+
+		await click('.drop-first');
+		expect([...container.querySelectorAll('.try-row')].map((row) => row.textContent)).toEqual([
+			'b',
+			'c',
+		]);
+		const logged = console_error_spy!.mock.calls.map((args) => args.map(String).join(' '));
+		expect(logged.filter((message) => message.includes('the same key'))).toEqual([]);
+	});
+
+	// ── Try/catch with a thrown non-Error value ──
+
+	for (const value of [null, undefined, false, 0, 'boom']) {
+		it(`catches a thrown ${String(value)} and recovers via reset`, async () => {
+			await render(ThrownValueApp, { value });
+			expect(text('.reset')).toBe('caught ' + String(value));
+
+			await click('.reset');
+			expect(text('.ok')).toBe('recovered');
+		});
+	}
+
+	// ── The @pending body runs only while the try body suspends ──
+
+	it('does not run the pending body when nothing suspends', async () => {
+		pendingBodyRuns = 0;
+		await render(PendingNotSuspendedApp);
+		expect(text('.ready')).toBe('ready 0');
+		expect(pendingBodyRuns).toBe(0);
+
+		await click('.bump');
+		expect(text('.ready')).toBe('ready 1');
+		expect(pendingBodyRuns).toBe(0);
+	});
+
+	it('runs the pending body while the try body suspends', async () => {
+		pendingBodyRuns = 0;
+		let resolve_fn: (value: string) => void;
+		const promise = new Promise<string>((resolve) => {
+			resolve_fn = resolve;
+		});
+
+		await render(PendingSuspendedApp, { promise });
+		expect(text('.pending')).toBe('loading');
+		expect(pendingBodyRuns).toBeGreaterThan(0);
+
+		await act(async () => {
+			resolve_fn('hello');
+		});
+		expect(text('.resolved')).toBe('hello');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('does not throw from a pending body when nothing suspends', async () => {
+		pendingBodyRuns = 0;
+		await render(ThrowingPendingNotSuspendedApp);
+		expect(text('.ready')).toBe('ready');
+		expect(container.querySelector('.caught')).toBeNull();
+		expect(pendingBodyRuns).toBe(0);
+	});
+
+	it('catches a throw from the pending body in the same try', async () => {
+		await render(ThrowingPendingApp, { promise: new Promise<string>(() => {}) });
+		expect(text('.caught')).toBe('pending boom');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('catches a throw from the pending body in an enclosing try', async () => {
+		await render(ThrowingPendingOuterCatchApp, { promise: new Promise<string>(() => {}) });
+		expect(text('.outer-caught')).toBe('pending boom');
+		expect(container.querySelector('.outer')).toBeNull();
+	});
+
+	it('gives hooks in the pending body to the fallback, which each suspension mounts fresh', async () => {
+		pendingStateInits = 0;
+		let resolve_first: (value: string) => void;
+		const promises = [
+			new Promise<string>((resolve) => {
+				resolve_first = resolve;
+			}),
+			new Promise<string>(() => {}),
+		];
+
+		await render(PendingHookApp, { promises });
+		expect(text('.ready')).toBe('ready');
+		expect(pendingStateInits).toBe(0);
+
+		await click('.next');
+		expect(text('.pending')).toBe('waiting 1');
+
+		await act(async () => {
+			resolve_first('first');
+		});
+		expect(text('.resolved')).toBe('first');
+		expect(container.querySelector('.pending')).toBeNull();
+
+		await click('.next');
+		expect(text('.pending')).toBe('waiting 2');
+	});
+
+	it('reads context the same component provides around the try in the pending body', async () => {
+		await render(PendingContextApp, { promise: new Promise<string>(() => {}) });
+		expect(text('.pending')).toBe('dark');
+	});
+
+	it("re-renders the pending body with the parent's current state", async () => {
+		await render(PendingParentStateApp, { promise: new Promise<string>(() => {}) });
+		expect(text('.pending')).toBe('waiting 0');
+
+		await click('.bump');
+		expect(text('.pending')).toBe('waiting 1');
+	});
+
+	it('shows a static pending body while the try body suspends', async () => {
+		const { promise, resolve } = deferred_promise();
+		await render(StaticPendingApp, { promise });
+		expect(text('.pending')).toBe('static loading');
+
+		await act(async () => {
+			resolve('hello');
+		});
+		expect(text('.resolved')).toBe('hello');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('shows each row its own pending body in a keyed loop', async () => {
+		const a = deferred_promise();
+		const b = deferred_promise();
+		await render(PendingRowsApp, {
+			rows: [
+				{ id: 'a', promise: a.promise },
+				{ id: 'b', promise: b.promise },
+			],
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('loading aloading b');
+
+		await act(async () => {
+			b.resolve('b done');
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('loading ab done');
+
+		await act(async () => {
+			a.resolve('a done');
+		});
+		expect(container.querySelector('.rows')?.textContent).toBe('a doneb done');
+	});
+
+	it('falls back to the enclosing pending body while a pending body suspends', async () => {
+		const body = deferred_promise();
+		const label = deferred_promise();
+		await render(SuspendingPendingApp, { body: body.promise, label: label.promise });
+		expect(container.innerHTML).toBe('<p class="outer-pending">outer loading</p>');
+
+		await act(async () => {
+			label.resolve('inner loading');
+		});
+		expect(container.innerHTML).toBe(
+			'<div class="outer"><p class="inner-pending">inner loading</p></div>',
+		);
+
+		await act(async () => {
+			body.resolve('done');
+		});
+		expect(container.innerHTML).toBe('<div class="outer"><p class="resolved">done</p></div>');
+	});
+
 	// ── Explicit hook components inside control flow ──
 
 	it('supports hooks inside explicit child components rendered by control flow', async () => {
@@ -1776,6 +2427,7 @@ describe('tsrx-react runtime', () => {
 });
 
 runSwitchFallthroughRuntimeTests();
+runForOfSourcesRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
 runScriptBodyRuntimeTests();
@@ -1783,3 +2435,4 @@ runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();
+runGeneratedImportBindingsRuntimeTests();

@@ -100,6 +100,11 @@ The language server, tsserver plugin, and `tsrx-tsc` share the same compiler
 selection behavior. See the [TSRX documentation](https://tsrx.dev/) for target
 setup and authoring guidance.
 
+Under `"module": "node16"` or `"nodenext"`, a `.tsrx` file has the module format a
+`.ts` file at the same path would have: ESM in a package whose `package.json` has
+`"type": "module"`, CommonJS otherwise. All three tools apply it, so `import.meta`
+in a `.tsrx` file of an ESM package does not report TS1470.
+
 ## Command-line type checking
 
 Install this package, TypeScript, and your target compiler, then run

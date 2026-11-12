@@ -79,6 +79,301 @@ describe('@tsrx/vite-plugin-hono', () => {
 		}
 	});
 
+	// Hono prints `class` and `className` as two `class` attributes, and a
+	// browser reads the first.
+	it('renders one class attribute for a host spread beside scoped styles with Hono SSR', async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-'),
+		);
+
+		try {
+			const source_id = path.join(directory, 'App.tsrx');
+			const output_id = path.join(directory, 'App.js');
+			const transformed = await plugin.transform.call(
+				context,
+				`export function App({ bag }) @{
+					<>
+						<style>
+							span {
+								color: red;
+							}
+						</style>
+						<span {...bag} />
+						<span className="base" {...bag} />
+						<span {...bag} class="last" />
+					</>
+				}`,
+				source_id,
+			);
+			// The CSS import is for Vite; the class attributes don't need it.
+			await writeFile(output_id, transformed.code.replace(/^import ".*\?tsrx-css.*";$/m, ''));
+
+			const [{ App }, { jsx }] = await Promise.all([
+				import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+				import('hono/jsx'),
+			]);
+
+			for (const bag of [
+				{ className: 'x' },
+				{ class: 'x', className: undefined },
+				{ className: 'x', class: undefined },
+			]) {
+				const html = String(await jsx(App, { bag }).toString()).replace(
+					/tsrx-[0-9a-f]+/g,
+					'tsrx-H',
+				);
+				expect(html).toBe(
+					'<span class="x tsrx-H"></span><span class="x tsrx-H"></span><span class="last tsrx-H"></span>',
+				);
+			}
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it("keeps the scope hash on a class from Hono's css helper with Hono SSR", async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-'),
+		);
+
+		try {
+			const source_id = path.join(directory, 'App.tsrx');
+			const output_id = path.join(directory, 'App.js');
+			const transformed = await plugin.transform.call(
+				context,
+				`import { css, Style } from 'hono/css';
+
+				const red = () => css\`color: red;\`;
+				// Hono's server prints a thenable that is not a Promise as text.
+				const thenable = { then() {}, toString: () => 'from-thenable' };
+
+				export function Native() @{
+					<div>
+						<Style />
+						<span data-probe="attribute" class={red()} />
+						<span data-probe="spread" {...{ class: red() }} />
+						<span data-probe="thenable" class={thenable} />
+					</div>
+				}
+
+				export function Scoped() @{
+					<div>
+						<Style />
+						<style>
+							span {
+								margin: 0;
+							}
+						</style>
+						<span data-probe="attribute" class={red()} />
+						<span data-probe="spread" {...{ class: red() }} />
+						<span data-probe="thenable" class={thenable} />
+					</div>
+				}`,
+				source_id,
+			);
+			await writeFile(output_id, transformed.code.replace(/^import ".*\?tsrx-css.*";$/m, ''));
+
+			const [{ Native, Scoped }, { jsx }, { HtmlEscapedCallbackPhase, resolveCallback }] =
+				await Promise.all([
+					import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+					import('hono/jsx'),
+					import('hono/utils/html'),
+				]);
+			// Resolve Hono's callbacks as `c.html()` does, which fills <Style />.
+			/** @param {unknown} component */
+			const render = async (component) =>
+				String(
+					await resolveCallback(
+						await jsx(/** @type {any} */ (component), {}).toString(),
+						HtmlEscapedCallbackPhase.Stringify,
+						false,
+						{},
+					),
+				);
+			/**
+			 * @param {string} html
+			 * @param {string} probe
+			 */
+			const classes = (html, probe) =>
+				(new RegExp(`data-probe="${probe}" class="([^"]*)"`).exec(html)?.[1] ?? '')
+					.split(' ')
+					.filter(Boolean);
+
+			const native = await render(Native);
+			const scoped = await render(Scoped);
+			for (const probe of ['attribute', 'spread']) {
+				expect(classes(native, probe)).toEqual([expect.stringMatching(/^css-\d+$/)]);
+			}
+			expect(classes(native, 'thenable')).toEqual(['from-thenable']);
+			for (const probe of ['attribute', 'spread', 'thenable']) {
+				expect(classes(scoped, probe)).toEqual([
+					...classes(native, probe),
+					expect.stringMatching(/^tsrx-[0-9a-f]+$/),
+				]);
+			}
+			// Hono's callbacks still add the rule to <Style />.
+			const style = (/** @type {string} */ html) =>
+				/<style id="hono-css">(.*?)<\/style>/.exec(html)?.[1];
+			expect(style(native)).toContain('color:red');
+			expect(style(scoped)).toBe(style(native));
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	it('renders a class beside scoped styles as Hono SSR renders it without them', async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-'),
+		);
+
+		try {
+			const source_id = path.join(directory, 'App.tsrx');
+			const output_id = path.join(directory, 'App.js');
+			const transformed = await plugin.transform.call(
+				context,
+				`export function Native({ value }) @{
+					<span class={value} />
+				}
+
+				export function Scoped({ value }) @{
+					<>
+						<style>
+							span {
+								color: red;
+							}
+						</style>
+						<span class={value} />
+					</>
+				}
+
+				export function NativeSpread({ value }) @{
+					<span {...{ class: value }} />
+				}
+
+				export function ScopedSpread({ value }) @{
+					<>
+						<style>
+							span {
+								color: red;
+							}
+						</style>
+						<span {...{ class: value }} />
+					</>
+				}`,
+				source_id,
+			);
+			await writeFile(output_id, transformed.code.replace(/^import ".*\?tsrx-css.*";$/m, ''));
+
+			const [{ Native, Scoped, NativeSpread, ScopedSpread }, { jsx }] = await Promise.all([
+				import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+				import('hono/jsx'),
+			]);
+			/**
+			 * @param {unknown} component
+			 * @param {unknown} value
+			 */
+			const classes = async (component, value) => {
+				const html = String(
+					await jsx(/** @type {any} */ (component), {
+						value: /** @type {any} */ (value),
+					}).toString(),
+				);
+				return (/class="([^"]*)"/.exec(html)?.[1] ?? '').split(' ').filter(Boolean);
+			};
+
+			for (const value of [undefined, null, false, true, '', 0, 'a b']) {
+				expect(await classes(Scoped, value)).toEqual([
+					...(await classes(Native, value)),
+					expect.stringMatching(/^tsrx-[0-9a-f]+$/),
+				]);
+				// A spread's class joins the same way.
+				expect(await classes(ScopedSpread, value)).toEqual([
+					...(await classes(NativeSpread, value)),
+					expect.stringMatching(/^tsrx-[0-9a-f]+$/),
+				]);
+			}
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
+	// Hono prints `class` and `className` as two `class` attributes, and a
+	// browser reads the first; of two of one name, the last one is printed.
+	it('stamps the class attribute Hono SSR applies when an element has several', async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-'),
+		);
+		const elements = [
+			'<span class="a" className="b" />',
+			'<span className="a" class="b" />',
+			'<span class="a" {...bag} className="b" />',
+			'<span class="a" {...bag} class="b" />',
+		];
+
+		try {
+			const source_id = path.join(directory, 'App.tsrx');
+			const output_id = path.join(directory, 'App.js');
+			const transformed = await plugin.transform.call(
+				context,
+				elements
+					.map(
+						(element, index) => `export function Native${index}({ bag }) @{
+							${element}
+						}
+
+						export function Scoped${index}({ bag }) @{
+							<>
+								<style>
+									span {
+										color: red;
+									}
+								</style>
+								${element}
+							</>
+						}`,
+					)
+					.join('\n'),
+				source_id,
+			);
+			await writeFile(output_id, transformed.code.replace(/^import ".*\?tsrx-css.*";$/m, ''));
+
+			const [components, { jsx }] = await Promise.all([
+				import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+				import('hono/jsx'),
+			]);
+			/**
+			 * The classes of the first `class` attribute, which a browser reads.
+			 * @param {unknown} component
+			 * @param {unknown} bag
+			 */
+			const classes = async (component, bag) => {
+				const html = String(
+					await jsx(/** @type {any} */ (component), { bag: /** @type {any} */ (bag) }).toString(),
+				);
+				return (/class="([^"]*)"/.exec(html)?.[1] ?? '').split(' ').filter(Boolean);
+			};
+
+			for (const index of elements.keys()) {
+				for (const bag of [{}, { class: 'x' }]) {
+					expect(await classes(components[`Scoped${index}`], bag)).toEqual([
+						...(await classes(components[`Native${index}`], bag)),
+						expect.stringMatching(/^tsrx-[0-9a-f]+$/),
+					]);
+				}
+			}
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it('renders awaits inside @for, @empty, @switch, and @if bodies with Hono SSR (#145)', async () => {
 		const plugin = tsrxHono();
 		const context = create_context();
@@ -341,6 +636,46 @@ describe('@tsrx/vite-plugin-hono', () => {
 		}
 	});
 
+	it('catches a throw from a @try body setup statement with Hono SSR', async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-try-body-'),
+		);
+
+		try {
+			const source_id = path.join(directory, 'BodyThrowPage.tsrx');
+			const output_id = path.join(directory, 'BodyThrowPage.js');
+			const transformed = await plugin.transform.call(
+				context,
+				`function load() {
+					throw new Error('server body boom');
+				}
+
+				export function BodyThrowPage() @{
+					@try {
+						const value = load();
+						<p>{value}</p>
+					} @catch (error) {
+						<p>{'caught ' + error.message}</p>
+					}
+				}`,
+				source_id,
+			);
+			await writeFile(output_id, transformed.code);
+
+			const [{ BodyThrowPage }, { jsx }] = await Promise.all([
+				import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+				import('hono/jsx'),
+			]);
+			expect(String(await jsx(BodyThrowPage, {}).toString())).toBe(
+				'<p>caught server body boom</p>',
+			);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it('selects the Hono DOM runtime and forwards direct runtime imports', async () => {
 		const plugin = tsrxHono({ mode: 'dom', runtimeImports: 'direct' });
 		const transformed = await plugin.transform.call(
@@ -479,6 +814,48 @@ describe('@tsrx/vite-plugin-hono', () => {
 		});
 
 		expect(result).toBe(modules);
+	});
+
+	it('keeps the virtual CSS when a styled file imported only as `?raw` stops compiling', async () => {
+		const plugin = tsrxHono();
+		const id = '/virtual/Example.tsrx';
+		const css_module = { id: `${id}?tsrx-css&lang.css` };
+		const invalidated = [];
+		// Vite keeps the stylesheet module of the earlier component import after
+		// the file's importers switch to `?raw`.
+		const context = create_context({
+			getModuleById(module_id) {
+				return module_id === css_module.id ? css_module : undefined;
+			},
+			invalidateModule(module) {
+				invalidated.push(module);
+			},
+		});
+		await plugin.transform.call(
+			context,
+			`export function Example() @{
+				<><p class="a">{'hi'}</p>
+				<style>.a { color: red; }</style></>
+			}`,
+			id,
+		);
+		const resolved_id = plugin.resolveId.call(context, css_module.id);
+
+		const broken_source = 'export function Example() @{ <section>';
+		const modules = [{ id }, { id: `${id}?raw` }, css_module];
+		const result = await plugin.hotUpdate.call(context, {
+			file: id,
+			modules,
+			read: async () => broken_source,
+		});
+
+		expect(result).toBe(modules);
+		expect(invalidated).toEqual([]);
+		expect(plugin.load.call(context, resolved_id)).toContain('color: red;');
+		// A component import still reports the error when Vite transforms it again.
+		await expect(plugin.transform.call(context, broken_source, id)).rejects.toThrow(
+			"Unclosed tag '<section>'",
+		);
 	});
 
 	it('registers Hono JSX runtime dependencies for optimizeDeps', () => {
