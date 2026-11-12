@@ -7,7 +7,7 @@ import { error_with } from './errors.js';
 import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
 
-/** @import { CompileDiagnosticsHarness, CompileHarness } from '../../types/index' */
+/** @import { CodeMapping, CompileDiagnosticsHarness, CompileHarness } from '../../types/index' */
 
 /**
  * Each first-party target's `jsx.classValue`.
@@ -38,6 +38,26 @@ function count_substring(haystack, needle) {
  */
 function diagnostic_codes(result) {
 	return result.errors.map((error) => error.code);
+}
+
+/** A class with static, static readonly and instance index signatures. */
+const STATIC_INDEX_SIGNATURES = `export class Registry {
+	static [key: string]: number;
+	static readonly [index: number]: string;
+	[symbol: symbol]: boolean;
+}
+`;
+
+/**
+ * esrap writes `readonly` but not `static` before an index signature (#1253).
+ * @param {string} code
+ */
+function expect_static_index_signatures(code) {
+	expect(code).toContain('static [key: string]: number');
+	expect(code).toContain('static readonly [index: number]: string');
+	expect(code).not.toContain('static [symbol: symbol]');
+	expect(code).not.toMatch(/static\s+static/);
+	expect(virtual_parse_diagnostics(code)).toEqual([]);
 }
 
 /**
@@ -189,6 +209,14 @@ function virtual_semantic_diagnostics(code, extra_options = {}) {
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] class index signatures in virtual code`, () => {
+		it('keeps static on a class index signature', () => {
+			expect_static_index_signatures(
+				compile_to_volar_mappings(STATIC_INDEX_SIGNATURES, 'App.tsrx', { loose: true }).code,
+			);
+		});
+	});
+
 	describe(`[${name}] control flow followed by another output node`, () => {
 		// A code block renders one node. The parser reports the second output node and
 		// keeps the control flow before it among the setup statements, which the loose
@@ -278,6 +306,114 @@ export function App() @{
 				const length = generatedLengths?.[0] ?? lengths[0];
 				expect(code.slice(generatedOffsets[0], generatedOffsets[0] + length)).toBe(text);
 			}
+		});
+	});
+
+	describe(`[${name}] comments in virtual code`, () => {
+		/**
+		 * Whether a verification mapping covers exactly `text`, which starts at
+		 * `offset` in the source, and maps it to the same generated text.
+		 * @param {{ code: string, mappings: CodeMapping[] }} result
+		 * @param {number} offset
+		 * @param {string} text
+		 */
+		const is_mapped = (result, offset, text) =>
+			result.mappings.some(
+				(mapping) =>
+					mapping.sourceOffsets[0] === offset &&
+					mapping.lengths[0] === text.length &&
+					mapping.data.verification &&
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					) === text,
+			);
+
+		it.each(['/** */', '/** Docs. */', '/**\n * Docs.\n * @param a The value.\n */'])(
+			'prints the JSDoc comment %j as written',
+			(comment) => {
+				const source = `${comment}\nexport function A({ a }: { a: number }) @{\n\t<p>{a}</p>\n}\n`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx');
+
+				expect(result.errors).toEqual([]);
+				expect(result.code).toContain(`${comment}\nexport `);
+				expect(is_mapped(result, 0, comment)).toBe(true);
+			},
+		);
+
+		it('keeps a block TypeScript directive on the line before its statement', () => {
+			const source = `/* @ts-expect-error */
+export const a: number = 'bad';
+/*@ts-ignore*/
+export const b: number = 'bad';
+export class K {
+	/* @ts-ignore */
+	v: number = 'bad';
+}
+/* plain */
+export const c = 1;
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain("/* @ts-expect-error */\nexport const a: number = 'bad';");
+			expect(result.code).toContain("/*@ts-ignore*/\nexport const b: number = 'bad';");
+			expect(result.code).toMatch(/\/\* @ts-ignore \*\/\n\s*v: number = 'bad';/);
+			expect(result.code).not.toContain('plain');
+			for (const comment of ['/* @ts-expect-error */', '/*@ts-ignore*/', '/* @ts-ignore */']) {
+				expect(is_mapped(result, source.indexOf(comment), comment), comment).toBe(true);
+			}
+		});
+
+		it('keeps the comments around a directive on the lines where they are written', () => {
+			// TypeScript applies a directive to the first line after it that is not
+			// blank or a line comment, so a block comment after one ends its reach.
+			const source = `declare const bad: string;
+/* @ts-expect-error */
+/* plain */
+export const a: number = bad;
+// @ts-expect-error
+/* plain */
+export const b: number = bad;
+/* @ts-expect-error */ /** docs */
+export const c: number = bad;
+/* explanation
+@ts-expect-error */
+export const d: number = bad;
+/** Docs. */ export const e = 1;
+`;
+			const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(code).toContain('/* @ts-expect-error */\n/* plain */\nexport const a');
+			expect(code).toContain('// @ts-expect-error\n/* plain */\nexport const b');
+			expect(code).toContain('/* @ts-expect-error */ /** docs */\nexport const c');
+			expect(code).toContain('/* explanation\n@ts-expect-error */\nexport const d');
+			expect(code).toContain('/** Docs. */ export const e = 1;');
+		});
+
+		it('leaves out a directive on the line where its statement starts', () => {
+			// It covers the source line after it, which the printed statement does
+			// not keep: here the printer splits the statement over several lines.
+			const source = `export function f(x: number) {
+	/* @ts-ignore */ if (x) { const y: number = 'bad'; return y; }
+	return 0;
+}
+/* @ts-expect-error */ export const o = { a: missing, b: 'a long string to make the printer wrap', c: 'and another long string' };
+`;
+			const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(code).not.toContain('@ts-ignore');
+			expect(code).not.toContain('@ts-expect-error');
+		});
+
+		it('maps an object literal getter or setter with type parameters', () => {
+			const source = 'export const o = { get g<T>() { return 1; }, set s<T>(v: T) {} };';
+			const result = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(result.code).toContain('get g<T>() {');
+			expect(result.code).toContain('set s<T>(v: T) {}');
 		});
 	});
 
@@ -428,6 +564,26 @@ export function App() @{
 				).toEqual([]);
 			},
 		);
+	});
+
+	describe(`[${name}] type arguments on a tag in virtual code (#1260)`, () => {
+		it('keeps and maps type arguments other than a single name', () => {
+			const source = `export function App({ List, xs }: any) @{
+	<div>
+		<List<string | number, [1]> items={xs} />
+	</div>
+}`;
+			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			expect(code).toContain('<List<string | number, [1]> items={xs} />');
+			const number = source.indexOf('number');
+			const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === number);
+			expect(mapping).toBeDefined();
+			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
+			expect(code.slice(generated, generated + 'number'.length)).toBe('number');
+		});
 	});
 
 	describe(`[${name}] platform flag virtual types`, () => {
@@ -613,6 +769,103 @@ export function App() @{
 			]);
 			expect(result.code).toContain('() =>');
 			expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+		});
+
+		it('reports an `@for` head that assigns instead of declaring (#267)', () => {
+			for (const [head, setup] of [
+				['state.item', 'const state = { item: 0 };'],
+				['item', 'let item = 0;'],
+				['{ item }', 'let item = 0;'],
+				['[state.item]', 'const state = { item: 0 };'],
+			]) {
+				const source = `export function App({ items }: { items: any[] }) @{
+					${setup}
+					<ul>
+						@for (${head} of items; index i) {
+							<li>{i}</li>
+						}
+					</ul>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf(`(${head} of`) + 1;
+
+				expect(
+					result.errors.map((error) => [error.code, error.pos, error.end]),
+					head,
+				).toEqual([[TSRX_ERRORS.FOR_HEAD_ASSIGNMENT.code, start, start + head.length]]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
+		it('reports an `@for` head that declares its item with `using` (#453)', () => {
+			for (const kind of ['using', 'await using']) {
+				const source = `export async function App({ items }: { items: Disposable[] }) @{
+					<ul>
+						@for (${kind} item of items) {
+							<li>{String(item)}</li>
+						}
+					</ul>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(
+					result.errors.map((error) => [error.code, error.message]),
+					kind,
+				).toEqual([[TSRX_ERRORS.FOR_HEAD_USING.code, TSRX_ERRORS.FOR_HEAD_USING(kind).message]]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
+		it('reports an invalid `@for` head wherever the loop is nested', () => {
+			/** @type {Record<string, (loop: string) => string>} */
+			const positions = {
+				'@if': (loop) => `@if (c) { ${loop} }`,
+				'@for': (loop) => `@for (const g of groups) { ${loop} }`,
+				'@switch': (loop) => `@switch (c) { @case 1: { ${loop} } }`,
+				'@try': (loop) => `@try { ${loop} } @catch (e) { <p /> }`,
+				'a JSX value': (loop) => `{<b>${loop}</b>}`,
+			};
+			for (const [head, code] of [
+				['state.item of items', TSRX_ERRORS.FOR_HEAD_ASSIGNMENT.code],
+				['using item of items', TSRX_ERRORS.FOR_HEAD_USING.code],
+			]) {
+				for (const [label, wrap] of Object.entries(positions)) {
+					const source = `export async function App({ items, groups, c }: any) @{
+						const state = { item: 0 };
+						<ul>
+							${wrap(`@for (${head}) { <li /> }`)}
+						</ul>
+					}`;
+					const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+					const start = source.indexOf(`(${head}`) + 1;
+
+					expect(
+						result.errors.map((error) => [error.code, error.pos]),
+						`${head} in ${label}`,
+					).toEqual([[code, start]]);
+					expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+				}
+			}
+		});
+
+		it('keeps type-only output valid for a keyed `@for` head that assigns', () => {
+			for (const clauses of ['key item', 'index i; key item']) {
+				const source = `export function App({ items }: { items: string[] }) @{
+					let item = '';
+					<ul>
+						@for (item of items; ${clauses}) {
+							<li>{item}</li>
+						}
+					</ul>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(
+					result.errors.map((error) => error.code),
+					clauses,
+				).toEqual([TSRX_ERRORS.FOR_HEAD_ASSIGNMENT.code]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
 		});
 
 		it('preserves deferred imports in type-only output', () => {
@@ -1867,9 +2120,9 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				);
 
 				const fragment_source = name === 'react' ? 'react' : 'preact';
-				expect(code).toContain(`import { Fragment } from '${fragment_source}';`);
-				expect(code).toContain('<Fragment key={i}>');
-				expect(code).toContain('</Fragment>');
+				expect(code).toContain(`import { Fragment as __Fragment } from '${fragment_source}';`);
+				expect(code).toContain('<__Fragment key={i}>');
+				expect(code).toContain('</__Fragment>');
 			},
 		);
 
@@ -1896,7 +2149,7 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			);
 
 			expect(code).toContain("<p key={item.id}>{'static'}</p>");
-			expect(code).toContain('<Fragment key={item.id}>');
+			expect(code).toContain('<__Fragment key={item.id}>');
 			expect(code).toContain('<Row key={item.id} />');
 			// A keyed branch element is per-row, so it is never hoisted as a static.
 			expect(code).not.toContain('__static');
@@ -1948,10 +2201,10 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			);
 
 			expect(code).toMatch(
-				/return <Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child, i\) =>/,
+				/return <__Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child, i\) =>/,
 			);
 			expect(code).toMatch(
-				/group\.open\s*\? <Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child\) =>/,
+				/group\.open\s*\? <__Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child\) =>/,
 			);
 			expect(code).toContain('<li key={i}>{child}</li>');
 		});
@@ -2539,6 +2792,56 @@ export function runSharedCompileTests({
 		classAttrName,
 		generatedClassAttrName,
 		classJoin,
+	});
+
+	describe(`[${name}] directive prologue`, () => {
+		// Each construct below makes the target inject at least one import.
+		const body = `import { label } from './label';
+
+			export function App({ rows, tag }: { rows: string[]; tag: string }) @{
+				<div>
+					@try {
+						<ul>@for (const row of rows; key row) { <><li>{row}</li><li>{label}</li></> }</ul>
+					} @pending {
+						<p>{'loading'}</p>
+					} @catch (error) {
+						<p>{'failed'}</p>
+					}
+					<{tag} />
+				</div>
+			}`;
+
+		/**
+		 * @param {string} code
+		 * @returns {string[]}
+		 */
+		function leading_statements(code) {
+			const source_file = ts.createSourceFile(
+				'out.tsx',
+				code,
+				ts.ScriptTarget.Latest,
+				true,
+				ts.ScriptKind.TSX,
+			);
+			return source_file.statements.map((statement) => statement.getText(source_file));
+		}
+
+		it.each([
+			{ label: "'use client'", directives: [`'use client';`] },
+			{ label: "'use server'", directives: [`'use server';`] },
+			{ label: "'use client' and 'use strict'", directives: [`'use client';`, `'use strict';`] },
+		])('keeps $label first ahead of generated imports', ({ directives }) => {
+			for (const options of [undefined, { collect: true }]) {
+				const { code } = compile(`${directives.join('\n')}\n\n${body}`, 'App.tsrx', options);
+				const statements = leading_statements(code);
+
+				expect(statements.slice(0, directives.length)).toEqual(directives);
+				expect(statements[directives.length]).toMatch(/^import /);
+				expect(
+					statements.slice(directives.length).filter((s) => s.startsWith('import ')).length,
+				).toBeGreaterThan(1);
+			}
+		});
 	});
 
 	describe(`[${name}] import phases`, () => {
@@ -3236,7 +3539,117 @@ export function App() @{
 		});
 	});
 
+	// The targets that share the core import injector, and the sources it
+	// imports each generated component from.
+	const generated_import_sources = /** @type {Record<string, Record<string, string>>} */ ({
+		react: {
+			Suspense: 'react',
+			Fragment: 'react',
+			TsrxErrorBoundary: '@tsrx/react/error-boundary',
+		},
+		preact: {
+			Suspense: 'preact/compat',
+			Fragment: 'preact',
+			TsrxErrorBoundary: '@tsrx/preact/error-boundary',
+		},
+		hono: {
+			Suspense: 'hono/jsx',
+			Fragment: 'hono/jsx',
+			TsrxErrorBoundary: '@tsrx/hono/error-boundary',
+		},
+	})[name];
+
+	if (generated_import_sources) {
+		const sources = generated_import_sources;
+
+		describe(`[${name}] generated imports beside authored bindings`, () => {
+			/** @type {Record<string, string>} */
+			const templates = {
+				Suspense: `<div>@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }</div>`,
+				TsrxErrorBoundary: `<div>@try { <p>{'ready'}</p> } @catch (error) { <p>{'failed'}</p> }</div>`,
+				Fragment: `<ul>@for (const row of rows; key row) { <><li>{row}</li><li>{'end'}</li></> }</ul>`,
+			};
+
+			/**
+			 * @param {string} generated
+			 * @param {string} module_scope
+			 * @param {string} [setup]
+			 * @param {string} [template]
+			 */
+			function compile_beside(generated, module_scope, setup = '', template) {
+				return compile(
+					`${module_scope}
+
+					export function App({ rows }: { rows: string[] }) @{
+						${setup}
+						${template ?? templates[generated]}
+					}`,
+					'App.tsrx',
+				).code;
+			}
+
+			/**
+			 * @param {string} code
+			 * @param {string} generated
+			 */
+			function expect_private_generated_binding(code, generated) {
+				const redeclarations = virtual_semantic_diagnostics(code)
+					.filter((diagnostic) => [2300, 2440, 2451].includes(diagnostic.code))
+					.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
+				expect(redeclarations).toEqual([]);
+				expect(code).toContain(
+					`import { ${generated} as __${generated} } from '${sources[generated]}';`,
+				);
+				expect(code).toContain(`<__${generated} `);
+				expect(code).not.toMatch(new RegExp(`<${generated}[\\s>]`));
+			}
+
+			for (const generated of ['Suspense', 'TsrxErrorBoundary', 'Fragment']) {
+				const source = sources[generated];
+
+				it.each([
+					`import { ${generated} } from '${source}';`,
+					`import type { ${generated} } from '${source}';`,
+					`import { type ${generated} } from '${source}';`,
+					`import ${generated} from './authored';`,
+					`import * as ${generated} from './authored';`,
+					`import { ${generated} } from './authored';`,
+					`const ${generated} = 'authored';`,
+				])(`imports a generated ${generated} beside \`%s\``, (module_scope) => {
+					expect_private_generated_binding(compile_beside(generated, module_scope), generated);
+				});
+
+				it(`keeps a generated ${generated} when setup declares a local of that name`, () => {
+					const code = compile_beside(
+						generated,
+						'',
+						`const ${generated} = (props: { children?: unknown }) => <section>{props.children}</section>;`,
+					);
+
+					expect_private_generated_binding(code, generated);
+					expect(code).toContain(`const ${generated} = `);
+				});
+			}
+
+			it('keys a fragment row with the generated Fragment when the loop variable is named Fragment', () => {
+				const code = compile_beside(
+					'Fragment',
+					'',
+					'',
+					`<ul>@for (const Fragment of rows; key Fragment) { <><li>{Fragment}</li><li>{'end'}</li></> }</ul>`,
+				);
+
+				expect_private_generated_binding(code, 'Fragment');
+				expect(code).toContain('<__Fragment key={Fragment}>');
+			});
+		});
+	}
+
 	describe(`[${name}] TypeScript output`, () => {
+		it('keeps static on a class index signature', () => {
+			expect_static_index_signatures(compile(STATIC_INDEX_SIGNATURES, 'App.tsrx').code);
+		});
+
 		it('collects unclosed tag diagnostics without loose recovery silence', () => {
 			const result = compile(
 				`function App() @{
@@ -3566,6 +3979,21 @@ break"}</p>
 			expect(code).toContain('export const query = sql<Row>`select 1`;');
 		});
 
+		it('keeps the ? of an optional binding pattern parameter', () => {
+			const { code } = compile(
+				`declare function f({ a }?: { a: number }): void;
+				type F = ([a]?: number[]) => void;
+				interface I { m({ a }?: { a: number }): void }
+				declare function g([a]?): void;`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('declare function f({ a }?: { a: number }): void;');
+			expect(code).toContain('type F = ([a]?: number[]) => void;');
+			expect(code).toContain('interface I { m({ a }?: { a: number }): void }');
+			expect(code).toContain('declare function g([a]?): void;');
+		});
+
 		it('prints the type annotation of a binding pattern parameter once', () => {
 			const { code } = compile(
 				'function f([a]: A, { b }: B, [c]: C = [], ...[d]: D) {}',
@@ -3573,6 +4001,38 @@ break"}</p>
 			);
 
 			expect(code).toContain('function f([a]: A, { b }: B, [c]: C = [], ...[d]: D) {}');
+		});
+
+		it('keeps the parentheses that keep a string statement from being a directive', () => {
+			const { code } = compile(
+				`'';
+				'use client';
+				export function run(value = 1) {
+					('use strict');
+					return value;
+				}
+				export function strict() {
+					'use strict';
+					'also';
+					run();
+					'later';
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain("'';\n'use client';");
+			expect(code).toMatch(/run\(value = 1\) \{\n\t\('use strict'\);/);
+			expect(code).toMatch(/strict\(\) \{\n\t'use strict';\n\t'also';\n\trun\(\);\n\t\('later'\);/);
+		});
+
+		it('keeps the type parameters of an object literal getter or setter', () => {
+			const { code } = compile(
+				'export const o = { get g<T>() { return 1; }, set s<T>(v: T) {} };',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('get g<T>() {');
+			expect(code).toContain('set s<T>(v: T) {}');
 		});
 
 		it('preserves optional markers in tuple members and function parameters', () => {

@@ -141,6 +141,22 @@ function applied(document, edits) {
 	return text;
 }
 
+/**
+ * Accept the TypeScript 7 extension's prompt to use the project's TypeScript, as clicking
+ * Use Workspace Version would: the command runs the first button of the newest
+ * notification. That is the prompt, which comes once the extension's server runs, after
+ * TSRX's notice about the file. In a window with no test run, TSRX then restarts the
+ * extension host, because the setting changed in the workspace. A test run holds the
+ * extension host, so that restart stays pending here and these checks carry on.
+ */
+async function accept_workspace_prompt() {
+	await sleep(config.actionWaitMs);
+	await vscode.commands.executeCommand('notification.acceptPrimaryAction');
+	await sleep(config.actionWaitMs);
+	const tsdk = vscode.workspace.getConfiguration('js/ts').inspect('tsdk.path');
+	return { user: tsdk?.globalValue, workspace: tsdk?.workspaceValue };
+}
+
 /** @param {vscode.Uri} uri */
 function diagnostics_of(uri) {
 	return vscode.languages.getDiagnostics(uri).map((diagnostic) => ({
@@ -166,6 +182,7 @@ exports.run = async () => {
 		await vscode.window.showTextDocument(document);
 		result.languageId = document.languageId;
 		result.useTsgoAtStart = use_tsgo('experimental.useTsgo');
+		if (config.workspacePrompt) result.workspacePrompt = await accept_workspace_prompt();
 
 		const text = document.getText();
 		result.hover = await hover_on_count(document, config.hoverTimeoutMs);
