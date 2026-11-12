@@ -439,20 +439,24 @@ process.exit(Number(process.env.TSRX_TEST_EXIT ?? 0));
 // The editor's loose compile, which tsrx-tsc runs, reports unclosed and
 // mismatched tags as a collecting compile does (#978).
 it.each([
-	['an unclosed tag', '\t<div>{title}\n', "Unclosed tag '<div>'"],
+	[
+		'an unclosed tag',
+		'\t<div>{title}\n',
+		"(3,1): error TSRX1001: Unclosed tag '<div>'. Expected '</div>' before end of template.",
+	],
 	[
 		'a mismatched closing tag',
 		'\t<div><span>{title}</div>\n',
-		"Expected closing tag to match opening tag. Expected '</span>' but found '</div>'",
+		"(2,20): error TSRX1002: Expected closing tag to match opening tag. Expected '</span>' but found '</div>'",
 	],
-])('reports %s in a .tsrx file', (_label, body, message) => {
+])('reports %s in a .tsrx file', (_label, body, diagnostic) => {
 	fs.writeFileSync(
 		path.join(workspace, 'layout.tsrx'),
 		`export default function MainLayout({ title }: { title: string }) @{\n${body}}\n`,
 	);
 	const result = run_cli('native');
 	expect(result.output).toContain(
-		`[tsrx-tsc] ${path.join(fs.realpathSync(workspace), 'layout.tsrx')}: ${message}`,
+		`[tsrx-tsc] ${path.join(fs.realpathSync(workspace), 'layout.tsrx')}${diagnostic}`,
 	);
 });
 
