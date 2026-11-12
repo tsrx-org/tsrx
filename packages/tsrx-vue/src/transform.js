@@ -22,6 +22,7 @@ import {
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	setLocation,
+	TSRX_ERRORS,
 } from '@tsrx/core';
 
 /** The local name of Vue's `computed` in a keyed slot that destructures its item. */
@@ -442,12 +443,11 @@ function hoist_component_bindings(statements, ctx) {
 		const passed = result.slice(first_read, index);
 		if (initializer_reads_declared(declaration, passed)) {
 			error(
-				`'${name}' is read here before its declaration. Vue TSRX compiles the component to a constant, which is not hoisted like a function, and moving its declaration above this read would change what its prop defaults read. Move the declaration of '${name}' above this read.`,
+				TSRX_ERRORS.TARGET_COMPONENT_READ_BEFORE_DECLARATION(ctx.platform.name, name),
 				ctx.filename,
 				read,
 				ctx.errors,
 				ctx.comments,
-				DIAGNOSTIC_CODES.TARGET_COMPONENT_READ_BEFORE_DECLARATION,
 			);
 			continue;
 		}
@@ -934,6 +934,7 @@ function wrap_native_function_component(fn, source, ctx, path) {
 
 	ctx.needs_define_vapor_component = true;
 	validate_prop_defaults(fn, ctx);
+	validate_props_param(fn, ctx);
 
 	const call = setLocation(
 		create_define_vapor_component_call(
@@ -988,22 +989,251 @@ function validate_prop_defaults(fn, ctx) {
 			continue;
 		}
 		const name = property.key.name;
-		const fallback = property.value.right;
-		const written =
-			ctx.source && fallback.start != null && fallback.end != null
-				? ctx.source.slice(fallback.start, fallback.end)
-				: null;
-		const example =
-			written && !written.includes('\n') ? `const ${name} = props.${name} ?? ${written}` : null;
 		error(
-			`Vue TSRX cannot keep this default for '${name}': vue-jsx-vapor turns destructured prop defaults into prop options and drops any default that is not a literal, an identifier, an object or array literal, or a function, so '${name}' would be undefined. Read the prop in the body instead${example ? `, for example \`${example}\`` : ''}.`,
+			TSRX_ERRORS.TARGET_PROP_DEFAULT_UNSUPPORTED(
+				ctx.platform.name,
+				name,
+				get_prop_read_example(property.value, `props.${name}`, ctx),
+			),
 			ctx.filename,
-			fallback,
+			property.value.right,
 			ctx.errors,
 			ctx.comments,
-			DIAGNOSTIC_CODES.TARGET_PROP_DEFAULT_UNSUPPORTED,
 		);
 	}
+}
+
+/**
+ * Check a component's props parameter the way vue-jsx-vapor's props macro
+ * reads it (TSRX2031, and TSRX2029 for a default inside a prop):
+ *
+ * - It skips a props parameter with a default (`{ s } = {}`), so the
+ *   component gets no prop options and Vue passes it no props.
+ * - It reads destructured props by name, and reads only keys that are names:
+ *   it reads `{ [k]: v }` as the prop `k`, whatever `k` holds, and leaves out
+ *   any other key (`{ 'a-b': v }`, `{ [1]: v }`), so its binding never gets
+ *   the prop. That holds at every level, and a pattern with no key it reads
+ *   also gets no prop options.
+ * - Inside a prop, it applies a default only when the whole prop is missing.
+ * - It doesn't keep a rest element inside a prop as the rest of that prop:
+ *   the pattern's last rest element gets the component's attrs, an array's
+ *   gets the whole array, and any other gets the rest as it was at setup.
+ *
+ * @param {AST.Function} fn
+ * @param {TransformContext} ctx
+ * @returns {void}
+ */
+function validate_props_param(fn, ctx) {
+	const param = fn.params[0];
+	if (param?.type === 'AssignmentPattern') {
+		error(
+			TSRX_ERRORS.TARGET_PROPS_PARAM_DEFAULT(ctx.platform.name, get_inline_text(param.right, ctx)),
+			ctx.filename,
+			param.right,
+			ctx.errors,
+			ctx.comments,
+		);
+		return;
+	}
+	if (param?.type === 'ObjectPattern') validate_prop_keys(param, 'props', false, ctx);
+}
+
+/**
+ * @param {AST.RestElement} rest a rest element inside a prop
+ * @param {string} object how the body reads the value it destructures
+ * @param {TransformContext} ctx
+ * @returns {void}
+ */
+function report_prop_rest(rest, object, ctx) {
+	error(
+		TSRX_ERRORS.TARGET_PROP_NESTED_REST(ctx.platform.name, get_prop_path(object)),
+		ctx.filename,
+		rest,
+		ctx.errors,
+		ctx.comments,
+	);
+}
+
+/**
+ * @param {AST.ObjectPattern} pattern
+ * @param {string} object how the body reads the value the pattern destructures
+ * @param {boolean} nested whether the pattern is inside a prop
+ * @param {TransformContext} ctx
+ * @returns {void}
+ */
+function validate_prop_keys(pattern, object, nested, ctx) {
+	for (const property of pattern.properties) {
+		if (property.type === 'RestElement') {
+			// The pattern's own rest element gets the attrs: the props it doesn't
+			// declare.
+			if (nested) report_prop_rest(property, object, ctx);
+			continue;
+		}
+		const key = property.key;
+		if (!property.computed && key.type === 'Identifier') {
+			validate_prop_value(
+				property.value,
+				join_prop_member(object, `.${key.name}`, nested),
+				nested,
+				ctx,
+			);
+			continue;
+		}
+		const written = get_inline_text(key, ctx);
+		const example = get_prop_read_example(
+			property.value,
+			join_prop_member(object, get_prop_member_access(key, written, !nested), nested),
+			ctx,
+		);
+		error(
+			property.computed && key.type === 'Identifier'
+				? TSRX_ERRORS.TARGET_PROP_KEY_COMPUTED(ctx.platform.name, key.name, example)
+				: TSRX_ERRORS.TARGET_PROP_KEY_UNSUPPORTED(
+						ctx.platform.name,
+						property.computed ? `[${written}]` : written,
+						example,
+					),
+			ctx.filename,
+			key,
+			ctx.errors,
+			ctx.comments,
+		);
+	}
+}
+
+/**
+ * Check the pattern a prop, or a value inside one, is destructured with. A
+ * prop's own default is checked as TSRX2029 by `validate_prop_defaults`.
+ *
+ * @param {AST.Pattern} pattern
+ * @param {string} object how the body reads the value
+ * @param {boolean} nested whether the value is inside a prop
+ * @param {TransformContext} ctx
+ * @returns {void}
+ */
+function validate_prop_value(pattern, object, nested, ctx) {
+	if (pattern.type === 'AssignmentPattern') {
+		if (nested) {
+			error(
+				TSRX_ERRORS.TARGET_PROP_NESTED_DEFAULT_UNSUPPORTED(
+					ctx.platform.name,
+					get_prop_path(object),
+					get_prop_read_example(pattern, object, ctx),
+				),
+				ctx.filename,
+				pattern.right,
+				ctx.errors,
+				ctx.comments,
+			);
+		}
+		validate_prop_value(pattern.left, object, nested, ctx);
+	} else if (pattern.type === 'ObjectPattern') {
+		validate_prop_keys(pattern, object, true, ctx);
+	} else if (pattern.type === 'ArrayPattern') {
+		pattern.elements.forEach((element, index) => {
+			if (element?.type === 'RestElement') {
+				report_prop_rest(element, object, ctx);
+			} else if (element) {
+				validate_prop_value(element, join_prop_member(object, `[${index}]`, true), true, ctx);
+			}
+		});
+	}
+}
+
+/**
+ * Read a member of a prop's value with optional chaining, since the prop
+ * itself can be missing.
+ *
+ * @param {string} object
+ * @param {string} member `.name` or `[key]`
+ * @param {boolean} nested whether `object` is a prop's value, not the props
+ * @returns {string}
+ */
+function join_prop_member(object, member, nested) {
+	return nested
+		? `${object}?.${member.startsWith('.') ? member.slice(1) : member}`
+		: object + member;
+}
+
+/**
+ * A value's path in the props as the messages show it, such as `s.a`.
+ *
+ * @param {string} object
+ * @returns {string}
+ */
+function get_prop_path(object) {
+	return object.slice('props.'.length).replace(/\?\.(\[)?/g, (_, bracket) => bracket ?? '.');
+}
+
+/**
+ * How the body reads the member at `key`. Vue camelizes a prop's name, so a
+ * top-level `'a-b'` prop is `props.aB`.
+ *
+ * @param {AST.Expression | AST.PrivateIdentifier} key
+ * @param {string} written the key as written
+ * @param {boolean} top whether the key names a prop
+ * @returns {string}
+ */
+function get_prop_member_access(key, written, top) {
+	const name =
+		key.type === 'Literal' && typeof key.value === 'string'
+			? key.value
+			: key.type === 'TemplateLiteral' && key.expressions.length === 0
+				? key.quasis[0].value.cooked
+				: null;
+	if (name == null) return `[${written}]`;
+	const member = top ? name.replace(/-(\w)/g, (_, letter) => letter.toUpperCase()) : name;
+	return /^[A-Za-z_$][\w$]*$/.test(member) ? `.${member}` : `[${JSON.stringify(member)}]`;
+}
+
+/**
+ * An expression that reads the value at `access` where it is used, with the
+ * pattern's default, or an empty string when the pattern binds more than a
+ * name or its default spans lines.
+ *
+ * @param {AST.Pattern} value
+ * @param {string} access
+ * @param {TransformContext} ctx
+ * @returns {string}
+ */
+function get_prop_read_example(value, access, ctx) {
+	if (value.type === 'Identifier') return `{${access}}`;
+	if (value.type !== 'AssignmentPattern' || value.left.type !== 'Identifier') return '';
+	const fallback = get_source_text(value.right, ctx);
+	// A default replaces only `undefined`, so `??`, which also replaces `null`,
+	// would not read the same.
+	return fallback === null ? '' : `{${access} === undefined ? ${fallback} : ${access}}`;
+}
+
+/**
+ * A node's source text, on one line.
+ *
+ * @param {AST.Node} node
+ * @param {TransformContext} ctx
+ * @returns {string}
+ */
+function get_inline_text(node, ctx) {
+	if (ctx.source && node.start != null && node.end != null) {
+		return ctx.source.slice(node.start, node.end).replace(/\s*\n\s*/g, ' ');
+	}
+	return node.type === 'Identifier'
+		? node.name
+		: node.type === 'Literal'
+			? String(node.value)
+			: '…';
+}
+
+/**
+ * @param {AST.Node} node
+ * @param {TransformContext} ctx
+ * @returns {string | null} the node's source text, when it is on one line
+ */
+function get_source_text(node, ctx) {
+	const text =
+		ctx.source && node.start != null && node.end != null
+			? ctx.source.slice(node.start, node.end)
+			: null;
+	return text && !text.includes('\n') ? text : null;
 }
 
 /**

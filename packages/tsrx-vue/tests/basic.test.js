@@ -520,7 +520,7 @@ function Card({ s = ${fallback} }: { s?: unknown }) {
 				expect(thrown, `${fallback}\n${source}`).toBeInstanceOf(Error);
 				expect(thrown.code).toBe('TSRX2029');
 				expect(thrown.message).toContain("Vue TSRX cannot keep this default for 's'");
-				expect(thrown.message).toContain('Read the prop in the body instead');
+				expect(thrown.message).toContain('read the prop where you use it instead');
 				expect(thrown.loc.start.line).toBe(3);
 			}
 		}
@@ -533,7 +533,219 @@ export function Card({ s = cfg.size }: { s?: number }) @{
 			'App.tsrx',
 		);
 		expect(errors.map((error) => error.code)).toEqual(['TSRX2029']);
-		expect(errors[0].message).toContain('for example `const s = props.s ?? cfg.size`');
+		expect(errors[0].message).toContain(
+			'for example `{props.s === undefined ? cfg.size : props.s}`, or derive it in a `computed`.',
+		);
+
+		const renamed = compile_to_volar_mappings(
+			`const cfg = { size: 1 };
+export function Card({ s: size = cfg.size }: { s?: number }) @{
+	<div>{size}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(renamed.errors[0].message).toContain(
+			'for example `{props.s === undefined ? cfg.size : props.s}`',
+		);
+	});
+
+	it('reports a destructured prop key vue-jsx-vapor reads as another prop or leaves out', () => {
+		for (const [params, key, message, example] of [
+			// vue-jsx-vapor reads a computed name as the prop with that name.
+			[
+				'{ [k]: v = cfg.size }',
+				'k',
+				"reads `[k]` as the prop 'k'",
+				'{props[k] === undefined ? cfg.size : props[k]}',
+			],
+			[
+				'{ [k]: v = 3 }',
+				'k',
+				"reads `[k]` as the prop 'k'",
+				'{props[k] === undefined ? 3 : props[k]}',
+			],
+			['{ [k]: v }', 'k', "reads `[k]` as the prop 'k'", '{props[k]}'],
+			['{ t, [k]: v }', 'k', "reads `[k]` as the prop 'k'", '{props[k]}'],
+			['{ [k]: { a: v } }', 'k', "reads `[k]` as the prop 'k'", null],
+			['{ t: { [k]: v } }', 'k', "reads `[k]` as the prop 'k'", '{props.t?.[k]}'],
+			['{ t: [{ [k]: v }] }', 'k', "reads `[k]` as the prop 'k'", '{props.t?.[0]?.[k]}'],
+			// It leaves out any other key. With no key it reads, the component gets no
+			// prop options, so Vue passes it no props.
+			["{ ['s']: v = 3 }", "'s'", "the prop at `['s']`", '{props.s === undefined ? 3 : props.s}'],
+			["{ ['s']: v, t }", "'s'", "the prop at `['s']`", '{props.s}'],
+			["{ 's': v }", "'s'", "the prop at `'s'`", '{props.s}'],
+			[
+				"{ 'a-b': v = 1, t }",
+				"'a-b'",
+				"the prop at `'a-b'`",
+				'{props.aB === undefined ? 1 : props.aB}',
+			],
+			['{ [1]: v }', '1', 'the prop at `[1]`', '{props[1]}'],
+			['{ [`s`]: v, ...rest }', '`s`', 'the prop at `[`s`]`', '{props.s}'],
+			['{ [obj.k]: v }', 'obj.k', 'the prop at `[obj.k]`', '{props[obj.k]}'],
+			["{ [k + '']: v }", "k + ''", "the prop at `[k + '']`", "{props[k + '']}"],
+			["{ t: { 's': v } }", "'s'", "the prop at `'s'`", '{props.t?.s}'],
+			["{ t: { 'a-b': v } }", "'a-b'", "the prop at `'a-b'`", '{props.t?.["a-b"]}'],
+		]) {
+			const source = `const cfg = { size: 1 };
+const k = 's';
+const obj = { k: 's' };
+export function Card(${params}: any) @{
+	<div>{String(v)}</div>
+}`;
+			/** @type {any} */
+			let thrown = null;
+			try {
+				compile(source, 'App.tsrx');
+			} catch (error) {
+				thrown = error;
+			}
+			expect(thrown, params).toBeInstanceOf(Error);
+			expect(thrown.code, params).toBe('TSRX2031');
+			expect(thrown.message, params).toContain(message);
+			expect(thrown.message, params).toContain('read the prop where you use it instead');
+			if (example) expect(thrown.message, params).toContain(`for example \`${example}\``);
+			else expect(thrown.message, params).not.toContain('for example');
+			expect(thrown.loc.start, params).toEqual({
+				line: 4,
+				column: 'export function Card('.length + params.indexOf(key),
+			});
+
+			const { errors } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(
+				errors.map((error) => error.code),
+				params,
+			).toEqual(['TSRX2031']);
+		}
+
+		// A key that spans lines is shown on one line.
+		const { errors } = compile_to_volar_mappings(
+			`const k = 's';
+export function Card({ t, [k +
+	'']: v }: any) @{
+	<div>{String(v)}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.message)).toEqual([
+			expect.stringContaining("the prop at `[k + '']`"),
+		]);
+	});
+
+	it('reports a default inside a destructured prop, which vue-jsx-vapor applies only to a missing prop', () => {
+		for (const [params, fallback, path, example] of [
+			[
+				'{ s: { a: v = cfg.size } }',
+				'cfg.size',
+				's.a',
+				'{props.s?.a === undefined ? cfg.size : props.s?.a}',
+			],
+			['{ s: { a: v = 3 } }', '3', 's.a', '{props.s?.a === undefined ? 3 : props.s?.a}'],
+			['{ s: [v = 1] }', '1', 's[0]', '{props.s?.[0] === undefined ? 1 : props.s?.[0]}'],
+			['{ s: { t: { a } = {} } }', '{}', 's.t', null],
+		]) {
+			const source = `const cfg = { size: 1 };
+export function Card(${params}: any) @{
+	<div>{String(v)}</div>
+}`;
+			const { errors } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(
+				errors.map((error) => error.code),
+				params,
+			).toEqual(['TSRX2029']);
+			expect(errors[0].message, params).toContain(
+				`cannot keep this default for '${path}': vue-jsx-vapor applies a default inside a destructured prop only when the whole prop is missing`,
+			);
+			if (example) expect(errors[0].message, params).toContain(`for example \`${example}\``);
+			else expect(errors[0].message, params).not.toContain('for example');
+			expect(errors[0].loc.start, params).toEqual({
+				line: 2,
+				column: 'export function Card('.length + params.indexOf(fallback),
+			});
+		}
+	});
+
+	it('reports a props parameter with a default, which vue-jsx-vapor skips', () => {
+		for (const [param, fallback] of [
+			['{ s: v }: { s?: number } = {}', '{}'],
+			['props: { s?: number } = { s: 1 }', '{ s: 1 }'],
+		]) {
+			const { errors } = compile_to_volar_mappings(
+				`export function Card(${param}) @{
+	<div>{String(v)}</div>
+}`,
+				'App.tsrx',
+			);
+			expect(
+				errors.map((error) => error.code),
+				param,
+			).toEqual(['TSRX2031']);
+			expect(errors[0].message, param).toContain(
+				`cannot read a props parameter with a default: vue-jsx-vapor skips it, so this component gets no props. Remove \`= ${fallback}\`; Vue always passes a props object.`,
+			);
+			expect(errors[0].loc.start, param).toEqual({
+				line: 1,
+				column: 'export function Card('.length + param.lastIndexOf(fallback),
+			});
+		}
+	});
+
+	it("reports a rest element inside a prop that vue-jsx-vapor doesn't give the rest of it", () => {
+		for (const [params, rests, path] of [
+			// The last rest element of the pattern gets the component's attrs.
+			['{ t: { a, ...r } }', ['...r'], 't'],
+			['{ t: [a, ...r] }', ['...r'], 't'],
+			// An array's rest element gets the whole array.
+			['{ t: [a, ...r], ...rest }', ['...r'], 't'],
+			// Any other gets the rest as it was at setup.
+			['{ t: { a, ...r }, ...rest }', ['...r'], 't'],
+			['{ t: [{ a, ...r }], ...rest }', ['...r'], 't[0]'],
+			['{ t: { a, ...r }, u: { b, ...q } }', ['...r', '...q'], null],
+		]) {
+			const { errors } = compile_to_volar_mappings(
+				`export function Card(${params}: any) @{
+	<div>{String(a)}</div>
+}`,
+				'App.tsrx',
+			);
+			expect(
+				errors.map((error) => error.code),
+				params,
+			).toEqual(rests.map(() => 'TSRX2031'));
+			if (path) {
+				expect(errors[0].message, params).toContain(
+					`cannot read this rest element inside '${path}': vue-jsx-vapor doesn't keep it as the rest of '${path}'.`,
+				);
+			}
+			expect(
+				errors.map((error) => error.loc.start),
+				params,
+			).toEqual(
+				rests.map((rest) => ({
+					line: 1,
+					column: 'export function Card('.length + params.indexOf(rest),
+				})),
+			);
+		}
+	});
+
+	it('accepts destructured props vue-jsx-vapor reads as written', () => {
+		for (const params of [
+			'{ s: v, t = 1 }',
+			'{ s: [v, w] }',
+			'{ s: { a: v } }',
+			// A prop's own default, which vue-jsx-vapor keeps for an object literal.
+			'{ s: { a: v } = {} }',
+			// The pattern's own rest element gets the attrs, which are the props it
+			// doesn't declare.
+			'{ s: v, ...rest }',
+			'{ ...rest }',
+		]) {
+			const source = `export function Card(${params}: any) @{
+	<div>{String(v)}</div>
+}`;
+			expect(() => compile(source, 'App.tsrx'), params).not.toThrow();
+		}
 	});
 
 	it('rejects the removed `&{ ... }` lazy destructuring syntax', () => {
