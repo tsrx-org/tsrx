@@ -9,6 +9,7 @@ import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/scrip
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
 import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
+import { runArrayRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-ref';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -2812,3 +2813,4 @@ runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
 runArraySpreadRefRuntimeTests({ refObjects: false, ownRef: false });
+runArrayRefRuntimeTests({ refObjects: false, falsyEntries: false, spreadRef: false });

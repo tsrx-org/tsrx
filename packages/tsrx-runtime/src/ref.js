@@ -1,4 +1,4 @@
-/** @import { ClassValueKind, MergeableRef, RefProp, RefValue, SpreadFalsy, SpreadProps } from '../types/ref' */
+/** @import { ClassValueKind, MergeableRef, MergeableRefValue, RefProp, RefValue, SpreadFalsy, SpreadProps } from '../types/ref' */
 
 import {
 	define_property,
@@ -16,16 +16,32 @@ const EMPTY_SPREAD_PROPS = Object.freeze({});
 /**
  * Merge multiple refs (function refs and ref objects) into a single
  * callback ref. Used by React, Preact, and Vue targets when an element has
- * more than one `ref` attribute.
+ * more than one `ref` attribute, or a ref list such as `ref={[a, b]}`.
  * This is a public method and also used by the compiler to unite any refs with
  * any of the supported syntaxes.  It does not process spreads, that is delegated to
  * `normalize_spread_props`.
  *
+ * A ref list counts as the refs in it, and a value that is not a ref, such as
+ * the `false` of `cond && cb`, is left out.
+ *
  * @template [T=Element]
- * @param {...MergeableRef<T>} refs
+ * @param {...MergeableRefValue<T>} values
  * @returns {(node: T | null) => (() => void)}
  */
-export function mergeRefs(...refs) {
+export function mergeRefs(...values) {
+	/** @type {MergeableRef<T>[]} */
+	let refs = /** @type {MergeableRef<T>[]} */ (values);
+	for (const value of values) {
+		if (
+			value != null &&
+			typeof value !== 'function' &&
+			(typeof value !== 'object' || is_array(value))
+		) {
+			refs = [];
+			collect_live_refs(/** @type {RefValue<T>[]} */ (values), /** @type {RefValue<T>[]} */ (refs));
+			break;
+		}
+	}
 	if (refs.length === 2) {
 		return (node) => {
 			const first = refs[0];
@@ -291,16 +307,17 @@ export function merge_ref_props(...refs) {
  *
  * @template [T=Element]
  * @param {RefValue<T>[]} refs
- * @param {boolean} [merge_lone_object] read nested lists as their refs, and
- *   merge a lone ref object as well, so only a lone callback comes back as itself
+ * @param {boolean} [flatten] read ref lists as the refs in them, leave out
+ *   values that are not refs, and merge a lone ref object that sat in a list;
+ *   see `keeps_lone_ref`
  * @returns {RefValue<T>} the single surviving ref, or a callback applying all
  */
-function merge_ref_list(refs, merge_lone_object = false) {
-	if (merge_lone_object) {
+function merge_ref_list(refs, flatten = false) {
+	if (flatten) {
 		/** @type {RefValue<T>[]} */
 		const live = [];
 		collect_live_refs(refs, live);
-		return live.length === 1 && typeof live[0] === 'object'
+		return live.length === 1 && !keeps_lone_ref(live[0], refs)
 			? create_merged_ref(live)
 			: merge_ref_list(live);
 	}
@@ -402,7 +419,8 @@ const merged_element_refs = { next: undefined, ref: undefined };
  * as itself, and the same refs give back the same callback, so a JSX runtime
  * that applies a `ref` again whenever its identity changes applies them once
  * rather than on every render. A ref list counts as the refs in it, so an
- * inline `[a, b]` written each render gives back the same callback too.
+ * inline `[a, b]` written each render gives back the same callback too, and a
+ * lone ref object in a list is merged rather than given back.
  *
  * Every element given the same refs shares the callback, so only a runtime
  * that keeps a ref's cleanup per element can use it (React, Hono): Preact
@@ -423,15 +441,13 @@ export function merge_element_refs(...refs) {
  *
  * @template [T=Element]
  * @param {RefValue<T>[]} refs
- * @param {boolean} [merge_lone_object] merge a lone ref object as well, so
- *   only a lone callback comes back as itself
  * @returns {RefValue<T>}
  */
-function merge_shared_ref_list(refs, merge_lone_object = false) {
+function merge_shared_ref_list(refs) {
 	/** @type {RefValue<T>[]} */
 	const live = [];
 	collect_live_refs(refs, live);
-	if (live.length < 2 && !(merge_lone_object && typeof live[0] === 'object')) {
+	if (live.length === 0 || (live.length === 1 && keeps_lone_ref(live[0], refs))) {
 		return live[0];
 	}
 
@@ -446,6 +462,21 @@ function merge_shared_ref_list(refs, merge_lone_object = false) {
 		entry = child;
 	}
 	return (entry.ref ??= create_merged_ref(live));
+}
+
+/**
+ * Whether a merge that leaves one ref can give back that ref as itself: a
+ * callback, or a ref object passed as itself. A ref object from a ref list is
+ * merged instead, because a JSX runtime reads a bare ref object as its own
+ * kind: React sets `current` on a `{ value }` ref, and Vue ignores a plain one.
+ *
+ * @template T
+ * @param {RefValue<T>} ref
+ * @param {readonly RefValue<T>[]} refs the refs as the merge was given them
+ * @returns {boolean}
+ */
+function keeps_lone_ref(ref, refs) {
+	return typeof ref === 'function' || refs.includes(ref);
 }
 
 /**
@@ -574,7 +605,7 @@ export function copy_spread_props_sharing_refs(props, ...outer_refs) {
  * @param {object | SpreadFalsy} props
  * @param {Array<RefValue<Element>>} outer_refs a rest array owned by the caller
  * @param {boolean} copy return the normalized copy even with nothing to merge
- * @param {(refs: RefValue<Element>[], merge_lone_object?: boolean) => RefValue<Element>} merge
+ * @param {(refs: RefValue<Element>[], flatten?: boolean) => RefValue<Element>} merge
  *   merges an owned list of the bag's refs into one
  * @param {boolean} merge_ref_lists merge a `ref` that is a ref list even when
  *   it is the bag's only ref, for a JSX runtime that takes a single ref
@@ -662,9 +693,6 @@ function normalize_spread(props, outer_refs, copy, merge, merge_ref_lists) {
 		if (existing_ref != null) {
 			outer_refs.unshift(existing_ref);
 		}
-		// A list's lone ref object is merged too, since a JSX runtime reads a bare
-		// ref object as its own kind: React sets `current` on a `{ value }` ref,
-		// and Vue ignores a plain one.
 		merged_ref = merge(outer_refs, merges_ref_list);
 	} else if (existing_ref == null && outer_refs.length === 0) {
 		// A single collected ref survives unchanged without merge machinery.

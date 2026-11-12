@@ -15,6 +15,13 @@ export type RefValue<T = Element> =
 
 export type MergeableRef<T> =
 	MergeableRefCallback<T> | MergeableRefObject<T> | MergeableVueRef<T> | null | undefined;
+/**
+ * What `mergeRefs` takes: a ref, a ref list such as `[a, b]` (read as the refs
+ * in it), or a falsy value such as the `false`, `0` or `''` of `cond && cb`,
+ * `count && cb` or `label && cb`, which is left out.
+ */
+export type MergeableRefValue<T> =
+	MergeableRef<T> | false | 0 | '' | readonly MergeableRefValue<T>[];
 
 /**
  * A props bag as it reaches a spread: keys the caller has not narrowed.
@@ -53,7 +60,7 @@ export type RefTarget<V> = [V] extends [never]
 							: V;
 
 export function mergeRefs<T = Element>(
-	...refs: Array<MergeableRef<T>>
+	...refs: Array<MergeableRefValue<T>>
 ): (node: T | null) => () => void;
 export function isRefProp(value: unknown): boolean;
 // The inference overload comes first so an inferred call resolves the target

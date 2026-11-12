@@ -4,6 +4,7 @@ import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedAnonymousComponentTests,
+	runSharedArrayRefTests,
 	runSharedCatchErrorTypeTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -66,6 +67,12 @@ runSharedCatchErrorTypeTests({
 	jsx_import_source: 'react',
 });
 runSharedCodeBlockChildrenTests({ compile, name: 'react' });
+runSharedArrayRefTests({
+	compile,
+	compile_to_volar_mappings,
+	name: 'react',
+	merge: 'merge_element_refs',
+});
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'react' });
 runSharedAnonymousComponentTests({ compile, name: 'react' });
 

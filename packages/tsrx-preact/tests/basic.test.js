@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedAnonymousComponentTests,
+	runSharedArrayRefTests,
 	runSharedCatchErrorTypeTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -57,6 +58,7 @@ runSharedCatchErrorTypeTests({
 	jsx_import_source: 'preact',
 });
 runSharedCodeBlockChildrenTests({ compile, name: 'preact' });
+runSharedArrayRefTests({ compile, compile_to_volar_mappings, name: 'preact', merge: 'mergeRefs' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'preact' });
 runSharedAnonymousComponentTests({ compile, name: 'preact' });
 

@@ -7085,8 +7085,10 @@ export function validate_at_most_one_ref_attribute(raw_attrs, transform_context)
  * - `undefined` — return the list unchanged. The platform takes care
  *   of duplicate refs at runtime (or doesn't support them).
  *
- * Single-ref elements are always left unchanged so trivial cases stay
- * import-free and produce no helper call.
+ * Single-ref elements are left unchanged so trivial cases stay import-free and
+ * produce no helper call. The exception is a ref list written as an array
+ * literal, `ref={[a, b]}`, under `'merge-refs'`: those runtimes take a single
+ * ref, so the list becomes `ref={__mergeRefs([a, b])}`.
  *
  * @param {ESTreeJSX.JSXAttributeNode[]} jsx_attrs
  * @param {TransformContext} transform_context
@@ -7103,7 +7105,11 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 		count += 1;
 		if (!attr.metadata?.synthetic_ref) tsx_form_count += 1;
 	}
-	if (count <= 1) return jsx_attrs;
+	if (count <= 1) {
+		return strategy === 'merge-refs'
+			? merge_ref_list_literal(jsx_attrs, transform_context)
+			: jsx_attrs;
+	}
 	// Two or more genuine `ref={...}` (TSX-form) attributes are already a
 	// validator-flagged compile error and TypeScript flags them as duplicate
 	// JSX props. Leave them in place so the user gets all three signals
@@ -7172,6 +7178,55 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 	}
 
 	return result;
+}
+
+/**
+ * Give an element's lone `ref={[a, b]}` to `__mergeRefs`, which applies every
+ * ref in the list. The attribute keeps its name node and location, so its
+ * mappings and metadata stay; a second pass sees the call and leaves it.
+ *
+ * @param {ESTreeJSX.JSXAttributeNode[]} jsx_attrs
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXAttributeNode[]}
+ */
+function merge_ref_list_literal(jsx_attrs, transform_context) {
+	const index = jsx_attrs.findIndex(
+		(attr) => is_jsx_ref_attribute(attr) && is_array_literal(attr.value.expression),
+	);
+	if (index === -1) return jsx_attrs;
+
+	const attr = /** @type {ESTreeJSX.JSXRefAttribute} */ (jsx_attrs[index]);
+	transform_context.needs_merge_refs = true;
+	const merged_attr = build_jsx_attribute(
+		attr.name,
+		b.jsx_expression_container(b.call(b.id(MERGE_REFS_INTERNAL_NAME), attr.value.expression)),
+		false,
+		has_location(attr) ? attr : undefined,
+	);
+	merged_attr.metadata = { ...(attr.metadata || {}), ...(merged_attr.metadata || {}) };
+	const result = [...jsx_attrs];
+	result[index] = merged_attr;
+	return result;
+}
+
+/**
+ * An array literal, through parentheses and type assertions such as `as const`.
+ *
+ * @param {AST.Expression} expression
+ * @returns {boolean}
+ */
+function is_array_literal(expression) {
+	/** @type {any} */
+	let node = expression;
+	while (
+		node.type === 'ParenthesizedExpression' ||
+		node.type === 'TSAsExpression' ||
+		node.type === 'TSSatisfiesExpression' ||
+		node.type === 'TSNonNullExpression'
+	) {
+		node = node.expression;
+	}
+	return node.type === 'ArrayExpression';
 }
 
 /**

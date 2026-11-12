@@ -536,7 +536,9 @@ export interface JsxPlatform {
 		 * natively, so it can use the cheaper array form.
 		 *
 		 * - `'merge-refs'`: emit `ref={mergeRefs(a, b, ...)}` and inject an
-		 *   import from `imports.mergeRefs`.
+		 *   import from `imports.mergeRefs`. A lone ref list written as an array
+		 *   literal, `ref={[a, b]}`, becomes `ref={mergeRefs([a, b])}`, because
+		 *   these runtimes take a single ref.
 		 * - `'array'`: emit `ref={[a, b, ...]}`. No runtime helper needed.
 		 * - `undefined`: no merging — duplicate `ref` attributes pass through
 		 *   unchanged. The platform's runtime is responsible.
