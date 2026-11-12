@@ -449,6 +449,60 @@ it('reports unresolved class field and heritage types in .tsrx files', () => {
 	}
 });
 
+it('reports errors in import types, import options, declared signatures and key remapping in .tsrx files', () => {
+	fs.writeFileSync(
+		path.join(workspace, 'store.ts'),
+		'export type Store<T> = { value: T };\nexport function create<T>(): T { return null!; }\n',
+	);
+	const lines = [
+		"export type A = import('./store.ts').Store<MissingA>;",
+		"export type B = typeof import('./store.ts').create<MissingB>;",
+		"export type M = import('./store.ts');",
+		"export const data = import('./store.ts', { with: { type: MissingC } });",
+		"export const lazy = import.defer('./store.ts', { with: { type: MissingD } });",
+		'export declare function request(options: MissingE): void;',
+		'export function overload(options: MissingF): void; export function overload(options: unknown) {}',
+		'export type Keys<T> = { [K in keyof T as MissingG]: T[K] };',
+		'export type Named<T> = { [K in keyof T as Capitalize<number>]: T[K] };',
+		'export type Indexed<T> = { [K in keyof T as T[K]]: 1 };',
+		'export type Literal<T> = { [K in keyof T as {}]: 1 };',
+		'export type Tuple<T> = { [K in keyof T as [K]]: 1 };',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	for (const [index, name] of /** @type {const} */ ([
+		[0, 'MissingA'],
+		[1, 'MissingB'],
+		[3, 'MissingC'],
+		[4, 'MissingD'],
+		[5, 'MissingE'],
+		[6, 'MissingF'],
+		[7, 'MissingG'],
+	])) {
+		expect(result.output).toContain(
+			`${at(index, name)}: error TS2304: Cannot find name '${name}'.`,
+		);
+	}
+	expect(result.output).toContain(
+		`${at(2, 'import(')}: error TS1340: Module './store.ts' does not refer to a type, but is used as a type here. Did you mean 'typeof import('./store.ts')'?`,
+	);
+	expect(result.output).toContain(
+		`${at(8, 'number')}: error TS2344: Type 'number' does not satisfy the constraint 'string'.`,
+	);
+	for (const [index, type] of /** @type {const} */ ([
+		[9, 'T[K]'],
+		[10, '{}'],
+		[11, '[K]'],
+	])) {
+		expect(result.output).toContain(
+			`${at(index, type)}: error TS2322: Type '${type}' is not assignable to type 'string | number | symbol'.`,
+		);
+	}
+});
+
 it('reports a failed satisfies check on its keyword in .tsrx files', () => {
 	const lines = [
 		'declare const count: number; declare function load(): number;',
@@ -645,6 +699,24 @@ it('reports a superclass expression that is not a constructor in .tsrx files', (
 	}
 });
 
+it('reports a missing or unknown prop of a dynamic tag component in .tsrx files', () => {
+	const lines = [
+		'const Card = (props: { title: string }) => <div>{props.title}</div>;',
+		'export function Missing() @{ const C = Card; <{C} /> }',
+		'export function Unknown() @{ const C = Card; <{C} title="x" extra={1} /> }',
+		'export function Correct() @{ const C = Card; <{C} title="x" /> }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	// TypeScript reports them on the generated name of the lowered tag, which
+	// maps to the authored `{C}`.
+	expect(result.output.match(/^layout\.tsrx\(\d+,\d+\): error TS\d+/gm)).toEqual([
+		`layout.tsrx(5,${lines[1].indexOf('{C}') + 1}): error TS2769`,
+		`layout.tsrx(6,${lines[2].indexOf('{C}') + 1}): error TS2769`,
+	]);
+	expect(result.status).toBe(2);
+});
+
 it('reports errors on a whole call or parenthesized expression in .tsrx files', () => {
 	const line =
 		'declare const plain: {}; declare function createBase(): {}; declare function createVoid(): void; export function run() { const items = [...createBase()]; createBase()(); (plain)(); if (createVoid()) {} return [items, createBase() as const]; }';
@@ -686,3 +758,70 @@ it('reports errors on a bare this in .tsrx files', () => {
 		`layout.tsrx(4,${line.lastIndexOf('this') + 1}): error TS17009: 'super' must be called before accessing 'this' in the constructor of a derived class.`,
 	);
 });
+
+// Two CLI runs, emit then consume.
+it(
+	'leaves the editor-only platform globals out of emitted declarations',
+	{ timeout: 60_000 },
+	() => {
+		const source =
+			"export function value() {\n\tif (import.meta.env.platform.web) {\n\t\treturn 'web';\n\t}\n\treturn 'native';\n}\n";
+		// An authored global augmentation stays in the declaration output.
+		fs.writeFileSync(
+			path.join(workspace, 'a.tsrx'),
+			`${source}declare global {\n\tinterface Window {\n\t\tapp: string;\n\t}\n}\n`,
+		);
+		fs.writeFileSync(path.join(workspace, 'b.tsrx'), source);
+		fs.writeFileSync(
+			path.join(workspace, 'tsconfig.emit.json'),
+			JSON.stringify({
+				extends: './tsconfig.json',
+				tsrx: { platform: 'web' },
+				compilerOptions: {
+					declaration: true,
+					emitDeclarationOnly: true,
+					outDir: 'dist',
+					skipLibCheck: false,
+				},
+				include: ['a.tsrx', 'b.tsrx'],
+			}),
+		);
+		const emitted = run_cli('native', ['-p', 'tsconfig.emit.json']);
+		expect(emitted.output).toBe('');
+		expect(emitted.status).toBe(0);
+		const declaration = fs.readFileSync(path.join(workspace, 'dist', 'a.d.ts'), 'utf8');
+		expect(declaration).toContain('export declare function value()');
+		expect(declaration).toContain('interface Window');
+		expect(declaration).not.toContain('ImportMeta');
+		expect(fs.readFileSync(path.join(workspace, 'dist', 'b.d.ts'), 'utf8')).not.toContain(
+			'declare global',
+		);
+
+		fs.writeFileSync(
+			path.join(workspace, 'consumer.ts'),
+			"import { value as a } from './dist/a.js';\nimport { value as b } from './dist/b.js';\nexport const result = [a(), b()];\n",
+		);
+		fs.writeFileSync(
+			path.join(workspace, 'tsconfig.consume.json'),
+			JSON.stringify({
+				compilerOptions: {
+					module: 'ESNext',
+					moduleResolution: 'Bundler',
+					target: 'ES2022',
+					strict: true,
+					skipLibCheck: false,
+					types: [],
+					noEmit: true,
+				},
+				include: ['consumer.ts'],
+			}),
+		);
+		const consumed = spawnSync(
+			process.execPath,
+			[tsc_path, '-p', 'tsconfig.consume.json', '--pretty', 'false'],
+			{ cwd: workspace, encoding: 'utf8', timeout: 30_000 },
+		);
+		expect(consumed.stdout + consumed.stderr).toBe('');
+		expect(consumed.status).toBe(0);
+	},
+);

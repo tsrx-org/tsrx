@@ -1783,6 +1783,90 @@ export function App() @{
 		});
 	});
 
+	describe(`[${name}] nested type and option children keep mappings`, () => {
+		/**
+		 * Whether a verification mapping covers exactly the `text` that starts at
+		 * `offset` in `source` and maps to the same text in the generated code.
+		 * @param {{ code: string, mappings: CodeMapping[] }} result
+		 * @param {number} offset
+		 * @param {string} text
+		 */
+		const is_mapped = (result, offset, text) =>
+			result.mappings.some(
+				(mapping) =>
+					mapping.sourceOffsets[0] === offset &&
+					mapping.lengths[0] === text.length &&
+					mapping.data.verification &&
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					) === text,
+			);
+
+		it.each([
+			['import type arguments', "export type A = import('./store').Store<Missing>;"],
+			['typeof import type arguments', "export type B = typeof import('./store').create<Missing>;"],
+			['import() options', "export const a = import('./data', { with: { type: Missing } });"],
+			[
+				'import.defer() options',
+				"export const b = import.defer('./data', { with: { type: Missing } });",
+			],
+			['declare function parameter types', 'export declare function f(options: Missing): void;'],
+			[
+				'overload signature parameter types',
+				'export function f(options: Missing): void;\nexport function f(options: unknown) {}',
+			],
+			['mapped type key remapping', 'export type M<T> = { [K in keyof T as Missing]: T[K] };'],
+		])('maps a name in the %s', (_kind, source) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(is_mapped(result, source.indexOf('Missing'), 'Missing')).toBe(true);
+		});
+
+		it.each([
+			"export type M = import('./store');",
+			"export type M = import('./store').Store<string>;",
+			"export type M = import('./store', { with: { 'resolution-mode': 'import' } }).Store;",
+			"export type M = typeof import('./store').create<string>;",
+		])('maps the whole import type in %j', (source) => {
+			// TypeScript reports TS1340 (a module used as a type without `typeof`)
+			// on the whole import type.
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const start = source.indexOf('import(');
+			expect(is_mapped(result, start, source.slice(start, -1))).toBe(true);
+		});
+
+		it.each(['T[K]', '{}', '[K]', '() => void'])(
+			'maps the whole key remapping type `as %s`',
+			(type) => {
+				// TypeScript reports a key type that is not a property key (TS2322) on
+				// the whole remapping type.
+				const source = `export type M<T> = { [K in keyof T as ${type}]: 1 };`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				expect(result.errors).toEqual([]);
+				const start = source.indexOf(`as ${type}`) + 'as '.length;
+				// The printer writes an empty type literal as `{  }`.
+				const generated = result.mappings
+					.filter(
+						(mapping) =>
+							mapping.sourceOffsets[0] === start &&
+							mapping.lengths[0] === type.length &&
+							mapping.data.verification,
+					)
+					.map((mapping) =>
+						result.code
+							.slice(
+								mapping.generatedOffsets[0],
+								mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+							)
+							.replace(/\s+/g, ''),
+					);
+				expect(generated).toContain(type.replace(/\s+/g, ''));
+			},
+		);
+	});
+
 	describe(`[${name}] submodule import mappings`, () => {
 		it('maps imported, local, and source identifiers in imports from submodules', () => {
 			const source = `module server {
