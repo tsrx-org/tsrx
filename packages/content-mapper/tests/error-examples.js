@@ -316,6 +316,18 @@ export const ERROR_EXAMPLES = [
 `,
 	},
 	{
+		error: TSRX_ERRORS.DIRECTIVE_BODY_VAR,
+		source: `export function C(props: { items: string[] }) @{
+	<ul>
+		@for (const item of props.items) {
+			var label = item.toUpperCase();
+			<li>{label}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.MULTIPLE_REFS,
 		source: `export function C(props: any) @{
 	<div ref={props.a} ref={props.b} />

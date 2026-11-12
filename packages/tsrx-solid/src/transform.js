@@ -30,7 +30,6 @@ import {
 	MERGE_SPREAD_CLASS_INTERNAL_NAME,
 	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 	validateAtMostOneRefAttribute,
-	validateForOfHead as validate_for_of_head,
 	addJsxSetupDeclaration as add_jsx_setup_declaration,
 	buildReturnExpression as build_return_expression,
 	collectParamBindings as collect_param_bindings,
@@ -1271,7 +1270,6 @@ const for_bindings_counts = new WeakMap();
  */
 function for_of_statement_to_jsx_child(node, transform_context) {
 	transform_context.needs_for = true;
-	validate_for_of_head(node.left, transform_context);
 
 	const loop_params = get_for_of_iteration_params(node.left, node.index, node.key);
 	const loop_body = node.body.type === 'BlockStatement' ? node.body.body : [node.body];

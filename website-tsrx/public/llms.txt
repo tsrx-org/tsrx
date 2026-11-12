@@ -610,6 +610,11 @@ fragment in that output position. Branches that only exit may use normal
 statements such as `return`, `throw`, or `continue` where they are legal.
 For tooling and AST work, this syntax is represented as a `JSXCodeBlock` node
 with setup statements in `body` and the final rendered node in `render`.
+A `@{ ... }` that is a function's own body, as in `function Name() @{ ... }`,
+shares that function's scope. Any other `@{ ... }`, such as a child or a value,
+runs in a function of its own, so declare its variables with `const` or `let`:
+a `var` in it, or in a plain block or loop inside it, is an error, since it
+can't be read outside the block.
 
 ```tsrx
 const Greeting = ({ name }: { name?: string }) => @{
@@ -831,7 +836,10 @@ inside each braced branch render into the current template. Use ordinary
 JavaScript `if` statements for guard returns before template output; direct
 `return`, `continue`, and `break` statements are invalid inside template `@if`
 branches. `@if`, `@for`, `@switch`, and `@try` bodies are implicit statement
-containers, so every body uses `{...}`.
+containers, so every body uses `{...}`. Declare a body's variables with `const`
+or `let`: a `var` in a body, or in a plain block or loop inside it, is an error,
+since it can't be read outside the body. A function inside the body keeps
+ordinary `var` scoping.
 
 ### `if` / `else if` / `else`
 

@@ -783,6 +783,15 @@ export const FeaturesPage = () => @{
 								<code class="inline-code">@try</code>
 								). Each one has its own scope.
 							</p>
+							<p class="section-body">
+								Declare the variables of a nested statement container or a control-flow body with{' '}
+								<code class="inline-code">const</code> or <code class="inline-code">let</code>. A{' '}
+								<code class="inline-code">var</code> in one, or in a plain block or loop inside it,
+								is an error, since it can't be read outside it. A component's own{' '}
+								<code class="inline-code">{'@{...}'}</code> body shares the component function's
+								scope, and a function inside a block keeps ordinary{' '}
+								<code class="inline-code">var</code> scoping.
+							</p>
 						</section>
 						<section class="doc-section" id="if">
 							<h2 class="section-heading">Conditional rendering</h2>

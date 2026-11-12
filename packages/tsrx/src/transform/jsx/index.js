@@ -6,7 +6,10 @@ import { walk } from 'zimmerframe';
 import { print } from 'esrap';
 import { error } from '../../errors.js';
 import { DIAGNOSTIC_CODES, TSRX_ERRORS } from '../../diagnostics.js';
-import { is_template_value_position } from '../../analyze/validation.js';
+import {
+	get_statement_keyword_node,
+	is_template_value_position,
+} from '../../analyze/validation.js';
 import { analyze_css } from '../../analyze/css-analyze.js';
 import {
 	in_jsx_child_context,
@@ -70,6 +73,7 @@ import {
 	child_nodes,
 	has_location,
 	is_ast_node,
+	is_code_block_function_body,
 	is_function_node,
 	is_function_or_class_node as is_function_or_class_boundary,
 	is_template_directive as is_jsx_control_flow_expression,
@@ -614,6 +618,8 @@ export function createJsxTransform(platform) {
 			// needs_show / needs_for flags) via `hooks.initialState`.
 			...(platform.hooks?.initialState?.() ?? {}),
 		};
+
+		validate_directive_declarations(ast, transform_context);
 
 		// Opt-in server-module dialect (`module <name> { … }` plus its boundary
 		// `import … from '<specifier>'`): lower to plain checkable TS before any
@@ -5486,14 +5492,14 @@ function validate_if_body_control_flow(node, transform_context) {
  * Every target hands an `@for` item to a callback, so the head has to declare
  * its loop variable the way a parameter can: assigning to an existing variable
  * or property would only shadow it, a `var` would not reach the enclosing
- * function, and a `using` item would never be disposed. A target that lowers
- * `@for` itself calls this from its own lowering.
+ * function, and a `using` item would never be disposed. Called from
+ * `validate_directive_declarations`, before any target lowers an `@for`.
  *
  * @param {AST.ForOfStatement['left']} left
  * @param {TransformContext} transform_context
  * @returns {void}
  */
-export function validate_for_of_head(left, transform_context) {
+function validate_for_of_head(left, transform_context) {
 	if (left.type !== 'VariableDeclaration') {
 		error(
 			TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
@@ -5522,6 +5528,69 @@ export function validate_for_of_head(left, transform_context) {
 }
 
 /**
+ * Every target runs an `@if`, `@for`, `@switch` or `@try` body that declares
+ * something, and every `@{ … }` block that isn't a function's own body, in a
+ * function of its own, so a `var` there, or in a plain block or loop inside
+ * one, would not reach the enclosing function. A function or class inside
+ * scopes its own `var`s. This walks the authored module before any target
+ * lowers a directive or block, and reports those `var`s and invalid `@for`
+ * heads once each, in source order.
+ *
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function validate_directive_declarations(program, transform_context) {
+	/** @type {Array<{ node: AST.Node, head: boolean }>} */
+	const found = [];
+	collect_directive_declarations(program, null, false, found);
+	found.sort(
+		(a, b) =>
+			/** @type {AST.NodeWithLocation} */ (a.node).start -
+			/** @type {AST.NodeWithLocation} */ (b.node).start,
+	);
+	for (const { node, head } of found) {
+		if (head) {
+			validate_for_of_head(/** @type {AST.ForOfStatement['left']} */ (node), transform_context);
+		} else {
+			error(
+				TSRX_ERRORS.DIRECTIVE_BODY_VAR,
+				transform_context.filename,
+				get_statement_keyword_node(node, 'var'),
+				transform_context.errors,
+				transform_context.comments,
+			);
+		}
+	}
+}
+
+/**
+ * @param {AST.Node} node
+ * @param {AST.Node | null} parent
+ * @param {boolean} in_body Whether `node` is inside a directive body or a nested `@{ … }` block.
+ * @param {Array<{ node: AST.Node, head: boolean }>} found An `@for` head, or a `var` declaration in a body.
+ * @returns {void}
+ */
+function collect_directive_declarations(node, parent, in_body, found) {
+	if (in_body && node.type === 'VariableDeclaration' && node.kind === 'var' && !node.declare) {
+		found.push({ node, head: false });
+	} else if (is_template_for_of_node(node)) {
+		found.push({ node: node.left, head: true });
+	}
+
+	const children_in_body =
+		is_jsx_control_flow_expression(node) ||
+		(node.type === 'JSXCodeBlock' && !is_code_block_function_body(node, parent)) ||
+		(in_body && !is_function_or_class_boundary(node));
+	for (const child of child_nodes(node)) {
+		// The `@for` head is validated as a head.
+		const in_for_head =
+			node.type === 'JSXForExpression' && child !== node.body && child !== node.empty;
+		collect_directive_declarations(child, node, children_in_body && !in_for_head, found);
+	}
+}
+
+/**
  * @param {AST.Node | null | undefined} node
  * @returns {boolean}
  */
@@ -5544,7 +5613,6 @@ function is_loop_statement(node) {
  * @returns {ESTreeJSX.JSXExpressionContainer}
  */
 function for_of_statement_to_jsx_child(node, transform_context) {
-	validate_for_of_head(node.left, transform_context);
 	if (node.await) {
 		error(
 			TSRX_ERRORS.TARGET_FOR_AWAIT_UNSUPPORTED(transform_context.platform.name),

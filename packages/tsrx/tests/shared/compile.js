@@ -905,6 +905,197 @@ export const d: number = bad;
 			}
 		});
 
+		it('reports a `var` declared in a directive body, at its keyword (#1208)', () => {
+			/** @type {Record<string, (body: string) => string>} */
+			const bodies = {
+				'@if': (body) => `@if (c) { ${body} }`,
+				'@else if': (body) => `@if (c) { <p /> } @else if (d) { ${body} }`,
+				'@else': (body) => `@if (c) { <p /> } @else { ${body} }`,
+				'@for': (body) => `@for (const item of items) { ${body} }`,
+				'@empty': (body) => `@for (const item of items) { <p /> } @empty { ${body} }`,
+				'@case': (body) => `@switch (c) { @case 1: { ${body} } }`,
+				'@default': (body) => `@switch (c) { @case 1: { <p /> } @default: { ${body} } }`,
+				'@try': (body) => `@try { ${body} } @catch (e) { <p /> }`,
+				'@pending': (body) => `@try { <p /> } @pending { ${body} }`,
+				'@catch': (body) => `@try { <p /> } @catch (e) { ${body} }`,
+			};
+			for (const [label, wrap] of Object.entries(bodies)) {
+				const source = `export function App({ items, c, d }: any) @{
+					<div>
+						${wrap('var value = 1; <p>{value}</p>')}
+					</div>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf('var value');
+
+				expect(
+					result.errors.map((error) => [error.code, error.message, error.pos, error.end]),
+					label,
+				).toEqual([
+					[
+						TSRX_ERRORS.DIRECTIVE_BODY_VAR.code,
+						TSRX_ERRORS.DIRECTIVE_BODY_VAR.message,
+						start,
+						start + 'var'.length,
+					],
+				]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
+		it('reports a `var` in a plain block nested in a directive body (#1208)', () => {
+			for (const statement of [
+				'{ var value = 1; }',
+				'if (c) { var value = 1; }',
+				'if (c) {} else { var value = 1; }',
+				'for (var value = 0; value < 1; value++) {}',
+				'for (var value of items) {}',
+				'for (var value in c) {}',
+				'while (c) { var value = 1; }',
+				'switch (c) { case 1: var value = 1; }',
+				'try { var value = 1; } catch {}',
+				'try {} catch { var value = 1; }',
+				'try {} finally { var value = 1; }',
+				'block: { var value = 1; }',
+			]) {
+				const source = `export function App({ items, c }: any) @{
+					<ul>
+						@for (const item of items) {
+							${statement}
+							<li>{item}</li>
+						}
+					</ul>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf('var value');
+
+				expect(
+					result.errors.map((error) => [error.code, error.pos, error.end]),
+					statement,
+				).toEqual([[TSRX_ERRORS.DIRECTIVE_BODY_VAR.code, start, start + 'var'.length]]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
+		it('reports a `var` declared in a nested `@{ … }` block, at its keyword (#1208)', () => {
+			/** @type {Record<string, { setup?: string, output: string, module?: string }>} */
+			const positions = {
+				child: { output: '<div>@{ var value = 1; <p>{value}</p> }</div>' },
+				'setup value': {
+					setup: 'const view = @{ var value = 1; <p>{value}</p> };',
+					output: '<div>{view}</div>',
+				},
+				'attribute value': { output: '<div title={@{ var value = 1; <p>{value}</p> }} />' },
+				'return value': {
+					setup: 'function view() { return @{ var value = 1; <p>{value}</p> }; }',
+					output: '<div>{view()}</div>',
+				},
+				'module value': {
+					module: 'const view = @{ var value = 1; <p>{value}</p> };',
+					output: '<div>{view}</div>',
+				},
+				'directive body': {
+					output: '<div>@if (c) { <p>@{ var value = 1; <b>{value}</b> }</p> }</div>',
+				},
+			};
+			for (const [label, { setup = '', output, module = '' }] of Object.entries(positions)) {
+				const source = `${module}
+				export function App({ c }: any) @{
+					${setup}
+					${output}
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf('var value');
+
+				expect(
+					result.errors.map((error) => [error.code, error.pos, error.end]),
+					label,
+				).toEqual([[TSRX_ERRORS.DIRECTIVE_BODY_VAR.code, start, start + 'var'.length]]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
+		it("accepts a `var` in a function's own `@{ … }` body or in a function or class in a block (#1208)", () => {
+			for (const statement of [
+				'const read = () => { var value = 1; return value; };',
+				'function read() { var value = 1; return value; }',
+				'const read = function () { var value = 1; return value; };',
+				'const model = { read() { var value = 1; return value; } };',
+				'class Model { static { var value = 1; } read() { var value = 1; return value; } }',
+				'const Row = () => @{ var value = 1; <b>{value}</b> };',
+				'const model = { render() @{ var value = 1; <b>{value}</b> } };',
+				'const view = @{ const read = () => { var value = 1; return value; }; <b>{read()}</b> };',
+			]) {
+				const source = `export function App({ c }: any) @{
+					var outer = 1;
+					function helper() { var local = 1; return local; }
+					<div>
+						@if (c) {
+							${statement}
+							<p>{outer}{helper()}</p>
+						}
+					</div>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(result.errors, statement).toEqual([]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
+		it('reports each `var` in nested directive bodies once, beside a `var` head (#1208)', () => {
+			const source = `export function App({ items, c }: any) @{
+				<ul>
+					@for (var item of items) {
+						var outer = item;
+						const row = () => @if (c) {
+							var inner = outer;
+							<b>{inner}</b>
+						};
+						@switch (c) {
+							@case 1: {
+								var deep = 1;
+								<li>{row()}{deep}</li>
+							}
+						}
+					}
+				</ul>
+			}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const at = (/** @type {string} */ text) => source.indexOf(text);
+
+			expect(result.errors.map((error) => [error.code, error.pos])).toEqual([
+				[TSRX_ERRORS.FOR_HEAD_VAR.code, at('var item')],
+				[TSRX_ERRORS.DIRECTIVE_BODY_VAR.code, at('var outer')],
+				[TSRX_ERRORS.DIRECTIVE_BODY_VAR.code, at('var inner')],
+				[TSRX_ERRORS.DIRECTIVE_BODY_VAR.code, at('var deep')],
+			]);
+			expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+		});
+
+		it('reports `var`s in nested bodies in source order (#1208)', () => {
+			const source = `export function App({ items, c }: any) @{
+				<div title={@if (c) { var first = 1; <b>{first}</b> }}>
+					@for (const item of items) {
+						var second = item;
+						<p>{second}</p>
+					}
+					@{
+						var third = 1;
+						<i>{third}</i>
+					}
+				</div>
+			}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+			expect(result.errors.map((error) => [error.code, error.pos])).toEqual(
+				['var first', 'var second', 'var third'].map((text) => [
+					TSRX_ERRORS.DIRECTIVE_BODY_VAR.code,
+					source.indexOf(text),
+				]),
+			);
+		});
+
 		it('preserves deferred imports in type-only output', () => {
 			const result = compile_to_volar_mappings(
 				`import defer * as feature from './feature.js';
@@ -2106,6 +2297,61 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 						'App.tsrx',
 					),
 				).toThrow(error_with(expected));
+			}
+		});
+
+		it('rejects a `var` declared in a directive body or a nested `@{ … }` block, strictly and when collecting (#1208)', () => {
+			const source = `export function App({ items }: { items: string[] }) @{
+				<>
+					<ul title={@{ var count = items.length; <b>{count}</b> }}>
+						@for (const item of items) {
+							var last = item;
+							<li>{item}</li>
+						}
+					</ul>
+					<p>{last}</p>
+				</>
+			}`;
+			const [count, last] = ['var count', 'var last'].map((text) => {
+				const start = source.indexOf(text);
+				return expect.objectContaining({
+					code: TSRX_ERRORS.DIRECTIVE_BODY_VAR.code,
+					pos: start,
+					end: start + 'var'.length,
+				});
+			});
+
+			expect(() => compile(source, 'App.tsrx')).toThrow(count);
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([count, last]);
+		});
+
+		it('reports a `var` head and body `var`s in source order, strictly and when collecting (#1208)', () => {
+			for (const [loops, order] of /** @type {Array<[string, string[]]>} */ ([
+				[
+					'@for (var item of items) { var label = item; <li>{label}</li> }',
+					['var item', 'var label'],
+				],
+				[
+					'@for (const item of items) { var label = item; <li>{label}</li> } @for (var other of items) { <li /> }',
+					['var label', 'var other'],
+				],
+			])) {
+				const source = `export function App({ items }: { items: string[] }) @{
+					<ul>
+						${loops}
+					</ul>
+				}`;
+				const expected = order.map((text) => {
+					const start = source.indexOf(text);
+					return expect.objectContaining({
+						code: (text === 'var label' ? TSRX_ERRORS.DIRECTIVE_BODY_VAR : TSRX_ERRORS.FOR_HEAD_VAR)
+							.code,
+						pos: start,
+					});
+				});
+
+				expect(() => compile(source, 'App.tsrx'), loops).toThrow(expected[0]);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, loops).toEqual(expected);
 			}
 		});
 
@@ -5236,7 +5482,7 @@ export function App() @{
 			const { code } = compile(
 				`function Card() @{
 					<div class="card">@{
-						var a = "one"
+						let a = "one"
 						a = "two"
 						<>
 							<b>{"hello" + a}</b>
