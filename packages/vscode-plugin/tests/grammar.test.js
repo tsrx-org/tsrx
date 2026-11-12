@@ -200,6 +200,55 @@ describe('TSRX TextMate grammar: <style> blocks', () => {
 		);
 		expect(find(tokens, '</').scopes).toContain('style.tag.js');
 	});
+
+	it('closes a <style> block at a closing tag with whitespace before its >, as the compiler does', () => {
+		const tokens = tokenize(
+			[
+				'export function App() @{',
+				'  <div>',
+				'    <style>.a { color: red; }</style >',
+				'    <p class="a">{text}</p>',
+				'  </div>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'color').scopes).toContain('source.css');
+		expect(find(tokens, 'style', 1).scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, '>', 2).scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'punctuation.definition.tag.end.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('style.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'text').scopes).not.toContain('style.tag.js');
+	});
+
+	it('closes a <style> block whose closing tag has a line break before its >', () => {
+		const tokens = tokenize(
+			[
+				'export function App() @{',
+				'  <div>',
+				'    <style>',
+				'      .a { color: red; }',
+				'    </style',
+				'    >',
+				'    <p class="a">{text}</p>',
+				'  </div>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'style', 1).scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('style.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'text').scopes).not.toContain('style.tag.js');
+	});
 });
 
 describe('TSRX TextMate grammar: without the CSS and TypeScript grammars', () => {

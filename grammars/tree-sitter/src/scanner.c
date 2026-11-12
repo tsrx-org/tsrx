@@ -355,12 +355,10 @@ static bool is_html_whitespace(int32_t c) {
 // `{`, quotes and comments) up to, but not including, the closing tag. Mirrors
 // how tree-sitter-html scans raw text, so JS/TS and CSS bodies never parse as
 // template markup. The body ends where the compiler ends it: `end_tag` (`</style`
-// or `</script`), then `>`, with whitespace allowed before the `>` when
-// `space_before_gt` is set (`</script >`, as HTML ends a script). Returns false
-// for an empty body (the grammar's `optional` handles that) or an unterminated
-// element.
-static bool scan_raw_text(TSLexer *lexer, enum TokenType symbol, const char *end_tag,
-                          bool space_before_gt) {
+// or `</script`), optional whitespace, then `>` (`</style >`, `</script >`).
+// Returns false for an empty body (the grammar's `optional` handles that) or an
+// unterminated element.
+static bool scan_raw_text(TSLexer *lexer, enum TokenType symbol, const char *end_tag) {
   lexer->result_symbol = symbol;
   bool has_content = false;
 
@@ -376,7 +374,7 @@ static bool scan_raw_text(TSLexer *lexer, enum TokenType symbol, const char *end
         matched++;
       }
       if (end_tag[matched] == '\0') {
-        while (space_before_gt && is_html_whitespace(lexer->lookahead)) {
+        while (is_html_whitespace(lexer->lookahead)) {
           advance(lexer);
         }
         if (lexer->lookahead == '>') {
@@ -403,11 +401,11 @@ bool tree_sitter_tsrx_external_scanner_scan(void *payload, TSLexer *lexer,
   }
 
   if (valid_symbols[SCRIPT_CONTENT]) {
-    return scan_raw_text(lexer, SCRIPT_CONTENT, "</script", true);
+    return scan_raw_text(lexer, SCRIPT_CONTENT, "</script");
   }
 
   if (valid_symbols[STYLE_CONTENT]) {
-    return scan_raw_text(lexer, STYLE_CONTENT, "</style", false);
+    return scan_raw_text(lexer, STYLE_CONTENT, "</style");
   }
 
   if (valid_symbols[TEMPLATE_CHARS]) {

@@ -5832,7 +5832,7 @@
 				</dict>
 			</dict>
 			<key>end</key>
-			<string>(/&gt;)|(&lt;/)(style)(&gt;)</string>
+			<string>(/&gt;)|(&lt;/)(style)\s*(&gt;)|(&lt;/)(style)\s*$</string>
 			<key>endCaptures</key>
 			<dict>
 				<key>1</key>
@@ -5855,6 +5855,16 @@
 					<key>name</key>
 					<string>punctuation.definition.tag.end.js</string>
 				</dict>
+				<key>5</key>
+				<dict>
+					<key>name</key>
+					<string>punctuation.definition.tag.begin.js</string>
+				</dict>
+				<key>6</key>
+				<dict>
+					<key>name</key>
+					<string>entity.name.tag.js</string>
+				</dict>
 			</dict>
 			<key>name</key>
 			<string>style.tag.js</string>
@@ -5874,7 +5884,7 @@
 					<key>contentName</key>
 					<string>source.css</string>
 					<key>end</key>
-					<string>(?=&lt;/style&gt;)</string>
+					<string>(?=&lt;/style\s*(?:&gt;|$))</string>
 					<key>patterns</key>
 					<array>
 						<dict>

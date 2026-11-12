@@ -472,6 +472,58 @@ function App() @{
         (jsx_text)
         (jsx_closing_fragment)))))
 
+==================
+Style Element Closing Tag With Whitespace
+==================
+
+function App() @{
+  <div>
+    <style>.a { color: red; }</style >
+    <style></style >
+    <style>
+      .b { color: blue; }
+    </style
+    >
+    <p>{text}</p>
+  </div>
+}
+
+---
+
+(program
+  (function_declaration
+    (identifier)
+    (formal_parameters)
+    (jsx_statement_container
+      (jsx_element
+        (jsx_opening_element
+          (jsx_element_name
+            (identifier)))
+        (jsx_text)
+        (style_element
+          (raw_text))
+        (jsx_text)
+        (style_element)
+        (jsx_text)
+        (style_element
+          (raw_text))
+        (jsx_text)
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_expression
+            (component_statement
+              (expression_statement
+                (identifier))))
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))
+        (jsx_text)
+        (jsx_closing_element
+          (jsx_element_name
+            (identifier)))))))
+
 =====================================
 Script Element Expression In Parentheses
 =====================================

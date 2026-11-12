@@ -6569,7 +6569,7 @@
           "name": "entity.name.tag.js"
         }
       },
-      "end": "(/>)|(</)(style)(>)",
+      "end": "(/>)|(</)(style)\\s*(>)|(</)(style)\\s*$",
       "endCaptures": {
         "1": {
           "name": "punctuation.definition.tag.end.js"
@@ -6582,6 +6582,12 @@
         },
         "4": {
           "name": "punctuation.definition.tag.end.js"
+        },
+        "5": {
+          "name": "punctuation.definition.tag.begin.js"
+        },
+        "6": {
+          "name": "entity.name.tag.js"
         }
       },
       "patterns": [
@@ -6592,7 +6598,7 @@
               "name": "punctuation.definition.tag.end.js"
             }
           },
-          "end": "(?=</style>)",
+          "end": "(?=</style\\s*(?:>|$))",
           "contentName": "source.css",
           "patterns": [
             {

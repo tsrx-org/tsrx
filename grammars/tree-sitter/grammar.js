@@ -26,7 +26,9 @@ const TYPE_PREC = {
 	UNION: 1,
 	INTERSECTION: 2,
 	OPERATOR: 3,
-	POSTFIX: 4,
+	// Above `as` and `satisfies` (PREC.REL), so `x as T[]` keeps the `[]` in its
+	// type instead of indexing `x as T`.
+	POSTFIX: PREC.REL + 1,
 };
 
 module.exports = grammar({
@@ -140,6 +142,8 @@ module.exports = grammar({
 		[$.declaration, $.jsx_statement_container],
 		[$.jsx_statement_container, $.object],
 		[$.jsx_try_expression],
+		[$.jsx_element_name, $.jsx_non_namespaced_element_name, $.type_parameter],
+		[$.expression, $._type_arguments_callee],
 	],
 
 	rules: {
@@ -778,16 +782,24 @@ module.exports = grammar({
 		jsx_finally_clause: ($) => seq('finally', field('body', $.jsx_template_block)),
 
 		// Raw-text `<style>` element: the body is verbatim CSS (scanned by the
-		// external scanner up to the literal `</style>`, so `<` and comments in the
-		// CSS stay in it), never template markup. The self-closing form
-		// (`<style apply={theme} />`) has no body.
+		// external scanner up to `</style>`, so `<` and comments in the CSS stay in
+		// it), never template markup. As in the compiler, the closing tag may have
+		// whitespace before its `>`; it stays the single `</style>` token either way.
+		// The self-closing form (`<style apply={theme} />`) has no body.
 		style_element: ($) =>
 			prec(
 				1,
 				seq(
 					'<style',
 					repeat($._jsx_attribute),
-					choice('/>', seq('>', optional(alias($._style_content, $.raw_text)), '</style>')),
+					choice(
+						'/>',
+						seq(
+							'>',
+							optional(alias($._style_content, $.raw_text)),
+							alias(token(seq('</style', /[\t\n\f\r ]*/, '>')), '</style>'),
+						),
+					),
 				),
 			),
 
@@ -1202,14 +1214,32 @@ module.exports = grammar({
 				),
 			),
 
+		// In `f<T>(x)`, TypeScript reads the `<…>` right before a call's arguments
+		// as type arguments. The parser keeps that reading and `f < T > (x)` as
+		// comparisons until one fails, and takes the call when both parse.
 		call_expression: ($) =>
-			prec(
-				PREC.CALL,
-				seq(
-					field('function', choice($.expression, $.import)),
-					field('arguments', choice($.arguments, $.template_string)),
+			choice(
+				prec(
+					PREC.CALL,
+					seq(
+						field('function', choice($.expression, $.import)),
+						field('arguments', choice($.arguments, $.template_string)),
+					),
+				),
+				prec.dynamic(
+					1,
+					seq(
+						field('function', $._type_arguments_callee),
+						field('type_arguments', $.type_arguments),
+						field('arguments', choice($.arguments, $.template_string)),
+					),
 				),
 			),
+
+		// A call with type arguments has a member, call or other primary
+		// expression as its callee, so a prefix operator applies to the whole call:
+		// `!f<T>(x)` negates the call and `await f<T>(x)` awaits it.
+		_type_arguments_callee: ($) => $.primary_expression,
 
 		new_expression: ($) =>
 			prec.right(
@@ -1264,7 +1294,10 @@ module.exports = grammar({
 				optional('async'),
 				choice(
 					field('parameter', choice($.identifier, $._using_identifier)),
-					field('parameters', $.formal_parameters),
+					seq(
+						optional(field('type_parameters', $.type_parameters)),
+						field('parameters', $.formal_parameters),
+					),
 				),
 				optional($._type_annotation),
 				'=>',
@@ -1391,7 +1424,17 @@ module.exports = grammar({
 
 		jsx_attribute: ($) =>
 			seq(
-				field('name', choice($.identifier, $.jsx_namespace_name, $.jsx_hyphenated_name)),
+				field(
+					'name',
+					choice(
+						$.identifier,
+						// `extends` is a keyword after `<T` where a generic arrow's type
+						// parameters can start; it stays an attribute name in a tag.
+						alias('extends', $.identifier),
+						$.jsx_namespace_name,
+						$.jsx_hyphenated_name,
+					),
+				),
 				optional(seq('=', field('value', $._jsx_attribute_value))),
 			),
 
