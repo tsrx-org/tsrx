@@ -247,7 +247,6 @@ export const ERROR_EXAMPLES = [
 	<span />
 }
 `,
-		also: [TSRX_ERRORS.FORGOTTEN_STATEMENT_CONTAINER],
 	},
 	{
 		error: TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT,
@@ -256,7 +255,6 @@ export const ERROR_EXAMPLES = [
 	console.log(1);
 }
 `,
-		also: [TSRX_ERRORS.FORGOTTEN_STATEMENT_CONTAINER],
 	},
 	{
 		error: TSRX_ERRORS.JSX_SPREAD_CHILD,
@@ -301,6 +299,66 @@ export const ERROR_EXAMPLES = [
 }
 `,
 		compiler: '@tsrx/solid',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_COMPONENT_READ_BEFORE_DECLARATION,
+		source: `export const registry = { inner: Inner };
+const PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_DEFAULT_UNSUPPORTED,
+		source: `const cfg = { size: 1 };
+export function Card({ s = cfg.size }: { s?: number }) @{
+	<div>{s}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_NESTED_DEFAULT_UNSUPPORTED,
+		source: `export function Card({ s: { a = 3 } }: { s: { a?: number } }) @{
+	<div>{a}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROPS_PARAM_DEFAULT,
+		source: `export function Card({ s }: { s?: number } = {}) @{
+	<div>{s}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_NESTED_REST,
+		source: `export function Card({ t: { a, ...r } }: { t: { a: number; b: number } }) @{
+	<div>{a}{r.b}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_KEY_COMPUTED,
+		source: `const k = 's';
+export function Card({ [k]: v }: { s?: number }) @{
+	<div>{v}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_KEY_UNSUPPORTED,
+		source: `export function Card({ 'a-b': v, t }: { 'a-b'?: number; t?: number }) @{
+	<div>{v}{t}</div>
+}
+`,
+		compiler: '@tsrx/vue',
 	},
 	{
 		error: TSRX_ERRORS.TARGET_YIELD_UNSUPPORTED,
@@ -511,6 +569,23 @@ export {};
 `,
 	},
 	{
+		error: TSRX_ERRORS.STYLE_IN_EXPRESSION_CONTAINER,
+		source: `function Box(props: { children?: unknown }) @{
+	<div />
+}
+
+export function C() @{
+	<Box>
+		{<style>
+			.a {
+				color: red;
+			}
+		</style>}
+	</Box>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.PLATFORM_REQUIRED,
 		source: `if (import.meta.env.platform.web) {
 	console.log(1);
@@ -693,7 +768,7 @@ let E;`,
 	await using a = b;
 }`,
 	},
-	{ error: TS_ERRORS.FOR_OF_LET, source: `for (let.a of b) {}` },
+	{ error: TS_ERRORS.VARIABLE_DECLARATION_EXPECTED, source: `for (let.a of b) {}` },
 	{ error: TS_ERRORS.FOR_IN_INITIALIZER, source: `for (var a = 1 in b) {}` },
 	{ error: TS_ERRORS.FOR_OF_INITIALIZER, source: `for (let a = 1 of b) {}` },
 	{ error: TS_ERRORS.MISSING_CATCH_OR_FINALLY, source: `try {}` },
@@ -742,7 +817,15 @@ let a = 2;`,
 	}
 }`,
 	},
-	{ error: UPSTREAM_ERRORS.LET_RESERVED, source: `const let = 1;` },
+	{ error: TS_ERRORS.STRICT_MODE_RESERVED_WORD, source: `var let = 1;` },
+	{ error: TS_ERRORS.STRICT_MODE_RESERVED_WORD_IN_CLASS, source: `class let {}` },
+	{ error: TS_ERRORS.IMPORT_META_PROPERTY_CALL, source: `import.foo();` },
+	{ error: TS_ERRORS.OPTIONAL_CHAIN_TAGGED_TEMPLATE, source: 'a?.<T>`c`;' },
+	{ error: TS_ERRORS.REST_PARAMETER_NOT_LAST, source: `function f(...a: number[], b: number) {}` },
+	{ error: TS_ERRORS.REST_ELEMENT_NOT_LAST, source: `const [...a, b] = [1];` },
+	{ error: TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, source: `a b;` },
+	{ error: TS_ERRORS.UNKNOWN_KEYWORD_OR_IDENTIFIER, source: `cosnt x = 1;` },
+	{ error: TS_ERRORS.VARIABLE_DECLARATION_NOT_ALLOWED, source: `let "a";` },
 	{
 		error: UPSTREAM_ERRORS.ABSTRACT_METHOD_IN_CLASS,
 		source: `class A {
@@ -774,6 +857,32 @@ let a = 2;`,
 		error: UPSTREAM_ERRORS.PRIVATE_ELEMENT_ABSTRACT,
 		source: `abstract class A {
 	abstract #a: number;
+}`,
+	},
+	{
+		error: TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT,
+		source: `declare namespace N {
+	declare class A {}
+}`,
+	},
+	{
+		error: TS_ERRORS.BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK,
+		source: `if (ready) let x = 1;`,
+	},
+	{
+		error: TS_ERRORS.LABEL_NOT_ALLOWED,
+		source: `outer: let x = 1;`,
+	},
+	{
+		error: TS_ERRORS.MODIFIER_ON_CONSTRUCTOR,
+		source: `class A {
+	static constructor() {}
+}`,
+	},
+	{
+		error: TS_ERRORS.DECORATORS_NOT_VALID_HERE,
+		source: `class A {
+	@dec static {}
 }`,
 	},
 	{
@@ -829,7 +938,6 @@ export const WITHOUT_EXAMPLE = new Map(
 			TSRX_ERRORS.RESERVED_IDENTIFIER_PREFIX,
 			"Raised only through core helpers that targets outside this repository call (Ripple, Octane); none of this repository's targets reaches it.",
 		],
-		[TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT, 'No source found (#961).'],
 		[
 			TS_ERRORS.DECLARED_IN_SCOPE,
 			'No source found: the parser rejects a name declared twice in one scope first (#964).',
@@ -839,8 +947,8 @@ export const WITHOUT_EXAMPLE = new Map(
 		[TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE, 'No source found (#964).'],
 		[TS_ERRORS.SIGNATURE_PARAMETER_NAME, 'No source found (#964).'],
 		[
-			UPSTREAM_ERRORS.LET_BINDING,
-			"`let` as a name gives `The keyword 'let' is reserved` (TS1212) at the same place first (#962).",
+			TS_ERRORS.LET_DECLARATION_NAME,
+			'Reported only with TS1214 (`TS_ERRORS.STRICT_MODE_RESERVED_WORD`) at the same name, as TypeScript reports both (`const let = 1;`).',
 		],
 	]),
 );
@@ -868,13 +976,8 @@ export const KNOWN_PROBLEMS = new Map(
 	/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([
 		[TSRX_ERRORS.UNCLOSED_TAG, { problem: 'lost', issue: 978 }],
 		[TSRX_ERRORS.MISMATCHED_CLOSING_TAG, { problem: 'lost', issue: 978 }],
-		[TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT, { problem: 'twice', issue: 981 }],
-		[TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT, { problem: 'twice', issue: 981 }],
 		[TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED, { problem: 'twice', issue: 980 }],
 		// The statement's keywords have no mapping, so the directive covers only `A`.
 		[TS_ERRORS.NESTED_GLOBAL_EXPORT, { problem: 'typescript', issue: 979 }],
-		// Printed as `<T>() => 1`, which TypeScript reads as JSX in the generated TSX:
-		// its syntax errors there are beyond a directive's reach.
-		[TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER, { problem: 'typescript', issue: 707 }],
 	]),
 );
