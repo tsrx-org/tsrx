@@ -407,7 +407,8 @@ const merged_element_refs = { next: undefined, ref: undefined };
  * Every element given the same refs shares the callback, so only a runtime
  * that keeps a ref's cleanup per element can use it (React, Hono): Preact
  * stores the cleanup on the function, where another element's would replace
- * it.
+ * it. Solid ignores what a ref returns, so its spread bags share it too, through
+ * `normalize_spread_props_sharing_refs`.
  *
  * @template [T=Element]
  * @param {...RefValue<T>} refs
@@ -525,6 +526,20 @@ function collect_ref_cleanups(ref_value, node, cleanups) {
  */
 export function normalize_spread_props(props, ...outer_refs) {
 	return normalize_spread(props, outer_refs, false, merge_ref_list, false);
+}
+
+/**
+ * `normalize_spread_props` that merges a bag's refs with
+ * `merge_element_refs`, so a new bag carrying the same refs gets the same
+ * `ref`. Solid's `spread_ref_bags` compares each bag's `ref` with the one it
+ * applied last.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {...RefValue<Element>} outer_refs
+ * @returns {SpreadProps | SpreadFalsy}
+ */
+export function normalize_spread_props_sharing_refs(props, ...outer_refs) {
+	return normalize_spread(props, outer_refs, false, merge_shared_ref_list, false);
 }
 
 /**
