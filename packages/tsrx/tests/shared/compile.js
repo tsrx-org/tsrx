@@ -1948,10 +1948,10 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			);
 
 			expect(code).toMatch(
-				/return <Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child, i\) =>/,
+				/return <__Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child, i\) =>/,
 			);
 			expect(code).toMatch(
-				/group\.open\s*\? <Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child\) =>/,
+				/group\.open\s*\? <__Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child\) =>/,
 			);
 			expect(code).toContain('<li key={i}>{child}</li>');
 		});
