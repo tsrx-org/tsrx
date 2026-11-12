@@ -94,6 +94,16 @@ export const DIAGNOSTIC_CODES = {
 	TOP_LEVEL_AWAIT_USE_SERVER: 'TSRX2025',
 	/** An `@catch` reset parameter on a target whose error boundary has none. */
 	TARGET_CATCH_RESET_UNSUPPORTED: 'TSRX2026',
+	/** An `@for` head that assigns to existing variables, or declares its loop variable with `using`. */
+	FOR_HEAD: 'TSRX2027',
+	/** A component read above its declaration on a target that compiles it to a constant, where moving the declaration up would change what it reads. */
+	TARGET_COMPONENT_READ_BEFORE_DECLARATION: 'TSRX2028',
+	/** A destructured prop default the target's component compiler drops. */
+	TARGET_PROP_DEFAULT_UNSUPPORTED: 'TSRX2029',
+	/** A destructured prop key the target's component compiler reads as another prop, or leaves out. */
+	TARGET_PROP_KEY_UNSUPPORTED: 'TSRX2031',
+	/** A binding of a name the target's toolchain finds by name: Vue's `defineVaporComponent`. */
+	TARGET_RESERVED_NAME: 'TSRX2032',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -121,6 +131,8 @@ export const DIAGNOSTIC_CODES = {
 	CSS_IMPORT: 'TSRX3012',
 	/** CSS in a `<style>` block that doesn't parse. */
 	CSS_SYNTAX: 'TSRX3013',
+	/** A `<style>` block in a child expression container (`{<style>…</style>}`), which renders its class map. */
+	STYLE_IN_EXPRESSION_CONTAINER: 'TSRX3014',
 
 	/** A recognized `import.meta.env.platform.*` flag is used without a selected platform. */
 	PLATFORM_REQUIRED: 'TSRX4001',
@@ -233,6 +245,16 @@ function tsrx(key, message) {
 /* @__NO_SIDE_EFFECTS__ */
 function tsrx_with_values(key, message) {
 	return with_values(tsrx_code(key), message);
+}
+
+/**
+ * The advice that ends Vue's destructured-props errors: read the prop where it
+ * is used, so it stays reactive, as `example` does when there is one.
+ * @param {string} example
+ * @returns {string}
+ */
+function read_prop_where_used(example) {
+	return `Take the props as a \`props\` parameter and read the prop where you use it instead${example ? `, for example \`${example}\`` : ''}, or derive it in a \`computed\`.`;
 }
 
 /**
@@ -363,6 +385,16 @@ export const TSRX_ERRORS = {
 		'FOR_OF_ONLY',
 		'Do...while loops are not supported in TSRX templates. Move the do...while loop into a function.',
 	),
+	FOR_HEAD_ASSIGNMENT: tsrx(
+		'FOR_HEAD',
+		'TSRX `@for` must declare its loop variable, as in `@for (const item of items)`, not assign to an existing variable or property.',
+	),
+	/** `kind` is `using` or `await using`. */
+	FOR_HEAD_USING: tsrx_with_values(
+		'FOR_HEAD',
+		(kind) =>
+			`TSRX \`@for\` does not support \`${kind}\` loop variables. Declare the resource in the loop body instead: \`@for (const item of items) { ${kind} resource = item; ... }\`.`,
+	),
 	MULTIPLE_REFS: tsrx(
 		'MULTIPLE_REFS',
 		'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single array-valued ref such as `ref={[a, b]}` where the target framework supports multiple refs.',
@@ -407,6 +439,73 @@ export const TSRX_ERRORS = {
 	TOP_LEVEL_AWAIT_USE_SERVER: tsrx(
 		'TOP_LEVEL_AWAIT_USE_SERVER',
 		'Top-level `await` in TSRX functions requires a module-level `"use server"` directive.',
+	),
+	/** `target` is the target's name, and `name` the component's. */
+	TARGET_COMPONENT_READ_BEFORE_DECLARATION: tsrx_with_values(
+		'TARGET_COMPONENT_READ_BEFORE_DECLARATION',
+		(target, name) =>
+			`'${name}' is read here before its declaration. ${target} TSRX compiles the component to a constant, which is not hoisted like a function, and moving its declaration above this read would change what its prop defaults read. Move the declaration of '${name}' above this read.`,
+	),
+	/**
+	 * `target` is the target's name, `name` the prop's, and `example`, which can
+	 * be empty, an expression that reads the prop where it is used. Only Vue's
+	 * vue-jsx-vapor drops defaults.
+	 */
+	TARGET_PROP_DEFAULT_UNSUPPORTED: tsrx_with_values(
+		'TARGET_PROP_DEFAULT_UNSUPPORTED',
+		(target, name, example) =>
+			`${target} TSRX cannot keep this default for '${name}': vue-jsx-vapor turns destructured prop defaults into prop options and drops any default that is not a literal, an identifier, an object or array literal, or a function, so '${name}' would be undefined. ${read_prop_where_used(example)}`,
+	),
+	/**
+	 * `target` is the target's name, `path` the value's path in the props (such
+	 * as `s.a`), and `example`, which can be empty, an expression that reads the
+	 * value where it is used.
+	 */
+	TARGET_PROP_NESTED_DEFAULT_UNSUPPORTED: tsrx_with_values(
+		'TARGET_PROP_DEFAULT_UNSUPPORTED',
+		(target, path, example) =>
+			`${target} TSRX cannot keep this default for '${path}': vue-jsx-vapor applies a default inside a destructured prop only when the whole prop is missing, so it is lost whenever the prop is passed without this value. ${read_prop_where_used(example)}`,
+	),
+	/**
+	 * `target` is the target's name, and `fallback` the parameter's default as
+	 * written. Only Vue's vue-jsx-vapor skips a props parameter with a default.
+	 */
+	TARGET_PROPS_PARAM_DEFAULT: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, fallback) =>
+			`${target} TSRX cannot read a props parameter with a default: vue-jsx-vapor skips it, so this component gets no props. Remove \`= ${fallback}\`; Vue always passes a props object.`,
+	),
+	/**
+	 * `target` is the target's name, and `path` the path in the props of the
+	 * value the rest element destructures (such as `t`).
+	 */
+	TARGET_PROP_NESTED_REST: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, path) =>
+			`${target} TSRX cannot read this rest element inside '${path}': vue-jsx-vapor doesn't keep it as the rest of '${path}'. It gives the last rest element in the props pattern the component's attrs, an array's rest element the whole array, and any other the rest of '${path}' only as it was at setup. ${read_prop_where_used('')}`,
+	),
+	/**
+	 * `target` is the target's name, `name` the computed key, and `example`,
+	 * which can be empty, an expression that reads the prop where it is used.
+	 * Only Vue's vue-jsx-vapor reads a destructured prop by its key's name.
+	 */
+	TARGET_PROP_KEY_COMPUTED: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, name, example) =>
+			`${target} TSRX cannot read this computed prop key: vue-jsx-vapor reads \`[${name}]\` as the prop '${name}', whatever '${name}' holds. ${read_prop_where_used(example)}`,
+	),
+	/**
+	 * `target` is the target's name, `key` the key as written, and `example`,
+	 * which can be empty, an expression that reads the prop where it is used.
+	 */
+	TARGET_PROP_KEY_UNSUPPORTED: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, key, example) =>
+			`${target} TSRX cannot read the prop at \`${key}\`: vue-jsx-vapor reads a destructured prop only by a key that is a name, so this binding never gets the prop. ${read_prop_where_used(example)}`,
+	),
+	DEFINE_VAPOR_COMPONENT_BINDING: tsrx(
+		'TARGET_RESERVED_NAME',
+		"Vue TSRX does not allow a binding named `defineVaporComponent`. vue-jsx-vapor finds components by calls to that exact name, and the compiler wraps each component in the one from 'vue-jsx-vapor', so the name can't be declared again or shadowed. Rename this binding.",
 	),
 
 	// TSRX3xxx
@@ -463,6 +562,10 @@ export const TSRX_ERRORS = {
 	CSS_IMPORT: tsrx(
 		'CSS_IMPORT',
 		"@import is not supported in <style> blocks: the imported rules would not be scoped. Share scoped styles with an assigned block (const theme = <style>…</style>) and apply={theme}. For global CSS, use :global in the block, or import the stylesheet in JavaScript: import './global.css'.",
+	),
+	STYLE_IN_EXPRESSION_CONTAINER: tsrx(
+		'STYLE_IN_EXPRESSION_CONTAINER',
+		'A <style> block inside an expression container, such as {<style>…</style>}, evaluates to its class map, so as a child it styles nothing. Remove the braces to write a standalone block in the element or fragment it styles: <><style>…</style><div>…</div></>. To reuse the block, assign it: const theme = <style>…</style>.',
 	),
 
 	// TSRX4xxx

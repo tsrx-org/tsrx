@@ -247,7 +247,6 @@ export const ERROR_EXAMPLES = [
 	<span />
 }
 `,
-		also: [TSRX_ERRORS.FORGOTTEN_STATEMENT_CONTAINER],
 	},
 	{
 		error: TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT,
@@ -256,7 +255,6 @@ export const ERROR_EXAMPLES = [
 	console.log(1);
 }
 `,
-		also: [TSRX_ERRORS.FORGOTTEN_STATEMENT_CONTAINER],
 	},
 	{
 		error: TSRX_ERRORS.JSX_SPREAD_CHILD,
@@ -284,6 +282,29 @@ export const ERROR_EXAMPLES = [
 `,
 	},
 	{
+		error: TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
+		source: `export function C(props: { items: number[] }) @{
+	const state = { item: 0 };
+	<ul>
+		@for (state.item of props.items) {
+			<li>{state.item}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.FOR_HEAD_USING,
+		source: `export function C(props: { items: Disposable[] }) @{
+	<ul>
+		@for (using item of props.items) {
+			<li>{String(item)}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.MULTIPLE_REFS,
 		source: `export function C(props: any) @{
 	<div ref={props.a} ref={props.b} />
@@ -301,6 +322,66 @@ export const ERROR_EXAMPLES = [
 }
 `,
 		compiler: '@tsrx/solid',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_COMPONENT_READ_BEFORE_DECLARATION,
+		source: `export const registry = { inner: Inner };
+const PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_DEFAULT_UNSUPPORTED,
+		source: `const cfg = { size: 1 };
+export function Card({ s = cfg.size }: { s?: number }) @{
+	<div>{s}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_NESTED_DEFAULT_UNSUPPORTED,
+		source: `export function Card({ s: { a = 3 } }: { s: { a?: number } }) @{
+	<div>{a}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROPS_PARAM_DEFAULT,
+		source: `export function Card({ s }: { s?: number } = {}) @{
+	<div>{s}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_NESTED_REST,
+		source: `export function Card({ t: { a, ...r } }: { t: { a: number; b: number } }) @{
+	<div>{a}{r.b}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_KEY_COMPUTED,
+		source: `const k = 's';
+export function Card({ [k]: v }: { s?: number }) @{
+	<div>{v}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_KEY_UNSUPPORTED,
+		source: `export function Card({ 'a-b': v, t }: { 'a-b'?: number; t?: number }) @{
+	<div>{v}{t}</div>
+}
+`,
+		compiler: '@tsrx/vue',
 	},
 	{
 		error: TSRX_ERRORS.TARGET_YIELD_UNSUPPORTED,
@@ -343,6 +424,18 @@ export class A extends B {
 	</ul>
 }
 `,
+	},
+	{
+		error: TSRX_ERRORS.DEFINE_VAPOR_COMPONENT_BINDING,
+		source: `function defineVaporComponent<T>(component: T): T {
+	return component;
+}
+
+export function C() @{
+	<p>{'text'}</p>
+}
+`,
+		compiler: '@tsrx/vue',
 	},
 	{
 		error: TSRX_ERRORS.STYLE_APPLY_VALUE,
@@ -507,6 +600,23 @@ export {};
 		</style>
 		<div />
 	</>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.STYLE_IN_EXPRESSION_CONTAINER,
+		source: `function Box(props: { children?: unknown }) @{
+	<div />
+}
+
+export function C() @{
+	<Box>
+		{<style>
+			.a {
+				color: red;
+			}
+		</style>}
+	</Box>
 }
 `,
 	},
@@ -913,15 +1023,8 @@ export const WITHOUT_EXAMPLE = new Map(
  */
 export const KNOWN_PROBLEMS = new Map(
 	/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([
-		[TSRX_ERRORS.UNCLOSED_TAG, { problem: 'lost', issue: 978 }],
-		[TSRX_ERRORS.MISMATCHED_CLOSING_TAG, { problem: 'lost', issue: 978 }],
-		[TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT, { problem: 'twice', issue: 981 }],
-		[TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT, { problem: 'twice', issue: 981 }],
 		[TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED, { problem: 'twice', issue: 980 }],
 		// The statement's keywords have no mapping, so the directive covers only `A`.
 		[TS_ERRORS.NESTED_GLOBAL_EXPORT, { problem: 'typescript', issue: 979 }],
-		// Printed as `<T>() => 1`, which TypeScript reads as JSX in the generated TSX:
-		// its syntax errors there are beyond a directive's reach.
-		[TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER, { problem: 'typescript', issue: 707 }],
 	]),
 );
