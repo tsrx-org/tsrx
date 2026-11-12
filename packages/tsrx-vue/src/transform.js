@@ -4,6 +4,7 @@
 
 import { walk } from 'zimmerframe';
 import is_reference from 'is-reference';
+import { find_deferred_template_yields } from './template-yield.js';
 import {
 	builders as b,
 	addJsxSetupDeclaration,
@@ -170,6 +171,7 @@ const vue_platform = {
 		transformElementChildren(node, walked_children, raw_children, attributes, ctx) {
 			return rewrite_host_text_children(node, walked_children, raw_children, attributes);
 		},
+		findDeferredTemplateYields: find_deferred_template_yields,
 		validateComponentAwait(await_expression, _component, ctx) {
 			error(
 				TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED(ctx.platform.name),

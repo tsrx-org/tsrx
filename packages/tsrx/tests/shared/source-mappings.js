@@ -23,6 +23,7 @@ export function runSharedSourceMappingTests({
 	compile_to_volar_mappings,
 	name,
 	rejectsComponentAwait,
+	rejectsTemplateYield = false,
 }) {
 	describe(`[${name}] platform-specialized source mappings`, () => {
 		it('maps only the selected branch and keeps its authored block location', () => {
@@ -320,16 +321,21 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 }`,
 		};
 
-		it.each(Object.keys(SOURCES))('keeps the yield inside a generator for the %s', (label) => {
-			const runtime = compile(SOURCES[label], 'App.tsrx').code;
-			const type_only = compile_to_volar_mappings(SOURCES[label], 'App.tsrx', { loose: true });
-			expect(type_only.errors).toEqual([]);
-			for (const code of [runtime, type_only.code]) {
-				expect(() =>
-					parseModule(code, 'App.tsx', { preserveParens: true, errors: [], comments: [] }),
-				).not.toThrow();
-			}
-		});
+		// Solid and Vue report some of these as TSRX2034 (#259); their own tests
+		// say which.
+		it.skipIf(rejectsTemplateYield).each(Object.keys(SOURCES))(
+			'keeps the yield inside a generator for the %s',
+			(label) => {
+				const runtime = compile(SOURCES[label], 'App.tsrx').code;
+				const type_only = compile_to_volar_mappings(SOURCES[label], 'App.tsrx', { loose: true });
+				expect(type_only.errors).toEqual([]);
+				for (const code of [runtime, type_only.code]) {
+					expect(() =>
+						parseModule(code, 'App.tsx', { preserveParens: true, errors: [], comments: [] }),
+					).not.toThrow();
+				}
+			},
+		);
 
 		it.each(Object.keys(SOURCES))('maps the yielded value in the %s', (label) => {
 			const source = SOURCES[label];
@@ -359,6 +365,93 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 			expect(result.errors.map((error) => [error.message, error.pos])).toEqual([
 				[expect.stringContaining('does not support `yield` here'), source.indexOf('yield')],
 			]);
+		});
+	});
+
+	describe(`[${name}] yield in a template (#259)`, () => {
+		/** @type {Record<string, string>} */
+		const SOURCES = {
+			'attribute value': `export function* field(bag: { title: string }) {
+	return <input title={yield bag.title} />;
+}`,
+			'attribute value, as yield*': `export function* field(bag: { titles: () => Generator<string, string> }) {
+	return <input title={yield* bag.titles()} />;
+}`,
+			child: `export function* field(bag: { text: string }) {
+	return <p>{yield bag.text}</p>;
+}`,
+			'child, as yield*': `export function* field(bag: { texts: () => Generator<string, string> }) {
+	return <p>{yield* bag.texts()}</p>;
+}`,
+			'spread attribute': `export function* field(bag: { attrs: object }) {
+	return <input {...(yield bag.attrs)} />;
+}`,
+			'component prop and spread': `export function* field(bag: { title: string; attrs: object }, Comp: any) {
+	return <Comp title={yield bag.title} {...(yield bag.attrs)} />;
+}`,
+			'attribute and child, in source order': `export function* field(bag: { title: string; text: string }) {
+	return <p title={yield bag.title}>{yield bag.text}</p>;
+}`,
+			'@{ … } output': `export function* field(bag: { title: string }) @{
+	<input title={yield bag.title} />
+}`,
+			'@if test': `export function* field(bag: { ok: boolean }) @{
+	<div>
+		@if (yield bag.ok) {
+			<p>yes</p>
+		}
+	</div>
+}`,
+			'@for iterable': `export function* field(bag: { items: string[] }) @{
+	<ul>
+		@for (const item of yield bag.items) {
+			<li>{item}</li>
+		}
+	</ul>
+}`,
+			'@if body with setup statements': `export function* field(bag: { ok: boolean; text: string }) @{
+	<div>
+		@if (bag.ok) {
+			const text = yield bag.text;
+			<p>{text}</p>
+		}
+	</div>
+}`,
+		};
+
+		/** @type {Record<string, string>} */
+		const ALLOWED = {
+			'a nested generator function': `export function* field(bag: { title: string }) {
+	return <input title={[...(function* () { yield bag.title; })()].join()} />;
+}`,
+			"the setup statements of the function's @{ … } body": `export function* field(bag: { title: string }) @{
+	const title = yield bag.title;
+	<input title={title} />
+}`,
+			'a statement before the element': `export function* field(bag: { title: string }) {
+	const title = yield bag.title;
+	return <input title={title} />;
+}`,
+		};
+
+		// Solid's and Vue's compilers evaluate some of these in effects; their
+		// own tests say which TSRX reports.
+		if (!rejectsTemplateYield) {
+			it.each(Object.keys(SOURCES))('accepts the yield in the %s', (label) => {
+				const source = SOURCES[label];
+				const result = compile(source, 'App.tsrx', { collect: true });
+				expect(result.errors).toEqual([]);
+				expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
+				expect(() =>
+					parseModule(result.code, 'App.tsx', { preserveParens: true, errors: [], comments: [] }),
+				).not.toThrow();
+			});
+		}
+
+		it.each(Object.keys(ALLOWED))('allows a yield in %s', (label) => {
+			const source = ALLOWED[label];
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
+			expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
 		});
 	});
 

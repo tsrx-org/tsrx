@@ -349,6 +349,18 @@ export interface JsxPlatformHooks {
 		source: string,
 	) => void;
 	/**
+	 * The `yield`s in the final output that the target's own JSX compiler moves
+	 * out of their generator, into an effect, getter or callback, where they no
+	 * longer parse. Each is reported as TSRX2034. Only a `yield` whose nearest
+	 * enclosing function is a generator belongs here. A returned `yield*` that
+	 * delegates to a generator made from a generated closure stands for the
+	 * authored `yield`s inside it.
+	 */
+	findDeferredTemplateYields?: (
+		program: AST.Program,
+		ctx: JsxTransformContext,
+	) => AST.YieldExpression[];
+	/**
 	 * Factory-managed state extra fields. Returns a record merged into the
 	 * initial `transform_context`. Lets solid seed its `needs_show` /
 	 * `needs_for` / etc. flags without forking the factory.

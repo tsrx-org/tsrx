@@ -622,6 +622,8 @@ const TSRX_ERROR_CODES = [
 	"          import { defineVaporComponent } from './helpers';  (Vue)",
 	'TSRX2033  A dynamic tag takes no type arguments.',
 	'          <{Tag}<T> />',
+	'TSRX2034  <target> TSRX does not support `yield` in this part of the template.',
+	'          function* f(b) { return <input title={yield b.title} />; }  (Solid, Vue)',
 	"TSRX3001  The 'apply' attribute of a <style> block requires an expression value.",
 	'          <style apply="a" />',
 	"TSRX3002  'a' is not a style block.",

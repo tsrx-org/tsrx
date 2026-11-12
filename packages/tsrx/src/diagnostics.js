@@ -108,6 +108,8 @@ export const DIAGNOSTIC_CODES = {
 	TARGET_RESERVED_NAME: 'TSRX2032',
 	/** Type arguments after a dynamic tag (`<{Tag}<T> />`). */
 	DYNAMIC_TAG_TYPE_ARGUMENTS: 'TSRX2033',
+	/** A `yield` in a template value the target's JSX compiler moves into an effect, getter or callback. */
+	TARGET_TEMPLATE_YIELD_UNSUPPORTED: 'TSRX2034',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -449,6 +451,12 @@ export const TSRX_ERRORS = {
 		'TARGET_YIELD_UNSUPPORTED',
 		(target) =>
 			`${target} TSRX does not support \`yield\` here: this part of the template runs in a callback, which cannot yield from the enclosing generator. Yield the value in the function body first.`,
+	),
+	/** `target` is the target's name. For Solid and Vue, whose JSX compilers move some template values into effects. */
+	TARGET_TEMPLATE_YIELD_UNSUPPORTED: tsrx_with_values(
+		'TARGET_TEMPLATE_YIELD_UNSUPPORTED',
+		(target) =>
+			`${target} TSRX does not support \`yield\` in this part of the template: ${target}'s JSX compiler evaluates it in an effect, a getter or a callback, which cannot yield from the enclosing generator. Yield the value before the template, as in \`const value = yield …;\`, and use \`value\` in it.`,
 	),
 	/** `target` is the target's name. */
 	TARGET_SUPER_UNSUPPORTED: tsrx_with_values(
