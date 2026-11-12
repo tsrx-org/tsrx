@@ -5420,8 +5420,9 @@ function validate_if_body_control_flow(node, transform_context) {
 /**
  * Every target hands an `@for` item to a callback, so the head has to declare
  * its loop variable the way a parameter can: assigning to an existing variable
- * or property would only shadow it, and a `using` item would never be disposed.
- * A target that lowers `@for` itself calls this from its own lowering.
+ * or property would only shadow it, a `var` would not reach the enclosing
+ * function, and a `using` item would never be disposed. A target that lowers
+ * `@for` itself calls this from its own lowering.
  *
  * @param {AST.ForOfStatement['left']} left
  * @param {TransformContext} transform_context
@@ -5431,6 +5432,14 @@ export function validate_for_of_head(left, transform_context) {
 	if (left.type !== 'VariableDeclaration') {
 		error(
 			TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
+			transform_context.filename,
+			left,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	} else if (left.kind === 'var') {
+		error(
+			TSRX_ERRORS.FOR_HEAD_VAR,
 			transform_context.filename,
 			left,
 			transform_context.errors,

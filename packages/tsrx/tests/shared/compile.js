@@ -817,6 +817,36 @@ export const d: number = bad;
 			}
 		});
 
+		it('reports an `@for` head that declares its item with `var` (#1158)', () => {
+			for (const head of ['var item', 'var { item }']) {
+				const source = `export function App({ items }: { items: any[] }) @{
+					<>
+						<ul>
+							@for (${head} of items) {
+								<li>{String(item)}</li>
+							}
+						</ul>
+						<p>{String(item)}</p>
+					</>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf(`(${head} of`) + 1;
+
+				expect(
+					result.errors.map((error) => [error.code, error.message, error.pos, error.end]),
+					head,
+				).toEqual([
+					[
+						TSRX_ERRORS.FOR_HEAD_VAR.code,
+						TSRX_ERRORS.FOR_HEAD_VAR.message,
+						start,
+						start + head.length,
+					],
+				]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
 		it('reports an invalid `@for` head wherever the loop is nested', () => {
 			/** @type {Record<string, (loop: string) => string>} */
 			const positions = {
@@ -829,6 +859,7 @@ export const d: number = bad;
 			for (const [head, code] of [
 				['state.item of items', TSRX_ERRORS.FOR_HEAD_ASSIGNMENT.code],
 				['using item of items', TSRX_ERRORS.FOR_HEAD_USING.code],
+				['var item of items', TSRX_ERRORS.FOR_HEAD_VAR.code],
 			]) {
 				for (const [label, wrap] of Object.entries(positions)) {
 					const source = `export async function App({ items, groups, c }: any) @{

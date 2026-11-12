@@ -305,6 +305,17 @@ export const ERROR_EXAMPLES = [
 `,
 	},
 	{
+		error: TSRX_ERRORS.FOR_HEAD_VAR,
+		source: `export function C(props: { items: string[] }) @{
+	<ul>
+		@for (var item of props.items) {
+			<li>{item}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.MULTIPLE_REFS,
 		source: `export function C(props: any) @{
 	<div ref={props.a} ref={props.b} />
