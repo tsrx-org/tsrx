@@ -539,4 +539,195 @@ export function Button(props: { onPress?: () => void }) @{
 		expect(messages).toEqual([]);
 		expect(props).toEqual(['onClick=onClick', 'type=submit']);
 	});
+
+	it('shows rules the name of a dynamic tag as the JSX name it mirrors', () => {
+		// jsx-ast-utils' `elementType`, which eslint-plugin-react and
+		// eslint-plugin-jsx-a11y use for the tag name, and the tag that
+		// eslint-plugin-react's `no-danger` reads for each attribute.
+		const element_type = (name: any): string =>
+			name.type === 'JSXMemberExpression'
+				? `${element_type(name.object)}.${name.property.name}`
+				: name.name;
+		const no_danger_tag = (name: any) => name.name || `${name.object.name}.${name.property.name}`;
+		const names: string[] = [];
+		lint(
+			`export function App({ as, ui, icons, key, pick }) @{
+	<>
+		<{as} class="box">{'hi'}</{as}>
+		<{ ui.Box } class="box" />
+		<{this.items.Item} class="box" />
+		<{'div'} class="box" />
+		<{icons[key]} class="box" />
+		<{pick()} class="box"></{pick()}>
+	</>
+}`,
+			{
+				plugins: {
+					probe: {
+						rules: {
+							names: {
+								create: (context) => {
+									const text = (node: any) => context.sourceCode.getText(node);
+									const record = (node: any) => {
+										const { name } = node;
+										const parts =
+											name.type === 'JSXMemberExpression'
+												? ` (${text(name.object)} . ${text(name.property)})`
+												: '';
+										names.push(
+											`${node.type === 'JSXOpeningElement' ? '<' : '</'}${element_type(name)} ` +
+												`${name.type} ${text(name)}${parts}`,
+										);
+										if (node.attributes?.length) no_danger_tag(name);
+									};
+									return { JSXOpeningElement: record, JSXClosingElement: record };
+								},
+							},
+						},
+					},
+				},
+				rules: { 'probe/names': 'error' },
+			},
+		);
+
+		expect(names).toEqual([
+			'<as JSXIdentifier {as}',
+			'</as JSXIdentifier {as}',
+			'<ui.Box JSXMemberExpression { ui.Box } (ui . Box)',
+			'<this.items.Item JSXMemberExpression {this.items.Item} (this.items . Item)',
+			// Shapes JSX names can't show get a synthetic name.
+			"<tsrx-dynamic-tag JSXIdentifier {'div'}",
+			'<tsrx-dynamic-tag JSXIdentifier {icons[key]}',
+			'<tsrx-dynamic-tag JSXIdentifier {pick()}',
+			'</tsrx-dynamic-tag JSXIdentifier {pick()}',
+		]);
+	});
+
+	it('resolves the expression of a dynamic tag once per element', () => {
+		const code = `import { icons, pick, unused } from './x';
+export function App({ as, ui, key }) @{
+	<>
+		<{as} />
+		<{ui.Box}>{'x'}</{ui.Box}>
+		<{icons[key]} />
+		<{pick()} />
+		<{Missing} />
+		<{missing.Box}>{'y'}</{missing.Box}>
+	</>
+}`;
+		// eslint-scope adds JSX references of its own when JSX is enabled.
+		for (const jsx of [false, true]) {
+			const messages = new Linter().verify(
+				code,
+				{
+					files: ['**/*.tsrx'],
+					languageOptions: { parser, parserOptions: { ecmaFeatures: { jsx } } },
+					rules: { 'no-undef': 'error', 'no-unused-vars': 'error' },
+				},
+				'App.tsrx',
+			);
+			expect(messages.map((m) => `${m.line}:${m.column} ${m.ruleId}: ${m.message}`)).toEqual([
+				"1:23 no-unused-vars: 'unused' is defined but never used.",
+				"8:5 no-undef: 'Missing' is not defined.",
+				"9:5 no-undef: 'missing' is not defined.",
+			]);
+		}
+	});
+
+	it('reads no reference from a closing tag', () => {
+		const code = `export function App() @{
+	<>
+		<style>.a { color: red; }</style>
+		<div class="a" />
+	</>
+}`;
+		for (const jsx of [false, true]) {
+			expect(
+				lint(code, {
+					languageOptions: { parser, parserOptions: { ecmaFeatures: { jsx } } },
+					rules: { 'no-undef': 'error' },
+				}),
+			).toEqual([]);
+		}
+	});
+
+	it('keeps the expression of a dynamic tag in view of rules', () => {
+		const code = `export class List {
+	Item = 'li';
+	render() @{
+		<{this.Item}>{'a'}</{this.Item}>
+	}
+}
+export function Icon({ icons }) @{
+	<{icons['Home']} class="icon"></{icons['Home']}>
+}
+`;
+		const { output, messages } = new Linter().verifyAndFix(
+			code,
+			{
+				files: ['**/*.tsrx'],
+				languageOptions: { parser },
+				rules: { 'class-methods-use-this': 'error', 'dot-notation': 'error' },
+			},
+			'App.tsrx',
+		);
+
+		expect(messages).toEqual([]);
+		expect(output).toBe(code.replaceAll("icons['Home']", 'icons.Home'));
+	});
+
+	it('keeps the braces of a dynamic tag when a rule fixes around its name', () => {
+		// Fixes as eslint-plugin-react's `jsx-tag-spacing`, `jsx-first-prop-new-line`
+		// and `jsx-closing-bracket-location` make them, from the name's range.
+		const code = `export function App({ as }) @{
+	< { as }
+		class="box"  >{'hi'}</{ as }>
+}`;
+		const { output, messages } = new Linter().verifyAndFix(
+			code,
+			{
+				files: ['**/*.tsrx'],
+				languageOptions: { parser },
+				plugins: {
+					probe: {
+						rules: {
+							spacing: {
+								meta: { fixable: 'whitespace' },
+								create: (context) => ({
+									JSXOpeningElement(node: any) {
+										const opening = context.sourceCode.getTokenBefore(node.name)!;
+										const [first] = node.attributes;
+										const edits: Array<[number, number, string]> = [
+											[opening.range[1], node.name.range[0], ''],
+											[node.name.range[1], first.range[0], ' '],
+											[first.range[1], node.range[1], '>'],
+										];
+										const { text } = context.sourceCode;
+										if (edits.every(([start, end, value]) => text.slice(start, end) === value)) {
+											return;
+										}
+										context.report({
+											node,
+											message: 'spacing',
+											fix: (fixer) =>
+												edits.map(([start, end, value]) =>
+													fixer.replaceTextRange([start, end], value),
+												),
+										});
+									},
+								}),
+							},
+						},
+					},
+				},
+				rules: { 'probe/spacing': 'error' },
+			},
+			'App.tsrx',
+		);
+
+		expect(messages).toEqual([]);
+		expect(output).toBe(`export function App({ as }) @{
+	<{ as } class="box">{'hi'}</{ as }>
+}`);
+	});
 });
