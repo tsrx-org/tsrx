@@ -251,6 +251,32 @@ export function App() @{
 			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
 			expect(code.slice(generated, generated + 'getTag'.length)).toBe('getTag');
 		});
+
+		it('maps the generated name of a dynamic tag to its expression', () => {
+			// TypeScript reports a component's missing or unknown props (TS2769) on
+			// the generated name of the lowered tag.
+			const source = `export function App({ C }: any) @{
+	<{C} title="x">child</{C}>
+}`;
+			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			const tag = source.indexOf('{C}');
+			const names = mappings
+				.filter(
+					(mapping) =>
+						mapping.sourceOffsets[0] === tag &&
+						mapping.lengths[0] === '{C}'.length &&
+						mapping.data.verification,
+				)
+				.map((mapping) =>
+					code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					),
+				);
+			expect(names).toContain('TsrxDynamic');
+		});
 	});
 
 	describe(`[${name}] platform flag virtual types`, () => {
