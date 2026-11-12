@@ -82,15 +82,15 @@ rules still lint the code and scope analysis reads it, so `no-unused-vars` and
 ### Rule Fixes TSRX Can't Take
 
 Some `eslint-plugin-react` fixes write JSX that TSRX reads differently than TSX
-does. The parser can't prevent them, so `--fix` with these options breaks a
-`.tsrx` file or changes what it renders:
+does. The parser can't prevent them:
 
-- `react/jsx-curly-brace-presence` with `children: 'never'`, its default, unwraps
-  a string child into text. TSRX text can start a directive (`@if (`, `@for (`,
-  `@switch (`) or a `//` comment. So `{'@for (item of items)'}` stops parsing, and
-  `{'// note'}` on its own line becomes a comment. Set `children: 'ignore'` for
-  `.tsrx` files, or keep such a string in braces with a
-  `// eslint-disable-next-line react/jsx-curly-brace-presence` line above it.
+- `react/jsx-curly-brace-presence` unwraps a string child into text. TSRX text can
+  start a directive (`@if (`, `@for (`, `@switch (`) or a `//` comment, so
+  `{'@for (item of items)'}` stops parsing, and `{'// note'}` on its own line
+  becomes a comment. Use `tsrx/jsx-curly-brace-presence` from
+  [`@tsrx/eslint-plugin`](https://github.com/tsrx-org/tsrx/tree/main/packages/eslint-plugin)
+  instead: it has the same options, and keeps those braces. Its `react`
+  configuration swaps it in for `.tsrx` files.
 - `react/jsx-tag-spacing` with `closingSlash: 'always'` writes `< /p>`, which
   neither TSRX nor TypeScript reads as a closing tag. With
   `afterOpening: 'always'` it writes `< br />`, which TSRX reads as text inside an
