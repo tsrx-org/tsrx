@@ -71,6 +71,14 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			'an attribute and a child, in source order',
 			returning('<p title={yield bag.title}>{yield bag.text}</p>'),
 		],
+		[
+			"a host spread beside a ref (#246's shape), whose spread TSRX normalizes with a call, so the compiler creates the element in an arrow",
+			returning("t ? <input {...{}} ref={() => {}} title={yield 'title'} /> : null"),
+		],
+		[
+			'a className, which TSRX compiles to class, which is always in an effect',
+			returning('<div className={yield t} />'),
+		],
 	])('reports each yield in %s', (_label, source) => {
 		const yields = [...source.matchAll(/\byield\b/g)].map((match) => match.index);
 		expect(() => compile(source, 'App.tsrx')).toThrow(
@@ -134,10 +142,6 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 		['a static component prop', returning('<Comp title={yield t} />')],
 		['a lone static component child', returning('<Comp>{yield t}</Comp>')],
 		['a component in a ternary arm', returning('t ? <Comp title={yield t} /> : null')],
-		[
-			"a host spread beside a ref (#246's shape)",
-			returning("t ? <input {...{}} ref={() => {}} title={yield 'title'} /> : null"),
-		],
 		['a static @if test', template('<div>\n\t\t@if (yield t) { <p>a</p> }\n\t</div>')],
 		[
 			'a static @for iterable',
@@ -182,7 +186,6 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			'a sequence that folds into its last value',
 			returning("<input title={(yield bag.title, 'a')} />"),
 		],
-		['a className, which is a plain attribute', returning('<div className={yield t} />')],
 		[
 			"a textarea's children, which its literal value replaces",
 			returning('<textarea value="x">{yield bag.text}</textarea>'),
