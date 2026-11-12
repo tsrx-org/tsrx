@@ -526,3 +526,70 @@ it('reports errors on a bare this in .tsrx files', () => {
 		`layout.tsrx(4,${line.lastIndexOf('this') + 1}): error TS17009: 'super' must be called before accessing 'this' in the constructor of a derived class.`,
 	);
 });
+
+// Two CLI runs, emit then consume.
+it(
+	'leaves the editor-only platform globals out of emitted declarations',
+	{ timeout: 60_000 },
+	() => {
+		const source =
+			"export function value() {\n\tif (import.meta.env.platform.web) {\n\t\treturn 'web';\n\t}\n\treturn 'native';\n}\n";
+		// An authored global augmentation stays in the declaration output.
+		fs.writeFileSync(
+			path.join(workspace, 'a.tsrx'),
+			`${source}declare global {\n\tinterface Window {\n\t\tapp: string;\n\t}\n}\n`,
+		);
+		fs.writeFileSync(path.join(workspace, 'b.tsrx'), source);
+		fs.writeFileSync(
+			path.join(workspace, 'tsconfig.emit.json'),
+			JSON.stringify({
+				extends: './tsconfig.json',
+				tsrx: { platform: 'web' },
+				compilerOptions: {
+					declaration: true,
+					emitDeclarationOnly: true,
+					outDir: 'dist',
+					skipLibCheck: false,
+				},
+				include: ['a.tsrx', 'b.tsrx'],
+			}),
+		);
+		const emitted = run_cli('native', ['-p', 'tsconfig.emit.json']);
+		expect(emitted.output).toBe('');
+		expect(emitted.status).toBe(0);
+		const declaration = fs.readFileSync(path.join(workspace, 'dist', 'a.d.ts'), 'utf8');
+		expect(declaration).toContain('export declare function value()');
+		expect(declaration).toContain('interface Window');
+		expect(declaration).not.toContain('ImportMeta');
+		expect(fs.readFileSync(path.join(workspace, 'dist', 'b.d.ts'), 'utf8')).not.toContain(
+			'declare global',
+		);
+
+		fs.writeFileSync(
+			path.join(workspace, 'consumer.ts'),
+			"import { value as a } from './dist/a.js';\nimport { value as b } from './dist/b.js';\nexport const result = [a(), b()];\n",
+		);
+		fs.writeFileSync(
+			path.join(workspace, 'tsconfig.consume.json'),
+			JSON.stringify({
+				compilerOptions: {
+					module: 'ESNext',
+					moduleResolution: 'Bundler',
+					target: 'ES2022',
+					strict: true,
+					skipLibCheck: false,
+					types: [],
+					noEmit: true,
+				},
+				include: ['consumer.ts'],
+			}),
+		);
+		const consumed = spawnSync(
+			process.execPath,
+			[tsc_path, '-p', 'tsconfig.consume.json', '--pretty', 'false'],
+			{ cwd: workspace, encoding: 'utf8', timeout: 30_000 },
+		);
+		expect(consumed.stdout + consumed.stderr).toBe('');
+		expect(consumed.status).toBe(0);
+	},
+);

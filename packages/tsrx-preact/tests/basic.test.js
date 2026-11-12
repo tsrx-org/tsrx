@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -49,6 +50,7 @@ runSharedCompileTests({ compile, name: 'preact', classAttrName: 'class' });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'preact' });
 runSharedCodeBlockChildrenTests({ compile, name: 'preact' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'preact' });
+runSharedAnonymousComponentTests({ compile, name: 'preact' });
 
 describe('@tsrx/preact basic', () => {
 	it('rejects the removed `&{ ... }` lazy destructuring syntax', () => {
@@ -308,6 +310,42 @@ describe('@tsrx/preact basic', () => {
 		expect(code).toContain('return <div>{Date.now()}</div>;');
 	});
 
+	// Preact reads a class from `class` or `className`, so a spread's class
+	// moves to the name of the element's class attribute.
+	it('keeps the class a host spread passes beside the scope classes', () => {
+		const { code, cssHash } = compile(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span className="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(
+			/import \{\s*merge_spread_class as __merge_spread_class,[^}]*\} from '@tsrx\/preact\/ref'/,
+		);
+		expect(code).toContain(
+			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", "className"))} />`,
+		);
+		expect(code).toContain(
+			`<span className="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "className", "class"))} />`,
+		);
+		// A spread before the class attribute drops its class, so its
+		// `className` can't override the attribute.
+		expect(code).toContain(
+			`<span {...__normalize_spread_props(__merge_spread_class(props, null, "class", "className"))} class="last ${cssHash}" />`,
+		);
+	});
+
 	it('applies scoped css hashes and keeps type selectors for dynamic tags', () => {
 		const { code, css, cssHash } = compile(
 			`export function App() @{
@@ -510,6 +548,43 @@ describe('@tsrx/preact basic', () => {
 				"let App__spread_props1 = __normalize_spread_props_for_ref_attr({ 'data-second': next() });",
 			);
 			expect(type_only).toContain('{...App__spread_props1}');
+		});
+
+		it('keeps a ref written before a host spread in its authored position', () => {
+			const source = `export function App() @{
+					function init() {
+						return () => {};
+					}
+					<div ref={init()} data-first="1" {...bag} />
+				}`;
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code).toContain(
+				'<div ref={__mergeRefs(init(), (node) => __mergeRefs(App__spread_props1?.ref)(node))} data-first="1" {...(App__spread_props1 = __normalize_spread_props_for_ref_attr(bag))} />',
+			);
+
+			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain(
+				'<div data-first="1" {...App__spread_props1} ref={__mergeRefs(init(), App__spread_props1?.ref)} />',
+			);
+		});
+
+		it('imports the spread normalizers that return their copy', () => {
+			const { code } = compile(
+				`export function App() @{
+					<>
+						<input {...props.first} />
+						<input {...props.second} ref={props.cb} />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('copy_spread_props as __normalize_spread_props');
+			expect(code).toContain(
+				'copy_spread_props_for_ref_attr as __normalize_spread_props_for_ref_attr',
+			);
+			expect(code).toContain('{...__normalize_spread_props(props.first)}');
 		});
 
 		it('rejects multiple ref={expr} attributes on the same element', () => {

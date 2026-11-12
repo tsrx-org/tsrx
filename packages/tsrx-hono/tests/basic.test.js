@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -29,6 +30,7 @@ runSharedCompileDiagnosticsTests({
 	name: 'hono',
 });
 runSharedCodeBlockChildrenTests({ compile: compileServer, name: 'hono' });
+runSharedAnonymousComponentTests({ compile: compileServer, name: 'hono' });
 runSharedHookBodyTests({
 	compile: compileServer,
 	compile_to_volar_mappings: compileServerToVolarMappings,
@@ -47,6 +49,7 @@ runSharedCompileDiagnosticsTests({
 	name: 'hono-dom',
 });
 runSharedCodeBlockChildrenTests({ compile: compileDom, name: 'hono-dom' });
+runSharedAnonymousComponentTests({ compile: compileDom, name: 'hono-dom' });
 runSharedClassFunctionComponentTests({
 	compile: compileDom,
 	compile_to_volar_mappings: compileDomToVolarMappings,
@@ -105,6 +108,42 @@ describe('@tsrx/hono server compiler', () => {
 	it('does not expose the compiler-only Dynamic helper at runtime', () => {
 		expect(honoServerRuntime).not.toHaveProperty('Dynamic');
 		expect(honoDomRuntime).not.toHaveProperty('Dynamic');
+	});
+
+	// Hono renders `className` as `class`, so a spread's class moves to the
+	// name of the element's class attribute.
+	it('keeps the class a host spread passes beside the scope classes', () => {
+		const { code, cssHash } = compileServer(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span className="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(
+			/import \{\s*merge_spread_class as __merge_spread_class,[^}]*\} from '@tsrx\/hono\/ref'/,
+		);
+		expect(code).toContain(
+			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", "className"))} />`,
+		);
+		expect(code).toContain(
+			`<span className="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "className", "class"))} />`,
+		);
+		// A spread before the class attribute drops its class, so its
+		// `className` can't override the attribute.
+		expect(code).toContain(
+			`<span {...__normalize_spread_props(__merge_spread_class(props, null, "class", "className"))} class="last ${cssHash}" />`,
+		);
 	});
 
 	it('emits Hono server JSX helpers and preserves async components', () => {
@@ -252,6 +291,57 @@ describe('@tsrx/hono DOM compiler', () => {
 		'const UI = { [key]: () => <span />, App: async () => <div /> }; <UI.App />;',
 	])('diagnoses a final known async object member: %s', (source) => {
 		expect(() => compileDom(source, 'App.tsrx')).toThrow(/does not support async components/);
+	});
+
+	it.each([
+		'const registry = UI; registry.App = () => <span />; <UI.App />;',
+		'const registry = UI as any; registry["App"] = () => <span />; <UI.App />;',
+		'let registry; registry = UI; registry.App = () => <span />; <UI.App />;',
+		'const first = UI; const second = first; second.App = () => <span />; <UI.App />;',
+		'const registry = UI; registry.App = () => <span />; const view = UI; <view.App />;',
+		'const registry = flag ? UI : fallback; registry.App = () => <span />; <UI.App />;',
+		'const registry = UI.nested; registry.App = () => <span />; <UI.nested.App />;',
+		'const { nested } = UI; nested.App = () => <span />; <UI.nested.App />;',
+		'Object.assign(UI, { App: () => <span /> }); <UI.App />;',
+		'Object.assign(UI.nested, { App: () => <span /> }); <UI.nested.App />;',
+		'const registry = UI; Object.assign(registry, { App: () => <span /> }); <UI.App />;',
+		'Object.defineProperty(UI, "App", { value: () => <span /> }); <UI.App />;',
+		'Reflect.set(UI, "App", () => <span />); <UI.App />;',
+		'let registry; registry ??= UI; registry.App = () => <span />; <UI.App />;',
+		'let registry = load(); registry ||= UI; registry.App = () => <span />; <UI.App />;',
+		'let registry = {}; registry = load(); registry ||= UI; registry.App = () => <span />; <UI.App />;',
+		'for (let registry of [{}]) { registry &&= UI; registry.App = () => <span />; } <UI.App />;',
+		'for (let registry in { key: 1 }) { registry &&= UI; registry.App = () => <span />; } <UI.App />;',
+		'for (let registry = {}; registry; registry = null) { registry &&= UI; registry.App = () => <span />; } <UI.App />;',
+		'function List() @{ <ul>@for (let registry of [{}]) { registry &&= UI; registry.App = () => <span />; <li /> }</ul> } <UI.App />;',
+	])('does not diagnose a member overwritten through an alias or writer call: %s', (update) => {
+		const source = `const UI = { App: async () => <div />, nested: { App: async () => <div /> } };
+			${update}`;
+		expect(() => compileDom(source, 'App.tsrx')).not.toThrow();
+		expect(compileDom(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
+		expect(compileDomToVolarMappings(source, 'App.tsrx').errors).toEqual([]);
+	});
+
+	it.each([
+		'const registry = UI; <registry.App />;',
+		'const copy = { ...UI }; copy.App = () => <span />; <UI.App />;',
+		'Object.assign({}, UI, { App: () => <span /> }); <UI.App />;',
+		'const Other = { App: () => <span /> }; Object.assign(Other, UI); <UI.App />;',
+		'let registry = UI; registry = { App: () => <span /> }; <UI.App />;',
+		'const { ...copy } = UI; copy.App = () => <span />; <UI.App />;',
+		'let copy; ({ ...copy } = UI); copy.App = () => <span />; <UI.App />;',
+		'let registry = { App: () => <span /> }; registry ||= UI; registry.App = () => <span />; <UI.App />;',
+		'let registry = { App: () => <span /> }; registry ??= UI; registry.App = () => <span />; <UI.App />;',
+		'let registry; registry &&= UI; Object.assign(registry, { App: () => <span /> }); <UI.App />;',
+	])('still diagnoses an async member that no write can replace: %s', (update) => {
+		const source = `const UI = { App: async () => <div /> };
+			${update}`;
+		const async_error = expect.objectContaining({
+			message: expect.stringContaining('does not support async components'),
+		});
+		expect(() => compileDom(source, 'App.tsrx')).toThrow(/does not support async components/);
+		expect(compileDom(source, 'App.tsrx', { collect: true }).errors).toEqual([async_error]);
+		expect(compileDomToVolarMappings(source, 'App.tsrx').errors).toEqual([async_error]);
 	});
 
 	it('rejects an async component referenced by a dynamic tag', () => {
