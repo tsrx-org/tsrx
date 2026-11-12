@@ -45,8 +45,14 @@ const preact_platform = {
 	},
 	jsx: {
 		rewriteClassAttr: false,
+		// Preact reads a class from either prop.
+		hostSpreadClassProps: ['class', 'className'],
+		// Preact renders `class={true}` as `true`. (`className={false}` renders
+		// `false` too, which the shared join leaves out.)
+		classValue: 'text-true',
 		multiRefStrategy: 'merge-refs',
 		hostSpreadRefBinding: 'in-place',
+		pendingFallback: 'try-body',
 		// preact-render-to-string escapes a string child of `<script>` like
 		// text; `dangerouslySetInnerHTML` renders the body as written on the
 		// client and the server.

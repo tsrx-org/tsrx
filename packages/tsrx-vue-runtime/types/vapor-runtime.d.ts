@@ -1,4 +1,4 @@
-import type { EffectScope } from 'vue';
+import type { ComponentInternalInstance, EffectScope } from 'vue';
 
 /**
  * The slice of Vue's Vapor runtime that `@tsrx/vue`'s error boundary drives
@@ -10,6 +10,12 @@ import type { EffectScope } from 'vue';
  * checked against it from there.
  */
 export interface VaporRuntime {
+	/**
+	 * The instance whose setup or render is running. Unlike
+	 * `getCurrentInstance()`, which returns null for a Vapor component, it
+	 * includes Vapor instances.
+	 */
+	currentInstance: ComponentInternalInstance | null;
 	/** Groups a block of rendered nodes behind a single anchor. */
 	VaporFragment: new (nodes: VaporBlock) => VaporFragment;
 	isFragment(value: unknown): value is VaporFragment;
