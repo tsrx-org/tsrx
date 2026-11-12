@@ -14,6 +14,19 @@ function call_load(plugin, id) {
 }
 
 /**
+ * @param {import('vite').Plugin} plugin
+ * @param {string} source
+ * @param {(source: string) => Promise<{ id: string } | null>} resolve
+ */
+function call_resolve_id(plugin, source, resolve) {
+	const hook =
+		typeof plugin.resolveId === 'function' ? plugin.resolveId : plugin.resolveId?.handler;
+	if (!hook) throw new Error('plugin has no resolveId hook');
+	const context = /** @type {ThisParameterType<typeof hook>} */ ({ resolve });
+	return hook.call(context, source, undefined, { isEntry: false });
+}
+
+/**
  * Pluck the main tsrx-vue plugin (the one with the load hook for `.tsrx.tsx`
  * virtual ids) out of the array returned by `tsrxVue()`.
  */
@@ -23,6 +36,28 @@ function get_main_plugin(options) {
 	if (!main) throw new Error('@tsrx/vite-plugin-vue plugin not found');
 	return main;
 }
+
+describe('@tsrx/vite-plugin-vue module resolution', () => {
+	it('rewrites a specifier without an extension that resolves to a `.tsrx` file', async () => {
+		const resolve = async () => ({ id: '/abs/node_modules/fixture-lib/App.tsrx' });
+		const result = await call_resolve_id(get_main_plugin(), 'fixture-lib', resolve);
+		expect(/** @type {any} */ (result).id).toBe('/abs/node_modules/fixture-lib/App.tsrx.tsx');
+	});
+
+	it('passes the resolution of a specifier for another file through unchanged', async () => {
+		const resolve = async () => ({ id: '/abs/node_modules/vue/index.js' });
+		expect(await call_resolve_id(get_main_plugin(), 'vue', resolve)).toEqual({
+			id: '/abs/node_modules/vue/index.js',
+		});
+	});
+
+	it('leaves a virtual or query-suffixed resolution of a `.tsrx` path alone', async () => {
+		for (const id of ['\0virtual:App.tsrx', '/abs/path/App.tsrx?inline']) {
+			const resolve = async () => ({ id });
+			expect(await call_resolve_id(get_main_plugin(), 'virtual-app', resolve)).toEqual({ id });
+		}
+	});
+});
 
 describe('@tsrx/vite-plugin-vue source maps', () => {
 	it('forwards direct runtime imports to the compiler', async () => {
