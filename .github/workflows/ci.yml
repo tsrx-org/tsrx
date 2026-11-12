@@ -77,6 +77,12 @@ jobs:
       - name: Test Hono with Bun
         run: pnpm --filter @tsrx/bun-plugin-hono test:native
 
+      - name: Test React with Bun
+        run: pnpm --filter @tsrx/bun-plugin-react test:native
+
+      - name: Test Preact with Bun
+        run: pnpm --filter @tsrx/bun-plugin-preact test:native
+
   lint:
     runs-on: ubuntu-latest
 
