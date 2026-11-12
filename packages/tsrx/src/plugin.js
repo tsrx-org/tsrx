@@ -2901,10 +2901,50 @@ export function TSRXPlugin(config) {
 						return this.#parseCodeBlock();
 					}
 					if (this.#isJSXControlFlowDirectiveAt(this.start)) {
-						return this.#parseJSXControlFlowExpression();
+						return this.#parseJSXControlFlowValue();
 					}
 				}
 				return super.parseExprAtom(refDestructuringErrors, forInit, forNew);
+			}
+
+			/**
+			 * A directive in expression position: in parentheses (`(@if … {}) / 2`),
+			 * an argument, a property value, or a template literal's `${ }`. The
+			 * directive reads its keyword, header and bodies with a statement context
+			 * on top of the stack, and pushes one when the enclosing `(`, `{` or `${`
+			 * context is on top instead. The token after the directive's last `}` is
+			 * read before the directive returns, with that statement context still
+			 * there, so a `)` or `}` pops it in place of its own context. What follows
+			 * then reads in the wrong mode: a `/` as a regular expression, a `<` as a
+			 * tag, the rest of a template literal as code (#1217). Put the enclosing
+			 * stack back and read that token again.
+			 * @returns {AST.JSXTemplateDirective}
+			 */
+			#parseJSXControlFlowValue() {
+				const enclosing_context = this.context;
+				// The directive filters the stack before it checks the top, and filtering
+				// again changes nothing.
+				this.#filterTemplateScriptContexts();
+				const pushes_statement_context = this.curContext() !== b_stat;
+				const node = this.#parseJSXControlFlowExpression();
+				if (pushes_statement_context) {
+					const loc = get_line_info(this, this.start);
+					this.context = enclosing_context;
+					this.pos = this.start;
+					this.curLine = loc.line;
+					this.lineStart = this.start - loc.column;
+					// As it was read, after the `}`.
+					this.type = tt.braceR;
+					this.exprAllowed = true;
+					const previous_reading_header = this.#readingJSXControlFlowHeader;
+					this.#readingJSXControlFlowHeader = true;
+					try {
+						this.nextToken();
+					} finally {
+						this.#readingJSXControlFlowHeader = previous_reading_header;
+					}
+				}
+				return node;
 			}
 
 			/**

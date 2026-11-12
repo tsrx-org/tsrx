@@ -619,25 +619,25 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 	});
 });
 
-describe('the token context stack after sibling directives (#1194)', () => {
-	/**
-	 * The deepest the tokenizer's context stack gets while `source` is parsed.
-	 * @param {string} source
-	 */
-	function max_context_depth(source) {
-		let deepest = 0;
-		/** @type {Parse.AcornPlugin} */
-		const measure = (Parser) =>
-			class extends Parser {
-				nextToken() {
-					super.nextToken();
-					deepest = Math.max(deepest, this.context.length);
-				}
-			};
-		createParser(TSRXPlugin(), measure)(source, 'App.tsrx');
-		return deepest;
-	}
+/**
+ * The deepest the tokenizer's context stack gets while `source` is parsed.
+ * @param {string} source
+ */
+function max_context_depth(source) {
+	let deepest = 0;
+	/** @type {Parse.AcornPlugin} */
+	const measure = (Parser) =>
+		class extends Parser {
+			nextToken() {
+				super.nextToken();
+				deepest = Math.max(deepest, this.context.length);
+			}
+		};
+	createParser(TSRXPlugin(), measure)(source, 'App.tsrx');
+	return deepest;
+}
 
+describe('the token context stack after sibling directives (#1194)', () => {
 	it.each([
 		'@if (c) { <i /> }',
 		'@if (c) { <i /> } @else { <b /> }',
@@ -656,6 +656,74 @@ describe('the token context stack after sibling directives (#1194)', () => {
 
 		// Every later directive copies the stack, so a deeper stack per sibling
 		// makes parse time grow with the square of the sibling count.
+		expect(depth(40)).toBe(depth(2));
+	});
+});
+
+describe('the token after a directive in expression position (#1217)', () => {
+	const directives = [
+		'@if (c) {}',
+		'@if (c) {} @else {}',
+		'@if (c) {} @else if (d) {} @else {}',
+		'@for (const a of b) { <b>{a}</b> }',
+		'@for (const a of b) {} @empty {}',
+		'@switch (k) { @default: {} }',
+		'@try {} @catch (e) {}',
+		'@try {} @pending {} @catch (e) {}',
+	];
+
+	/**
+	 * The node types in `value`, depth first, with an `<i />` element or a
+	 * directive as `Value`.
+	 * @param {unknown} value
+	 * @returns {string[]}
+	 */
+	function outline(value) {
+		if (!value || typeof value !== 'object') return [];
+		if (Array.isArray(value)) return value.flatMap(outline);
+		const node = /** @type {AST.Node & Record<string, any>} */ (value);
+		if (
+			is_directive(node.type) ||
+			(node.type === 'JSXElement' &&
+				node.openingElement.name.type === 'JSXIdentifier' &&
+				node.openingElement.name.name === 'i')
+		) {
+			return ['Value'];
+		}
+		return [
+			...(typeof node.type === 'string' ? [node.type] : []),
+			...Object.keys(node)
+				.filter((key) => key !== 'loc' && key !== 'metadata')
+				.flatMap((key) => outline(node[key])),
+		];
+	}
+
+	it('reads what follows the enclosing `)` or `}` as it does after an element', async () => {
+		const shapes = [
+			'const x = (%s) / 2;',
+			'const x = foo(%s) / 2;',
+			'const x = foo(%s, 1) / 2;',
+			'const x = (%s) <= y;',
+			'const s = `${(%s)}x`;',
+			'const s = `${%s}x`;',
+			'const o = { a: %s } / 2;',
+			'export function App() @{\n\t<div title={(%s) / 2} />\n}',
+			'export function App() @{\n\t<div>{(%s) / 2}</div>\n}',
+			'export function App() @{\n\tconst v = (%s) / 2;\n\t<b>{v}</b>\n}',
+			'const e = <div>{(%s) / 2}</div>;',
+		];
+		const values = ['<i />', ...directives];
+		const sources = shapes.flatMap((shape) => values.map((value) => shape.replace('%s', value)));
+		const programs = await parse_all(sources);
+		expect(programs.map(outline)).toEqual(
+			sources.map((_, index) => outline(programs[index - (index % values.length)])),
+		);
+	});
+
+	it.each(directives)('leaves the context stack as it found it after `foo(%s)`', (directive) => {
+		/** @param {number} count */
+		const depth = (count) => max_context_depth(Array(count).fill(`foo(${directive});`).join('\n'));
+
 		expect(depth(40)).toBe(depth(2));
 	});
 });
