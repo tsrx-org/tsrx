@@ -64,6 +64,7 @@ import {
 import { is_hoist_safe_jsx_node } from '../jsx-hoist.js';
 import { lower_server_module_for_types } from './server-module.js';
 import { get_hashbang } from '../../comment-utils.js';
+import { get_source_tokens } from '../../parse/source-tokens.js';
 import {
 	child_nodes,
 	has_location,
@@ -74,6 +75,7 @@ import {
 	node_children,
 	render_children,
 } from '../../utils/ast.js';
+import { is_reference } from '../../utils/is-reference.js';
 
 const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
 const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
@@ -540,6 +542,8 @@ export function createJsxTransform(platform) {
 	 * @returns {JsxTransformResult}
 	 */
 	function transform(ast, source, filename, options) {
+		/** @type {Map<number, boolean> | undefined} */
+		let hoistable_tags;
 		const effective_platform =
 			options?.runtimeImports === 'direct' && platform.directRuntimeImports
 				? {
@@ -562,12 +566,15 @@ export function createJsxTransform(platform) {
 			platform: effective_platform,
 			local_statement_component_index: 0,
 			needs_error_boundary: false,
+			needs_try_body: false,
+			try_site_index: 0,
 			needs_suspense: false,
 			needs_merge_refs: false,
 			needs_merge_spread_class: false,
 			needs_join_scope_class: false,
 			needs_normalize_spread_props: false,
 			needs_normalize_spread_props_for_ref_attr: false,
+			needs_spread_ref_bags: false,
 			needs_fragment: false,
 			needs_dynamic_element: false,
 			needs_dynamic_factory: false,
@@ -581,10 +588,12 @@ export function createJsxTransform(platform) {
 			needs_loading: false,
 			needs_define_vapor_component: false,
 			needs_vapor_for: false,
+			needs_vapor_computed: false,
 			stylesheets,
 			type_only_style_anchors,
 			helper_state: null,
 			available_bindings: new Map(),
+			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast)),
 			filename: filename ?? null,
 			source,
 			collect,
@@ -608,6 +617,8 @@ export function createJsxTransform(platform) {
 		// owns the dialect's real codegen (isolation validation, RPC stubs).
 		// Copy-on-write: a program without a server block passes through as the
 		// same object.
+		// The copy-on-write passes below hand back a new program object.
+		const source_ast = ast;
 		if (transform_context.typeOnly && platform.serverModule) {
 			ast = lower_server_module_for_types(ast, platform.serverModule);
 		}
@@ -803,6 +814,7 @@ export function createJsxTransform(platform) {
 			FunctionDeclaration: transform_function,
 			FunctionExpression: transform_function,
 			ArrowFunctionExpression: transform_function,
+			TSModuleBlock: visit_local_helper_scope,
 
 			JSXOpeningElement(node, { next }) {
 				const visited = /** @type {ESTreeJSX.TSRXJSXOpeningElement} */ (next() || node);
@@ -879,6 +891,9 @@ export function createJsxTransform(platform) {
 			{
 				sourceMapSource: filename,
 				sourceMapContent: source,
+				// The editor output maps the keywords and punctuation esrap writes
+				// to their source tokens; build prints stay sparse.
+				tokens: transform_context.typeOnly ? get_source_tokens(source_ast, source) : undefined,
 			},
 		);
 
@@ -1089,7 +1104,7 @@ function build_component_statements(body_nodes, transform_context) {
  * @returns {{ statements: AST.Statement[], has_render: boolean }}
  */
 function code_block_scope_statements(block, transform_context) {
-	const statements = [...(block.body || [])];
+	const statements = code_block_setup_statements(block);
 	const render = block.render ?? null;
 
 	if (render == null) {
@@ -1150,6 +1165,23 @@ function lower_code_block_stream_node(block, transform_context) {
 
 	const iife = b.call(b.arrow([], b.block(statements, block_loc)));
 	return [to_jsx_expression_container(iife, block)];
+}
+
+/**
+ * The setup statements of a `@{ … }` code block. A code block renders one node;
+ * in loose mode the parser reports a second output node and keeps the earlier
+ * one among the setup statements. A control-flow directive there would reach the
+ * printer unlowered, so it becomes an unused expression statement, which lowers
+ * like any directive in that slot and keeps the editor checking its body (#197).
+ * @param {AST.JSXCodeBlock} block
+ * @returns {AST.Statement[]}
+ */
+function code_block_setup_statements(block) {
+	return (block.body || []).map((statement) =>
+		is_jsx_control_flow_expression(statement)
+			? b.stmt(/** @type {AST.Expression} */ (wrap_in_native_tsrx_fragment(statement)))
+			: statement,
+	);
 }
 
 /**
@@ -1352,14 +1384,16 @@ function create_helper_name(helper_state, suffix) {
 
 /**
  * @param {string} base_name
+ * @param {boolean} [local] whether the component is inside another function
  * @returns {JsxHelperState}
  */
-function create_helper_state(base_name) {
+function create_helper_state(base_name, local = false) {
 	return {
 		base_name,
 		next_id: 0,
 		helpers: [],
 		statics: [],
+		local,
 	};
 }
 
@@ -1531,7 +1565,25 @@ function transform_function(node, context) {
 		});
 	}
 
-	return context.next() ?? node;
+	return visit_local_helper_scope(node, context);
+}
+
+/**
+ * Visits a plain function or a namespace body, where a component keeps its
+ * statics and helper components in place (see
+ * `transform_native_tsrx_function`). In a namespace body a name can read an
+ * export of any declaration of the namespace, which module level can't see.
+ *
+ * @param {AST.Node} node
+ * @param {JsxVisitorContext} context
+ * @returns {AST.Node}
+ */
+function visit_local_helper_scope(node, context) {
+	const saved = context.state.in_local_helper_scope;
+	context.state.in_local_helper_scope = true;
+	const result = context.next();
+	context.state.in_local_helper_scope = saved;
+	return result ?? node;
 }
 
 /**
@@ -1546,7 +1598,7 @@ function lower_jsx_code_block_function_body(node) {
 	if (node.body?.type !== 'JSXCodeBlock') return node;
 
 	const code_block = node.body;
-	const statements = [...code_block.body];
+	const statements = code_block_setup_statements(code_block);
 	if (code_block.render != null) {
 		let render = code_block.render;
 		if (!is_native_tsrx_node(render)) {
@@ -1580,8 +1632,14 @@ function lower_jsx_code_block_function_body(node) {
  * @returns {AST.Node}
  */
 function transform_native_tsrx_function(node, { next, state }, { nativeBody = false } = {}) {
+	// Statics and helper components reach module level through the top-level
+	// statement that holds the component, and `expand_component_helpers` finds
+	// them only through nodes that are not functions. A component inside
+	// another function or a namespace gets a local helper state, which keeps
+	// them in place.
 	const helper_state =
-		state.helper_state || create_helper_state(get_function_helper_base_name(node));
+		state.helper_state ||
+		create_helper_state(get_function_helper_base_name(node), !!state.in_local_helper_scope);
 	const saved_helper_state = state.helper_state;
 	const saved_bindings = state.available_bindings;
 
@@ -2460,7 +2518,7 @@ function references_scope_bindings(node, scope_bindings, referenced_bindings) {
  * @param {TransformContext} transform_context
  */
 function hoist_static_render_nodes(render_nodes, transform_context) {
-	if (!transform_context.helper_state) return;
+	if (!transform_context.helper_state || transform_context.helper_state.local) return;
 
 	for (let i = 0; i < render_nodes.length; i++) {
 		const node = render_nodes[i];
@@ -2482,14 +2540,308 @@ function hoist_static_render_nodes(render_nodes, transform_context) {
 			continue;
 		}
 		if (references_scope_bindings(node, transform_context.available_bindings)) continue;
+		if (reads_unhoistable_tag(node, transform_context.hoistable_tags())) continue;
 
 		const name = create_helper_name(transform_context.helper_state, 'static');
 		const id = create_generated_identifier(name);
 
-		transform_context.helper_state.statics.push(b.const(id, node));
+		transform_context.helper_state.statics.push(
+			b.const(id, lower_static_script_bodies(node, transform_context)),
+		);
 
 		render_nodes[i] = to_jsx_expression_container(clone_identifier(id), node);
 	}
+}
+
+/**
+ * Whether each tag in `program` can be read where a static hoisted out of it
+ * runs, keyed by the start of the identifier the tag starts with. A static
+ * runs at module level, before the top-level statement it came from. A tag
+ * can be read there when that identifier resolves to an import, a function
+ * declaration, or a `const` or class declared in an earlier statement. A
+ * member tag (`<Menu.Item>`) also reads a property, which the module can still
+ * assign after it loads (`Menu.Item = …`), so only one that starts with an
+ * import is hoisted. A tag that starts with `this`, `super`, a local binding,
+ * a binding that can be reassigned (`let`, `var`, an enum, a namespace, an
+ * import alias), or a name the module does not bind stays at render time.
+ *
+ * @param {AST.Program} program
+ * @returns {Map<number, boolean>}
+ */
+function collect_hoistable_tags(program) {
+	/** @type {Map<string, { kind: string, end: number }>} */
+	const module_bindings = new Map();
+	/**
+	 * @param {string} name
+	 * @param {string} kind
+	 * @param {number} end
+	 */
+	const declare = (name, kind, end) => {
+		const existing = module_bindings.get(name);
+		module_bindings.set(
+			name,
+			!existing ? { kind, end } : existing.kind === kind ? existing : { kind: 'mutable', end },
+		);
+	};
+	for (const statement of program.body) {
+		for (const [name, kind] of statement_bindings(statement)) {
+			declare(name, kind, statement.end ?? Infinity);
+		}
+	}
+	// A `var` in a block outside any function is module-level too
+	for (const name of var_names(program)) declare(name, 'mutable', Infinity);
+
+	/** @type {Map<number, boolean>} */
+	const hoistable = new Map();
+	/** @type {Set<string>[]} */
+	const scopes = [];
+	/**
+	 * @param {string} name
+	 * @param {boolean} member
+	 * @param {number} position
+	 * @returns {boolean}
+	 */
+	const is_hoistable = (name, member, position) => {
+		if (name === 'this' || name === 'super') return false;
+		if (scopes.some((names) => names.has(name))) return false;
+		const binding = module_bindings.get(name);
+		switch (binding?.kind) {
+			case 'import':
+				return true;
+			case 'function':
+				return !member;
+			case 'class':
+			case 'const':
+				return !member && binding.end <= position;
+			default:
+				return false;
+		}
+	};
+	/** @param {AST.Node} node */
+	const visit = (node) => {
+		const names = node === program ? null : scope_names(node);
+		if (names) scopes.push(names);
+		if (node.type === 'JSXOpeningElement' && !is_intrinsic_tag(node.name)) {
+			const root = jsx_tag_root(node.name);
+			if (root && typeof root.start === 'number') {
+				hoistable.set(
+					root.start,
+					is_hoistable(root.name, node.name.type === 'JSXMemberExpression', root.start),
+				);
+			}
+		}
+		for (const child of child_nodes(node)) visit(child);
+		if (names) scopes.pop();
+	};
+	visit(program);
+	return hoistable;
+}
+
+/**
+ * Whether a tag is intrinsic (`<div>`, `<my-element>`, `<svg:rect>`): a string
+ * that reads no binding.
+ *
+ * @param {ESTreeJSX.TSRXJSXOpeningElement['name']} name
+ * @returns {boolean}
+ */
+function is_intrinsic_tag(name) {
+	if (name.type === 'JSXNamespacedName') return true;
+	return (
+		name.type === 'JSXIdentifier' &&
+		name.name !== 'this' &&
+		name.name !== 'super' &&
+		(/^[a-z]/.test(name.name) || name.name.includes('-'))
+	);
+}
+
+/**
+ * The identifier a tag that reads a binding starts with: the tag itself, or
+ * the object a member tag starts with. `null` for any other tag.
+ *
+ * @param {ESTreeJSX.TSRXJSXOpeningElement['name']} name
+ * @returns {ESTreeJSX.JSXIdentifier | null}
+ */
+function jsx_tag_root(name) {
+	/** @type {any} */
+	let root = name;
+	while (root.type === 'JSXMemberExpression') root = root.object;
+	return root.type === 'JSXIdentifier' ? root : null;
+}
+
+/**
+ * The value bindings a statement in a statement list declares, with their
+ * kind: `import`, `function`, `class`, `const`, or `mutable`. Type-only and
+ * ambient declarations bind no value.
+ *
+ * @param {AST.Node} statement
+ * @returns {Array<[string, string]>}
+ */
+function statement_bindings(statement) {
+	// Typed loosely: the TypeScript declarations are not in the estree types
+	/** @type {any} */
+	const node =
+		statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration'
+			? statement.declaration
+			: statement;
+	if (!node || node.declare) return [];
+	switch (node.type) {
+		case 'ImportDeclaration':
+			if (node.importKind === 'type') return [];
+			return node.specifiers.flatMap((/** @type {any} */ specifier) =>
+				specifier.importKind === 'type' ? [] : [[specifier.local.name, 'import']],
+			);
+		case 'VariableDeclaration': {
+			/** @type {Map<string, AST.Identifier>} */
+			const bindings = new Map();
+			collect_statement_bindings(node, bindings);
+			const kind = node.kind === 'let' || node.kind === 'var' ? 'mutable' : 'const';
+			return [...bindings.keys()].map((name) => [name, kind]);
+		}
+		case 'FunctionDeclaration':
+			return node.id ? [[node.id.name, 'function']] : [];
+		case 'ClassDeclaration':
+			return node.id ? [[node.id.name, 'class']] : [];
+		case 'TSEnumDeclaration':
+		case 'TSModuleDeclaration':
+		case 'TSImportEqualsDeclaration':
+			return node.id?.type === 'Identifier' ? [[node.id.name, 'mutable']] : [];
+		default:
+			return [];
+	}
+}
+
+/**
+ * The names `node` binds for the code inside it, or `null` when it binds none:
+ * a function's parameters, name, and `var`s, a class's name, a catch clause's
+ * parameters, a `@for` index, the declarations of a loop head, the
+ * declarations in any statement list it holds, and those of every case of a
+ * `switch`, which share one scope.
+ *
+ * @param {AST.Node} node
+ * @returns {Set<string> | null}
+ */
+function scope_names(node) {
+	/** @type {Map<string, AST.Identifier>} */
+	const bindings = new Map();
+	/** @type {string[]} */
+	const names = [];
+	/** @type {any} */
+	const loose = node;
+	if (is_function_node(node)) {
+		for (const param of node.params) collect_pattern_bindings(param, bindings);
+		if (node.type === 'FunctionExpression' && node.id) names.push(node.id.name);
+		if (node.body) names.push(...var_names(node.body));
+	}
+	if ((node.type === 'ClassDeclaration' || node.type === 'ClassExpression') && node.id) {
+		names.push(node.id.name);
+	}
+	if (loose.type === 'StaticBlock' || loose.type === 'TSModuleBlock')
+		names.push(...var_names(node));
+	if (node.type === 'CatchClause') {
+		collect_pattern_bindings(node.param, bindings);
+		collect_pattern_bindings(loose.resetParam, bindings);
+	}
+	if (loose.type === 'JSXForExpression') collect_pattern_bindings(loose.index, bindings);
+	if (node.type === 'SwitchStatement') {
+		for (const switch_case of node.cases) {
+			for (const statement of switch_case.consequent) {
+				names.push(...statement_bindings(statement).map(([name]) => name));
+			}
+		}
+	}
+	for (const key of Object.keys(node)) {
+		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
+		const value = loose[key];
+		if (Array.isArray(value)) {
+			for (const item of value) {
+				if (is_ast_node(item)) names.push(...statement_bindings(item).map(([name]) => name));
+			}
+		} else if (is_ast_node(value) && value.type === 'VariableDeclaration') {
+			collect_statement_bindings(value, bindings);
+		}
+	}
+	return bindings.size > 0 || names.length > 0 ? new Set([...bindings.keys(), ...names]) : null;
+}
+
+/**
+ * The names `var` declarations bind in `node`, outside any function in it.
+ *
+ * @param {AST.Node} node
+ * @returns {string[]}
+ */
+function var_names(node) {
+	/** @type {Map<string, AST.Identifier>} */
+	const bindings = new Map();
+	/** @param {AST.Node} current */
+	const visit = (current) => {
+		if (current.type === 'VariableDeclaration' && current.kind === 'var') {
+			collect_statement_bindings(current, bindings);
+		}
+		for (const child of child_nodes(current)) {
+			if (!is_function_node(child)) visit(child);
+		}
+	};
+	visit(node);
+	return [...bindings.keys()];
+}
+
+/**
+ * Whether a static would read a tag that `collect_hoistable_tags` found can't
+ * be read where the static runs, or one it has no record of.
+ *
+ * @param {AST.Node} node
+ * @param {Map<number, boolean>} hoistable_tags
+ * @returns {boolean}
+ */
+function reads_unhoistable_tag(node, hoistable_tags) {
+	if (node.type === 'JSXOpeningElement' && !is_intrinsic_tag(node.name)) {
+		const root = jsx_tag_root(node.name);
+		if (!root || typeof root.start !== 'number' || hoistable_tags.get(root.start) !== true) {
+			return true;
+		}
+	}
+	return child_nodes(node).some((child) => reads_unhoistable_tag(child, hoistable_tags));
+}
+
+/**
+ * A static with its raw `<script>` bodies lowered. The walk lowers the
+ * elements an expression container or attribute value holds in the render
+ * output it returns, which a static has already left.
+ *
+ * @template {AST.Node} T
+ * @param {T} node
+ * @param {TransformContext} transform_context
+ * @returns {T}
+ */
+function lower_static_script_bodies(node, transform_context) {
+	if (is_raw_script_element(node)) {
+		const hook = transform_context.platform.hooks?.transformElement;
+		return /** @type {T} */ (
+			hook ? hook(node, transform_context, []) : to_jsx_element(node, transform_context)
+		);
+	}
+
+	/** @type {AST.TraversableAstNode} */
+	let out = /** @type {AST.TraversableAstNode} */ (node);
+	for (const key of Object.keys(node)) {
+		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
+		const value = /** @type {AST.TraversableAstNode} */ (node)[key];
+		/** @type {unknown} */
+		let next = value;
+		if (Array.isArray(value)) {
+			const lowered = value.map((child) =>
+				is_ast_node(child) ? lower_static_script_bodies(child, transform_context) : child,
+			);
+			if (lowered.some((child, index) => child !== value[index])) next = lowered;
+		} else if (is_ast_node(value)) {
+			next = lower_static_script_bodies(value, transform_context);
+		}
+		if (next !== value) {
+			if (out === node) out = { ...out };
+			out[key] = next;
+		}
+	}
+	return /** @type {T} */ (out);
 }
 
 /**
@@ -2606,14 +2958,17 @@ function lower_remaining_jsx_code_blocks(node, transform_context, seen = new Set
  * such closure the missing kind and suspends where it is called, so the value
  * still settles in the enclosing function, in source order:
  *
- * - an IIFE holding an `await` becomes `await (async () => { … })()`;
+ * - an IIFE holding an `await` (or an `await using` declaration) becomes
+ *   `await (async () => { … })()`;
  * - an IIFE holding a `yield` becomes a generator the call delegates to,
- *   `yield* (function* () { … })()`, which is also `async` when it awaits.
- *   An arrow shares `this` and `arguments` with the enclosing function and a
- *   generator does not, so the runtime call passes whichever the body reads
- *   (`.call(this)` or `.apply(this, arguments)`). The type-only print keeps
- *   the plain call, the form TypeScript types the delegated `yield` results
- *   from;
+ *   `yield* (function* () { … })()`, which is also `async` when it awaits or
+ *   runs in an async generator, where the authored `yield*` may delegate to
+ *   an async iterable. An arrow shares `this` and `arguments` with the
+ *   enclosing function and a generator does not, so the runtime call passes
+ *   whichever the body reads (`.call(this)`, or `.call(this, arguments)` with
+ *   the body reading its `arguments` from a parameter). The type-only print
+ *   keeps the plain call, the form TypeScript types the delegated `yield`
+ *   results from;
  * - a `map_iterable` call given an async callback becomes
  *   `await map_iterable_async(…)`, which settles one item before the next,
  *   like a `for...of` loop with an `await` in its body.
@@ -2658,6 +3013,10 @@ function suspend_generated_closures(program, transform_context) {
 	const made_generator = new Map();
 	let sync_iterable_calls = 0;
 	let async_iterable_calls = 0;
+	/** @type {string | undefined} */
+	let arguments_name;
+	/** A name for the enclosing `arguments` that no identifier in the module uses. */
+	const get_arguments_name = () => (arguments_name ??= unused_name('__arguments', program));
 
 	/**
 	 * Returns the node with its generated closures made async or generators,
@@ -2669,15 +3028,19 @@ function suspend_generated_closures(program, transform_context) {
 	 *   it becomes an async closure
 	 * @param {boolean} delegable whether the parent delegates to this node's
 	 *   call when it becomes a generator
+	 * @param {boolean} in_async_generator whether the code runs in an async
+	 *   generator, so a closure made a generator there is async as well
 	 * @returns {SuspendResult}
 	 */
-	const visit = (node, awaitable, delegable) => {
+	const visit = (node, awaitable, delegable, in_async_generator) => {
 		const cached = results.get(node);
 		if (cached) return cached;
 
 		/** @type {AST.Node | null} */
 		let first_await =
-			node.type === 'AwaitExpression' || (node.type === 'ForOfStatement' && node.await)
+			node.type === 'AwaitExpression' ||
+			(node.type === 'ForOfStatement' && node.await) ||
+			(node.type === 'VariableDeclaration' && node.kind === 'await using')
 				? node
 				: null;
 		/** @type {AST.Node | null} */
@@ -2689,6 +3052,10 @@ function suspend_generated_closures(program, transform_context) {
 			node.callee.name === MAP_ITERABLE_INTERNAL_NAME;
 		/** @type {AST.TraversableAstNode} */
 		let out = /** @type {AST.TraversableAstNode} */ (node);
+		// A generated closure is not a generator yet: if it becomes one, it runs
+		// where the enclosing function does.
+		const child_in_async_generator =
+			is_function_node(node) && node.generator ? !!node.async : in_async_generator;
 
 		for (const key of Object.keys(node)) {
 			if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
@@ -2702,7 +3069,7 @@ function suspend_generated_closures(program, transform_context) {
 			 * @returns {AST.Node}
 			 */
 			const visit_child = (child) => {
-				const result = visit(child, child_awaitable, is_callee);
+				const result = visit(child, child_awaitable, is_callee, child_in_async_generator);
 				first_await ??= result.first_await;
 				first_yield ??= result.first_yield;
 				return result.node;
@@ -2745,7 +3112,7 @@ function suspend_generated_closures(program, transform_context) {
 			}
 			if (make_generator) {
 				if (delegable) {
-					fn = to_generator_function(fn);
+					fn = to_generator_function(fn, in_async_generator);
 				} else {
 					error(
 						TSRX_ERRORS.TARGET_YIELD_UNSUPPORTED(transform_context.platform.name),
@@ -2772,7 +3139,10 @@ function suspend_generated_closures(program, transform_context) {
 				// `yield*` also settles a delegated async generator, so a closure
 				// made both async and a generator is not awaited as well.
 				result = {
-					node: b.yield(delegate_to_generated_generator(call, transform_context), true),
+					node: b.yield(
+						delegate_to_generated_generator(call, transform_context, get_arguments_name),
+						true,
+					),
 					first_await: made_async.get(call.callee) ?? first_await,
 					first_yield: made_generator.get(call.callee) ?? first_yield,
 				};
@@ -2804,7 +3174,7 @@ function suspend_generated_closures(program, transform_context) {
 		return result;
 	};
 
-	const lowered = /** @type {T} */ (visit(program, false, false).node);
+	const lowered = /** @type {T} */ (visit(program, false, false, false).node);
 	if (async_iterable_calls > 0) {
 		transform_context.needs_for_of_iterable = sync_iterable_calls > 0;
 		transform_context.needs_for_of_iterable_async = true;
@@ -2817,13 +3187,17 @@ function suspend_generated_closures(program, transform_context) {
  * body becomes a `return`, since a generator has no concise form.
  *
  * @param {AST.Function} fn
+ * @param {boolean} make_async whether it runs in an async generator, where an
+ *   authored `yield*` may delegate to an async iterable, which only an async
+ *   generator can
  * @returns {AST.FunctionExpression}
  */
-function to_generator_function(fn) {
+function to_generator_function(fn, make_async) {
 	return /** @type {AST.FunctionExpression} */ ({
 		...fn,
 		type: 'FunctionExpression',
 		id: fn.type === 'ArrowFunctionExpression' ? null : fn.id,
+		async: fn.async || make_async,
 		generator: true,
 		body: fn.body.type === 'BlockStatement' ? fn.body : b.block([b.return(fn.body)]),
 	});
@@ -2832,14 +3206,17 @@ function to_generator_function(fn) {
 /**
  * The call a `yield*` delegates to for an IIFE made a generator. The arrow it
  * replaces read `this` and `arguments` from the enclosing function, so the
- * runtime call passes on whichever the body reads. `super` has no such
- * hand-off: a function expression cannot reference it, so it is reported.
+ * runtime call passes on whichever the body reads. The enclosing `arguments`
+ * object itself is passed, as a parameter the body reads instead, so a write
+ * to it reaches the enclosing function. `super` has no such hand-off: a
+ * function expression cannot reference it, so it is reported.
  *
  * @param {AST.CallExpression} call
  * @param {TransformContext} transform_context
+ * @param {() => string} get_arguments_name the name of that parameter
  * @returns {AST.CallExpression}
  */
-function delegate_to_generated_generator(call, transform_context) {
+function delegate_to_generated_generator(call, transform_context, get_arguments_name) {
 	const generator = /** @type {AST.FunctionExpression} */ (call.callee);
 	/** @type {{ this: boolean, arguments: boolean, super: AST.Node | null }} */
 	const found = { this: false, arguments: false, super: null };
@@ -2860,7 +3237,15 @@ function delegate_to_generated_generator(call, transform_context) {
 	// TypeScript types the delegated `yield` results only for a direct call.
 	if (transform_context.typeOnly) return call;
 	if (found.arguments) {
-		return b.call(b.member(generator, 'apply'), b.this, b.id('arguments'));
+		const name = get_arguments_name();
+		const receives_arguments = {
+			...generator,
+			params: [b.id(name)],
+			body: /** @type {AST.BlockStatement} */ (
+				rename_function_context_arguments(generator.body, name)
+			),
+		};
+		return b.call(b.member(receives_arguments, 'call'), b.this, b.id('arguments'));
 	}
 	if (found.this) {
 		return b.call(b.member(generator, 'call'), b.this, ...call.arguments);
@@ -2879,9 +3264,16 @@ function delegate_to_generated_generator(call, transform_context) {
  * @returns {void}
  */
 function find_function_context_references(node, found) {
-	if (node.type === 'ThisExpression') {
+	// A JSX tag can read `this` too: `<this.Widget />`
+	if (node.type === 'ThisExpression' || (node.type === 'JSXIdentifier' && node.name === 'this')) {
 		found.this = true;
-	} else if (node.type === 'Identifier' && node.name === 'arguments') {
+	} else if (
+		(node.type === 'Identifier' && node.name === 'arguments') ||
+		// and `arguments`, as the object of a member tag: `<arguments.Widget />`
+		(node.type === 'JSXMemberExpression' &&
+			node.object.type === 'JSXIdentifier' &&
+			node.object.name === 'arguments')
+	) {
 		found.arguments = true;
 	} else if (node.type === 'Super') {
 		found.super ??= node;
@@ -2896,6 +3288,88 @@ function find_function_context_references(node, found) {
 	for (const child of child_nodes(node, node.type === 'PropertyDefinition' ? 'value' : undefined)) {
 		find_function_context_references(child, found);
 	}
+}
+
+/**
+ * `node` with each `arguments` it reads from the function a generated closure
+ * sits in renamed to the parameter the closure receives that object as. The
+ * same functions bind their own `arguments` as in
+ * `find_function_context_references`.
+ *
+ * @param {AST.Node} node
+ * @param {string} name the parameter's name
+ * @param {AST.Node | null} [parent]
+ * @returns {AST.Node}
+ */
+function rename_function_context_arguments(node, name, parent = null) {
+	if (node.type === 'Identifier') {
+		return node.name === 'arguments' && is_reference(node, parent) ? { ...node, name } : node;
+	}
+	if (
+		node.type === 'JSXMemberExpression' &&
+		node.object.type === 'JSXIdentifier' &&
+		node.object.name === 'arguments'
+	) {
+		return { ...node, object: { ...node.object, name } };
+	}
+	if (
+		node.type === 'FunctionExpression' ||
+		node.type === 'FunctionDeclaration' ||
+		node.type === 'StaticBlock'
+	) {
+		return node;
+	}
+
+	/** @type {AST.TraversableAstNode} */
+	let out = /** @type {AST.TraversableAstNode} */ (node);
+	for (const key of Object.keys(node)) {
+		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
+		if (key === 'value' && node.type === 'PropertyDefinition') continue;
+		// Names, not references: a key that is not computed (a shorthand
+		// property's key can be its value node too), and an enum member's name
+		if (key === 'key' && !(/** @type {any} */ (node).computed)) continue;
+		if (key === 'id' && /** @type {string} */ (node.type) === 'TSEnumMember') continue;
+		const value = /** @type {AST.TraversableAstNode} */ (node)[key];
+		/** @type {unknown} */
+		let next = value;
+		if (Array.isArray(value)) {
+			const renamed = value.map((child) =>
+				is_ast_node(child) ? rename_function_context_arguments(child, name, node) : child,
+			);
+			if (renamed.some((child, index) => child !== value[index])) next = renamed;
+		} else if (is_ast_node(value)) {
+			next = rename_function_context_arguments(value, name, node);
+		}
+		if (next !== value) {
+			if (out === node) out = { ...out };
+			out[key] = next;
+		}
+	}
+	// `{ arguments }` keeps its key and reads the parameter
+	if (out !== node && node.type === 'Property') out.shorthand = false;
+	return /** @type {AST.Node} */ (out);
+}
+
+/**
+ * `base`, or `base` with the first number after it that makes it a name no
+ * identifier in `program` uses, so a declaration of it shadows nothing.
+ *
+ * @param {string} base
+ * @param {AST.Node} program
+ * @returns {string}
+ */
+function unused_name(base, program) {
+	/** @type {Set<string>} */
+	const names = new Set();
+	/** @param {AST.Node} node */
+	const collect = (node) => {
+		if (node.type === 'Identifier' || node.type === 'JSXIdentifier') names.add(node.name);
+		for (const child of child_nodes(node)) collect(child);
+	};
+	collect(program);
+	let name = base;
+	for (let index = 1; names.has(name); index++) name = `${base}${index}`;
+	return name;
 }
 
 /**
@@ -3408,7 +3882,11 @@ export function create_hook_safe_helper(body_nodes, source_node, transform_conte
 	const helper_id = create_generated_identifier(
 		create_local_statement_component_name(transform_context),
 	);
-	const helper_state = transform_context.helper_state;
+	// A local helper state can't reach module level, so the helper is declared
+	// in place, as outside a component
+	const helper_state = transform_context.helper_state?.local
+		? null
+		: transform_context.helper_state;
 	const component_id = helper_state
 		? create_module_scoped_hook_component_id(helper_id, transform_context)
 		: helper_id;
@@ -4405,6 +4883,14 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		(body_key_expression ? create_loop_key(body_key_expression, transform_context) : null);
 	if (loop_key) {
 		body_statements = apply_key_to_render_statements(body_statements, loop_key, transform_context);
+	} else {
+		// Rows without a key are matched by position, and a `@try` site key would
+		// repeat in every row.
+		body_statements = apply_key_to_render_statements(
+			body_statements,
+			{ expression: null, mapped: true, branches: !transform_context.platform.hooks?.renderForOf },
+			transform_context,
+		);
 	}
 
 	// Restore bindings
@@ -4485,7 +4971,10 @@ function for_of_statement_to_jsx_child(node, transform_context) {
  * only expects a key on the body's top-level output, including when it falls
  * back to the default lowering.
  *
- * @typedef {{ expression: AST.Expression, mapped: boolean, branches: boolean }} LoopKey
+ * `expression` is null for a loop without a key, whose rows only lose their
+ * `@try` site keys (see `apply_key_to_jsx_element`).
+ *
+ * @typedef {{ expression: AST.Expression | null, mapped: boolean, branches: boolean }} LoopKey
  */
 
 /**
@@ -4506,7 +4995,10 @@ function create_loop_key(expression, transform_context) {
  * @returns {ESTreeJSX.JSXAttribute}
  */
 function create_loop_key_attribute(loop_key) {
-	const expression = clone_ast_node(loop_key.expression, !loop_key.mapped);
+	const expression = clone_ast_node(
+		/** @type {AST.Expression} */ (loop_key.expression),
+		!loop_key.mapped,
+	);
 	loop_key.mapped = true;
 	return b.jsx_attribute(b.jsx_id('key'), to_jsx_expression_container(expression));
 }
@@ -4666,6 +5158,7 @@ function apply_key_to_rendered_value(expression, loop_key, transform_context) {
 		case 'JSXElement':
 			return apply_key_to_jsx_element(expression, loop_key);
 		case 'JSXFragment':
+			if (!loop_key.expression) return expression;
 			transform_context.needs_fragment = true;
 			return keyed_fragment_to_jsx_element(expression, loop_key);
 		case 'ConditionalExpression': {
@@ -4787,7 +5280,24 @@ function apply_key_to_returned_value(statement, loop_key, transform_context) {
  */
 function apply_key_to_jsx_element(element, loop_key) {
 	const attributes = element.openingElement?.attributes || [];
-	if (attributes.some(is_key_attribute)) return element;
+	const site_key = attributes.find(
+		/** @returns {attr is ESTreeJSX.JSXAttribute} */
+		(attr) => attr.type === 'JSXAttribute' && try_site_keys.has(attr),
+	);
+	if (site_key) {
+		return {
+			...element,
+			openingElement: {
+				...element.openingElement,
+				attributes: loop_key.expression
+					? attributes.map((attr) =>
+							attr === site_key ? create_try_site_loop_key_attribute(site_key, loop_key) : attr,
+						)
+					: attributes.filter((attr) => attr !== site_key),
+			},
+		};
+	}
+	if (!loop_key.expression || attributes.some(is_key_attribute)) return element;
 
 	return {
 		...element,
@@ -4796,6 +5306,26 @@ function apply_key_to_jsx_element(element, loop_key) {
 			attributes: [...attributes, create_loop_key_attribute(loop_key)],
 		},
 	};
+}
+
+/**
+ * `key={'try1:' + loopKey}`: the loop key keeps rows apart and the site name
+ * keeps each row's `@try` sites apart.
+ *
+ * @param {ESTreeJSX.JSXAttribute} site_key
+ * @param {LoopKey} loop_key
+ * @returns {ESTreeJSX.JSXAttribute}
+ */
+function create_try_site_loop_key_attribute(site_key, loop_key) {
+	const loop_key_attribute = create_loop_key_attribute(loop_key);
+	const site = /** @type {AST.Literal} */ (site_key.value).value;
+	const loop_expression = /** @type {AST.Expression} */ (
+		/** @type {ESTreeJSX.JSXExpressionContainer} */ (loop_key_attribute.value).expression
+	);
+	return b.jsx_attribute(
+		b.jsx_id('key'),
+		to_jsx_expression_container(b.binary('+', b.literal(`${site}:`), loop_expression)),
+	);
 }
 
 /**
@@ -4894,7 +5424,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 
 	// Build the try body content as JSX children
 	const try_body_nodes = node.block.body || [];
-	const try_content = statement_body_to_jsx_child(try_body_nodes, transform_context);
+	const try_content = try_body_to_jsx_child(try_body_nodes, transform_context);
 
 	/** @type {ESTreeJSX.JSXRenderNode} */
 	let result = try_content;
@@ -4903,10 +5433,16 @@ function try_statement_to_jsx_child(node, transform_context) {
 	if (pending) {
 		transform_context.needs_suspense = true;
 		const pending_body_nodes = pending.body || [];
-		const fallback_content =
+		const fallback_body =
 			pending_body_nodes.length === 0
-				? to_jsx_expression_container(create_null_literal())
-				: statement_body_to_jsx_child(pending_body_nodes, transform_context);
+				? create_null_literal()
+				: transform_context.platform.jsx.pendingFallback === 'try-body'
+					? try_body_to_jsx_child(pending_body_nodes, transform_context)
+					: statement_body_to_jsx_child(pending_body_nodes, transform_context);
+		const fallback_content =
+			fallback_body.type === 'JSXExpressionContainer'
+				? fallback_body
+				: to_jsx_expression_container(/** @type {AST.Expression} */ (fallback_body));
 
 		const custom_pending = transform_context.platform.hooks?.createPendingBoundary?.(
 			result,
@@ -5005,15 +5541,6 @@ function try_statement_to_jsx_child(node, transform_context) {
 
 		if (custom_boundary) {
 			result = custom_boundary;
-		} else if (boundary_content && transform_context.inside_element_child) {
-			result = to_jsx_expression_container(
-				b.call(
-					'TsrxErrorBoundary',
-					b.object([b.init('fallback', fallback_fn), b.init('content', boundary_content)]),
-				),
-			);
-
-			return result;
 		} else {
 			const fallback_name = stamp_directive_origin(
 				b.jsx_id('fallback'),
@@ -5043,12 +5570,90 @@ function try_statement_to_jsx_child(node, transform_context) {
 	// result is a JSXElement, but we need to return a JSXExpressionContainer
 	// for embedding in the parent component's render return
 	if (result.type === 'JSXElement') {
+		if (transform_context.platform.imports.tryBody && !transform_context.typeOnly) {
+			key_try_site(result, transform_context);
+		}
 		return to_jsx_expression_container(result);
 	}
 
 	return result.type === 'JSXExpressionContainer'
 		? result
 		: to_jsx_expression_container(/** @type {AST.Expression} */ (result));
+}
+
+/**
+ * A `@try` body as the boundary's child, or a `@pending` body as the
+ * `Suspense` fallback. See `imports.tryBody` and `jsx.pendingFallback`.
+ *
+ * @param {AST.Node[]} body_nodes
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXRenderNode}
+ */
+function try_body_to_jsx_child(body_nodes, transform_context) {
+	if (
+		!transform_context.platform.imports.tryBody ||
+		transform_context.typeOnly ||
+		body_nodes.some(suspends_enclosing_function)
+	) {
+		return statement_body_to_jsx_child(body_nodes, transform_context);
+	}
+
+	transform_context.needs_try_body = true;
+	const render_fn = b.arrow(
+		[],
+		b.block(build_render_statements(body_nodes, true, transform_context)),
+	);
+	return create_jsx_element(
+		'TsrxTryBody',
+		[b.jsx_attribute(b.jsx_id('render'), to_jsx_expression_container(render_fn))],
+		[],
+	);
+}
+
+/**
+ * Key attributes `key_try_site` added, which a loop key extends.
+ *
+ * @type {WeakSet<ESTreeJSX.JSXAttribute>}
+ */
+const try_site_keys = new WeakSet();
+
+/**
+ * Keys the outermost element a `@try` produced with a name for its site.
+ * Every `@try` lowers to the same component types, so without it React would
+ * reuse one site's boundary state and body hooks for another `@try` rendered
+ * in the same slot, such as the other arm of an `@if`. A loop key placed on
+ * the element later is combined with it (see `apply_key_to_jsx_element`).
+ *
+ * @param {AST.TSRXJSXElement} element
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function key_try_site(element, transform_context) {
+	transform_context.try_site_index += 1;
+	const key = b.jsx_attribute(b.jsx_id('key'), b.literal(`try${transform_context.try_site_index}`));
+	try_site_keys.add(key);
+	element.openingElement.attributes.push(key);
+}
+
+/**
+ * Whether `node` holds an `await` or `yield` that belongs to the function
+ * enclosing it.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function suspends_enclosing_function(node) {
+	if (is_function_node(node)) return false;
+	if (
+		node.type === 'AwaitExpression' ||
+		node.type === 'YieldExpression' ||
+		(node.type === 'ForOfStatement' && node.await) ||
+		(node.type === 'VariableDeclaration' && node.kind === 'await using') ||
+		(node.type === 'JSXForExpression' && node.statementType === 'ForOfStatement' && node.await)
+	) {
+		return true;
+	}
+	return child_nodes(node).some(suspends_enclosing_function);
 }
 
 /**
@@ -5083,11 +5688,18 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	/** @type {AST.ImportDeclaration[]} */
 	const imports = [];
 
-	if (transform_context.needs_fragment && platform.imports.fragment) {
+	if (
+		transform_context.needs_fragment &&
+		platform.imports.fragment &&
+		!has_named_value_import(program, platform.imports.fragment, 'Fragment')
+	) {
 		imports.push(b.imports([['Fragment', 'Fragment']], platform.imports.fragment));
 	}
 
-	if (transform_context.needs_suspense) {
+	if (
+		transform_context.needs_suspense &&
+		!has_named_value_import(program, suspense_source, 'Suspense')
+	) {
 		imports.push(b.imports([['Suspense', 'Suspense']], suspense_source));
 	}
 
@@ -5111,6 +5723,10 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 		);
 	}
 
+	if (transform_context.needs_try_body && platform.imports.tryBody) {
+		imports.push(b.imports([['TsrxTryBody', 'TsrxTryBody']], platform.imports.tryBody));
+	}
+
 	const merge_refs_source =
 		transform_context.needs_merge_refs && platform.imports.mergeRefs
 			? platform.imports.mergeRefs
@@ -5123,6 +5739,11 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 		transform_context.needs_normalize_spread_props_for_ref_attr && platform.imports.refProp
 			? platform.imports.refProp
 			: null;
+
+	// A JSX runtime that evaluates attributes left to right copies a spread once,
+	// so it gets the normalizers that return their copy: handing back the
+	// original bag would make the copy read its getters a second time.
+	const copies_spread = transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place';
 
 	/** @type {Map<string, AST.ImportSpecifier[]>} */
 	const ref_imports = new Map();
@@ -5155,7 +5776,10 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 		add_ref_import_specifier(
 			ref_imports,
 			normalize_spread_props_source,
-			b.import_specifier('normalize_spread_props', NORMALIZE_SPREAD_PROPS_INTERNAL_NAME),
+			b.import_specifier(
+				copies_spread ? 'copy_spread_props' : 'normalize_spread_props',
+				NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
+			),
 		);
 	}
 
@@ -5164,9 +5788,17 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			normalize_spread_props_for_ref_attr_source,
 			b.import_specifier(
-				'normalize_spread_props_for_ref_attr',
+				copies_spread ? 'copy_spread_props_for_ref_attr' : 'normalize_spread_props_for_ref_attr',
 				NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 			),
+		);
+	}
+
+	if (transform_context.needs_spread_ref_bags && platform.imports.refProp) {
+		add_ref_import_specifier(
+			ref_imports,
+			platform.imports.refProp,
+			b.import_specifier('spread_ref_bags', SPREAD_REF_BAGS_INTERNAL_NAME),
 		);
 	}
 
@@ -5177,6 +5809,33 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	if (imports.length > 0) {
 		program.body.unshift(...imports);
 	}
+}
+
+/**
+ * Whether the module already imports the value `name` from `source` under the
+ * same local name, which the generated JSX can use as is. Injecting it again
+ * would declare the binding twice.
+ *
+ * @param {AST.Program} program
+ * @param {string} source
+ * @param {string} name
+ * @returns {boolean}
+ */
+function has_named_value_import(program, source, name) {
+	return program.body.some(
+		(statement) =>
+			statement.type === 'ImportDeclaration' &&
+			statement.source.value === source &&
+			statement.importKind !== 'type' &&
+			statement.specifiers.some(
+				(specifier) =>
+					specifier.type === 'ImportSpecifier' &&
+					specifier.importKind !== 'type' &&
+					specifier.imported.type === 'Identifier' &&
+					specifier.imported.name === name &&
+					specifier.local.name === name,
+			),
+	);
 }
 
 /**
@@ -5399,24 +6058,32 @@ function is_component_like_jsx_name(name) {
 function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 	if (!is_host) return attrs;
 
-	const needs_explicit_spread_ref =
-		transform_context.platform.jsx?.hostSpreadRefStrategy === 'explicit-ref-attr';
-	const ref_exprs = attrs
-		.filter((attr) => is_jsx_ref_attribute(attr))
-		.map((attr) => attr.value.expression);
-	const needs_synthetic_spread_ref = needs_explicit_spread_ref || ref_exprs.length > 0;
+	const strategy = transform_context.platform.jsx?.hostSpreadRefStrategy;
+	const has_ref = attrs.some((attr) => is_jsx_ref_attribute(attr));
+	const spread_count = attrs.filter((attr) => attr.type === 'JSXSpreadAttribute').length;
+	// Types do not depend on which spread applies a ref, so the type-only print
+	// merges the bags' refs into the element's own as for other targets.
+	if (strategy === 'spread' && has_ref && spread_count > 1 && !transform_context.typeOnly) {
+		return lower_spread_ref_bags(
+			attrs,
+			create_generated_identifier(create_spread_props_name(transform_context)),
+			transform_context,
+		);
+	}
+	const needs_synthetic_spread_ref =
+		strategy === 'explicit-ref-attr' || (has_ref && (strategy !== 'spread' || spread_count > 1));
 	// Types do not depend on evaluation order, so the type-only print keeps
 	// the initialized setup declaration.
-	const bind_in_place =
-		!transform_context.typeOnly &&
-		transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place';
+	const bind_in_place = binds_host_spread_in_place(transform_context);
+	const own_ref_index = attrs.findIndex((attr) => is_jsx_ref_attribute(attr));
 
 	return attrs.flatMap(
 		/**
 		 * @param {ESTreeJSX.JSXAttributeNode} attr
+		 * @param {number} index
 		 * @returns {ESTreeJSX.JSXAttributeNode[]}
 		 */
-		(attr) => {
+		(attr, index) => {
 			if (attr.type !== 'JSXSpreadAttribute') {
 				return [attr];
 			}
@@ -5437,8 +6104,6 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				);
 				// Bound in place, the bag is evaluated between the attributes around
 				// it, as in native JSX; the setup declaration only declares the name.
-				// The `ref` read below comes after the spread either way: the synthetic
-				// ref follows it, and `merge_duplicate_refs` appends the merged ref.
 				const spread = {
 					...attr,
 					argument: bind_in_place
@@ -5447,9 +6112,26 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				};
 				// A spread bag may be nullish (`{...props.optional}`) and spread to
 				// nothing, as in native JSX, so its ref is read without throwing.
+				/** @type {AST.Expression} */
+				let spread_ref = b.maybe_member(clone_identifier(normalized_id), 'ref');
+				// `merge_duplicate_refs` keeps a bound-in-place element's merged ref
+				// where its own `ref` is written, so the `ref` expression is evaluated
+				// in authored order. A bag spread after it is assigned only later in
+				// the attributes, so its ref is read when the merged ref is applied.
+				if (
+					bind_in_place &&
+					transform_context.platform.jsx.multiRefStrategy === 'merge-refs' &&
+					own_ref_index !== -1 &&
+					index > own_ref_index
+				) {
+					spread_ref = b.arrow(
+						[b.id('node')],
+						b.call(b.call(MERGE_REFS_INTERNAL_NAME, spread_ref), b.id('node')),
+					);
+				}
 				const ref_attr = b.jsx_attribute(
 					b.jsx_id('ref'),
-					to_jsx_expression_container(b.maybe_member(clone_identifier(normalized_id), 'ref'), attr),
+					to_jsx_expression_container(spread_ref, attr),
 					false,
 					has_location(attr) ? attr : undefined,
 				);
@@ -5476,16 +6158,87 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 }
 
 /**
+ * Lower the host spreads of an element with more than one beside its own
+ * `ref`, for `hostSpreadRefStrategy: 'spread'`. Such a JSX runtime applies
+ * only the last spread's `ref`, so the bags go through one `spread_ref_bags`
+ * group from `imports.refProp`: each spread gets its bag without a `ref`, and
+ * a spread of the group's `refs` after the last one carries every bag's ref.
+ * The element keeps its own `ref` as written. Each bag stays inside an arrow,
+ * so the runtime evaluates it when it reads the spread.
+ *
+ * @param {ESTreeJSX.JSXAttributeNode[]} attrs
+ * @param {AST.Identifier} group_id
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXAttributeNode[]}
+ */
+export function lower_spread_ref_bags(attrs, group_id, transform_context) {
+	transform_context.needs_spread_ref_bags = true;
+
+	/** @type {AST.Expression[]} */
+	const sources = [];
+	/** @type {ESTreeJSX.JSXAttributeNode[]} */
+	const lowered = [];
+	/** @type {ESTreeJSX.JSXSpreadAttribute | null} */
+	let first_spread = null;
+	let refs_index = 0;
+	for (const attr of attrs) {
+		if (attr.type !== 'JSXSpreadAttribute') {
+			lowered.push(attr);
+			continue;
+		}
+		/** @type {ESTreeJSX.JSXSpreadAttribute} */
+		const spread = {
+			...attr,
+			argument: b.call(b.member(clone_identifier(group_id), 'bag'), b.literal(sources.length)),
+		};
+		sources.push(b.arrow([], attr.argument));
+		first_spread ??= spread;
+		lowered.push(spread);
+		refs_index = lowered.length;
+	}
+
+	if (first_spread) {
+		add_jsx_setup_declaration(
+			first_spread,
+			b.let(clone_identifier(group_id), b.call(SPREAD_REF_BAGS_INTERNAL_NAME, ...sources)),
+		);
+	}
+	lowered.splice(
+		refs_index,
+		0,
+		b.jsx_spread_attribute(b.member(clone_identifier(group_id), 'refs')),
+	);
+	return lowered;
+}
+
+/**
  * @param {TransformContext} transform_context
  * @returns {string}
  */
 function create_spread_props_name(transform_context) {
-	if (transform_context.helper_state) {
-		return create_helper_name(transform_context.helper_state, 'spread_props');
-	}
+	/** @type {string} */
+	let name;
+	do {
+		if (transform_context.helper_state) {
+			name = create_helper_name(transform_context.helper_state, 'spread_props');
+		} else {
+			transform_context.local_statement_component_index += 1;
+			name = `_tsrx_spread_props_${transform_context.local_statement_component_index}`;
+		}
+	} while (source_mentions_identifier(transform_context.source, name));
+	return name;
+}
 
-	transform_context.local_statement_component_index += 1;
-	return `_tsrx_spread_props_${transform_context.local_statement_component_index}`;
+/**
+ * Whether `source` has `name` as a whole identifier anywhere, so a generated
+ * binding of that name could shadow or redeclare one the author wrote.
+ *
+ * @param {string} source
+ * @param {string} name a name of identifier characters only
+ * @returns {boolean}
+ */
+function source_mentions_identifier(source, name) {
+	return new RegExp(`(?<![\\w$])${name}(?![\\w$])`).test(source);
 }
 
 /**
@@ -5645,6 +6398,7 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 	const result = [];
 	/** @type {ESTreeJSX.JSXRefAttribute | null} */
 	let source_attr = null;
+	let source_index = -1;
 	for (const attr of jsx_attrs) {
 		if (is_jsx_ref_attribute(attr)) {
 			ref_exprs.push(attr.value.expression);
@@ -5653,6 +6407,7 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 			// retains a source mapping back to its original `ref=` keyword.
 			if (!source_attr && !attr.metadata?.synthetic_ref) {
 				source_attr = attr;
+				source_index = result.length;
 			}
 		} else {
 			result.push(attr);
@@ -5683,9 +6438,31 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 		false,
 		source_attr_location,
 	);
-	result.push(merged_attr);
+	// Bound in place, the merged ref stays where the element's own `ref` is
+	// written, so a JSX runtime that evaluates attributes left to right
+	// evaluates that expression in authored order.
+	if (
+		strategy === 'merge-refs' &&
+		source_index !== -1 &&
+		binds_host_spread_in_place(transform_context)
+	) {
+		result.splice(source_index, 0, merged_attr);
+	} else {
+		result.push(merged_attr);
+	}
 
 	return result;
+}
+
+/**
+ * @param {TransformContext} transform_context
+ * @returns {boolean}
+ */
+function binds_host_spread_in_place(transform_context) {
+	return (
+		!transform_context.typeOnly &&
+		transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place'
+	);
 }
 
 /**
@@ -5715,6 +6492,7 @@ export const MERGE_REFS_INTERNAL_NAME = '__mergeRefs';
 export const NORMALIZE_SPREAD_PROPS_INTERNAL_NAME = '__normalize_spread_props';
 export const NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME =
 	'__normalize_spread_props_for_ref_attr';
+export const SPREAD_REF_BAGS_INTERNAL_NAME = '__spread_ref_bags';
 /**
  * Point a generated node at the DIRECTIVE KEYWORD that produced it.
  *
