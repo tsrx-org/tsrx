@@ -139,6 +139,37 @@ describe.each(['native', 'bypass', 'legacy'])('tsrx-tsc with the %s loader', (lo
 		expect(result.output).not.toContain('TS2307');
 	});
 
+	// Two CLI runs, ESM then CommonJS.
+	it(
+		'takes the module format of .tsrx files from package.json under NodeNext (#163)',
+		{
+			timeout: 60_000,
+		},
+		() => {
+			const config_path = path.join(workspace, 'tsconfig.json');
+			const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+			config.compilerOptions.module = 'NodeNext';
+			config.compilerOptions.moduleResolution = 'NodeNext';
+			config.include = ['main.ts', 'meta.tsrx'];
+			fs.writeFileSync(config_path, JSON.stringify(config));
+			fs.appendFileSync(path.join(workspace, 'layout.tsrx'), 'console.log(import.meta.url);\n');
+			// No import, so TypeScript resolves nothing for it.
+			fs.writeFileSync(path.join(workspace, 'meta.tsrx'), 'export const url = import.meta.url;\n');
+
+			// `"type": "module"`: ESM, as a `.ts` file there.
+			const esm = run_cli(loader);
+			expect(esm.output).toBe('');
+			expect(esm.status).toBe(0);
+
+			fs.writeFileSync(path.join(workspace, 'package.json'), '{"type":"commonjs"}');
+			const cjs = run_cli(loader);
+			const ts1470 =
+				"error TS1470: The 'import.meta' meta-property is not allowed in files which will build into CommonJS output.";
+			expect(cjs.output).toBe(`layout.tsrx(4,13): ${ts1470}\nmeta.tsrx(1,20): ${ts1470}\n`);
+			expect(cjs.status).toBe(2);
+		},
+	);
+
 	it('uses the installed TypeScript version for --version', () => {
 		const result = run_cli(loader, ['--version']);
 		expect(result.output).toBe(`Version ${cli_require('typescript').version}\n`);
@@ -806,3 +837,40 @@ it(
 		expect(consumed.status).toBe(0);
 	},
 );
+
+it('gives .tsrx files the module format of their own project in a solution build', () => {
+	// `-b` creates every project's program with one compiler host, and the
+	// Bundler project builds before the NodeNext one.
+	/** @param {string} name @param {string} module @param {string} file @param {string} source */
+	const add_project = (name, module, file, source) => {
+		fs.mkdirSync(path.join(workspace, name));
+		fs.writeFileSync(
+			path.join(workspace, name, 'tsconfig.json'),
+			JSON.stringify({
+				tsrx: { compiler: '@tsrx/preact' },
+				compilerOptions: {
+					composite: true,
+					outDir: 'dist',
+					module,
+					moduleResolution: module === 'NodeNext' ? 'NodeNext' : 'Bundler',
+					target: 'ES2022',
+					strict: true,
+					skipLibCheck: true,
+					types: [],
+				},
+				include: [file],
+			}),
+		);
+		fs.writeFileSync(path.join(workspace, name, file), source);
+	};
+	add_project('bundler', 'ESNext', 'index.ts', 'export const value = 1;\n');
+	add_project('nodenext', 'NodeNext', 'meta.tsrx', 'export const url = import.meta.url;\n');
+	fs.writeFileSync(
+		path.join(workspace, 'tsconfig.json'),
+		JSON.stringify({ files: [], references: [{ path: './bundler' }, { path: './nodenext' }] }),
+	);
+
+	const result = run_cli('native', ['-b', 'tsconfig.json']);
+	expect(result.output).toBe('');
+	expect(result.status).toBe(0);
+});
