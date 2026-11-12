@@ -26,7 +26,9 @@ const TYPE_PREC = {
 	UNION: 1,
 	INTERSECTION: 2,
 	OPERATOR: 3,
-	POSTFIX: 4,
+	// Above `as` and `satisfies` (PREC.REL), so `x as T[]` keeps the `[]` in its
+	// type instead of indexing `x as T`.
+	POSTFIX: PREC.REL + 1,
 };
 
 module.exports = grammar({
@@ -52,6 +54,7 @@ module.exports = grammar({
 		$._expression_statement_primary_expression,
 		$._semicolon,
 		$._reserved_identifier,
+		$._using_identifier,
 		$._jsx_attribute,
 		$._jsx_child,
 		$._jsx_attribute_value,
@@ -139,6 +142,8 @@ module.exports = grammar({
 		[$.declaration, $.jsx_statement_container],
 		[$.jsx_statement_container, $.object],
 		[$.jsx_try_expression],
+		[$.jsx_element_name, $.jsx_non_namespaced_element_name, $.type_parameter],
+		[$.expression, $._type_arguments_callee],
 	],
 
 	rules: {
@@ -257,6 +262,7 @@ module.exports = grammar({
 				$.super,
 				$.identifier,
 				$._reserved_identifier,
+				$._using_identifier,
 				$.number,
 				$.string,
 				$.template_string,
@@ -293,6 +299,19 @@ module.exports = grammar({
 
 		lexical_declaration: ($) =>
 			seq(choice('let', 'const'), commaSep1($.variable_declarator), $._semicolon),
+
+		// `using` and `await using` declarations (TypeScript 5.2), named as in
+		// tree-sitter-javascript. They bind identifiers only, never patterns, so
+		// `using [i]` stays an index into a variable named `using`.
+		using_declaration: ($) =>
+			seq(
+				choice('using', seq('await', 'using')),
+				commaSep1(alias($._using_declarator, $.variable_declarator)),
+				$._semicolon,
+			),
+
+		_using_declarator: ($) =>
+			seq(field('name', $.identifier), optional($._type_annotation), optional($.initializer)),
 
 		statement_block: ($) => seq('{', repeat($.statement), '}'),
 
@@ -341,6 +360,7 @@ module.exports = grammar({
 				choice(
 					seq(choice('let', 'const', 'var'), choice($._destructuring_pattern, $.identifier)),
 					$.identifier,
+					$._using_identifier,
 				),
 				'in',
 				field('right', $.expression),
@@ -355,7 +375,9 @@ module.exports = grammar({
 				'(',
 				choice(
 					seq(choice('let', 'const', 'var'), choice($._destructuring_pattern, $.identifier)),
+					seq(choice('using', seq('await', 'using')), $.identifier),
 					$.identifier,
+					$._using_identifier,
 				),
 				'of',
 				field('right', $.expression),
@@ -415,7 +437,14 @@ module.exports = grammar({
 		debugger_statement: ($) => seq('debugger', $._semicolon),
 
 		labeled_statement: ($) =>
-			prec.dynamic(-1, seq(field('label', $.identifier), ':', field('body', $.statement))),
+			prec.dynamic(
+				-1,
+				seq(
+					field('label', choice($.identifier, $._using_identifier)),
+					':',
+					field('body', $.statement),
+				),
+			),
 
 		empty_statement: ($) => ';',
 
@@ -426,6 +455,7 @@ module.exports = grammar({
 				$.class_declaration,
 				$.lexical_declaration,
 				$.variable_declaration,
+				$.using_declaration,
 				$.interface_declaration,
 				$.type_alias_declaration,
 			),
@@ -461,6 +491,7 @@ module.exports = grammar({
 				prec(2, $.script_element),
 				$.variable_declaration,
 				$.lexical_declaration,
+				$.using_declaration,
 				$.function_declaration,
 				$.class_declaration,
 				$.expression_statement,
@@ -492,6 +523,7 @@ module.exports = grammar({
 				$.module_declaration,
 				$.variable_declaration,
 				$.lexical_declaration,
+				$.using_declaration,
 				$.function_declaration,
 				$.class_declaration,
 				$._jsx_statement_container_expression_statement,
@@ -530,6 +562,7 @@ module.exports = grammar({
 					$.super,
 					$.identifier,
 					$._reserved_identifier,
+					$._using_identifier,
 					$.number,
 					$.string,
 					$.template_string,
@@ -659,10 +692,17 @@ module.exports = grammar({
 					optional('await'),
 					'(',
 					choice(
-						seq(choice('let', 'const', 'var'), choice($._destructuring_pattern, $.identifier)),
-						$.identifier,
+						seq(
+							choice(
+								seq(choice('let', 'const', 'var'), choice($._destructuring_pattern, $.identifier)),
+								$.identifier,
+								$._using_identifier,
+							),
+							choice('of', 'in'),
+						),
+						// A `using` declaration can only head a `for…of` loop.
+						seq(choice('using', seq('await', 'using')), $.identifier, 'of'),
 					),
-					choice('of', 'in'),
 					field('right', $.expression),
 					optional(seq(';', 'index', $.identifier)),
 					optional(seq(';', 'key', $.expression)),
@@ -742,21 +782,30 @@ module.exports = grammar({
 		jsx_finally_clause: ($) => seq('finally', field('body', $.jsx_template_block)),
 
 		// Raw-text `<style>` element: the body is verbatim CSS (scanned by the
-		// external scanner up to the literal `</style>`, so `<` and comments in the
-		// CSS stay in it), never template markup. The self-closing form
-		// (`<style apply={theme} />`) has no body.
+		// external scanner up to `</style>`, so `<` and comments in the CSS stay in
+		// it), never template markup. As in the compiler, the closing tag may have
+		// whitespace before its `>`; it stays the single `</style>` token either way.
+		// The self-closing form (`<style apply={theme} />`) has no body.
 		style_element: ($) =>
 			prec(
 				1,
 				seq(
 					'<style',
 					repeat($._jsx_attribute),
-					choice('/>', seq('>', optional(alias($._style_content, $.raw_text)), '</style>')),
+					choice(
+						'/>',
+						seq(
+							'>',
+							optional(alias($._style_content, $.raw_text)),
+							alias(token(seq('</style', /[\t\n\f\r ]*/, '>')), '</style>'),
+						),
+					),
 				),
 			),
 
 		// Raw-text `<script>` element: the body is verbatim JS/TS (scanned by the
-		// external scanner up to the literal `</script>`), never template markup.
+		// external scanner up to `</script>`, which may have whitespace before its
+		// `>`, as in the compiler), never template markup.
 		// The self-closing form (`<script src={...} />`) has no body; it is matched
 		// here too because the `<script` literal takes lexical priority over the
 		// generic element path.
@@ -897,7 +946,7 @@ module.exports = grammar({
 
 		required_parameter: ($) =>
 			seq(
-				field('pattern', choice($.identifier, $._destructuring_pattern)),
+				field('pattern', choice($.identifier, $._using_identifier, $._destructuring_pattern)),
 				optional('?'),
 				optional($._type_annotation),
 				optional($.initializer),
@@ -945,7 +994,8 @@ module.exports = grammar({
 
 		assignment_pattern: ($) => seq(field('left', $.pattern), '=', field('right', $.expression)),
 
-		pattern: ($) => choice($.identifier, $._reserved_identifier, $._destructuring_pattern),
+		pattern: ($) =>
+			choice($.identifier, $._reserved_identifier, $._using_identifier, $._destructuring_pattern),
 
 		expression: ($) =>
 			choice(
@@ -981,6 +1031,7 @@ module.exports = grammar({
 				$.super,
 				$.identifier,
 				$._reserved_identifier,
+				$._using_identifier,
 				$.number,
 				$.string,
 				$.template_string,
@@ -1031,6 +1082,7 @@ module.exports = grammar({
 						'left',
 						choice(
 							$.identifier,
+							$._using_identifier,
 							$.member_expression,
 							$.subscript_expression,
 							$.non_null_expression,
@@ -1050,6 +1102,7 @@ module.exports = grammar({
 						'left',
 						choice(
 							$.identifier,
+							$._using_identifier,
 							$.member_expression,
 							$.subscript_expression,
 							$.non_null_expression,
@@ -1161,14 +1214,32 @@ module.exports = grammar({
 				),
 			),
 
+		// In `f<T>(x)`, TypeScript reads the `<…>` right before a call's arguments
+		// as type arguments. The parser keeps that reading and `f < T > (x)` as
+		// comparisons until one fails, and takes the call when both parse.
 		call_expression: ($) =>
-			prec(
-				PREC.CALL,
-				seq(
-					field('function', choice($.expression, $.import)),
-					field('arguments', choice($.arguments, $.template_string)),
+			choice(
+				prec(
+					PREC.CALL,
+					seq(
+						field('function', choice($.expression, $.import)),
+						field('arguments', choice($.arguments, $.template_string)),
+					),
+				),
+				prec.dynamic(
+					1,
+					seq(
+						field('function', $._type_arguments_callee),
+						field('type_arguments', $.type_arguments),
+						field('arguments', choice($.arguments, $.template_string)),
+					),
 				),
 			),
+
+		// A call with type arguments has a member, call or other primary
+		// expression as its callee, so a prefix operator applies to the whole call:
+		// `!f<T>(x)` negates the call and `await f<T>(x)` awaits it.
+		_type_arguments_callee: ($) => $.primary_expression,
 
 		new_expression: ($) =>
 			prec.right(
@@ -1221,7 +1292,13 @@ module.exports = grammar({
 		arrow_function: ($) =>
 			seq(
 				optional('async'),
-				choice(field('parameter', $.identifier), field('parameters', $.formal_parameters)),
+				choice(
+					field('parameter', choice($.identifier, $._using_identifier)),
+					seq(
+						optional(field('type_parameters', $.type_parameters)),
+						field('parameters', $.formal_parameters),
+					),
+				),
 				optional($._type_annotation),
 				'=>',
 				field('body', choice($.expression, $.statement_block, $.jsx_statement_container)),
@@ -1347,7 +1424,17 @@ module.exports = grammar({
 
 		jsx_attribute: ($) =>
 			seq(
-				field('name', choice($.identifier, $.jsx_namespace_name, $.jsx_hyphenated_name)),
+				field(
+					'name',
+					choice(
+						$.identifier,
+						// `extends` is a keyword after `<T` where a generic arrow's type
+						// parameters can start; it stays an attribute name in a tag.
+						alias('extends', $.identifier),
+						$.jsx_namespace_name,
+						$.jsx_hyphenated_name,
+					),
+				),
 				optional(seq('=', field('value', $._jsx_attribute_value))),
 			),
 
@@ -1402,6 +1489,11 @@ module.exports = grammar({
 		private_property_identifier: ($) => /#[a-zA-Z_$][a-zA-Z0-9_$]*/,
 
 		_reserved_identifier: ($) => choice('arguments', 'await', 'fragment', 'track', 'untrack'),
+
+		// `using` is a keyword where a `using` declaration can start and an
+		// identifier everywhere else, so `using(x)`, `using.dispose()` and
+		// `using = x` still parse as before.
+		_using_identifier: ($) => alias('using', $.identifier),
 
 		comment: ($) => token(choice(seq('//', /.*/), seq('/*', /[^*]*\*+([^/*][^*]*\*+)*/, '/'))),
 

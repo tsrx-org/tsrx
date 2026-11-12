@@ -200,6 +200,55 @@ describe('TSRX TextMate grammar: <style> blocks', () => {
 		);
 		expect(find(tokens, '</').scopes).toContain('style.tag.js');
 	});
+
+	it('closes a <style> block at a closing tag with whitespace before its >, as the compiler does', () => {
+		const tokens = tokenize(
+			[
+				'export function App() @{',
+				'  <div>',
+				'    <style>.a { color: red; }</style >',
+				'    <p class="a">{text}</p>',
+				'  </div>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'color').scopes).toContain('source.css');
+		expect(find(tokens, 'style', 1).scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, '>', 2).scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'punctuation.definition.tag.end.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('style.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'text').scopes).not.toContain('style.tag.js');
+	});
+
+	it('closes a <style> block whose closing tag has a line break before its >', () => {
+		const tokens = tokenize(
+			[
+				'export function App() @{',
+				'  <div>',
+				'    <style>',
+				'      .a { color: red; }',
+				'    </style',
+				'    >',
+				'    <p class="a">{text}</p>',
+				'  </div>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'style', 1).scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('style.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'text').scopes).not.toContain('style.tag.js');
+	});
 });
 
 describe('TSRX TextMate grammar: without the CSS and TypeScript grammars', () => {
@@ -313,6 +362,104 @@ describe('TSRX TextMate grammar: without the CSS and TypeScript grammars', () =>
 		expect(find(tokens, 'p').scopes).not.toContain('script.tag.js');
 		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
 		expect(invalid(tokens)).toEqual([]);
+	});
+});
+
+describe('TSRX TextMate grammar: <script> closing tags', () => {
+	it('closes a <script> block at a closing tag with whitespace before its >, as the compiler does', () => {
+		const tokens = tokenize(
+			[
+				'export function App() @{',
+				'  <div>',
+				'    <script>go();</script >',
+				'    <p>{text}</p>',
+				'  </div>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'go').scopes).toContain('source.ts');
+		expect(find(tokens, 'script', 1).scopes).toEqual(
+			expect.arrayContaining(['script.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, '>', 2).scopes).toEqual(
+			expect.arrayContaining(['script.tag.js', 'punctuation.definition.tag.end.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('script.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'text').scopes).not.toContain('script.tag.js');
+	});
+
+	it('closes a <script> block whose closing tag has a line break before its >', () => {
+		const tokens = tokenize(
+			[
+				'export function App() @{',
+				'  <div>',
+				'    <script>',
+				'      go();',
+				'    </script',
+				'    >',
+				'    <p>{text}</p>',
+				'  </div>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'script', 1).scopes).toEqual(
+			expect.arrayContaining(['script.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('script.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'text').scopes).not.toContain('script.tag.js');
+	});
+});
+
+describe('TSRX TextMate grammar: using declarations', () => {
+	it('highlights using and await using in an @for head as declaration keywords', () => {
+		const tokens = tokenize(
+			[
+				'function List() @{',
+				'  <ul>',
+				'    @for (using item of items) {',
+				'      <li>{item}</li>',
+				'    }',
+				'    @for (await using conn of conns; index i) {',
+				'      <li>{i}</li>',
+				'    }',
+				'    @for (using of items) {',
+				'      <li />',
+				'    }',
+				'  </ul>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'using').scopes).toContain('storage.type.js');
+		expect(find(tokens, 'await using').scopes).toContain('storage.type.js');
+		// `using` followed by `of` is the loop variable, not a declaration keyword.
+		expect(find(tokens, 'using', 1).scopes).toContain('variable.other.readwrite.js');
+	});
+
+	it('keeps using a variable in a directive head that is not a for…of declaration', () => {
+		const tokens = tokenize(
+			[
+				'function List() @{',
+				'  <ul>',
+				'    @for (using item in items) {',
+				'      <li />',
+				'    }',
+				'    @if (using instanceof Foo) {',
+				'      <li />',
+				'    }',
+				'  </ul>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'using').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'using', 1).scopes).toContain('variable.other.readwrite.js');
 	});
 });
 
