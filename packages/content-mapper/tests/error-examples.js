@@ -993,8 +993,6 @@ export const WITHOUT_EXAMPLE = new Map(
  */
 export const KNOWN_PROBLEMS = new Map(
 	/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([
-		[TSRX_ERRORS.UNCLOSED_TAG, { problem: 'lost', issue: 978 }],
-		[TSRX_ERRORS.MISMATCHED_CLOSING_TAG, { problem: 'lost', issue: 978 }],
 		// The generated code keeps the tag unclosed, so TypeScript reports it too
 		// (TS17008), a syntax error that no directive hides.
 		[TSRX_ERRORS.UNCLOSED_TAG_GENERIC_ARROW, { problem: 'typescript', issue: 978 }],
