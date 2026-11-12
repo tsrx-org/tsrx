@@ -778,6 +778,47 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map a statement TypeScript reports on as a whole (TS7027 on an unreachable
+	 * `break;`) like a literal: its start and its end, `;` included, as the
+	 * points of one diagnostics-only mapping, and its keyword for TypeScript 7.
+	 * Separate token mappings for the keyword and the `;` would lose to a mapping
+	 * around the statement, such as an arrow function's, which holds both ends
+	 * and maps them by offset.
+	 * @param {AST.Node} node
+	 * @param {string} keyword
+	 * @returns {void}
+	 */
+	function push_statement_mappings(node, keyword) {
+		if (!has_location(node)) return;
+		const mapping = push_points_mapping(node, keyword);
+		if (!mapping) return;
+		if (source[node.end - 1] !== ';' && generated_code[mapping.generatedOffsets[1]] === ';') {
+			mapping.generatedOffsets[1]++;
+		}
+		const token = find_source_token(source_tokens, keyword, node.start, 'after');
+		if (token && token.start === node.start) push_position_only_token(token, keyword);
+	}
+
+	/**
+	 * Map a type member TypeScript reports on as a whole (TS2374 on a duplicate
+	 * index signature) the same way: its start and its end as the points of one
+	 * diagnostics-only mapping, and its first token for TypeScript 7. The printer
+	 * writes a `;` after each member, which TypeScript counts in the member.
+	 * @param {AST.Node} node
+	 * @returns {void}
+	 */
+	function push_member_mappings(node) {
+		if (!has_location(node)) return;
+		const first = source_tokens?.find((token) => token.start === node.start);
+		if (!first) return;
+		const text = source.slice(first.start, first.end);
+		const mapping = push_points_mapping(node, text);
+		if (!mapping) return;
+		if (generated_code[mapping.generatedOffsets[1]] === ';') mapping.generatedOffsets[1]++;
+		push_position_only_token(first, text);
+	}
+
+	/**
 	 * Map the first `text` token at or after `from` that lies inside `node`.
 	 * @param {string} text
 	 * @param {number} from
@@ -2226,6 +2267,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'BreakStatement' || node.type === 'ContinueStatement') {
+				push_statement_mappings(node, node.type === 'BreakStatement' ? 'break' : 'continue');
 				// Visit label if present
 				if (node.label) {
 					visit(node.label);
@@ -2539,6 +2581,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSIndexSignature') {
+				push_member_mappings(node);
 				// Index signature [key: string]: Type
 				if (node.parameters) {
 					for (const param of node.parameters) {

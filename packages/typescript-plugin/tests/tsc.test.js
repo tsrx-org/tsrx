@@ -905,6 +905,84 @@ it('reports errors on a whole spread in .tsrx files', () => {
 	);
 });
 
+it('reports an unreachable break or continue in place in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	// An arrow maps its whole span, and the printer adds a blank line after `return;`.
+	const lines = [
+		'export const b = () => { while (true) { return; break; } };',
+		'export const c = () => { for (const x of [1]) { return; continue; } };',
+		'export const i = function () { while (true) { return; break; } };',
+		'export function j() { while (true) { return; break; } }',
+		'export function L() @{',
+		'\tconst loop = () => { while (true) { return; break; } };',
+		'\t<p onClick={loop} />',
+		'}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const [index, text] of /** @type {const} */ ([
+		[0, 'break'],
+		[1, 'continue'],
+		[2, 'break'],
+		[3, 'break'],
+		[5, 'break'],
+	])) {
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1}): error TS7027: Unreachable code detected.`,
+		);
+	}
+});
+
+it('reports duplicate index signatures in place in .tsrx files', () => {
+	const lines = [
+		'export type T = { [x: string]: string; [x: string]: number };',
+		'export type U = { /*comment*/ [x: string]: string; [x: string]: number };',
+		'export class C { readonly [k: string]: number; [k: string]: string }',
+		'export interface I { readonly [k: number]: 1; [k: number]: 2 }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const [index, text, occurrence] of /** @type {const} */ ([
+		[0, '[x', 1],
+		[0, '[x', 2],
+		[1, '[x', 1],
+		[1, '[x', 2],
+		[2, 'readonly', 1],
+		[2, '[k', 2],
+		[3, 'readonly', 1],
+		[3, '[k', 2],
+	])) {
+		let offset = -1;
+		for (let count = 0; count < occurrence; count++)
+			offset = lines[index].indexOf(text, offset + 1);
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${offset + 1}): error TS2374: Duplicate index signature for type`,
+		);
+	}
+});
+
+it('reports no duplicate for a static and an instance index signature in .tsrx files', () => {
+	// Two signatures of the same key type are duplicates only on the same side.
+	const lines = [
+		'export class A { static [k: string]: number; [k: string]: string }',
+		'export class B { [k: string]: string; static [k: string]: number }',
+		'export class C { static [k: string]: number; [k: string]: boolean; [k: string]: number }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts2374 = result.output.split('\n').filter((line) => line.includes('error TS2374'));
+	expect(ts2374.map((line) => line.slice(0, line.indexOf(':')))).toEqual([
+		`layout.tsrx(6,${lines[2].indexOf('[k: string]: boolean') + 1})`,
+		`layout.tsrx(6,${lines[2].lastIndexOf('[k: string]') + 1})`,
+	]);
+});
+
 it('reports errors on a bare this in .tsrx files', () => {
 	const line =
 		'export function readValue() { return this; } class Base {} export class Derived extends Base { constructor() { this; super(); } }';

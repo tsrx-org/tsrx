@@ -274,4 +274,92 @@ describe('native tsc --runExternalCode', () => {
 		expect(at('Types.tsrx')).toEqual(at('plain.ts'));
 		expect(result.status).toBe(2);
 	});
+
+	it('reports an unreachable break or continue and duplicate index signatures where the source has them', () => {
+		const source = [
+			'export const b = () => { while (true) { return; break; } };',
+			'export const c = () => { for (const x of [1]) { return; continue; } };',
+			'export const i = function () { while (true) { return; break; } };',
+			'export function j() { while (true) { return; break; } }',
+			'export type T = { [x: string]: string; [x: string]: number };',
+			'export type U = { /*comment*/ [x: string]: string; [x: string]: number };',
+			'export class C { [k: string]: any; [k: string]: number }',
+			'export type V = {',
+			'\t[x: string]: string;',
+			'\t[x: string]: number;',
+			'};',
+			'',
+		].join('\n');
+		const files = consumer_fixture_files();
+		const tsconfig = JSON.parse(files['tsconfig.json']);
+		tsconfig.compilerOptions.allowUnreachableCode = false;
+		files['tsconfig.json'] = JSON.stringify(tsconfig);
+		files['Types.tsrx'] = source;
+		files['plain.ts'] = source;
+		files['main.ts'] = "import './Types.tsrx';\nimport './plain.ts';\n";
+		const dir = workspace(files);
+		const result = run_native_tsc(dir, [
+			'--noEmit',
+			'-p',
+			'tsconfig.native.json',
+			'--pretty',
+			'false',
+		]);
+		const at = (/** @type {string} */ file) =>
+			parse_tsc_output(result.output)
+				.filter((d) => d.file === file)
+				.map((d) => [d.line, d.column, d.code]);
+		expect(at('plain.ts')).toEqual([
+			[1, 49, 'TS7027'],
+			[2, 57, 'TS7027'],
+			[3, 55, 'TS7027'],
+			[4, 46, 'TS7027'],
+			[5, 19, 'TS2374'],
+			[5, 40, 'TS2374'],
+			[6, 31, 'TS2374'],
+			[6, 52, 'TS2374'],
+			[7, 18, 'TS2374'],
+			[7, 36, 'TS2374'],
+			[9, 2, 'TS2374'],
+			[10, 2, 'TS2374'],
+		]);
+		expect(at('Types.tsrx')).toEqual(at('plain.ts'));
+		expect(result.status).toBe(2);
+	});
+
+	it('reports a static and an instance index signature as plain tsc does', () => {
+		// The printer used to drop `static`, which made the two signatures duplicates.
+		const source = [
+			'export class A { static [k: string]: number; [k: string]: string }',
+			'export class B { [k: string]: string; static [k: string]: number }',
+			'export class C { static [k: string]: number; [k: string]: boolean; [k: string]: number }',
+			"export const x: number = new A()['y'];",
+			"export const y: string = A['z'];",
+			'',
+		].join('\n');
+		const files = consumer_fixture_files();
+		files['Types.tsrx'] = source;
+		files['plain.ts'] = source;
+		files['main.ts'] = "import './Types.tsrx';\nimport './plain.ts';\n";
+		const dir = workspace(files);
+		const result = run_native_tsc(dir, [
+			'--noEmit',
+			'-p',
+			'tsconfig.native.json',
+			'--pretty',
+			'false',
+		]);
+		const at = (/** @type {string} */ file) =>
+			parse_tsc_output(result.output)
+				.filter((d) => d.file === file)
+				.map((d) => [d.line, d.column, d.code]);
+		expect(at('plain.ts')).toEqual([
+			[3, 46, 'TS2374'],
+			[3, 68, 'TS2374'],
+			[4, 14, 'TS2322'],
+			[5, 14, 'TS2322'],
+		]);
+		expect(at('Types.tsrx')).toEqual(at('plain.ts'));
+		expect(result.status).toBe(2);
+	});
 });
