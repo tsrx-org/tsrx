@@ -10,3 +10,7 @@ its first attributes and a button stayed enabled. The bag is now assigned
 where it is spread, `{...(bag = __normalize_spread_props_for_ref_attr(expr))}`,
 inside vue-jsx-vapor's render effect, which reads it again when it changes and
 sets the element's template ref after it.
+
+A new `jsx.refAfterProps` platform option says the compiled JSX applies an
+element's `ref` after its other attributes, so with the in-place binding the
+merged `ref` still goes last. Vue sets it.

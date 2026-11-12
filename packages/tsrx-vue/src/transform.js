@@ -77,6 +77,7 @@ const vue_platform = {
 		// sets its template ref after the props, so a bag bound in place is read
 		// again when its expression changes and is assigned before its `ref`.
 		hostSpreadRefBinding: 'in-place',
+		refAfterProps: true,
 		// vue-jsx-vapor escapes a string child into its HTML template, where a
 		// `<script>` element's text isn't decoded, and writes a string
 		// `innerHTML` there as an attribute. `v-html` sets the body as written

@@ -598,9 +598,18 @@ export interface JsxPlatform {
 		 * `@tsrx/runtime/ref` does. With `multiRefStrategy:
 		 * 'merge-refs'` as well, the merged `ref` stays where the element's own
 		 * `ref` is written and reads the ref of a bag spread after it when it is
-		 * applied.
+		 * applied, unless `refAfterProps` is set.
 		 */
 		hostSpreadRefBinding?: 'in-place';
+		/**
+		 * Set when the compiled JSX applies an element's `ref` after all of its
+		 * other attributes, wherever the `ref` is written, as vue-jsx-vapor sets
+		 * a template ref after the element's props. With `hostSpreadRefBinding:
+		 * 'in-place'`, a merged `ref` then goes last, as it does without the
+		 * in-place binding, and reads each bag's `ref` directly, since every
+		 * spread is assigned by the time it is applied.
+		 */
+		refAfterProps?: boolean;
 		/**
 		 * How a raw-text `<script>` element's body (its `content`, as written)
 		 * is output, in the form the target renders exactly on the client and

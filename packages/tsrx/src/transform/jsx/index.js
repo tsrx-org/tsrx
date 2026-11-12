@@ -6124,8 +6124,7 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				// in authored order. A bag spread after it is assigned only later in
 				// the attributes, so its ref is read when the merged ref is applied.
 				if (
-					bind_in_place &&
-					transform_context.platform.jsx.multiRefStrategy === 'merge-refs' &&
+					keeps_merged_ref_in_place(transform_context) &&
 					own_ref_index !== -1 &&
 					index > own_ref_index
 				) {
@@ -6448,11 +6447,7 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 	// Bound in place, the merged ref stays where the element's own `ref` is
 	// written, so a JSX runtime that evaluates attributes left to right
 	// evaluates that expression in authored order.
-	if (
-		strategy === 'merge-refs' &&
-		source_index !== -1 &&
-		binds_host_spread_in_place(transform_context)
-	) {
+	if (source_index !== -1 && keeps_merged_ref_in_place(transform_context)) {
 		result.splice(source_index, 0, merged_attr);
 	} else {
 		result.push(merged_attr);
@@ -6469,6 +6464,23 @@ function binds_host_spread_in_place(transform_context) {
 	return (
 		!transform_context.typeOnly &&
 		transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place'
+	);
+}
+
+/**
+ * Whether an element's merged `ref` stays where its own `ref` is written:
+ * bound in place, on a JSX runtime that applies the `ref` in written order.
+ * One that applies it after every other attribute (`jsx.refAfterProps`) gets
+ * it last, as without the in-place binding, reading the bags spread before it.
+ *
+ * @param {TransformContext} transform_context
+ * @returns {boolean}
+ */
+function keeps_merged_ref_in_place(transform_context) {
+	return (
+		binds_host_spread_in_place(transform_context) &&
+		transform_context.platform.jsx.multiRefStrategy === 'merge-refs' &&
+		!transform_context.platform.jsx.refAfterProps
 	);
 }
 
