@@ -69,6 +69,14 @@ export function WithComponent() @{
 	<p>{helperB()}<Button label="x" /></p>
 }
 `;
+const STATEMENT_TSRX = `import { helperA } from './lib';
+
+export function Statement() @{
+	helperA();
+	const value = helperB;
+	<p>{value}</p>
+}
+`;
 const NO_IMPORTS_TSRX = `export function NoImports() @{
 	<p>{helperB()}</p>
 }
@@ -101,6 +109,7 @@ function workspace_files() {
 	files['NewLine.tsrx'] = NEW_LINE_TSRX;
 	files['NoImports.tsrx'] = NO_IMPORTS_TSRX;
 	files['WithComponent.tsrx'] = WITH_COMPONENT_TSRX;
+	files['Statement.tsrx'] = STATEMENT_TSRX;
 	files['Extend.tsrx'] = EXTEND_TSRX;
 	files['Fresh.tsrx'] = FRESH_TSRX;
 	files['sub/tsconfig.json'] = JSON.stringify(
@@ -532,6 +541,26 @@ import def from './mixed';
 				newText: 'import { helperB } from "./lib";\n\n',
 			},
 		],
+		[
+			// The `<` of the tag maps with other features than `helperB`, which ended the span
+			// of `helperB` at the cursor, and TypeScript 7 offered no auto-import there.
+			'on a new line when the template uses a component tag (#1028)',
+			'WithComponent.tsrx',
+			{
+				range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
+				newText: "import { helperB } from './lib';\n",
+			},
+		],
+		[
+			// The generated code adds a blank line after the `;`, which ended the span of
+			// `helperB` at the cursor before the next span (#1064).
+			'into an existing import from a statement in a template body',
+			'Statement.tsrx',
+			{
+				range: { start: { line: 0, character: 16 }, end: { line: 0, character: 16 } },
+				newText: ', helperB',
+			},
+		],
 	])('auto-imports %s', async (_name, file, edit) => {
 		// The file is on disk, so it belongs to the project that holds `lib.ts`.
 		client.open(file, files[file]);
@@ -548,23 +577,6 @@ import def from './mixed';
 		const resolved = await client.request('completionItem/resolve', item);
 		expect(resolved.additionalTextEdits ?? item.additionalTextEdits).toEqual([edit]);
 		client.close(file);
-	});
-
-	it('offers no auto-import that needs a new line when the template uses a component tag (#1028)', async () => {
-		// A `.tsx` file with the same code gets the candidate, and so does this file
-		// without the `<Button />` tag.
-		client.open('WithComponent.tsrx', files['WithComponent.tsrx']);
-		await client.diagnostics('WithComponent.tsrx').catch(() => undefined);
-		const completion = await client.request('textDocument/completion', {
-			...at(client, files, 'WithComponent.tsrx', 'helperB', 'helperB'.length),
-			context: { triggerKind: 1 },
-		});
-		expect(
-			completion.items.filter(
-				(/** @type {{ label: string }} */ entry) => entry.label === 'helperB',
-			),
-		).toEqual([]);
-		client.close('WithComponent.tsrx');
 	});
 
 	it('reports a compile error at the authored construct and keeps importers resolving', async () => {

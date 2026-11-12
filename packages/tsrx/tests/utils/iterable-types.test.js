@@ -30,6 +30,21 @@ describe('iterable helper types', () => {
 		expect(types.withEmpty).toBe('string[]');
 	});
 
+	it('infers the item type from every member of a union source', () => {
+		const { errors, types } = check_types(`${IMPORT}
+			declare const items: string[] | number[];
+			declare const mixed: Set<string> | Iterator<boolean>;
+			const fromUnion = map_iterable(items, (item) => item);
+			const fromMixed = map_iterable(mixed, (item) => item);
+			const settled = await map_iterable_async(items, async (item) => item);
+		`);
+
+		expect(errors).toEqual([]);
+		expect(types.fromUnion).toBe('(string | number)[]');
+		expect(types.fromMixed).toBe('(string | boolean)[]');
+		expect(types.settled).toBe('(string | number)[]');
+	});
+
 	it('resolves the async helper to the settled item array', () => {
 		const { errors, types } = check_types(`${IMPORT}
 			declare const iterator: Iterator<number>;
