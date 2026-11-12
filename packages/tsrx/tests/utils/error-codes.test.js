@@ -1,10 +1,16 @@
 /** @import { CompileError } from '../../types/index' */
 
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { parse } from 'acorn';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
-import { get_upstream_error, TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
+import {
+	get_upstream_error,
+	TS_ERRORS,
+	TS_SYNTAX_ERROR_CODES,
+	TSRX_ERRORS,
+} from '../../src/diagnostics.js';
 import { analyzeTsrx, DIAGNOSTIC_CODES, parseModule } from '../../src/index.js';
 
 /**
@@ -545,6 +551,73 @@ let E;`,
 				expect(message, name).toBe(typescript.get(entry.code));
 			}
 		}
+	});
+
+	it('tells the TypeScript codes TypeScript reports as syntax errors from the others', () => {
+		// Where TypeScript 5.9 raises each code, from the source file each use of
+		// its diagnostic is in, which its bundle marks with a
+		// `// src/compiler/<file>` comment: a code its scanner or parser raises is
+		// a syntax error, and one only its binder or checker raises is a grammar
+		// or semantic error (#1264).
+		const bundle = readFileSync(createRequire(import.meta.url).resolve('typescript'), 'utf8');
+		/** @type {Array<[number, string]>} */
+		const files = [...bundle.matchAll(/^\/\/ src\/compiler\/([\w/.-]+)$/gm)].map((match) => [
+			/** @type {number} */ (match.index),
+			match[1],
+		]);
+		/** @param {number} position */
+		const file_at = (position) => files.findLast(([start]) => start < position)?.[1];
+		const diagnostics = /** @type {{ Diagnostics: Record<string, { code: number }> }} */ (
+			/** @type {unknown} */ (ts)
+		).Diagnostics;
+		/** @type {Map<string, Set<string | undefined>>} */
+		const raised_in = new Map();
+		for (const match of bundle.matchAll(/\bDiagnostics\.(\w+)\b/g)) {
+			const diagnostic = diagnostics[match[1]];
+			if (!diagnostic) continue;
+			const code = `TS${diagnostic.code}`;
+			const in_files = raised_in.get(code) ?? new Set();
+			raised_in.set(code, in_files);
+			in_files.add(file_at(/** @type {number} */ (match.index)));
+		}
+		// TypeScript's checker reports these, though its scanner or parser raises
+		// them too: a regular expression's mistakes, which the checker scans the
+		// literal again to report (`checkGrammarRegularExpressionLiteral`), a line
+		// break after `throw` (TS1142) and a private name outside a class
+		// (TS18016), where TSRX raises them.
+		const checker = new Set([
+			'TS1142',
+			'TS18016',
+			'TS1499',
+			'TS1500',
+			'TS1504',
+			'TS1506',
+			'TS1507',
+			'TS1508',
+			'TS1510',
+			'TS1512',
+			'TS1514',
+			'TS1515',
+			'TS1516',
+			'TS1517',
+			'TS1518',
+			'TS1526',
+			'TS1529',
+			'TS1532',
+			'TS1535',
+		]);
+		const source = readFileSync(new URL('../../src/diagnostics.js', import.meta.url), 'utf8');
+		const codes = new Set([...source.matchAll(/'(TS\d+)'/g)].map((match) => match[1]));
+		const syntax = new Set(TS_SYNTAX_ERROR_CODES);
+		for (const code of codes) {
+			const in_files = raised_in.get(code) ?? new Set();
+			const raised_by_parser = in_files.has('scanner.ts') || in_files.has('parser.ts');
+			expect(syntax.has(code), `${code}: ${[...in_files].join(', ')}`).toBe(
+				raised_by_parser && !checker.has(code),
+			);
+		}
+		// The check finds the scanner's, the parser's and the checker's codes.
+		expect(syntax.has('TS1005') && !syntax.has('TS1114') && codes.has('TS1114')).toBe(true);
 	});
 
 	it('gives each TSRX error a TSRX code', () => {

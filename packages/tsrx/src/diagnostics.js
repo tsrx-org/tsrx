@@ -163,6 +163,57 @@ export const DIAGNOSTIC_CODES = {
 export const DIAGNOSTIC_SOURCE = 'TSRX';
 
 /**
+ * The TypeScript codes in this module that TypeScript reports as syntax errors,
+ * from its scanner or parser (`getSyntacticDiagnostics`). It reports every
+ * other TypeScript code here from its binder or checker, as a grammar or
+ * semantic error, with its other checker errors, and none of them for a file
+ * with a syntax error (see `#isSyntaxError` in `plugin.js`). A test derives
+ * this from where TypeScript raises each code.
+ * @type {string[]}
+ */
+export const TS_SYNTAX_ERROR_CODES = [
+	'TS1002',
+	'TS1003',
+	'TS1005',
+	'TS1010',
+	'TS1012',
+	'TS1109',
+	'TS1124',
+	'TS1125',
+	'TS1127',
+	'TS1128',
+	'TS1134',
+	'TS1136',
+	'TS1145',
+	'TS1146',
+	'TS1160',
+	'TS1161',
+	'TS1177',
+	'TS1178',
+	'TS1198',
+	'TS1209',
+	'TS1260',
+	'TS1351',
+	'TS1359',
+	'TS1381',
+	'TS1382',
+	'TS1434',
+	'TS1435',
+	'TS1438',
+	'TS1440',
+	'TS1472',
+	'TS1477',
+	'TS1478',
+	'TS1487',
+	'TS1488',
+	'TS17002',
+	'TS17008',
+	'TS2657',
+	'TS6188',
+	'TS6189',
+];
+
+/**
  * TypeScript 7's content-mapper protocol takes a number as an error's code, and
  * shows every error `@tsrx/content-mapper` reports as {@link DIAGNOSTIC_SOURCE}
  * then that number. Each kind of code gets its own numbers:
@@ -1071,8 +1122,11 @@ export const TS_ERRORS = {
  * doesn't write: the pattern of its message, and TypeScript's code for the
  * same mistake. The code is TypeScript's diagnostic with the same wording, or
  * the one TypeScript reports for an input that raises the message (checked for
- * each), and `TSRX4003` where TypeScript accepts the code.
- * @typedef {{ pattern: RegExp, code: string }} UpstreamError
+ * each), and `TSRX4003` where TypeScript accepts the code. `checker` marks one
+ * that TypeScript reports from its checker though its parser reports the code
+ * too, which `TS_SYNTAX_ERROR_CODES` lists: a regular expression's mistake,
+ * `await` as a name in an async function (#1264).
+ * @typedef {{ pattern: RegExp, code: string, checker?: boolean }} UpstreamError
  */
 
 /**
@@ -1162,11 +1216,12 @@ export const UPSTREAM_ERRORS = {
 /**
  * acorn's and acorn-typescript's errors, which they raise as bare messages:
  * the lookup that gives each its code. A row is an {@link UpstreamError}, a
- * `[pattern, code]` pair, or the entry of a message TSRX raises too in the same
- * words, whose pattern is the entry's message with any value in it. A comment
- * names the upstream functions that raise each. The first row that matches
- * wins.
- * @returns {Array<UpstreamError | [RegExp, string] | Diagnostic | DiagnosticWithValues>}
+ * `[pattern, code]` pair, a `[pattern, code, 'checker']` triple for a checker
+ * error with a code in `TS_SYNTAX_ERROR_CODES`, or the entry of a message TSRX
+ * raises too in the same words, whose pattern is the entry's message with any
+ * value in it. A comment names the upstream functions that raise each. The
+ * first row that matches wins.
+ * @returns {Array<UpstreamError | [RegExp, string] | [RegExp, string, 'checker'] | Diagnostic | DiagnosticWithValues>}
  */
 function upstream_lookup_rows() {
 	return [
@@ -1177,7 +1232,7 @@ function upstream_lookup_rows() {
 		// acorn: checkPatternErrors, toAssignable
 		[/^Assigning to rvalue$/, 'TS2364'],
 		// acorn: checkPatternErrors
-		[/^Parenthesized pattern$/, 'TS1005'],
+		[/^Parenthesized pattern$/, 'TS1005', 'checker'],
 		// acorn: checkExpressionErrors
 		[/^Shorthand property assignments are valid only in destructuring patterns$/, 'TS1312'],
 		// acorn: checkExpressionErrors, checkPropClash
@@ -1258,9 +1313,9 @@ function upstream_lookup_rows() {
 		// acorn: parseModuleExportName
 		[/^An export name cannot include a lone surrogate\.$/, 'TSRX4003'],
 		// acorn: toAssignable, parseSubscript, checkUnreserved
-		[/^Cannot use 'await' as identifier inside an async function$/, 'TS1359'],
+		[/^Cannot use 'await' as identifier inside an async function$/, 'TS1359', 'checker'],
 		// acorn: toAssignable
-		[/^Object pattern can't contain getter or setter$/, 'TS1136'],
+		[/^Object pattern can't contain getter or setter$/, 'TS1136', 'checker'],
 		// acorn: toAssignable
 		[/^Rest elements cannot have a default value$/, 'TS1186'],
 		// acorn: toAssignable
@@ -1407,23 +1462,23 @@ function upstream_lookup_rows() {
 		// acorn: regexp_eatTerm
 		[/^Invalid regular expression: \/.*\/: Invalid quantifier$/, 'TS1507'],
 		// acorn: regexp_eatAssertion, regexp_eatCapturingGroup, regexp_eatUncapturingGroup
-		[/^Invalid regular expression: \/.*\/: Unterminated group$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Unterminated group$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatBracedQuantifier
 		[/^Invalid regular expression: \/.*\/: numbers out of order in \{\} quantifier$/, 'TS1506'],
 		// acorn: regexp_eatBracedQuantifier
-		[/^Invalid regular expression: \/.*\/: Incomplete quantifier$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Incomplete quantifier$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatUncapturingGroup
 		[/^Invalid regular expression: \/.*\/: Duplicate regular expression modifiers$/, 'TS1500'],
 		// acorn: regexp_eatUncapturingGroup
 		[/^Invalid regular expression: \/.*\/: Invalid regular expression modifiers$/, 'TS1504'],
 		// acorn: regexp_eatCapturingGroup, regexp_groupSpecifier
-		[/^Invalid regular expression: \/.*\/: Invalid group$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Invalid group$/, 'TS1005', 'checker'],
 		// acorn: regexp_groupSpecifier
 		[/^Invalid regular expression: \/.*\/: Duplicate capture group name$/, 'TS1515'],
 		// acorn: regexp_eatGroupName
 		[/^Invalid regular expression: \/.*\/: Invalid capture group name$/, 'TS1514'],
 		// acorn: regexp_eatAtomEscape, regexp_eatRegExpUnicodeEscapeSequence
-		[/^Invalid regular expression: \/.*\/: Invalid unicode escape$/, 'TS1198'],
+		[/^Invalid regular expression: \/.*\/: Invalid unicode escape$/, 'TS1198', 'checker'],
 		// acorn: regexp_eatKGroupName
 		[/^Invalid regular expression: \/.*\/: Invalid named reference$/, 'TS1510'],
 		// acorn: regexp_eatCharacterClassEscape, regexp_validateUnicodePropertyNameAndValue, regexp_validateUnicodePropertyNameOrValue
@@ -1431,7 +1486,7 @@ function upstream_lookup_rows() {
 		// acorn: regexp_validateUnicodePropertyNameAndValue
 		[/^Invalid regular expression: \/.*\/: Invalid property value$/, 'TS1526'],
 		// acorn: regexp_eatCharacterClass
-		[/^Invalid regular expression: \/.*\/: Unterminated character class$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Unterminated character class$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatCharacterClass, regexp_eatNestedClass
 		[/^Invalid regular expression: \/.*\/: Negated character class may contain strings$/, 'TS1518'],
 		// acorn: regexp_nonEmptyClassRanges
@@ -1643,7 +1698,12 @@ let upstream_lookup;
  */
 export function get_upstream_error(message) {
 	upstream_lookup ??= upstream_lookup_rows().map((row) => {
-		if (Array.isArray(row)) return { pattern: row[0], error: { pattern: row[0], code: row[1] } };
+		if (Array.isArray(row)) {
+			/** @type {UpstreamError} */
+			const error = { pattern: row[0], code: row[1] };
+			if (row[2] === 'checker') error.checker = true;
+			return { pattern: row[0], error };
+		}
 		if ('pattern' in row) return { pattern: row.pattern, error: row };
 		return { pattern: message_pattern(row), error: row };
 	});

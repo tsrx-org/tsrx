@@ -593,6 +593,8 @@ export namespace Parse {
 		 * changes, undone when the parse is abandoned
 		 */
 		parseEffects?: {
+			/** Whether a speculative parse is being read */
+			readonly active: boolean;
 			/** Record `target`'s length, to restore if the current speculative parse is abandoned */
 			willAppend(target: unknown[]): void;
 			/** Record `target[key]`, to restore if the current speculative parse is abandoned */

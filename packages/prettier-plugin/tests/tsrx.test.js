@@ -2487,7 +2487,7 @@ describe('parse errors', () => {
 			],
 			[
 				'const f = async (a, readonly [b]: number[]) => a;',
-				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				TS_ERRORS.PATTERN_PARAMETER_PROPERTY,
 				'1:21',
 			],
 			[

@@ -842,8 +842,13 @@ describe("a parameter property modifier before a function type's first parameter
 	// TypeScript's lookahead for a function type skips modifiers before the
 	// first parameter; acorn-typescript's took the token after the modifier for
 	// the one after the parameter's name, and read a parenthesized type. When
-	// collecting, the type is a function type, and TS2369 is recorded (#136).
-	const error = TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR;
+	// collecting, the type is a function type, and TS2369 is recorded (#136),
+	// after TS1187 at the same position for a binding pattern (#1264).
+	/** @param {string} source */
+	const error = (source) =>
+		/(?:readonly|override) [[{]/.test(source)
+			? TS_ERRORS.PATTERN_PARAMETER_PROPERTY
+			: TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR;
 	const sources = [
 		'type F = (public x: number) => void;',
 		'type F = (readonly [a]: number[]) => void;',
@@ -860,15 +865,17 @@ describe("a parameter property modifier before a function type's first parameter
 			const source = sources[index];
 			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
 			const pos = source.indexOf('(') + 1;
-			expect(outcome.errors?.[0], source).toEqual({ code: error.code, pos, end: pos + 1 });
+			expect(outcome.errors?.[0], source).toEqual({ code: error(source).code, pos, end: pos + 1 });
 			expect(JSON.stringify(outcome.ast), source).toContain('"type":"TSFunctionType"');
 		}
 	});
 
-	it('throws TS2369 at the modifier without collecting (#1162)', async () => {
+	it('throws it at the modifier without collecting (#1162)', async () => {
 		const outcomes = await parse_in_worker(sources.map((source) => ({ source })));
 
-		expect(outcomes).toEqual(sources.map((source) => thrown(error, source.indexOf('(') + 1)));
+		expect(outcomes).toEqual(
+			sources.map((source) => thrown(error(source), source.indexOf('(') + 1)),
+		);
 	});
 
 	it('still reads a parenthesized type', async () => {
