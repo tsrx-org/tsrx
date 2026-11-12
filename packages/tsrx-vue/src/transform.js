@@ -40,6 +40,17 @@ const VAPOR_BINDINGS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'vapor_bindings';
 const vapor_bindings_counts = new WeakMap();
 
 /**
+ * Local name for the `VaporFor` the transform imports for `@for`, so an
+ * authored binding named `VaporFor` neither collides with the import nor
+ * replaces the loop. `defineVaporComponent` keeps its public name:
+ * vue-jsx-vapor finds components by that callee name for its macros, HMR,
+ * SSR and interop output.
+ */
+const VAPOR_FOR_INTERNAL_NAME = '__VaporFor';
+
+const DEFINE_VAPOR_COMPONENT = 'defineVaporComponent';
+
+/**
  * Minimal Vue platform descriptor consumed by `createJsxTransform`.
  *
  * Vue largely reuses the shared JSX lowering while wrapping compiled
@@ -1817,8 +1828,8 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 
 	return to_jsx_expression_container(
 		b.jsx_element_fresh(
-			b.jsx_opening_element(b.jsx_id('VaporFor'), attributes),
-			b.jsx_closing_element(b.jsx_id('VaporFor')),
+			b.jsx_opening_element(b.jsx_id(VAPOR_FOR_INTERNAL_NAME), attributes),
+			b.jsx_closing_element(b.jsx_id(VAPOR_FOR_INTERNAL_NAME)),
 			[to_jsx_expression_container(create_loop_callback(slot.params, slot.body, slot.expression))],
 		),
 	);
@@ -2587,6 +2598,217 @@ function to_jsx_expression_container(expression, source_node = expression) {
 }
 
 /**
+ * Whether `specifier` of `declaration` imports `defineVaporComponent` from
+ * `vue-jsx-vapor` under its own name, as a value or as a type.
+ *
+ * @param {AST.ImportDeclaration | AST.TSRXImportDeclaration} declaration
+ * @param {AST.ImportDeclaration['specifiers'][number]} specifier
+ * @returns {boolean}
+ */
+function imports_define_vapor_component(declaration, specifier) {
+	return (
+		declaration.source.type === 'Literal' &&
+		declaration.source.value === 'vue-jsx-vapor' &&
+		specifier.type === 'ImportSpecifier' &&
+		imported_name(specifier) === DEFINE_VAPOR_COMPONENT &&
+		specifier.local.name === DEFINE_VAPOR_COMPONENT
+	);
+}
+
+/**
+ * The name an import specifier imports, written as an identifier or quoted
+ * (`import { "a" as a }`).
+ *
+ * @param {AST.ImportSpecifier} specifier
+ * @returns {string | undefined}
+ */
+function imported_name(specifier) {
+	const imported = specifier.imported;
+	if (imported?.type === 'Identifier') return imported.name;
+	if (imported?.type === 'Literal' && typeof imported.value === 'string') return imported.value;
+	return undefined;
+}
+
+/**
+ * Turn an authored type-only import of `defineVaporComponent` from
+ * `vue-jsx-vapor` into the value import the generated components need. The
+ * specifier is replaced by one without a location, as for a name the compiler
+ * adds, so the editor maps no edit of the whole import back to the source.
+ *
+ * @param {AST.Program} program
+ * @returns {void}
+ */
+function promote_type_only_define_vapor_component_import(program) {
+	for (const statement of program.body) {
+		if (statement.type !== 'ImportDeclaration') continue;
+		const index = statement.specifiers.findIndex(
+			(specifier) =>
+				imports_define_vapor_component(statement, specifier) &&
+				(statement.importKind === 'type' ||
+					/** @type {AST.ImportSpecifier} */ (specifier).importKind === 'type'),
+		);
+		if (index === -1) continue;
+		if (statement.importKind === 'type') {
+			statement.importKind = 'value';
+			for (const specifier of statement.specifiers) {
+				if (specifier.type === 'ImportSpecifier') specifier.importKind = 'type';
+			}
+		}
+		statement.specifiers[index] = create_import_specifier(DEFINE_VAPOR_COMPONENT);
+		return;
+	}
+}
+
+/**
+ * Report each authored binding named `defineVaporComponent`. vue-jsx-vapor
+ * finds components by calls to that name, and the compiler wraps each
+ * component in the one from `vue-jsx-vapor`, so the module can't declare or
+ * shadow it. An import of it from `vue-jsx-vapor` itself is the binding the
+ * compiler needs.
+ *
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {boolean} whether it reported one
+ */
+function report_define_vapor_component_bindings(program, transform_context) {
+	/** @type {Set<number>} */
+	const reported = new Set();
+
+	/** @param {AST.Node | null | undefined} pattern */
+	const check = (pattern) => {
+		for (const id of pattern_identifiers(pattern)) {
+			if (id.name !== DEFINE_VAPOR_COMPONENT || !has_location(id)) continue;
+			// The transform can carry one authored node to more than one place.
+			if (reported.has(id.start)) continue;
+			reported.add(id.start);
+			error(
+				TSRX_ERRORS.DEFINE_VAPOR_COMPONENT_BINDING,
+				transform_context.filename,
+				id,
+				transform_context.errors,
+				transform_context.comments,
+			);
+		}
+	};
+
+	/** @param {AST.Function} node */
+	const check_function = (node) => {
+		if (node.type !== 'ArrowFunctionExpression') check(node.id);
+		for (const param of node.params) check(param);
+	};
+
+	walk(/** @type {AST.Node} */ (program), null, {
+		ImportDeclaration(node) {
+			for (const specifier of node.specifiers) {
+				if (!imports_define_vapor_component(node, specifier)) check(specifier.local);
+			}
+		},
+		VariableDeclarator(node, { next }) {
+			check(node.id);
+			next();
+		},
+		FunctionDeclaration(node, { next }) {
+			check_function(node);
+			next();
+		},
+		FunctionExpression(node, { next }) {
+			check_function(node);
+			next();
+		},
+		ArrowFunctionExpression(node, { next }) {
+			check_function(node);
+			next();
+		},
+		// `declare function`: its parameters only name types.
+		TSDeclareFunction(node) {
+			check(node.id);
+		},
+		ClassDeclaration(node, { next }) {
+			check(node.id);
+			next();
+		},
+		ClassExpression(node, { next }) {
+			check(node.id);
+			next();
+		},
+		CatchClause(node, { next }) {
+			check(node.param);
+			next();
+		},
+		TSEnumDeclaration(node, { next }) {
+			check(node.id);
+			next();
+		},
+		TSModuleDeclaration(node, { next }) {
+			if (is_instantiated_namespace(node)) check(node.id);
+			next();
+		},
+		TSImportEqualsDeclaration(node, { next }) {
+			check(node.id);
+			next();
+		},
+	});
+
+	return reported.size > 0;
+}
+
+/**
+ * Whether a namespace declares a value, as TypeScript decides: a namespace of
+ * interfaces, type aliases and namespaces of those binds only a type.
+ *
+ * @param {AST.TSModuleDeclaration} node
+ * @returns {boolean}
+ */
+function is_instantiated_namespace(node) {
+	const body = node.body;
+	if (!body) return false;
+	if (body.type === 'TSModuleDeclaration') return is_instantiated_namespace(body);
+	return body.body.some((statement) => {
+		const declaration = /** @type {AST.Node} */ (
+			statement.type === 'ExportNamedDeclaration' && statement.declaration
+				? statement.declaration
+				: statement
+		);
+		switch (declaration.type) {
+			case 'TSInterfaceDeclaration':
+			case 'TSTypeAliasDeclaration':
+				return false;
+			case 'TSModuleDeclaration':
+				return is_instantiated_namespace(declaration);
+			default:
+				return true;
+		}
+	});
+}
+
+/**
+ * The identifiers a binding pattern declares.
+ *
+ * @param {AST.Node | null | undefined} node
+ * @returns {AST.Identifier[]}
+ */
+function pattern_identifiers(node) {
+	switch (node?.type) {
+		case 'Identifier':
+			return [node];
+		case 'RestElement':
+			return pattern_identifiers(node.argument);
+		case 'AssignmentPattern':
+			return pattern_identifiers(node.left);
+		case 'ArrayPattern':
+			return node.elements.flatMap(pattern_identifiers);
+		case 'ObjectPattern':
+			return node.properties.flatMap((property) =>
+				pattern_identifiers(property.type === 'Property' ? property.value : property),
+			);
+		case 'TSParameterProperty':
+			return pattern_identifiers(/** @type {AST.Node} */ (/** @type {unknown} */ (node.parameter)));
+		default:
+			return [];
+	}
+}
+
+/**
  * @param {import('estree').Program} program
  * @param {TransformContext} transform_context
  * @returns {void}
@@ -2596,11 +2818,21 @@ function inject_vue_imports(program, transform_context) {
 	const ref_prop_source = transform_context.platform.imports.refProp;
 
 	if (transform_context.needs_define_vapor_component) {
-		ensure_named_import(program, 'vue-jsx-vapor', 'defineVaporComponent');
+		promote_type_only_define_vapor_component_import(program);
+	}
+	const reported_define_vapor_component = report_define_vapor_component_bindings(
+		program,
+		transform_context,
+	);
+
+	// After the error the authored binding keeps the name, and an import could
+	// only declare it a second time.
+	if (transform_context.needs_define_vapor_component && !reported_define_vapor_component) {
+		ensure_named_import(program, 'vue-jsx-vapor', DEFINE_VAPOR_COMPONENT);
 	}
 
 	if (transform_context.needs_vapor_for) {
-		ensure_named_import(program, 'vue-jsx-vapor', 'VaporFor');
+		ensure_named_import(program, 'vue-jsx-vapor', 'VaporFor', VAPOR_FOR_INTERNAL_NAME);
 	}
 
 	if (transform_context.needs_vapor_computed) {
@@ -2693,8 +2925,7 @@ function ensure_named_import(program, source, name, local = name) {
 			(specifier) =>
 				specifier.type === 'ImportSpecifier' &&
 				specifier.importKind !== 'type' &&
-				specifier.imported?.type === 'Identifier' &&
-				specifier.imported.name === name &&
+				imported_name(specifier) === name &&
 				specifier.local?.name === local,
 		);
 

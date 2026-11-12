@@ -35,6 +35,9 @@ const identifier_pattern = /^[\p{ID_Start}_$][\p{ID_Continue}$‌‍]*$/u;
  * @property {number} originalEnd
  * @property {0 | 1 | 2} kind
  * @property {number} features
+ * @property {boolean} [positionOnly] From a mapping with no Volar feature, not even
+ *   `verification`: it only places diagnostics, so coalescing may join it to
+ *   its neighbours like an unmapped gap.
  */
 
 /**
@@ -179,6 +182,7 @@ export function to_span_mappings(mappings, generated_text, original_text, option
 				features: language_features
 					? features_from_mapping_data(mapping.data)
 					: SpanMapFeature.None,
+				positionOnly: is_position_only(mapping.data),
 			});
 		}
 	}
@@ -229,11 +233,32 @@ export function to_span_mappings(mappings, generated_text, original_text, option
 }
 
 /**
+ * Whether a mapping has no Volar feature at all, not even `verification`. The
+ * transform emits such mappings only to give TypeScript 7 a place for
+ * diagnostics (the brackets of a respaced literal); Volar ignores them.
+ * @param {CodeMapping['data'] | undefined} data
+ * @returns {boolean}
+ */
+function is_position_only(data) {
+	return (
+		!!data &&
+		typeof data === 'object' &&
+		!data.verification &&
+		!data.completion &&
+		!data.semantic &&
+		!data.navigation &&
+		!data.structure &&
+		!data.format
+	);
+}
+
+/**
  * Merge runs of Verbatim spans, sorted by generated start, when the two spans
  * carry the same feature bits and the text between them is identical (and of
  * equal length) in the generated and the original file. The merged span is
  * Verbatim by construction: every position inside it maps with the same
- * offset and the same text.
+ * offset and the same text. A position-only span joins a neighbour whatever
+ * its features, and takes them, as the unmapped text it covers would.
  * @param {Candidate[]} spans
  * @param {string} generated_text
  * @param {string} original_text
@@ -248,7 +273,7 @@ export function coalesce_verbatim_spans(spans, generated_text, original_text) {
 			previous &&
 			previous.kind === SpanMapKind.Verbatim &&
 			span.kind === SpanMapKind.Verbatim &&
-			previous.features === span.features &&
+			(previous.features === span.features || previous.positionOnly || span.positionOnly) &&
 			span.originalStart >= previous.originalEnd &&
 			span.generatedStart - previous.generatedEnd === span.originalStart - previous.originalEnd &&
 			generated_text.slice(previous.generatedEnd, span.generatedStart) ===
@@ -256,6 +281,10 @@ export function coalesce_verbatim_spans(spans, generated_text, original_text) {
 		) {
 			previous.generatedEnd = span.generatedEnd;
 			previous.originalEnd = span.originalEnd;
+			if (previous.positionOnly && !span.positionOnly) {
+				previous.features = span.features;
+				previous.positionOnly = false;
+			}
 			continue;
 		}
 		merged.push({ ...span });

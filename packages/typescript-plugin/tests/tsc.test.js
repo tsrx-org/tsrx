@@ -468,12 +468,13 @@ process.exit(Number(process.env.TSRX_TEST_EXIT ?? 0));
 });
 
 // The editor's loose compile, which tsrx-tsc runs, reports unclosed and
-// mismatched tags as a collecting compile does (#978).
+// mismatched tags as a collecting compile does (#978), an unclosed tag at its
+// name (#1288).
 it.each([
 	[
 		'an unclosed tag',
 		'\t<div>{title}\n',
-		"(3,1): error TSRX1001: Unclosed tag '<div>'. Expected '</div>' before end of template.",
+		"(2,3): error TSRX1001: Unclosed tag '<div>'. Expected '</div>' before end of template.",
 	],
 	[
 		'a mismatched closing tag',
@@ -827,6 +828,81 @@ it('keeps a static index signature static in .tsrx files and their declarations'
 	expect(declaration).toContain('static [key: string]: number;');
 	expect(declaration).toContain('static [key: string]: string;');
 	expect(declaration).not.toMatch(/^\s*\[key: string\]/m);
+});
+
+it('reports errors on an array inside an array and on an empty type literal in .tsrx files', () => {
+	const lines = [
+		'declare function g<T extends string>(): void; g<{}>();',
+		'export const t = [ {}, [] ] satisfies number[]; export const u = [[]] satisfies number[];',
+		'export const v: number[] = [ [ 1 ] ];',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {number} */ offset) =>
+		`layout.tsrx(${index + 4},${offset + 1})`;
+	expect(result.output).toContain(
+		`${at(0, lines[0].indexOf('{}'))}: error TS2344: Type '{}' does not satisfy the constraint 'string'.`,
+	);
+	for (const [index, offset, type] of /** @type {const} */ ([
+		[1, lines[1].indexOf('{}'), '{}'],
+		[1, lines[1].indexOf('[]'), '[]'],
+		[1, lines[1].indexOf('[]]'), '[]'],
+		[2, lines[2].indexOf('[ 1 ]'), '[number]'],
+	])) {
+		expect(result.output).toContain(
+			`${at(index, offset)}: error TS2322: Type '${type}' is not assignable to type 'number'.`,
+		);
+	}
+});
+
+it('reports errors after a comment inside an array or object literal where they are written in .tsrx files', () => {
+	// The printer leaves the comments out, so the literal is shorter in the
+	// generated code than in the source.
+	const lines = [
+		'declare const o: { a: number };',
+		'export const x = [ /*comment*/ 1 as string ];',
+		"export const y: number[] = [ /* c */ o.a + 'x' ];",
+		'export const z = [ /* c */ {} + 1 ];',
+		"export const v: number[] = [ /* long comment here */ true ? 'a' : 'b' ];",
+		'export const w = { /* comment */ a: 1 as string };',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	for (const [index, text, code] of /** @type {const} */ ([
+		[1, '1 as', 'TS2352'],
+		[2, 'o.a', 'TS2322'],
+		[3, '{} +', 'TS2365'],
+		[4, 'true', 'TS2322'],
+		[5, '1 as', 'TS2352'],
+	])) {
+		expect(result.output).toContain(`${at(index, text)}: error ${code}:`);
+	}
+});
+
+it('reports errors on a whole spread in .tsrx files', () => {
+	const lines = [
+		'declare const n: number; declare const s: string | undefined;',
+		'export const a = { ...n }; export const b = { ...s }; export const c = { /* c */ ...s };',
+		"export const d: number[] = [ ...['x'] ];",
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts2698 = 'error TS2698: Spread types may only be created from object types.';
+	for (const offset of [
+		lines[1].indexOf('...n'),
+		lines[1].indexOf('...s'),
+		lines[1].lastIndexOf('...s'),
+	]) {
+		expect(result.output).toContain(`layout.tsrx(5,${offset + 1}): ${ts2698}`);
+	}
+	expect(result.output).toContain(
+		`layout.tsrx(6,${lines[2].indexOf('...') + 1}): error TS2322: Type 'string' is not assignable to type 'number'.`,
+	);
 });
 
 it('reports errors on a bare this in .tsrx files', () => {

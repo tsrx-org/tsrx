@@ -714,6 +714,70 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map the start and the end of a node as the two points of one mapping, for
+	 * diagnostics only. Volar maps a range only when both of its ends fall in one
+	 * mapping, and points have no length, so a range inside the node still maps
+	 * through its own tokens.
+	 * @param {AST.Node} node
+	 * @param {string} start_text The text the node starts with.
+	 * @returns {CodeMapping | undefined}
+	 */
+	function push_points_mapping(node, start_text) {
+		if (!has_location(node)) return;
+		const mapping = declaration_mapping(node, start_text);
+		if (!mapping) return;
+		const generated_start = mapping.generatedOffsets[0];
+		mapping.sourceOffsets = [node.start, node.end];
+		mapping.generatedOffsets = [generated_start, generated_start + mapping.generatedLengths[0]];
+		mapping.lengths = [0, 0];
+		mapping.generatedLengths = [0, 0];
+		mappings.push(mapping);
+		return mapping;
+	}
+
+	/**
+	 * Map a literal for errors TypeScript reports on all of it (TS2344 on the
+	 * `{}` of `g<{}>()`, TS2322 on the `[]` of `[ {}, [] ]`), which the printer
+	 * respaces. A mapping over the whole literal would also map every position
+	 * inside it by offset, which is wrong wherever the printed text differs,
+	 * for example after a comment the printer leaves out. Instead:
+	 *
+	 * - Its start and its end are the two points of one diagnostics-only
+	 *   mapping (see {@link push_points_mapping}).
+	 * - Its brackets are mapped with no Volar feature at all. The TypeScript 7
+	 *   content mapper drops points, which have no length, but turns any
+	 *   mapping into a span that places diagnostics, and joins a span without
+	 *   features to its neighbours. Volar ignores a mapping without features;
+	 *   with diagnostics on, a bracket's end would also catch a range that
+	 *   starts right after it.
+	 * @param {AST.Node} node
+	 * @param {string} open
+	 * @param {string} close
+	 * @returns {void}
+	 */
+	function push_literal_mappings(node, open, close) {
+		if (!has_location(node)) return;
+		if (!push_points_mapping(node, open)) return;
+		const opening = find_source_token(source_tokens, open, node.start, 'after');
+		const closing = find_source_token(source_tokens, close, node.end, 'before');
+		if (opening?.start !== node.start || closing?.end !== node.end) return;
+		push_position_only_token(opening, open);
+		push_position_only_token(closing, close);
+	}
+
+	/**
+	 * Map a source token where the printer writes it, with no Volar feature, as
+	 * a place for TypeScript 7 diagnostics (see {@link push_literal_mappings}).
+	 * @param {Parse.Token} token
+	 * @param {string} text
+	 * @returns {void}
+	 */
+	function push_position_only_token(token, text) {
+		if (!token.loc || generated_offset_for_text(token.loc.start, text) === undefined) return;
+		tokens.push({ source: text, generated: text, loc: token.loc, metadata: {}, mappingData: {} });
+	}
+
+	/**
 	 * Map the first `text` token at or after `from` that lies inside `node`.
 	 * @param {string} text
 	 * @param {number} from
@@ -1816,11 +1880,7 @@ export function convert_source_map_to_mappings(
 
 				return;
 			} else if (node.type === 'ObjectExpression' || node.type === 'ObjectPattern') {
-				if (node.type === 'ObjectExpression' && has_location(node)) {
-					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
-					);
-				}
+				if (node.type === 'ObjectExpression') push_literal_mappings(node, '{', '}');
 
 				// Visit properties in order
 				if (node.properties) {
@@ -1853,6 +1913,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'ArrayExpression' || node.type === 'ArrayPattern') {
+				if (node.type === 'ArrayExpression') push_literal_mappings(node, '[', ']');
 				// Visit elements in order
 				if (node.elements) {
 					for (const element of node.elements) {
@@ -2076,6 +2137,17 @@ export function convert_source_map_to_mappings(
 				// type that is not an array), which starts at the `...`.
 				if (node.type === 'RestElement' && has_location(node)) {
 					push_source_keyword_token('...', node.start, node);
+				}
+				// TypeScript reports some errors on a whole spread (TS2698 on
+				// `{ ...value }` when the value is not an object), so it maps like a
+				// literal: its ends as points, and its `...` for TypeScript 7.
+				if (
+					node.type === 'SpreadElement' &&
+					has_location(node) &&
+					push_points_mapping(node, '...')
+				) {
+					const ellipsis = find_source_token(source_tokens, '...', node.start, 'after');
+					if (ellipsis && ellipsis.start === node.start) push_position_only_token(ellipsis, '...');
 				}
 				// Visit the argument
 				if (node.argument) {
@@ -2403,6 +2475,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSTypeLiteral') {
+				push_literal_mappings(node, '{', '}');
 				// Object type literal { foo: string }
 				if (node.members) {
 					for (const member of node.members) {
@@ -3090,18 +3163,19 @@ function add_diagnostic_mappings(
 		);
 		if (generated_start === null) continue;
 
+		// The anchor stays on its generated line. The source token isn't in the
+		// generated code, so running past the line would map unrelated code.
+		const line_end = generated_code.indexOf('\n', generated_start);
+		const room = (line_end === -1 ? generated_code.length : line_end) - generated_start;
+
 		diagnostic_mappings.push({
 			sourceOffsets: [start],
 			generatedOffsets: [generated_start],
 			lengths: [length],
-			generatedLengths: [
-				generated_code.length === 0
-					? 0
-					: Math.max(1, Math.min(length, generated_code.length - generated_start)),
-			],
+			generatedLengths: [generated_code.length === 0 ? 0 : Math.max(1, Math.min(length, room))],
 			data: {
 				...mapping_data_verify_only,
-				customData: {},
+				customData: { diagnosticAnchor: true },
 			},
 		});
 	}
@@ -3188,7 +3262,9 @@ function get_nearest_generated_offset_from_source_line_map(
 	const generated_offset =
 		loc_to_offset(position.line, position.column, gen_line_offsets) +
 		('sourceColumn' in position ? loc.column - position.sourceColumn : 0);
-	return Math.max(0, Math.min(generated_offset, generated_code.length - 1));
+	// The column only carries over on the generated line of the code it's from.
+	const next_line = gen_line_offsets[position.line] ?? generated_code.length;
+	return Math.max(0, Math.min(generated_offset, next_line - 1, generated_code.length - 1));
 }
 
 /**
