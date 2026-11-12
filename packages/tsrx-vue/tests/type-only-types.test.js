@@ -1,8 +1,13 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { compile_to_volar_mappings } from '../src/index.js';
+
+// Each case builds a TypeScript program over the Vue declarations, which can run
+// past the 5s default once the rest of the suite is competing for workers. The
+// cases assert diagnostics, not speed, so the timeout is only here to catch a hang.
+vi.setConfig({ testTimeout: 30_000 });
 
 /**
  * Runs the TypeScript checker over the type-only (editor) output against the
@@ -90,6 +95,16 @@ describe('@tsrx/vue type-only output type-checks', () => {
 					<Child label="hi" />
 				} @catch (err, reset) {
 					<button onClick={reset}>{(err as Error).message}{suffix}</button>
+				}
+			}`,
+		],
+		[
+			'@try / @pending',
+			`export function App() @{
+				@try {
+					<span>{'Loaded'}</span>
+				} @pending {
+					<span>{'Loading'}</span>
 				}
 			}`,
 		],

@@ -77,6 +77,12 @@ jobs:
       - name: Test Hono with Bun
         run: pnpm --filter @tsrx/bun-plugin-hono test:native
 
+      - name: Test React with Bun
+        run: pnpm --filter @tsrx/bun-plugin-react test:native
+
+      - name: Test Preact with Bun
+        run: pnpm --filter @tsrx/bun-plugin-preact test:native
+
   lint:
     runs-on: ubuntu-latest
 
@@ -188,3 +194,20 @@ jobs:
           pnpm regenerate-textmate
           pnpm copy-tree-sitter-queries
           git diff --exit-code
+
+      - name: Load the Tree-sitter grammar in ast-grep
+        run: |
+          pnpm --filter @tsrx/tree-sitter build:library
+          cat > "$RUNNER_TEMP/sgconfig.yml" <<EOF
+          customLanguages:
+            tsrx:
+              libraryPath: $GITHUB_WORKSPACE/grammars/tree-sitter/tsrx.so
+              extensions: [tsrx]
+          EOF
+          # npx, not `pnpm dlx`: dlx skips the postinstall that puts ast-grep's platform binary in place.
+          matches=$(npx --yes --package @ast-grep/cli@0.50.0 ast-grep run -c "$RUNNER_TEMP/sgconfig.yml" \
+            --custom-languages allow -l tsrx --json=compact \
+            -p '@if ($COND) { $$$THEN } @else { $$$ELSE }' \
+            packages/tsrx/tests/fixtures/scoped-styles)
+          # A pattern that parses with an ERROR node exits with 0 and matches nothing.
+          test "$matches" != "[]"

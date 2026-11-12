@@ -247,7 +247,6 @@ export const ERROR_EXAMPLES = [
 	<span />
 }
 `,
-		also: [TSRX_ERRORS.FORGOTTEN_STATEMENT_CONTAINER],
 	},
 	{
 		error: TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT,
@@ -256,7 +255,6 @@ export const ERROR_EXAMPLES = [
 	console.log(1);
 }
 `,
-		also: [TSRX_ERRORS.FORGOTTEN_STATEMENT_CONTAINER],
 	},
 	{
 		error: TSRX_ERRORS.JSX_SPREAD_CHILD,
@@ -507,6 +505,23 @@ export {};
 		</style>
 		<div />
 	</>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.STYLE_IN_EXPRESSION_CONTAINER,
+		source: `function Box(props: { children?: unknown }) @{
+	<div />
+}
+
+export function C() @{
+	<Box>
+		{<style>
+			.a {
+				color: red;
+			}
+		</style>}
+	</Box>
 }
 `,
 	},
@@ -901,13 +916,8 @@ export const KNOWN_PROBLEMS = new Map(
 	/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([
 		[TSRX_ERRORS.UNCLOSED_TAG, { problem: 'lost', issue: 978 }],
 		[TSRX_ERRORS.MISMATCHED_CLOSING_TAG, { problem: 'lost', issue: 978 }],
-		[TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT, { problem: 'twice', issue: 981 }],
-		[TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT, { problem: 'twice', issue: 981 }],
 		[TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED, { problem: 'twice', issue: 980 }],
 		// The statement's keywords have no mapping, so the directive covers only `A`.
 		[TS_ERRORS.NESTED_GLOBAL_EXPORT, { problem: 'typescript', issue: 979 }],
-		// Printed as `<T>() => 1`, which TypeScript reads as JSX in the generated TSX:
-		// its syntax errors there are beyond a directive's reach.
-		[TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER, { problem: 'typescript', issue: 707 }],
 	]),
 );

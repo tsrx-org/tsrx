@@ -94,6 +94,10 @@ export const DIAGNOSTIC_CODES = {
 	TOP_LEVEL_AWAIT_USE_SERVER: 'TSRX2025',
 	/** An `@catch` reset parameter on a target whose error boundary has none. */
 	TARGET_CATCH_RESET_UNSUPPORTED: 'TSRX2026',
+	/** A component read above its declaration on a target that compiles it to a constant, where moving the declaration up would change what it reads. */
+	TARGET_COMPONENT_READ_BEFORE_DECLARATION: 'TSRX2028',
+	/** A destructured prop default the target's component compiler drops. */
+	TARGET_PROP_DEFAULT_UNSUPPORTED: 'TSRX2029',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -121,6 +125,8 @@ export const DIAGNOSTIC_CODES = {
 	CSS_IMPORT: 'TSRX3012',
 	/** CSS in a `<style>` block that doesn't parse. */
 	CSS_SYNTAX: 'TSRX3013',
+	/** A `<style>` block in a child expression container (`{<style>…</style>}`), which renders its class map. */
+	STYLE_IN_EXPRESSION_CONTAINER: 'TSRX3014',
 
 	/** A recognized `import.meta.env.platform.*` flag is used without a selected platform. */
 	PLATFORM_REQUIRED: 'TSRX4001',
@@ -463,6 +469,10 @@ export const TSRX_ERRORS = {
 	CSS_IMPORT: tsrx(
 		'CSS_IMPORT',
 		"@import is not supported in <style> blocks: the imported rules would not be scoped. Share scoped styles with an assigned block (const theme = <style>…</style>) and apply={theme}. For global CSS, use :global in the block, or import the stylesheet in JavaScript: import './global.css'.",
+	),
+	STYLE_IN_EXPRESSION_CONTAINER: tsrx(
+		'STYLE_IN_EXPRESSION_CONTAINER',
+		'A <style> block inside an expression container, such as {<style>…</style>}, evaluates to its class map, so as a child it styles nothing. Remove the braces to write a standalone block in the element or fragment it styles: <><style>…</style><div>…</div></>. To reuse the block, assign it: const theme = <style>…</style>.',
 	),
 
 	// TSRX4xxx
