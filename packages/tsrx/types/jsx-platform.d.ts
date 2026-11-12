@@ -33,10 +33,15 @@ export interface JsxTransformContext {
 	platform: JsxPlatform;
 	local_statement_component_index: number;
 	needs_error_boundary: boolean;
+	needs_try_body: boolean;
+	/** Counts `@try` sites, which runtime output keys `try1`, `try2`, …. */
+	try_site_index: number;
 	needs_suspense: boolean;
 	needs_merge_refs: boolean;
+	needs_merge_spread_class: boolean;
 	needs_normalize_spread_props: boolean;
 	needs_normalize_spread_props_for_ref_attr: boolean;
+	needs_spread_ref_bags: boolean;
 	needs_fragment: boolean;
 	needs_dynamic_element: boolean;
 	needs_dynamic_factory: boolean;
@@ -52,11 +57,20 @@ export interface JsxTransformContext {
 	needs_loading: boolean;
 	needs_define_vapor_component: boolean;
 	needs_vapor_for: boolean;
+	needs_vapor_computed: boolean;
 	stylesheets: AST.CSS.StyleSheet[];
 	type_only_style_anchors: AST.Statement[];
 	helper_state: JsxHelperState | null;
 	available_bindings: Map<string, AST.Identifier>;
+	/**
+	 * Whether each tag in the module can be read where a static hoisted out of
+	 * it runs, keyed by the start of the identifier the tag starts with.
+	 * Computed on first use.
+	 */
+	hoistable_tags: () => Map<number, boolean>;
 	inside_element_child?: boolean;
+	/** True inside a function that is not a component. */
+	inside_plain_function?: boolean;
 	/** Full source text for source-aware diagnostics. */
 	source: string;
 	/** Source filename for diagnostics; null when the caller did not supply one. */
@@ -377,6 +391,19 @@ export interface JsxPlatform {
 		 */
 		errorBoundary: string;
 		/**
+		 * Module to import `TsrxTryBody` from. When set, runtime output renders
+		 * a `@try` body as `<TsrxTryBody render={() => …} />` instead of an
+		 * expression the parent evaluates while rendering, and keys the
+		 * outermost element of each `@try` with its site. For runtimes whose
+		 * boundaries (React-style error boundaries and `Suspense`) catch only
+		 * what descendant components throw: the body's setup statements then
+		 * run inside the boundary. A body that awaits or yields stays inline,
+		 * since the enclosing function has to settle it. The type-only output
+		 * keeps the inline body. Keep this module free of class components so
+		 * a `@try` with only `@pending` works in React Server Components.
+		 */
+		tryBody?: string;
+		/**
 		 * Module to import `mergeRefs` from when an element has more than one
 		 * `ref` attribute and the platform uses the `'merge-refs'` strategy.
 		 * Required when `jsx.multiRefStrategy === 'merge-refs'`; ignored
@@ -406,6 +433,7 @@ export interface JsxPlatform {
 	 */
 	directRuntimeImports?: {
 		errorBoundary?: string;
+		tryBody?: string;
 		mergeRefs?: string;
 		refProp?: string;
 		forOfIterableHelper?: string;
@@ -423,6 +451,34 @@ export interface JsxPlatform {
 		 */
 		classAttrName?: 'class' | 'className';
 		/**
+		 * The props the JSX runtime reads a host element's class from, so an
+		 * element that receives scoped CSS classes keeps the class a spread
+		 * passes it. Each spread written after the element's class attribute is
+		 * wrapped in `merge_spread_class` from `imports.refProp`, which joins
+		 * the spread's class with the scope classes.
+		 *
+		 * - One prop, such as React's `['className']` or Solid's `['class']`.
+		 * - Both, `['class', 'className']`, for runtimes that read either, such
+		 *   as Preact's and Hono's: a spread's class moves to the name of the
+		 *   element's class attribute, so the element keeps one class prop. A
+		 *   spread written before the class attribute loses its class, which
+		 *   the attribute would replace anyway.
+		 * - `undefined`: spreads stay as written, for a runtime that joins
+		 *   `class` across attributes and spreads itself, such as Vue's
+		 *   `mergeProps`.
+		 *
+		 * A spread's class joins the scope classes as text, as in the class
+		 * attribute, except a thenable class (Hono's server `css`), which applies
+		 * unchanged. `hostSpreadClassList` joins a non-string class as a list.
+		 */
+		hostSpreadClassProps?: ReadonlyArray<'class' | 'className'>;
+		/**
+		 * The runtime's class prop also takes an object or a list, as Solid's
+		 * `class` does, so a spread's non-string class joins the scope classes
+		 * as `[class, scope]`.
+		 */
+		hostSpreadClassList?: boolean;
+		/**
 		 * How to collapse multiple `ref` attributes on the same element into
 		 * one. React's and Preact's runtimes treat duplicate `ref` props as
 		 * a normal duplicate-prop collision (last wins), so they need a
@@ -437,11 +493,26 @@ export interface JsxPlatform {
 		 */
 		multiRefStrategy?: 'merge-refs' | 'array';
 		/**
-		 * Some JSX runtimes do not apply a `ref` that arrives through a props
-		 * spread. In that case, host spread normalization also emits an
-		 * explicit `ref={normalized.ref}` attribute.
+		 * How a host spread's `ref` reaches the element.
+		 *
+		 * - `undefined`: the JSX runtime applies a `ref` that arrives through a
+		 *   spread, but the element's own `ref` replaces it. An element with its
+		 *   own `ref` also reads each spread's normalized `ref` and merges them
+		 *   into that attribute.
+		 * - `'explicit-ref-attr'`: the JSX runtime does not apply a `ref` that
+		 *   arrives through a spread, so every host spread also emits an explicit
+		 *   `ref={normalized.ref}` attribute.
+		 * - `'spread'`: the JSX runtime applies a spread's `ref` alongside the
+		 *   element's own `ref` (Solid's `spread()`), so an element with one
+		 *   spread keeps its own `ref` as written and spreads the normalized bag
+		 *   in place. The runtime keeps only the last of several spreads' refs,
+		 *   so an element with more than one spread and its own `ref` lowers its
+		 *   bags through `spread_ref_bags`, which `imports.refProp` must export:
+		 *   each spread gets its bag without a `ref`, and one more spread carries
+		 *   every bag's ref. The type-only print merges those refs into the
+		 *   element's `ref` as for `undefined`.
 		 */
-		hostSpreadRefStrategy?: 'explicit-ref-attr';
+		hostSpreadRefStrategy?: 'explicit-ref-attr' | 'spread';
 		/**
 		 * Where a host spread binds its normalized props bag when the element
 		 * also reads the bag's `ref` through a `ref` attribute.
@@ -454,6 +525,17 @@ export interface JsxPlatform {
 		 * - `undefined`: evaluate the spread in a `let bag = normalize(expr);`
 		 *   declaration ahead of the element, for compiled JSX that reads `ref`
 		 *   before the spread or evaluates the spread lazily, such as Solid's.
+		 *
+		 * With `'in-place'`, core's import injection also gives the platform
+		 * `copy_spread_props` and `copy_spread_props_for_ref_attr` in place of
+		 * `normalize_spread_props` and `normalize_spread_props_for_ref_attr`.
+		 * They return their copy of each bag rather than the bag itself, so a
+		 * runtime that copies the spread reads each getter once. A custom
+		 * platform's `imports.refProp` module must export them, as
+		 * `@tsrx/runtime/ref` does. With `multiRefStrategy:
+		 * 'merge-refs'` as well, the merged `ref` stays where the element's own
+		 * `ref` is written and reads the ref of a bag spread after it when it is
+		 * applied.
 		 */
 		hostSpreadRefBinding?: 'in-place';
 		/**

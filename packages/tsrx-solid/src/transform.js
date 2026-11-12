@@ -24,6 +24,7 @@ import {
 	createScriptBody as create_script_body,
 	error,
 	mergeDuplicateRefs,
+	MERGE_SPREAD_CLASS_INTERNAL_NAME,
 	validateAtMostOneRefAttribute,
 	addJsxSetupDeclaration as add_jsx_setup_declaration,
 	buildReturnExpression as build_return_expression,
@@ -33,9 +34,11 @@ import {
 	isInterleavedBody as is_interleaved_body_core,
 	isCapturableJsxChild as is_capturable_jsx_child,
 	captureJsxChild,
+	lowerSpreadRefBags as lower_spread_ref_bags,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	returnValueBodyToExpression as return_value_body_to_expression,
+	SPREAD_REF_BAGS_INTERNAL_NAME,
 	clone_ast_node,
 	clone_identifier,
 	clone_jsx_name,
@@ -101,10 +104,16 @@ const solid_platform = {
 	},
 	jsx: {
 		rewriteClassAttr: false,
+		// Solid reads a class only from `class`, which also takes an object or
+		// a list.
+		hostSpreadClassProps: ['class'],
+		hostSpreadClassList: true,
 		// Solid's runtime accepts an array of refs natively, so multiple
 		// `ref` attributes collapse to `ref={[a, b, ...]}` rather than
 		// going through a `mergeRefs` helper.
 		multiRefStrategy: 'array',
+		// Solid's `spread()` applies the bag's `ref` beside the element's own.
+		hostSpreadRefStrategy: 'spread',
 		// Solid's compiler escapes a string child into its HTML template, and a
 		// `<script>` element's text there isn't decoded; `innerHTML` renders the
 		// body as written on the client and the server.
@@ -1403,14 +1412,22 @@ function try_statement_to_jsx_child(node, transform_context) {
 	if (handler) {
 		transform_context.needs_errored = true;
 
+		// `<Errored>` passes the error as an accessor; the `@catch` binding is the
+		// thrown value itself, as on every other target.
+		const error_accessor = create_generated_identifier(
+			handler.param ? unused_catch_name(handler) : '_error',
+		);
 		/** @type {AST.Pattern[]} */
-		const catch_params = [];
-		if (handler.param) catch_params.push(handler.param);
-		else catch_params.push(create_generated_identifier('_error'));
+		const catch_params = [error_accessor];
 		if (handler.resetParam) catch_params.push(handler.resetParam);
 		else catch_params.push(create_generated_identifier('_reset'));
 
-		const catch_body_nodes = handler.body.body || [];
+		const catch_body_nodes = handler.param
+			? [
+					b.let(handler.param, b.call(clone_identifier(error_accessor))),
+					...(handler.body.body || []),
+				]
+			: handler.body.body || [];
 		const catch_jsx = body_to_jsx_child(catch_body_nodes, transform_context);
 
 		const fallback_fn = merge_branch_body_into_arrow(
@@ -1426,6 +1443,46 @@ function try_statement_to_jsx_child(node, transform_context) {
 	}
 
 	return result;
+}
+
+/**
+ * A name for the `<Errored>` error accessor that no identifier in the catch
+ * clause uses, so the accessor neither shadows nor is shadowed by one.
+ *
+ * @param {AST.CatchClause} handler
+ * @returns {string}
+ */
+function unused_catch_name(handler) {
+	/** @type {Set<string>} */
+	const names = new Set();
+	collect_identifier_names(handler, names);
+	let name = '_tsrx_error';
+	for (let i = 1; names.has(name); i++) name = `_tsrx_error${i}`;
+	return name;
+}
+
+/**
+ * @param {unknown} node
+ * @param {Set<string>} names
+ * @returns {void}
+ */
+function collect_identifier_names(node, names) {
+	if (Array.isArray(node)) {
+		for (const child of node) collect_identifier_names(child, names);
+		return;
+	}
+	if (!node || typeof node !== 'object') return;
+	const record = /** @type {Record<string, unknown>} */ (node);
+	if (
+		(record.type === 'Identifier' || record.type === 'JSXIdentifier') &&
+		typeof record.name === 'string'
+	) {
+		names.add(record.name);
+	}
+	for (const key of Object.keys(record)) {
+		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
+		collect_identifier_names(record[key], names);
+	}
 }
 
 /**
@@ -2096,6 +2153,15 @@ function inject_solid_imports(program, transform_context) {
 		);
 	}
 
+	if (transform_context.needs_spread_ref_bags && ref_prop_source) {
+		program.body.unshift(
+			b.import_declaration(
+				[b.import_specifier('spread_ref_bags', SPREAD_REF_BAGS_INTERNAL_NAME)],
+				ref_prop_source,
+			),
+		);
+	}
+
 	if (transform_context.needs_normalize_spread_props_for_ref_attr && ref_prop_source) {
 		program.body.unshift(
 			b.import_declaration(
@@ -2105,6 +2171,15 @@ function inject_solid_imports(program, transform_context) {
 						NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 					),
 				],
+				ref_prop_source,
+			),
+		);
+	}
+
+	if (transform_context.needs_merge_spread_class && ref_prop_source) {
+		program.body.unshift(
+			b.import_declaration(
+				[b.import_specifier('merge_spread_class', MERGE_SPREAD_CLASS_INTERNAL_NAME)],
 				ref_prop_source,
 			),
 		);
@@ -2261,7 +2336,21 @@ function transform_element_attributes(raw_attrs, is_composite, transform_context
 function normalize_solid_host_ref_spreads(attrs, is_host, transform_context) {
 	if (!is_host) return attrs;
 
-	const needs_synthetic_spread_ref = attrs.some(is_solid_jsx_ref_attribute);
+	// Solid's `spread()` applies a lone spread's `ref` beside the element's own
+	// `ref`, which keeps its native meaning (`ref={el}` assigns `el`). Of several
+	// spreads' refs its prop merge keeps only the last, so those go through one
+	// `spread_ref_bags` group; the type-only print merges them into the
+	// element's `ref` array instead.
+	const needs_synthetic_spread_ref =
+		attrs.some(is_solid_jsx_ref_attribute) &&
+		attrs.filter((attr) => attr?.type === 'JSXSpreadAttribute').length > 1;
+	if (needs_synthetic_spread_ref && !transform_context.typeOnly) {
+		return lower_spread_ref_bags(
+			attrs,
+			create_generated_identifier(create_solid_spread_props_name(transform_context)),
+			transform_context,
+		);
+	}
 
 	return attrs.flatMap(
 		/**
@@ -2329,13 +2418,19 @@ function normalize_solid_host_ref_spreads(attrs, is_host, transform_context) {
  * @returns {string}
  */
 function create_solid_spread_props_name(transform_context) {
-	if (transform_context.helper_state) {
-		transform_context.helper_state.next_id += 1;
-		return `${transform_context.helper_state.base_name}__spread_props${transform_context.helper_state.next_id}`;
-	}
-
-	transform_context.local_statement_component_index += 1;
-	return `_tsrx_spread_props_${transform_context.local_statement_component_index}`;
+	/** @type {string} */
+	let name;
+	do {
+		if (transform_context.helper_state) {
+			transform_context.helper_state.next_id += 1;
+			name = `${transform_context.helper_state.base_name}__spread_props${transform_context.helper_state.next_id}`;
+		} else {
+			transform_context.local_statement_component_index += 1;
+			name = `_tsrx_spread_props_${transform_context.local_statement_component_index}`;
+		}
+		// A name the author wrote anywhere could be shadowed or redeclared
+	} while (new RegExp(`(?<![\\w$])${name}(?![\\w$])`).test(transform_context.source));
+	return name;
 }
 
 /**

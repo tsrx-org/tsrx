@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -44,6 +45,7 @@ runSharedCodeBlockChildrenTests({ compile, name: 'solid' });
 runSharedClassFunctionComponentTests({ compile, compile_to_volar_mappings, name: 'solid' });
 runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'solid' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'solid' });
+runSharedAnonymousComponentTests({ compile, name: 'solid' });
 
 describe('@tsrx/solid basic', () => {
 	describe('component → function', () => {
@@ -322,19 +324,21 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toMatch(/keyed=\{\(item\) =>\s*item\.id\}/);
 		});
 
-		it('try/catch → <Errored fallback={(err, reset) => ...}>', () => {
+		it('try/catch → <Errored fallback> binding the thrown value', () => {
 			const { code } = compile(
 				`function App() @{
 						@try {
 						<div>{'content'}</div>
 					} @catch (err, reset) {
-						<div>{err().message}</div>
+						<div>{err.message}</div>
 					}
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Errored fallback={(err, reset) =>');
-			expect(code).toContain('<div>{err().message}</div>');
+			// `<Errored>` passes an accessor; `err` is the value it returns.
+			expect(code).toContain('<Errored fallback={(_tsrx_error, reset) => {');
+			expect(code).toContain('let err = _tsrx_error();');
+			expect(code).toContain('<div>{err.message}</div>');
 			expect(code).toContain("import { Errored } from 'solid-js'");
 		});
 
@@ -835,7 +839,7 @@ describe('@tsrx/solid basic', () => {
 						} @pending {
 							<div>{'loading'}</div>
 						} @catch (err) {
-							recover(err());
+							recover(err);
 						}
 				}`,
 				'App.tsrx',
@@ -844,7 +848,7 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('<Errored');
 			expect(code).toContain('<Loading fallback=');
 			expect(code).toContain('setup();');
-			expect(code).toContain('recover(err());');
+			expect(code).toContain('recover(err);');
 			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
 			expect(code).not.toContain('try {');
 		});
@@ -1018,6 +1022,38 @@ describe('@tsrx/solid basic', () => {
 		});
 	});
 
+	// Solid reads a class only from `class`, which also takes an object or a
+	// list.
+	it('keeps the class a host spread passes beside the scope classes', () => {
+		const { code, cssHash } = compile(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span class="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			"import { merge_spread_class as __merge_spread_class } from '@tsrx/solid/ref';",
+		);
+		expect(code).toContain(
+			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", void 0, true))} />`,
+		);
+		expect(code).toContain(
+			`<span class="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", void 0, true))} />`,
+		);
+		expect(code).toContain(`<span {...__normalize_spread_props(props)} class="last ${cssHash}" />`);
+	});
+
 	it('applies scoped css hashes and keeps type selectors for dynamic tags', () => {
 		const { code, css, cssHash } = compile(
 			`export function App() @{
@@ -1179,49 +1215,79 @@ describe('@tsrx/solid basic', () => {
 			expect(code).not.toContain('normalize_spread_props');
 		});
 
-		it('normalizes multiple host spreads once while merging one explicit ref', () => {
-			const { code } = compile(
-				`function App() @{
+		it('groups several host spreads beside an explicit ref', () => {
+			const source = `function App() @{
 					const first = {};
 					const second = {};
 					function cb(_node) {}
-					<input {...first} {...second} ref={cb} />
-				}`,
-				'App.tsrx',
-			);
+					<input {...first} title="t" {...second} ref={cb} />
+				}`;
+			const { code } = compile(source, 'App.tsrx');
 
 			expect(code).toContain(
+				"import { spread_ref_bags as __spread_ref_bags } from '@tsrx/solid/ref';",
+			);
+			expect(code).toContain(
+				'let App__spread_props1 = __spread_ref_bags(() => first, () => second);',
+			);
+			expect(code).toContain(
+				'<input {...App__spread_props1.bag(0)} title="t" {...App__spread_props1.bag(1)} {...App__spread_props1.refs} ref={cb} />',
+			);
+			expect(code).not.toContain('normalize_spread_props');
+
+			// The type-only print merges the bags' refs into the element's own.
+			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain(
 				'let App__spread_props1 = __normalize_spread_props_for_ref_attr(first);',
 			);
-			expect(code).toContain(
+			expect(type_only).toContain(
 				'let App__spread_props2 = __normalize_spread_props_for_ref_attr(second);',
 			);
-			expect(code).toContain('{...App__spread_props1}');
-			expect(code).toContain('{...App__spread_props2}');
-			expect(code).toContain('ref={[App__spread_props1?.ref, App__spread_props2?.ref, cb]}');
-			expect(code.match(/__normalize_spread_props_for_ref_attr\(/g)).toHaveLength(2);
-			expect(code).not.toContain('create_ref_prop');
-			expect(code).not.toContain('__normalize_spread_props(first, cb)');
-			expect(code).not.toContain('__normalize_spread_props(second, cb)');
+			expect(type_only).toContain('ref={[App__spread_props1?.ref, App__spread_props2?.ref, cb]}');
+			expect(type_only).not.toContain('spread_ref_bags');
 		});
 
-		it('lowers a host spread beside a ref in expression position once', () => {
-			const source = `export function App({ enabled, bag, cb }) {
+		it('keeps the ref as written beside a single host spread', () => {
+			const template = `function App() @{
+					let input;
+					<input ref={input} {...props.rest} />
+				}`;
+			const expression = `export function App({ enabled, bag, cb }) {
 					return enabled ? <input {...bag} ref={cb} /> : null;
 				}`;
 
-			for (const { code } of [
-				compile(source, 'App.tsrx'),
-				compile_to_volar_mappings(source, 'App.tsrx'),
-			]) {
-				expect(code).toContain(
-					'let App__spread_props1 = __normalize_spread_props_for_ref_attr(bag);',
+			for (const compile_fn of [compile, compile_to_volar_mappings]) {
+				const template_code = compile_fn(template, 'App.tsrx').code;
+				expect(template_code).toContain(
+					'<input ref={input} {...__normalize_spread_props(props.rest)} />',
 				);
-				expect(code).toContain(
-					'<input {...App__spread_props1} ref={[App__spread_props1?.ref, cb]} />',
-				);
-				expect(code).not.toContain('App__spread_props2');
+				expect(template_code).not.toContain('spread_props1');
+
+				const expression_code = compile_fn(expression, 'App.tsrx').code;
+				expect(expression_code).toContain('<input {...__normalize_spread_props(bag)} ref={cb} />');
+				expect(expression_code).not.toContain('spread_props1');
 			}
+		});
+
+		it('lowers host spreads beside a ref in expression position once', () => {
+			const source = `export function App({ enabled, first, second, cb }) {
+					return enabled ? <input {...first} {...second} ref={cb} /> : null;
+				}`;
+
+			const { code } = compile(source, 'App.tsrx');
+			expect(code).toContain(
+				'let App__spread_props1 = __spread_ref_bags(() => first, () => second);',
+			);
+			expect(code).toContain(
+				'<input {...App__spread_props1.bag(0)} {...App__spread_props1.bag(1)} {...App__spread_props1.refs} ref={cb} />',
+			);
+			expect(code).not.toContain('App__spread_props2');
+
+			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain(
+				'<input {...App__spread_props1} {...App__spread_props2} ref={[App__spread_props1?.ref, App__spread_props2?.ref, cb]} />',
+			);
+			expect(type_only).not.toContain('App__spread_props3');
 		});
 
 		it('keeps named ref-like props as ordinary props on host elements', () => {
