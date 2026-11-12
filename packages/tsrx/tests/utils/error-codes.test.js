@@ -510,18 +510,14 @@ let E;`,
 			TS_ERRORS.MULTIPLE_DEFAULT_CLAUSES,
 			TS_ERRORS.USE_STRICT_NON_SIMPLE_PARAMETERS,
 			// acorn-typescript's, for the code TSRX reads in its place
-			TS_ERRORS.UNTERMINATED_JSX_CONTENTS,
-			TS_ERRORS.JSX_UNESCAPED_GREATER_THAN,
 			TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE,
 			TS_ERRORS.ONLY_STRING_ATTRIBUTE_VALUE,
 			TS_ERRORS.TYPE_IMPORT_ARGUMENT,
 			TS_ERRORS.UNEXPECTED_LEADING_DECORATOR,
 			TS_ERRORS.TYPE_CAST_IN_PARAMETER,
 			TS_ERRORS.UNEXPECTED_TYPE_ANNOTATION,
-			TS_ERRORS.SIGNATURE_PARAMETER_NAME,
 			TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER,
 			// TSRX's own
-			TS_ERRORS.DECLARED_IN_SCOPE,
 			TS_ERRORS.JSX_ATTRIBUTE_VALUE,
 		]);
 		// Codes that TypeScript added after the version installed here, as
@@ -632,8 +628,6 @@ let E;`,
 		// catch first.
 		/** @type {Array<[code: string, message: string]>} */
 		const cases = [
-			['TS1382', 'Unexpected token `>`. Did you mean `&gt;` or `{">"}`?'],
-			['TS1381', 'Unexpected token `}`. Did you mean `&rbrace;` or `{"}"}`?'],
 			[
 				'TS7059',
 				'This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead.',
@@ -658,9 +652,13 @@ let E;`,
 		const typescript_codes = new Set(
 			[...diagnostics.matchAll(/'(TS\d+)'/g)].map(([, code]) => code),
 		);
-		for (const code of [...Object.values(DIAGNOSTIC_CODES), ...typescript_codes]) {
+		const codes = [...Object.values(DIAGNOSTIC_CODES), ...typescript_codes];
+		for (const code of codes) {
 			expect(specification, code).toMatch(new RegExp(`['"]${code}  `));
 		}
+		// And it lists no other code (#964).
+		const listed = [...specification.matchAll(/['"]((?:TSRX|TS)\d+) {2}/g)].map(([, code]) => code);
+		expect(listed.filter((code) => !codes.includes(code))).toEqual([]);
 	});
 
 	it('are exported without the compiler as @tsrx/core/diagnostics', async () => {

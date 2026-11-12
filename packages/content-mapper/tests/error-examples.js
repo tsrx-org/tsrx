@@ -912,6 +912,12 @@ let E;`,
 `,
 	},
 	{ error: TS_ERRORS.JSX_ATTRIBUTE_VALUE, source: `const a = <div a=1 />;` },
+	// In the JSX of a dynamic tag's expression; in a template, a `}` in an open
+	// element ends the text, and the element is TSRX1001.
+	{
+		error: TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE,
+		source: `const el = <{c ? <b>a } b</b> : 'i'} />;`,
+	},
 	{ error: TS_ERRORS.ONLY_STRING_ATTRIBUTE_VALUE, source: `import a from "a" with { type: 1 };` },
 	{ error: TS_ERRORS.TYPE_IMPORT_ARGUMENT, source: `type A = import(a);` },
 	{ error: TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, source: `@dec function f() {}` },
@@ -1084,14 +1090,6 @@ export const WITHOUT_EXAMPLE = new Map(
 			TSRX_ERRORS.RESERVED_IDENTIFIER_PREFIX,
 			"Raised only through core helpers that targets outside this repository call (Ripple, Octane); none of this repository's targets reaches it.",
 		],
-		[
-			TS_ERRORS.DECLARED_IN_SCOPE,
-			'No source found: the parser rejects a name declared twice in one scope first (#964).',
-		],
-		[TS_ERRORS.UNTERMINATED_JSX_CONTENTS, 'No source found (#964).'],
-		[TS_ERRORS.JSX_UNESCAPED_GREATER_THAN, 'No source found: a `>` in JSX text is text (#964).'],
-		[TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE, 'No source found (#964).'],
-		[TS_ERRORS.SIGNATURE_PARAMETER_NAME, 'No source found (#964).'],
 		[
 			TS_ERRORS.RESERVED_TYPE_ASSERTION,
 			'Only in a `.mts` or `.cts` file, which no TSRX compiler reads: a `.tsrx` file has JSX, where `<T>x` is a tag.',

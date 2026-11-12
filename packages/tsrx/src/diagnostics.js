@@ -196,7 +196,6 @@ export const TS_SYNTAX_ERROR_CODES = [
 	'TS1351',
 	'TS1359',
 	'TS1381',
-	'TS1382',
 	'TS1434',
 	'TS1435',
 	'TS1438',
@@ -207,7 +206,6 @@ export const TS_SYNTAX_ERROR_CODES = [
 	'TS1487',
 	'TS1488',
 	'TS17002',
-	'TS17008',
 	'TS2657',
 	'TS6188',
 	'TS6189',
@@ -1004,11 +1002,6 @@ export const TS_ERRORS = {
 		code: 'TS1363',
 		message: 'A type-only import can specify a default import or named bindings, but not both.',
 	},
-	// TSRX's wording of a name redeclared in a module's or function's scope
-	DECLARED_IN_SCOPE: with_values(
-		'TS2300',
-		(name) => `'${name}' has already been declared in the current scope`,
-	),
 
 	// Parameters
 	SIGNATURE_PARAMETER_INITIALIZER: {
@@ -1079,13 +1072,7 @@ export const TS_ERRORS = {
 		message: "Illegal 'use strict' directive in function with non-simple parameter list",
 	},
 
-	// acorn-typescript's wording, for the code TSRX reads in acorn-typescript's
-	// place
-	UNTERMINATED_JSX_CONTENTS: { code: 'TS17008', message: 'Unterminated JSX contents' },
-	JSX_UNESCAPED_GREATER_THAN: {
-		code: 'TS1382',
-		message: 'Unexpected token `>`. Did you mean `&gt;` or `{">"}`?',
-	},
+	// acorn-typescript's wording, for a `}` in JSX text
 	JSX_UNESCAPED_CLOSING_BRACE: {
 		code: 'TS1381',
 		message: 'Unexpected token `}`. Did you mean `&rbrace;` or `{"}"}`?',
@@ -1113,12 +1100,6 @@ export const TS_ERRORS = {
 		message: 'Unexpected type cast in parameter position.',
 	},
 	UNEXPECTED_TYPE_ANNOTATION: { code: 'TS1005', message: 'Did not expect a type annotation here.' },
-	/** `type` is the type of the node read as the parameter. */
-	SIGNATURE_PARAMETER_NAME: with_values(
-		'TS2371',
-		(type) =>
-			`Name in a signature must be an Identifier, ObjectPattern or ArrayPattern, instead got ${type}.`,
-	),
 	RESERVED_ARROW_TYPE_PARAMETER: {
 		code: 'TS7060',
 		message:
@@ -1512,12 +1493,6 @@ function upstream_lookup_rows() {
 		[/^Invalid regular expression: \/.*\/: Invalid class escape$/, 'TS1512'],
 		// acorn: regexp_classSetExpression
 		[/^Invalid regular expression: \/.*\/: Invalid character in character class$/, 'TS1508'],
-		// acorn-typescript: jsx_readToken
-		TS_ERRORS.UNTERMINATED_JSX_CONTENTS,
-		// acorn-typescript: jsx_readToken
-		TS_ERRORS.JSX_UNESCAPED_GREATER_THAN,
-		// acorn-typescript: jsx_readToken
-		TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE,
 		// acorn-typescript: jsx_parseAttributeValue
 		[/^JSX attributes must only be assigned a non-empty expression$/, 'TS17000'],
 		// acorn-typescript: jsx_parseAttributeValue
@@ -1664,8 +1639,6 @@ function upstream_lookup_rows() {
 		TS_ERRORS.TYPE_IMPORT_ARGUMENT,
 		// acorn-typescript: parseAssignableListItem
 		TS_ERRORS.PATTERN_PARAMETER_PROPERTY,
-		// acorn-typescript: tsParseBindingListForSignature
-		TS_ERRORS.SIGNATURE_PARAMETER_NAME,
 		// acorn-typescript: parseDecorators
 		TS_ERRORS.UNEXPECTED_LEADING_DECORATOR,
 		// acorn-typescript: parseClass
