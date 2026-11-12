@@ -69,8 +69,20 @@ export function WithComponent() @{
 	<p>{helperB()}<Button label="x" /></p>
 }
 `;
+const STATEMENT_TSRX = `import { helperA } from './lib';
+
+export function Statement() @{
+	helperA();
+	const value = helperB;
+	<p>{value}</p>
+}
+`;
 const NO_IMPORTS_TSRX = `export function NoImports() @{
 	<p>{helperB()}</p>
+}
+`;
+const FLAGGED_NO_IMPORTS_TSRX = `export function FlaggedNoImports() @{
+	<p>{helperB()}{String(import.meta.env.platform.web)}</p>
 }
 `;
 /** Imports with several names and type names, some of them unused. */
@@ -100,7 +112,9 @@ function workspace_files() {
 	files['mixed.ts'] = MIXED_TS;
 	files['NewLine.tsrx'] = NEW_LINE_TSRX;
 	files['NoImports.tsrx'] = NO_IMPORTS_TSRX;
+	files['FlaggedNoImports.tsrx'] = FLAGGED_NO_IMPORTS_TSRX;
 	files['WithComponent.tsrx'] = WITH_COMPONENT_TSRX;
+	files['Statement.tsrx'] = STATEMENT_TSRX;
 	files['Extend.tsrx'] = EXTEND_TSRX;
 	files['Fresh.tsrx'] = FRESH_TSRX;
 	files['sub/tsconfig.json'] = JSON.stringify(
@@ -515,6 +529,24 @@ import def from './mixed';
 		);
 	});
 
+	it('removes unused imports in a module that keeps a platform flag', async () => {
+		// The shared platform globals are referenced by a directive, not imported, so
+		// the module's last import stays its own and its edits still map.
+		const source = [
+			"import Panel from './Panel.tsrx';",
+			"import Button from './Button.tsrx';",
+			'',
+			'export default function Flagged() @{',
+			'\t<Button label={String(import.meta.env.platform.web)} />',
+			'}',
+			'',
+		].join('\n');
+		const edits = await source_action_edits('Flagged.tsrx', source, 'source.removeUnusedImports');
+		expect(apply_edits(source, edits)).toBe(
+			source.replace("import Panel from './Panel.tsrx';\n", ''),
+		);
+	});
+
 	it.each([
 		[
 			'on a new line, sorted before the other import',
@@ -533,14 +565,31 @@ import def from './mixed';
 			},
 		],
 		[
-			// #1028: TypeScript 7 offered no candidate here while the edges of the
-			// template's containers were Atoms; it does now that the text they share
-			// with the source maps Verbatim.
-			'on a new line after the import of a component the template uses',
+			// The `<` of the tag maps with other features than `helperB`, which ended the span
+			// of `helperB` at the cursor, and TypeScript 7 offered no auto-import there.
+			'on a new line when the template uses a component tag (#1028)',
 			'WithComponent.tsrx',
 			{
 				range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
 				newText: "import { helperB } from './lib';\n",
+			},
+		],
+		[
+			// The generated code adds a blank line after the `;`, which ended the span of
+			// `helperB` at the cursor before the next span (#1064).
+			'into an existing import from a statement in a template body',
+			'Statement.tsrx',
+			{
+				range: { start: { line: 0, character: 16 }, end: { line: 0, character: 16 } },
+				newText: ', helperB',
+			},
+		],
+		[
+			'into a file without imports that keeps a platform flag',
+			'FlaggedNoImports.tsrx',
+			{
+				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+				newText: 'import { helperB } from "./lib";\n\n',
 			},
 		],
 	])('auto-imports %s', async (_name, file, edit) => {

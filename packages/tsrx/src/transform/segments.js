@@ -881,6 +881,35 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * A lowered dynamic tag, `<{expr} … />`, prints as `<TsrxDynamic is={expr} … />`.
+	 * TypeScript reports a component's missing or unknown props (TS2769) on
+	 * the generated name, which has no source of its own, so it maps to the
+	 * authored `{expr}` (the `is` attribute's location) for diagnostics.
+	 * @param {ESTreeJSX.JSXOpeningElement | ESTreeJSX.TSRXJSXOpeningElement} opening
+	 * @returns {void}
+	 */
+	function add_dynamic_tag_name_mapping(opening) {
+		const name = opening.name;
+		if (!has_location(opening) || name.type !== 'JSXIdentifier' || has_location(name)) return;
+		const is = opening.attributes.find(
+			(attribute) =>
+				attribute.type === 'JSXAttribute' &&
+				attribute.name.type === 'JSXIdentifier' &&
+				attribute.name.name === 'is',
+		);
+		if (!has_location(is)) return;
+		const generated = generated_offset_for_text(opening.loc.start, `<${name.name}`);
+		if (generated === undefined) return;
+		mappings.push({
+			sourceOffsets: [is.start],
+			lengths: [is.end - is.start],
+			generatedOffsets: [generated + 1],
+			generatedLengths: [name.name.length],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
+	}
+
+	/**
 	 * @param {AST.Identifier | ESTreeJSX.JSXIdentifier} generated_node
 	 * @returns {void}
 	 */
@@ -1298,6 +1327,10 @@ export function convert_source_map_to_mappings(
 					}
 				}
 
+				if (node.metadata?.dynamicElement) {
+					add_dynamic_tag_name_mapping(opening);
+				}
+
 				visit(opening);
 
 				// 2. Visit children in order
@@ -1332,6 +1365,44 @@ export function convert_source_map_to_mappings(
 							mapping.generatedOffsets[0] + mapping.generatedLengths[0] - generated_close_length,
 						];
 						mapping.generatedLengths = [generated_close_length];
+					}
+					// Loose recovery adds a closing tag, with no source position, to a tag
+					// left unclosed (#978), and the closing tags around it can then be
+					// printed after children that follow them in the source. The first
+					// generated position of this closing tag's start can be an added tag,
+					// or the end of a child before one, so the span would cover it, and
+					// TypeScript's errors on the added tag would show here again. Start
+					// the span at this tag's own `</`, the last generated position of its
+					// start, and end it at its own `>`, keeping the extension above.
+					/** @param {any} element */
+					const has_recovered_closing = (element) =>
+						element.children?.some(
+							(/** @type {any} */ child) =>
+								(child.type === 'JSXElement' || child.type === 'JSXFragment') &&
+								(child.closingElement?.metadata?.recovered || has_recovered_closing(child)),
+						);
+					if (closing && has_recovered_closing(node)) {
+						const { start, end } = /** @type {AST.SourceLocation} */ (closing.loc);
+						const offsets = (/** @type {AST.Position} */ position) =>
+							(src_to_gen_map.get(`${position.line}:${position.column}`) ?? []).map((generated) =>
+								loc_to_offset(generated.line, generated.column, gen_line_offsets),
+							);
+						const own_start = offsets(start)
+							.filter((offset) => generated_code.startsWith('</', offset))
+							.at(-1);
+						const first_end = offsets(end)[0];
+						if (
+							own_start !== undefined &&
+							first_end !== undefined &&
+							own_start >= mapping.generatedOffsets[0]
+						) {
+							const extension =
+								mapping.generatedOffsets[0] + mapping.generatedLengths[0] - first_end;
+							mapping.generatedOffsets = [own_start];
+							mapping.generatedLengths = [
+								generated_code.indexOf('>', own_start) + 1 - own_start + extension,
+							];
+						}
 					}
 					mappings.push(mapping);
 				}
