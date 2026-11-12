@@ -139,6 +139,37 @@ describe.each(['native', 'bypass', 'legacy'])('tsrx-tsc with the %s loader', (lo
 		expect(result.output).not.toContain('TS2307');
 	});
 
+	// Two CLI runs, ESM then CommonJS.
+	it(
+		'takes the module format of .tsrx files from package.json under NodeNext (#163)',
+		{
+			timeout: 60_000,
+		},
+		() => {
+			const config_path = path.join(workspace, 'tsconfig.json');
+			const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+			config.compilerOptions.module = 'NodeNext';
+			config.compilerOptions.moduleResolution = 'NodeNext';
+			config.include = ['main.ts', 'meta.tsrx'];
+			fs.writeFileSync(config_path, JSON.stringify(config));
+			fs.appendFileSync(path.join(workspace, 'layout.tsrx'), 'console.log(import.meta.url);\n');
+			// No import, so TypeScript resolves nothing for it.
+			fs.writeFileSync(path.join(workspace, 'meta.tsrx'), 'export const url = import.meta.url;\n');
+
+			// `"type": "module"`: ESM, as a `.ts` file there.
+			const esm = run_cli(loader);
+			expect(esm.output).toBe('');
+			expect(esm.status).toBe(0);
+
+			fs.writeFileSync(path.join(workspace, 'package.json'), '{"type":"commonjs"}');
+			const cjs = run_cli(loader);
+			const ts1470 =
+				"error TS1470: The 'import.meta' meta-property is not allowed in files which will build into CommonJS output.";
+			expect(cjs.output).toBe(`layout.tsrx(4,13): ${ts1470}\nmeta.tsrx(1,20): ${ts1470}\n`);
+			expect(cjs.status).toBe(2);
+		},
+	);
+
 	it('uses the installed TypeScript version for --version', () => {
 		const result = run_cli(loader, ['--version']);
 		expect(result.output).toBe(`Version ${cli_require('typescript').version}\n`);
@@ -436,6 +467,30 @@ process.exit(Number(process.env.TSRX_TEST_EXIT ?? 0));
 	});
 });
 
+// The editor's loose compile, which tsrx-tsc runs, reports unclosed and
+// mismatched tags as a collecting compile does (#978).
+it.each([
+	[
+		'an unclosed tag',
+		'\t<div>{title}\n',
+		"(3,1): error TSRX1001: Unclosed tag '<div>'. Expected '</div>' before end of template.",
+	],
+	[
+		'a mismatched closing tag',
+		'\t<div><span>{title}</div>\n',
+		"(2,20): error TSRX1002: Expected closing tag to match opening tag. Expected '</span>' but found '</div>'",
+	],
+])('reports %s in a .tsrx file', (_label, body, diagnostic) => {
+	fs.writeFileSync(
+		path.join(workspace, 'layout.tsrx'),
+		`export default function MainLayout({ title }: { title: string }) @{\n${body}}\n`,
+	);
+	const result = run_cli('native');
+	expect(result.output).toContain(
+		`[tsrx-tsc] ${path.join(fs.realpathSync(workspace), 'layout.tsrx')}${diagnostic}`,
+	);
+});
+
 it('reports unresolved class field and heritage types in .tsrx files', () => {
 	const line =
 		'export class Model<T extends MissingBound> implements MissingShape { value!: MissingType; }';
@@ -643,6 +698,49 @@ it('reports a missing return on a primitive return type in .tsrx files', () => {
 	);
 });
 
+it('applies block TypeScript directives and optional binding patterns as TypeScript does in .tsrx files', () => {
+	const lines = [
+		'declare const bad: string;',
+		'/* @ts-expect-error */',
+		'export const a: number = bad;',
+		'/* @ts-ignore */',
+		'export const b: number = bad;',
+		'/* @ts-expect-error */ /** docs */',
+		'export const c: number = bad;',
+		'/* explanation',
+		'@ts-expect-error */',
+		'export const d: number = bad;',
+		'/* @ts-expect-error */',
+		'/* plain */',
+		'export const e: number = bad;',
+		'// @ts-expect-error',
+		'/* plain */',
+		'export const f: number = bad;',
+		'export function g(x: number) {',
+		"\t/* @ts-ignore */ if (x) { const y: number = 'bad'; return y; }",
+		'\treturn 0;',
+		'}',
+		'declare function optional({ a }?: { a: number }): void; optional();',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	const ts2322 = "error TS2322: Type 'string' is not assignable to type 'number'.";
+	const ts2578 = "error TS2578: Unused '@ts-expect-error' directive.";
+	// The diagnostics tsc reports for the same code. A block comment after a
+	// directive ends its reach, and a directive on the line of the error covers
+	// the line after it.
+	expect(result.output.trim().split('\n')).toEqual([
+		`${at(10, '/*')}: ${ts2578}`,
+		`${at(12, 'e:')}: ${ts2322}`,
+		`${at(13, '//')}: ${ts2578}`,
+		`${at(15, 'f:')}: ${ts2322}`,
+		`${at(17, 'y:')}: ${ts2322}`,
+	]);
+	expect(result.status).toBe(2);
+});
+
 it('reports a superclass expression that is not a constructor in .tsrx files', () => {
 	const line =
 		'function createBase() { return {}; } export class Model extends createBase() {} export class Cast extends (Model as unknown as {}) {}';
@@ -700,6 +798,35 @@ it('reports errors on a whole call or parenthesized expression in .tsrx files', 
 	for (const [anchor, message] of expected) {
 		expect(result.output).toContain(`layout.tsrx(4,${line.indexOf(anchor) + 1}): ${message}`);
 	}
+});
+
+it('keeps a static index signature static in .tsrx files and their declarations', () => {
+	const lines = [
+		'export class Registry { static [key: string]: number; static [key: string]: string }',
+		'export class Store { static [key: string]: number; static count = 1 }',
+		"export const missing = new Store()['y'];",
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	// Two static signatures are not duplicates, and an instance has no signature.
+	expect(result.output).not.toContain('TS2374');
+	expect(result.output).toContain(
+		`layout.tsrx(6,${lines[2].indexOf('new') + 1}): error TS7053: Element implicitly has an 'any' type`,
+	);
+
+	run_cli('native', [
+		'-p',
+		'tsconfig.json',
+		'--declaration',
+		'--emitDeclarationOnly',
+		'--outDir',
+		'dist',
+	]);
+	const declaration = fs.readFileSync(path.join(workspace, 'dist', 'layout.d.ts'), 'utf8');
+	expect(declaration).toContain('static [key: string]: number;');
+	expect(declaration).toContain('static [key: string]: string;');
+	expect(declaration).not.toMatch(/^\s*\[key: string\]/m);
 });
 
 it('reports errors on a bare this in .tsrx files', () => {
@@ -782,6 +909,43 @@ it(
 		expect(consumed.status).toBe(0);
 	},
 );
+
+it('gives .tsrx files the module format of their own project in a solution build', () => {
+	// `-b` creates every project's program with one compiler host, and the
+	// Bundler project builds before the NodeNext one.
+	/** @param {string} name @param {string} module @param {string} file @param {string} source */
+	const add_project = (name, module, file, source) => {
+		fs.mkdirSync(path.join(workspace, name));
+		fs.writeFileSync(
+			path.join(workspace, name, 'tsconfig.json'),
+			JSON.stringify({
+				tsrx: { compiler: '@tsrx/preact' },
+				compilerOptions: {
+					composite: true,
+					outDir: 'dist',
+					module,
+					moduleResolution: module === 'NodeNext' ? 'NodeNext' : 'Bundler',
+					target: 'ES2022',
+					strict: true,
+					skipLibCheck: true,
+					types: [],
+				},
+				include: [file],
+			}),
+		);
+		fs.writeFileSync(path.join(workspace, name, file), source);
+	};
+	add_project('bundler', 'ESNext', 'index.ts', 'export const value = 1;\n');
+	add_project('nodenext', 'NodeNext', 'meta.tsrx', 'export const url = import.meta.url;\n');
+	fs.writeFileSync(
+		path.join(workspace, 'tsconfig.json'),
+		JSON.stringify({ files: [], references: [{ path: './bundler' }, { path: './nodenext' }] }),
+	);
+
+	const result = run_cli('native', ['-b', 'tsconfig.json']);
+	expect(result.output).toBe('');
+	expect(result.status).toBe(0);
+});
 
 it('reports errors that start at a yield, a rest parameter or a nested export as namespace in .tsrx files', () => {
 	const lines = [

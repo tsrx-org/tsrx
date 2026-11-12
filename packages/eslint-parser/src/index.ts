@@ -30,20 +30,24 @@ const visitorKeys: Record<string, string[]> = {
 	JSXNamespacedName: ['namespace', 'name'],
 	JSXText: [],
 	JSXStyleElement: ['openingElement', 'children', 'closingElement'],
-	JSXIfExpression: ['test', 'consequent', 'alternate'],
+	JSXIfExpression: ['statement'],
 	JSXForExpression: ['index', 'key', 'loop', 'empty'],
 	JSXSwitchExpression: ['discriminant', 'cases'],
 	JSXSwitchCase: ['test', 'consequent'],
-	JSXTryExpression: ['block', 'handler', 'finalizer', 'pending'],
+	JSXTryExpression: ['block', 'pending', 'handler', 'finalizer'],
 	JSXCodeBlock: ['body', 'render'],
 	StyleSheet: [],
 	ForOfStatement: ['left', 'right', 'body'],
+	// eslint-scope's default keys leave out `pending`, so without this, scope
+	// analysis would skip the `pending` block of a plain `try`.
+	TryStatement: ['block', 'pending', 'handler', 'finalizer'],
 };
 
 /**
  * eslint-scope's referencer, plus the `@for` parts: the loop's `index` and
  * `key` belong to the loop's scope, like its variable, and the `@empty` branch
- * runs outside it. TSRX gives every iteration its own index.
+ * runs outside it. TSRX gives every iteration its own index. A `@catch` can
+ * also take a `reset` function after the error.
  */
 class TSRXReferencer extends Referencer {
 	#tsrx_for_by_loop = new Map<any, any>();
@@ -89,6 +93,26 @@ class TSRXReferencer extends Referencer {
 			this.visitVariableDeclaration(this.currentScope(), 'Variable', node, index);
 			if (declaration.init) this.visit(declaration.init);
 		});
+	}
+
+	CatchClause(node: any): void {
+		if (!node.resetParam) {
+			super.CatchClause(node);
+			return;
+		}
+		// eslint-scope's `CatchClause`, with `reset` defined as the error is.
+		(this as any).scopeManager.__nestCatchScope(node);
+		for (const param of [node.param, node.resetParam]) {
+			this.visitPattern(param, { processRightHandNodes: true }, (pattern: any, info: any) => {
+				(this.currentScope() as any).__define(
+					pattern,
+					new (Definition as any)('CatchClause', pattern, node, null, null, null),
+				);
+				this.referencingDefaultValue(pattern, info.assignments, null, true);
+			});
+		}
+		this.visit(node.body);
+		this.close(node);
 	}
 
 	close(node: any): void {
@@ -137,6 +161,10 @@ const LOOP_FIELDS: Record<string, string[]> = {
 	ForStatement: ['init', 'test', 'update', 'body'],
 	ForInStatement: ['left', 'right', 'body'],
 	ForOfStatement: ['await', 'left', 'right', 'body'],
+};
+
+const STATEMENT_FIELDS: Record<string, { keyword: string; fields: string[] }> = {
+	JSXIfExpression: { keyword: 'if', fields: ['test', 'consequent', 'alternate'] },
 };
 
 const SIGNATURE_TYPES = new Set([
@@ -241,6 +269,31 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 				delete node[key];
 			}
 			node.loop = loop;
+		}
+
+		// An `@if` likewise keeps its if statement in `statement`, so code path
+		// analysis gives each arm a path of its own, as it does the branches of an
+		// `if`. A `@try` keeps its blocks, in source order: as a `try` statement,
+		// its body would be inside a `try`, though the React, Preact and Hono
+		// output has none.
+		// `react-hooks/rules-of-hooks` would then report as conditional every hook
+		// after the body's first call, member access or identifier, except `use()`,
+		// which 6.1.1 and 7.1.1 report anywhere in the body as inside a try/catch
+		// block.
+		// `@switch` keeps its cases: a `switch` would fall through from each case
+		// into the next.
+		if (node.type in STATEMENT_FIELDS) {
+			const { keyword, fields } = STATEMENT_FIELDS[node.type];
+			const statement: any = {
+				type: node.statementType,
+				start: code.indexOf(keyword, node.start),
+				end: node.end,
+			};
+			for (const key of fields) {
+				statement[key] = node[key];
+				delete node[key];
+			}
+			node.statement = statement;
 		}
 
 		// Rules read a tag name as a JSX name, and crash on the expression

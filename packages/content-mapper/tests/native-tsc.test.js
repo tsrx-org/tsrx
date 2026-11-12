@@ -130,4 +130,50 @@ describe('native tsc --runExternalCode', () => {
 		// A supplemental parse must not shadow the physical file.
 		expect(fs.existsSync(path.join(dir, 'Panel.tsrx'))).toBe(true);
 	});
+
+	it('reports errors where the source has them when the printed spacing differs', () => {
+		// The type-only transform prints these without the source's inner spaces, or
+		// with spaces it adds (`Record<{  }, 1>`). TS1340 lands on the start of the
+		// whole import type's span; the others on nodes inside a container's edges
+		// that have no span of their own.
+		const source = [
+			"export type M = import(  './store.ts'  );",
+			"export type N = import('./store.ts');",
+			'export type B = Record<{}, 1>;',
+			'export const x = f([ ]);',
+			'export type C = Record< {}, 1 >;',
+			'export type D = Record<[ ], 1>;',
+			'export const y = f( [] );',
+			'declare function f(a: string): void;',
+			'',
+		].join('\n');
+		const files = consumer_fixture_files();
+		files['store.ts'] = 'export type Store<T> = { value: T };\n';
+		files['Types.tsrx'] = source;
+		files['plain.ts'] = source;
+		files['main.ts'] = "export type * from './Types.tsrx';\nexport type * from './plain.ts';\n";
+		const dir = workspace(files);
+		const result = run_native_tsc(dir, [
+			'--noEmit',
+			'-p',
+			'tsconfig.native.json',
+			'--pretty',
+			'false',
+		]);
+		const at = (/** @type {string} */ file) =>
+			parse_tsc_output(result.output)
+				.filter((d) => d.file === file)
+				.map((d) => [d.line, d.column, d.code]);
+		expect(at('plain.ts')).toEqual([
+			[1, 17, 'TS1340'],
+			[2, 17, 'TS1340'],
+			[3, 24, 'TS2344'],
+			[4, 20, 'TS2345'],
+			[5, 25, 'TS2344'],
+			[6, 24, 'TS2344'],
+			[7, 21, 'TS2345'],
+		]);
+		expect(at('Types.tsrx')).toEqual(at('plain.ts'));
+		expect(result.status).toBe(2);
+	});
 });

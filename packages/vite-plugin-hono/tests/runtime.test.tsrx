@@ -161,7 +161,7 @@ function BoundaryApp() @{
 	@try {
 		<Broken />
 	} @catch (error) {
-		<p class="error">{error.message}</p>
+		<p class="error">{error instanceof Error ? error.message : String(error)}</p>
 	}
 }
 
@@ -174,7 +174,7 @@ function BodyThrowBoundaryApp() @{
 		const value = loadOrThrow();
 		<p class="ok">{value}</p>
 	} @catch (error) {
-		<p class="error">{error.message}</p>
+		<p class="error">{error instanceof Error ? error.message : String(error)}</p>
 	}
 }
 
@@ -220,6 +220,45 @@ function StyledApp() @{
 			{'styled'}
 		</div>
 	</div>
+}
+
+const spread_ref_render_log: string[] = [];
+
+function log_spread_ref(name: string) {
+	return (node: HTMLInputElement | null) => {
+		spread_ref_render_log.push(`${name}:${node ? 'attach' : 'detach'}`);
+	};
+}
+
+const own_before_ref = log_spread_ref('own-before');
+const own_after_ref = log_spread_ref('own-after');
+const own_beside_ref = log_spread_ref('own-beside');
+const bag_beside_ref = log_spread_ref('bag-beside');
+const swap_first_ref = log_spread_ref('swap-first');
+const swap_second_ref = log_spread_ref('swap-second');
+const plain_bag = { title: 'bag' };
+const ref_bag = { title: 'bag', ref: bag_beside_ref };
+
+function SpreadRefRenderApp() @{
+	const [count, setCount] = useState(0);
+	const [swapped, setSwapped] = useState(false);
+
+	<>
+		<input class="own-before" ref={own_before_ref} {...plain_bag} />
+		<input class="own-after" {...plain_bag} ref={own_after_ref} />
+		<input class="own-beside" ref={own_beside_ref} data-count={count} {...ref_bag} />
+		<input
+			class="swap"
+			ref={swapped ? swap_second_ref : swap_first_ref}
+			{...{ 'data-count': count }}
+		/>
+		<button class="spread-ref-rerender" onClick={() => setCount(count + 1)}>
+			{count}
+		</button>
+		<button class="spread-ref-swap" onClick={() => setSwapped(true)}>
+			{'swap'}
+		</button>
+	</>
 }
 
 let conditional_spread_and_node: HTMLInputElement | null = null;
@@ -579,6 +618,33 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
 		});
 	}
+
+	it('applies refs beside a host spread again only when a ref changes', async () => {
+		async function click(selector: string) {
+			(container.querySelector(selector) as HTMLButtonElement).click();
+			await Promise.resolve();
+		}
+
+		spread_ref_render_log.length = 0;
+		render(<SpreadRefRenderApp />, container);
+		expect(spread_ref_render_log).toEqual([
+			'own-before:attach',
+			'own-after:attach',
+			'own-beside:attach',
+			'bag-beside:attach',
+			'swap-first:attach',
+		]);
+
+		spread_ref_render_log.length = 0;
+		await click('.spread-ref-rerender');
+		await click('.spread-ref-rerender');
+		expect(container.querySelector('.spread-ref-rerender')?.textContent).toBe('2');
+		expect(container.querySelector('.own-beside')?.getAttribute('data-count')).toBe('2');
+		expect(spread_ref_render_log).toEqual([]);
+
+		await click('.spread-ref-swap');
+		expect(spread_ref_render_log).toEqual(['swap-first:detach', 'swap-second:attach']);
+	});
 
 	const spread_bag = { id: 'first', title: 'First' };
 	const spread_bags = [spread_bag, { id: 'second', title: 'Second' }];

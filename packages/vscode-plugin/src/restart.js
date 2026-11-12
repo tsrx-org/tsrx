@@ -42,17 +42,21 @@ export function register_restart_command(get_client) {
 		// Missing while no TypeScript server runs, such as TypeScript 7 on with only the
 		// TypeScript 7 Nightly extension installed.
 		const commands = await vscode.commands.getCommands(true);
-		try {
-			await Promise.all([
-				get_client()?.restart(),
-				commands.includes(typescript_restart)
-					? vscode.commands.executeCommand(typescript_restart)
-					: undefined,
-			]);
-			vscode.window.setStatusBarMessage('TSRX: Restarted the language server.', 3000);
-		} catch (error) {
+		/** @param {unknown} error */
+		function report_failure(error) {
 			const message = error instanceof Error ? error.message : String(error);
 			vscode.window.showErrorMessage(`TSRX could not restart the language server: ${message}`);
+		}
+		// Not awaited: when its compiler's `package.json` changed, TypeScript 7 asks the user
+		// to restart the extension host, and this settles only once they answer.
+		if (commands.includes(typescript_restart)) {
+			Promise.resolve(vscode.commands.executeCommand(typescript_restart)).catch(report_failure);
+		}
+		try {
+			await get_client()?.restart();
+			vscode.window.setStatusBarMessage('TSRX: Restarted the language server.', 3000);
+		} catch (error) {
+			report_failure(error);
 		}
 	});
 }
