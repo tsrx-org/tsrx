@@ -200,10 +200,12 @@ export function tsrxPreact(options = {}) {
 		async handleHotUpdate(ctx) {
 			if (!TSRX_EXTENSION_PATTERN.test(ctx.file)) return;
 
-			update_css_cache(await ctx.read(), ctx.file);
-
+			// Without a stylesheet module there is no css to refresh, and the file
+			// may only be imported as an asset (`?raw`) that must not compile.
 			const css_mod = ctx.server.moduleGraph.getModuleById(ctx.file + CSS_QUERY);
 			if (!css_mod) return ctx.modules;
+
+			update_css_cache(await ctx.read(), ctx.file);
 
 			ctx.server.moduleGraph.invalidateModule(css_mod);
 			// Vite usually lists the CSS module already, under the component's file.
