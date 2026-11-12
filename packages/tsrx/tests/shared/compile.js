@@ -1869,10 +1869,10 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch');
-			expect(code).toMatch(/<Match when=\{status === "idle"\}>/);
-			expect(code).toMatch(/<Match when=\{status === "active"\}>/);
-			expect(code).toMatch(/<Match when=\{status === "offline"\}>/);
+			expect(code).toContain('<__Switch');
+			expect(code).toMatch(/<__Match when=\{status === "idle"\}>/);
+			expect(code).toMatch(/<__Match when=\{status === "active"\}>/);
+			expect(code).toMatch(/<__Match when=\{status === "offline"\}>/);
 			expect(count_substring(code, "'Offline'")).toBe(1);
 			expect(count_substring(code, "'Away'")).toBe(1);
 			expect(count_substring(code, "'Online'")).toBe(1);
@@ -1894,8 +1894,8 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toMatch(/<Match when=\{kind === "a"\}>/);
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toMatch(/<__Match when=\{kind === "a"\}>/);
 			expect(count_substring(code, "'D'")).toBe(1);
 		});
 	});
@@ -2355,9 +2355,9 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 			expect(code).toContain('children={({ items }: { items: JSX.Element[] }) => <ul>');
 			expect(code).toContain(
 				name === 'solid'
-					? '<For each={items} keyed={false}>'
+					? '<__For each={items} keyed={false}>'
 					: name === 'vue'
-						? '<VaporFor in={items}'
+						? '<__VaporFor in={items}'
 						: '__map_iterable(items, (item, i)',
 			);
 			expect(code).toContain(name === 'vue' ? '<li>{item.value}</li>' : '<li key={i}>{item}</li>');
@@ -3540,8 +3540,10 @@ export function App() @{
 		});
 	});
 
-	// The targets that share the core import injector, and the sources it
-	// imports each generated component from.
+	// The components each target imports itself, and the sources it imports
+	// them from. React, Preact and Hono share the core import injector; Solid
+	// and Vue have their own. Vue's `defineVaporComponent` keeps its public
+	// name: vue-jsx-vapor finds components by that callee name.
 	const generated_import_sources = /** @type {Record<string, Record<string, string>>} */ ({
 		react: {
 			Suspense: 'react',
@@ -3558,6 +3560,17 @@ export function App() @{
 			Fragment: 'hono/jsx',
 			TsrxErrorBoundary: '@tsrx/hono/error-boundary',
 		},
+		solid: {
+			Show: 'solid-js',
+			For: 'solid-js',
+			Switch: 'solid-js',
+			Match: 'solid-js',
+			Errored: 'solid-js',
+			Loading: 'solid-js',
+		},
+		vue: {
+			VaporFor: 'vue-jsx-vapor',
+		},
 	})[name];
 
 	if (generated_import_sources) {
@@ -3569,6 +3582,13 @@ export function App() @{
 				Suspense: `<div>@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }</div>`,
 				TsrxErrorBoundary: `<div>@try { <p>{'ready'}</p> } @catch (error) { <p>{'failed'}</p> }</div>`,
 				Fragment: `<ul>@for (const row of rows; key row) { <><li>{row}</li><li>{'end'}</li></> }</ul>`,
+				Show: `<div>@if (rows.length > 0) { <p>{'some'}</p> }</div>`,
+				For: `<ul>@for (const row of rows) { <li>{row}</li> }</ul>`,
+				Switch: `<div>@switch (rows[0]) { @case 'a': { <p>{'a'}</p> } @default: { <p>{'other'}</p> } }</div>`,
+				Match: `<div>@switch (rows[0]) { @case 'a': { <p>{'a'}</p> } @default: { <p>{'other'}</p> } }</div>`,
+				Errored: `<div>@try { <p>{'ready'}</p> } @catch (error) { <p>{'failed'}</p> }</div>`,
+				Loading: `<div>@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }</div>`,
+				VaporFor: `<ul>@for (const row of rows; key row) { <li>{row}</li> }</ul>`,
 			};
 
 			/**
@@ -3598,14 +3618,21 @@ export function App() @{
 					.filter((diagnostic) => [2300, 2440, 2451].includes(diagnostic.code))
 					.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
 				expect(redeclarations).toEqual([]);
-				expect(code).toContain(
-					`import { ${generated} as __${generated} } from '${sources[generated]}';`,
+				// A target can import several generated names from one source in a
+				// single declaration, which the printer may wrap over several lines.
+				const import_line = [...code.matchAll(/^import \{([^}]*)\} from '([^']+)';$/gm)].find(
+					(match) =>
+						match[2] === sources[generated] &&
+						match[1]
+							.split(',')
+							.some((specifier) => specifier.trim() === `${generated} as __${generated}`),
 				);
+				expect(import_line, `a value import of ${generated} as __${generated}`).toBeDefined();
 				expect(code).toContain(`<__${generated} `);
 				expect(code).not.toMatch(new RegExp(`<${generated}[\\s>]`));
 			}
 
-			for (const generated of ['Suspense', 'TsrxErrorBoundary', 'Fragment']) {
+			for (const generated of Object.keys(sources)) {
 				const source = sources[generated];
 
 				it.each([
@@ -3632,17 +3659,37 @@ export function App() @{
 				});
 			}
 
-			it('keys a fragment row with the generated Fragment when the loop variable is named Fragment', () => {
-				const code = compile_beside(
-					'Fragment',
-					'',
-					'',
-					`<ul>@for (const Fragment of rows; key Fragment) { <><li>{Fragment}</li><li>{'end'}</li></> }</ul>`,
-				);
+			it.runIf('Fragment' in sources)(
+				'keys a fragment row with the generated Fragment when the loop variable is named Fragment',
+				() => {
+					const code = compile_beside(
+						'Fragment',
+						'',
+						'',
+						`<ul>@for (const Fragment of rows; key Fragment) { <><li>{Fragment}</li><li>{'end'}</li></> }</ul>`,
+					);
 
-				expect_private_generated_binding(code, 'Fragment');
-				expect(code).toContain('<__Fragment key={Fragment}>');
-			});
+					expect_private_generated_binding(code, 'Fragment');
+					expect(code).toContain('<__Fragment key={Fragment}>');
+				},
+			);
+
+			it.runIf(name === 'solid')(
+				'switches through the generated Match when the loop variable is named Match',
+				() => {
+					const code = compile_beside(
+						'Match',
+						'',
+						'',
+						`<ul>@for (const Match of rows) { @switch (Match) { @case 'a': { <li>{'a'}</li> } @default: { <li>{'b'}</li> } } }</ul>`,
+					);
+
+					expect_private_generated_binding(code, 'Match');
+					expect_private_generated_binding(code, 'For');
+					expect(code).toContain('{(Match) => <__Switch');
+					expect(code).toContain(`<__Match when={Match === 'a'}>`);
+				},
+			);
 		});
 	}
 

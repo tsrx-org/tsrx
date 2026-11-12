@@ -102,6 +102,8 @@ export const DIAGNOSTIC_CODES = {
 	TARGET_PROP_DEFAULT_UNSUPPORTED: 'TSRX2029',
 	/** A destructured prop key the target's component compiler reads as another prop, or leaves out. */
 	TARGET_PROP_KEY_UNSUPPORTED: 'TSRX2031',
+	/** A binding of a name the target's toolchain finds by name: Vue's `defineVaporComponent`. */
+	TARGET_RESERVED_NAME: 'TSRX2032',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -500,6 +502,10 @@ export const TSRX_ERRORS = {
 		'TARGET_PROP_KEY_UNSUPPORTED',
 		(target, key, example) =>
 			`${target} TSRX cannot read the prop at \`${key}\`: vue-jsx-vapor reads a destructured prop only by a key that is a name, so this binding never gets the prop. ${read_prop_where_used(example)}`,
+	),
+	DEFINE_VAPOR_COMPONENT_BINDING: tsrx(
+		'TARGET_RESERVED_NAME',
+		"Vue TSRX does not allow a binding named `defineVaporComponent`. vue-jsx-vapor finds components by calls to that exact name, and the compiler wraps each component in the one from 'vue-jsx-vapor', so the name can't be declared again or shadowed. Rename this binding.",
 	),
 
 	// TSRX3xxx
