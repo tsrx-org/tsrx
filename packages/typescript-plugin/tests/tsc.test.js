@@ -830,6 +830,159 @@ it('keeps a static index signature static in .tsrx files and their declarations'
 	expect(declaration).not.toMatch(/^\s*\[key: string\]/m);
 });
 
+it('reports errors on an array inside an array and on an empty type literal in .tsrx files', () => {
+	const lines = [
+		'declare function g<T extends string>(): void; g<{}>();',
+		'export const t = [ {}, [] ] satisfies number[]; export const u = [[]] satisfies number[];',
+		'export const v: number[] = [ [ 1 ] ];',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {number} */ offset) =>
+		`layout.tsrx(${index + 4},${offset + 1})`;
+	expect(result.output).toContain(
+		`${at(0, lines[0].indexOf('{}'))}: error TS2344: Type '{}' does not satisfy the constraint 'string'.`,
+	);
+	for (const [index, offset, type] of /** @type {const} */ ([
+		[1, lines[1].indexOf('{}'), '{}'],
+		[1, lines[1].indexOf('[]'), '[]'],
+		[1, lines[1].indexOf('[]]'), '[]'],
+		[2, lines[2].indexOf('[ 1 ]'), '[number]'],
+	])) {
+		expect(result.output).toContain(
+			`${at(index, offset)}: error TS2322: Type '${type}' is not assignable to type 'number'.`,
+		);
+	}
+});
+
+it('reports errors after a comment inside an array or object literal where they are written in .tsrx files', () => {
+	// The printer leaves the comments out, so the literal is shorter in the
+	// generated code than in the source.
+	const lines = [
+		'declare const o: { a: number };',
+		'export const x = [ /*comment*/ 1 as string ];',
+		"export const y: number[] = [ /* c */ o.a + 'x' ];",
+		'export const z = [ /* c */ {} + 1 ];',
+		"export const v: number[] = [ /* long comment here */ true ? 'a' : 'b' ];",
+		'export const w = { /* comment */ a: 1 as string };',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	for (const [index, text, code] of /** @type {const} */ ([
+		[1, '1 as', 'TS2352'],
+		[2, 'o.a', 'TS2322'],
+		[3, '{} +', 'TS2365'],
+		[4, 'true', 'TS2322'],
+		[5, '1 as', 'TS2352'],
+	])) {
+		expect(result.output).toContain(`${at(index, text)}: error ${code}:`);
+	}
+});
+
+it('reports errors on a whole spread in .tsrx files', () => {
+	const lines = [
+		'declare const n: number; declare const s: string | undefined;',
+		'export const a = { ...n }; export const b = { ...s }; export const c = { /* c */ ...s };',
+		"export const d: number[] = [ ...['x'] ];",
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts2698 = 'error TS2698: Spread types may only be created from object types.';
+	for (const offset of [
+		lines[1].indexOf('...n'),
+		lines[1].indexOf('...s'),
+		lines[1].lastIndexOf('...s'),
+	]) {
+		expect(result.output).toContain(`layout.tsrx(5,${offset + 1}): ${ts2698}`);
+	}
+	expect(result.output).toContain(
+		`layout.tsrx(6,${lines[2].indexOf('...') + 1}): error TS2322: Type 'string' is not assignable to type 'number'.`,
+	);
+});
+
+it('reports an unreachable break or continue in place in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	// An arrow maps its whole span, and the printer adds a blank line after `return;`.
+	const lines = [
+		'export const b = () => { while (true) { return; break; } };',
+		'export const c = () => { for (const x of [1]) { return; continue; } };',
+		'export const i = function () { while (true) { return; break; } };',
+		'export function j() { while (true) { return; break; } }',
+		'export function L() @{',
+		'\tconst loop = () => { while (true) { return; break; } };',
+		'\t<p onClick={loop} />',
+		'}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const [index, text] of /** @type {const} */ ([
+		[0, 'break'],
+		[1, 'continue'],
+		[2, 'break'],
+		[3, 'break'],
+		[5, 'break'],
+	])) {
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1}): error TS7027: Unreachable code detected.`,
+		);
+	}
+});
+
+it('reports duplicate index signatures in place in .tsrx files', () => {
+	const lines = [
+		'export type T = { [x: string]: string; [x: string]: number };',
+		'export type U = { /*comment*/ [x: string]: string; [x: string]: number };',
+		'export class C { readonly [k: string]: number; [k: string]: string }',
+		'export interface I { readonly [k: number]: 1; [k: number]: 2 }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const [index, text, occurrence] of /** @type {const} */ ([
+		[0, '[x', 1],
+		[0, '[x', 2],
+		[1, '[x', 1],
+		[1, '[x', 2],
+		[2, 'readonly', 1],
+		[2, '[k', 2],
+		[3, 'readonly', 1],
+		[3, '[k', 2],
+	])) {
+		let offset = -1;
+		for (let count = 0; count < occurrence; count++)
+			offset = lines[index].indexOf(text, offset + 1);
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${offset + 1}): error TS2374: Duplicate index signature for type`,
+		);
+	}
+});
+
+it('reports no duplicate for a static and an instance index signature in .tsrx files', () => {
+	// Two signatures of the same key type are duplicates only on the same side.
+	const lines = [
+		'export class A { static [k: string]: number; [k: string]: string }',
+		'export class B { [k: string]: string; static [k: string]: number }',
+		'export class C { static [k: string]: number; [k: string]: boolean; [k: string]: number }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts2374 = result.output.split('\n').filter((line) => line.includes('error TS2374'));
+	expect(ts2374.map((line) => line.slice(0, line.indexOf(':')))).toEqual([
+		`layout.tsrx(6,${lines[2].indexOf('[k: string]: boolean') + 1})`,
+		`layout.tsrx(6,${lines[2].lastIndexOf('[k: string]') + 1})`,
+	]);
+});
+
 it('reports errors on a bare this in .tsrx files', () => {
 	const line =
 		'export function readValue() { return this; } class Base {} export class Derived extends Base { constructor() { this; super(); } }';
@@ -946,4 +1099,68 @@ it('gives .tsrx files the module format of their own project in a solution build
 	const result = run_cli('native', ['-b', 'tsconfig.json']);
 	expect(result.output).toBe('');
 	expect(result.status).toBe(0);
+});
+
+it('reports errors that start at a yield, a rest parameter or a nested export as namespace in .tsrx files', () => {
+	const lines = [
+		'export function* plain() { const value = yield 1; return value; }',
+		'export function bad(...args: number) {} export class K { m(...args: number) {} }',
+		'export function List<T>(...items: T) @{ <ul /> }',
+		'function nested() { export as namespace A; }',
+		'export function* View() @{ @if (yield 1) { <div /> } }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {number} */ offset) =>
+		`layout.tsrx(${index + 4},${offset + 1})`;
+	for (const index of [0, 4]) {
+		expect(result.output).toContain(
+			`${at(index, lines[index].indexOf('yield'))}: error TS7057: 'yield' expression implicitly results in an 'any' type because its containing generator lacks a return-type annotation.`,
+		);
+	}
+	for (const [index, offset] of [
+		[1, lines[1].indexOf('...')],
+		[1, lines[1].lastIndexOf('...')],
+		[2, lines[2].indexOf('...')],
+	]) {
+		expect(result.output).toContain(
+			`${at(index, offset)}: error TS2370: A rest parameter must be of an array type.`,
+		);
+	}
+	expect(result.output).toContain(
+		`${at(3, lines[3].indexOf('export'))}: error TS1316: Global module exports may only appear at top level.`,
+	);
+});
+
+it('reports unreachable code on a statement that ends with an element in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	const lines = [
+		'let x: unknown; declare function foo(): void;',
+		'export function a() { return; x = <div></div>; }',
+		'export function b() { return; x = <br />; }',
+		'export function c() { return; true ? <div /> : <span />; }',
+		'export function d() { return; foo(); }',
+		'export function e() {',
+		'\treturn;',
+		'\tx = <span>x</span>',
+		'}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const [index, text] of /** @type {const} */ ([
+		[1, 'x ='],
+		[2, 'x ='],
+		[3, 'true'],
+		[4, 'foo'],
+		[7, 'x ='],
+	])) {
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1}): error TS7027: Unreachable code detected.`,
+		);
+	}
 });

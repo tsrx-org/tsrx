@@ -6,7 +6,10 @@ import { walk } from 'zimmerframe';
 import { print } from 'esrap';
 import { error } from '../../errors.js';
 import { DIAGNOSTIC_CODES, TSRX_ERRORS } from '../../diagnostics.js';
-import { is_template_value_position } from '../../analyze/validation.js';
+import {
+	get_statement_keyword_node,
+	is_template_value_position,
+} from '../../analyze/validation.js';
 import { analyze_css } from '../../analyze/css-analyze.js';
 import {
 	in_jsx_child_context,
@@ -67,6 +70,7 @@ import {
 	child_nodes,
 	has_location,
 	is_ast_node,
+	is_code_block_function_body,
 	is_function_node,
 	is_function_or_class_node as is_function_or_class_boundary,
 	is_template_directive as is_jsx_control_flow_expression,
@@ -75,8 +79,8 @@ import {
 } from '../../utils/ast.js';
 import { is_reference } from '../../utils/is-reference.js';
 
-const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
-const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
+export const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
+export const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
 const LEADING_INLINE_WHITESPACE = /^[ \t]+/;
 const TRAILING_INLINE_WHITESPACE = /[ \t]+$/;
 
@@ -585,6 +589,9 @@ export function createJsxTransform(platform) {
 			needs_match: false,
 			needs_errored: false,
 			needs_loading: false,
+			needs_for_items: false,
+			needs_for_keyed_rows: false,
+			needs_for_memo: false,
 			needs_define_vapor_component: false,
 			needs_vapor_for: false,
 			needs_vapor_computed: false,
@@ -609,6 +616,8 @@ export function createJsxTransform(platform) {
 			// needs_show / needs_for flags) via `hooks.initialState`.
 			...(platform.hooks?.initialState?.() ?? {}),
 		};
+
+		validate_directive_declarations(ast, transform_context);
 
 		// Opt-in server-module dialect (`module <name> { … }` plus its boundary
 		// `import … from '<specifier>'`): lower to plain checkable TS before any
@@ -964,7 +973,9 @@ function lower_dynamic_jsx_element(node, transform_context) {
 				name_id,
 				[...extra_attributes, ...(node.openingElement.attributes || [])],
 				node.openingElement.selfClosing,
-				node.openingElement.typeArguments,
+				// Type arguments here are an error (TSRX2033): on `TsrxDynamic` they
+				// would type the tag, not its props.
+				undefined,
 				has_location(node.openingElement) ? node.openingElement : undefined,
 			),
 			closing
@@ -2863,12 +2874,15 @@ function reads_tag_binding(node) {
  * declaration, or a `const` or class declared in an earlier statement. A
  * member tag (`<Menu.Item>`) also reads a property, which the module can still
  * assign after it loads (`Menu.Item = …`), so only one that starts with an
- * import is hoisted. A tag that starts with `this`, `super`, a local binding,
- * a binding that can be reassigned (`let`, `var`, an enum, a namespace, an
- * import alias), a binding the module assigns anywhere (`Tag = Replacement`
- * after `function Tag() {}`, or any binding once it calls `eval` directly),
- * or a name the module does not bind stays at render time, since a static
- * would keep the value it read when the module loaded.
+ * import is hoisted, and only when the module writes no property under that
+ * import. A namespace import's own properties are read-only, so a tag that
+ * reads one of them (`<ns.Button>`) is hoisted either way. A tag that starts
+ * with `this`, `super`, a local binding, a binding that can be reassigned
+ * (`let`, `var`, an enum, a namespace, an import alias), a binding the module
+ * assigns anywhere (`Tag = Replacement` after `function Tag() {}`, or any
+ * binding once it calls `eval` directly), or a name the module does not bind
+ * stays at render time, since a static would keep the value it read when the
+ * module loaded.
  *
  * @param {AST.Program} program
  * @param {AST.Program} [parsed] the program before the passes that can move
@@ -2905,23 +2919,26 @@ function collect_hoistable_tags(program, parsed = program) {
 	const assigned = collect_assigned_names(parsed);
 	/**
 	 * @param {string} name
-	 * @param {boolean} member
+	 * @param {number} depth how many properties the tag reads: none for
+	 * `<Tag>`, two for `<ui.Menu.Item>`
 	 * @param {number} position
 	 * @returns {boolean}
 	 */
-	const is_hoistable = (name, member, position) => {
+	const is_hoistable = (name, depth, position) => {
 		if (name === 'this' || name === 'super') return false;
 		if (scopes.some((names) => names.has(name))) return false;
-		if (!assigned || assigned.has(name)) return false;
+		if (!assigned || assigned.names.has(name)) return false;
 		const binding = module_bindings.get(name);
 		switch (binding?.kind) {
 			case 'import':
-				return true;
+				return depth === 0 || !assigned.objects.has(name);
+			case 'namespace import':
+				return depth <= 1 || !assigned.objects.has(name);
 			case 'function':
-				return !member;
+				return depth === 0;
 			case 'class':
 			case 'const':
-				return !member && binding.end <= position;
+				return depth === 0 && binding.end <= position;
 			default:
 				return false;
 		}
@@ -2935,10 +2952,11 @@ function collect_hoistable_tags(program, parsed = program) {
 		if (node.type === 'JSXOpeningElement' && !is_intrinsic_tag(node.name)) {
 			const root = jsx_tag_root(node.name);
 			if (root && typeof root.start === 'number') {
-				hoistable.set(
-					root.start,
-					is_hoistable(root.name, node.name.type === 'JSXMemberExpression', root.start),
-				);
+				let depth = 0;
+				for (let name = node.name; name.type === 'JSXMemberExpression'; name = name.object) {
+					depth++;
+				}
+				hoistable.set(root.start, is_hoistable(root.name, depth, root.start));
 			}
 		}
 		for (const child of child_nodes(node)) visit(child);
@@ -2949,41 +2967,51 @@ function collect_hoistable_tags(program, parsed = program) {
 }
 
 /**
- * The names `program` assigns anywhere: the targets of an assignment, an
- * update, or a `for … in`/`for … of` head without a declaration, through
- * destructuring and type assertions. `null` when the program calls `eval`
- * directly, which can assign any name it can see. Read from the program as
- * parsed: the style pass moves the `ref` of a `<style>` in a nested root to
- * the root's metadata, which `child_nodes` skips.
+ * What `program` assigns anywhere. `names` are the names it assigns: the
+ * targets of an assignment, an update, or a `for … in`/`for … of` head
+ * without a declaration, through destructuring and type assertions. `objects`
+ * are the names it can write a property under: the name a member target of
+ * any of those starts with (`ui` for `ui.Menu.Item = …`), the one a `delete`
+ * starts with, and the one the first argument of any call or `new` starts
+ * with, since `Object.assign(ui, …)` and `Object.defineProperty(ui.Menu, …)`
+ * write one.
+ * `null` when the program calls `eval` directly, which can assign any name it
+ * can see. Read from the program as parsed: the style pass moves the `ref` of
+ * a `<style>` in a nested root to the root's metadata, which `child_nodes`
+ * skips.
  *
  * @param {AST.Program} program
- * @returns {Set<string> | null}
+ * @returns {{ names: Set<string>, objects: Set<string> } | null}
  */
 function collect_assigned_names(program) {
-	/** @type {Set<string>} */
-	const names = new Set();
+	const assigned = { names: new Set(), objects: new Set() };
 	let calls_eval = false;
 	/** @param {AST.Node} node */
 	const visit = (node) => {
-		if (node.type === 'AssignmentExpression') add_target_names(node.left, names);
-		else if (node.type === 'UpdateExpression') add_target_names(node.argument, names);
-		else if (
+		if (node.type === 'AssignmentExpression') add_target_names(node.left, assigned);
+		else if (node.type === 'UpdateExpression') add_target_names(node.argument, assigned);
+		else if (node.type === 'UnaryExpression' && node.operator === 'delete') {
+			add_object_names(node.argument, assigned.objects);
+		} else if (
 			(node.type === 'ForInStatement' || node.type === 'ForOfStatement') &&
 			node.left.type !== 'VariableDeclaration'
 		) {
-			add_target_names(node.left, names);
-		} else if (node.type === 'CallExpression') {
+			add_target_names(node.left, assigned);
+		} else if (node.type === 'CallExpression' || node.type === 'NewExpression') {
 			const callee = unwrap_expression(node.callee);
 			if (callee.type === 'Identifier' && callee.name === 'eval') calls_eval = true;
+			const [first] = node.arguments;
+			if (first && first.type !== 'SpreadElement') add_object_names(first, assigned.objects);
 		}
 		for (const child of child_nodes(node)) visit(child);
 	};
 	visit(program);
-	return calls_eval ? null : names;
+	return calls_eval ? null : assigned;
 }
 
 /**
- * `node` without the parentheses and type assertions around it.
+ * `node` without the parentheses, type assertions and type arguments around
+ * it.
  *
  * @param {AST.Node} node
  * @returns {AST.Node}
@@ -2996,7 +3024,8 @@ function unwrap_expression(node) {
 		current.type === 'TSAsExpression' ||
 		current.type === 'TSSatisfiesExpression' ||
 		current.type === 'TSNonNullExpression' ||
-		current.type === 'TSTypeAssertion'
+		current.type === 'TSTypeAssertion' ||
+		current.type === 'TSInstantiationExpression'
 	) {
 		current = current.expression;
 	}
@@ -3005,31 +3034,73 @@ function unwrap_expression(node) {
 
 /**
  * @param {AST.Node | null} target
- * @param {Set<string>} names
+ * @param {{ names: Set<string>, objects: Set<string> }} assigned
  */
-function add_target_names(target, names) {
+function add_target_names(target, assigned) {
 	/** @type {any} */
 	const node = target && unwrap_expression(target);
 	switch (node?.type) {
 		case 'Identifier':
-			names.add(node.name);
+			assigned.names.add(node.name);
+			break;
+		case 'MemberExpression':
+			add_object_names(node, assigned.objects);
 			break;
 		case 'ObjectPattern':
 			for (const property of node.properties) {
 				add_target_names(
 					property.type === 'RestElement' ? property.argument : property.value,
-					names,
+					assigned,
 				);
 			}
 			break;
 		case 'ArrayPattern':
-			for (const element of node.elements) add_target_names(element, names);
+			for (const element of node.elements) add_target_names(element, assigned);
 			break;
 		case 'RestElement':
-			add_target_names(node.argument, names);
+			add_target_names(node.argument, assigned);
 			break;
 		case 'AssignmentPattern':
-			add_target_names(node.left, names);
+			add_target_names(node.left, assigned);
+			break;
+	}
+}
+
+/**
+ * Adds the names whose value `node` can be, or that a property path in it
+ * starts from: `ui` for `ui`, `ui.Menu`, `(0, ui)`, `ui?.Menu` and
+ * `(await ui)`.
+ *
+ * @param {AST.Node} node
+ * @param {Set<string>} names
+ */
+function add_object_names(node, names) {
+	/** @type {any} */
+	const current = unwrap_expression(node);
+	switch (current.type) {
+		case 'Identifier':
+			names.add(current.name);
+			break;
+		case 'MemberExpression':
+			add_object_names(current.object, names);
+			break;
+		case 'ChainExpression':
+			add_object_names(current.expression, names);
+			break;
+		case 'AwaitExpression':
+			add_object_names(current.argument, names);
+			break;
+		case 'SequenceExpression':
+			add_object_names(current.expressions[current.expressions.length - 1], names);
+			break;
+		case 'ConditionalExpression':
+			add_object_names(current.consequent, names);
+			add_object_names(current.alternate, names);
+			break;
+		case 'LogicalExpression':
+		case 'AssignmentExpression':
+			add_object_names(current.left, names);
+			add_object_names(current.right, names);
 			break;
 	}
 }
@@ -3067,8 +3138,8 @@ function jsx_tag_root(name) {
 
 /**
  * The value bindings a statement in a statement list declares, with their
- * kind: `import`, `function`, `class`, `const`, or `mutable`. Type-only and
- * ambient declarations bind no value.
+ * kind: `import`, `namespace import`, `function`, `class`, `const`, or
+ * `mutable`. Type-only and ambient declarations bind no value.
  *
  * @param {AST.Node} statement
  * @returns {Array<[string, string]>}
@@ -3084,9 +3155,11 @@ function statement_bindings(statement) {
 	switch (node.type) {
 		case 'ImportDeclaration':
 			if (node.importKind === 'type') return [];
-			return node.specifiers.flatMap((/** @type {any} */ specifier) =>
-				specifier.importKind === 'type' ? [] : [[specifier.local.name, 'import']],
-			);
+			return node.specifiers.flatMap((/** @type {any} */ specifier) => {
+				if (specifier.importKind === 'type') return [];
+				const kind = specifier.type === 'ImportNamespaceSpecifier' ? 'namespace import' : 'import';
+				return [[specifier.local.name, kind]];
+			});
 		case 'VariableDeclaration': {
 			/** @type {Map<string, AST.Identifier>} */
 			const bindings = new Map();
@@ -5413,14 +5486,14 @@ function validate_if_body_control_flow(node, transform_context) {
  * Every target hands an `@for` item to a callback, so the head has to declare
  * its loop variable the way a parameter can: assigning to an existing variable
  * or property would only shadow it, a `var` would not reach the enclosing
- * function, and a `using` item would never be disposed. A target that lowers
- * `@for` itself calls this from its own lowering.
+ * function, and a `using` item would never be disposed. Called from
+ * `validate_directive_declarations`, before any target lowers an `@for`.
  *
  * @param {AST.ForOfStatement['left']} left
  * @param {TransformContext} transform_context
  * @returns {void}
  */
-export function validate_for_of_head(left, transform_context) {
+function validate_for_of_head(left, transform_context) {
 	if (left.type !== 'VariableDeclaration') {
 		error(
 			TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
@@ -5449,6 +5522,69 @@ export function validate_for_of_head(left, transform_context) {
 }
 
 /**
+ * Every target runs an `@if`, `@for`, `@switch` or `@try` body that declares
+ * something, and every `@{ … }` block that isn't a function's own body, in a
+ * function of its own, so a `var` there, or in a plain block or loop inside
+ * one, would not reach the enclosing function. A function or class inside
+ * scopes its own `var`s. This walks the authored module before any target
+ * lowers a directive or block, and reports those `var`s and invalid `@for`
+ * heads once each, in source order.
+ *
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function validate_directive_declarations(program, transform_context) {
+	/** @type {Array<{ node: AST.Node, head: boolean }>} */
+	const found = [];
+	collect_directive_declarations(program, null, false, found);
+	found.sort(
+		(a, b) =>
+			/** @type {AST.NodeWithLocation} */ (a.node).start -
+			/** @type {AST.NodeWithLocation} */ (b.node).start,
+	);
+	for (const { node, head } of found) {
+		if (head) {
+			validate_for_of_head(/** @type {AST.ForOfStatement['left']} */ (node), transform_context);
+		} else {
+			error(
+				TSRX_ERRORS.DIRECTIVE_BODY_VAR,
+				transform_context.filename,
+				get_statement_keyword_node(node, 'var'),
+				transform_context.errors,
+				transform_context.comments,
+			);
+		}
+	}
+}
+
+/**
+ * @param {AST.Node} node
+ * @param {AST.Node | null} parent
+ * @param {boolean} in_body Whether `node` is inside a directive body or a nested `@{ … }` block.
+ * @param {Array<{ node: AST.Node, head: boolean }>} found An `@for` head, or a `var` declaration in a body.
+ * @returns {void}
+ */
+function collect_directive_declarations(node, parent, in_body, found) {
+	if (in_body && node.type === 'VariableDeclaration' && node.kind === 'var' && !node.declare) {
+		found.push({ node, head: false });
+	} else if (is_template_for_of_node(node)) {
+		found.push({ node: node.left, head: true });
+	}
+
+	const children_in_body =
+		is_jsx_control_flow_expression(node) ||
+		(node.type === 'JSXCodeBlock' && !is_code_block_function_body(node, parent)) ||
+		(in_body && !is_function_or_class_boundary(node));
+	for (const child of child_nodes(node)) {
+		// The `@for` head is validated as a head.
+		const in_for_head =
+			node.type === 'JSXForExpression' && child !== node.body && child !== node.empty;
+		collect_directive_declarations(child, node, children_in_body && !in_for_head, found);
+	}
+}
+
+/**
  * @param {AST.Node | null | undefined} node
  * @returns {boolean}
  */
@@ -5471,7 +5607,6 @@ function is_loop_statement(node) {
  * @returns {ESTreeJSX.JSXExpressionContainer}
  */
 function for_of_statement_to_jsx_child(node, transform_context) {
-	validate_for_of_head(node.left, transform_context);
 	if (node.await && !transform_context.rejected_awaits.has(/** @type {number} */ (node.start))) {
 		error(
 			TSRX_ERRORS.TARGET_FOR_AWAIT_UNSUPPORTED(transform_context.platform.name),
@@ -7077,8 +7212,10 @@ export function validate_at_most_one_ref_attribute(raw_attrs, transform_context)
  * - `undefined` — return the list unchanged. The platform takes care
  *   of duplicate refs at runtime (or doesn't support them).
  *
- * Single-ref elements are always left unchanged so trivial cases stay
- * import-free and produce no helper call.
+ * Single-ref elements are left unchanged so trivial cases stay import-free and
+ * produce no helper call. The exception is a ref list written as an array
+ * literal, `ref={[a, b]}`, under `'merge-refs'`: those runtimes take a single
+ * ref, so the list becomes `ref={__mergeRefs([a, b])}`.
  *
  * @param {ESTreeJSX.JSXAttributeNode[]} jsx_attrs
  * @param {TransformContext} transform_context
@@ -7095,7 +7232,11 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 		count += 1;
 		if (!attr.metadata?.synthetic_ref) tsx_form_count += 1;
 	}
-	if (count <= 1) return jsx_attrs;
+	if (count <= 1) {
+		return strategy === 'merge-refs'
+			? merge_ref_list_literal(jsx_attrs, transform_context)
+			: jsx_attrs;
+	}
 	// Two or more genuine `ref={...}` (TSX-form) attributes are already a
 	// validator-flagged compile error and TypeScript flags them as duplicate
 	// JSX props. Leave them in place so the user gets all three signals
@@ -7164,6 +7305,55 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 	}
 
 	return result;
+}
+
+/**
+ * Give an element's lone `ref={[a, b]}` to `__mergeRefs`, which applies every
+ * ref in the list. The attribute keeps its name node and location, so its
+ * mappings and metadata stay; a second pass sees the call and leaves it.
+ *
+ * @param {ESTreeJSX.JSXAttributeNode[]} jsx_attrs
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXAttributeNode[]}
+ */
+function merge_ref_list_literal(jsx_attrs, transform_context) {
+	const index = jsx_attrs.findIndex(
+		(attr) => is_jsx_ref_attribute(attr) && is_array_literal(attr.value.expression),
+	);
+	if (index === -1) return jsx_attrs;
+
+	const attr = /** @type {ESTreeJSX.JSXRefAttribute} */ (jsx_attrs[index]);
+	transform_context.needs_merge_refs = true;
+	const merged_attr = build_jsx_attribute(
+		attr.name,
+		b.jsx_expression_container(b.call(b.id(MERGE_REFS_INTERNAL_NAME), attr.value.expression)),
+		false,
+		has_location(attr) ? attr : undefined,
+	);
+	merged_attr.metadata = { ...(attr.metadata || {}), ...(merged_attr.metadata || {}) };
+	const result = [...jsx_attrs];
+	result[index] = merged_attr;
+	return result;
+}
+
+/**
+ * An array literal, through parentheses and type assertions such as `as const`.
+ *
+ * @param {AST.Expression} expression
+ * @returns {boolean}
+ */
+function is_array_literal(expression) {
+	/** @type {any} */
+	let node = expression;
+	while (
+		node.type === 'ParenthesizedExpression' ||
+		node.type === 'TSAsExpression' ||
+		node.type === 'TSSatisfiesExpression' ||
+		node.type === 'TSNonNullExpression'
+	) {
+		node = node.expression;
+	}
+	return node.type === 'ArrayExpression';
 }
 
 /**

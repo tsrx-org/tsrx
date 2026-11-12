@@ -11,10 +11,13 @@ import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/scrip
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
 import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
+import { runArrayRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-ref';
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
 import { runStaticContainersRuntimeTests } from '@tsrx/core/test-harness/runtime/static-containers';
 import { StaticContainers } from '@tsrx/core/test-harness/runtime/static-containers-components.tsrx';
+import { runAssignedImportMemberRuntimeTests } from '@tsrx/core/test-harness/runtime/assigned-import-member';
+import { AssignedImportMember } from '@tsrx/core/test-harness/runtime/assigned-import-member-components.tsrx';
 import { runGeneratedImportBindingsRuntimeTests } from '@tsrx/core/test-harness/runtime/generated-import-bindings';
 
 function text(selector: string): string | null {
@@ -565,6 +568,26 @@ function SharedRefApp() @{
 	</>
 }
 
+function SharedRefListToggle() @{
+	const [shown, setShown] = useState(true);
+
+	<>
+		@if (shown) {
+			<p class="shared-ref-b" ref={[shared_cleanup_ref, shared_ref_bag.ref]} />
+		}
+		<button class="shared-ref-hide" onClick={() => setShown(false)}>
+			{'hide'}
+		</button>
+	</>
+}
+
+function SharedRefListApp() @{
+	<>
+		<p class="shared-ref-a" ref={[shared_cleanup_ref, shared_ref_bag.ref]} />
+		<SharedRefListToggle />
+	</>
+}
+
 // ── Conditional host spreads ──
 
 let conditional_spread_and_node: HTMLInputElement | null = null;
@@ -1053,6 +1076,25 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 		expect(shared_ref_log).toEqual(['own-cleanup:shared-ref-b', 'bag:null']);
 	});
 
+	it("keeps each element's ref cleanup when two elements write the same ref list", async () => {
+		shared_ref_log.length = 0;
+		await render(SharedRefListApp);
+		expect(shared_ref_log).toEqual([
+			'own:shared-ref-a',
+			'bag:shared-ref-a',
+			'own:shared-ref-b',
+			'bag:shared-ref-b',
+		]);
+
+		shared_ref_log.length = 0;
+		await act(() => {
+			(container.querySelector('.shared-ref-hide') as HTMLButtonElement).click();
+		});
+		expect(container.querySelector('.shared-ref-b')).toBeNull();
+		expect(container.querySelector('.shared-ref-a')).not.toBeNull();
+		expect(shared_ref_log).toEqual(['own-cleanup:shared-ref-b', 'bag:null']);
+	});
+
 	for (const enabled of [false, true]) {
 		it(`renders conditional host spreads when the condition is ${enabled}`, async () => {
 			conditional_spread_and_node = null;
@@ -1121,6 +1163,7 @@ runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
 runArraySpreadRefRuntimeTests();
+runArrayRefRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();
 runStaticContainersRuntimeTests({
@@ -1131,4 +1174,5 @@ runStaticContainersRuntimeTests({
 		});
 	},
 });
+runAssignedImportMemberRuntimeTests({ AssignedImportMember });
 runGeneratedImportBindingsRuntimeTests();
