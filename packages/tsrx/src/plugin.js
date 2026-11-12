@@ -1368,6 +1368,16 @@ export function TSRXPlugin(config) {
 			/** @type {AST.NodeWithLocation | null}	*/
 			#lastClauseKeywordSpan = null;
 			#templateControlFlowTryDepth = 0;
+			// Where the statement being read starts: the depth of the tokenizer's
+			// context stack, and how many `[` are open (see `#parseJSXControlFlowValue`).
+			#statementContextDepth = 0;
+			#statementOpenBrackets = 0;
+			// How many `[` of array literals, array patterns and computed members are
+			// open. Unlike `(`, `{` and `${`, a `[` pushes no tokenizer context.
+			#openBrackets = 0;
+			// While a directive in brackets is read, the depth of the context stack
+			// that its bodies close at (see `#parseJSXControlFlowValue`), or -1.
+			#bracketedDirectiveDepth = -1;
 			/** @type {Parse.Parser['context']} */
 			context = [b_stat];
 			/** @type {AST.NativeTSRXTemplateNode | null} */
@@ -1645,7 +1655,10 @@ export function TSRXPlugin(config) {
 				if (exitStrict) {
 					this.strict = false;
 				}
-				this.exprAllowed = true;
+				// After the last body of a directive in brackets, the next token is an
+				// operator (`(@if (c) {} / 2)`). After any other body of it, the next
+				// token is its clause's `@`, which reads the same either way.
+				this.exprAllowed = depth_before_brace !== this.#bracketedDirectiveDepth;
 				// The `}` popped the context of the `{` from the body's copy of the
 				// stack, so drop it from the enclosing stack too. Left there, every
 				// directive body would leave one entry behind, and each later sibling
@@ -3028,15 +3041,35 @@ export function TSRXPlugin(config) {
 			 * then reads in the wrong mode: a `/` as a regular expression, a `<` as a
 			 * tag, the rest of a template literal as code (#1217). Put the enclosing
 			 * stack back and read that token again.
+			 *
+			 * In brackets opened in the statement being read (`(`, `[`, `{` or `${`),
+			 * the statement can't end right after the directive, so the token after
+			 * it is an operator, as after an element: `(a = @if (c) {} / 2) => a`,
+			 * `foo(@if (c) {} < y)`, `[@if (c) {} / 2]`. Elsewhere a semicolon can be
+			 * inserted after the directive, and a `/` or `<` on the next line starts
+			 * the next statement (`const x = @if (c) { <b /> }\n/re/.test(s);`), so
+			 * that token is read as the start of an expression, as after a block.
 			 * @returns {AST.JSXTemplateDirective}
 			 */
 			#parseJSXControlFlowValue() {
 				const enclosing_context = this.context;
+				const in_brackets =
+					enclosing_context.length > this.#statementContextDepth ||
+					this.#openBrackets > this.#statementOpenBrackets;
 				// The directive filters the stack before it checks the top, and filtering
 				// again changes nothing.
 				this.#filterTemplateScriptContexts();
 				const pushes_statement_context = this.curContext() !== b_stat;
-				const node = this.#parseJSXControlFlowExpression();
+				const outer_bracketed_directive_depth = this.#bracketedDirectiveDepth;
+				this.#bracketedDirectiveDepth = in_brackets
+					? this.context.length + (pushes_statement_context ? 1 : 0)
+					: -1;
+				let node;
+				try {
+					node = this.#parseJSXControlFlowExpression();
+				} finally {
+					this.#bracketedDirectiveDepth = outer_bracketed_directive_depth;
+				}
 				if (pushes_statement_context) {
 					const loc = get_line_info(this, this.start);
 					this.context = enclosing_context;
@@ -3045,7 +3078,7 @@ export function TSRXPlugin(config) {
 					this.lineStart = this.start - loc.column;
 					// As it was read, after the `}`.
 					this.type = tt.braceR;
-					this.exprAllowed = true;
+					this.exprAllowed = !in_brackets;
 					const previous_reading_header = this.#readingJSXControlFlowHeader;
 					this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 					try {
@@ -3526,6 +3559,10 @@ export function TSRXPlugin(config) {
 				}
 
 				this.exitScope();
+				// As after a directive body (see `#parseTemplateControlFlowBlock`).
+				if (this.context.length === this.#bracketedDirectiveDepth) {
+					this.exprAllowed = false;
+				}
 				this.next();
 				this.labels.pop();
 				return this.#finishJSXControlFlowExpression(
@@ -5244,6 +5281,8 @@ export function TSRXPlugin(config) {
 				// `parseBindingList` (see `parseBindingListItem`).
 				this.#readingGenericArrowParameters =
 					close === tt.parenR && this.#genericArrowFunction?.parametersStart === this.lastTokStart;
+				const array = close === tt.bracketR;
+				if (array) this.#openBrackets++;
 				try {
 					return this.#collect
 						? this.#parseBindingListPastRestElement(
@@ -5256,6 +5295,7 @@ export function TSRXPlugin(config) {
 				} finally {
 					this.#bindingListClose = outer;
 					this.#readingGenericArrowParameters = outer_generic_arrow;
+					if (array) this.#openBrackets--;
 				}
 			}
 
@@ -8733,15 +8773,24 @@ export function TSRXPlugin(config) {
 						return this.#parseGenericArrowFunction(startPos, parse);
 					}
 				}
-				return super.parseSubscript(
-					base,
-					startPos,
-					startLoc,
-					noCalls,
-					maybeAsyncArrow,
-					optionalChained,
-					forInit,
-				);
+				// The `[` of a computed member (`a[i]`, `a?.[i]`).
+				const computed =
+					this.type === tt.bracketL ||
+					(this.type === tt.questionDot && this.lookaheadCharCode() === CharCode.openBracket);
+				if (computed) this.#openBrackets++;
+				try {
+					return super.parseSubscript(
+						base,
+						startPos,
+						startLoc,
+						noCalls,
+						maybeAsyncArrow,
+						optionalChained,
+						forInit,
+					);
+				} finally {
+					if (computed) this.#openBrackets--;
+				}
 			}
 
 			/**
@@ -8784,10 +8833,13 @@ export function TSRXPlugin(config) {
 					close === tt.parenR && async_arguments?.start === this.lastTokStart
 						? async_arguments
 						: NON_PARAMETER_LIST;
+				const array = close === tt.bracketR;
+				if (array) this.#openBrackets++;
 				try {
 					return super.parseExprList(close, allowTrailingComma, allowEmpty, refDestructuringErrors);
 				} finally {
 					this.#expressionList = outer;
+					if (array) this.#openBrackets--;
 				}
 			}
 
@@ -10434,6 +10486,9 @@ export function TSRXPlugin(config) {
 							}
 							const paramStart = skip_whitespace_from(this.input, this.start);
 							if (this.input.charCodeAt(paramStart) === CharCode.openParen) {
+								// Read as code, the `(` pushed its context. Drop it, or reading the
+								// `(` again leaves a second one and a statement context under it.
+								this.#truncateContext(this.context.length - this.#currentTokenContextCount());
 								this.pos = paramStart;
 								this.start = paramStart;
 								this.startLoc = get_line_info(this, paramStart);
@@ -11950,16 +12005,24 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Records the statement's `context` (see `#inStatementList`).
+			 * Records the statement's `context` (see `#inStatementList`), and where it
+			 * starts, for `#parseJSXControlFlowValue`. Its first token is already
+			 * read, and may have pushed a context.
 			 * @type {Parse.Parser['parseStatement']}
 			 */
 			parseStatement(context, topLevel, exports) {
 				const outer = this.#statementContext;
+				const outer_context_depth = this.#statementContextDepth;
+				const outer_open_brackets = this.#statementOpenBrackets;
 				this.#statementContext = context ?? null;
+				this.#statementContextDepth = this.context.length - this.#currentTokenContextCount();
+				this.#statementOpenBrackets = this.#openBrackets;
 				try {
 					return this.#parseStatement(context, topLevel, exports);
 				} finally {
 					this.#statementContext = outer;
+					this.#statementContextDepth = outer_context_depth;
+					this.#statementOpenBrackets = outer_open_brackets;
 				}
 			}
 
