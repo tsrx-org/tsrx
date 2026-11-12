@@ -120,64 +120,45 @@ export function BlogRemovingLazyDestructuringPage() @{
 							<p class="eyebrow">September 14, 2026</p>
 							<h1>Removing lazy destructuring</h1>
 							<p class="lead">
-								TSRX no longer has
-								<code>{'&{ ... }'}</code>
-								and
-								<code>{'&[ ... ]'}</code>. Destructuring is ordinary destructuring again, and
-								reactive state is read through your framework's own API.
+								TSRX no longer has <code>{'&{ ... }'}</code> and <code>{'&[ ... ]'}</code>.
+								Destructuring is ordinary destructuring again, and reactive state is read through
+								your framework's own API.
 							</p>
 						</header>
 						<p>
 							Since the beginning, TSRX has carried one extension to the ECMAScript binding grammar:
-							a pattern prefixed with
-							<code>{'&'}</code>
-							that looked like destructuring but deferred every property or index access until the
-							binding was read. Each reference compiled back to a member expression on a hidden
-							source object.
+							a pattern prefixed with <code>{'&'}</code> that looked like destructuring but deferred
+							every property or index access until the binding was read. Each reference compiled
+							back to a member expression on a hidden source object.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={LAZY_BEFORE_HTML} />
 						</pre>
 						<p>
-							As of today's release it is gone from the language. Writing
-							<code>{'&'}</code>
-							before
-							<code>{'{'}</code>
-							or
-							<code>[</code>
-							in a binding position is a syntax error, exactly as it is in TypeScript. There is no
-							replacement syntax. The full reasoning is in
+							As of today's release it is gone from the language. Writing <code>{'&'}</code> before{' '}
+							<code>{'{'}</code> or <code>[</code> in a binding position is a syntax error, exactly
+							as it is in TypeScript. There is no replacement syntax. The full reasoning is in{' '}
 							<a href="https://github.com/tsrx-org/tsrx/discussions/106">RFC #106</a>; this post is
 							the short version.
 						</p>
 						<h2>Why it existed</h2>
 						<p>
 							Lazy destructuring was built for Ripple. Ripple props used to be objects with accessor
-							properties, so a plain
-							<code>{'{ name }'}</code>
-							would read the accessor once and snapshot the value, breaking per-access reactivity
-							across the component boundary. The
-							<code>{'&'}</code>
-							kept the ergonomics of destructuring while compiling every read back to
-							<code>props.name</code>. The same trick was then applied to
-							<code>track()</code>
-							so a bare
-							<code>count</code>
-							could read and write a tracked value.
+							properties, so a plain <code>{'{ name }'}</code> would read the accessor once and
+							snapshot the value, breaking per-access reactivity across the component boundary. The{' '}
+							<code>{'&'}</code> kept the ergonomics of destructuring while compiling every read
+							back to <code>props.name</code>. The same trick was then applied to{' '}
+							<code>track()</code> so a bare <code>count</code> could read and write a tracked
+							value.
 						</p>
 						<p>
 							Ripple has since made props plain objects. Reactivity crosses the component boundary
-							explicitly, as a<code>Tracked</code>
-							or
-							<code>Derived</code>
-							that the child reads through
-							<code>.value</code>. With prop getters gone, the only remaining use was sugar over
-							<code>track()</code>, and no other target ever needed the feature: React, Preact, and
-							Octane re-run the component body on every render, Solid's own guidance is to read
-							<code>props.name</code>
-							rather than destructure, and Vue's reactive proxy already makes
-							<code>state.count</code>
-							reactive on its own.
+							explicitly, as a <code>Tracked</code> or <code>Derived</code> that the child reads
+							through <code>.value</code>. With prop getters gone, the only remaining use was sugar
+							over <code>track()</code>, and no other target ever needed the feature: React, Preact,
+							and Octane re-run the component body on every render, Solid's own guidance is to read{' '}
+							<code>props.name</code> rather than destructure, and Vue's reactive proxy already
+							makes <code>state.count</code> reactive on its own.
 						</p>
 						<h2>What was wrong with it</h2>
 						<p>
@@ -188,15 +169,12 @@ export function BlogRemovingLazyDestructuringPage() @{
 							<code innerHTML={TWO_BINDINGS_HTML} />
 						</pre>
 						<p>
-							Hovering
-							<code>count</code>
-							in an editor showed
-							<code>number</code>. The type checker, and every tool built on it, believed it was a
-							plain value. To make the declaration type-check at all, Ripple's
-							<code>{'Tracked<V>'}</code>
-							had to claim it was also a<code>{'[V, Tracked<V>]'}</code>
-							tuple, and the compiler then needed two dedicated errors to stop people from indexing
-							it. Reactivity was invisible in the type system exactly where it mattered most.
+							Hovering <code>count</code> in an editor showed <code>number</code>. The type checker,
+							and every tool built on it, believed it was a plain value. To make the declaration
+							type-check at all, Ripple's <code>{'Tracked<V>'}</code> had to claim it was also a{' '}
+							<code>{'[V, Tracked<V>]'}</code> tuple, and the compiler then needed two dedicated
+							errors to stop people from indexing it. Reactivity was invisible in the type system
+							exactly where it mattered most.
 						</p>
 						<p>
 							A lazy binding was also not a variable, and JavaScript treats bindings as values in
@@ -206,26 +184,21 @@ export function BlogRemovingLazyDestructuringPage() @{
 							<code innerHTML={NOT_A_VARIABLE_HTML} />
 						</pre>
 						<p>
-							The same applied to
-							<code>val++</code>, which mutated someone else's array. Each case was handled
-							correctly by the compiler; the cost fell on the reader, who had to remember that an
-							<code>{'&'}</code>
-							many lines above changed the meaning of every later occurrence of the name.
+							The same applied to <code>val++</code>, which mutated someone else's array. Each case
+							was handled correctly by the compiler; the cost fell on the reader, who had to
+							remember that an <code>{'&'}</code> many lines above changed the meaning of every
+							later occurrence of the name.
 						</p>
 						<p>
-							Finally, the syntax was whitespace sensitive and not TypeScript.
-							<code>{'&{'}</code>
-							introduced a pattern only when the bracket followed the ampersand directly;
-							<code>{'& {'}</code>
-							did not. Every tool in the chain had to reproduce that rule: the parser, Prettier,
-							ESLint, the TextMate and Tree-sitter grammars, the editor queries, the language
-							server's source mappings, and the OXC and Yuku ports. Most TSRX code is now written or
-							edited by language models, whose prior is TypeScript plus the target framework's own
-							idioms. A model that forgot the
-							<code>{'&'}</code>
-							produced code that compiled and rendered once, silently. One explicit way to read
-							reactive state, spelled the way the framework's own docs spell it, is the safer
-							design.
+							Finally, the syntax was whitespace sensitive and not TypeScript. <code>{'&{'}</code>{' '}
+							introduced a pattern only when the bracket followed the ampersand directly;{' '}
+							<code>{'& {'}</code> did not. Every tool in the chain had to reproduce that rule: the
+							parser, Prettier, ESLint, the TextMate and Tree-sitter grammars, the editor queries,
+							the language server's source mappings, and the OXC and Yuku ports. Most TSRX code is
+							now written or edited by language models, whose prior is TypeScript plus the target
+							framework's own idioms. A model that forgot the <code>{'&'}</code> produced code that
+							compiled and rendered once, silently. One explicit way to read reactive state, spelled
+							the way the framework's own docs spell it, is the safer design.
 						</p>
 						<h2>What to write instead</h2>
 						<p>
@@ -237,29 +210,24 @@ export function BlogRemovingLazyDestructuringPage() @{
 							<code innerHTML={REACT_AFTER_HTML} />
 						</pre>
 						<p>
-							For Solid, read props through the props object, or use
-							<code>splitProps</code>
-							when you want to pull some of them apart. This is the idiom Solid's own tooling
-							recommends.
+							For Solid, read props through the props object, or use <code>splitProps</code> when
+							you want to pull some of them apart. This is the idiom Solid's own tooling recommends.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={SOLID_AFTER_HTML} />
 						</pre>
 						<p>
-							For Vue, read through the reactive proxy, or use
-							<code>toRefs</code>
-							when destructuring is what you want.
+							For Vue, read through the reactive proxy, or use <code>toRefs</code> when
+							destructuring is what you want.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={VUE_AFTER_HTML} />
 						</pre>
 						<p>
-							For Ripple, hold the tracked object and read and write
-							<code>.value</code>. Passing
-							<code>count</code>
-							to a child passes the tracked object; passing
-							<code>count.value</code>
-							passes a number. The two spellings look different because they are different.
+							For Ripple, hold the tracked object and read and write <code>.value</code>. Passing{' '}
+							<code>count</code> to a child passes the tracked object; passing{' '}
+							<code>count.value</code> passes a number. The two spellings look different because
+							they are different.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={RIPPLE_AFTER_HTML} />
@@ -267,21 +235,18 @@ export function BlogRemovingLazyDestructuringPage() @{
 						<h2>Migrating</h2>
 						<p>
 							The rewrites are mechanical. A file that still uses the sigils fails to compile with a
-							syntax error pointing at the
-							<code>{'&'}</code>, so nothing changes meaning silently.
+							syntax error pointing at the <code>{'&'}</code>, so nothing changes meaning silently.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={MIGRATION_HTML} />
 						</pre>
 						<p>
-							Alongside the language change, the
-							<code>tsrx/no-lazy-destructuring-in-modules</code>
+							Alongside the language change, the <code>tsrx/no-lazy-destructuring-in-modules</code>{' '}
 							ESLint rule is removed since it has nothing left to check, Prettier no longer prints
-							the prefix, and the editor grammars no longer highlight it. The
-							<code>{'Tracked<V>'}</code>
-							types in Ripple become honest
-							<code>{'{ value: V }'}</code>
-							shapes in Ripple's next release, which also drops the tracked-index errors.
+							the prefix, and the editor grammars no longer highlight it. The{' '}
+							<code>{'Tracked<V>'}</code> types in Ripple become honest{' '}
+							<code>{'{ value: V }'}</code> shapes in Ripple's next release, which also drops the
+							tracked-index errors.
 						</p>
 						<h2>What this means for TSRX</h2>
 						<p>

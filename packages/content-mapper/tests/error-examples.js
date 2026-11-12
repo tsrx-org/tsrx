@@ -247,7 +247,6 @@ export const ERROR_EXAMPLES = [
 	<span />
 }
 `,
-		also: [TSRX_ERRORS.FORGOTTEN_STATEMENT_CONTAINER],
 	},
 	{
 		error: TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT,
@@ -256,7 +255,6 @@ export const ERROR_EXAMPLES = [
 	console.log(1);
 }
 `,
-		also: [TSRX_ERRORS.FORGOTTEN_STATEMENT_CONTAINER],
 	},
 	{
 		error: TSRX_ERRORS.JSX_SPREAD_CHILD,
@@ -273,11 +271,69 @@ export const ERROR_EXAMPLES = [
 `,
 	},
 	{
+		error: TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS,
+		source: `function List<T>(props: { items: T[] }) {
+	return null;
+}
+
+export function C(props: { items: string[] }) @{
+	const Tag = List;
+	<{Tag}<string> items={props.items} />
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.FOR_OF_ONLY,
 		source: `export function C(props: { a: boolean; items: string[]; n: number }) @{
 	<ul>
 		@for (const k in props) {
 			<li>{k}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
+		source: `export function C(props: { items: number[] }) @{
+	const state = { item: 0 };
+	<ul>
+		@for (state.item of props.items) {
+			<li>{state.item}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.FOR_HEAD_USING,
+		source: `export function C(props: { items: Disposable[] }) @{
+	<ul>
+		@for (using item of props.items) {
+			<li>{String(item)}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.FOR_HEAD_VAR,
+		source: `export function C(props: { items: string[] }) @{
+	<ul>
+		@for (var item of props.items) {
+			<li>{item}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.DIRECTIVE_BODY_VAR,
+		source: `export function C(props: { items: string[] }) @{
+	<ul>
+		@for (const item of props.items) {
+			var label = item.toUpperCase();
+			<li>{label}</li>
 		}
 	</ul>
 }
@@ -292,6 +348,17 @@ export const ERROR_EXAMPLES = [
 	},
 	{
 		error: TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED,
+		source: `export async function C(props: { load: (error: unknown) => Promise<string> }) @{
+	@try {
+		<p>ok</p>
+	} @catch (error) {
+		<p>{await props.load(error)}</p>
+	}
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED,
 		source: `export async function C(props: { items: Promise<string>[] }) @{
 	<ul>
 		@for (const item of props.items) {
@@ -303,6 +370,66 @@ export const ERROR_EXAMPLES = [
 		compiler: '@tsrx/solid',
 	},
 	{
+		error: TSRX_ERRORS.TARGET_COMPONENT_READ_BEFORE_DECLARATION,
+		source: `export const registry = { inner: Inner };
+const PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_DEFAULT_UNSUPPORTED,
+		source: `const cfg = { size: 1 };
+export function Card({ s = cfg.size }: { s?: number }) @{
+	<div>{s}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_NESTED_DEFAULT_UNSUPPORTED,
+		source: `export function Card({ s: { a = 3 } }: { s: { a?: number } }) @{
+	<div>{a}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROPS_PARAM_DEFAULT,
+		source: `export function Card({ s }: { s?: number } = {}) @{
+	<div>{s}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_NESTED_REST,
+		source: `export function Card({ t: { a, ...r } }: { t: { a: number; b: number } }) @{
+	<div>{a}{r.b}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_KEY_COMPUTED,
+		source: `const k = 's';
+export function Card({ [k]: v }: { s?: number }) @{
+	<div>{v}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
+		error: TSRX_ERRORS.TARGET_PROP_KEY_UNSUPPORTED,
+		source: `export function Card({ 'a-b': v, t }: { 'a-b'?: number; t?: number }) @{
+	<div>{v}{t}</div>
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
 		error: TSRX_ERRORS.TARGET_YIELD_UNSUPPORTED,
 		source: `export function* C(props: { items: string[] }) @{
 	<ul>
@@ -312,6 +439,14 @@ export const ERROR_EXAMPLES = [
 	</ul>
 }
 `,
+	},
+	{
+		error: TSRX_ERRORS.TARGET_TEMPLATE_YIELD_UNSUPPORTED,
+		source: `export function* field(bag: { title: string }): Generator<string, unknown, string> {
+	return <input title={yield bag.title} />;
+}
+`,
+		compiler: '@tsrx/solid',
 	},
 	{
 		error: TSRX_ERRORS.TARGET_SUPER_UNSUPPORTED,
@@ -343,6 +478,18 @@ export class A extends B {
 	</ul>
 }
 `,
+	},
+	{
+		error: TSRX_ERRORS.DEFINE_VAPOR_COMPONENT_BINDING,
+		source: `function defineVaporComponent<T>(component: T): T {
+	return component;
+}
+
+export function C() @{
+	<p>{'text'}</p>
+}
+`,
+		compiler: '@tsrx/vue',
 	},
 	{
 		error: TSRX_ERRORS.STYLE_APPLY_VALUE,
@@ -507,6 +654,23 @@ export {};
 		</style>
 		<div />
 	</>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.STYLE_IN_EXPRESSION_CONTAINER,
+		source: `function Box(props: { children?: unknown }) @{
+	<div />
+}
+
+export function C() @{
+	<Box>
+		{<style>
+			.a {
+				color: red;
+			}
+		</style>}
+	</Box>
 }
 `,
 	},
@@ -874,6 +1038,10 @@ export const WITHOUT_EXAMPLE = new Map(
 			'Only for a target that sets `requireUseServerForAwait` without an `await` validator of its own; Solid, Vue and Hono DOM report their own error first (#887).',
 		],
 		[
+			TSRX_ERRORS.HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED,
+			"Only the Hono DOM compiler reports it, and this package doesn't depend on `@tsrx/hono`; its tests check it.",
+		],
+		[
 			TSRX_ERRORS.RESERVED_IDENTIFIER_PREFIX,
 			"Raised only through core helpers that targets outside this repository call (Ripple, Octane); none of this repository's targets reaches it.",
 		],
@@ -911,17 +1079,4 @@ export const WITHOUT_EXAMPLE = new Map(
  * fix fails the test until the record here is removed.
  * @type {Map<ErrorEntry, KnownProblem>}
  */
-export const KNOWN_PROBLEMS = new Map(
-	/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([
-		[TSRX_ERRORS.UNCLOSED_TAG, { problem: 'lost', issue: 978 }],
-		[TSRX_ERRORS.MISMATCHED_CLOSING_TAG, { problem: 'lost', issue: 978 }],
-		[TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT, { problem: 'twice', issue: 981 }],
-		[TSRX_ERRORS.CODE_BLOCK_STATEMENT_AFTER_OUTPUT, { problem: 'twice', issue: 981 }],
-		[TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED, { problem: 'twice', issue: 980 }],
-		// The statement's keywords have no mapping, so the directive covers only `A`.
-		[TS_ERRORS.NESTED_GLOBAL_EXPORT, { problem: 'typescript', issue: 979 }],
-		// Printed as `<T>() => 1`, which TypeScript reads as JSX in the generated TSX:
-		// its syntax errors there are beyond a directive's reach.
-		[TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER, { problem: 'typescript', issue: 707 }],
-	]),
-);
+export const KNOWN_PROBLEMS = new Map(/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([]));

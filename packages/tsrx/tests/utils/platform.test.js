@@ -1,10 +1,13 @@
 import { decode, encode } from '@jridgewell/sourcemap-codec';
 import { describe, expect, it } from 'vitest';
 import {
+	createJsxTransform,
 	createPlatformDefinitions,
+	createVolarMappingsResult,
 	parseModule,
 	replacePlatformFlags,
 	specializePlatform,
+	withPlatformTypes,
 } from '../../src/index.js';
 
 describe('platform specialization', () => {
@@ -102,6 +105,90 @@ describe('platform specialization', () => {
 		expect(specialized).toBe(ast);
 	});
 
+	describe('module marker of the platform types', () => {
+		/** @type {import('../../types/index').JsxPlatform} */
+		const platform = {
+			name: 'marker',
+			imports: { fragment: 'p', suspense: 'p', dynamic: 'p/d', errorBoundary: 'p/e' },
+			jsx: { rewriteClassAttr: false, classAttrName: 'class' },
+			validation: { requireUseServerForAwait: false },
+		};
+
+		/**
+		 * The platform types appended to the type-only output of `source`.
+		 * @param {string} source
+		 * @param {import('../../types/index').JsxPlatform} [target]
+		 */
+		const types = (source, target = platform) => {
+			/** @type {any[]} */
+			const errors = [];
+			/** @type {any[]} */
+			const comments = [];
+			let ast = parseModule(source, 'App.tsrx', { loose: true, errors, comments });
+			ast = specializePlatform(ast, 'web', 'App.tsrx', { errors, comments });
+			const transformed = createJsxTransform(target)(ast, source, 'App.tsrx', {
+				collect: true,
+				loose: true,
+				typeOnly: true,
+				errors,
+				comments,
+			});
+			const result = createVolarMappingsResult({
+				ast: transformed.ast,
+				ast_from_source: ast,
+				source,
+				generated_code: transformed.code,
+				source_map: transformed.map,
+				errors,
+			});
+			const code = withPlatformTypes(result, 'web', transformed.ast).code;
+			return code.slice(transformed.code.length);
+		};
+		const flag = 'const web = import.meta.env.platform.web;\n';
+
+		it('is added to a module without imports or exports', () => {
+			expect(types(flag)).toMatch(/^\nexport \{\};\ndeclare global \{/);
+		});
+
+		it.each([
+			"import { a } from './a';",
+			"import './side-effect';",
+			'export const value = 1;',
+			'export default function App() {}',
+			"export * from './a';",
+			'export {};',
+		])('is left out after %s', (statement) => {
+			expect(types(`${statement}\n${flag}`)).toMatch(/^\ndeclare global \{/);
+		});
+
+		it('is added when the transform lowers the only import to an import alias', () => {
+			// `serverModule` turns `import { value } from 'server'` into
+			// `import value = server.value`, which does not make a file a module.
+			const source = `module server {\n\texport const value = 1;\n}\nimport { value } from 'server';\nfunction f() {\n\tif (import.meta.env.platform.web) {\n\t\treturn value;\n\t}\n\treturn 0;\n}\n`;
+			expect(
+				types(source, {
+					...platform,
+					serverModule: { blockName: 'server', importSpecifier: 'server' },
+				}),
+			).toMatch(/^\nexport \{\};\ndeclare global \{/);
+		});
+
+		it('is added without the generated program', () => {
+			const result = withPlatformTypes(
+				{
+					code: '',
+					mappings: [],
+					cssMappings: [],
+					scriptMappings: [],
+					errors: [],
+					sourceAst: parseModule(`import { a } from './a';\n${flag}`, 'App.tsrx'),
+				},
+				'web',
+			);
+			expect(result.code).toMatch(/^\nexport \{\};\ndeclare global \{/);
+		});
+	});
+
 	it('creates exactly one true boolean definition', () => {
 		expect(createPlatformDefinitions('android')).toEqual({
 			'import.meta.env.platform.web': false,
@@ -131,6 +218,68 @@ const active = import.meta.env.platform.web;`;
 		const result = replacePlatformFlags(source, 'cli.ts', 'web');
 
 		expect(result.code).toBe(source.replace('import.meta.env.platform.web', 'true'));
+	});
+
+	it('reads comment-like JSX text in ordinary JSX and TSX as text', () => {
+		const jsx = 'export default function Page() { return <main><pre>/*</pre></main>; }';
+		const tsx = 'export default function Page() { return <main><pre>// docs</pre></main>; }';
+
+		for (const filename of ['page.jsx', 'page.js', 'page.mjs', 'page.cjs']) {
+			expect(replacePlatformFlags(jsx, filename, 'web').code).toBe(jsx);
+		}
+		expect(replacePlatformFlags(tsx, 'page.tsx', 'web').code).toBe(tsx);
+	});
+
+	it('replaces a flag in an expression container between comment-like JSX text', () => {
+		const source = 'export const Note = () => <pre>/* {import.meta.env.platform.web} */ @if</pre>;';
+		const result = replacePlatformFlags(source, 'Note.tsx', 'web');
+
+		expect(result.code).toBe('export const Note = () => <pre>/* {true} */ @if</pre>;');
+	});
+
+	it('reads a constrained or defaulted generic arrow function in TSX', () => {
+		const constrained = `const pick = <T extends object>(o: T) => o;
+export const Note = () => <pre>/* {import.meta.env.platform.web} */</pre>;`;
+		const defaulted = `const pick = <T = string>(o: T) => o;
+export const Note = () => <pre>// docs</pre>;`;
+
+		expect(replacePlatformFlags(constrained, 'Note.tsx', 'web').code).toBe(
+			constrained.replace('import.meta.env.platform.web', 'true'),
+		);
+		expect(replacePlatformFlags(defaulted, 'Note.tsx', 'web').code).toBe(defaulted);
+	});
+
+	it('reports a syntax error after a constrained generic arrow function where it is', () => {
+		const source = `const pick = <T extends object>(o: T) => o;
+const = 1;`;
+
+		expect(() => replacePlatformFlags(source, 'pick.tsx', 'web')).toThrow('Unexpected token (2:6)');
+	});
+
+	it('reports the TSX syntax error when neither parser reads the module', () => {
+		const source = `export const Note = () => <pre>/*</pre>;
+const = 1;`;
+
+		expect(() => replacePlatformFlags(source, 'page.tsx', 'web')).toThrow('Unexpected token (2:6)');
+	});
+
+	it('reads angle-bracket type assertions in TypeScript modules without JSX', () => {
+		const source = `const count = <number>(value as unknown);
+const active = import.meta.env.platform.web;`;
+
+		for (const filename of ['count.ts', 'count.mts', 'count.cts']) {
+			const result = replacePlatformFlags(source, filename, 'web');
+			expect(result.code).toBe(source.replace('import.meta.env.platform.web', 'true'));
+		}
+	});
+
+	it('replaces flags in a module that uses syntax only the TSRX parser reads', () => {
+		const source = `import defer * as feature from './feature.js';
+const lazy = import('./lazy.js',);
+const active = import.meta.env.platform.ios;`;
+		const result = replacePlatformFlags(source, 'feature.ts', 'ios');
+
+		expect(result.code).toBe(source.replace('import.meta.env.platform.ios', 'true'));
 	});
 
 	it('preserves an incoming map when there is nothing to rewrite', () => {
