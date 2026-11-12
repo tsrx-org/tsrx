@@ -1590,6 +1590,15 @@ export namespace Parse {
 		 */
 		tsParseTypePredicatePrefix(): AST.Identifier | undefined;
 
+		/** Read `asserts` before a type predicate's name or `this`, or return `false`. */
+		tsParseTypePredicateAsserts(): boolean;
+
+		/**
+		 * Read a signature's type parameters, parameters and return type into
+		 * `signature`, its return type after `returnToken` (@sveltejs/acorn-typescript).
+		 */
+		tsFillSignature(returnToken: TokenType, signature: AST.Node): void;
+
 		/** Parse `this` in a type, or a `this is T` predicate (@sveltejs/acorn-typescript). */
 		tsParseThisTypeOrThisTypePredicate(): AST.TSThisType | AST.TSTypePredicate;
 
