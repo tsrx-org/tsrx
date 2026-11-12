@@ -2873,12 +2873,15 @@ function reads_tag_binding(node) {
  * declaration, or a `const` or class declared in an earlier statement. A
  * member tag (`<Menu.Item>`) also reads a property, which the module can still
  * assign after it loads (`Menu.Item = …`), so only one that starts with an
- * import is hoisted. A tag that starts with `this`, `super`, a local binding,
- * a binding that can be reassigned (`let`, `var`, an enum, a namespace, an
- * import alias), a binding the module assigns anywhere (`Tag = Replacement`
- * after `function Tag() {}`, or any binding once it calls `eval` directly),
- * or a name the module does not bind stays at render time, since a static
- * would keep the value it read when the module loaded.
+ * import is hoisted, and only when the module writes no property under that
+ * import. A namespace import's own properties are read-only, so a tag that
+ * reads one of them (`<ns.Button>`) is hoisted either way. A tag that starts
+ * with `this`, `super`, a local binding, a binding that can be reassigned
+ * (`let`, `var`, an enum, a namespace, an import alias), a binding the module
+ * assigns anywhere (`Tag = Replacement` after `function Tag() {}`, or any
+ * binding once it calls `eval` directly), or a name the module does not bind
+ * stays at render time, since a static would keep the value it read when the
+ * module loaded.
  *
  * @param {AST.Program} program
  * @param {AST.Program} [parsed] the program before the passes that can move
@@ -2915,23 +2918,26 @@ function collect_hoistable_tags(program, parsed = program) {
 	const assigned = collect_assigned_names(parsed);
 	/**
 	 * @param {string} name
-	 * @param {boolean} member
+	 * @param {number} depth how many properties the tag reads: none for
+	 * `<Tag>`, two for `<ui.Menu.Item>`
 	 * @param {number} position
 	 * @returns {boolean}
 	 */
-	const is_hoistable = (name, member, position) => {
+	const is_hoistable = (name, depth, position) => {
 		if (name === 'this' || name === 'super') return false;
 		if (scopes.some((names) => names.has(name))) return false;
-		if (!assigned || assigned.has(name)) return false;
+		if (!assigned || assigned.names.has(name)) return false;
 		const binding = module_bindings.get(name);
 		switch (binding?.kind) {
 			case 'import':
-				return true;
+				return depth === 0 || !assigned.objects.has(name);
+			case 'namespace import':
+				return depth <= 1 || !assigned.objects.has(name);
 			case 'function':
-				return !member;
+				return depth === 0;
 			case 'class':
 			case 'const':
-				return !member && binding.end <= position;
+				return depth === 0 && binding.end <= position;
 			default:
 				return false;
 		}
@@ -2945,10 +2951,11 @@ function collect_hoistable_tags(program, parsed = program) {
 		if (node.type === 'JSXOpeningElement' && !is_intrinsic_tag(node.name)) {
 			const root = jsx_tag_root(node.name);
 			if (root && typeof root.start === 'number') {
-				hoistable.set(
-					root.start,
-					is_hoistable(root.name, node.name.type === 'JSXMemberExpression', root.start),
-				);
+				let depth = 0;
+				for (let name = node.name; name.type === 'JSXMemberExpression'; name = name.object) {
+					depth++;
+				}
+				hoistable.set(root.start, is_hoistable(root.name, depth, root.start));
 			}
 		}
 		for (const child of child_nodes(node)) visit(child);
@@ -2959,41 +2966,51 @@ function collect_hoistable_tags(program, parsed = program) {
 }
 
 /**
- * The names `program` assigns anywhere: the targets of an assignment, an
- * update, or a `for … in`/`for … of` head without a declaration, through
- * destructuring and type assertions. `null` when the program calls `eval`
- * directly, which can assign any name it can see. Read from the program as
- * parsed: the style pass moves the `ref` of a `<style>` in a nested root to
- * the root's metadata, which `child_nodes` skips.
+ * What `program` assigns anywhere. `names` are the names it assigns: the
+ * targets of an assignment, an update, or a `for … in`/`for … of` head
+ * without a declaration, through destructuring and type assertions. `objects`
+ * are the names it can write a property under: the name a member target of
+ * any of those starts with (`ui` for `ui.Menu.Item = …`), the one a `delete`
+ * starts with, and the one the first argument of any call or `new` starts
+ * with, since `Object.assign(ui, …)` and `Object.defineProperty(ui.Menu, …)`
+ * write one.
+ * `null` when the program calls `eval` directly, which can assign any name it
+ * can see. Read from the program as parsed: the style pass moves the `ref` of
+ * a `<style>` in a nested root to the root's metadata, which `child_nodes`
+ * skips.
  *
  * @param {AST.Program} program
- * @returns {Set<string> | null}
+ * @returns {{ names: Set<string>, objects: Set<string> } | null}
  */
 function collect_assigned_names(program) {
-	/** @type {Set<string>} */
-	const names = new Set();
+	const assigned = { names: new Set(), objects: new Set() };
 	let calls_eval = false;
 	/** @param {AST.Node} node */
 	const visit = (node) => {
-		if (node.type === 'AssignmentExpression') add_target_names(node.left, names);
-		else if (node.type === 'UpdateExpression') add_target_names(node.argument, names);
-		else if (
+		if (node.type === 'AssignmentExpression') add_target_names(node.left, assigned);
+		else if (node.type === 'UpdateExpression') add_target_names(node.argument, assigned);
+		else if (node.type === 'UnaryExpression' && node.operator === 'delete') {
+			add_object_names(node.argument, assigned.objects);
+		} else if (
 			(node.type === 'ForInStatement' || node.type === 'ForOfStatement') &&
 			node.left.type !== 'VariableDeclaration'
 		) {
-			add_target_names(node.left, names);
-		} else if (node.type === 'CallExpression') {
+			add_target_names(node.left, assigned);
+		} else if (node.type === 'CallExpression' || node.type === 'NewExpression') {
 			const callee = unwrap_expression(node.callee);
 			if (callee.type === 'Identifier' && callee.name === 'eval') calls_eval = true;
+			const [first] = node.arguments;
+			if (first && first.type !== 'SpreadElement') add_object_names(first, assigned.objects);
 		}
 		for (const child of child_nodes(node)) visit(child);
 	};
 	visit(program);
-	return calls_eval ? null : names;
+	return calls_eval ? null : assigned;
 }
 
 /**
- * `node` without the parentheses and type assertions around it.
+ * `node` without the parentheses, type assertions and type arguments around
+ * it.
  *
  * @param {AST.Node} node
  * @returns {AST.Node}
@@ -3006,7 +3023,8 @@ function unwrap_expression(node) {
 		current.type === 'TSAsExpression' ||
 		current.type === 'TSSatisfiesExpression' ||
 		current.type === 'TSNonNullExpression' ||
-		current.type === 'TSTypeAssertion'
+		current.type === 'TSTypeAssertion' ||
+		current.type === 'TSInstantiationExpression'
 	) {
 		current = current.expression;
 	}
@@ -3015,31 +3033,73 @@ function unwrap_expression(node) {
 
 /**
  * @param {AST.Node | null} target
- * @param {Set<string>} names
+ * @param {{ names: Set<string>, objects: Set<string> }} assigned
  */
-function add_target_names(target, names) {
+function add_target_names(target, assigned) {
 	/** @type {any} */
 	const node = target && unwrap_expression(target);
 	switch (node?.type) {
 		case 'Identifier':
-			names.add(node.name);
+			assigned.names.add(node.name);
+			break;
+		case 'MemberExpression':
+			add_object_names(node, assigned.objects);
 			break;
 		case 'ObjectPattern':
 			for (const property of node.properties) {
 				add_target_names(
 					property.type === 'RestElement' ? property.argument : property.value,
-					names,
+					assigned,
 				);
 			}
 			break;
 		case 'ArrayPattern':
-			for (const element of node.elements) add_target_names(element, names);
+			for (const element of node.elements) add_target_names(element, assigned);
 			break;
 		case 'RestElement':
-			add_target_names(node.argument, names);
+			add_target_names(node.argument, assigned);
 			break;
 		case 'AssignmentPattern':
-			add_target_names(node.left, names);
+			add_target_names(node.left, assigned);
+			break;
+	}
+}
+
+/**
+ * Adds the names whose value `node` can be, or that a property path in it
+ * starts from: `ui` for `ui`, `ui.Menu`, `(0, ui)`, `ui?.Menu` and
+ * `(await ui)`.
+ *
+ * @param {AST.Node} node
+ * @param {Set<string>} names
+ */
+function add_object_names(node, names) {
+	/** @type {any} */
+	const current = unwrap_expression(node);
+	switch (current.type) {
+		case 'Identifier':
+			names.add(current.name);
+			break;
+		case 'MemberExpression':
+			add_object_names(current.object, names);
+			break;
+		case 'ChainExpression':
+			add_object_names(current.expression, names);
+			break;
+		case 'AwaitExpression':
+			add_object_names(current.argument, names);
+			break;
+		case 'SequenceExpression':
+			add_object_names(current.expressions[current.expressions.length - 1], names);
+			break;
+		case 'ConditionalExpression':
+			add_object_names(current.consequent, names);
+			add_object_names(current.alternate, names);
+			break;
+		case 'LogicalExpression':
+		case 'AssignmentExpression':
+			add_object_names(current.left, names);
+			add_object_names(current.right, names);
 			break;
 	}
 }
@@ -3077,8 +3137,8 @@ function jsx_tag_root(name) {
 
 /**
  * The value bindings a statement in a statement list declares, with their
- * kind: `import`, `function`, `class`, `const`, or `mutable`. Type-only and
- * ambient declarations bind no value.
+ * kind: `import`, `namespace import`, `function`, `class`, `const`, or
+ * `mutable`. Type-only and ambient declarations bind no value.
  *
  * @param {AST.Node} statement
  * @returns {Array<[string, string]>}
@@ -3094,9 +3154,11 @@ function statement_bindings(statement) {
 	switch (node.type) {
 		case 'ImportDeclaration':
 			if (node.importKind === 'type') return [];
-			return node.specifiers.flatMap((/** @type {any} */ specifier) =>
-				specifier.importKind === 'type' ? [] : [[specifier.local.name, 'import']],
-			);
+			return node.specifiers.flatMap((/** @type {any} */ specifier) => {
+				if (specifier.importKind === 'type') return [];
+				const kind = specifier.type === 'ImportNamespaceSpecifier' ? 'namespace import' : 'import';
+				return [[specifier.local.name, kind]];
+			});
 		case 'VariableDeclaration': {
 			/** @type {Map<string, AST.Identifier>} */
 			const bindings = new Map();
