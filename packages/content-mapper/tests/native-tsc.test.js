@@ -176,4 +176,102 @@ describe('native tsc --runExternalCode', () => {
 		expect(at('Types.tsrx')).toEqual(at('plain.ts'));
 		expect(result.status).toBe(2);
 	});
+
+	it('reports errors on an empty type literal and on an array inside an array where the source has them', () => {
+		// The type-only transform prints `{}` as `{  }` and drops the spaces inside
+		// `[ … ]`. Neither literal had a span of its own: the error on the `{}`
+		// landed on the `<`, and the one on the inner array at its generated
+		// position.
+		const source = [
+			'declare function g<T extends string>(): void;',
+			'g<{}>();',
+			'export const t = [ {}, [] ] satisfies number[];',
+			'export const u: number[] = [ [ 1 ] ];',
+			'declare function f(a: string): void;',
+			'f([',
+			'\t1,',
+			']);',
+			'export const x = [ /*comment*/ 1 as string ];',
+			'export const w = { /* comment */ a: 1 as string };',
+			'',
+		].join('\n');
+		const files = consumer_fixture_files();
+		files['Types.tsrx'] = source;
+		files['plain.ts'] = source;
+		files['main.ts'] = "import './Types.tsrx';\nimport './plain.ts';\n";
+		const dir = workspace(files);
+		const result = run_native_tsc(dir, [
+			'--noEmit',
+			'-p',
+			'tsconfig.native.json',
+			'--pretty',
+			'false',
+		]);
+		const at = (/** @type {string} */ file) =>
+			parse_tsc_output(result.output)
+				.filter((d) => d.file === file)
+				.map((d) => [d.line, d.column, d.code]);
+		expect(at('plain.ts')).toEqual([
+			[2, 3, 'TS2344'],
+			[3, 20, 'TS2322'],
+			[3, 24, 'TS2322'],
+			[4, 30, 'TS2322'],
+			[6, 3, 'TS2345'],
+			[9, 32, 'TS2352'],
+			[10, 37, 'TS2352'],
+		]);
+		expect(at('Types.tsrx')).toEqual(at('plain.ts'));
+		expect(result.status).toBe(2);
+	});
+
+	it('keeps one exact span over literals printed as written and places errors on a spread', () => {
+		// The brackets of a literal get spans without features. They must not split
+		// the exact span over code printed as written: TS6198 and TS6199 start at a
+		// pattern or a keyword that only that span covers.
+		const source = [
+			'export function f() {',
+			'\tconst { p, q } = { p: 1, q: 2 };',
+			'\tconst [m, n] = [1, 2];',
+			'\tlet u1 = [1], u2 = { a: 1 };',
+			'\tconst { r, t } = { r: 1, t: [ 2 ] };',
+			'\tlet u3 = [ 1 ], u4 = {a: 1};',
+			'}',
+			'declare const s: string | undefined;',
+			'export const o = { ...s };',
+			'export const c = { /* c */ ...s };',
+			"export const a: number[] = [ ...['x'] ];",
+			'',
+		].join('\n');
+		const files = consumer_fixture_files();
+		const tsconfig = JSON.parse(files['tsconfig.json']);
+		tsconfig.compilerOptions.noUnusedLocals = true;
+		files['tsconfig.json'] = JSON.stringify(tsconfig);
+		files['Types.tsrx'] = source;
+		files['plain.ts'] = source;
+		files['main.ts'] = "import './Types.tsrx';\nimport './plain.ts';\n";
+		const dir = workspace(files);
+		const result = run_native_tsc(dir, [
+			'--noEmit',
+			'-p',
+			'tsconfig.native.json',
+			'--pretty',
+			'false',
+		]);
+		const at = (/** @type {string} */ file) =>
+			parse_tsc_output(result.output)
+				.filter((d) => d.file === file)
+				.map((d) => [d.line, d.column, d.code]);
+		expect(at('plain.ts')).toEqual([
+			[2, 8, 'TS6198'],
+			[3, 8, 'TS6198'],
+			[4, 2, 'TS6199'],
+			[5, 8, 'TS6198'],
+			[6, 2, 'TS6199'],
+			[9, 20, 'TS2698'],
+			[10, 28, 'TS2698'],
+			[11, 30, 'TS2322'],
+		]);
+		expect(at('Types.tsrx')).toEqual(at('plain.ts'));
+		expect(result.status).toBe(2);
+	});
 });

@@ -114,6 +114,11 @@ export function normalize_spread_props<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): T | SpreadProps;
+// Returns the same merged `ref` for a bag carrying the same refs.
+export function normalize_spread_props_sharing_refs<T extends object | SpreadFalsy>(
+	props: T,
+	...outer_refs: Array<RefValue<Element>>
+): T | SpreadProps;
 // Always returns the normalized copy, for JSX runtimes that copy a spread once.
 export function copy_spread_props<T extends object | SpreadFalsy>(
 	props: T,

@@ -1,6 +1,7 @@
 import type { MockInstance } from 'vitest';
 import type { JSX } from '@solidjs/web';
 import { createMemo, createSignal, createStore, lazy } from 'solid-js';
+import { create_ref_prop } from '@tsrx/solid/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runForOfSourcesRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-sources';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
@@ -8,6 +9,7 @@ import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtim
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -566,6 +568,26 @@ function SpreadsRefChurnApp() @{
 	set_spreads_churn_first = setFirst;
 	set_spreads_churn_second = setSecond;
 	<input ref={spreadsRef('own')} {...first()} {...second()} class="spreads-ref-churn" />
+}
+
+let set_spreads_refs_first: (bag: Record<string, unknown>) => void = () => {};
+let set_spreads_refs_second: (bag: Record<string, unknown>) => void = () => {};
+const spreads_refs_named = create_ref_prop(() => spreadsRef('named'));
+const spreads_refs_list = [spreadsRef('list-a'), spreadsRef('list-b')];
+
+function SpreadsRefsChurnApp() @{
+	const [first, setFirst] = createSignal<Record<string, unknown>>({
+		title: 'a',
+		ref: spreads_churn_first_ref,
+		extra: spreads_refs_named,
+	});
+	const [second, setSecond] = createSignal<Record<string, unknown>>({
+		'data-x': '1',
+		ref: spreads_refs_list,
+	});
+	set_spreads_refs_first = setFirst;
+	set_spreads_refs_second = setSecond;
+	<input ref={spreadsRef('own')} {...first()} {...second()} class="spreads-refs-churn" />
 }
 
 // ── A spread wrapper creates its children once ──
@@ -1959,6 +1981,29 @@ describe('tsrx-solid runtime', () => {
 		expect(spreads_ref_calls).toEqual(['replaced']);
 	});
 
+	it("applies a spread bag's several refs again only when one of them changes", async () => {
+		spreads_ref_calls.length = 0;
+		await render(SpreadsRefsChurnApp);
+		await flush();
+		const input = container.querySelector('.spreads-refs-churn') as HTMLInputElement;
+		expect(spreads_ref_calls).toEqual(['own', 'first', 'named', 'list-a', 'list-b']);
+
+		spreads_ref_calls.length = 0;
+		set_spreads_refs_first({ title: 'b', ref: spreads_churn_first_ref, extra: spreads_refs_named });
+		await flush();
+		set_spreads_refs_second({ 'data-x': '2', ref: spreads_refs_list });
+		await flush();
+		set_spreads_refs_first({ title: 'c', ref: spreads_churn_first_ref, extra: spreads_refs_named });
+		await flush();
+		expect([input.title, input.getAttribute('data-x')]).toEqual(['c', '2']);
+		expect(spreads_ref_calls).toEqual([]);
+
+		set_spreads_refs_first({ title: 'd', ref: spreadsRef('replaced'), extra: spreads_refs_named });
+		await flush();
+		expect(input.title).toBe('d');
+		expect(spreads_ref_calls).toEqual(['replaced', 'named']);
+	});
+
 	it('creates the children of a spread wrapper once', async () => {
 		spread_wrapper_child_runs = 0;
 		await render(SpreadWrapperApp);
@@ -3059,3 +3104,4 @@ runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
+runArraySpreadRefRuntimeTests({ refObjects: false, ownRef: false });

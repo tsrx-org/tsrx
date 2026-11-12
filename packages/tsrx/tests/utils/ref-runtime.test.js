@@ -15,6 +15,7 @@ import {
 	mergeRefs,
 	normalize_spread_props,
 	normalize_spread_props_for_ref_attr,
+	normalize_spread_props_sharing_refs,
 } from '../../src/runtime/ref.js';
 
 describe('ref runtime helpers', () => {
@@ -1467,6 +1468,101 @@ describe('spread ref normalization', () => {
 		).not.toBe(own_ref);
 	});
 
+	it("merges a ref list that is a bag's only ref", () => {
+		/** @type {Array<[string, unknown]>} */
+		const calls = [];
+		/** @param {string} name */
+		const log_ref = (name) => /** @param {object | null} node */ (node) => {
+			calls.push([name, node]);
+		};
+		const first = log_ref('first');
+		const second = log_ref('second');
+		/** @type {{ current: object | null }} */
+		const object = { current: null };
+		const node = {};
+		/** @param {unknown} bag */
+		const ref_of = (bag) => /** @type {Record<string, unknown>} */ (bag).ref;
+
+		for (const normalize of [
+			copy_spread_props,
+			copy_spread_props_sharing_refs,
+			copy_spread_props_for_ref_attr,
+			copy_spread_props_for_ref_attr_sharing_refs,
+			normalize_spread_props_for_ref_attr,
+		]) {
+			calls.length = 0;
+			const bag = /** @type {Record<string, unknown>} */ (
+				normalize({ title: 't', ref: [first, [second, object]] })
+			);
+			expect(bag.title).toBe('t');
+			const ref = /** @type {(node: object | null) => () => void} */ (bag.ref);
+			expect(typeof ref).toBe('function');
+			const cleanup = ref(node);
+			expect(calls).toEqual([
+				['first', node],
+				['second', node],
+			]);
+			expect(object.current).toBe(node);
+			cleanup();
+			expect(calls.slice(2)).toEqual([
+				['first', null],
+				['second', null],
+			]);
+			expect(object.current).toBe(null);
+
+			// A list of one callback gives back that callback. An empty list still
+			// replaces an earlier spread's ref, as its `ref` key would in native JSX.
+			expect(ref_of(normalize({ ref: [first, false] }))).toBe(first);
+			const empty = /** @type {object} */ (normalize({ ref: [] }));
+			expect('ref' in empty).toBe(true);
+			expect(ref_of(empty)).toBeUndefined();
+		}
+
+		// Sharing refs, a new list with the same refs gives back the same callback.
+		expect(ref_of(copy_spread_props_sharing_refs({ ref: [first, second] }))).toBe(
+			ref_of(copy_spread_props_for_ref_attr_sharing_refs({ ref: [first, second] })),
+		);
+
+		// Solid's spread takes a ref list and reads the bag lazily, so the bag
+		// comes back as itself.
+		const solid_bag = { title: 't', ref: [first, second] };
+		expect(normalize_spread_props(solid_bag)).toBe(solid_bag);
+	});
+
+	it("merges a ref list's lone ref object into a callback", () => {
+		const node = {};
+		/** @param {unknown} bag */
+		const ref_of = (bag) => /** @type {Record<string, unknown>} */ (bag).ref;
+
+		for (const normalize of [
+			copy_spread_props,
+			copy_spread_props_sharing_refs,
+			copy_spread_props_for_ref_attr,
+			copy_spread_props_for_ref_attr_sharing_refs,
+			normalize_spread_props_for_ref_attr,
+		]) {
+			for (const object of [{ current: null }, { value: null }]) {
+				const ref = /** @type {(node: object | null) => () => void} */ (
+					ref_of(normalize({ ref: [object, null] }))
+				);
+				expect(typeof ref).toBe('function');
+				const cleanup = ref(node);
+				expect(Object.values(object)).toEqual([node]);
+				cleanup();
+				expect(Object.values(object)).toEqual([null]);
+			}
+		}
+
+		// Sharing refs, a new list with the same ref object gives back the same
+		// callback, and a bag whose `ref` is the object itself still passes it on.
+		const object = { value: null };
+		expect(ref_of(copy_spread_props_sharing_refs({ ref: [object] }))).toBe(
+			ref_of(copy_spread_props_for_ref_attr_sharing_refs({ ref: [[object]] })),
+		);
+		expect(ref_of(copy_spread_props_sharing_refs({ ref: object }))).toBe(object);
+		expect(ref_of(copy_spread_props({ ref: object }))).toBe(object);
+	});
+
 	it('preserves explicit ordinary-ref reads, source state, and the selected ref value', () => {
 		/** @type {string[]} */
 		const events = [];
@@ -1776,6 +1872,35 @@ describe('spread ref normalization', () => {
 			expect(normalized.ref).toBeUndefined();
 			expect({ ...normalized }).toEqual({});
 		}
+	});
+
+	it('gives a new bag with the same refs the same merged ref when sharing refs', () => {
+		/** @param {object | null} _node */
+		const own = (_node) => {};
+		const object = { current: null };
+		const named = create_ref_prop(() => own);
+		/** @param {Record<string, unknown>} bag */
+		const ref_of = (bag) =>
+			/** @type {Record<string, unknown>} */ (normalize_spread_props_sharing_refs(bag)).ref;
+
+		const merged = ref_of({ title: '1', ref: own, extra: named });
+		expect(typeof merged).toBe('function');
+		expect(ref_of({ title: '2', ref: own, extra: named })).toBe(merged);
+		expect(ref_of({ ref: object, extra: named })).not.toBe(merged);
+		expect(ref_of({ ref: false, extra: named })).toBe(named);
+		expect(ref_of({ extra: named, other: named })).toBe(ref_of({ extra: named, other: named }));
+
+		const plain = { title: 'plain', ref: own };
+		expect(normalize_spread_props_sharing_refs(plain)).toBe(plain);
+
+		// Without sharing, each bag's refs merge into a new callback.
+		const own_ref = /** @type {Record<string, unknown>} */ (
+			normalize_spread_props({ ref: own, extra: named })
+		).ref;
+		expect(
+			/** @type {Record<string, unknown>} */ (normalize_spread_props({ ref: own, extra: named }))
+				.ref,
+		).not.toBe(own_ref);
 	});
 
 	it('passes a single collected ref through unwrapped', () => {

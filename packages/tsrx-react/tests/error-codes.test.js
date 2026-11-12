@@ -137,6 +137,14 @@ describe('error codes', () => {
 }`,
 			],
 			[
+				'TSRX2027',
+				`function App() @{
+	@for (var x of xs) {
+		<p />
+	}
+}`,
+			],
+			[
 				'TSRX3011',
 				`function App() @{
 	<>

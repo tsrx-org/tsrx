@@ -2984,6 +2984,59 @@ export function App() @{ <div /> }`;
 		expect(reported(loose)).toEqual(reported(collected));
 	});
 
+	// A collecting or loose parse records each tag left open at the end of its
+	// template at the tag's name (a fragment's `<>`), so the editor shows each
+	// error on its own tag, and keeps `raisedAt` one past the token that ends the
+	// template. A strict parse still throws the first one at that token (#1288).
+	it.each([
+		['export function C() @{\n\t<main><section>\n}\n', ['section', 'main'], '\n}'],
+		['export function C() @{\n\t<ul><li>a\n}\n', ['li', 'ul'], '\n}'],
+		['export function C() @{\n\t<a><b><c><d>\n}\n', ['d', 'c', 'b', 'a'], '\n}'],
+		['export function C() @{\n\t<><div>\n}\n', ['div', '<>'], '\n}'],
+		['export function C() @{\n\t<>\n}\n', ['<>'], '\n}'],
+		['export function C() {\n\treturn <div>;\n}\n', ['div'], '\n}'],
+		['export const a = <><div>;\n', ['div', '<>'], null],
+		['export function C({ Tag }) @{\n\t<{Tag}>\n}\n', ['{Tag}'], '\n}'],
+		['export function C() @{\n\t<a.b class="x">\n}\n', ['a.b'], '\n}'],
+		['export function C() @{\n\t@if (x) {\n\t\t<div>\n\t}\n}\n', ['div'], '\n\t}'],
+	])('records each unclosed tag of %j at its name', (source, tags, before_end) => {
+		const end =
+			before_end === null ? source.length : source.indexOf(before_end) + before_end.length - 1;
+		for (const options of [{ collect: true }, { loose: true, collect: true }]) {
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'App.tsrx', { ...options, errors });
+			expect(errors.map((error) => [error.code, source.slice(error.pos, error.end)])).toEqual(
+				tags.map((tag) => [TSRX_ERRORS.UNCLOSED_TAG.code, tag]),
+			);
+			expect(errors.map((error) => error.raisedAt)).toEqual(tags.map(() => end + 1));
+		}
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			error_with(TSRX_ERRORS.UNCLOSED_TAG, line_column(source, end)),
+		);
+	});
+
+	// `<style>` and `<script>` read their body as raw text, so they report an
+	// unclosed tag from their own path: on the opening tag in a loose parse,
+	// and where the body starts when thrown. Only a loose parse goes on past
+	// it; a collecting one records it, then throws its next error (#1288).
+	it.each([
+		['export const y = <style>.a {}\n', '<style>', '.a'],
+		['export const y = <script>const a = 1;\n', '<script>', 'const a'],
+	])('records the unclosed raw text tag of %j on its opening tag', (source, tag, body) => {
+		const start = source.indexOf(body);
+		/** @type {CompileError[]} */
+		const errors = [];
+		parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+		expect(errors.map((error) => [error.code, source.slice(error.pos, error.end)])).toEqual([
+			[TSRX_ERRORS.UNCLOSED_TAG.code, tag],
+		]);
+		expect(errors[0].raisedAt).toBe(start + 1);
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			error_with(TSRX_ERRORS.UNCLOSED_TAG, line_column(source, start)),
+		);
+	});
+
 	it('parses module-scope style expressions followed by JavaScript statements', () => {
 		const source = `const styles = <style>
 			.card {
@@ -10860,6 +10913,67 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			],
 			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '2:47'],
 		},
+		// A namespace's name is a value when the namespace is instantiated, and
+		// shares the name with anything otherwise (#1263).
+		{
+			source:
+				'declare namespace N { var X: number; }\ndeclare namespace N { let X: number; }\ndeclare namespace N { namespace X {} }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'X: number; }\ndeclare namespace N { let'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'X: number; }\ndeclare namespace N { namespace'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:26'],
+		},
+		{
+			source:
+				'namespace N { export namespace a { export const x = 1; } }\nnamespace N { export const a = 1; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a { export'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a = 1'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:31'],
+		},
+		{
+			// An exported name whose declaration is a value makes it instantiated.
+			source:
+				'declare namespace N { namespace a { const x: number; export { x }; } }\ndeclare namespace N { const a: number; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a { const'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a: number; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:32'],
+		},
+		{
+			source:
+				'namespace N { export const a = 1; }\nnamespace N { export namespace a { export const enum E {} } }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a { export const enum'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:27'],
+		},
+		// An export specifier and `export import` are both aliases (#1263).
+		{
+			source:
+				'declare namespace N { export import A = Y.Z; }\ndeclare namespace N { const b: number; export { b as A }; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'A = Y.Z'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'A }; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:36'],
+		},
+		// At one position, by code, as tsc sorts them (#1263).
+		{
+			source:
+				'namespace N { export var a = 1; }\nnamespace N { export enum a {} }\nnamespace N { export let a = 1; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a = 1; }\nnamespace N { export enum'],
+				[TS_ERRORS.ENUM_REDECLARED, 'a = 1; }\nnamespace N { export enum'],
+				[TS_ERRORS.ENUM_REDECLARED, 'a {}'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a = 1; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:25'],
+		},
 		// A default-exported class's name is the default export's, so a second
 		// one is another default export, not a redeclaration (#1213).
 		{
@@ -12967,6 +13081,13 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'namespace N { export enum E { A } }\nnamespace N { export enum E { B = 1 } }',
 			'namespace N { export const [a, { b }] = [1, { b: 2 }]; }\nnamespace N { export import b = X.Y; }',
 			'export default class C {}\nexport default interface C {}',
+			// A namespace that declares no value shares its name (#1263).
+			'namespace N { export const a = 1; }\nnamespace N { export namespace a {} }',
+			'namespace N { export class a {} }\nnamespace N { export namespace a { export const x = 1; } }',
+			'declare namespace N { namespace a { interface I {} export { I }; } }\ndeclare namespace N { const a: number; }',
+			'declare namespace N { interface J {} namespace a { export { J }; } }\ndeclare namespace N { const a: number; }',
+			'namespace N { export namespace a { export namespace b { export type T = 1; } } }\nnamespace N { export const a = 1; }',
+			'namespace N { export enum a {} }\nnamespace N { export namespace a { export const x = 1; } }',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) =>
@@ -13684,12 +13805,14 @@ describe('JSX whitespace in template text', () => {
 
 	it('reports a token that text cannot start at instead of reading it forever', async () => {
 		// The `<` of `<T,>` reads as a type parameter list's, where the text of
-		// `<b>` would start, so the text reads nothing
+		// `<b>` would start, so the text reads nothing. Read again after it, the
+		// `<` starts a tag, as in TSX, and the error is at the `,`, where
+		// TypeScript reports it (#1270).
 		const source = 'const f = <b><T,>() => 1;';
 		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
 
 		for (const outcome of outcomes) {
-			expect(outcome).toEqual(thrown(TS_ERRORS.UNEXPECTED_TOKEN, 13));
+			expect(outcome).toEqual(thrown(TS_ERRORS.UNEXPECTED_TOKEN, 15));
 		}
 	});
 
@@ -13750,7 +13873,7 @@ describe('syntax errors in an element that is a value', () => {
 		[
 			'text that reads nothing in a setup statement',
 			'export function App() @{\n\tconst f = <b><T,>() => 1;\n\t<main />\n}',
-			[TS_ERRORS.UNEXPECTED_TOKEN, '2:14'],
+			[TS_ERRORS.UNEXPECTED_TOKEN, '2:16'],
 		],
 	];
 

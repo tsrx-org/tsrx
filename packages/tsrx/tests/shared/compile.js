@@ -291,14 +291,18 @@ export function App() @{
 			expect(virtual_parse_diagnostics(code)).toEqual([]);
 
 			const attributes = source.indexOf('{ with');
-			for (const text of [
-				"{ with: { type: 'json' } }",
-				'with',
-				'type',
-				"'json'",
-				"'resolution-mode'",
-				"'require'",
-			]) {
+			// The options object maps its start and its end as the points of one
+			// mapping, which hold the object's whole printed text between them.
+			const options = "{ with: { type: 'json' } }";
+			const whole = mappings.find(
+				(candidate) =>
+					candidate.sourceOffsets[0] === attributes &&
+					candidate.sourceOffsets[1] === attributes + options.length,
+			);
+			expect(whole, options).toBeDefined();
+			const [from, to] = /** @type {NonNullable<typeof whole>} */ (whole).generatedOffsets;
+			expect(code.slice(from, to)).toBe(options);
+			for (const text of ['with', 'type', "'json'", "'resolution-mode'", "'require'"]) {
 				const start = source.indexOf(text, attributes);
 				const mapping = mappings.find((candidate) => candidate.sourceOffsets[0] === start);
 				expect(mapping, text).toBeDefined();
@@ -817,6 +821,36 @@ export const d: number = bad;
 			}
 		});
 
+		it('reports an `@for` head that declares its item with `var` (#1158)', () => {
+			for (const head of ['var item', 'var { item }']) {
+				const source = `export function App({ items }: { items: any[] }) @{
+					<>
+						<ul>
+							@for (${head} of items) {
+								<li>{String(item)}</li>
+							}
+						</ul>
+						<p>{String(item)}</p>
+					</>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf(`(${head} of`) + 1;
+
+				expect(
+					result.errors.map((error) => [error.code, error.message, error.pos, error.end]),
+					head,
+				).toEqual([
+					[
+						TSRX_ERRORS.FOR_HEAD_VAR.code,
+						TSRX_ERRORS.FOR_HEAD_VAR.message,
+						start,
+						start + head.length,
+					],
+				]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
 		it('reports an invalid `@for` head wherever the loop is nested', () => {
 			/** @type {Record<string, (loop: string) => string>} */
 			const positions = {
@@ -829,6 +863,7 @@ export const d: number = bad;
 			for (const [head, code] of [
 				['state.item of items', TSRX_ERRORS.FOR_HEAD_ASSIGNMENT.code],
 				['using item of items', TSRX_ERRORS.FOR_HEAD_USING.code],
+				['var item of items', TSRX_ERRORS.FOR_HEAD_VAR.code],
 			]) {
 				for (const [label, wrap] of Object.entries(positions)) {
 					const source = `export async function App({ items, groups, c }: any) @{
@@ -5431,6 +5466,63 @@ export function App() @{
 			[
 				'a middle name of its dotted namespace',
 				"const Foo = 'outer';\nnamespace Outer {\n\texport function Foo() {\n\t\treturn null;\n\t}\n}\nnamespace Outer.Foo.Bar {\n\texport function App() {\n\t\treturn <Foo>ok</Foo>;\n\t}\n}\nexport const result = () => Outer.Foo.Bar.App().type === Outer.Foo;",
+				true,
+			],
+			[
+				'a function declaration the module assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nTag = Replacement;\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration that another function assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nexport function swap() {\n\tTag = Replacement;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport const result = () => {\n\tswap();\n\treturn App().props.children[0].type === Replacement;\n};',
+				true,
+			],
+			[
+				'a class declaration the module assigns by destructuring',
+				'class Box {}\nclass Other {}\nfunction App() {\n\treturn <div><Box>hello</Box></div>;\n}\n[Box] = [Other];\nexport const result = () => App().props.children[0].type === Other;',
+				true,
+			],
+			[
+				'a function declaration assigned through a typed destructuring target',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n[Tag as any] = [Replacement];\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				// Any assignment of the name counts, even to a local that shadows it
+				'a function declaration whose name another function assigns as a local',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function other() {\n\tlet Tag = 1;\n\tTag = 2;\n\treturn Tag;\n}\nexport const result = () => App().props.children[0].type === Tag;',
+				true,
+			],
+			[
+				'a function declaration a for…of head assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfor (Tag of [Replacement]);\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration a for…in head assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfor (Tag in { replacement: 1 });\nexport const result = () => App().props.children[0].type;',
+				'replacement',
+			],
+			[
+				'a function declaration another function updates',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function bump() {\n\tTag++;\n}\nexport const result = () => {\n\tbump();\n\treturn Number.isNaN(App().props.children[0].type);\n};',
+				true,
+			],
+			[
+				'a function declaration assigned by object destructuring with a default',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n({ Tag = Replacement } = {});\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				// The style pass moves a `ref` of a `<style>` in a nested root out of the tree
+				'a function declaration a style ref assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nexport function App() @{\n\tconst content = <><style ref={() => { Tag = Replacement; }} /><span>content</span></>;\n\t<>{content}<div><Tag>hello</Tag></div></>\n}\nexport const result = () => App().props.children[1].props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration a direct eval can assign',
+				"function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n(eval)('Tag = Replacement');\nexport const result = () => App().props.children[0].type === Replacement;",
 				true,
 			],
 		])(

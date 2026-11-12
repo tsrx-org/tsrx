@@ -94,7 +94,7 @@ export const DIAGNOSTIC_CODES = {
 	TOP_LEVEL_AWAIT_USE_SERVER: 'TSRX2025',
 	/** An `@catch` reset parameter on a target whose error boundary has none. */
 	TARGET_CATCH_RESET_UNSUPPORTED: 'TSRX2026',
-	/** An `@for` head that assigns to existing variables, or declares its loop variable with `using`. */
+	/** An `@for` head that assigns to existing variables, or declares its loop variable with `var` or `using`. */
 	FOR_HEAD: 'TSRX2027',
 	/** A component read above its declaration on a target that compiles it to a constant, where moving the declaration up would change what it reads. */
 	TARGET_COMPONENT_READ_BEFORE_DECLARATION: 'TSRX2028',
@@ -388,6 +388,10 @@ export const TSRX_ERRORS = {
 	FOR_HEAD_ASSIGNMENT: tsrx(
 		'FOR_HEAD',
 		'TSRX `@for` must declare its loop variable, as in `@for (const item of items)`, not assign to an existing variable or property.',
+	),
+	FOR_HEAD_VAR: tsrx(
+		'FOR_HEAD',
+		"TSRX `@for` does not support `var` loop variables, since its loop variable can't be read after the loop. Declare it with `const` or `let`, as in `@for (const item of items)`.",
 	),
 	/** `kind` is `using` or `await using`. */
 	FOR_HEAD_USING: tsrx_with_values(
