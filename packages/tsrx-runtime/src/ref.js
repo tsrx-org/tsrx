@@ -539,7 +539,7 @@ export function normalize_spread_props(props, ...outer_refs) {
  * @returns {SpreadProps | SpreadFalsy}
  */
 export function normalize_spread_props_sharing_refs(props, ...outer_refs) {
-	return normalize_spread(props, outer_refs, false, merge_shared_ref_list);
+	return normalize_spread(props, outer_refs, false, merge_shared_ref_list, false);
 }
 
 /**
