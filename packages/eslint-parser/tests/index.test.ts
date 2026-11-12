@@ -19,6 +19,21 @@ describe('eslint-parser', () => {
 		).toThrow(/Expected closing tag to match opening tag/);
 	});
 
+	it('reports an unclosed tag at its name, the innermost one first', () => {
+		let thrown: any;
+		try {
+			parseForESLint('export function App() @{\n\t<main><section>\n}\n', {
+				filePath: 'App.tsrx',
+			});
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toBeInstanceOf(SyntaxError);
+		expect(thrown.message).toContain("Unclosed tag '<section>'");
+		expect([thrown.lineNumber, thrown.column]).toEqual([2, 9]);
+	});
+
 	it('keeps forgotten statement-container hints available to ESLint rules', () => {
 		const result = parseForESLint(
 			`export function UserBadge({ user }: UserBadgeProps): JSX.Element {
