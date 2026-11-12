@@ -3335,7 +3335,12 @@ export function D() @{
 }
 declare const i: number;`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-			expect(result.errors).toEqual([]);
+			// A target whose components can't be async reports the `await using`.
+			expect(result.errors.map((error) => [error.code, error.pos])).toEqual(
+				rejectsComponentAwait
+					? [[DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED, source.indexOf('await using')]]
+					: [],
+			);
 			/** @type {Array<[string, number]>} */
 			const tokens = [
 				['const', source.indexOf('const [a')],
