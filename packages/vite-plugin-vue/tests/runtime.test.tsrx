@@ -1860,6 +1860,104 @@ describe('tsrx-vue component wrapping', () => {
 	});
 });
 
+const merged_ref_log: string[] = [];
+const merged_ref_object = ref<HTMLInputElement | null>(null);
+
+function MergedRefCleanupApp() @{
+	const shown = ref(true);
+	const withCleanup = (node: HTMLInputElement | null) => {
+		merged_ref_log.push(node ? 'set' : 'null');
+		return () => {
+			merged_ref_log.push('cleanup');
+		};
+	};
+	<>
+		@if (shown.value) {
+			<input class="merged-cleanup" ref={mergeRefs(withCleanup, merged_ref_object)} />
+		}
+		<button class="hide-merged" onClick={() => (shown.value = false)}>
+			{'hide'}
+		</button>
+	</>
+}
+
+const swapped_ref_log: string[] = [];
+const swapped_ref_which = ref(0);
+const swapped_ref_object = ref<HTMLInputElement | null>(null);
+
+function SwappedMergedRefApp() @{
+	const shown = ref(true);
+	const withCleanup = (node: HTMLInputElement | null) => {
+		swapped_ref_log.push(node ? 'A:set' : 'A:null');
+		return () => {
+			swapped_ref_log.push('A:cleanup');
+		};
+	};
+	const plain = (node: HTMLInputElement | null) => {
+		swapped_ref_log.push(node ? 'B:set' : 'B:null');
+	};
+	const other = (node: HTMLInputElement | null) => {
+		swapped_ref_log.push(node ? 'C:set' : 'C:null');
+	};
+	<>
+		@if (shown.value) {
+			<input
+				class="swapped-merged"
+				ref={mergeRefs(
+					withCleanup,
+					plain,
+					swapped_ref_object,
+					swapped_ref_which.value ? other : null,
+				)}
+			/>
+		}
+		<button class="hide-swapped" onClick={() => (shown.value = false)}>
+			{'hide'}
+		</button>
+	</>
+}
+
+describe('tsrx-vue merged refs', () => {
+	it('runs the replaced merged ref cleanup when a new one is set on the element', async () => {
+		swapped_ref_log.length = 0;
+		swapped_ref_which.value = 0;
+		await render(SwappedMergedRefApp);
+		expect(swapped_ref_log).toEqual(['A:set', 'B:set']);
+
+		// A reactive read re-creates the merged ref; Vue sets the new one without
+		// calling the old one with `null`.
+		swapped_ref_which.value = 1;
+		await flush();
+		expect(swapped_ref_log).toEqual([
+			'A:set',
+			'B:set',
+			'A:cleanup',
+			'B:null',
+			'A:set',
+			'B:set',
+			'C:set',
+		]);
+		expect(swapped_ref_object.value).toBeInstanceOf(HTMLInputElement);
+
+		await click('.hide-swapped');
+		expect(swapped_ref_log.slice(7)).toEqual(['A:cleanup', 'B:null', 'C:null']);
+		expect(swapped_ref_object.value).toBeNull();
+	});
+
+	it("runs a merged ref's cleanup when Vue unsets the ref", async () => {
+		merged_ref_log.length = 0;
+		await render(MergedRefCleanupApp);
+		expect(merged_ref_log).toEqual(['set']);
+		expect(merged_ref_object.value).toBeInstanceOf(HTMLInputElement);
+
+		await click('.hide-merged');
+		// Vue ignores a function ref's return value and calls it with `null`;
+		// the merged ref runs the stored cleanup on that call instead.
+		expect(merged_ref_log).toEqual(['set', 'cleanup']);
+		expect(merged_ref_object.value).toBeNull();
+	});
+});
+
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 // Vapor leaves an empty comment where a constant `@if` with a following sibling
