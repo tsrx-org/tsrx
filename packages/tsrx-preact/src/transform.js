@@ -51,6 +51,8 @@ const preact_platform = {
 		// `false` too, which the shared join leaves out.)
 		classValue: 'text-true',
 		multiRefStrategy: 'merge-refs',
+		// No `shareMergedRefs`: Preact stores a ref's cleanup on the function, so
+		// elements sharing one merged ref would run each other's cleanups.
 		hostSpreadRefBinding: 'in-place',
 		pendingFallback: 'try-body',
 		// preact-render-to-string escapes a string child of `<script>` like

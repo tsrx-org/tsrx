@@ -3,11 +3,12 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve as path_resolve, isAbsolute } from 'node:path';
-import { normalizePath } from 'vite';
+import { normalizePath, parseSync } from 'vite';
 import { compile } from '@tsrx/solid';
 import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
 import { resolveBuildPlatform } from '@tsrx/core/config';
 import { createDepScanLoadPlugin } from '@tsrx/core/vite/dep-scan';
+import { findUnconfiguredPlatformFlag, restartOnPlatformChange } from '@tsrx/core/vite/platform';
 import { createWorkerEntryMiddleware, stripWorkerEntryQuery } from '@tsrx/core/vite/worker';
 
 const DEFAULT_TSRX_PATTERN = /\.tsrx$/;
@@ -39,16 +40,20 @@ export function tsrxSolid(options = {}) {
 	const include_pattern = options.include ?? DEFAULT_TSRX_PATTERN;
 	const compile_options = { runtimeImports: options.runtimeImports, platform };
 
+	/** @type {import('@tsrx/core/config').BuildPlatformResolutionOptions} */
+	let platform_resolution = {};
+
 	/** @param {import('vite').UserConfig} config */
 	function resolve_platform(config) {
-		platform = resolveBuildPlatform({
+		platform_resolution = {
 			root: config.root ?? process.cwd(),
 			tsconfig:
 				options.tsconfig ??
 				/** @type {{ tsconfig?: string }} */ (/** @type {unknown} */ (config)).tsconfig,
 			platform: explicit_platform,
 			integration: '@tsrx/vite-plugin-solid',
-		});
+		};
+		platform = resolveBuildPlatform(platform_resolution);
 		compile_options.platform = platform;
 	}
 
@@ -148,6 +153,7 @@ export function tsrxSolid(options = {}) {
 		},
 
 		configureServer(server) {
+			restartOnPlatformChange(server, platform_resolution, () => platform);
 			server.middlewares.use(createWorkerEntryMiddleware(is_tsrx_source));
 		},
 
@@ -231,6 +237,13 @@ export function tsrxSolid(options = {}) {
 			}
 
 			return { code, map };
+		},
+
+		transform(code, id) {
+			if (platform !== undefined) return null;
+			const flag = findUnconfiguredPlatformFlag(code, id, parseSync);
+			if (flag) this.error(flag, flag.pos);
+			return null;
 		},
 
 		async handleHotUpdate(ctx) {

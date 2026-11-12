@@ -116,7 +116,7 @@ function is_platform_namespace(node) {
  * @param {AST.Node} node
  * @returns {AST.Node | null}
  */
-function find_platform_flag(node) {
+export function find_platform_flag(node) {
 	if (get_platform_flag(node) !== null) return node;
 
 	for (const child of child_nodes(node)) {

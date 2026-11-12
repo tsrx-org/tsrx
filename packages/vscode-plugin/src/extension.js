@@ -7,8 +7,8 @@
  *
  * The TSRX language server runs alongside it in `plugin` mode for snippets, CSS,
  * document symbols, CSS-class navigation, keyword highlights and formatting (with the
- * project's Prettier and `@tsrx/prettier-plugin`), and closes tags while
- * TypeScript 7 does not (`closing-tags.js`). A status item on `.tsrx` files names the
+ * project's Prettier and `@tsrx/prettier-plugin`), and closes tags on
+ * TypeScript 7 (`closing-tags.js`). A status item on `.tsrx` files names the
  * TypeScript that serves them, and a notice says what to do when none can
  * (`typescript-guidance.js`).
  * It also reports compile errors; `diagnostics.js` removes that copy once the native

@@ -2,6 +2,7 @@
 /** @import {TextDocument} from 'vscode-languageserver-textdocument' */
 
 import { TS_ERRORS } from '@tsrx/core';
+import { DIAGNOSTIC_SOURCE } from '@tsrx/core/diagnostics';
 import { describe, expect, it } from 'vitest';
 import { DiagnosticSeverity } from '@volar/language-server';
 import { createCompileErrorDiagnosticPlugin } from '../src/compileErrorDiagnosticPlugin.js';
@@ -311,5 +312,116 @@ export {};`,
 		expect(reported(document, diagnostics, 'TS1186')).toEqual([
 			{ source: 'TSRX', text: '=', offset: 27 },
 		]);
+	});
+});
+
+// The editor's compile is loose: it recovers unclosed and mismatched markup,
+// so the rest of the file keeps working, and reports it as a collecting
+// compile does (#978).
+describe('compile error diagnostic plugin — unclosed and mismatched tags', () => {
+	// The editor's code gets the missing closing tag, with no mapping, so
+	// TypeScript adds no TS17008 or TS1005 to the parser's error. An unclosed
+	// tag is reported at the token that ends its template, which has no
+	// mapping: the editor shows it on the nearest code before it, the open
+	// tag, not at the start of the file.
+	it.each([
+		['UnclosedTag', 'export function C() @{\n\t<div>\n}\n', 'TSRX1001', '<div>'],
+		['MismatchedTag', 'export function C() @{\n\t<div><span></div>\n}\n', 'TSRX1002', '</div>'],
+		['UnclosedReturnedTag', 'export function C() {\n\treturn <div>;\n}\n', 'TSRX1001', '<div>'],
+	])('reports %s once, near the tag', async (name, source, code, near) => {
+		const { document, diagnostics } = await editor_diagnostics_for(name, source);
+
+		const tsrx = diagnostics.filter((diagnostic) => diagnostic.source === DIAGNOSTIC_SOURCE);
+		expect(tsrx.map((diagnostic) => diagnostic.code)).toEqual([code]);
+		const offset = document.offsetAt(tsrx[0].range.start);
+		const tag = source.indexOf(near);
+		expect(offset, document.getText(tsrx[0].range)).toBeGreaterThanOrEqual(tag);
+		expect(offset).toBeLessThan(tag + near.length);
+		expect(
+			diagnostics
+				.filter((diagnostic) => diagnostic.source === 'ts')
+				.map((diagnostic) => diagnostic.code)
+				.filter((ts_code) => ts_code === 17008 || ts_code === 1005 || ts_code === 17002),
+		).toEqual([]);
+	});
+
+	// TypeScript also reports an undefined name on the closing tag the
+	// editor's code adds. That tag has no mapping, and no closing tag around
+	// it, whether it is printed right after it or after later children,
+	// covers it, so the error isn't repeated on one of them.
+	it.each([
+		['Unclosed', 'export function C() @{\n\t<div><Missing>valid</div>\n}\n', 'Missing'],
+		['UnclosedNested', 'export function C() @{\n\t<div><Missing><b>x</div>\n}\n', 'Missing'],
+		[
+			'NotLastChild',
+			'export function C() @{\n\t<div><span><Missing>x</span>tail</div>\n}\n',
+			'Missing',
+		],
+		[
+			'TrailingSpace',
+			'export function C() @{\n\t<div><span><Missing>x</span> </div>\n}\n',
+			'Missing',
+		],
+		[
+			'TrailingExpression',
+			'export function C({ y }: { y: string }) @{\n\t<div><span><Missing>x</span>{y}</div>\n}\n',
+			'Missing',
+		],
+		[
+			'TrailingText',
+			'export function C() @{\n\t<p>\n\t\t<b>\n\t\t\t<NewComp>hello\n\t\t</b>\n\t\tmore text\n\t</p>\n}\n',
+			'NewComp',
+		],
+		[
+			'DynamicParent',
+			'export function C({ Tag }: { Tag: string }) @{\n\t<{Tag}><Missing>valid</{Tag}>\n}\n',
+			'Missing',
+		],
+		[
+			'DynamicParentWithText',
+			'export function C({ Tag }: { Tag: string }) @{\n\t<div><{Tag}><Missing>x</{Tag}>tail</div>\n}\n',
+			'Missing',
+		],
+	])('reports the undefined unclosed tag of %s once, at its name', async (name, source, tag) => {
+		const { document, diagnostics } = await editor_diagnostics_for(`Undefined${name}`, source);
+
+		expect(reported(document, diagnostics, 'TS2304')).toEqual([
+			{ source: 'ts', text: tag, offset: source.indexOf(tag) },
+		]);
+	});
+
+	it('keeps hover, completions and diagnostics elsewhere in the file', async () => {
+		const source = `export function C({ items }: { items: string[] }) @{
+	const count: number = 'one';
+	const total = items.length;
+	<main>
+		<p>{total}
+	</main>
+}
+`;
+		const { document, service, uri } = create_typescript_harness(
+			source,
+			[createCompileErrorDiagnosticPlugin(), createTypeScriptDiagnosticFilterPlugin()],
+			'react/UnclosedTagFeatures.tsrx',
+		);
+		const diagnostics = await service.getDiagnostics(uri);
+		expect(reported(document, diagnostics, 'TS2322')).toEqual([
+			{ source: 'ts', text: 'count', offset: source.indexOf('count') },
+		]);
+		expect(
+			diagnostics
+				.filter((diagnostic) => diagnostic.source === DIAGNOSTIC_SOURCE)
+				.map((diagnostic) => diagnostic.code),
+		).toEqual(['TSRX1002']);
+
+		const hover = await service.getHover(uri, document.positionAt(source.indexOf('{total}') + 1));
+		expect(JSON.stringify(hover?.contents)).toContain('const total: number');
+
+		const completions = await service.getCompletionItems(
+			uri,
+			document.positionAt(source.indexOf('items.length') + 'items.'.length),
+			{ triggerKind: 1 },
+		);
+		expect(completions.items.map((item) => item.label)).toContain('length');
 	});
 });

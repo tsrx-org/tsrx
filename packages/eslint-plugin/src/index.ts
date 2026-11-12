@@ -3,6 +3,7 @@ import noReturnInComponent from './rules/no-return-in-component.js';
 import controlFlowJsx from './rules/control-flow-jsx.js';
 import validForOfKey from './rules/valid-for-of-key.js';
 import requireStatementContainerBody from './rules/require-statement-container-body.js';
+import jsxCurlyBracePresence from './rules/jsx-curly-brace-presence.js';
 
 const plugin = {
 	meta: {
@@ -14,6 +15,7 @@ const plugin = {
 		'control-flow-jsx': controlFlowJsx,
 		'valid-for-of-key': validForOfKey,
 		'require-statement-container-body': requireStatementContainerBody,
+		'jsx-curly-brace-presence': jsxCurlyBracePresence,
 	},
 	configs: {} as any,
 };
@@ -89,6 +91,23 @@ plugin.configs.strict = [
 	{
 		name: 'tsrx/ignores',
 		ignores: ['**/*.d.ts', '**/node_modules/**', '**/dist/**', '**/build/**'],
+	},
+];
+
+// For eslint-plugin-react users, listed after react's configurations: its
+// `jsx-curly-brace-presence` unwraps strings that TSRX text reads as syntax, so
+// `.tsrx` files get the TSRX version. A rule that is off needs no plugin.
+plugin.configs.react = [
+	{
+		name: 'tsrx/react-tsrx-files',
+		files: ['**/*.tsrx'],
+		plugins: {
+			tsrx: plugin,
+		},
+		rules: {
+			'tsrx/jsx-curly-brace-presence': 'error',
+			'react/jsx-curly-brace-presence': 'off',
+		},
 	},
 ];
 

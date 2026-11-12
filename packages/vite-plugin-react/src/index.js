@@ -39,11 +39,12 @@
  * }} TsrxReactPlugin
  */
 
-import { transformWithOxc } from 'vite';
+import { parseSync, transformWithOxc } from 'vite';
 import { compile } from '@tsrx/react';
 import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
 import { resolveBuildPlatform } from '@tsrx/core/config';
 import { createDepScanTransformPlugin } from '@tsrx/core/vite/dep-scan';
+import { findUnconfiguredPlatformFlag, restartOnPlatformChange } from '@tsrx/core/vite/platform';
 import { createWorkerEntryMiddleware, stripWorkerEntryQuery } from '@tsrx/core/vite/worker';
 
 const TSRX_EXTENSION_PATTERN = /\.tsrx$/;
@@ -67,16 +68,20 @@ export function tsrxReact(options = {}) {
 	const jsxImportSource = options.jsxImportSource ?? 'react';
 	const compile_options = { runtimeImports: options.runtimeImports, platform };
 
+	/** @type {import('@tsrx/core/config').BuildPlatformResolutionOptions} */
+	let platform_resolution = {};
+
 	/** @param {import('vite').UserConfig} config */
 	function resolve_platform(config) {
-		platform = resolveBuildPlatform({
+		platform_resolution = {
 			root: config.root ?? process.cwd(),
 			tsconfig:
 				options.tsconfig ??
 				/** @type {{ tsconfig?: string }} */ (/** @type {unknown} */ (config)).tsconfig,
 			platform: explicit_platform,
 			integration: '@tsrx/vite-plugin-react',
-		});
+		};
+		platform = resolveBuildPlatform(platform_resolution);
 		compile_options.platform = platform;
 	}
 
@@ -134,6 +139,7 @@ export function tsrxReact(options = {}) {
 		},
 
 		configureServer(server) {
+			restartOnPlatformChange(server, platform_resolution, () => platform);
 			server.middlewares.use(
 				createWorkerEntryMiddleware((path) => TSRX_EXTENSION_PATTERN.test(path)),
 			);
@@ -151,11 +157,17 @@ export function tsrxReact(options = {}) {
 			return css ?? '';
 		},
 
+		/** @this {import('vite').Rollup.TransformPluginContext} */
 		async transform(/** @type {string} */ code, /** @type {string} */ id) {
 			// A dev worker entry arrives as `<path>?worker_file&type=<type>`.
 			// Compile it under its file path, as a plain import would be.
 			const file = stripWorkerEntryQuery(id);
-			if (!TSRX_EXTENSION_PATTERN.test(file)) return null;
+			if (!TSRX_EXTENSION_PATTERN.test(file)) {
+				const flag =
+					platform === undefined ? findUnconfiguredPlatformFlag(code, id, parseSync) : null;
+				if (flag) this.error(flag, flag.pos);
+				return null;
+			}
 
 			let { code: tsx_code, css, map } = compile(code, file, compile_options);
 
