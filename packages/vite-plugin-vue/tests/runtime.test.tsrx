@@ -747,6 +747,48 @@ function DestructuredKeyedRow(props: { id: string; label: string }) @{
 	>{`${props.label}:${count.value}`}</button>
 }
 
+function ForNestedArrayDestructuredKeyedApp() @{
+	const rows = ref<[string, [string, string][]][]>([
+		[
+			'p',
+			[
+				['x', 'X'],
+				['y', 'Y'],
+			],
+		],
+	]);
+	<ul>
+		@for (const [k, list] of rows.value; key k) {
+			@for (const [a, b] of list; key a) {
+				<li class="nested-array-destructured">{`${k}-${a}-${b}`}</li>
+			}
+		}
+	</ul>
+}
+
+function ForArrayDestructuredKeyedApp() @{
+	const rows = ref<Iterable<string>[]>([new Set(['a', 'Alpha']), '😀x', ['b']]);
+	<>
+		@for (const [id, label = 'none'] of rows.value; key id) {
+			<DestructuredKeyedRow {id} {label} />
+		}
+		<button
+			class="reverse-array-destructured-keyed"
+			onClick={() => (rows.value = [...rows.value].reverse())}
+		>
+			{'reverse'}
+		</button>
+		<button
+			class="rename-array-destructured-keyed-a"
+			onClick={() =>
+				(rows.value = rows.value.map((row) => ([...row][0] === 'a' ? ['a', 'Again'] : row)))
+			}
+		>
+			{'rename'}
+		</button>
+	</>
+}
+
 function ForDestructuredKeyedStateApp() @{
 	const items = ref([
 		{ id: 'a', label: 'Alpha' },
@@ -1531,6 +1573,25 @@ describe('tsrx-vue runtime', () => {
 
 		await click('.rename-destructured-keyed-beta');
 		expect(text('.row-b')).toBe('Bravo:1');
+	});
+
+	it('reads the destructured names of each loop in nested keyed loops', async () => {
+		await render(ForNestedArrayDestructuredKeyedApp);
+		expect(texts('.nested-array-destructured')).toEqual(['p-x-X', 'p-y-Y']);
+	});
+
+	it('destructures keyed for-of array patterns the way for...of does (#938)', async () => {
+		await render(ForArrayDestructuredKeyedApp);
+		expect(texts('.destructured-keyed-row')).toEqual(['Alpha:0', 'x:0', 'none:0']);
+
+		await click('.row-a');
+		expect(text('.row-a')).toBe('Alpha:1');
+
+		await click('.reverse-array-destructured-keyed');
+		expect(texts('.destructured-keyed-row')).toEqual(['none:0', 'x:0', 'Alpha:1']);
+
+		await click('.rename-array-destructured-keyed-a');
+		expect(text('.row-a')).toBe('Again:1');
 	});
 
 	it('switches rendered branches reactively', async () => {

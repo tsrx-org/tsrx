@@ -16,12 +16,24 @@ import {
 	DIAGNOSTIC_CODES,
 	error,
 	has_location,
+	IDENTIFIER_OBFUSCATION_PREFIX,
 	is_component_like_element,
 	MERGE_REFS_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	setLocation,
 } from '@tsrx/core';
+
+/** The local name of Vue's `computed` in a keyed slot that destructures its item. */
+const VUE_COMPUTED_INTERNAL_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'vapor_computed';
+/** The `computed` such a slot destructures its item in, numbered per slot. */
+const VAPOR_BINDINGS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'vapor_bindings';
+/**
+ * How many slots each compile has given a bindings `computed`, so each slot's
+ * has its own name and a nested slot's can't capture the outer slot's names.
+ * @type {WeakMap<TransformContext, number>}
+ */
+const vapor_bindings_counts = new WeakMap();
 
 /**
  * Minimal Vue platform descriptor consumed by `createJsxTransform`.
@@ -1171,7 +1183,7 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 		: (find_jsx_key_expression(rendered) ?? (node.index ? clone_ast_node(node.index) : null));
 
 	const slot = key_expression
-		? create_keyed_vapor_for_slot(loop_params, rendered)
+		? create_keyed_vapor_for_slot(loop_params, rendered, transform_context)
 		: { params: loop_params, body: rendered, expression: true };
 	if (!slot) {
 		return null;
@@ -1180,7 +1192,7 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 	transform_context.needs_vapor_for = true;
 
 	if (key_expression) {
-		strip_top_level_jsx_keys(slot.body);
+		strip_top_level_jsx_keys(slot.rendered ?? slot.body);
 	}
 
 	const attributes = [
@@ -1328,7 +1340,7 @@ function strip_top_level_jsx_keys(node) {
 
 /**
  * @param {AST.Pattern[]} loop_params
- * @param {AST.Expression} body
+ * @param {AST.Expression | AST.BlockStatement} body
  * @param {boolean} expression
  * @returns {AST.ArrowFunctionExpression}
  */
@@ -1344,9 +1356,10 @@ function create_loop_callback(loop_params, body, expression) {
 /**
  * @param {AST.Pattern[]} loop_params
  * @param {AST.Expression} rendered
- * @returns {{ params: AST.Pattern[], body: AST.Expression, expression: boolean } | null}
+ * @param {TransformContext} transform_context
+ * @returns {{ params: AST.Pattern[], body: AST.Expression | AST.BlockStatement, expression: boolean, rendered?: AST.Expression } | null}
  */
-function create_keyed_vapor_for_slot(loop_params, rendered) {
+function create_keyed_vapor_for_slot(loop_params, rendered, transform_context) {
 	if (loop_params[0]?.type === 'Identifier') {
 		return {
 			params: loop_params,
@@ -1356,6 +1369,16 @@ function create_keyed_vapor_for_slot(loop_params, rendered) {
 	}
 
 	const item_ref = create_generated_identifier('__vapor_item');
+	if (contains_array_pattern(loop_params[0])) {
+		transform_context.needs_vapor_computed = true;
+		return create_destructured_keyed_vapor_for_slot(
+			loop_params,
+			rendered,
+			item_ref,
+			transform_context,
+		);
+	}
+
 	const item_ref_value = create_value_member_expression(item_ref);
 	const replacements = create_pattern_replacements(loop_params[0], item_ref_value);
 	if (!replacements) {
@@ -1377,14 +1400,105 @@ function create_keyed_vapor_for_slot(loop_params, rendered) {
 }
 
 /**
+ * A keyed slot for an item pattern that property reads can't stand in for:
+ * an array pattern destructures through the item's iterator, so `[a, b]` of
+ * a `Set` or a string is not `item[0]` and `item[1]`. The slot destructures
+ * the item with the authored pattern in a `computed`, which runs once per
+ * item value and keeps the row's reads reactive, and reads each name from it.
+ *
+ * @param {AST.Pattern[]} loop_params
+ * @param {AST.Expression} rendered
+ * @param {AST.Identifier} item_ref
+ * @param {TransformContext} transform_context
+ * @returns {{ params: AST.Pattern[], body: AST.BlockStatement, expression: boolean, rendered: AST.Expression }}
+ */
+function create_destructured_keyed_vapor_for_slot(
+	loop_params,
+	rendered,
+	item_ref,
+	transform_context,
+) {
+	const count = (vapor_bindings_counts.get(transform_context) ?? 0) + 1;
+	vapor_bindings_counts.set(transform_context, count);
+	const bindings_ref = create_generated_identifier(`${VAPOR_BINDINGS_NAME}_${count}`);
+	/** @type {Set<string>} */
+	const names = new Set();
+	collect_pattern_names(loop_params[0], names);
+
+	/** @type {Map<string, AST.Expression>} */
+	const replacements = new Map();
+	for (const name of names) {
+		replacements.set(
+			name,
+			b.member(create_value_member_expression(bindings_ref), create_generated_identifier(name)),
+		);
+	}
+
+	const bindings = b.const(
+		bindings_ref,
+		b.call(
+			VUE_COMPUTED_INTERNAL_NAME,
+			b.arrow(
+				[],
+				b.block([
+					// A default in the pattern reads the index through its ref too.
+					b.const(
+						rewrite_vapor_for_keyed_slot_refs(loop_params[0], loop_params.slice(1)),
+						create_value_member_expression(item_ref),
+					),
+					b.return(
+						b.object([...names].map((name) => b.prop('init', b.id(name), b.id(name), false, true))),
+					),
+				]),
+			),
+		),
+	);
+	const rewritten_rendered = rewrite_vapor_for_keyed_slot_refs(
+		rendered,
+		loop_params.slice(1),
+		replacements,
+	);
+
+	return {
+		params: [item_ref, ...loop_params.slice(1)],
+		body: b.block([bindings, b.return(rewritten_rendered)]),
+		expression: false,
+		rendered: rewritten_rendered,
+	};
+}
+
+/**
+ * @param {AST.Node | null} node
+ * @returns {boolean}
+ */
+function contains_array_pattern(node) {
+	if (!node) return false;
+	switch (node.type) {
+		case 'ArrayPattern':
+			return true;
+		case 'ObjectPattern':
+			return node.properties.some((property) =>
+				contains_array_pattern(property.type === 'RestElement' ? property : property.value),
+			);
+		case 'AssignmentPattern':
+			return contains_array_pattern(node.left);
+		case 'RestElement':
+			return contains_array_pattern(node.argument);
+		default:
+			return false;
+	}
+}
+
+/**
  * Vue's `VaporFor` passes plain item values to unkeyed slots, but keyed slots
  * receive shallow refs so row instances can update in place. Match that runtime
  * shape by reading loop params through `.value` inside the slot body.
  *
- * @param {AST.Expression} node
+ * @template {AST.Node} T
+ * @param {T} node
  * @param {AST.Pattern[]} loop_params
  * @param {Map<string, AST.Expression>} [replacements]
- * @returns {AST.Expression}
+ * @returns {T}
  */
 function rewrite_vapor_for_keyed_slot_refs(node, loop_params, replacements = new Map()) {
 	const loop_param_names = new Set();
@@ -1396,14 +1510,29 @@ function rewrite_vapor_for_keyed_slot_refs(node, loop_params, replacements = new
 		return node;
 	}
 
-	return /** @type {AST.Expression} */ (
+	return /** @type {T} */ (
 		walk(
 			node,
-			{ loop_param_names, shadowed_names: new Set() },
+			{ loop_param_names, shadowed_names: new Set(), in_type: false },
 			{
+				_(child, { state, next }) {
+					// A type names no runtime value, so a type parameter or type
+					// reference spelled like a loop param stays as written; only a
+					// `typeof` in a type reads the param.
+					if (child.type === 'TSTypeQuery') {
+						next({ ...state, in_type: false });
+					} else if (is_type_only_node(child)) {
+						next({ ...state, in_type: true });
+					} else {
+						next();
+					}
+				},
 				Identifier(identifier, { path, state, next }) {
 					const parent = path.at(-1);
 					if (
+						!state.in_type &&
+						// `typeof Types.item` reads `Types`; `item` is a member name.
+						!(parent?.type === 'TSQualifiedName' && parent.right === identifier) &&
 						(state.loop_param_names.has(identifier.name) || replacements.has(identifier.name)) &&
 						!state.shadowed_names.has(identifier.name) &&
 						parent &&
@@ -1424,6 +1553,28 @@ function rewrite_vapor_for_keyed_slot_refs(node, loop_params, replacements = new
 				BlockStatement: rewrite_block_shadowed_refs,
 			},
 		)
+	);
+}
+
+/**
+ * Whether `node` is TypeScript type syntax: a type annotation, type parameters
+ * or arguments, the type of an `as`, `satisfies`, or `<T>` assertion, or a
+ * type alias or interface declaration.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_type_only_node(node) {
+	return (
+		node.type === 'TSTypeAnnotation' ||
+		node.type === 'TSTypeAliasDeclaration' ||
+		node.type === 'TSInterfaceDeclaration' ||
+		node.type === 'TSTypeParameterDeclaration' ||
+		node.type === 'TSTypeParameterInstantiation' ||
+		node.type === 'TSTypeReference' ||
+		node.type === 'TSTypeLiteral' ||
+		node.type === 'TSTypeOperator' ||
+		/^TS[A-Za-z]*(Type|Keyword)$/.test(node.type)
 	);
 }
 
@@ -1507,7 +1658,7 @@ function collect_pattern_replacements(pattern, source, replacements) {
 
 /**
  * @param {AST.Function} node
- * @param {import('zimmerframe').Context<AST.Node, { loop_param_names: Set<string>, shadowed_names: Set<string> }>} context
+ * @param {import('zimmerframe').Context<AST.Node, { loop_param_names: Set<string>, shadowed_names: Set<string>, in_type: boolean }>} context
  * @returns {AST.Node | void}
  */
 function rewrite_function_shadowed_refs(node, { state, next }) {
@@ -1524,7 +1675,7 @@ function rewrite_function_shadowed_refs(node, { state, next }) {
 
 /**
  * @param {AST.BlockStatement} node
- * @param {import('zimmerframe').Context<AST.Node, { loop_param_names: Set<string>, shadowed_names: Set<string> }>} context
+ * @param {import('zimmerframe').Context<AST.Node, { loop_param_names: Set<string>, shadowed_names: Set<string>, in_type: boolean }>} context
  * @returns {AST.Node | void}
  */
 function rewrite_block_shadowed_refs(node, { state, next }) {
@@ -1843,6 +1994,12 @@ function inject_vue_imports(program, transform_context) {
 		ensure_named_import(program, 'vue-jsx-vapor', 'VaporFor');
 	}
 
+	if (transform_context.needs_vapor_computed) {
+		// Its own declaration: an authored `import type` or `import * as` from
+		// 'vue' can't take a value specifier.
+		program.body.unshift(b.imports([['computed', VUE_COMPUTED_INTERNAL_NAME, 'value']], 'vue'));
+	}
+
 	if (transform_context.needs_suspense) {
 		ensure_named_import(program, 'vue', 'Suspense');
 	}
@@ -1879,6 +2036,12 @@ function inject_vue_imports(program, transform_context) {
 }
 
 /**
+ * Import `name` as `local` from `source` unless a named value import of
+ * `source` already has it, in any declaration: an authored
+ * `import { Suspense } from 'vue'` can follow the keyed slot's `computed`
+ * import. Otherwise add it to the first named value import of `source`, or
+ * give it an import of its own.
+ *
  * @param {import('estree').Program} program
  * @param {string} source
  * @param {string} name
@@ -1886,23 +2049,39 @@ function inject_vue_imports(program, transform_context) {
  * @returns {void}
  */
 function ensure_named_import(program, source, name, local = name) {
+	/** @type {import('estree').ImportDeclaration | undefined} */
+	let first;
 	for (const statement of program.body) {
 		if (statement.type !== 'ImportDeclaration' || statement.source?.value !== source) {
+			continue;
+		}
+		// A type-only import is erased from the build, and a namespace import
+		// takes no named specifiers: the helper gets an import of its own.
+		if (
+			statement.importKind === 'type' ||
+			statement.specifiers.some((specifier) => specifier.type === 'ImportNamespaceSpecifier')
+		) {
 			continue;
 		}
 
 		const has_specifier = statement.specifiers.some(
 			(specifier) =>
 				specifier.type === 'ImportSpecifier' &&
+				specifier.importKind !== 'type' &&
 				specifier.imported?.type === 'Identifier' &&
 				specifier.imported.name === name &&
 				specifier.local?.name === local,
 		);
 
-		if (!has_specifier) {
-			statement.specifiers.push(create_import_specifier(name, local));
+		if (has_specifier) {
+			return;
 		}
 
+		first ??= statement;
+	}
+
+	if (first) {
+		first.specifiers.push(create_import_specifier(name, local));
 		return;
 	}
 
