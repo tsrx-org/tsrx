@@ -5433,6 +5433,63 @@ export function App() @{
 				"const Foo = 'outer';\nnamespace Outer {\n\texport function Foo() {\n\t\treturn null;\n\t}\n}\nnamespace Outer.Foo.Bar {\n\texport function App() {\n\t\treturn <Foo>ok</Foo>;\n\t}\n}\nexport const result = () => Outer.Foo.Bar.App().type === Outer.Foo;",
 				true,
 			],
+			[
+				'a function declaration the module assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nTag = Replacement;\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration that another function assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nexport function swap() {\n\tTag = Replacement;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport const result = () => {\n\tswap();\n\treturn App().props.children[0].type === Replacement;\n};',
+				true,
+			],
+			[
+				'a class declaration the module assigns by destructuring',
+				'class Box {}\nclass Other {}\nfunction App() {\n\treturn <div><Box>hello</Box></div>;\n}\n[Box] = [Other];\nexport const result = () => App().props.children[0].type === Other;',
+				true,
+			],
+			[
+				'a function declaration assigned through a typed destructuring target',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n[Tag as any] = [Replacement];\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				// Any assignment of the name counts, even to a local that shadows it
+				'a function declaration whose name another function assigns as a local',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function other() {\n\tlet Tag = 1;\n\tTag = 2;\n\treturn Tag;\n}\nexport const result = () => App().props.children[0].type === Tag;',
+				true,
+			],
+			[
+				'a function declaration a for…of head assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfor (Tag of [Replacement]);\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration a for…in head assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nfor (Tag in { replacement: 1 });\nexport const result = () => App().props.children[0].type;',
+				'replacement',
+			],
+			[
+				'a function declaration another function updates',
+				'function Tag() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\nexport function bump() {\n\tTag++;\n}\nexport const result = () => {\n\tbump();\n\treturn Number.isNaN(App().props.children[0].type);\n};',
+				true,
+			],
+			[
+				'a function declaration assigned by object destructuring with a default',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n({ Tag = Replacement } = {});\nexport const result = () => App().props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				// The style pass moves a `ref` of a `<style>` in a nested root out of the tree
+				'a function declaration a style ref assigns',
+				'function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nexport function App() @{\n\tconst content = <><style ref={() => { Tag = Replacement; }} /><span>content</span></>;\n\t<>{content}<div><Tag>hello</Tag></div></>\n}\nexport const result = () => App().props.children[1].props.children[0].type === Replacement;',
+				true,
+			],
+			[
+				'a function declaration a direct eval can assign',
+				"function Tag() {\n\treturn null;\n}\nfunction Replacement() {\n\treturn null;\n}\nfunction App() {\n\treturn <div><Tag>hello</Tag></div>;\n}\n(eval)('Tag = Replacement');\nexport const result = () => App().props.children[0].type === Replacement;",
+				true,
+			],
 		])(
 			'leaves JSX whose tag reads %s in place, reading it at render time',
 			(_case, source, expected) => {
