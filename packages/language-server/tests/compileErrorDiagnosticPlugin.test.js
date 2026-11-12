@@ -348,7 +348,6 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 	it.each([
 		['NestedUnclosedTags', 'export function C() @{\n\t<main><section>\n}\n', ['main', 'section']],
 		['NestedUnclosedList', 'export function C() @{\n\t<ul><li>a\n}\n', ['ul', 'li']],
-		['UnclosedFragment', 'export const a = <><div>;\n', ['<>', 'div']],
 		['UnclosedStyle', 'export const a = <style>.a {}\n', ['<style>']],
 		['UnclosedScript', 'export const a = <script>const b = 1;\n', ['<script>']],
 	])('reports each tag of %s at its name', async (name, source, tags) => {
@@ -380,6 +379,24 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 				.filter(({ offset }) => offset === source.indexOf(child))
 				.map(({ text }) => text),
 		).toEqual(['<']);
+	});
+
+	// Outside a template a `<>` has no mapping either: the editor's code maps no
+	// `<>`, closed or not. So a `<>` left open there also shows on its first
+	// child, and the `<div>` at its name.
+	it('reports an unclosed fragment outside a template on its first child', async () => {
+		const source = 'export const a = <><div>;\n';
+		const { document, diagnostics } = await editor_diagnostics_for('UnclosedFragment', source);
+
+		expect(
+			reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code).map(({ text, offset }) => ({
+				text,
+				offset,
+			})),
+		).toEqual([
+			{ text: '<', offset: source.indexOf('<div>') },
+			{ text: 'div', offset: source.indexOf('div') },
+		]);
 	});
 
 	// The first offset of a file is where a `<>` there has no mapping to widen
@@ -445,17 +462,28 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		]);
 	});
 
-	// The fallback for an error no mapping covers: the editor's code leaves the
-	// repeated modifier out, so the error shows on the nearest code before it,
-	// not at the start of the file.
+	// The editor's code leaves a repeated modifier out, but the compile anchors
+	// the error on the code it reads in its place, so the editor shows it on
+	// the modifier's first character, not on the code before it or at the start
+	// of the file. EmptyFragment above covers the fallback to the code before.
 	it.each([
-		['RepeatedAccessibility', 'class A {\n\tpublic public a = 1;\n}\nexport {};\n', 'TS1028'],
-		['RepeatedModifier', 'class A {\n\treadonly readonly a = 1;\n}\nexport {};\n', 'TS1030'],
-	])('reports %s on the nearest code before it', async (name, source, code) => {
+		[
+			'RepeatedAccessibility',
+			'class A {\n\tpublic public a = 1;\n}\nexport {};\n',
+			'TS1028',
+			'public a',
+		],
+		[
+			'RepeatedModifier',
+			'class A {\n\treadonly readonly a = 1;\n}\nexport {};\n',
+			'TS1030',
+			'readonly a',
+		],
+	])('reports %s on the repeated modifier', async (name, source, code, at) => {
 		const { document, diagnostics } = await editor_diagnostics_for(name, source);
 
 		expect(reported(document, diagnostics, code)).toEqual([
-			{ source: DIAGNOSTIC_SOURCE, text: 'A', offset: source.indexOf('A') },
+			{ source: DIAGNOSTIC_SOURCE, text: at[0], offset: source.indexOf(at) },
 		]);
 	});
 
