@@ -529,9 +529,18 @@ import def from './mixed';
 		);
 	});
 
-	it('removes unused imports in a module that keeps a platform flag', async () => {
+	it.each([
+		['source.removeUnusedImports', "import Button from './Button.tsrx';\n"],
+		['source.organizeImports', "import Button from './Button.tsrx';\n"],
+		[
+			'source.sortImports',
+			"import Button from './Button.tsrx';\nimport Panel from './Panel.tsrx';\n",
+		],
+	])('applies %s in a module that keeps a platform flag', async (kind, imports) => {
 		// The shared platform globals are referenced by a directive, not imported, so
-		// the module's last import stays its own and its edits still map.
+		// the module's last import stays its own and its edits still map. A module
+		// with an import or export also gets no generated `export {};`, which
+		// Organize and Sort Imports would rewrite in generated code (#1207).
 		const source = [
 			"import Panel from './Panel.tsrx';",
 			"import Button from './Button.tsrx';",
@@ -541,10 +550,8 @@ import def from './mixed';
 			'}',
 			'',
 		].join('\n');
-		const edits = await source_action_edits('Flagged.tsrx', source, 'source.removeUnusedImports');
-		expect(apply_edits(source, edits)).toBe(
-			source.replace("import Panel from './Panel.tsrx';\n", ''),
-		);
+		const edits = await source_action_edits('Flagged.tsrx', source, kind);
+		expect(apply_edits(source, edits)).toBe(imports + source.slice(source.indexOf('\nexport')));
 	});
 
 	it.each([
