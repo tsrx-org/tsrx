@@ -392,9 +392,9 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Show when={import.meta.env.DEV}>');
-			expect(code).toContain('<Match when={true}>');
-			expect(code).toContain('<Show when={import.meta.url}>');
+			expect(code).toContain('<__Show when={import.meta.env.DEV}>');
+			expect(code).toContain('<__Match when={true}>');
+			expect(code).toContain('<__Show when={import.meta.url}>');
 		});
 
 		it('switch statement → <Switch>/<Match> using ===', () => {
@@ -421,17 +421,18 @@ describe('@tsrx/solid basic', () => {
 				}
 			}`;
 			const { code } = compile(source, 'App.tsrx');
-			expect(code).toContain(
-				"import { Switch, Match, createMemo as _$_createMemo } from 'solid-js';",
+			// The printer wraps this import over several lines.
+			expect(code).toMatch(
+				/import \{\s*Switch as __Switch,\s*Match as __Match,\s*createMemo as _\$_createMemo\s*\} from 'solid-js';/,
 			);
 			// Boxed, so a thenable discriminant is compared rather than awaited.
 			expect(code).toContain('const _$_switch_value = _$_createMemo(() => [queue.shift()]);');
-			expect(code).toContain("<Match when={_$_switch_value()[0] === 'loading'}>");
-			expect(code).toContain("<Match when={_$_switch_value()[0] === 'ready'}>");
+			expect(code).toContain("<__Match when={_$_switch_value()[0] === 'loading'}>");
+			expect(code).toContain("<__Match when={_$_switch_value()[0] === 'ready'}>");
 			expect(code.match(/queue\.shift\(\)/g)).toHaveLength(1);
 
 			const type_only = compile_to_volar_mappings(source, 'App.tsrx').code;
-			expect(type_only).toContain("<Match when={queue.shift() === 'loading'}>");
+			expect(type_only).toContain("<__Match when={queue.shift() === 'loading'}>");
 			expect(type_only).not.toContain('createMemo');
 		});
 
@@ -487,7 +488,7 @@ describe('@tsrx/solid basic', () => {
 			// The block's setup becomes the branch's function child, which `<Show>`
 			// runs untracked, like a body without the `@{ }`.
 			expect(code).toMatch(
-				/<Show when=\{props\.on\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Show>/,
+				/<__Show when=\{props\.on\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/__Show>/,
 			);
 			expect(code).not.toContain('return null');
 		});
@@ -515,7 +516,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 			expect(code).toMatch(
-				/<Match when=\{kind === 'a'\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Match>/,
+				/<__Match when=\{kind === 'a'\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/__Match>/,
 			);
 			expect(code).toMatch(
 				/fallback=\{_\$_untrack\(\(\) => \{\s*const w = 2;\s*return <i>\{w\}<\/i>;\s*\}\)\}/,
@@ -592,7 +593,7 @@ describe('@tsrx/solid basic', () => {
 				/fallback=\{\(_tsrx_error, reset\) => \{\s*let err = _tsrx_error\(\);\s*return _\$_untrack\(\(\) => \{\s*const f = 6;\s*return <i>\{f\}<\/i>;\s*\}\);\s*\}\}/,
 			);
 			expect(code).toMatch(
-				/>\{_\$_untrack\(\(\) => \{\s*const e = 5;\s*return <i>\{e\}<\/i>;\s*\}\)\}<\/Errored>/,
+				/>\{_\$_untrack\(\(\) => \{\s*const e = 5;\s*return <i>\{e\}<\/i>;\s*\}\)\}<\/__Errored>/,
 			);
 		});
 

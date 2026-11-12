@@ -3618,15 +3618,14 @@ export function App() @{
 					.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
 				expect(redeclarations).toEqual([]);
 				// A target can import several generated names from one source in a
-				// single declaration.
-				const import_line = code
-					.split('\n')
-					.find(
-						(line) =>
-							line.startsWith('import {') &&
-							line.includes(` ${generated} as __${generated}`) &&
-							line.endsWith(` from '${sources[generated]}';`),
-					);
+				// single declaration, which the printer may wrap over several lines.
+				const import_line = [...code.matchAll(/^import \{([^}]*)\} from '([^']+)';$/gm)].find(
+					(match) =>
+						match[2] === sources[generated] &&
+						match[1]
+							.split(',')
+							.some((specifier) => specifier.trim() === `${generated} as __${generated}`),
+				);
 				expect(import_line, `a value import of ${generated} as __${generated}`).toBeDefined();
 				expect(code).toContain(`<__${generated} `);
 				expect(code).not.toMatch(new RegExp(`<${generated}[\\s>]`));

@@ -1684,7 +1684,7 @@ export function Card(${params}: any) @{
 		);
 
 		expect(errors).toEqual([]);
-		expect(code).toContain("<VaporFor in={rows} getKey={([first, second = 'none']) => first}>");
+		expect(code).toContain("<__VaporFor in={rows} getKey={([first, second = 'none']) => first}>");
 		expect(code).toMatch(
 			/const _\$_vapor_bindings_1 = _\$_vapor_computed\(\(\) => \{\s*const \[first, second = 'none'\] = __vapor_item\.value;\s*return \{ first, second \};/,
 		);
