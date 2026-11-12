@@ -38,6 +38,7 @@ import {
 	lowerSpreadRefBags as lower_spread_ref_bags,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
+	sourceMentionsIdentifier as source_mentions_identifier,
 	returnValueBodyToExpression as return_value_body_to_expression,
 	SPREAD_REF_BAGS_INTERNAL_NAME,
 	clone_ast_node,
@@ -2484,7 +2485,7 @@ function create_solid_spread_props_name(transform_context) {
 			name = `_tsrx_spread_props_${transform_context.local_statement_component_index}`;
 		}
 		// A name the author wrote anywhere could be shadowed or redeclared
-	} while (new RegExp(`(?<![\\w$])${name}(?![\\w$])`).test(transform_context.source));
+	} while (source_mentions_identifier(transform_context.source, name));
 	return name;
 }
 

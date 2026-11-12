@@ -2143,6 +2143,262 @@ export function Card(${params}: any) @{
 		});
 	});
 
+	describe('declares the catch helper of a component inside another scope', () => {
+		/** @param {string} read */
+		const try_block = (read) => `@try {
+						<p>{'ready'}</p>
+					} @pending {
+						<p>{'loading'}</p>
+					} @catch (error) {
+						<p>{${read}}</p>
+					}`;
+		const helper =
+			'const App__StatementBodyHook1 = defineVaporComponent(function App__StatementBodyHook1(';
+
+		it.each([
+			[
+				'that reads only the enclosing function',
+				`export function makeApp(label: string) {
+					function App() @{
+						${try_block('label')}
+					}
+					return App;
+				}`,
+				'\tconst App = defineVaporComponent(function App() {',
+			],
+			[
+				'that reads its own catch parameter and locals',
+				`export function makeApp() {
+					function App() @{
+						${try_block('(error as Error).message').replace(
+							'<p>{(error as Error).message}</p>',
+							'const message = (error as Error).message;\n<p>{message}</p>',
+						)}
+					}
+					return App;
+				}`,
+				'\tconst App = defineVaporComponent(function App() {',
+			],
+			[
+				'in a namespace',
+				`export namespace Views {
+					export function App() @{
+						${try_block('(error as Error).message')}
+					}
+				}`,
+				'\texport const App = defineVaporComponent(function App() {',
+			],
+		])('once, beside the component, when it captures nothing: %s', (_label, source, component) => {
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code).toContain(`\n\t${helper}`);
+			expect(code.indexOf(helper)).toBeLessThan(code.indexOf(component));
+			expect(code).not.toContain(`\t\t${helper}`);
+		});
+
+		it.each([
+			[
+				'a setup local',
+				`export function makeApp() {
+					function App() @{
+						const suffix = '!';
+						${try_block('suffix')}
+					}
+					return App;
+				}`,
+			],
+			[
+				'a prop',
+				`export function makeApp() {
+					function App(props: { name: string }) @{
+						${try_block('props.name')}
+					}
+					return App;
+				}`,
+			],
+			[
+				'a parameter of a callback in the component',
+				`export function makeApp() {
+					function App() @{
+						const row = (x: string) => <div>${try_block('x')}</div>;
+						<>{row('a')}</>
+					}
+					return App;
+				}`,
+			],
+			[
+				'the parameter of an expression-bodied arrow that holds the component',
+				`export const makeApp = (label: string) =>
+					function App() @{
+						${try_block('label')}
+					};`,
+			],
+			[
+				'the name of the function expression that is the component',
+				`export function makeApp() {
+					return function App() @{
+						${try_block('App.name')}
+					};
+				}`,
+			],
+			[
+				'an enum declared in the component',
+				`export function makeApp() {
+					function App() @{
+						enum Tone {
+							Loud = 'loud',
+						}
+						${try_block('Tone.Loud')}
+					}
+					return App;
+				}`,
+			],
+			[
+				'a type alias declared in the component',
+				`export function makeApp() {
+					function App() @{
+						type Label = string;
+						${try_block('(error as Label)')}
+					}
+					return App;
+				}`,
+			],
+			[
+				'an interface declared in the component',
+				`export function makeApp() {
+					function App() @{
+						interface Failure {
+							message: string;
+						}
+						${try_block('(error as Failure).message')}
+					}
+					return App;
+				}`,
+			],
+			[
+				'a type parameter of the component',
+				`export function makeApp() {
+					function App<T>() @{
+						${try_block('(error as T)')}
+					}
+					return App;
+				}`,
+			],
+			[
+				'nothing, in a loop body without braces',
+				`export function makeApps(labels: string[]) {
+					const apps: unknown[] = [];
+					for (const label of labels) apps.push(function App() @{
+						${try_block('label')}
+					});
+					return apps;
+				}`,
+			],
+			[
+				'nothing, in an if body without braces',
+				`export function makeApps(apps: unknown[]) {
+					if (apps.length === 0) apps.push(function App() @{
+						${try_block('(error as Error).message')}
+					});
+				}`,
+			],
+			[
+				'nothing, in a labeled statement',
+				`export function makeApps(apps: unknown[]) {
+					register: apps.push(function App() @{
+						${try_block('(error as Error).message')}
+					});
+				}`,
+			],
+			[
+				'nothing, in a switch case test',
+				`export function pick(kind: unknown) {
+					switch (kind) {
+						case function App() @{
+							${try_block('(error as Error).message')}
+						}:
+							break;
+					}
+				}`,
+			],
+			[
+				'a setup local through a direct eval',
+				`export function makeApp() {
+					function App() @{
+						const secret = 'secret';
+						${try_block("eval('secret')")}
+					}
+					return App;
+				}`,
+			],
+		])('in the setup when it reads %s', (_label, source) => {
+			const { code } = compile(source, 'App.tsrx');
+
+			// Declared after the component starts, so in its setup.
+			const component_start = code.search(/defineVaporComponent\(function App[<(]/);
+			expect(component_start).toBeGreaterThan(-1);
+			expect(code.indexOf(helper)).toBeGreaterThan(component_start);
+		});
+
+		it.each([
+			[
+				'a static method that reads a private field',
+				`export function make() {
+					class Holder {
+						static #m = 'boom';
+						static App() @{
+							${try_block('Holder.#m')}
+						}
+					}
+					return Holder;
+				}`,
+				'class Holder {',
+			],
+			[
+				'a method of a named class expression that reads the class name',
+				`export function make() {
+					const K = class Inner {
+						static v = 'v';
+						App = function App() @{
+							${try_block('Inner.v')}
+						};
+					};
+					return K;
+				}`,
+				'class Inner {',
+			],
+		])('inside the class for a component in %s', (_label, source, class_start) => {
+			const { code } = compile(source, 'App.tsrx');
+
+			// A helper before the class can't read its private names or its own name.
+			expect(code.search(/const \w+__StatementBodyHook1 = /)).toBeGreaterThan(
+				code.indexOf(class_start),
+			);
+		});
+
+		it('beside the component in a static block of a class', () => {
+			const { code } = compile(
+				`export function make(label: string) {
+					let App;
+					class Holder {
+						static {
+							App = function App() @{
+								${try_block('label')}
+							};
+						}
+					}
+					return [Holder, App];
+				}`,
+				'App.tsrx',
+			);
+
+			// The static block has its own statement list, inside the class.
+			const helper_start = code.indexOf(helper);
+			expect(helper_start).toBeGreaterThan(code.indexOf('static {'));
+			expect(helper_start).toBeLessThan(code.indexOf('App = defineVaporComponent(function App('));
+		});
+	});
+
 	it('keeps try/pending/catch Suspense lowering valid in type-only output', () => {
 		const source = `import { defineVaporAsyncComponent } from 'vue';
 

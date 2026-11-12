@@ -858,7 +858,10 @@ export function createJsxTransform(platform) {
 		if (type_only_style_anchors.length > 0) {
 			transformed_program.body.unshift(...type_only_style_anchors);
 		}
-		const expanded = expand_component_helpers(transformed_program);
+		let expanded = expand_component_helpers(transformed_program);
+		if (transform_context.has_local_helpers) {
+			expanded = expand_local_component_helpers(expanded);
+		}
 
 		// Lower any `@{ … }` code blocks left in generated helper bodies, so every
 		// `@{ … }` block / `@`-directive has been lowered to its final closure /
@@ -1385,23 +1388,84 @@ function create_helper_name(helper_state, suffix) {
 /**
  * @param {string} base_name
  * @param {boolean} [local] whether the component is inside another function
+ *   or a namespace
+ * @param {AST.Function} [component] a local component whose helpers can be
+ *   declared beside it (see `has_statement_list_beside`)
  * @returns {JsxHelperState}
  */
-function create_helper_state(base_name, local = false) {
+function create_helper_state(base_name, local = false, component) {
 	return {
 		base_name,
 		next_id: 0,
 		helpers: [],
 		statics: [],
 		local,
+		...(component ? { component } : null),
 	};
 }
 
 /**
+ * Whether a node sits in a statement list of its own enclosing function with
+ * nothing in between that owns a scope or a statement position, so a
+ * declaration put ahead of the statement that holds it sees every binding the
+ * node sees outside its own scope. A component in an expression-bodied arrow,
+ * in the body of a `for`, `while` or `if` without braces, in a labeled
+ * statement, in a class outside a static block, or in a `switch` case's test
+ * has none.
+ *
+ * @param {AST.Node} node
+ * @param {AST.Node[]} path the node's ancestors, which can end with the node itself
+ * @returns {boolean}
+ */
+function has_statement_list_beside(node, path) {
+	// The path can end with the node, or with the node it was copied from.
+	const last = path.at(-1);
+	const ends_with_node = last === node || (last?.type === node.type && last?.start === node.start);
+	let child = ends_with_node ? /** @type {AST.Node} */ (last) : node;
+	for (let index = path.length - (ends_with_node ? 2 : 1); index >= 0; index -= 1) {
+		const ancestor = path[index];
+		if (ancestor.type === 'SwitchCase') {
+			return ancestor.consequent.includes(/** @type {AST.Statement} */ (child));
+		}
+		if (is_statement_list_owner(ancestor, 'body')) return true;
+		if (is_function_node(ancestor) || HOIST_BARRIER_TYPES.has(ancestor.type)) return false;
+		child = ancestor;
+	}
+	return false;
+}
+
+/**
+ * Nodes a helper can't be moved out of: statements whose parts aren't
+ * statement lists of the enclosing function, and classes, whose private names
+ * and own name are bound only inside them.
+ */
+const HOIST_BARRIER_TYPES = new Set([
+	'IfStatement',
+	'ForStatement',
+	'ForInStatement',
+	'ForOfStatement',
+	'WhileStatement',
+	'DoWhileStatement',
+	'LabeledStatement',
+	'WithStatement',
+	'CatchClause',
+	'ClassDeclaration',
+	'ClassExpression',
+	'ClassBody',
+]);
+
+/**
  * @param {JsxHelperState} helper_state
- * @returns {{ generated_helpers: AST.Statement[], generated_statics: AST.Statement[] } | null}
+ * @returns {{ generated_helpers: AST.Statement[], generated_statics: AST.Statement[] } | { generated_local_helpers: AST.Statement[] } | null}
  */
 function create_generated_helper_metadata(helper_state) {
+	if (helper_state.local) {
+		// Read back by `expand_local_component_helpers`, which puts them beside
+		// the component instead of at module level.
+		return helper_state.helpers.length > 0
+			? { generated_local_helpers: helper_state.helpers }
+			: null;
+	}
 	if (helper_state.helpers.length === 0 && helper_state.statics.length === 0) {
 		return null;
 	}
@@ -1631,7 +1695,7 @@ function lower_jsx_code_block_function_body(node) {
  * @param {{ nativeBody?: boolean }} [options]
  * @returns {AST.Node}
  */
-function transform_native_tsrx_function(node, { next, state }, { nativeBody = false } = {}) {
+function transform_native_tsrx_function(node, { next, state, path }, { nativeBody = false } = {}) {
 	// Statics and helper components reach module level through the top-level
 	// statement that holds the component, and `expand_component_helpers` finds
 	// them only through nodes that are not functions. A component inside
@@ -1639,7 +1703,11 @@ function transform_native_tsrx_function(node, { next, state }, { nativeBody = fa
 	// them in place.
 	const helper_state =
 		state.helper_state ||
-		create_helper_state(get_function_helper_base_name(node), !!state.in_local_helper_scope);
+		create_helper_state(
+			get_function_helper_base_name(node),
+			!!state.in_local_helper_scope,
+			state.in_local_helper_scope && has_statement_list_beside(node, path) ? node : undefined,
+		);
 	const saved_helper_state = state.helper_state;
 	const saved_bindings = state.available_bindings;
 
@@ -2890,6 +2958,170 @@ function expand_component_helpers(program) {
 }
 
 /**
+ * Whether a helper of a component inside another function or a namespace
+ * reads nothing from the component's scope, so it can be declared beside the
+ * component. Its props may only be its own transient bindings (an `@catch`
+ * parameter), and its body may name no binding the component declares
+ * outside the helper's source.
+ *
+ * @param {AST.Node[]} body_nodes
+ * @param {AST.Identifier[]} helper_bindings
+ * @param {Set<string>} transient_bindings
+ * @param {AST.NodeWithLocation | undefined} source_node
+ * @param {AST.Function} component
+ * @returns {boolean}
+ */
+function helper_captures_nothing(
+	body_nodes,
+	helper_bindings,
+	transient_bindings,
+	source_node,
+	component,
+) {
+	if (!source_node || !has_location(source_node)) return false;
+	if (helper_bindings.some((binding) => !transient_bindings.has(binding.name))) return false;
+	// A direct `eval` can read any binding of the component by name.
+	if (calls_direct_eval(component)) return false;
+	/** @type {Map<string, AST.Identifier>} */
+	const declared = new Map();
+	// A function expression's own name is bound inside it.
+	if (component.type !== 'ArrowFunctionExpression' && component.id) {
+		declared.set(component.id.name, component.id);
+	}
+	collect_declared_bindings(component.typeParameters, declared, source_node);
+	for (const param of component.params) {
+		collect_declared_bindings(param, declared, source_node);
+	}
+	collect_declared_bindings(component.body, declared, source_node);
+	return !body_nodes.some((node) => references_scope_bindings(node, declared));
+}
+
+/**
+ * Whether `node` calls `eval` directly anywhere, nested functions included.
+ *
+ * @param {AST.Node | null | undefined} node
+ * @returns {boolean}
+ */
+function calls_direct_eval(node) {
+	if (!node || typeof node !== 'object') return false;
+	if (
+		node.type === 'CallExpression' &&
+		node.callee.type === 'Identifier' &&
+		node.callee.name === 'eval'
+	) {
+		return true;
+	}
+	return child_nodes(node).some(calls_direct_eval);
+}
+
+/**
+ * Every binding declared in `node`, at any depth and in nested functions too,
+ * except those declared inside `skip`.
+ *
+ * @param {AST.Node | null | undefined} node
+ * @param {Map<string, AST.Identifier>} bindings
+ * @param {AST.NodeWithLocation} skip
+ * @returns {void}
+ */
+function collect_declared_bindings(node, bindings, skip) {
+	if (!node || typeof node !== 'object') return;
+	if (has_location(node) && node.start >= skip.start && node.end <= skip.end) return;
+
+	/** @type {AST.Node[]} */
+	const patterns = [];
+	if (node.type === 'VariableDeclarator') patterns.push(node.id);
+	else if (node.type === 'CatchClause' && node.param) patterns.push(node.param);
+	else if (is_function_node(node)) {
+		if (node.type !== 'ArrowFunctionExpression' && node.id) patterns.push(node.id);
+		patterns.push(...node.params);
+	} else if (
+		(node.type === 'ClassDeclaration' ||
+			node.type === 'ClassExpression' ||
+			node.type === 'TSEnumDeclaration' ||
+			node.type === 'TSModuleDeclaration' ||
+			node.type === 'TSTypeAliasDeclaration' ||
+			node.type === 'TSInterfaceDeclaration') &&
+		node.id
+	) {
+		// Types count too: a helper declared outside the component can't name them.
+		patterns.push(/** @type {AST.Node} */ (node.id));
+	} else if (node.type === 'TSTypeParameter') {
+		patterns.push(/** @type {AST.Node} */ (/** @type {unknown} */ (node.name)));
+	}
+	for (const pattern of patterns) collect_pattern_bindings(pattern, bindings);
+
+	for (const child of child_nodes(node)) {
+		collect_declared_bindings(child, bindings, skip);
+	}
+}
+
+/**
+ * Put the helpers declared beside a component inside another function or a
+ * namespace (see `create_hook_safe_helper`) ahead of the statement that holds
+ * the component, in the statement list nearest to it.
+ *
+ * @param {AST.Program} program
+ * @returns {AST.Program}
+ */
+function expand_local_component_helpers(program) {
+	/** @param {AST.Node} node */
+	const visit = (node) => {
+		const owner = /** @type {AST.TraversableAstNode} */ (node);
+		for (const key of ['body', 'consequent']) {
+			const list = owner[key];
+			if (!Array.isArray(list) || !is_statement_list_owner(node, key)) continue;
+			owner[key] = list.flatMap((statement) => {
+				const helpers = collect_local_component_helpers(statement);
+				return helpers.length > 0 ? [...helpers, statement] : [statement];
+			});
+		}
+		for (const child of child_nodes(node)) visit(child);
+	};
+	visit(program);
+	return program;
+}
+
+/**
+ * @param {AST.Node} node
+ * @param {string} key
+ * @returns {boolean}
+ */
+function is_statement_list_owner(node, key) {
+	if (key === 'consequent') return node.type === 'SwitchCase';
+	return (
+		node.type === 'Program' ||
+		node.type === 'BlockStatement' ||
+		node.type === 'StaticBlock' ||
+		node.type === 'TSModuleBlock'
+	);
+}
+
+/**
+ * The local helpers of the components a statement holds outside any nested
+ * statement list.
+ *
+ * @param {AST.Node} statement
+ * @returns {AST.Statement[]}
+ */
+function collect_local_component_helpers(statement) {
+	/** @type {AST.Statement[]} */
+	const helpers = [];
+	/** @param {AST.Node} node */
+	const visit = (node) => {
+		const local_helpers = node.metadata?.generated_local_helpers;
+		if (local_helpers) {
+			helpers.push(...local_helpers);
+			return;
+		}
+		for (const child of child_nodes(node)) {
+			if (!is_statement_list_owner(child, 'body') && child.type !== 'SwitchCase') visit(child);
+		}
+	};
+	visit(statement);
+	return helpers;
+}
+
+/**
  * Generated helper metadata can be appended after the main transformer walk.
  * If one of those helpers contains a statement-container body, lower it before
  * the printer sees the helper subtree.
@@ -3944,10 +4176,33 @@ export function create_hook_safe_helper(body_nodes, source_node, transform_conte
 	);
 
 	if (!helper_state) {
+		const declaration = create_helper_declaration(
+			component_id,
+			helper_fn,
+			source_node,
+			transform_context,
+		);
+		const local_state = transform_context.helper_state;
+		if (
+			local_state?.component &&
+			helper_captures_nothing(
+				body_nodes,
+				helper_bindings,
+				transient_bindings,
+				source_node,
+				local_state.component,
+			)
+		) {
+			// Declared once beside the component, as at module level, rather than
+			// in its setup, where each instance would define it again.
+			local_state.helpers.push(declaration);
+			transform_context.has_local_helpers = true;
+			return { setup_statements: [], component_element };
+		}
 		return {
 			setup_statements: [
 				...aliases.flatMap((alias) => (alias ? [alias.declaration] : [])),
-				create_helper_declaration(component_id, helper_fn, source_node, transform_context),
+				declaration,
 			],
 			component_element,
 		};
@@ -6262,7 +6517,7 @@ function create_spread_props_name(transform_context) {
  * @param {string} name a name of identifier characters only
  * @returns {boolean}
  */
-function source_mentions_identifier(source, name) {
+export function source_mentions_identifier(source, name) {
 	// `$` is an identifier character and a regex anchor.
 	const escaped = name.replace(/\$/g, '\\$');
 	return new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`).test(source);

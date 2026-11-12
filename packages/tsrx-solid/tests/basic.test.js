@@ -1396,6 +1396,31 @@ describe('@tsrx/solid basic', () => {
 			expect(type_only).not.toContain('spread_ref_bags');
 		});
 
+		it.each(['App', 'App$'])(
+			'names the spread temporary in a branch of %s apart from an authored binding of that name',
+			(component) => {
+				// A lone spread keeps its `ref` as written; two spreads beside a `ref`
+				// still go through a named `spread_ref_bags` group.
+				const { code } = compile(
+					`export function ${component}(props: any) @{
+						const ${component}__spread_props1 = 'mine';
+						<section>
+							@if (props.on) {
+								<div {...props.rest} {...props.more} ref={props.r} title={${component}__spread_props1} />
+							}
+						</section>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(code).toContain(
+					`let ${component}__spread_props2 = __spread_ref_bags(() => props.rest, () => props.more);`,
+				);
+				expect(code).toContain(`title={${component}__spread_props1}`);
+				expect(code).not.toContain(`let ${component}__spread_props1 `);
+			},
+		);
+
 		it('keeps the ref as written beside a single host spread', () => {
 			const template = `function App() @{
 					let input;

@@ -66,6 +66,8 @@ export interface JsxTransformContext {
 	stylesheets: AST.CSS.StyleSheet[];
 	type_only_style_anchors: AST.Statement[];
 	helper_state: JsxHelperState | null;
+	/** Set once a helper is declared beside a component inside another function. */
+	has_local_helpers?: boolean;
 	available_bindings: Map<string, AST.Identifier>;
 	/**
 	 * Whether each tag in the module can be read where a static hoisted out of

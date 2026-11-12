@@ -237,6 +237,8 @@ export interface BaseNodeMetaData {
 	generated_helpers?: AST.Statement[];
 	/** Module-level static JSX hoisted out of a component. */
 	generated_statics?: AST.Statement[];
+	/** Helper components declared beside a component inside another function; read back by `expand_local_component_helpers`. */
+	generated_local_helpers?: AST.Statement[];
 	has_unmappable_value?: boolean;
 	synthetic_ref?: boolean;
 	tsrx_reactive_block?: boolean;
@@ -2002,6 +2004,8 @@ export interface JsxHelperState {
 	 * components can't reach module level, so they stay in place.
 	 */
 	local?: boolean;
+	/** The component, when `local`: a helper that reads nothing of its scope is declared beside it. */
+	component?: AST.Function;
 }
 
 /** Override zimmerframe types and provide our own */
