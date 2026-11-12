@@ -40,6 +40,26 @@ function diagnostic_codes(result) {
 	return result.errors.map((error) => error.code);
 }
 
+/** A class with static, static readonly and instance index signatures. */
+const STATIC_INDEX_SIGNATURES = `export class Registry {
+	static [key: string]: number;
+	static readonly [index: number]: string;
+	[symbol: symbol]: boolean;
+}
+`;
+
+/**
+ * esrap writes `readonly` but not `static` before an index signature (#1253).
+ * @param {string} code
+ */
+function expect_static_index_signatures(code) {
+	expect(code).toContain('static [key: string]: number');
+	expect(code).toContain('static readonly [index: number]: string');
+	expect(code).not.toContain('static [symbol: symbol]');
+	expect(code).not.toMatch(/static\s+static/);
+	expect(virtual_parse_diagnostics(code)).toEqual([]);
+}
+
 /**
  * Markup a loose compile recovers and reports (#978): its label, the source,
  * the error, and the closing tag the editor's code adds.
@@ -189,6 +209,14 @@ function virtual_semantic_diagnostics(code, extra_options = {}) {
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] class index signatures in virtual code`, () => {
+		it('keeps static on a class index signature', () => {
+			expect_static_index_signatures(
+				compile_to_volar_mappings(STATIC_INDEX_SIGNATURES, 'App.tsrx', { loose: true }).code,
+			);
+		});
+	});
+
 	describe(`[${name}] control flow followed by another output node`, () => {
 		// A code block renders one node. The parser reports the second output node and
 		// keeps the control flow before it among the setup statements, which the loose
@@ -3618,6 +3646,10 @@ export function App() @{
 	}
 
 	describe(`[${name}] TypeScript output`, () => {
+		it('keeps static on a class index signature', () => {
+			expect_static_index_signatures(compile(STATIC_INDEX_SIGNATURES, 'App.tsrx').code);
+		});
+
 		it('collects unclosed tag diagnostics without loose recovery silence', () => {
 			const result = compile(
 				`function App() @{

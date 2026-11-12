@@ -800,6 +800,35 @@ it('reports errors on a whole call or parenthesized expression in .tsrx files', 
 	}
 });
 
+it('keeps a static index signature static in .tsrx files and their declarations', () => {
+	const lines = [
+		'export class Registry { static [key: string]: number; static [key: string]: string }',
+		'export class Store { static [key: string]: number; static count = 1 }',
+		"export const missing = new Store()['y'];",
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	// Two static signatures are not duplicates, and an instance has no signature.
+	expect(result.output).not.toContain('TS2374');
+	expect(result.output).toContain(
+		`layout.tsrx(6,${lines[2].indexOf('new') + 1}): error TS7053: Element implicitly has an 'any' type`,
+	);
+
+	run_cli('native', [
+		'-p',
+		'tsconfig.json',
+		'--declaration',
+		'--emitDeclarationOnly',
+		'--outDir',
+		'dist',
+	]);
+	const declaration = fs.readFileSync(path.join(workspace, 'dist', 'layout.d.ts'), 'utf8');
+	expect(declaration).toContain('static [key: string]: number;');
+	expect(declaration).toContain('static [key: string]: string;');
+	expect(declaration).not.toMatch(/^\s*\[key: string\]/m);
+});
+
 it('reports errors on a bare this in .tsrx files', () => {
 	const line =
 		'export function readValue() { return this; } class Base {} export class Derived extends Base { constructor() { this; super(); } }';
