@@ -1,5 +1,5 @@
 /** @import {CodeMapping} from '@tsrx/core/types' */
-/** @import {SpanMapping} from './protocol.js' */
+/** @import {SpanMapping, VerificationMapping} from './protocol.js' */
 
 import { SpanMapFeature, SpanMapKind } from './protocol.js';
 
@@ -250,6 +250,41 @@ function is_position_only(data) {
 		!data.structure &&
 		!data.format
 	);
+}
+
+/**
+ * The transform's own mappings for diagnostics, for command-line checkers (the
+ * `verificationMappings` mapper option): every mapping whose `data.verification`
+ * is set, in the transform's order, with its offsets and lengths as emitted.
+ * This is what `tsrx-tsc` hands Volar, so Volar's `SourceMap#toSourceRange`
+ * (with `fallbackToAnyMatch`) over it maps a diagnostic exactly as `tsrx-tsc`
+ * does. The grouping matters: Volar maps a range through one mapping that holds
+ * both of its ends, such as the start and end points of a literal, and tries
+ * mappings in this order, narrower first. When any mapping's verification is a
+ * `shouldReport` callback, the result is empty: the callback depends on the
+ * diagnostic and doesn't serialize, and leaving out only that mapping could
+ * let an overlapping one map a diagnostic somewhere else.
+ * @param {readonly CodeMapping[]} mappings
+ * @returns {VerificationMapping[]}
+ */
+export function to_verification_mappings(mappings) {
+	/** @type {VerificationMapping[]} */
+	const result = [];
+	for (const mapping of mappings) {
+		const verification = mapping.data?.verification;
+		if (!verification) continue;
+		if (typeof verification === 'object' && typeof verification.shouldReport === 'function') {
+			return [];
+		}
+		result.push({
+			sourceOffsets: [...mapping.sourceOffsets],
+			generatedOffsets: [...mapping.generatedOffsets],
+			lengths: [...mapping.lengths],
+			generatedLengths: [...(mapping.generatedLengths ?? mapping.lengths)],
+			data: { verification: true },
+		});
+	}
+	return result;
 }
 
 /**
