@@ -43,7 +43,7 @@ const SOLID_VITE_CONFIG_HTML = [
 ].join('\n');
 
 const VUE_INSTALL_HTML = [
-	'<span class="ln">1</span> <span class="fn">pnpm</span> <span class="prop">install</span> <span class="str">@tsrx/vue</span> <span class="str">@tsrx/vite-plugin-vue</span> <span class="str">vue</span> <span class="str">vue-jsx-vapor</span>',
+	'<span class="ln">1</span> <span class="fn">pnpm</span> <span class="prop">install</span> <span class="str">@tsrx/vue</span> <span class="str">@tsrx/vite-plugin-vue</span> <span class="str">"vue@^3.6.0-0"</span> <span class="str">vue-jsx-vapor</span>',
 ].join('\n');
 
 const VUE_VITE_CONFIG_HTML = [
@@ -90,7 +90,7 @@ const SOLID_RSPACK_INSTALL_HTML = [
 ].join('\n');
 
 const VUE_RSPACK_INSTALL_HTML = [
-	'<span class="ln">1</span> <span class="fn">pnpm</span> <span class="prop">install</span> <span class="str">@tsrx/vue</span> <span class="str">@tsrx/rspack-plugin-vue</span> <span class="str">vue</span> <span class="str">vue-jsx-vapor</span>',
+	'<span class="ln">1</span> <span class="fn">pnpm</span> <span class="prop">install</span> <span class="str">@tsrx/vue</span> <span class="str">@tsrx/rspack-plugin-vue</span> <span class="str">"vue@^3.6.0-0"</span> <span class="str">vue-jsx-vapor</span>',
 ].join('\n');
 
 const REACT_RSPACK_CONFIG_HTML = [
@@ -183,7 +183,7 @@ const SOLID_BUN_CONFIG_HTML = [
 ].join('\n');
 
 const VUE_BUN_INSTALL_HTML = [
-	'<span class="ln">1</span> <span class="fn">pnpm</span> <span class="prop">install</span> <span class="str">@tsrx/vue</span> <span class="str">@tsrx/bun-plugin-vue</span> <span class="str">vue</span> <span class="str">vue-jsx-vapor</span>',
+	'<span class="ln">1</span> <span class="fn">pnpm</span> <span class="prop">install</span> <span class="str">@tsrx/vue</span> <span class="str">@tsrx/bun-plugin-vue</span> <span class="str">"vue@^3.6.0-0"</span> <span class="str">vue-jsx-vapor</span>',
 ].join('\n');
 
 const VUE_BUN_CONFIG_HTML = [
@@ -710,7 +710,7 @@ export function GettingStartedPage() @{
 							<h2 class="section-heading">Vue + Vite</h2>
 							<p class="section-body">
 								Install the Vue compiler, its Vite plugin, the Vue runtime, and the Vapor JSX
-								plugin:
+								plugin. Vapor needs Vue 3.6 or later, so name the version:
 							</p>
 							<pre class="code-block">
 								<code innerHTML={VUE_INSTALL_HTML} />
@@ -744,7 +744,8 @@ export function GettingStartedPage() @{
 						<section class="doc-section" id="vue-rspack">
 							<h2 class="section-heading">Vue + Rspack</h2>
 							<p class="section-body">
-								Install the Vue compiler, the Rspack plugin, the Vue runtime, and Vue Vapor JSX:
+								Install the Vue compiler, the Rspack plugin, the Vue runtime, and Vue Vapor JSX.
+								Vapor needs Vue 3.6 or later, so name the version:
 							</p>
 							<pre class="code-block">
 								<code innerHTML={VUE_RSPACK_INSTALL_HTML} />
@@ -767,7 +768,8 @@ export function GettingStartedPage() @{
 						<section class="doc-section" id="vue-bun">
 							<h2 class="section-heading">Vue + Bun</h2>
 							<p class="section-body">
-								Install the Vue compiler, the Bun plugin, the Vue runtime, and Vue Vapor JSX:
+								Install the Vue compiler, the Bun plugin, the Vue runtime, and Vue Vapor JSX. Vapor
+								needs Vue 3.6 or later, so name the version:
 							</p>
 							<pre class="code-block">
 								<code innerHTML={VUE_BUN_INSTALL_HTML} />

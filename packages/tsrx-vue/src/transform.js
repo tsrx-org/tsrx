@@ -100,8 +100,8 @@ const vue_platform = {
 		},
 		renderForOf: (node, loop_params, body_statements, ctx) =>
 			render_for_of_as_vapor_for(node, loop_params, body_statements, ctx),
-		createPendingBoundary(try_content, fallback_content) {
-			return create_vapor_pending_boundary(try_content, fallback_content);
+		createPendingBoundary(try_content, fallback_content, ctx) {
+			return create_vapor_pending_boundary(try_content, fallback_content, ctx);
 		},
 		createErrorFallbackComponent(catch_body_nodes, catch_params, ctx, node) {
 			// Only the runtime `@pending` boundary renders the component (see
@@ -129,6 +129,7 @@ const vue_platform = {
 			const suspense = create_vapor_pending_boundary_from_default_slot(
 				default_slot,
 				fallback_content,
+				ctx,
 			);
 			const boundary = create_vapor_error_boundary(suspense, fallback_fn);
 			for (const statement of fallback_component?.setup_statements ?? []) {
@@ -164,23 +165,29 @@ export const transform = createJsxTransform(vue_platform);
 /**
  * @param {ESTreeJSX.JSXRenderNode} try_content
  * @param {ESTreeJSX.JSXRenderNode} fallback_content
+ * @param {TransformContext} ctx
  * @returns {AST.TSRXJSXElement}
  */
-function create_vapor_pending_boundary(try_content, fallback_content) {
+function create_vapor_pending_boundary(try_content, fallback_content, ctx) {
 	return create_vapor_pending_boundary_from_default_slot(
 		b.arrow([], jsx_child_to_expression(try_content)),
 		fallback_content,
+		ctx,
 	);
 }
 
 /**
  * @param {AST.ArrowFunctionExpression} default_slot
  * @param {ESTreeJSX.JSXRenderNode} fallback_content
+ * @param {TransformContext} ctx
  * @returns {AST.TSRXJSXElement}
  */
-function create_vapor_pending_boundary_from_default_slot(default_slot, fallback_content) {
+function create_vapor_pending_boundary_from_default_slot(default_slot, fallback_content, ctx) {
 	const fallback_expression = jsx_child_to_expression(fallback_content);
-	const slots_properties = [b.init('_', b.literal(1)), b.init('default', default_slot)];
+	const slots_properties = [b.init('default', default_slot)];
+	// Vue's stable-slots flag isn't a slot, so `Suspense`'s JSX slot types reject
+	// it in the type-only output.
+	if (!ctx.typeOnly) slots_properties.unshift(b.init('_', b.literal(1)));
 
 	if (fallback_expression.type !== 'Literal' || fallback_expression.value !== null) {
 		slots_properties.push(b.init('fallback', b.arrow([], fallback_expression)));

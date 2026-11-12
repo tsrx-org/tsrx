@@ -1859,7 +1859,9 @@ describe('tsrx-vue component wrapping', () => {
 
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
-runJsxTextWhitespaceRuntimeTests({ nbsp: 'kept' });
+// Vapor leaves an empty comment where a constant `@if` with a following sibling
+// was inserted.
+runJsxTextWhitespaceRuntimeTests({ nbsp: 'kept', anchors: 'empty comments' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
