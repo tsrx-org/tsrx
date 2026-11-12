@@ -229,10 +229,9 @@ export function is_component_jsx_name(name) {
 /**
  * Does this JSX subtree contain any component-shaped element (anywhere —
  * including nested under host elements or inside expression containers)?
- * Vue and Solid use this as their `canHoistStaticNode` predicate: hoisting a
- * subtree that invokes a component into a module-level constant pins that
- * component instance to module identity, which doesn't help either framework
- * the way it helps React, so it's wasted output.
+ * No built-in target calls it: Solid and Vue don't hoist static JSX at all,
+ * since their JSX evaluates to DOM nodes (#1236, #1240). It stays exported as
+ * part of `@tsrx/core`'s public API.
  *
  * @param {AST.Node | AST.Node[]} node
  * @returns {boolean}

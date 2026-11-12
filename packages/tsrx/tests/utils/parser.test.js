@@ -2683,7 +2683,8 @@ abc
 		);
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2715,7 +2716,8 @@ abc
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2759,7 +2761,8 @@ export function App() @{
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2790,7 +2793,8 @@ export function App() @{
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2817,7 +2821,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 		expect(ast.body.map((statement) => statement.type)).toEqual(['VariableDeclaration']);
 
 		const style = find_first(ast, function (node) {
@@ -2842,7 +2847,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2877,7 +2883,8 @@ export function App() @{ <div /> }`;
 		);
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const section = find_first(ast, function (node) {
 			return (
@@ -2905,7 +2912,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2930,7 +2938,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const div = find_first(ast, function (node) {
 			return (
@@ -2948,6 +2957,31 @@ export function App() @{ <div /> }`;
 		expect(child(div, 0, 'JSXStyleElement').unclosed).toBe(true);
 		expect(div.unclosed).toBeFalsy();
 		expect(div.closingElement).toBeTruthy();
+	});
+
+	// A loose parse, the editor's, recovers unclosed and mismatched markup and
+	// reports it where a collecting parse does (#978).
+	it.each([
+		['export function C() @{\n\t<div>\n}\n', 'TSRX1001'],
+		['export function C() @{\n\t<div><span></div>\n}\n', 'TSRX1002'],
+		['export function C() {\n\treturn <div>;\n}\n', 'TSRX1001'],
+		[
+			'export function C() @{\n\t<main>\n\t\t<section>\n\t\t\t<p>x\n\t\t</section>\n\t</main>\n}\n',
+			'TSRX1002',
+		],
+		['export const a = <><div>;\n', 'TSRX1001'],
+	])('reports the broken markup of %j in a loose parse, as when collecting', (source, code) => {
+		/** @type {CompileError[]} */
+		const loose = [];
+		/** @type {CompileError[]} */
+		const collected = [];
+		parseModule(source, 'App.tsrx', { loose: true, collect: true, errors: loose });
+		parseModule(source, 'App.tsrx', { collect: true, errors: collected });
+
+		/** @param {CompileError[]} errors */
+		const reported = (errors) => errors.map((error) => [error.code, error.pos, error.end]);
+		expect(new Set(loose.map((error) => error.code))).toEqual(new Set([code]));
+		expect(reported(loose)).toEqual(reported(collected));
 	});
 
 	it('parses module-scope style expressions followed by JavaScript statements', () => {
@@ -13187,6 +13221,48 @@ describe('JSX whitespace in template text', () => {
 			'export function App() @{\n\t<main>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tconst a = <div><b>1</b> 2<i /></div>;\n\t\t\t\t<p>{a}</p>\n\t\t\t}\n\t\t}\n\t</main>\n}',
 			['<b>', ' 2', '<i>'],
 		],
+		// An element in a directive header reads its text as anywhere else (#649)
+		[
+			'text before an element in an element in an @for header',
+			'export const App = () => @for (const item of [<div>Hello<b /></div>]) { <>{item}</> };',
+			['Hello', '<b>'],
+		],
+		[
+			'text before an element in an element in an @for header inside an element',
+			'export const App = () => <main>@for (const item of [<div>Hello<b /></div>]) { <>{item}</> }</main>;',
+			['Hello', '<b>'],
+		],
+		[
+			'a space after a closing tag in an element in an @for header inside an element',
+			'export const App = () => <main>@for (const item of [<div><b>1</b> 2</div>]) { <>{item}</> }</main>;',
+			['<b>', ' 2'],
+		],
+		[
+			'text before an element in an element in an @if header inside an element',
+			'export const App = () => <main>@if ([<div>Hello<b /></div>].length) { <p /> }</main>;',
+			['Hello', '<b>'],
+		],
+		[
+			'text before an element in an element in an @case test',
+			'export const App = () => <main>@switch (x) { @case <div>Hello<b /></div>: { <p /> } }</main>;',
+			['Hello', '<b>'],
+		],
+		[
+			'a `/` and a `#` in an element in an @for header inside an element',
+			'export const App = () => <main>@for (const item of [<div>5/2 #x<b /></div>]) { <>{item}</> }</main>;',
+			['5/2 #x', '<b>'],
+		],
+		// The code after a self-closing element in a header stays the header's
+		[
+			'text after an @for whose header holds a self-closing element',
+			'export const App = () => <div>@for (const item of [<b />]) { <>{item}</> } after</div>;',
+			['JSXForExpression', ' after'],
+		],
+		[
+			'text after an @if whose header holds a self-closing element',
+			'export const App = () => <div>@if (<b /> != null) { <p /> } after</div>;',
+			['JSXIfExpression', ' after'],
+		],
 		// A spread attribute's argument stays code
 		[
 			'text in an element with a spread attribute',
@@ -14335,6 +14411,29 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		]);
 	});
 
+	it('ends a return type at `asserts` before a line break, as TypeScript does (#682)', async () => {
+		await expect_thrown([
+			['function f(x): asserts\n  x {}', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'x {}'],
+			[
+				'function f(x): asserts\n  x is string {}',
+				TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+				'x is',
+			],
+			['function f(this: A): asserts\n  this {}', TS_ERRORS.TOKEN_EXPECTED, '{}'],
+		]);
+	});
+
+	it('reports an element that is a superclass without parentheses (#745)', async () => {
+		await expect_thrown([
+			['class A extends <div /> {}', TS_ERRORS.EXPRESSION_EXPECTED, '<div'],
+			['const B = class extends <></> {};', TS_ERRORS.EXPRESSION_EXPECTED, '<>'],
+		]);
+		expect(
+			as_type(parseModule('class C extends (<div />) {}', 'App.tsrx').body[0], 'ClassDeclaration')
+				.superClass,
+		).toMatchObject({ type: 'JSXElement' });
+	});
+
 	it('reports type arguments after `?.` without a call at the token after them (#884)', async () => {
 		await expect_thrown([
 			['a?.<T>`c`;', TS_ERRORS.OPTIONAL_CHAIN_TAGGED_TEMPLATE, '`c`'],
@@ -14348,6 +14447,47 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			['a?.<T>b;', TS_ERRORS.IDENTIFIER_EXPECTED, '<'],
 			['a?.<T>-1;', TS_ERRORS.IDENTIFIER_EXPECTED, '<'],
 		]);
+	});
+});
+
+describe('a `const` type parameter in a function type or a signature (#731)', () => {
+	it('parses it as TypeScript does', () => {
+		for (const source of [
+			'type F = <const T>(value: T) => T;',
+			'type C = new <const T>(value: T) => T;',
+			'interface I { <const T>(value: T): T }',
+			'interface I { new <const T>(value: T): T }',
+			'interface I { m<const T>(value: T): T }',
+			'type O = { m<const T>(value: T): T };',
+			'class A { m<const T, U>(value: T): T { return value; } }',
+		]) {
+			/** @type {CompileError[]} */
+			const errors = [];
+			const ast = parseModule(source, 'App.tsrx', { collect: true, errors, comments: [] });
+			expect(errors, source).toEqual([]);
+			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
+			expect(
+				find_first(ast, (node) => node.type === 'TSTypeParameter'),
+				source,
+			).toMatchObject({ const: true, name: { name: 'T' } });
+		}
+	});
+
+	it("still rejects one inside a method's parentheses", async () => {
+		// acorn-typescript reads type parameters after a method's `(`, which
+		// TypeScript doesn't (TS1003); `const` there stays unexpected.
+		const sources = [
+			'class A { m(<const T>x) {} }',
+			'let o = { m(<const T>x) {} };',
+			'class B { constructor(<const T>x) {} }',
+		];
+		const modes = [undefined, { collect: true, comments: [] }, { loose: true }];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+		expect(outcomes).toEqual(
+			sources.flatMap((source) => modes.map(() => thrown('TS1359', source.indexOf('<const') + 1))),
+		);
 	});
 });
 

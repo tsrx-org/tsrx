@@ -515,6 +515,34 @@ function ForKeyedSwitchApp() @{
 	</>
 }
 
+let nested_row_mounts = 0;
+
+function NestedRow({ id }: { id: string }) @{
+	const [mount] = useState(() => ++nested_row_mounts);
+
+	<li className="nested-row">{`${id}:${mount}`}</li>
+}
+
+function ForKeyedNestedForApp() @{
+	const [groups, setGroups] = useState([
+		{ id: 'a', children: ['a1', 'a2'] },
+		{ id: 'b', children: ['b1'] },
+	]);
+
+	<>
+		<ul>
+			@for (const group of groups; key group.id) {
+				@for (const child of group.children; index i) {
+					<NestedRow id={child} />
+				}
+			}
+		</ul>
+		<button className="reverse-keyed-nested-for" onClick={() => setGroups([...groups].reverse())}>
+			{'reverse'}
+		</button>
+	</>
+}
+
 // ── For-of over a Set ──
 
 function ForOverSetApp() @{
@@ -834,8 +862,8 @@ function ThrowingChild() @{
 function ErrorBoundaryApp() @{
 	@try {
 		<ThrowingChild />
-	} @catch (err: Error) {
-		<p className="caught">{err.message}</p>
+	} @catch (err) {
+		<p className="caught">{(err as Error).message}</p>
 	}
 }
 
@@ -855,9 +883,9 @@ function ErrorToggleApp() @{
 	<>
 		@try {
 			<MaybeThrow shouldThrow={fail} />
-		} @catch (err: Error, reset: () => void) {
+		} @catch (err, reset: () => void) {
 			<>
-				<p className="caught">{err.message}</p>
+				<p className="caught">{(err as Error).message}</p>
 				<button
 					className="reset"
 					onClick={() => {
@@ -905,8 +933,8 @@ function SuspenseErrorApp(props: { promise: Promise<string> }) @{
 		<AsyncChild promise={props.promise} />
 	} @pending {
 		<p className="pending">{'loading...'}</p>
-	} @catch (err: Error) {
-		<p className="caught">{err.message}</p>
+	} @catch (err) {
+		<p className="caught">{(err as Error).message}</p>
 	}
 }
 
@@ -917,9 +945,9 @@ function ErrorResetApp(props: { promise: Promise<string> }) @{
 		<AsyncChild promise={props.promise} />
 	} @pending {
 		<p className="pending">{'loading...'}</p>
-	} @catch (err: Error, reset: () => void) {
+	} @catch (err, reset: () => void) {
 		<>
-			<p className="caught">{err.message}</p>
+			<p className="caught">{(err as Error).message}</p>
 			<button className="retry" onClick={() => reset()}>
 				{'retry'}
 			</button>
@@ -940,12 +968,12 @@ function NestedTryApp() @{
 		<div className="outer">
 			@try {
 				<InnerThrow />
-			} @catch (err: Error) {
-				<p className="inner-caught">{err.message}</p>
+			} @catch (err) {
+				<p className="inner-caught">{(err as Error).message}</p>
 			}
 		</div>
-	} @catch (err: Error) {
-		<p className="outer-caught">{err.message}</p>
+	} @catch (err) {
+		<p className="outer-caught">{(err as Error).message}</p>
 	}
 }
 
@@ -978,7 +1006,7 @@ function IfInsideTryApp() @{
 			} @else {
 				<p className="branch-b">{'alternate'}</p>
 			}
-		} @catch (err: Error) {
+		} @catch (err) {
 			<p className="caught">{'error'}</p>
 		}
 		<button className="toggle" onClick={() => setShow(!show)}>
@@ -999,7 +1027,7 @@ function ForInsideTryApp() @{
 					{item}
 				</span>
 			}
-		} @catch (err: Error) {
+		} @catch (err) {
 			<p className="caught">{'error'}</p>
 		}
 		<button className="add" onClick={() => setItems([...items, 'z'])}>
@@ -1778,6 +1806,23 @@ describe('tsrx-react runtime', () => {
 		expect(
 			Array.from(container.querySelectorAll('.continue-item'), (item) => item.textContent),
 		).toEqual(['a', 'c']);
+	});
+
+	it('keeps row state with its group when a keyed loop renders a nested @for (#181)', async () => {
+		const rows = () =>
+			Array.from(container.querySelectorAll('.nested-row'), (row) => row.textContent);
+
+		nested_row_mounts = 0;
+		await render(ForKeyedNestedForApp);
+		expect(rows()).toEqual(['a1:1', 'a2:2', 'b1:3']);
+
+		// Each group's rows move with it: their keys only tell rows within a
+		// group apart.
+		await click('.reverse-keyed-nested-for');
+		expect(rows()).toEqual(['b1:3', 'a1:1', 'a2:2']);
+		expect(
+			console_error_spy?.mock.calls.some((args) => String(args[0]).includes('unique "key"')),
+		).toBe(false);
 	});
 
 	for (const [directive, App, reverse] of [

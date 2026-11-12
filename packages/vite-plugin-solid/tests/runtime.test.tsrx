@@ -1,6 +1,6 @@
 import type { MockInstance } from 'vitest';
 import type { JSX } from '@solidjs/web';
-import { createSignal, lazy } from 'solid-js';
+import { createMemo, createSignal, lazy } from 'solid-js';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
 import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace';
@@ -1190,6 +1190,118 @@ function FullyStaticApp() @{
 	</div>
 }
 
+// ── Static output rendered more than once ──
+// Solid JSX evaluates to DOM nodes, so each use of a static subtree needs a
+// node of its own.
+
+function StaticBadge() @{
+	<p class="static-badge">
+		<b>{'plain'}</b>
+	</p>
+}
+
+function StaticTwiceApp() @{
+	<div class="static-twice">
+		<StaticBadge />
+		<StaticBadge />
+	</div>
+}
+
+function StaticThriceApp() @{
+	<div class="static-thrice">
+		<StaticBadge />
+		<StaticBadge />
+		<StaticBadge />
+	</div>
+}
+
+function StaticHeaderPanel() @{
+	const [open, setOpen] = createSignal(false);
+	<>
+		<h3 class="static-panel-title">{'Panel'}</h3>
+		<button class="static-panel-toggle" onClick={() => setOpen(!open())}>
+			{open() ? 'open' : 'closed'}
+		</button>
+	</>
+}
+
+function StaticPanelsApp() @{
+	<>
+		<div class="static-panel">
+			<StaticHeaderPanel />
+		</div>
+		<div class="static-panel">
+			<StaticHeaderPanel />
+		</div>
+	</>
+}
+
+function StaticInIfApp() @{
+	const [show, setShow] = createSignal(false);
+	<div class="static-if">
+		<StaticBadge />
+		@if (show()) {
+			<>
+				<StaticBadge />
+				<span class="static-if-text">
+					<i>{'shown'}</i>
+				</span>
+			</>
+		}
+		<button class="static-if-toggle" onClick={() => setShow(!show())}>
+			{'toggle'}
+		</button>
+	</div>
+}
+
+function StaticInForApp() @{
+	const [items, setItems] = createSignal(['a', 'b', 'c']);
+	<div class="static-for">
+		<ul>
+			@for (const item of items()) {
+				<li class="static-for-row">
+					<StaticBadge />
+					<em>{'row'}</em>
+				</li>
+			}
+		</ul>
+		<button class="static-for-add" onClick={() => setItems([...items(), 'd'])}>
+			{'add'}
+		</button>
+	</div>
+}
+
+function StaticForBodyApp() @{
+	<ul class="static-for-body">
+		@for (const item of ['a', 'b', 'c']) {
+			<li class="static-for-body-row">
+				<b>{'row'}</b>
+			</li>
+		}
+	</ul>
+}
+
+function StaticIfBranch(props: { show: boolean }) @{
+	<div class="static-if-branch">
+		@if (props.show) {
+			<p class="static-if-branch-yes">
+				<b>{'yes'}</b>
+			</p>
+		} @else {
+			<p class="static-if-branch-no">{'no'}</p>
+		}
+	</div>
+}
+
+function StaticIfBranchesApp() @{
+	<>
+		<StaticIfBranch show={true} />
+		<StaticIfBranch show={true} />
+		<StaticIfBranch show={false} />
+		<StaticIfBranch show={false} />
+	</>
+}
+
 // ── Mid-template locals + interleaved statements inside element children ──
 // `.tsrx` lets you declare locals and run plain statements between JSX
 // children. The Solid transform wraps the block in an IIFE so the statements
@@ -1993,6 +2105,78 @@ describe('tsrx-solid runtime', () => {
 		expect(text('.all-static p')).toBe('Paragraph');
 	});
 
+	it('renders a static component used twice as two nodes', async () => {
+		await render(StaticTwiceApp);
+		const badges = container.querySelectorAll('.static-twice > .static-badge');
+		expect(badges.length).toBe(2);
+		expect([...badges].map((badge) => badge.textContent)).toEqual(['plain', 'plain']);
+	});
+
+	it('renders a static component used three times as three nodes', async () => {
+		await render(StaticThriceApp);
+		const badges = container.querySelectorAll('.static-thrice > .static-badge');
+		expect(badges.length).toBe(3);
+		expect([...badges].map((badge) => badge.textContent)).toEqual(['plain', 'plain', 'plain']);
+	});
+
+	it('gives each instance of a component its own static output', async () => {
+		await render(StaticPanelsApp);
+		const panels = container.querySelectorAll('.static-panel');
+		expect(panels.length).toBe(2);
+		for (const panel of panels) {
+			expect(panel.querySelector('.static-panel-title')?.textContent).toBe('Panel');
+			expect(panel.querySelector('.static-panel-toggle')?.textContent).toBe('closed');
+		}
+	});
+
+	it('renders a static component inside @if beside one outside it', async () => {
+		const badge_count = () => container.querySelectorAll('.static-if .static-badge').length;
+		await render(StaticInIfApp);
+		expect(badge_count()).toBe(1);
+		expect(container.querySelector('.static-if-text')).toBeNull();
+
+		await click('.static-if-toggle');
+		expect(badge_count()).toBe(2);
+		expect(text('.static-if-text i')).toBe('shown');
+
+		await click('.static-if-toggle');
+		expect(badge_count()).toBe(1);
+		expect(container.querySelector('.static-if-text')).toBeNull();
+
+		await click('.static-if-toggle');
+		expect(badge_count()).toBe(2);
+		expect(text('.static-if-text i')).toBe('shown');
+	});
+
+	it('renders a static component in every @for row', async () => {
+		const expect_rows = (count: number) => {
+			const rows = container.querySelectorAll('.static-for-row');
+			expect(rows.length).toBe(count);
+			for (const row of rows) {
+				expect(row.querySelector('.static-badge')?.textContent).toBe('plain');
+				expect(row.querySelector('em')?.textContent).toBe('row');
+			}
+		};
+		await render(StaticInForApp);
+		expect_rows(3);
+
+		await click('.static-for-add');
+		expect_rows(4);
+	});
+
+	it('renders a static @for body in every row', async () => {
+		await render(StaticForBodyApp);
+		const rows = container.querySelectorAll('.static-for-body > .static-for-body-row');
+		expect([...rows].map((row) => row.textContent)).toEqual(['row', 'row', 'row']);
+	});
+
+	it('renders the static @if branch of each instance', async () => {
+		await render(StaticIfBranchesApp);
+		const branches = container.querySelectorAll('.static-if-branch');
+		expect(branches.length).toBe(4);
+		expect([...branches].map((branch) => branch.textContent)).toEqual(['yes', 'yes', 'no', 'no']);
+	});
+
 	// ── Mid-template locals + interleaved statements ──
 
 	it('executes mid-template statements and keeps locals scoped to the element', async () => {
@@ -2162,6 +2346,136 @@ function SwitchPromiseApp() @{
 	}
 }
 
+// ── Fallback bodies with setup ──
+
+const fallback_runs: string[] = [];
+
+function FallbackSetupApp() @{
+	const [n, setN] = createSignal(0);
+	const [show] = createSignal(false);
+	const [mode] = createSignal('z');
+	const [items] = createSignal<string[]>([]);
+	<div>
+		@if (show()) {
+			<b />
+		} @else {
+			fallback_runs.push('else');
+			const label = `else ${n()}`;
+			<p class="else-fallback">{label}</p>
+		}
+		@if (show()) {
+			<b />
+		} @else if (show()) {
+			<i />
+		} @else {
+			fallback_runs.push('else-chain');
+			const label = `else-chain ${n()}`;
+			<p class="else-chain-fallback">{label}</p>
+		}
+		@switch (mode()) {
+			@case 'a': {
+				<b />
+			}
+			@default: {
+				fallback_runs.push('default');
+				const label = `default ${n()}`;
+				<p class="default-fallback">{label}</p>
+			}
+		}
+		<ul>
+			@for (const item of items()) {
+				<li>{item}</li>
+			} @empty {
+				fallback_runs.push('empty');
+				const label = `empty ${n()}`;
+				<li class="empty-fallback">{label}</li>
+			}
+		</ul>
+		<button class="bump-fallback" onClick={() => setN(n() + 1)}>
+			{'bump'}
+		</button>
+	</div>
+}
+
+const pending_runs: string[] = [];
+
+function PendingSetupApp() @{
+	const [n, setN] = createSignal(0);
+	const NeverChild = lazy(() => new Promise<{ default: typeof ResolvedChild }>(() => {}));
+	<div>
+		@try {
+			<NeverChild value="never" />
+		} @pending {
+			pending_runs.push('pending');
+			const label = `pending ${n()}`;
+			<p class="pending-fallback">{label}</p>
+		}
+		<button class="bump-pending" onClick={() => setN(n() + 1)}>
+			{'bump'}
+		</button>
+	</div>
+}
+
+// ── @try and @catch bodies with setup ──
+
+const try_runs = { body: 0, catch: 0 };
+let try_should_throw = false;
+
+function TrySetupApp() @{
+	const [k, setK] = createSignal(0);
+	<div>
+		@try {
+			try_runs.body++;
+			if (try_should_throw) {
+				throw new Error(`boom ${k()}`);
+			}
+			const label = `body ${k()}`;
+			<p class="try-body">
+				{label}
+				<i class="try-live">{k()}</i>
+			</p>
+		} @catch (err, reset) {
+			try_runs.catch++;
+			const label = `caught ${k()}`;
+			<>
+				<p class="try-caught">{label}</p>
+				<p class="try-caught-live">{`${(err as Error).message} / ${k()}`}</p>
+				<button
+					class="try-reset"
+					onClick={() => {
+						try_should_throw = false;
+						reset();
+					}}
+				>
+					{'reset'}
+				</button>
+			</>
+		}
+		<button class="try-bump" onClick={() => setK(k() + 1)}>
+			{'bump'}
+		</button>
+	</div>
+}
+
+let resolve_try_async: (value: string) => void = () => {};
+
+function TryAsyncSetupApp() @{
+	const value = createMemo(
+		() =>
+			new Promise<string>((resolve) => {
+				resolve_try_async = resolve;
+			}),
+	);
+	<div>
+		@try {
+			const v = value();
+			<p class="try-async">{v}</p>
+		} @pending {
+			<p class="try-async-pending">{'loading'}</p>
+		}
+	</div>
+}
+
 describe('tsrx-solid control-flow bodies', () => {
 	it('renders a whole-body @{ } block and runs its setup once', async () => {
 		block_runs.if = block_runs.elseIf = block_runs.case = 0;
@@ -2177,6 +2491,86 @@ describe('tsrx-solid control-flow bodies', () => {
 		// The setup reads `k()` but runs untracked, as a body without `@{ }` does.
 		expect(block_runs).toEqual({ if: 1, elseIf: 1, case: 1 });
 		expect(Array.from(container.querySelectorAll('i'))).toEqual(nodes);
+	});
+
+	it('runs the setup of a fallback body once', async () => {
+		fallback_runs.length = 0;
+		await render(FallbackSetupApp);
+		const labels = () =>
+			['.else-fallback', '.else-chain-fallback', '.default-fallback', '.empty-fallback'].map(text);
+		expect(labels()).toEqual(['else 0', 'else-chain 0', 'default 0', 'empty 0']);
+		expect([...fallback_runs].sort()).toEqual(['default', 'else', 'else-chain', 'empty']);
+		const nodes = Array.from(container.querySelectorAll('p, li'));
+
+		await click('.bump-fallback');
+		await click('.bump-fallback');
+		// The setup reads `n()` but runs untracked, as in the other branch bodies.
+		expect([...fallback_runs].sort()).toEqual(['default', 'else', 'else-chain', 'empty']);
+		expect(labels()).toEqual(['else 0', 'else-chain 0', 'default 0', 'empty 0']);
+		expect(Array.from(container.querySelectorAll('p, li'))).toEqual(nodes);
+	});
+
+	it('runs the setup of a @pending body once', async () => {
+		pending_runs.length = 0;
+		await render(PendingSetupApp);
+		await flush();
+		expect(text('.pending-fallback')).toBe('pending 0');
+		expect(pending_runs).toEqual(['pending']);
+		const node = container.querySelector('.pending-fallback');
+
+		await click('.bump-pending');
+		await click('.bump-pending');
+		expect(pending_runs).toEqual(['pending']);
+		expect(text('.pending-fallback')).toBe('pending 0');
+		expect(container.querySelector('.pending-fallback')).toBe(node);
+	});
+
+	it('runs the setup of a @try body once', async () => {
+		try_runs.body = try_runs.catch = 0;
+		try_should_throw = false;
+		await render(TrySetupApp);
+		expect(text('.try-body')).toBe('body 00');
+		const node = container.querySelector('.try-body');
+
+		await click('.try-bump');
+		await click('.try-bump');
+		// The setup reads `k()` but runs untracked; the rendered `k()` updates.
+		expect(try_runs).toEqual({ body: 1, catch: 0 });
+		expect(text('.try-body')).toBe('body 02');
+		expect(container.querySelector('.try-body')).toBe(node);
+	});
+
+	it('runs the setup of a @catch body once, and reset() runs the @try body again', async () => {
+		try_runs.body = try_runs.catch = 0;
+		try_should_throw = true;
+		await render(TrySetupApp);
+		expect(try_runs).toEqual({ body: 1, catch: 1 });
+		expect(text('.try-caught')).toBe('caught 0');
+		expect(text('.try-caught-live')).toBe('boom 0 / 0');
+		const node = container.querySelector('.try-caught');
+
+		await click('.try-bump');
+		await click('.try-bump');
+		expect(try_runs).toEqual({ body: 1, catch: 1 });
+		expect(text('.try-caught')).toBe('caught 0');
+		expect(text('.try-caught-live')).toBe('boom 0 / 2');
+		expect(container.querySelector('.try-caught')).toBe(node);
+
+		await click('.try-reset');
+		expect(try_runs).toEqual({ body: 2, catch: 1 });
+		expect(container.querySelector('.try-caught')).toBeNull();
+		expect(text('.try-body')).toBe('body 22');
+	});
+
+	it('shows a @try body whose setup reads an async value once it resolves', async () => {
+		await render(TryAsyncSetupApp);
+		await flush();
+		expect(text('.try-async-pending')).toBe('loading');
+
+		resolve_try_async('ready');
+		await flush();
+		expect(text('.try-async')).toBe('ready');
+		expect(container.querySelector('.try-async-pending')).toBeNull();
 	});
 
 	it('compares a promise discriminant as a value, as a JavaScript switch does', async () => {
