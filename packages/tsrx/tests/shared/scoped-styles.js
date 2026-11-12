@@ -251,6 +251,33 @@ export function runSharedScopedStyleTests({
 			expect(css).not.toContain('(unused)');
 		});
 
+		it('matches the values of HTML case-insensitive attributes in any case', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							input[type="TEXT"] { color: red; }
+							[dir="RTL"] { margin: 0; }
+							[data-kind="TEXT"] { padding: 0; }
+							input[type="TEXT" s] { border: 0; }
+							input[type="TEXT" S] { outline: 0; }
+							[data-kind="TEXT" I] { float: left; }
+						</style>
+						<input type="text" dir="rtl" data-kind="text" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`input[type="TEXT"].${hash} {`);
+			expect(css).toContain(`[dir="RTL"].${hash} {`);
+			expect(css).toContain('/* (unused) [data-kind="TEXT"] { padding: 0; }*/');
+			expect(css).toContain('/* (unused) input[type="TEXT" s] { border: 0; }*/');
+			expect(css).toContain('/* (unused) input[type="TEXT" S] { outline: 0; }*/');
+			expect(css).toContain(`[data-kind="TEXT" I].${hash} {`);
+		});
+
 		it('splits class attributes on ASCII whitespace only, so a no-break space stays inside its class', () => {
 			const nbsp = '\u00a0';
 			const { code, css, cssHash } = compile(
@@ -617,6 +644,240 @@ export function runSharedScopedStyleTests({
 
 			expect(css).toContain('/* (unused) .outer { color: red; }*/');
 			expect(css).toMatch(/\.inner\.tsrx-[0-9a-f]+ \{ color: blue; \}/);
+		});
+
+		it('keeps sibling rules across text, fragments, and control flow between the siblings', () => {
+			const a = `<i ${attr}="a" />`;
+			const b = `<b ${attr}="b">{'b'}</b>`;
+			const bodies = [
+				`${a}text${b}`,
+				`<>${a}</>${b}`,
+				`${a}<>${b}</>`,
+				`@if (show) { ${a} }${b}`,
+				`@if (show) { <span /> } @else { ${a} }${b}`,
+				`${a}@if (show) { ${b} }`,
+				`@if (show) { <u /> } @else if (more) { ${a} }${b}`,
+				`@if (show) { <u /> } @else if (more) { <span /> } @else { ${a} }${b}`,
+				`${a}@if (show) { <u /> } @else if (more) { ${b} }`,
+				`${a}@if (show) { <u /> } @else if (more) { <span /> } @else { ${b} }`,
+				`@for (const item of items) { ${a} }${b}`,
+				`@for (const item of items) { <>${b}{item}${a}</> }`,
+				`@for (const item of items) { <span /> } @empty { ${a} }${b}`,
+				`@switch (show) { @case true: { <>${a}</> } }${b}`,
+				`@switch (show) { @case true: { <span /> } @default: { ${a} } }${b}`,
+				`@try { ${a} } @catch (error) { <span /> }${b}`,
+				`@try { <span /> } @pending { ${a} }${b}`,
+				`@{ const label = 'a'; <>{label}${a}</> }${b}`,
+			];
+
+			for (const body of bodies) {
+				const { css } = compile(
+					`export function App({ show, more, items }: { show: boolean, more: boolean, items: string[] }) @{
+						<>
+							<style>.a + .b { color: red; } .a ~ .b { margin: 0; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(css, body).not.toContain('(unused)');
+			}
+		});
+
+		it('keeps sibling rules when what renders between or around the siblings is not known', () => {
+			const a = `<i ${attr}="a" />`;
+			const b = `<b ${attr}="b">{'b'}</b>`;
+			const bodies = [
+				// React hoists these into <head>
+				`${a}<title>{'t'}</title>${b}`,
+				`${a}<><meta name="x" /></>${b}`,
+				`${a}<link rel="x" />${b}`,
+				// An expression renders the elements it holds in its place
+				`{show && ${a}}${b}`,
+				`{show ? ${a} : null}${b}`,
+				`${a}{show && ${b}}`,
+				// A component may render the elements passed to it in its place
+				`${a}<Comp />${b}`,
+				`<Comp>${a}</Comp>${b}`,
+				`<Comp render={${a}} />${b}`,
+				`${a}<Comp>${b}</Comp>`,
+				// A dynamic class may hold `a`
+				`<u ${attr}={cls} />${b}`,
+			];
+
+			for (const body of bodies) {
+				const { css } = compile(
+					`export function App({ show, cls }: { show: boolean, cls: string }) @{
+						<>
+							<style>.a + .b { color: red; } .a ~ .b { margin: 0; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(css, body).not.toContain('(unused)');
+				expect(css, body).toMatch(/\.a\.tsrx-[0-9a-f]+ \+ \.b/);
+			}
+		});
+
+		it('keeps a sibling chain through a global selector after a component', () => {
+			for (const [rule, body] of [
+				['.a:has(+ :global(.x) + .b)', `<div ${attr}="a" /><Comp />\n<b ${attr}="b" />`],
+				[
+					'.a:has(+ :global(.x) + .b)',
+					`<div ${attr}="a" /><Comp />@if (show) { <b ${attr}="b" /> }`,
+				],
+				['.a:has(~ :global(.x) ~ .b)', `<div ${attr}="a" /><Comp /><><b ${attr}="b" /></>`],
+			]) {
+				const { css } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>${rule} { color: red; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(css, body).not.toContain('(unused)');
+			}
+		});
+
+		it('scopes the rest of a chain kept for a component the search cannot place', () => {
+			for (const combinator of ['+', '~']) {
+				const { css, cssHash } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>:global(.x) ${combinator} .y ${combinator} .b { color: red; }</style>
+							{show && <Comp />}
+							<b ${attr}="b" />
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				// Unscoped, `.y` would match an element the component renders
+				const hash = hashes_of(cssHash)[0];
+				expect(css).toContain(`.x ${combinator} .y.${hash} ${combinator} .b:where(.${hash}) {`);
+			}
+		});
+
+		it('keeps every :not() argument in a chain kept without a match', () => {
+			const in_expression = `<i ${attr}="y" />{show && <b ${attr}="b" />}`;
+			const after_component = `{show && <Comp />}<b ${attr}="b" />`;
+			/** @type {Array<[string, string, (hash: string) => string]>} */
+			const cases = [
+				[
+					'.y:not(.z, :global(.w)) + .b',
+					in_expression,
+					(hash) => `.y.${hash}:not(.z, .w) + .b:where(.${hash}) {`,
+				],
+				[
+					'.y:not(.p .z) + .b',
+					in_expression,
+					(hash) => `.y.${hash}:not(.p:where(.${hash}) .z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					':global(.x) + .y:not(.z) + .b',
+					after_component,
+					(hash) => `.x + .y.${hash}:not(.z) + .b:where(.${hash}) {`,
+				],
+			];
+
+			for (const [rule, body, expected] of cases) {
+				const { css, cssHash } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>${rule} { color: red; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				// An empty `:not()` is invalid, and a shorter one matches more
+				expect(css, rule).not.toContain('(unused)');
+				expect(css, rule).toContain(expected(hashes_of(cssHash)[0]));
+			}
+		});
+
+		it('keeps every :is(), :where(), and :has() argument in a chain kept without a match', () => {
+			const in_expression = `{show && <b ${attr}="b" />}`;
+			/** @type {Array<[string, string, (hash: string) => string]>} */
+			const cases = [
+				// Matched normally, this compound keeps `> .z` as well
+				[
+					'.y:has(> .z) + .b',
+					`<i ${attr}="y"><span ${attr}="z" /></i>${in_expression}`,
+					(hash) => `.y.${hash}:has(> .z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					'.y:has(.z) + .b',
+					`<i ${attr}="y" />${in_expression}`,
+					(hash) => `.y.${hash}:has(.z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					'.y:is(.z, .q) + .b',
+					`<i ${attr}="y z" />${in_expression}`,
+					(hash) => `.y.${hash}:is(.z:where(.${hash}), .q:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					':global(.x) + .y:where(.z) + .b',
+					`{show && <Comp />}<b ${attr}="b" />`,
+					(hash) => `.x + .y.${hash}:where(.z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+			];
+
+			for (const [rule, body, expected] of cases) {
+				const { css, cssHash } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>${rule} { color: red; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				// An empty `:has()` is invalid, so the browser drops the whole rule
+				expect(css, rule).not.toContain('(unused)');
+				expect(css, rule).toContain(expected(hashes_of(cssHash)[0]));
+			}
+		});
+
+		it('prunes sibling rules when another element or a parent boundary separates the siblings', () => {
+			const a = `<i ${attr}="a" />`;
+			const b = `<b ${attr}="b">{'b'}</b>`;
+			/** @type {Array<[string, string[]]>} */
+			const cases = [
+				[`${a}<u />${b}`, ['.a + .b']],
+				[`<>${a}<u /></>${b}`, ['.a + .b']],
+				[`@if (show) { <>${a}<u /></> }${b}`, ['.a + .b']],
+				[`<div>${a}</div>${b}`, ['.a + .b', '.a ~ .b']],
+				[`${b}<>${a}</>`, ['.a + .b', '.a ~ .b']],
+				[`@if (show) { ${a} } @else { ${b} }`, ['.a + .b', '.a ~ .b']],
+				[`@if (show) { ${a} } @else if (more) { ${b} }`, ['.a + .b', '.a ~ .b']],
+				[`${a}<title>{'t'}</title><u />${b}`, ['.a + .b']],
+			];
+
+			for (const [body, pruned] of cases) {
+				const { css } = compile(
+					`export function App({ show, more }: { show: boolean, more: boolean }) @{
+						<>
+							<style>.a + .b { color: red; } .a ~ .b { margin: 0; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(
+					[...css.matchAll(/\/\* \(unused\) (.*?) \{/g)].map((m) => m[1]),
+					body,
+				).toEqual(pruned);
+			}
 		});
 
 		it('stops stamping and pruning at a function boundary', () => {
