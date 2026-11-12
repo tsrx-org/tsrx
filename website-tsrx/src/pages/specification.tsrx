@@ -620,6 +620,8 @@ const TSRX_ERROR_CODES = [
 	'          function Card({ [k]: v }) @{ <p>{v}</p> }  (Vue)',
 	'TSRX2032  Vue TSRX does not allow a binding named `defineVaporComponent`.',
 	"          import { defineVaporComponent } from './helpers';  (Vue)",
+	'TSRX2033  A dynamic tag takes no type arguments.',
+	'          <{Tag}<T> />',
 	"TSRX3001  The 'apply' attribute of a <style> block requires an expression value.",
 	'          <style apply="a" />',
 	"TSRX3002  'a' is not a style block.",
@@ -1170,7 +1172,11 @@ export function SpecificationPage() @{
 								the expression in its closing tag, so anything more is computed above the element
 								and the result used as the tag:{' '}
 								<code class="inline-code">{'const Tag = c ? Child : Fallback;'}</code> followed by{' '}
-								<code class="inline-code">{'<{Tag} />'}</code>. Forms such as{' '}
+								<code class="inline-code">{'<{Tag} />'}</code>. Type arguments after the tag
+								expression, which TSX allows after a tag name, parse and are reported too:{' '}
+								<code class="inline-code">{'<{Tag}<T> />'}</code> needs a typed alias above the
+								element, <code class="inline-code">{'const Typed = Tag<T>;'}</code> followed by{' '}
+								<code class="inline-code">{'<{Typed} />'}</code>. Forms such as{' '}
 								<code class="inline-code">{'<@tag />'}</code> and{' '}
 								<code class="inline-code">{'<@Component />'}</code> are not dynamic tag syntax in
 								current TSRX.
@@ -1600,6 +1606,12 @@ export function SpecificationPage() @{
 									expression is <code class="inline-code">TSRX2014</code>, reported once for each
 									element at the part of the expression that isn't one of them. The check doesn't
 									change the parse.
+								</li>
+								<li>
+									Type arguments after a dynamic tag expression, as in{' '}
+									<code class="inline-code">{'<{Tag}<T> />'}</code>, are{' '}
+									<code class="inline-code">TSRX2033</code>, reported at the type arguments. The
+									check doesn't change the parse.
 								</li>
 								<li>
 									A JSXCodeBlock or template control-flow block that contains TypeScript setup

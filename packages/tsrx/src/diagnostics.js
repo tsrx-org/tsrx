@@ -106,6 +106,8 @@ export const DIAGNOSTIC_CODES = {
 	TARGET_PROP_KEY_UNSUPPORTED: 'TSRX2031',
 	/** A binding of a name the target's toolchain finds by name: Vue's `defineVaporComponent`. */
 	TARGET_RESERVED_NAME: 'TSRX2032',
+	/** Type arguments after a dynamic tag (`<{Tag}<T> />`). */
+	DYNAMIC_TAG_TYPE_ARGUMENTS: 'TSRX2033',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -366,6 +368,10 @@ export const TSRX_ERRORS = {
 	DYNAMIC_TAG_EXPRESSION: tsrx(
 		'DYNAMIC_TAG_EXPRESSION',
 		'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
+	),
+	DYNAMIC_TAG_TYPE_ARGUMENTS: tsrx(
+		'DYNAMIC_TAG_TYPE_ARGUMENTS',
+		'A dynamic tag takes no type arguments. Declare a typed alias before the element: `const Typed = Tag<T>;`, then `<{Typed} />`.',
 	),
 	FOR_OF_ONLY: tsrx(
 		'FOR_OF_ONLY',
