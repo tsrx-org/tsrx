@@ -1,6 +1,8 @@
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import vscode from 'vscode';
+import { is_native_typescript_package } from '@tsrx/typescript-plugin/src/typescript-version.js';
 
 /** The extensions whose presence makes VS Code's own TypeScript stand down for TypeScript 7. */
 const TYPESCRIPT_7_EXTENSIONS = [
@@ -32,6 +34,12 @@ const TSDK_SETTINGS = [
 	{ section: 'typescript', key: 'tsdk', native_only: true },
 	{ section: 'typescript.native-preview', key: 'tsdk', native_only: false },
 ];
+
+/**
+ * The packages the TypeScript 7 extension (1.0.2 and newer) looks for in a workspace
+ * folder's `node_modules`, in its order. It skips TypeScript 5 and 6.
+ */
+const WORKSPACE_PACKAGES = ['typescript', '@typescript/native', '@typescript/native-preview'];
 
 /** For `affectsConfiguration`. */
 export const TSDK_SETTING_NAMES = TSDK_SETTINGS.map(({ section, key }) => `${section}.${key}`);
@@ -81,25 +89,67 @@ export function typescript_7_server_extension() {
 
 /**
  * The directory the TypeScript 7 extension resolves a relative `tsdk` setting against:
- * the `.code-workspace` file's directory, or the only workspace folder.
+ * the `.code-workspace` file's directory, or the first workspace folder.
  * @returns {string | undefined}
  */
 export function workspace_config_base() {
 	const file = vscode.workspace.workspaceFile;
 	if (file?.scheme === 'file') return path.dirname(file.fsPath);
-	const folders = vscode.workspace.workspaceFolders ?? [];
-	return folders.length === 1 ? folders[0].uri.fsPath : undefined;
+	return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
 }
 
 /**
- * The version of the TypeScript 7 package a `tsdk` setting names, as the TypeScript 7
- * extension finds it: the package at that path or its parent (the path may name its
- * `lib` directory), which must be `typescript` with a `tsc` bin or
- * `@typescript/native-preview` with a `tsgo` bin.
- * @param {string} tsdk
- * @returns {string | undefined}
+ * The compiler package in a directory, by its manifest: `typescript` with a `tsc` bin or
+ * another package, such as `@typescript/native-preview`, with a `tsgo` bin.
+ * @param {string} directory
+ * @returns {{ version: string, manifest: string, base_name: string, bin: string } | undefined}
  */
-function tsdk_version(tsdk) {
+function compiler_package(directory) {
+	const manifest_path = path.join(directory, 'package.json');
+	try {
+		const manifest = JSON.parse(fs.readFileSync(manifest_path, 'utf8'));
+		const base_name =
+			typeof manifest.name === 'string' ? manifest.name.split('/').pop() : undefined;
+		const bin = base_name === 'typescript' ? 'tsc' : 'tsgo';
+		if (base_name && manifest.bin && typeof manifest.bin === 'object' && bin in manifest.bin) {
+			const version = typeof manifest.version === 'string' ? manifest.version : 'unknown';
+			return { version, manifest: manifest_path, base_name, bin };
+		}
+	} catch {}
+	return undefined;
+}
+
+/** @param {string} bin */
+function executable_name(bin) {
+	return process.platform === 'win32' ? `${bin}.exe` : bin;
+}
+
+/**
+ * Whether a compiler package's executable is there, as the TypeScript 7 extension checks
+ * before it runs one: `@typescript/<name>-<os>-<arch>` holds it, resolved from the
+ * package, and an install can leave that optional dependency out.
+ * @param {{ manifest: string, base_name: string, bin: string }} compiler
+ * @returns {boolean}
+ */
+function has_platform_binary({ manifest, base_name, bin }) {
+	try {
+		const platform_package = `@typescript/${base_name}-${process.platform}-${process.arch}`;
+		const platform_manifest = createRequire(manifest).resolve(`${platform_package}/package.json`);
+		return fs.existsSync(path.join(path.dirname(platform_manifest), 'lib', executable_name(bin)));
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * The compiler a `tsdk` setting names, as the TypeScript 7 extension finds it: a package
+ * with its platform binary at that path or its parent (the path may name its `lib`
+ * directory), or else a local build, a directory with a bare `tsc` or `tsgo`, which has
+ * no manifest and the version `local`.
+ * @param {string} tsdk
+ * @returns {{ version: string, manifest?: string } | undefined}
+ */
+function tsdk_compiler(tsdk) {
 	const base = workspace_config_base();
 	let resolved = path.isAbsolute(tsdk) || !base ? tsdk : path.join(base, tsdk);
 	try {
@@ -108,17 +158,15 @@ function tsdk_version(tsdk) {
 		return undefined;
 	}
 	for (const directory of [resolved, path.dirname(resolved)]) {
-		try {
-			const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'package.json'), 'utf8'));
-			const base_name =
-				typeof manifest.name === 'string' ? manifest.name.split('/').pop() : undefined;
-			const bin = base_name === 'typescript' ? 'tsc' : 'tsgo';
-			if (base_name && manifest.bin && typeof manifest.bin === 'object' && bin in manifest.bin) {
-				return typeof manifest.version === 'string' ? manifest.version : 'unknown';
-			}
-		} catch {}
+		const compiler = compiler_package(directory);
+		if (compiler && has_platform_binary(compiler)) {
+			return { version: compiler.version, manifest: compiler.manifest };
+		}
 	}
-	return undefined;
+	const is_local_build = ['tsc', 'tsgo'].some((bin) =>
+		fs.existsSync(path.join(resolved, executable_name(bin))),
+	);
+	return is_local_build ? { version: 'local' } : undefined;
 }
 
 /** @param {string} tsdk */
@@ -177,21 +225,27 @@ function bundled_version(extension) {
 }
 
 /**
- * `scope` and `tsdk` say where a compiler from a setting comes from.
+ * `scope`, `tsdk` and `manifest` say where a compiler from a setting comes from.
  * @typedef {{
  * 	version: string,
  * 	from: 'setting' | 'nightly-extension' | 'bundled',
  * 	scope?: 'user' | 'workspace',
  * 	tsdk?: string,
+ * 	manifest?: string,
  * }} TypeScript7Compiler
  */
 
 /**
- * The compiler the TypeScript 7 extension runs, chosen the way it chooses: the first
- * `tsdk` setting that names a TypeScript 7 package, then the TypeScript 7 Nightly
- * extension's compiler, then its own bundled one. A setting in the workspace counts
- * as chosen although the TypeScript 7 extension first asks the user to allow it (it
- * remembers the answer where other extensions cannot read it).
+ * The compiler the settings tell the TypeScript 7 extension to run, chosen the way it
+ * chooses: the first `tsdk` setting that names a TypeScript 7 package, then the
+ * TypeScript 7 Nightly extension's compiler, then its own bundled one. This is a
+ * prediction: a setting in the workspace counts as chosen although the TypeScript 7
+ * extension runs it only once the user allows it, which it remembers where other
+ * extensions cannot read it. `running_compiler_version` says what actually runs.
+ *
+ * A package in `node_modules` does not count. The TypeScript 7 extension only offers
+ * one, and runs it once the user accepts, which writes it to `js/ts.tsdk.path` in the
+ * workspace settings.
  * @returns {TypeScript7Compiler | undefined} `undefined` when no TypeScript 7 server
  *   extension is installed.
  */
@@ -199,10 +253,10 @@ export function typescript_7_compiler() {
 	const server = typescript_7_server_extension();
 	if (!server) return undefined;
 	for (const candidate of tsdk_candidates()) {
-		const version = tsdk_version(candidate.value);
-		if (version) {
+		const compiler = tsdk_compiler(candidate.value);
+		if (compiler) {
 			return {
-				version,
+				...compiler,
 				from: 'setting',
 				scope: candidate.scope > 1 ? 'workspace' : 'user',
 				tsdk: candidate.value,
@@ -215,28 +269,137 @@ export function typescript_7_compiler() {
 }
 
 /**
- * The `typescript` package installed in a directory's `node_modules`.
- * @param {string} directory
- * @returns {{ version: string, directory: string } | undefined}
+ * What the TypeScript 7 server last reported about itself. A local build has no
+ * `packageJsonPath`. `superseded` says a change of setting has asked for a restart.
+ * @typedef {{
+ * 	version: string,
+ * 	packageJsonPath?: string,
+ * 	isCurrent?: () => boolean,
+ * 	superseded?: boolean,
+ * }} ReportedCompiler
  */
-function installed_typescript(directory) {
-	const package_directory = path.join(directory, 'node_modules', 'typescript');
-	try {
-		const manifest = JSON.parse(
-			fs.readFileSync(path.join(package_directory, 'package.json'), 'utf8'),
-		);
-		if (typeof manifest.version === 'string') {
-			return { version: manifest.version, directory: package_directory };
-		}
-	} catch {}
-	return undefined;
+
+/** @type {ReportedCompiler | undefined} */
+let reported_compiler;
+
+/** @type {Set<() => void>} */
+const compiler_report_listeners = new Set();
+
+function notify_compiler_report() {
+	for (const listener of compiler_report_listeners) listener();
 }
 
 /**
- * The `typescript` package a file's project installs: the nearest
- * `node_modules/typescript` from the file's directory up to its workspace folder.
+ * Follow the compiler the TypeScript 7 server runs, through the TypeScript 7 extension's
+ * API. `onLanguageServerInitialized` passes the running compiler on every start, and at
+ * once if the server already runs. Extension 1.0.1 has the event but passes nothing, so
+ * there `running_compiler` stays undefined.
+ *
+ * Subscribing has a cost: the extension then remembers the version in the compiler's
+ * `package.json`, and when that changes on disk its restart command asks to restart the
+ * extension host instead of restarting the server.
+ * @param {unknown} api
+ * @returns {import('vscode').Disposable | undefined}
+ */
+export function follow_running_compiler(api) {
+	const { onLanguageServerInitialized: on_initialized } = /** @type {{
+		onLanguageServerInitialized?: (
+			listener: (compiler?: Omit<ReportedCompiler, 'version'> & { version?: unknown }) => void,
+		) => import('vscode').Disposable,
+	}} */ (api ?? {});
+	if (typeof on_initialized !== 'function') return undefined;
+	const subscription = on_initialized((compiler) => {
+		if (typeof compiler?.version !== 'string') return;
+		const { version, packageJsonPath, isCurrent } = compiler;
+		reported_compiler = { version, packageJsonPath, isCurrent };
+		notify_compiler_report();
+	});
+	return {
+		dispose() {
+			subscription.dispose();
+			if (!reported_compiler) return;
+			reported_compiler = undefined;
+			notify_compiler_report();
+		},
+	};
+}
+
+/**
+ * The compiler the TypeScript 7 server runs, if it has said so and has not started to
+ * restart since.
+ * @returns {ReportedCompiler | undefined}
+ */
+export function running_compiler() {
+	return reported_compiler?.isCurrent?.() === false ? undefined : reported_compiler;
+}
+
+/**
+ * Note that a changed setting has asked for a restart. The report stays, because that
+ * server runs until the restart starts, and goes on running if it fails or the user
+ * declines it.
+ */
+export function supersede_running_compiler() {
+	if (reported_compiler) reported_compiler.superseded = true;
+}
+
+/**
+ * Whether the server runs the compiler a setting names. Two packages can share a version,
+ * so a report is matched by its `package.json`. Only a local build goes by its version.
+ * @param {ReportedCompiler} running
+ * @param {TypeScript7Compiler} compiler
+ * @returns {boolean}
+ */
+export function runs_compiler(running, compiler) {
+	if (!running.packageJsonPath || !compiler.manifest) return running.version === compiler.version;
+	try {
+		return (
+			fs.realpathSync.native(running.packageJsonPath) === fs.realpathSync.native(compiler.manifest)
+		);
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Call `listener` whenever the TypeScript 7 server reports its compiler.
+ * @param {() => void} listener
+ * @returns {import('vscode').Disposable}
+ */
+export function on_running_compiler_reported(listener) {
+	compiler_report_listeners.add(listener);
+	return { dispose: () => compiler_report_listeners.delete(listener) };
+}
+
+/**
+ * The package a directory's `node_modules` offers the TypeScript 7 extension: the first
+ * TypeScript 7 one in `WORKSPACE_PACKAGES` with its platform binary, or else the
+ * TypeScript 5 or 6 it has, which has no platform binary to find.
+ * @param {string} directory
+ * @returns {{ name: string, version: string, directory: string } | undefined}
+ */
+function installed_typescript(directory) {
+	const installed = [];
+	for (const name of WORKSPACE_PACKAGES) {
+		const package_directory = path.join(directory, 'node_modules', name);
+		let real_directory;
+		try {
+			real_directory = fs.realpathSync(package_directory);
+		} catch {
+			continue;
+		}
+		const compiler = compiler_package(real_directory);
+		if (!compiler) continue;
+		if (is_native_typescript_package(compiler.version) && !has_platform_binary(compiler)) continue;
+		installed.push({ name, version: compiler.version, directory: package_directory });
+	}
+	return installed.find(({ version }) => is_native_typescript_package(version)) ?? installed[0];
+}
+
+/**
+ * The TypeScript package a file's project installs: the nearest one from the file's
+ * directory up to its workspace folder.
  * @param {import('vscode').Uri} uri
- * @returns {{ version: string, directory: string } | undefined}
+ * @returns {{ name: string, version: string, directory: string } | undefined}
  */
 export function project_typescript(uri) {
 	if (uri.scheme !== 'file') return undefined;
@@ -252,9 +415,10 @@ export function project_typescript(uri) {
 }
 
 /**
- * The `typescript` package the open folder installs at its root: what a relative
- * `"js/ts.tsdk.path": "node_modules/typescript"` names.
- * @returns {{ version: string, directory: string } | undefined}
+ * The TypeScript package installed at `workspace_config_base`: what a relative
+ * `"js/ts.tsdk.path": "node_modules/typescript"` names. That is one directory, while the
+ * TypeScript 7 extension's own prompt looks at the root of every workspace folder.
+ * @returns {{ name: string, version: string, directory: string } | undefined}
  */
 export function workspace_typescript() {
 	const base = workspace_config_base();

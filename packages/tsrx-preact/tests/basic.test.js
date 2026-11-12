@@ -1,6 +1,8 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedAnonymousComponentTests,
+	runSharedCatchErrorTypeTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -48,6 +50,12 @@ describe('@tsrx/preact direct runtime imports', () => {
 runSharedTsxExpressionTsrxTests({ compile, name: 'preact', classAttrName: 'class' });
 runSharedCompileTests({ compile, name: 'preact', classAttrName: 'class' });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'preact' });
+runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings,
+	name: 'preact',
+	package_dir: fileURLToPath(new URL('..', import.meta.url)),
+	jsx_import_source: 'preact',
+});
 runSharedCodeBlockChildrenTests({ compile, name: 'preact' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'preact' });
 runSharedAnonymousComponentTests({ compile, name: 'preact' });
@@ -115,7 +123,7 @@ describe('@tsrx/preact basic', () => {
 		);
 
 		expect(code).toMatch(
-			/<Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
+			/<__Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
 		);
 	});
 
@@ -133,7 +141,7 @@ describe('@tsrx/preact basic', () => {
 		);
 
 		expect(code).not.toContain('TsrxTryBody');
-		expect(code).toMatch(/<Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
+		expect(code).toMatch(/<__Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
 	});
 
 	it('keeps a @pending body that awaits inline', () => {
@@ -149,7 +157,7 @@ describe('@tsrx/preact basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toMatch(/<Suspense fallback=\{await \(async \(\) => \{/);
+		expect(code).toMatch(/<__Suspense fallback=\{await \(async \(\) => \{/);
 	});
 
 	it('imports TsrxErrorBoundary from @tsrx/preact/error-boundary when try/catch is used', () => {
@@ -550,20 +558,33 @@ describe('@tsrx/preact basic', () => {
 			expect(type_only).toContain('{...App__spread_props1}');
 		});
 
-		it('keeps a ref written before a host spread in its authored position', () => {
+		it('evaluates a ref written before a host spread in its authored position', () => {
 			const source = `export function App() @{
 					function init() {
 						return () => {};
 					}
-					<div ref={init()} data-first="1" {...bag} />
+					<>
+						<div ref={init()} data-first="1" {...bag} />
+						<div ref={init()} {...bag} data-first="1" />
+					</>
 				}`;
 			const { code } = compile(source, 'App.tsrx');
 
+			// The merged ref follows the spread whose ref it reads. Preact stores a
+			// ref's cleanup on the function, so each element keeps its own
+			// `mergeRefs` callback rather than sharing a `merge_element_refs` one.
+			expect(code).toContain('mergeRefs as __mergeRefs');
+			expect(code).not.toContain('merge_element_refs');
 			expect(code).toContain(
-				'<div ref={__mergeRefs(init(), (node) => __mergeRefs(App__spread_props1?.ref)(node))} data-first="1" {...(App__spread_props1 = __normalize_spread_props_for_ref_attr(bag))} />',
+				'<div {...(App__ref1 = init(), null)} data-first="1" {...(App__spread_props2 = __normalize_spread_props_for_ref_attr(bag))} ref={__mergeRefs(App__ref1, App__spread_props2?.ref)} />',
+			);
+			expect(code.replace(/\s+/g, ' ')).toContain(
+				'<div {...( App__ref3 = init(), App__spread_props4 = __normalize_spread_props_for_ref_attr(bag) )} data-first="1" ref={__mergeRefs(App__ref3, App__spread_props4?.ref)} />',
 			);
 
 			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain('mergeRefs as __mergeRefs');
+			expect(type_only).not.toContain('merge_element_refs');
 			expect(type_only).toContain(
 				'<div data-first="1" {...App__spread_props1} ref={__mergeRefs(init(), App__spread_props1?.ref)} />',
 			);

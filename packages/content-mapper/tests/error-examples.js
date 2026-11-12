@@ -294,6 +294,29 @@ export function C(props: { items: string[] }) @{
 `,
 	},
 	{
+		error: TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
+		source: `export function C(props: { items: number[] }) @{
+	const state = { item: 0 };
+	<ul>
+		@for (state.item of props.items) {
+			<li>{state.item}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.FOR_HEAD_USING,
+		source: `export function C(props: { items: Disposable[] }) @{
+	<ul>
+		@for (using item of props.items) {
+			<li>{String(item)}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.MULTIPLE_REFS,
 		source: `export function C(props: any) @{
 	<div ref={props.a} ref={props.b} />
@@ -1000,8 +1023,6 @@ export const WITHOUT_EXAMPLE = new Map(
  */
 export const KNOWN_PROBLEMS = new Map(
 	/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([
-		[TSRX_ERRORS.UNCLOSED_TAG, { problem: 'lost', issue: 978 }],
-		[TSRX_ERRORS.MISMATCHED_CLOSING_TAG, { problem: 'lost', issue: 978 }],
 		[TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED, { problem: 'twice', issue: 980 }],
 		// The statement's keywords have no mapping, so the directive covers only `A`.
 		[TS_ERRORS.NESTED_GLOBAL_EXPORT, { problem: 'typescript', issue: 979 }],
