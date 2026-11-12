@@ -42,16 +42,18 @@ const regex_whitespace_character = /\s/;
  * An expression being read that can be a generic arrow function (see
  * `#parseGenericArrowFunction`): where its type parameters start, where its
  * parameter list starts (known once the type parameters are read), where the
- * arrow function starts (its `(`, or `async`), and the error that the arrow
- * function threw after its `=>`. In a `.mts` or `.cts` file, while it's read as
- * an arrow function whose type parameters are TS7060 (`reserved`), the checker
- * errors in it, which come after its own (`held`, see
- * `#reportReservedArrowTypeParameters`), the errors held around it
- * (`outerHeld`), and the arrow function once its `=>` is read (`node`).
+ * arrow function starts (its `(`, or `async`), whether an arrow function was
+ * read from there, and the error that the arrow function threw after its `=>`.
+ * In a `.mts` or `.cts` file, while it's read as an arrow function whose type
+ * parameters are TS7060 (`reserved`), the checker errors in it, which come
+ * after its own (`held`, see `#reportReservedArrowTypeParameters`), the errors
+ * held around it (`outerHeld`), and the arrow function once its `=>` is read
+ * (`node`).
  * @typedef {{
  *   typeParametersStart: number,
  *   parametersStart: number,
  *   arrowStart: number,
+ *   arrowRead: boolean,
  *   error: SyntaxError | null,
  *   reserved: AST.TSTypeParameterDeclaration | null,
  *   held: CompileError[],
@@ -130,21 +132,15 @@ const CharCode = Object.freeze({
 	lineFeed: 10,
 	carriageReturn: 13,
 	space: 32,
-	exclamation: 33,
-	doubleQuote: 34,
 	numberSign: 35,
 	dollar: 36,
 	ampersand: 38,
-	singleQuote: 39,
 	openParen: 40,
 	closeParen: 41,
 	comma: 44,
 	asterisk: 42,
-	plus: 43,
-	dash: 45,
 	dot: 46,
 	slash: 47,
-	colon: 58,
 	semicolon: 59,
 	lessThan: 60,
 	equals: 61,
@@ -156,9 +152,7 @@ const CharCode = Object.freeze({
 	uppercaseZ: 90,
 	openBracket: 91,
 	closeBracket: 93,
-	backslash: 92,
 	underscore: 95,
-	backtick: 96,
 	lowercaseA: 97,
 	lowercaseZ: 122,
 	openBrace: 123,
@@ -166,6 +160,12 @@ const CharCode = Object.freeze({
 });
 
 const TYPE_PARAMETER_MODIFIERS = new Set(['const']);
+// The reserved words, which never name a type parameter: acorn's keywords and
+// `enum`, as TypeScript's `isIdentifier` has them.
+const RESERVED_WORDS = new Set([
+	...Object.values(acorn.tokTypes).flatMap((type) => type.keyword ?? []),
+	'enum',
+]);
 
 // Nodes that ESTree's decorators extension gives a `decorators` array.
 const DECORATABLE_NODE_TYPES = new Set([
@@ -174,25 +174,11 @@ const DECORATABLE_NODE_TYPES = new Set([
 	'MethodDefinition',
 	'PropertyDefinition',
 ]);
-// Reserved words after which a `/` opens a regular expression literal rather
-// than dividing, because they never end an operand. `of` is handled apart
-// since it is also a plain identifier.
-const REGEX_PRECEDING_KEYWORDS = new Set([
-	'await',
-	'case',
-	'delete',
-	'do',
-	'else',
-	'in',
-	'instanceof',
-	'new',
-	'return',
-	'throw',
-	'typeof',
-	'void',
-	'yield',
-]);
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
+// The files TypeScript reads without JSX, and the ones where it reserves the
+// syntax a JSX file would read as a tag (TS7059, TS7060).
+const regex_file_without_jsx = /\.[cm]?ts$/;
+const regex_reserved_jsx_like_file = /\.[cm]ts$/;
 
 const regex_line_break = /\r\n?|[\n\u2028\u2029]/;
 // A word written with an escape, from `lastIndex`.
@@ -1315,148 +1301,6 @@ function skip_whitespace_from(input, i) {
 }
 
 /**
- * Skip past a string literal opened at `i` with the given quote char code.
- * @param {string} input
- * @param {number} i
- * @param {number} quote
- */
-function skip_string_from(input, i, quote) {
-	i++;
-	while (i < input.length) {
-		const ch = input.charCodeAt(i);
-		i++;
-		if (ch === CharCode.backslash)
-			i++; // backslash escape
-		else if (ch === quote) return i;
-	}
-	return i;
-}
-
-/**
- * Skip past a regular expression literal opened at `i`. Returns the index after
- * its flags, or -1 when a line ends before the closing `/`.
- * @param {string} input
- * @param {number} i
- */
-function skip_regex_from(input, i) {
-	let in_class = false;
-	i++;
-	while (i < input.length) {
-		const ch = input.charCodeAt(i);
-		if (ch === CharCode.lineFeed || ch === CharCode.carriageReturn) return -1;
-		i++;
-		if (ch === CharCode.backslash) i++;
-		else if (ch === CharCode.openBracket) in_class = true;
-		else if (ch === CharCode.closeBracket) in_class = false;
-		else if (ch === CharCode.slash && !in_class) break;
-	}
-	const flags_end = scan_identifier_from(input, i);
-	return flags_end === -1 ? i : flags_end;
-}
-
-/**
- * Scan past a balanced pair starting at `i` (which must point at `open`).
- * Strings, comments, and regular expression literals are skipped so brackets
- * inside them do not count. A `/` divides when the previous token ends an
- * operand (an identifier, number, literal, or closing bracket, kept through
- * postfix `!`, `++`, `--`, and `.`) and opens a regex otherwise. Returns the
- * position after the matching close, or -1 if unbalanced.
- * @param {string} input
- * @param {number} i
- * @param {number} open
- * @param {number} close
- */
-function scan_balanced_from(input, i, open, close) {
-	let depth = 1;
-	let after_operand = false;
-	let after_dot = false;
-	i++;
-	while (i < input.length) {
-		const ch = input.charCodeAt(i);
-		if (
-			ch === CharCode.space ||
-			ch === CharCode.tab ||
-			ch === CharCode.lineFeed ||
-			ch === CharCode.carriageReturn
-		) {
-			i++;
-			continue;
-		}
-		if (ch === CharCode.doubleQuote || ch === CharCode.singleQuote || ch === CharCode.backtick) {
-			i = skip_string_from(input, i, ch);
-			after_operand = true;
-			after_dot = false;
-			continue;
-		}
-		if (ch === CharCode.slash) {
-			const after_comment = skip_space_and_comments_from(input, i);
-			if (after_comment === -1) return -1;
-			if (after_comment !== i) {
-				i = after_comment;
-				continue;
-			}
-			if (after_operand) {
-				after_operand = false;
-				i++;
-			} else {
-				i = skip_regex_from(input, i);
-				if (i === -1) return -1;
-				after_operand = true;
-			}
-			after_dot = false;
-			continue;
-		}
-		if (ch === open) depth++;
-		else if (ch === close && --depth === 0) return i + 1;
-
-		const name_end = scan_identifier_from(input, i);
-		if (name_end !== -1) {
-			const name = input.slice(i, name_end);
-			// A property name after `.` is always an operand. `of` is only the
-			// `for ... of` keyword when it follows an operand, and a reserved
-			// word never ends one.
-			if (after_dot) after_operand = true;
-			else if (name === 'of') after_operand = !after_operand;
-			else after_operand = !REGEX_PRECEDING_KEYWORDS.has(name);
-			after_dot = false;
-			i = name_end;
-			continue;
-		}
-		if (ch >= CharCode.digit0 && ch <= CharCode.digit9) {
-			after_operand = true;
-		} else if (
-			ch === CharCode.closeParen ||
-			ch === CharCode.closeBracket ||
-			ch === CharCode.closeBrace
-		) {
-			after_operand = true;
-		} else if ((ch === CharCode.plus || ch === CharCode.dash) && input.charCodeAt(i + 1) === ch) {
-			// Postfix `++`/`--` keeps the operand; the prefix forms follow a non-operand.
-			after_dot = false;
-			i += 2;
-			continue;
-		} else if (
-			ch === CharCode.dot &&
-			input.charCodeAt(i + 1) === CharCode.dot &&
-			input.charCodeAt(i + 2) === CharCode.dot
-		) {
-			// A spread or rest `...` precedes an operand rather than a property name.
-			after_operand = false;
-			after_dot = false;
-			i += 3;
-			continue;
-		} else if (ch !== CharCode.exclamation && ch !== CharCode.dot) {
-			// Postfix `!` and a number's trailing `.` keep the operand; the
-			// prefix `!` and a leading `.` already follow a non-operand.
-			after_operand = false;
-		}
-		after_dot = ch === CharCode.dot;
-		i++;
-	}
-	return -1;
-}
-
-/**
  * Skip whitespace and comments starting at `i`. Returns -1 when a block
  * comment is left open at the end of the input.
  * @param {string} input
@@ -1500,132 +1344,100 @@ function scan_identifier_from(input, i) {
 }
 
 /**
- * Scan a type starting at `i` and return the index of the character that ends
- * it: a `,`, `;`, `=`, `>`, `)`, `]`, or `}` outside any brackets the type
- * itself opened. Inside a type `>` only closes `<` and `=>` only belongs to a
- * function type, so neither is mistaken for the end of an enclosing type
- * parameter list. With `stop_at_arrow`, a `=>` outside brackets ends the type
- * instead, which is how an arrow's return type ends. Returns -1 when the input
- * runs out first, brackets do not match, or a character that cannot appear in
- * a type is found.
- * @param {string} input
- * @param {number} i
- * @param {boolean} stop_at_arrow
- */
-function scan_type_from(input, i, stop_at_arrow) {
-	/** @type {number[]} */
-	const closers = [];
-	while (i < input.length) {
-		const ch = input.charCodeAt(i);
-		if (ch === CharCode.doubleQuote || ch === CharCode.singleQuote || ch === CharCode.backtick) {
-			i = skip_string_from(input, i, ch);
-			continue;
-		}
-		if (ch === CharCode.slash) {
-			const after_comment = skip_space_and_comments_from(input, i);
-			if (after_comment === -1 || after_comment === i) return -1;
-			i = after_comment;
-			continue;
-		}
-		if (ch === CharCode.equals && input.charCodeAt(i + 1) === CharCode.greaterThan) {
-			if (stop_at_arrow && closers.length === 0) return i;
-			i += 2;
-			continue;
-		}
-		if (ch === CharCode.openParen) closers.push(CharCode.closeParen);
-		else if (ch === CharCode.openBracket) closers.push(CharCode.closeBracket);
-		else if (ch === CharCode.openBrace) closers.push(CharCode.closeBrace);
-		else if (ch === CharCode.lessThan) closers.push(CharCode.greaterThan);
-		else if (
-			ch === CharCode.closeParen ||
-			ch === CharCode.closeBracket ||
-			ch === CharCode.closeBrace ||
-			ch === CharCode.greaterThan
-		) {
-			if (closers.length === 0) return i;
-			if (closers.pop() !== ch) return -1;
-		} else if (
-			closers.length === 0 &&
-			(ch === CharCode.comma || ch === CharCode.semicolon || ch === CharCode.equals)
-		) {
-			return i;
-		}
-		i++;
-	}
-	return -1;
-}
-
-/**
- * Best-effort lookahead at a `<` to decide whether it starts a generic arrow
- * expression — `<...>(...)[: T] => ...`. The angle brackets must hold a type
- * parameter list, `<[const] Name [extends Type] [= Type], ...>`, so a JSX tag
- * whose attributes or children happen to contain `>` and `=>` (for example a
- * generic arrow passed as a prop) is never mistaken for one. Conservative:
- * returns false on any unexpected shape so JSX continues to parse as JSX.
+ * Whether the `<` at `pos` starts a generic arrow function rather than a JSX
+ * tag, by TypeScript's rule for `.tsx` files (`isParenthesizedArrowFunctionExpression`).
+ * It reads four tokens and never the parameters: `<[const] T` followed by `,`
+ * or `=`, or by `extends` and anything but `=`, `>`, or `/`. Everything else,
+ * `<T>(x) => x` included, is a tag.
  * @param {string} input
  * @param {number} pos
  */
 function looks_like_generic_arrow(input, pos) {
-	if (input.charCodeAt(pos) !== CharCode.lessThan) return false;
-
-	let i = pos + 1;
-	while (true) {
-		i = skip_space_and_comments_from(input, i);
-		if (i === -1) return false;
-		let name_end = scan_identifier_from(input, i);
-		if (name_end === -1) return false;
-
+	let i = skip_space_and_comments_from(input, pos + 1);
+	let name_end = i === -1 ? -1 : scan_identifier_from(input, i);
+	if (name_end === -1) return false;
+	const name = input.slice(i, name_end);
+	if (TYPE_PARAMETER_MODIFIERS.has(name)) {
 		// A `const` modifier precedes the parameter name.
-		while (TYPE_PARAMETER_MODIFIERS.has(input.slice(i, name_end))) {
-			const next = skip_space_and_comments_from(input, name_end);
-			const next_end = next === -1 ? -1 : scan_identifier_from(input, next);
-			if (next_end === -1) break;
-			i = next;
-			name_end = next_end;
-		}
-
 		i = skip_space_and_comments_from(input, name_end);
-		if (i === -1) return false;
-		if (input.startsWith('extends', i) && scan_identifier_from(input, i) === i + 7) {
-			i = scan_type_from(input, i + 7, false);
-			if (i === -1) return false;
-		}
-		if (input.charCodeAt(i) === CharCode.equals) {
-			i = scan_type_from(input, i + 1, false);
-			if (i === -1) return false;
-		}
-
-		const ch = input.charCodeAt(i);
-		if (ch === CharCode.greaterThan) {
-			i++;
-			break;
-		}
-		if (ch !== CharCode.comma) return false;
-		i = skip_space_and_comments_from(input, i + 1);
-		if (i === -1) return false;
-		if (input.charCodeAt(i) === CharCode.greaterThan) {
-			i++;
-			break;
-		}
+		name_end = i === -1 ? -1 : scan_identifier_from(input, i);
+		if (name_end === -1) return false;
+	} else if (RESERVED_WORDS.has(name)) {
+		return false;
 	}
 
-	// `>` must be followed by `(...)`.
-	i = skip_space_and_comments_from(input, i);
-	if (i === -1 || input.charCodeAt(i) !== CharCode.openParen) return false;
-	i = scan_balanced_from(input, i, CharCode.openParen, CharCode.closeParen);
+	i = skip_space_and_comments_from(input, name_end);
 	if (i === -1) return false;
-
-	// Optional `: ReturnType` before `=>`.
-	i = skip_space_and_comments_from(input, i);
-	if (i === -1) return false;
-	if (input.charCodeAt(i) === CharCode.colon) {
-		i = scan_type_from(input, i + 1, true);
-		if (i === -1) return false;
+	if (input.charCodeAt(i) === CharCode.comma) return true;
+	if (input.startsWith('extends', i) && scan_identifier_from(input, i) === i + 7) {
+		i = skip_space_and_comments_from(input, i + 7);
+		const next = i === -1 ? -1 : input.charCodeAt(i);
+		if (next === CharCode.equals) return !is_lone_equals(input, i);
+		if (next === CharCode.slash) return input.charCodeAt(i + 1) === CharCode.equals;
+		return next !== CharCode.greaterThan;
 	}
+	return is_lone_equals(input, i);
+}
 
-	return (
-		input.charCodeAt(i) === CharCode.equals && input.charCodeAt(i + 1) === CharCode.greaterThan
-	);
+/**
+ * Whether a `=` token starts at `i`, rather than `==`, `===`, or `=>`.
+ * @param {string} input
+ * @param {number} i
+ */
+function is_lone_equals(input, i) {
+	if (input.charCodeAt(i) !== CharCode.equals) return false;
+	const next = input.charCodeAt(i + 1);
+	return next !== CharCode.equals && next !== CharCode.greaterThan;
+}
+
+/**
+ * The type parameter that the opening tag `open` reads as in a `.ts` file,
+ * where `<T>(x) => x` is a generic arrow function: `T` for `<T>` and `const T`
+ * for `<const T>`, when a `(` follows. Null for any other tag, and for an HTML
+ * element's lowercase name (`<div>(hello)`).
+ * @param {string} input
+ * @param {ESTreeJSX.TSRXJSXOpeningElement & AST.NodeWithLocation} open
+ * @param {string} tag_name
+ * @returns {string | null}
+ */
+function lone_type_parameter(input, open, tag_name) {
+	if (open.selfClosing || scan_identifier_from(tag_name, 0) !== tag_name.length) return null;
+	let parameter = tag_name;
+	if (TYPE_PARAMETER_MODIFIERS.has(tag_name) && open.attributes.length === 1) {
+		const [attribute] = open.attributes;
+		if (
+			attribute.type !== 'JSXAttribute' ||
+			attribute.value ||
+			attribute.name.type !== 'JSXIdentifier'
+		) {
+			return null;
+		}
+		parameter += ` ${attribute.name.name}`;
+	} else {
+		const first = tag_name.charCodeAt(0);
+		if (
+			open.attributes.length > 0 ||
+			(first >= CharCode.lowercaseA && first <= CharCode.lowercaseZ)
+		) {
+			return null;
+		}
+	}
+	const next = skip_space_and_comments_from(input, open.end);
+	return next !== -1 && input.charCodeAt(next) === CharCode.openParen ? parameter : null;
+}
+
+/**
+ * Whether a closing tag for `name` (`</name`) comes anywhere after `index`.
+ * @param {string} input
+ * @param {string} name
+ * @param {number} index
+ */
+function has_closing_tag(input, name, index) {
+	const closing = `</${name}`;
+	for (let at = input.indexOf(closing, index); at !== -1; at = input.indexOf(closing, at + 1)) {
+		if (scan_identifier_from(input, at + 2) === at + closing.length) return true;
+	}
+	return false;
 }
 
 /**
@@ -1667,6 +1479,13 @@ export function TSRXPlugin(config) {
 			#errors = undefined;
 			/** @type {string | null} */
 			#filename = null;
+			// Whether the file has JSX, as TypeScript reads every file but a `.ts`,
+			// `.mts`, or `.cts` file. Without JSX, a `<` where an expression starts
+			// is a generic arrow function's or a type assertion's.
+			#jsxFile = true;
+			// Where a `<` must not start a type assertion, while
+			// `#parseArrowOrTypeAssertion` reads it as a generic arrow function's.
+			#arrowFirstAt = -1;
 			/** @type {WeakMap<object, { names: Set<string>, lengths: number[] }>} */
 			#localExportNamesByScope = new WeakMap();
 			/** @type {ModuleBodyExports[]} */
@@ -1700,6 +1519,10 @@ export function TSRXPlugin(config) {
 			// `?` allows an expression next, so the tokenizer would otherwise read the
 			// `<` of the type parameters as a JSX tag.
 			#afterOptionalMemberName = false;
+			// Set while a `<` known to start a tag, a template's render node or
+			// child, is re-read (see `#rereadAsTagStart`), so the generic-arrow rule
+			// doesn't apply to it.
+			#rereadingTagStart = false;
 			// The node `tsParseModifiers` is reading modifiers for, so that
 			// `tsParseModifier` can tell whether it has already read `static`.
 			/** @type {{ static?: unknown } | null} */
@@ -1978,6 +1801,7 @@ export function TSRXPlugin(config) {
 				this.#loose = tsrx_options?.loose === true;
 				this.#errors = tsrx_options?.errors;
 				this.#filename = tsrx_options?.filename || null;
+				this.#jsxFile = !regex_file_without_jsx.test(this.#filename ?? '');
 				this.#textComments = tsrx_options?.textComments;
 				if (this.#collect) {
 					// With private-field checks on, acorn rejects `#x in obj` outside a class
@@ -3366,8 +3190,10 @@ export function TSRXPlugin(config) {
 			 * the start of a line, or in an expression position such as after `;`/`{`/`=>` —
 			 * which the `jsxTagStart` fast path below covers. The char-based fallback for a
 			 * raw `<` therefore only treats it as render output when the tag starts its own
-			 * line or follows a `;` on the same line (so one-liners such as
-			 * `@{ const foo = 1; <>{foo}</> }` work). A `<` the tokenizer left as a
+			 * line or follows a `;`, `{`, or `}` on the same line (so one-liners such as
+			 * `@{ const foo = 1; <>{foo}</> }` work, and `@{ <Foo extends bar /> }`, whose
+			 * `<` the tokenizer reads as a generic arrow's by TypeScript's rule for an
+			 * expression). A `<` the tokenizer left as a
 			 * relational operator while trailing a value on the same line is the comparison
 			 * it looks like (`aaa <b` is `aaa < b`, never a `<b>` tag), so it stays setup
 			 * code rather than being mistaken for render output.
@@ -3379,10 +3205,13 @@ export function TSRXPlugin(config) {
 				if (ch === CharCode.lessThan) {
 					if (this.input.charCodeAt(index + 1) === CharCode.slash) return false;
 					const tagLike = can_start_tag_after_lt(this.input, index);
-					const previous = this.#previousNonSpaceTabIndex(index);
-					const afterSemicolon =
-						previous >= 0 && this.input.charCodeAt(previous) === CharCode.semicolon;
-					return tagLike && (this.#isLineStartPosition(index) || afterSemicolon);
+					const previous = this.#previousNonSpaceTabCommentIndex(index);
+					const before = previous >= 0 ? this.input.charCodeAt(previous) : -1;
+					const afterStatement =
+						before === CharCode.semicolon ||
+						before === CharCode.openBrace ||
+						before === CharCode.closeBrace;
+					return tagLike && (this.#isLineStartPosition(index) || afterStatement);
 				}
 				return this.#isCodeBlockStart(index) || this.#isJSXControlFlowDirectiveAt(index);
 			}
@@ -3454,6 +3283,36 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether the parser is reading a setup statement of a template's code
+			 * block, directive body, or `@case` arm.
+			 */
+			#readingTemplateSetupStatement() {
+				return (
+					this.#templateScriptParsingDepth > 0 || this.#parsingJSXSwitchCaseScriptStatementDepth > 0
+				);
+			}
+
+			/**
+			 * Re-read the `<` at `index`, where a template's render node or child
+			 * starts, so its `jsxTagStart` pushes the opening-tag contexts in place
+			 * of the ones it pushed when it was first read. A tag starts there, so
+			 * the generic-arrow rule that may have read it as a `<` operator
+			 * (`<Foo extends bar />`) doesn't apply.
+			 * @param {number} index
+			 */
+			#rereadAsTagStart(index) {
+				this.#truncateContext(this.context.length - this.#currentTokenContextCount());
+				this.pos = index;
+				this.exprAllowed = true;
+				this.#rereadingTagStart = true;
+				try {
+					this.next();
+				} finally {
+					this.#rereadingTagStart = false;
+				}
+			}
+
+			/**
 			 * Parse the single bare render node of a code block — a JSX element/fragment
 			 * (parsed as a native TSRX element so its own body may again be plain JSX or
 			 * a nested `@{ … }`) or an `@if`/`@for`/`@switch`/`@try` directive.
@@ -3481,12 +3340,7 @@ export function TSRXPlugin(config) {
 					return this.#parseJSXControlFlowExpression();
 				}
 
-				// Re-read the `<` so its `jsxTagStart` pushes the opening-tag contexts,
-				// in place of the ones it pushed when it was first read.
-				this.#truncateContext(this.context.length - this.#currentTokenContextCount());
-				this.pos = at_index;
-				this.exprAllowed = true;
-				this.next();
+				this.#rereadAsTagStart(at_index);
 				if (this.type !== tstt.jsxTagStart) {
 					this.unexpected();
 				}
@@ -4261,6 +4115,9 @@ export function TSRXPlugin(config) {
 				) {
 					const startPos = this.start;
 					const startLoc = this.startLoc;
+					if (this.type === tt.relational && this.value === '<') {
+						this.#rereadAsTagStart(startPos);
+					}
 					if (this.type === tstt.jsxTagStart) {
 						this.next();
 					} else {
@@ -5508,6 +5365,11 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['parseMaybeUnary']}
 			 */
 			parseMaybeUnary(refDestructuringErrors, sawUnary, incDec, forInit) {
+				if (!this.#jsxFile && this.tsMatchLeftRelational() && this.start !== this.#arrowFirstAt) {
+					return /** @type {AST.Expression} */ (
+						/** @type {unknown} */ (this.#parseTypeAssertion())
+					);
+				}
 				if (
 					!sawUnary &&
 					!forInit &&
@@ -9877,12 +9739,13 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * `<T,>(x: T) => x` and `<T>(x: T): T => x` should parse as generic
-			 * arrow functions, not JSX elements. acorn-typescript's `readToken`
-			 * can otherwise tokenize `<` as `jsxTagStart` when expression parsing
-			 * allows JSX, bypassing our `getTokenFromCode` override. We intercept
-			 * only when the source from `<` actually looks like a generic arrow
-			 * expression, so JSX like `<div>` keeps parsing normally.
+			 * `<T,>(x: T) => x` and `<T extends U>(x: T) => x` should parse as
+			 * generic arrow functions, not JSX elements. acorn-typescript's
+			 * `readToken` can otherwise tokenize `<` as `jsxTagStart` when
+			 * expression parsing allows JSX, bypassing our `getTokenFromCode`
+			 * override. We intercept only where TypeScript's TSX rule reads a
+			 * generic arrow (see `looks_like_generic_arrow`), so JSX like `<div>`
+			 * and `<T>` keeps parsing normally.
 			 *
 			 * @type {Parse.Parser['readToken']}
 			 */
@@ -9918,14 +9781,43 @@ export function TSRXPlugin(config) {
 					// text ending in an identifier character (`hello<div>`) would read as
 					// the start of a type argument list (`hello<T>`).
 					const next = this.input.charCodeAt(this.pos + 1);
+					// `</` starts a closing tag, unless its `/` starts a comment
+					// (`</* c */ T,>`).
+					const after_slash = this.input.charCodeAt(this.pos + 2);
+					const closing_tag =
+						next === CharCode.slash &&
+						after_slash !== CharCode.slash &&
+						after_slash !== CharCode.asterisk;
 					if (
 						afterOptionalMemberName ||
-						(next !== CharCode.slash &&
-							(looks_like_generic_arrow(this.input, this.pos) ||
-								this.#canStartTypeParameterOrArgumentList(this.pos)))
+						(!closing_tag &&
+							// The rule applies only where an expression can start, as in
+							// TypeScript: not between JSX children, nor where a template's
+							// render node or child starts, where a `<` only opens a tag. In a
+							// template's setup code, that includes a `<` after an operand,
+							// which starts the render node on its line.
+							((this.#jsxFile &&
+								(this.exprAllowed || !this.#readingTemplateSetupStatement()) &&
+								context !== tstc.tc_expr &&
+								!this.#rereadingTagStart &&
+								looks_like_generic_arrow(this.input, this.pos)) ||
+								// Without JSX, a `<` where an expression starts begins type
+								// parameters or a type assertion, unless it is `<=`, `<<`, or `<<=`.
+								(!this.#jsxFile &&
+									this.exprAllowed &&
+									next !== CharCode.equals &&
+									next !== CharCode.lessThan) ||
+								(next !== CharCode.slash && this.#canStartTypeParameterOrArgumentList(this.pos))))
 					) {
 						++this.pos;
 						return this.finishToken(tt.relational, '<');
+					}
+					// Elsewhere a file without JSX reads it as JavaScript does: `<`, `<=`,
+					// `<<`, or `<<=`, never a tag.
+					if (!this.#jsxFile && !this.inType) {
+						return /** @type {Parse.Parser} */ (
+							/** @type {unknown} */ (original)
+						).getTokenFromCode.call(this, code);
 					}
 				}
 				if (context === tstc.tc_expr || context === tstc.tc_oTag || context === tstc.tc_cTag) {
@@ -10315,7 +10207,34 @@ export function TSRXPlugin(config) {
 						);
 					if (this.type === tt.parenL) return this.#parseAsyncArguments(parse);
 					if (this.tsMatchLeftRelational()) {
-						return this.#parseGenericArrowFunction(startPos, parse);
+						const type_parameters_start = this.start;
+						const node = this.#parseGenericArrowFunction(startPos, parse);
+						// In a `.tsx` file TypeScript reads `async <T>(x) => x` as a call:
+						// only the type parameters its rule reads as a generic arrow
+						// function's are one (see `looks_like_generic_arrow`). Reported at
+						// the type parameter, as TS7060 is. A file without JSX has the
+						// generic arrow function.
+						if (
+							this.#jsxFile &&
+							node.type === 'ArrowFunctionExpression' &&
+							node.typeParameters &&
+							!looks_like_generic_arrow(this.input, type_parameters_start)
+						) {
+							const parameter = node.typeParameters.params[0];
+							if (this.#collect) {
+								this.#recordCheckerLevelError(
+									/** @type {number} */ (parameter.start),
+									/** @type {number} */ (parameter.end),
+									TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER,
+								);
+							} else {
+								this.raise(
+									/** @type {number} */ (parameter.start),
+									TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER,
+								);
+							}
+						}
+						return node;
 					}
 				}
 				// The `[` of a computed member (`a[i]`, `a?.[i]`).
@@ -10641,6 +10560,7 @@ export function TSRXPlugin(config) {
 					typeParametersStart: this.start,
 					parametersStart: -1,
 					arrowStart,
+					arrowRead: false,
 					error: null,
 					reserved: null,
 					held: [],
@@ -10679,6 +10599,7 @@ export function TSRXPlugin(config) {
 				if (arrow === null || arrow.arrowStart !== node.start) {
 					return super.parseArrowExpression(node, params, isAsync, forInit);
 				}
+				arrow.arrowRead = true;
 				try {
 					return super.parseArrowExpression(node, params, isAsync, forInit);
 				} catch (error) {
@@ -10749,16 +10670,124 @@ export function TSRXPlugin(config) {
 			/**
 			 * acorn-typescript reads an expression that starts with `<` as an element
 			 * first, then as a generic arrow function (see
-			 * `#parseGenericArrowFunction`).
+			 * `#parseGenericArrowFunction`). A `jsxTagStart` is a `<` that TypeScript's
+			 * TSX rule reads as a tag (see `looks_like_generic_arrow`), so it is read
+			 * only as an element: an element that fails to parse is the error, as in
+			 * TSX, not a generic arrow function such as `<T>(x) => x`.
 			 * @type {Parse.Parser['parseMaybeAssign']}
 			 */
 			#parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse) {
-				if (this.type !== tstt.jsxTagStart && !this.tsMatchLeftRelational()) {
+				if (this.type === tstt.jsxTagStart) {
+					return this.parseMaybeAssignOrigin(forInit, refDestructuringErrors, afterLeftParse);
+				}
+				if (!this.tsMatchLeftRelational()) {
 					return super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
 				}
 				return this.#parseGenericArrowFunction(-1, () =>
-					super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse),
+					this.#jsxFile
+						? super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse)
+						: this.#parseArrowOrTypeAssertion(forInit, refDestructuringErrors, afterLeftParse),
 				);
+			}
+
+			/**
+			 * A `<` where an expression starts in a file without JSX, as TypeScript
+			 * reads it there: a generic arrow function's type parameters when an
+			 * arrow function follows them, and a type assertion's type otherwise
+			 * (`<T>x`). acorn-typescript reads it as an element first, which fails at
+			 * the `<` here, then as a generic arrow function; the type assertion,
+			 * which it reads only without JSX, comes after.
+			 * @type {Parse.Parser['parseMaybeAssign']}
+			 */
+			#parseArrowOrTypeAssertion(forInit, refDestructuringErrors, afterLeftParse) {
+				const outer = this.#arrowFirstAt;
+				const outer_hold = this.#hold.held;
+				// The checker errors read while the `<` is tried as a generic arrow
+				// function's, TS7059 and TS7060 among them, are held (see
+				// `#holdingErrors`). Thrown there, one ended the attempt, and the `<` was
+				// read as a type assertion's, which failed at the type parameters
+				// (`<T,>(x = <number>y) => x`). An attempt that fails drops them with
+				// its other effects, such as the TS7060 of `<Handler>((e) => e.x)`, a
+				// type assertion.
+				/** @type {CompileError[]} */
+				const held = [];
+				this.#arrowFirstAt = this.start;
+				this.#setHeld(held);
+				const generic_arrow = this.#genericArrowFunction;
+				let arrow;
+				try {
+					arrow = this.tryParse(() => {
+						const node = super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
+						// acorn-typescript reads `<T>((x) => x)` as a generic arrow function
+						// whose parentheses go unseen; TypeScript reads a type assertion on a
+						// parenthesized arrow function, which doesn't start at their `(`.
+						if (
+							node.type === 'ArrowFunctionExpression' &&
+							node.typeParameters &&
+							generic_arrow &&
+							!generic_arrow.arrowRead
+						) {
+							this.unexpected(/** @type {number} */ (node.typeParameters.end));
+						}
+						return node;
+					});
+				} finally {
+					this.#arrowFirstAt = outer;
+					this.#setHeld(outer_hold);
+				}
+				if (arrow.error) {
+					// Once its `=>` is read, TypeScript reads a generic arrow function
+					// whatever follows, so an error after it, such as a syntax error in its
+					// body, is the arrow function's, after the checker errors before it
+					// (#1264). Read it again, not as an attempt, for that error.
+					if (generic_arrow?.arrowRead) {
+						this.#arrowFirstAt = this.start;
+						try {
+							return super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
+						} finally {
+							this.#arrowFirstAt = outer;
+						}
+					}
+					return this.parseMaybeAssignOrigin(forInit, refDestructuringErrors, afterLeftParse);
+				}
+				// It is a generic arrow function: what it held is reported, by position,
+				// or held around it.
+				this.#releaseErrors(held);
+				return /** @type {AST.Expression} */ (arrow.node);
+			}
+
+			/**
+			 * A type assertion, `<T>x`, which only a file without JSX has. TypeScript
+			 * reserves it in a `.mts` or `.cts` file (TS7059), where a strict parse
+			 * throws that and a collecting one records it, or either holds it while
+			 * checker errors are held (see `#parseArrowOrTypeAssertion`).
+			 * @returns {AST.TSTypeAssertion}
+			 */
+			#parseTypeAssertion() {
+				const node = /** @type {AST.TSTypeAssertion} */ (this.startNode());
+				const constant = this.tsTryNextParseConstantContext();
+				node.typeAnnotation = /** @type {any} */ (constant || this.tsNextThenParseType());
+				this.expect(tt.relational);
+				node.expression = this.parseMaybeUnary();
+				const assertion = this.finishNode(
+					node,
+					/** @type {AST.TSTypeAssertion['type']} */ ('TSTypeAssertion'),
+				);
+				if (regex_reserved_jsx_like_file.test(this.#filename ?? '')) {
+					const start = /** @type {number} */ (assertion.start);
+					if (this.#collect || this.#hold.held) {
+						// Dropped with an attempt that fails (`#parseArrowOrTypeAssertion`).
+						this.#recordCheckerLevelError(
+							start,
+							/** @type {number} */ (assertion.end),
+							TS_ERRORS.RESERVED_TYPE_ASSERTION,
+							true,
+						);
+					} else {
+						this.raise(start, TS_ERRORS.RESERVED_TYPE_ASSERTION);
+					}
+				}
+				return assertion;
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#136): remove once a release includes the fix
@@ -13105,26 +13134,58 @@ export function TSRXPlugin(config) {
 					this.#path.pop();
 				} else {
 					this.#elementContextDepths.set(node, pre_element_context_depth);
-					this.#parseNativeTemplateBody(node, /** @type {AST.Node[]} */ (node.children), {
-						enterScope: true,
-						resetFunctionBodyDepth: true,
-					});
+					// `<T>(x) => x` is a tag, as in a `.tsx` file; unclosed, it gets the fix.
+					const type_parameter =
+						is_fragment || is_dynamic
+							? null
+							: lone_type_parameter(this.input, open, String(tag_name));
+					try {
+						this.#parseNativeTemplateBody(node, /** @type {AST.Node[]} */ (node.children), {
+							enterScope: true,
+							resetFunctionBodyDepth: true,
+						});
+					} catch (error) {
+						// An arrow body such as `{ return x; }` fails as markup first.
+						if (
+							type_parameter !== null &&
+							!has_closing_tag(this.input, String(tag_name), open.end)
+						) {
+							this.raise(
+								open.start,
+								TSRX_ERRORS.UNCLOSED_TAG_GENERIC_ARROW(String(tag_name), type_parameter),
+							);
+						}
+						throw error;
+					}
 
 					if (this.#path[this.#path.length - 1] === node) {
 						const displayTag = is_fragment
 							? ''
 							: this.getElementName(/** @type {ESTreeJSX.JSXElement} */ (node).openingElement.name);
-						// Recorded at the tag's name (a fragment's `<>`), so that each tag
-						// left open shows on itself, not all of them at the token that ends
-						// the template (#1288).
-						const tag = is_fragment
-							? /** @type {ESTreeJSX.JSXFragment} */ (node).openingFragment
-							: /** @type {ESTreeJSX.JSXElement} */ (node).openingElement.name;
-						this.#report_broken_markup_error(
-							this.start,
-							TSRX_ERRORS.UNCLOSED_TAG(String(displayTag)),
-							[/** @type {number} */ (tag.start), /** @type {number} */ (tag.end)],
-						);
+						if (type_parameter === null) {
+							// Recorded at the tag's name (a fragment's `<>`), so that each tag
+							// left open shows on itself, not all of them at the token that ends
+							// the template (#1288).
+							const tag = is_fragment
+								? /** @type {ESTreeJSX.JSXFragment} */ (node).openingFragment
+								: /** @type {ESTreeJSX.JSXElement} */ (node).openingElement.name;
+							this.#report_broken_markup_error(
+								this.start,
+								TSRX_ERRORS.UNCLOSED_TAG(String(displayTag)),
+								[/** @type {number} */ (tag.start), /** @type {number} */ (tag.end)],
+							);
+						} else {
+							// Reported in loose mode too: only this error names the fix.
+							const error = TSRX_ERRORS.UNCLOSED_TAG_GENERIC_ARROW(
+								String(displayTag),
+								type_parameter,
+							);
+							if (this.#collect) {
+								this.#report_recoverable_error_range(open.start, open.end, error);
+							} else {
+								this.raise(open.start, error);
+							}
+						}
 						slots.unclosed = true;
 						/** @type {AST.SourceLocation} */ (node.loc).end = {
 							.../** @type {AST.SourceLocation} */ (
@@ -13215,6 +13276,16 @@ export function TSRXPlugin(config) {
 						}
 						body.push(this.#parseCodeBlock());
 						continue;
+					}
+
+					// A child's `<` starts a tag, even where the generic-arrow rule read it
+					// as an operator (`}<Foo extends bar />` after a directive).
+					if (
+						this.type === tt.relational &&
+						this.value === '<' &&
+						can_start_tag_after_lt(this.input, this.start)
+					) {
+						this.#rereadAsTagStart(this.start);
 					}
 
 					if (this.type === tt.braceL) {

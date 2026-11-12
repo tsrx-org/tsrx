@@ -534,6 +534,8 @@ const SPECIAL_AST_SHAPE = [
 const TSRX_ERROR_CODES = [
 	"TSRX1001  Unclosed tag '<div>'. Expected '</div>' before end of template.",
 	'          const a = <div><b>text</b>;',
+	'          (for a lone type parameter before `(`, also: To write a generic arrow function, add a trailing comma, as in `<T,>() => ...`.)',
+	'          const f = <T>(x: T) => x;',
 	"TSRX1002  Expected closing tag to match opening tag. Expected '</div>' but found '</span>'",
 	'          const a = <div></span>;',
 	'TSRX1003  Unexpected closing tag',
@@ -1069,6 +1071,15 @@ export function SpecificationPage() @{
 								Class methods, object methods, arrow functions, and function expressions all remain
 								ordinary TypeScript constructs. Hosts may choose which TSRX-producing functions are
 								considered components.
+							</p>
+							<p class="section-body muted">
+								As in a <code class="inline-code">.tsx</code> file, a{' '}
+								<code class="inline-code">{'<'}</code> where an expression starts begins a generic
+								arrow function only when its type parameter is followed by a comma, a default, or a
+								constraint (<code class="inline-code">{'<T,>'}</code>,{' '}
+								<code class="inline-code">{'<T = U>'}</code>,{' '}
+								<code class="inline-code">{'<T extends U>'}</code>). Anything else, including{' '}
+								<code class="inline-code">{'<T>(x) => x'}</code>, begins an element.
 							</p>
 						</section>
 

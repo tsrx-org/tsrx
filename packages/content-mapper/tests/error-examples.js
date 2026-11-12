@@ -37,6 +37,7 @@ export const ERROR_EXAMPLES = [
 }
 `,
 	},
+	{ error: TSRX_ERRORS.UNCLOSED_TAG_GENERIC_ARROW, source: `export const f = <T>(x: T) => x;` },
 	{
 		error: TSRX_ERRORS.MISMATCHED_CLOSING_TAG,
 		source: `export function C() @{
@@ -916,7 +917,7 @@ let E;`,
 	{ error: TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, source: `@dec function f() {}` },
 	{ error: TS_ERRORS.TYPE_CAST_IN_PARAMETER, source: `const f = (x as number) => x;` },
 	{ error: TS_ERRORS.UNEXPECTED_TYPE_ANNOTATION, source: `f(a: number);` },
-	{ error: TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER, source: `const f = <T>() => 1;` },
+	{ error: TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER, source: `const f = async <T>() => 1;` },
 	{
 		error: UPSTREAM_ERRORS.REDECLARED,
 		source: `var a = 1;
@@ -1091,6 +1092,10 @@ export const WITHOUT_EXAMPLE = new Map(
 		[TS_ERRORS.JSX_UNESCAPED_GREATER_THAN, 'No source found: a `>` in JSX text is text (#964).'],
 		[TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE, 'No source found (#964).'],
 		[TS_ERRORS.SIGNATURE_PARAMETER_NAME, 'No source found (#964).'],
+		[
+			TS_ERRORS.RESERVED_TYPE_ASSERTION,
+			'Only in a `.mts` or `.cts` file, which no TSRX compiler reads: a `.tsrx` file has JSX, where `<T>x` is a tag.',
+		],
 		[
 			TS_ERRORS.LET_DECLARATION_NAME,
 			'Reported only with TS1214 (`TS_ERRORS.STRICT_MODE_RESERVED_WORD`) at the same name, as TypeScript reports both (`const let = 1;`).',

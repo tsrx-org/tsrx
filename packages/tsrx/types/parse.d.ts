@@ -1411,6 +1411,28 @@ export namespace Parse {
 		tsMatchLeftRelational(): boolean;
 
 		/**
+		 * Read the `const` of a const assertion written `<const>x`, after its `<`,
+		 * or `null` when another type follows (@sveltejs/acorn-typescript)
+		 */
+		tsTryNextParseConstantContext(): AST.TypeNode | null;
+
+		/**
+		 * Read the next token, then a type (@sveltejs/acorn-typescript)
+		 */
+		tsNextThenParseType(): AST.TypeNode;
+
+		/**
+		 * acorn's own `parseMaybeAssign`, without the attempts that
+		 * acorn-typescript's makes at an expression that starts with `<`: an
+		 * element, then a generic arrow function (@sveltejs/acorn-typescript)
+		 */
+		parseMaybeAssignOrigin(
+			forInit?: ForInit,
+			refDestructuringErrors?: DestructuringErrors,
+			afterLeftParse?: (node: AST.Node, startPos: number, startLoc: AST.Position) => AST.Node,
+		): AST.Expression;
+
+		/**
 		 * Parse type arguments in an expression position, rescanning the `<` that was
 		 * tokenized outside a type context (@sveltejs/acorn-typescript). `undefined`
 		 * when the rescan does not yield a `<`.

@@ -4490,15 +4490,18 @@ break"}</p>
 			expect(code).toContain('export function getItems<Item>(props: Props<Item>)');
 		});
 
-		it('keeps a generic arrow with one type parameter from reading as a JSX tag', () => {
+		it('keeps the comma of a generic arrow with one type parameter, so the output reparses', () => {
 			const { code } = compile(
-				`export const first = <T>(items: T[]) => items[0];
+				`export const f = <T,>(x: T) => x;
+				export const first = <const T,>(items: T[]) => items[0];
 				export const pair = <A, B>(a: A, b: B) => [a, b];`,
 				'App.tsrx',
 			);
 
-			expect(code).toContain('export const first = <T,>(items: T[]) => items[0];');
+			expect(code).toContain('export const f = <T,>(x: T) => x;');
+			expect(code).toContain('export const first = <const T,>(items: T[]) => items[0];');
 			expect(code).toContain('export const pair = <A, B>(a: A, b: B) => [a, b];');
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
 		});
 
 		it('keeps parameter decorators before parameter property modifiers', () => {
