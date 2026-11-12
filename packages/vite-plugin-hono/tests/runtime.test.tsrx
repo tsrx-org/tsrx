@@ -178,6 +178,25 @@ function BodyThrowBoundaryApp() @{
 	}
 }
 
+function pendingBoom(): string {
+	throw new Error('pending boom');
+}
+
+function ThrowingPendingOuterCatchApp() @{
+	@try {
+		<div class="outer">
+			@try {
+				<AsyncContent />
+			} @pending {
+				const label = pendingBoom();
+				<p class="pending">{label}</p>
+			}
+		</div>
+	} @catch (error) {
+		<p class="outer-caught">{(error as Error).message}</p>
+	}
+}
+
 const ThemeContext = createContext('light');
 
 function ThemeLabel() @{
@@ -369,6 +388,15 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		await Promise.resolve();
 		await Promise.resolve();
 		expect(container.innerHTML).toBe('<span class="resolved">ready</span>');
+	});
+
+	// Hono keeps the @pending body inline, so it throws while the outer @try
+	// body renders, before anything suspends. A component fallback would
+	// throw inside Hono DOM's Suspense instead, which crashes its renderer.
+	it('catches a throw from a @pending body in an enclosing @catch', () => {
+		render(<ThrowingPendingOuterCatchApp />, container);
+
+		expect(container.innerHTML).toBe('<p class="outer-caught">pending boom</p>');
 	});
 
 	it('renders @catch through Hono DOM ErrorBoundary', () => {

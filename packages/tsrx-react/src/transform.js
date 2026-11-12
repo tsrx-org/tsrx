@@ -40,6 +40,7 @@ const react_platform = {
 		classValue: 'text',
 		multiRefStrategy: 'merge-refs',
 		hostSpreadRefBinding: 'in-place',
+		pendingFallback: 'try-body',
 	},
 	validation: {
 		requireUseServerForAwait: false,

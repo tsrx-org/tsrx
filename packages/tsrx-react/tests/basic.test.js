@@ -1579,6 +1579,88 @@ describe('@tsrx/react basic', () => {
 		expect(code).not.toContain('key=');
 	});
 
+	it('renders the @pending body as a TsrxTryBody fallback', () => {
+		const { code } = compile(
+			`export function App() @{
+				@try {
+					<Posts />
+				} @pending {
+					const label = loadLabel();
+					<p>{label}</p>
+				} @catch (err) {
+					<p>{'error'}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		// As a component inside both boundaries, the fallback runs only while
+		// the body suspends, and its throw reaches `@catch`.
+		expect(code).toMatch(
+			/<Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
+		);
+	});
+
+	it('keeps the @pending body inline in type-only output', () => {
+		const { code } = compile_to_volar_mappings(
+			`export function App() @{
+				@try {
+					<Posts />
+				} @pending {
+					const label = loadLabel();
+					<p>{label}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('TsrxTryBody');
+		expect(code).toMatch(/<Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
+	});
+
+	it('keeps a @pending body that awaits inline', () => {
+		const { code } = compile(
+			`export async function App() @{
+				@try {
+					<Posts />
+				} @pending {
+					const label = await loadLabel();
+					<p>{label}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(/<Suspense fallback=\{await \(async \(\) => \{/);
+	});
+
+	it.each([
+		[
+			'@try body',
+			`@try {
+				await using resource = acquire();
+				<p>{resource.label}</p>
+			} @pending {
+				<p>{'loading'}</p>
+			}`,
+		],
+		[
+			'@pending body',
+			`@try {
+				<Posts />
+			} @pending {
+				await using resource = acquire();
+				<p>{resource.label}</p>
+			}`,
+		],
+	])('keeps a %s with await using inline in an awaited async closure', (_name, template) => {
+		const { code } = compile(`export async function App() @{\n${template}\n}`, 'App.tsrx');
+
+		// `await using` needs an async function, like `await`.
+		expect(code).toMatch(/await \(async \(\) => \{\s*await using resource = acquire\(\);/);
+		expect(code).not.toMatch(/render=\{\(\) => \{\s*await using/);
+	});
+
 	it('applies scoped CSS hashes inside try blocks', () => {
 		const { code, css, cssHash } = compile(
 			`export function App() @{

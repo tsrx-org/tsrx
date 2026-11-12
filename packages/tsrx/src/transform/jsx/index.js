@@ -5433,10 +5433,16 @@ function try_statement_to_jsx_child(node, transform_context) {
 	if (pending) {
 		transform_context.needs_suspense = true;
 		const pending_body_nodes = pending.body || [];
-		const fallback_content =
+		const fallback_body =
 			pending_body_nodes.length === 0
-				? to_jsx_expression_container(create_null_literal())
-				: statement_body_to_jsx_child(pending_body_nodes, transform_context);
+				? create_null_literal()
+				: transform_context.platform.jsx.pendingFallback === 'try-body'
+					? try_body_to_jsx_child(pending_body_nodes, transform_context)
+					: statement_body_to_jsx_child(pending_body_nodes, transform_context);
+		const fallback_content =
+			fallback_body.type === 'JSXExpressionContainer'
+				? fallback_body
+				: to_jsx_expression_container(/** @type {AST.Expression} */ (fallback_body));
 
 		const custom_pending = transform_context.platform.hooks?.createPendingBoundary?.(
 			result,
@@ -5576,7 +5582,8 @@ function try_statement_to_jsx_child(node, transform_context) {
 }
 
 /**
- * The `@try` body as the boundary's child. See `imports.tryBody`.
+ * A `@try` body as the boundary's child, or a `@pending` body as the
+ * `Suspense` fallback. See `imports.tryBody` and `jsx.pendingFallback`.
  *
  * @param {AST.Node[]} body_nodes
  * @param {TransformContext} transform_context
@@ -5641,6 +5648,7 @@ function suspends_enclosing_function(node) {
 		node.type === 'AwaitExpression' ||
 		node.type === 'YieldExpression' ||
 		(node.type === 'ForOfStatement' && node.await) ||
+		(node.type === 'VariableDeclaration' && node.kind === 'await using') ||
 		(node.type === 'JSXForExpression' && node.statementType === 'ForOfStatement' && node.await)
 	) {
 		return true;

@@ -396,12 +396,13 @@ export interface JsxPlatform {
 		errorBoundary: string;
 		/**
 		 * Module to import `TsrxTryBody` from. When set, runtime output renders
-		 * a `@try` body as `<TsrxTryBody render={() => …} />` instead of an
-		 * expression the parent evaluates while rendering, and keys the
-		 * outermost element of each `@try` with its site. For runtimes whose
-		 * boundaries (React-style error boundaries and `Suspense`) catch only
-		 * what descendant components throw: the body's setup statements then
-		 * run inside the boundary. A body that awaits or yields stays inline,
+		 * a `@try` body (and, with `jsx.pendingFallback`, a `@pending` body)
+		 * as `<TsrxTryBody render={() => …} />` instead of an expression the
+		 * parent evaluates while rendering, and keys the outermost element of
+		 * each `@try` with its site. For runtimes whose boundaries (React-style
+		 * error boundaries and `Suspense`) catch only what descendant
+		 * components throw: the body's setup statements then run inside the
+		 * boundary. A body that awaits or yields stays inline,
 		 * since the enclosing function has to settle it. The type-only output
 		 * keeps the inline body. Keep this module free of class components so
 		 * a `@try` with only `@pending` works in React Server Components.
@@ -556,6 +557,22 @@ export interface JsxPlatform {
 		 *   element's `ref` as for `undefined`.
 		 */
 		hostSpreadRefStrategy?: 'explicit-ref-attr' | 'spread';
+		/**
+		 * How runtime output renders a `@pending` body, the `Suspense`
+		 * fallback.
+		 *
+		 * - `'try-body'`: `<TsrxTryBody render={() => …} />`, like the `@try`
+		 *   body (see `imports.tryBody`, which it needs). On the client, the
+		 *   body then runs only while the `@try` body suspends, and a throw in
+		 *   it reaches the `@try`'s `@catch`. A body that awaits or yields
+		 *   stays inline.
+		 * - `undefined`: the default `<Suspense>` lowering passes the body as
+		 *   an expression the parent evaluates on every render, whether or
+		 *   not anything suspends. For runtimes whose `Suspense` can't recover
+		 *   from a fallback that throws, such as Hono's DOM renderer. A
+		 *   `hooks.createPendingBoundary` hook decides for itself.
+		 */
+		pendingFallback?: 'try-body';
 		/**
 		 * Where a host spread binds its normalized props bag when the element
 		 * also reads the bag's `ref` through a `ref` attribute.
