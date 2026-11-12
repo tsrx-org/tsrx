@@ -81,6 +81,10 @@ const NO_IMPORTS_TSRX = `export function NoImports() @{
 	<p>{helperB()}</p>
 }
 `;
+const FLAGGED_NO_IMPORTS_TSRX = `export function FlaggedNoImports() @{
+	<p>{helperB()}{String(import.meta.env.platform.web)}</p>
+}
+`;
 /** Imports with several names and type names, some of them unused. */
 const MIXED_IMPORTS = `import { type Model, helperA } from './mixed';
 import { helperA as first, type Model as M, helperB } from './mixed';
@@ -108,6 +112,7 @@ function workspace_files() {
 	files['mixed.ts'] = MIXED_TS;
 	files['NewLine.tsrx'] = NEW_LINE_TSRX;
 	files['NoImports.tsrx'] = NO_IMPORTS_TSRX;
+	files['FlaggedNoImports.tsrx'] = FLAGGED_NO_IMPORTS_TSRX;
 	files['WithComponent.tsrx'] = WITH_COMPONENT_TSRX;
 	files['Statement.tsrx'] = STATEMENT_TSRX;
 	files['Extend.tsrx'] = EXTEND_TSRX;
@@ -524,6 +529,24 @@ import def from './mixed';
 		);
 	});
 
+	it('removes unused imports in a module that keeps a platform flag', async () => {
+		// The shared platform globals are referenced by a directive, not imported, so
+		// the module's last import stays its own and its edits still map.
+		const source = [
+			"import Panel from './Panel.tsrx';",
+			"import Button from './Button.tsrx';",
+			'',
+			'export default function Flagged() @{',
+			'\t<Button label={String(import.meta.env.platform.web)} />',
+			'}',
+			'',
+		].join('\n');
+		const edits = await source_action_edits('Flagged.tsrx', source, 'source.removeUnusedImports');
+		expect(apply_edits(source, edits)).toBe(
+			source.replace("import Panel from './Panel.tsrx';\n", ''),
+		);
+	});
+
 	it.each([
 		[
 			'on a new line, sorted before the other import',
@@ -559,6 +582,14 @@ import def from './mixed';
 			{
 				range: { start: { line: 0, character: 16 }, end: { line: 0, character: 16 } },
 				newText: ', helperB',
+			},
+		],
+		[
+			'into a file without imports that keeps a platform flag',
+			'FlaggedNoImports.tsrx',
+			{
+				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+				newText: 'import { helperB } from "./lib";\n\n',
 			},
 		],
 	])('auto-imports %s', async (_name, file, edit) => {

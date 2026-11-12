@@ -178,7 +178,9 @@ export {
 	createJsxTransform,
 	DYNAMIC_FACTORY_LOCAL,
 	DYNAMIC_IMPORT_LOCAL,
+	ERROR_BOUNDARY_INTERNAL_NAME,
 	extract_jsx_setup_declarations as extractJsxSetupDeclarations,
+	insert_after_directives as insertAfterDirectives,
 	is_component_like_element,
 	is_svg_tag_name as isSvgTagName,
 	is_mathml_tag_name as isMathmlTagName,
@@ -190,7 +192,9 @@ export {
 	return_value_body_to_expression as returnValueBodyToExpression,
 	source_mentions_identifier as sourceMentionsIdentifier,
 	SPREAD_REF_BAGS_INTERNAL_NAME,
+	SUSPENSE_INTERNAL_NAME,
 	validate_at_most_one_ref_attribute as validateAtMostOneRefAttribute,
+	validate_for_of_head as validateForOfHead,
 	wrap_edge_whitespace as wrapEdgeWhitespace,
 } from './transform/jsx/index.js';
 export {

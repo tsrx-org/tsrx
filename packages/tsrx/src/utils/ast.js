@@ -1,7 +1,7 @@
 /** @import * as AST from 'estree' */
 
 import * as b from './builders.js';
-import { is_jsx_child_tooling_comment } from '../comment-utils.js';
+import { should_preserve_jsx_tooling_comment } from '../comment-utils.js';
 
 /**
  * @param {unknown} value
@@ -77,7 +77,7 @@ export function is_layout_whitespace(node) {
 
 /**
  * Whether a child is an empty `{}` holding a tooling comment
- * (`// @ts-expect-error`, see `is_jsx_child_tooling_comment`), which the
+ * (`// @ts-expect-error`, see `should_preserve_jsx_tooling_comment`), which the
  * editor's TypeScript reads as `{/* @ts-expect-error *\/}`.
  * @param {AST.Node | undefined} node
  * @returns {boolean}
@@ -87,7 +87,7 @@ function is_tooling_comment_container(node) {
 	return (
 		node?.type === 'JSXExpressionContainer' &&
 		expression?.type === 'JSXEmptyExpression' &&
-		(expression.innerComments ?? []).some(is_jsx_child_tooling_comment)
+		(expression.innerComments ?? []).some(should_preserve_jsx_tooling_comment)
 	);
 }
 

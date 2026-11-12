@@ -1714,19 +1714,17 @@ export function Card(${params}: any) @{
 	});
 
 	it('imports Suspense once, as a value, beside the computed import and authored vue imports', () => {
-		for (const [authored, suspense_import] of [
-			["import { Suspense } from 'vue';", "import { Suspense } from 'vue';"],
-			[
-				"import type { Ref } from 'vue';",
-				"import { computed as _$_vapor_computed, Suspense } from 'vue';",
-			],
-			[
-				"import * as Vue from 'vue';",
-				"import { computed as _$_vapor_computed, Suspense } from 'vue';",
-			],
+		// The generated `Suspense` is imported privately, as `__Suspense`, so an
+		// authored `Suspense` import stays as written beside it.
+		const generated =
+			"import { computed as _$_vapor_computed, Suspense as __Suspense } from 'vue';";
+		for (const [authored, suspense_imports] of [
+			["import { Suspense } from 'vue';", [generated, "import { Suspense } from 'vue';"]],
+			["import type { Ref } from 'vue';", [generated]],
+			["import * as Vue from 'vue';", [generated]],
 			[
 				"import { ref } from 'vue';\nimport { Suspense } from 'vue';",
-				"import { Suspense } from 'vue';",
+				[generated, "import { Suspense } from 'vue';"],
 			],
 		]) {
 			const { code, errors } = compile(
@@ -1751,7 +1749,7 @@ export function Card(${params}: any) @{
 
 			expect(errors, authored).toEqual([]);
 			expect(code, authored).toContain(authored);
-			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual([suspense_import]);
+			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual(suspense_imports);
 			expect(code, authored).toMatch(/^import \{ computed as _\$_vapor_computed\b/);
 		}
 	});
@@ -1780,7 +1778,7 @@ export function Card(${params}: any) @{
 			expect(errors, authored).toEqual([]);
 			expect(code, authored).toContain(authored);
 			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual([
-				"import { Suspense } from 'vue';",
+				"import { Suspense as __Suspense } from 'vue';",
 			]);
 		}
 	});
@@ -1928,7 +1926,7 @@ export function Card(${params}: any) @{
 
 		// A component instance registers the boundary's error hook; a plain call
 		// has none.
-		expect(code).toContain('{<TsrxErrorBoundary fallback=');
+		expect(code).toContain('{<__TsrxErrorBoundary fallback=');
 		expect(code).not.toContain('TsrxErrorBoundary({');
 	});
 
@@ -1946,7 +1944,59 @@ export function Card(${params}: any) @{
 
 		expect(code).not.toContain('StatementBodyHook');
 		expect(code.match(/<span>\{'Failed'\}<\/span>/g)).toHaveLength(1);
-		expect(code).toContain('<TsrxErrorBoundary fallback={(error, _reset) =>');
+		expect(code).toContain('<__TsrxErrorBoundary fallback={(error, _reset) =>');
+	});
+
+	it.each([
+		[`import type { TsrxErrorBoundary } from '@tsrx/vue/error-boundary';`, ''],
+		[`import { TsrxErrorBoundary } from './authored';`, ''],
+		['', `const TsrxErrorBoundary = 'authored';`],
+	])('imports the generated error boundary privately beside `%s%s`', (module_scope, setup) => {
+		const { code } = compile(
+			`${module_scope}
+
+			export function App() @{
+				${setup}
+				@try {
+					<span>{'Loaded'}</span>
+				} @catch (error) {
+					<span>{'Failed'}</span>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			"import { TsrxErrorBoundary as __TsrxErrorBoundary } from '@tsrx/vue/error-boundary';",
+		);
+		expect(code).toContain('<__TsrxErrorBoundary fallback=');
+		expect(code).not.toContain('<TsrxErrorBoundary');
+	});
+
+	it.each([
+		[
+			`import { type Suspense } from 'vue';`,
+			`import { type Suspense, Suspense as __Suspense } from 'vue';`,
+		],
+		[`import type { Suspense } from 'vue';`, `import { Suspense as __Suspense } from 'vue';`],
+		[`import { Suspense } from './authored';`, `import { Suspense as __Suspense } from 'vue';`],
+	])('imports the generated Suspense as a value beside `%s`', (authored, generated) => {
+		const { code } = compile(
+			`${authored}
+
+			export function App() @{
+				@try {
+					<span>{'Loaded'}</span>
+				} @pending {
+					<span>{'Loading'}</span>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(generated);
+		expect(code).toContain('<__Suspense v-slots=');
+		expect(code).not.toContain('<Suspense');
 	});
 
 	it('compiles try/pending into a Vue Suspense slot boundary', () => {
@@ -1992,7 +2042,7 @@ export function Card(${params}: any) @{
 		expect(code).toContain('Suspense');
 		expect(code).toContain("from 'vue'");
 		expect(code).toContain('v-slots=');
-		expect(code).toContain('content={() => <Suspense');
+		expect(code).toContain('content={() => <__Suspense');
 		expect(code).toContain('default: () =>');
 		expect(code).toContain('content={() =>');
 		expect(code).toContain('error.message');
@@ -2001,11 +2051,11 @@ export function Card(${params}: any) @{
 		expect(code).toContain('suffix={suffix}');
 		// The Suspense default slot renders the body through its own boundary,
 		// so `reset` works for errors thrown there.
-		expect(code).toMatch(/default: \(\) => <TsrxErrorBoundary fallback=\{\(error, reset\) => \{/);
+		expect(code).toMatch(/default: \(\) => <__TsrxErrorBoundary fallback=\{\(error, reset\) => \{/);
 		expect(code).not.toContain('reset={() => {}}');
 
-		const error_boundary_index = code.indexOf('<TsrxErrorBoundary');
-		const suspense_index = code.indexOf('<Suspense');
+		const error_boundary_index = code.indexOf('<__TsrxErrorBoundary');
+		const suspense_index = code.indexOf('<__Suspense');
 		expect(error_boundary_index).toBeLessThan(suspense_index);
 	});
 
