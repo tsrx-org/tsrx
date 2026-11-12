@@ -511,6 +511,23 @@ export {};
 `,
 	},
 	{
+		error: TSRX_ERRORS.STYLE_IN_EXPRESSION_CONTAINER,
+		source: `function Box(props: { children?: unknown }) @{
+	<div />
+}
+
+export function C() @{
+	<Box>
+		{<style>
+			.a {
+				color: red;
+			}
+		</style>}
+	</Box>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.PLATFORM_REQUIRED,
 		source: `if (import.meta.env.platform.web) {
 	console.log(1);
