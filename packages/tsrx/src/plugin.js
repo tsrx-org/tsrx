@@ -10736,6 +10736,18 @@ export function TSRXPlugin(config) {
 					this.#setHeld(outer_hold);
 				}
 				if (arrow.error) {
+					// Once its `=>` is read, TypeScript reads a generic arrow function
+					// whatever follows, so an error after it, such as a syntax error in its
+					// body, is the arrow function's, after the checker errors before it
+					// (#1264). Read it again, not as an attempt, for that error.
+					if (generic_arrow?.arrowRead) {
+						this.#arrowFirstAt = this.start;
+						try {
+							return super.parseMaybeAssign(forInit, refDestructuringErrors, afterLeftParse);
+						} finally {
+							this.#arrowFirstAt = outer;
+						}
+					}
 					return this.parseMaybeAssignOrigin(forInit, refDestructuringErrors, afterLeftParse);
 				}
 				// It is a generic arrow function: what it held is reported, by position,
