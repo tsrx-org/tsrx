@@ -8,6 +8,7 @@ import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtim
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
 import { runStaticContainersRuntimeTests } from '@tsrx/core/test-harness/runtime/static-containers';
@@ -869,6 +870,22 @@ function SpreadRefsRenderApp() @{
 			{count}
 		</button>
 		<button className="spread-refs-replace" onClick={() => setReplaced(true)}>
+			{'replace'}
+		</button>
+	</>
+}
+
+function SpreadRefListRenderApp() @{
+	const [count, setCount] = useState(0);
+	const [replaced, setReplaced] = useState(false);
+	const last_ref = replaced ? bag_replaced_ref : bag_second_ref;
+
+	<>
+		<input className="lone-ref-list" {...{ 'data-count': count, ref: [bag_first_ref, last_ref] }} />
+		<button className="ref-list-rerender" onClick={() => setCount(count + 1)}>
+			{count}
+		</button>
+		<button className="ref-list-replace" onClick={() => setReplaced(true)}>
 			{'replace'}
 		</button>
 	</>
@@ -1949,6 +1966,26 @@ describe('tsrx-react runtime', () => {
 		]);
 	});
 
+	it("applies a spread bag's lone ref list again only when one of its refs changes", async () => {
+		spread_ref_render_log.length = 0;
+		await render(SpreadRefListRenderApp);
+		expect(spread_ref_render_log).toEqual(['bag-first:attach', 'bag-second:attach']);
+
+		spread_ref_render_log.length = 0;
+		await click('.ref-list-rerender');
+		await click('.ref-list-rerender');
+		expect(container.querySelector('.lone-ref-list')!.getAttribute('data-count')).toBe('2');
+		expect(spread_ref_render_log).toEqual([]);
+
+		await click('.ref-list-replace');
+		expect(spread_ref_render_log).toEqual([
+			'bag-first:detach',
+			'bag-second:detach',
+			'bag-first:attach',
+			'bag-replaced:attach',
+		]);
+	});
+
 	it("keeps each element's ref cleanups when elements share a bag", async () => {
 		shared_bag_log.length = 0;
 		await render(SharedRefBagApp);
@@ -2646,6 +2683,7 @@ runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
+runArraySpreadRefRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();
 runStaticContainersRuntimeTests({ Host: StaticContainersHost, click });
