@@ -155,6 +155,12 @@ export interface BaseNodeMetaData {
 	script_only?: boolean;
 	/** A synthetic wrapper for a nested `@{ @{ ... } }` code-block render chain. */
 	tsrx_code_block_chain?: boolean;
+	/**
+	 * Output of a `@{ … }` body that a later output or statement displaced, which
+	 * the parser reported (TSRX2011, TSRX2012), so the analysis doesn't report it
+	 * as unused (TSRX2010).
+	 */
+	misplaced_output?: boolean;
 	/** A synthesized render-body fragment (see create_native_tsrx_render_function). */
 	tsrx_render_fragment?: boolean;
 	/** A merged text run produced by normalize_children - renders through the text path. */
