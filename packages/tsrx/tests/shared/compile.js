@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -1868,10 +1869,10 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch');
-			expect(code).toMatch(/<Match when=\{status === "idle"\}>/);
-			expect(code).toMatch(/<Match when=\{status === "active"\}>/);
-			expect(code).toMatch(/<Match when=\{status === "offline"\}>/);
+			expect(code).toContain('<__Switch');
+			expect(code).toMatch(/<__Match when=\{status === "idle"\}>/);
+			expect(code).toMatch(/<__Match when=\{status === "active"\}>/);
+			expect(code).toMatch(/<__Match when=\{status === "offline"\}>/);
 			expect(count_substring(code, "'Offline'")).toBe(1);
 			expect(count_substring(code, "'Away'")).toBe(1);
 			expect(count_substring(code, "'Online'")).toBe(1);
@@ -1893,8 +1894,8 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toMatch(/<Match when=\{kind === "a"\}>/);
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toMatch(/<__Match when=\{kind === "a"\}>/);
 			expect(count_substring(code, "'D'")).toBe(1);
 		});
 	});
@@ -2354,9 +2355,9 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 			expect(code).toContain('children={({ items }: { items: JSX.Element[] }) => <ul>');
 			expect(code).toContain(
 				name === 'solid'
-					? '<For each={__for_items(items)} keyed={false}>'
+					? '<__For each={__for_items(items)} keyed={false}>'
 					: name === 'vue'
-						? '<VaporFor in={items}'
+						? '<__VaporFor in={items}'
 						: '__map_iterable(items, (item, i)',
 			);
 			expect(code).toContain(name === 'vue' ? '<li>{item.value}</li>' : '<li key={i}>{item}</li>');
@@ -3539,8 +3540,10 @@ export function App() @{
 		});
 	});
 
-	// The targets that share the core import injector, and the sources it
-	// imports each generated component from.
+	// The components each target imports itself, and the sources it imports
+	// them from. React, Preact and Hono share the core import injector; Solid
+	// and Vue have their own. Vue's `defineVaporComponent` keeps its public
+	// name: vue-jsx-vapor finds components by that callee name.
 	const generated_import_sources = /** @type {Record<string, Record<string, string>>} */ ({
 		react: {
 			Suspense: 'react',
@@ -3557,6 +3560,17 @@ export function App() @{
 			Fragment: 'hono/jsx',
 			TsrxErrorBoundary: '@tsrx/hono/error-boundary',
 		},
+		solid: {
+			Show: 'solid-js',
+			For: 'solid-js',
+			Switch: 'solid-js',
+			Match: 'solid-js',
+			Errored: 'solid-js',
+			Loading: 'solid-js',
+		},
+		vue: {
+			VaporFor: 'vue-jsx-vapor',
+		},
 	})[name];
 
 	if (generated_import_sources) {
@@ -3568,6 +3582,13 @@ export function App() @{
 				Suspense: `<div>@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }</div>`,
 				TsrxErrorBoundary: `<div>@try { <p>{'ready'}</p> } @catch (error) { <p>{'failed'}</p> }</div>`,
 				Fragment: `<ul>@for (const row of rows; key row) { <><li>{row}</li><li>{'end'}</li></> }</ul>`,
+				Show: `<div>@if (rows.length > 0) { <p>{'some'}</p> }</div>`,
+				For: `<ul>@for (const row of rows) { <li>{row}</li> }</ul>`,
+				Switch: `<div>@switch (rows[0]) { @case 'a': { <p>{'a'}</p> } @default: { <p>{'other'}</p> } }</div>`,
+				Match: `<div>@switch (rows[0]) { @case 'a': { <p>{'a'}</p> } @default: { <p>{'other'}</p> } }</div>`,
+				Errored: `<div>@try { <p>{'ready'}</p> } @catch (error) { <p>{'failed'}</p> }</div>`,
+				Loading: `<div>@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }</div>`,
+				VaporFor: `<ul>@for (const row of rows; key row) { <li>{row}</li> }</ul>`,
 			};
 
 			/**
@@ -3597,14 +3618,21 @@ export function App() @{
 					.filter((diagnostic) => [2300, 2440, 2451].includes(diagnostic.code))
 					.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'));
 				expect(redeclarations).toEqual([]);
-				expect(code).toContain(
-					`import { ${generated} as __${generated} } from '${sources[generated]}';`,
+				// A target can import several generated names from one source in a
+				// single declaration, which the printer may wrap over several lines.
+				const import_line = [...code.matchAll(/^import \{([^}]*)\} from '([^']+)';$/gm)].find(
+					(match) =>
+						match[2] === sources[generated] &&
+						match[1]
+							.split(',')
+							.some((specifier) => specifier.trim() === `${generated} as __${generated}`),
 				);
+				expect(import_line, `a value import of ${generated} as __${generated}`).toBeDefined();
 				expect(code).toContain(`<__${generated} `);
 				expect(code).not.toMatch(new RegExp(`<${generated}[\\s>]`));
 			}
 
-			for (const generated of ['Suspense', 'TsrxErrorBoundary', 'Fragment']) {
+			for (const generated of Object.keys(sources)) {
 				const source = sources[generated];
 
 				it.each([
@@ -3631,17 +3659,37 @@ export function App() @{
 				});
 			}
 
-			it('keys a fragment row with the generated Fragment when the loop variable is named Fragment', () => {
-				const code = compile_beside(
-					'Fragment',
-					'',
-					'',
-					`<ul>@for (const Fragment of rows; key Fragment) { <><li>{Fragment}</li><li>{'end'}</li></> }</ul>`,
-				);
+			it.runIf('Fragment' in sources)(
+				'keys a fragment row with the generated Fragment when the loop variable is named Fragment',
+				() => {
+					const code = compile_beside(
+						'Fragment',
+						'',
+						'',
+						`<ul>@for (const Fragment of rows; key Fragment) { <><li>{Fragment}</li><li>{'end'}</li></> }</ul>`,
+					);
 
-				expect_private_generated_binding(code, 'Fragment');
-				expect(code).toContain('<__Fragment key={Fragment}>');
-			});
+					expect_private_generated_binding(code, 'Fragment');
+					expect(code).toContain('<__Fragment key={Fragment}>');
+				},
+			);
+
+			it.runIf(name === 'solid')(
+				'switches through the generated Match when the loop variable is named Match',
+				() => {
+					const code = compile_beside(
+						'Match',
+						'',
+						'',
+						`<ul>@for (const Match of rows) { @switch (Match) { @case 'a': { <li>{'a'}</li> } @default: { <li>{'b'}</li> } } }</ul>`,
+					);
+
+					expect_private_generated_binding(code, 'Match');
+					expect_private_generated_binding(code, 'For');
+					expect(code).toContain('{(Match) => <__Switch');
+					expect(code).toContain(`<__Match when={Match === 'a'}>`);
+				},
+			);
 		});
 	}
 
@@ -5248,10 +5296,12 @@ export function App() @{
 		 * and returns what its `result` export returns. An import is a string
 		 * that names it when it is capitalized, and otherwise a function that
 		 * returns its argument; a default import is a module of the same kind.
+		 * `modules` replaces the modules it names.
 		 * @param {string} code
+		 * @param {Record<string, object>} [modules]
 		 * @returns {unknown}
 		 */
-		function run_result(code) {
+		function run_result(code, modules = {}) {
 			const { outputText } = ts.transpileModule(code, {
 				fileName: 'App.tsx',
 				compilerOptions: {
@@ -5272,6 +5322,7 @@ export function App() @{
 			 * @returns {object}
 			 */
 			const require = (specifier) =>
+				modules[specifier] ??
 				new Proxy(
 					{},
 					{
@@ -5476,6 +5527,30 @@ export function App() @{
 			expect(run_result(code)).toBe(expected);
 		});
 
+		it.each([
+			[
+				'in the component and at module level',
+				"const App__static1 = 'module';\nexport function App() {\n\tconst App__static2 = 'local';\n\treturn <>{<div>static</div>}<b>bare</b>{App__static1}{App__static2}</>;\n}\nexport const result = () => App().props.children.map((child: any) => (typeof child === 'object' ? child.type : child));",
+				['App__static3', 'App__static4'],
+				['div', 'b', 'module', 'local'],
+			],
+			[
+				'with a $ in its name',
+				"export function $App() {\n\tconst $App__static1 = 'local';\n\treturn <>{<div>static</div>}{$App__static1}</>;\n}\nexport const result = () => $App().props.children.map((child: any) => (typeof child === 'object' ? child.type : child));",
+				['$App__static2'],
+				['div', 'local'],
+			],
+		])(
+			'names a static apart from an authored static name %s',
+			(_case, source, statics, expected) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(
+					[...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]),
+				).toEqual(hoistsStaticJsx ? statics : []);
+				expect(run_result(code)).toEqual(expected);
+			},
+		);
+
 		it('hoists an intrinsic tag that shares its name with a later binding', () => {
 			const { code } = compile(
 				'function App() {\n\treturn <div>hello</div>;\n}\nconst div = 1;\nexport const result = () => App().type;',
@@ -5499,6 +5574,240 @@ export function App() @{
 		])('keeps the body of a raw script in %s of static JSX (#845)', (_case, source) => {
 			const { code } = compile(source, 'App.tsrx');
 			expect(code).toContain(`'{"a":1}'`);
+		});
+
+		describe('in expression containers (#81)', () => {
+			/** @param {string} code */
+			const static_count = (code) => code.match(/^const App__static\d+ = /gm)?.length ?? 0;
+
+			it('hoists a static element in a container like the bare one beside it', () => {
+				const { code } = compile(
+					'export function App() {\n\treturn <>{<b>a</b>}<b>b</b></>;\n}\n' +
+						'export const result = () => {\n' +
+						'\tconst [first, second] = [App(), App()];\n' +
+						'\treturn [first.props.children.length, ...first.props.children.map((child: unknown, i: number) => child === second.props.children[i])];\n' +
+						'};',
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code).toContain('const App__static1 = <b>a</b>;');
+					expect(code).toContain('const App__static2 = <b>b</b>;');
+					expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+					expect(run_result(code)).toEqual([2, true, true]);
+				} else {
+					expect(code).not.toContain('__static');
+					expect(run_result(code)).toEqual([2, false, false]);
+				}
+			});
+
+			it('hoists through children, attribute values, branches, nested containers and fragments', () => {
+				const { code } = compile(
+					`function Card(props: { header: unknown; n: number; children?: unknown }) {
+	return null;
+}
+export function App(props: { on: boolean; n: number; label?: string }) {
+	return (
+		<div title={String(props.n)}>
+			{<b>child</b>}
+			<Card header={<h1>header</h1>} n={props.n}>
+				{<i>card child</i>}
+			</Card>
+			{props.on ? <span>on</span> : <span>off</span>}
+			{props.on && <em>and</em>}
+			{props.label ?? <s>fallback</s>}
+			{<p title={String(props.n)}>{<u>nested</u>}</p>}
+			{<><a>one</a><a>two</a></>}
+		</div>
+	);
+}
+const strip = (node: any): any =>
+	node && typeof node === 'object'
+		? { type: typeof node.type === 'function' ? node.type.name : node.type, props: Object.fromEntries(Object.entries(node.props).map(([k, v]) => [k, Array.isArray(v) ? v.map(strip) : strip(v)])) }
+		: node;
+export const result = () => [App({ on: true, n: 1 }), App({ on: false, n: 2, label: 'x' })].map(strip);`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(static_count(code)).toBe(10);
+					expect(code).toContain(
+						'return <div title={String(props.n)}>{App__static1}<Card header={App__static2} n={props.n}>{App__static3}</Card>{props.on ? App__static4 : App__static5}{props.on && App__static6}{props.label ?? App__static7}{<p title={String(props.n)}>{App__static8}</p>}{<>{App__static9}{App__static10}</>}</div>;',
+					);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+				/** @param {string} type @param {Record<string, unknown>} [props] */
+				const el = (type, props = {}) => ({ type, props });
+				/** @param {boolean} on @param {number} n @param {unknown} fallback */
+				const tree = (on, n, fallback) =>
+					el('div', {
+						title: String(n),
+						children: [
+							el('b', { children: ['child'] }),
+							el('Card', {
+								header: el('h1', { children: ['header'] }),
+								n,
+								children: [el('i', { children: ['card child'] })],
+							}),
+							el('span', { children: [on ? 'on' : 'off'] }),
+							on && el('em', { children: ['and'] }),
+							fallback,
+							el('p', { title: String(n), children: [el('u', { children: ['nested'] })] }),
+							el('Fragment', {
+								children: [el('a', { children: ['one'] }), el('a', { children: ['two'] })],
+							}),
+						],
+					});
+				expect(run_result(code)).toEqual([
+					tree(true, 1, el('s', { children: ['fallback'] })),
+					tree(false, 2, 'x'),
+				]);
+			});
+
+			it('hoists a static element in a nested container of a component body', () => {
+				const { code } = compile(
+					`export function App(props: { n: number }) @{
+	const label = String(props.n);
+	<section title={label}>
+		{<div title={label}>{<span>nested</span>}</div>}
+	</section>
+}`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code).toContain('const App__static1 = <span>nested</span>;');
+					expect(code).toContain(
+						'return <section title={label}>{<div title={label}>{App__static1}</div>}</section>;',
+					);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('hoists only host elements in a conditional container', () => {
+				// A static reads its tags when the module loads; a component the
+				// render may never reach can be uninitialized then (a cyclic import)
+				const { code } = compile(
+					`import * as ui from './ui';
+function Icon(props: { size: number }) {
+	return null;
+}
+export function App(props: { on: boolean; n: number; label?: string }) {
+	return <div title={String(props.n)}>
+		{props.on && <ui.Button x="x" />}
+		{props.on ? <Icon size={1} /> : <span>off</span>}
+		{props.label ?? <b><Icon size={2} /></b>}
+		{props.on || <i>host</i>}
+		{props.on && <p title={String(props.n)}>{<Icon size={3} />}{<em>nested host</em>}</p>}
+	</div>;
+}`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code.match(/^const App__static\d+ = .*$/gm)).toEqual([
+						'const App__static1 = <span>off</span>;',
+						'const App__static2 = <i>host</i>;',
+						'const App__static3 = <em>nested host</em>;',
+					]);
+					expect(code).toContain('{props.on && <ui.Button x="x" />}');
+					expect(code).toContain('{props.on ? <Icon size={1} /> : App__static1}');
+					expect(code).toContain('{props.label ?? <b><Icon size={2} /></b>}');
+					expect(code).toContain('{<Icon size={3} />}{App__static3}');
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('does not read a component in a conditional container when the module loads', () => {
+				const { code } = compile(
+					"import * as ui from './ui';\n" +
+						'export function App(props: { on: boolean }) {\n' +
+						'\treturn <>{props.on && <ui.Button x="x" />}</>;\n' +
+						'}\n' +
+						'export const result = () => App({ on: false }).props.children;',
+					'App.tsrx',
+				);
+				const ui = {
+					get Button() {
+						throw new Error('ui.Button read');
+					},
+				};
+				expect(run_result(code, { './ui': ui })).toEqual([false]);
+			});
+
+			it('hoists a component in an unconditional container, as it does a bare one', () => {
+				const { code } = compile(
+					`import * as ui from './ui';
+function Icon(props: { size: number }) {
+	return null;
+}
+export function App(props: { n: number }) {
+	return <div title={String(props.n)}>
+		{<ui.Button x="x" />}
+		<ui.Button x={<Icon size={1} />} y={String(props.n)} />
+	</div>;
+}`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(code.match(/^const App__static\d+ = .*$/gm)).toEqual([
+						'const App__static1 = <ui.Button x="x" />;',
+						'const App__static2 = <Icon size={1} />;',
+					]);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('hoists each of two static containers on its own instead of merging them', () => {
+				const { code } = compile(
+					'export function App() {\n\treturn <>{<b>a</b>}{<b>b</b>}</>;\n}',
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(static_count(code)).toBe(2);
+					expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('leaves keyed elements, binding reads, bare children and other expressions in place', () => {
+				const { code } = compile(
+					`function Card(props: { n?: number }) {
+	return null;
+}
+function Helper() {
+	return null;
+}
+export function App(props: { on: boolean; n: number; items: string[] }) {
+	return (
+		<div title={String(props.n)}>
+			<p>bare child</p>
+			{<b key="k">keyed</b>}
+			{props.on ? <i key="on">on</i> : <i key="off">off</i>}
+			{<b>{props.n}</b>}
+			{<Card n={props.n} />}
+			{<Helper />}
+			{props.items.map((item) => <li>row</li>)}
+			{[<u key="a">a</u>]}
+		</div>
+	);
+}`,
+					'App.tsrx',
+				);
+				expect(code).not.toContain('__static');
+			});
+
+			it('hoists the statics of the shared runtime fixture', () => {
+				const source = readFileSync(
+					new URL('./runtime/static-containers-components.tsrx', import.meta.url),
+					'utf8',
+				);
+				const { code } = compile(source, 'StaticContainers.tsrx');
+				expect(code.match(/^const StaticContainers__static\d+ = /gm)?.length ?? 0).toBe(
+					hoistsStaticJsx ? 10 : 0,
+				);
+			});
 		});
 	});
 

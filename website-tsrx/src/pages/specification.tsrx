@@ -614,6 +614,8 @@ const TSRX_ERROR_CODES = [
 	'          function Card({ s = cfg.size }) @{ <p>{s}</p> }  (Vue)',
 	'TSRX2031  <target> TSRX cannot read this computed prop key.',
 	'          function Card({ [k]: v }) @{ <p>{v}</p> }  (Vue)',
+	'TSRX2032  Vue TSRX does not allow a binding named `defineVaporComponent`.',
+	"          import { defineVaporComponent } from './helpers';  (Vue)",
 	"TSRX3001  The 'apply' attribute of a <style> block requires an expression value.",
 	'          <style apply="a" />',
 	"TSRX3002  'a' is not a style block.",

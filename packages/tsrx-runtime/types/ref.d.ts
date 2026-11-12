@@ -119,6 +119,12 @@ export function copy_spread_props<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): T | SpreadProps;
+// `copy_spread_props` whose merged `ref` is the same for the same refs, as
+// `merge_element_refs` returns it.
+export function copy_spread_props_sharing_refs<T extends object | SpreadFalsy>(
+	props: T,
+	...outer_refs: Array<RefValue<Element>>
+): T | SpreadProps;
 /**
  * A props bag from `normalize_spread_props_for_ref_attr`: its refs merged into
  * a readable `ref` that the compiler hands to the element's `ref` attribute.
@@ -134,6 +140,10 @@ export function normalize_spread_props_for_ref_attr<T extends object | SpreadFal
 	...outer_refs: Array<RefValue<Element>>
 ): SpreadRefProps<Exclude<T, null | undefined | void>>;
 export function copy_spread_props_for_ref_attr<T extends object | SpreadFalsy>(
+	props: T,
+	...outer_refs: Array<RefValue<Element>>
+): SpreadRefProps<Exclude<T, null | undefined | void>>;
+export function copy_spread_props_for_ref_attr_sharing_refs<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): SpreadRefProps<Exclude<T, null | undefined | void>>;

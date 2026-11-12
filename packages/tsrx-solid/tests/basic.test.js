@@ -240,8 +240,8 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Show when={n > 0}>');
-			expect(code).toContain("import { Show } from 'solid-js'");
+			expect(code).toContain('<__Show when={n > 0}>');
+			expect(code).toContain("import { Show as __Show } from 'solid-js'");
 		});
 
 		it('if/else → <Show when fallback>', () => {
@@ -255,7 +255,7 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Show when={n > 0} fallback=');
+			expect(code).toContain('<__Show when={n > 0} fallback=');
 		});
 
 		it('if/else-if/else → <Switch>/<Match>', () => {
@@ -271,10 +271,10 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toContain('<Match when={n > 10}>');
-			expect(code).toContain('<Match when={n > 5}>');
-			expect(code).toContain("import { Switch, Match } from 'solid-js'");
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toContain('<__Match when={n > 10}>');
+			expect(code).toContain('<__Match when={n > 5}>');
+			expect(code).toContain("import { Switch as __Switch, Match as __Match } from 'solid-js'");
 		});
 
 		it('for-of with index and no key → <For keyed={false}>', () => {
@@ -286,11 +286,11 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<For each={__for_items(items)}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).toContain('keyed={false}');
 			expect(code).toMatch(/\(item, i\) =>/);
 			expect(code).toContain('<li>{i + item()}</li>');
-			expect(code).toContain("import { For } from 'solid-js'");
+			expect(code).toContain("import { For as __For } from 'solid-js'");
 		});
 
 		it('for-of without index or key → default <For>', () => {
@@ -302,10 +302,10 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<For each={__for_items(items)}>');
+			expect(code).toContain('<__For each={__for_items(items)}>');
 			expect(code).not.toContain('keyed=');
 			expect(code).toContain('(item) => <li>{item}</li>');
-			expect(code).toContain("import { For } from 'solid-js'");
+			expect(code).toContain("import { For as __For } from 'solid-js'");
 		});
 
 		it('for-of with `key` clause → <For keyed={...}>', () => {
@@ -320,7 +320,7 @@ describe('@tsrx/solid basic', () => {
 			// `key item.id` lifts to `keyed={(item) => item.id}` — Solid 2.0's
 			// <For keyed> switches reconciliation from reference identity to
 			// the derived key.
-			expect(code).toContain('<For each={__for_items(items)}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).toMatch(/keyed=\{\(item\) =>\s*item\.id\}/);
 		});
 
@@ -333,7 +333,7 @@ describe('@tsrx/solid basic', () => {
 
 			const { code } = compile(source, 'App.tsrx');
 			expect(code).toContain("import { for_items as __for_items } from '@tsrx/solid/iterable';");
-			expect(code).toContain('<For each={__for_items(tags)}>');
+			expect(code).toContain('<__For each={__for_items(tags)}>');
 
 			const direct = compile(source, 'App.tsrx', { runtimeImports: 'direct' }).code;
 			expect(direct).toContain(
@@ -427,10 +427,10 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 			// `<Errored>` passes an accessor; `err` is the value it returns.
-			expect(code).toContain('<Errored fallback={(_tsrx_error, reset) => {');
+			expect(code).toContain('<__Errored fallback={(_tsrx_error, reset) => {');
 			expect(code).toContain('let err = _tsrx_error();');
 			expect(code).toContain('<div>{err.message}</div>');
-			expect(code).toContain("import { Errored } from 'solid-js'");
+			expect(code).toContain("import { Errored as __Errored } from 'solid-js'");
 		});
 
 		it('try/pending/catch → <Errored><Loading>...', () => {
@@ -446,9 +446,11 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Errored');
-			expect(code).toContain('<Loading fallback=');
-			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
+			expect(code).toContain('<__Errored');
+			expect(code).toContain('<__Loading fallback=');
+			expect(code).toMatch(
+				/import \{[^}]*Errored as __Errored[^}]*Loading as __Loading[^}]*\} from 'solid-js'/,
+			);
 		});
 
 		it('static @if condition → plain conditional instead of <Show>', () => {
@@ -482,9 +484,9 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Show when={import.meta.env.DEV}>');
-			expect(code).toContain('<Match when={true}>');
-			expect(code).toContain('<Show when={import.meta.url}>');
+			expect(code).toContain('<__Show when={import.meta.env.DEV}>');
+			expect(code).toContain('<__Match when={true}>');
+			expect(code).toContain('<__Show when={import.meta.url}>');
 		});
 
 		it('switch statement → <Switch>/<Match> using ===', () => {
@@ -498,9 +500,9 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toMatch(/<Match when=\{kind === 'a'\}>/);
-			expect(code).toMatch(/<Match when=\{kind === 'b'\}>/);
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toMatch(/<__Match when=\{kind === 'a'\}>/);
+			expect(code).toMatch(/<__Match when=\{kind === 'b'\}>/);
 		});
 
 		it('switch reads a discriminant with a side effect once through a memo', () => {
@@ -511,17 +513,18 @@ describe('@tsrx/solid basic', () => {
 				}
 			}`;
 			const { code } = compile(source, 'App.tsrx');
-			expect(code).toContain(
-				"import { Switch, Match, createMemo as _$_createMemo } from 'solid-js';",
+			// The printer wraps this import over several lines.
+			expect(code).toMatch(
+				/import \{\s*Switch as __Switch,\s*Match as __Match,\s*createMemo as _\$_createMemo\s*\} from 'solid-js';/,
 			);
 			// Boxed, so a thenable discriminant is compared rather than awaited.
 			expect(code).toContain('const _$_switch_value = _$_createMemo(() => [queue.shift()]);');
-			expect(code).toContain("<Match when={_$_switch_value()[0] === 'loading'}>");
-			expect(code).toContain("<Match when={_$_switch_value()[0] === 'ready'}>");
+			expect(code).toContain("<__Match when={_$_switch_value()[0] === 'loading'}>");
+			expect(code).toContain("<__Match when={_$_switch_value()[0] === 'ready'}>");
 			expect(code.match(/queue\.shift\(\)/g)).toHaveLength(1);
 
 			const type_only = compile_to_volar_mappings(source, 'App.tsrx').code;
-			expect(type_only).toContain("<Match when={queue.shift() === 'loading'}>");
+			expect(type_only).toContain("<__Match when={queue.shift() === 'loading'}>");
 			expect(type_only).not.toContain('createMemo');
 		});
 
@@ -577,7 +580,7 @@ describe('@tsrx/solid basic', () => {
 			// The block's setup becomes the branch's function child, which `<Show>`
 			// runs untracked, like a body without the `@{ }`.
 			expect(code).toMatch(
-				/<Show when=\{props\.on\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Show>/,
+				/<__Show when=\{props\.on\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/__Show>/,
 			);
 			expect(code).not.toContain('return null');
 		});
@@ -605,7 +608,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 			expect(code).toMatch(
-				/<Match when=\{kind === 'a'\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Match>/,
+				/<__Match when=\{kind === 'a'\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/__Match>/,
 			);
 			expect(code).toMatch(
 				/fallback=\{_\$_untrack\(\(\) => \{\s*const w = 2;\s*return <i>\{w\}<\/i>;\s*\}\)\}/,
@@ -682,7 +685,7 @@ describe('@tsrx/solid basic', () => {
 				/fallback=\{\(_tsrx_error, reset\) => \{\s*let err = _tsrx_error\(\);\s*return _\$_untrack\(\(\) => \{\s*const f = 6;\s*return <i>\{f\}<\/i>;\s*\}\);\s*\}\}/,
 			);
 			expect(code).toMatch(
-				/>\{_\$_untrack\(\(\) => \{\s*const e = 5;\s*return <i>\{e\}<\/i>;\s*\}\)\}<\/Errored>/,
+				/>\{_\$_untrack\(\(\) => \{\s*const e = 5;\s*return <i>\{e\}<\/i>;\s*\}\)\}<\/__Errored>/,
 			);
 		});
 
@@ -752,11 +755,11 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 			const signal_idx = code.indexOf('createSignal(0)');
-			const show_idx = code.indexOf('<Show when={!cond}');
+			const show_idx = code.indexOf('<__Show when={!cond}');
 			expect(signal_idx).toBeGreaterThan(-1);
 			expect(show_idx).toBeGreaterThan(-1);
 			expect(signal_idx).toBeLessThan(show_idx);
-			expect(code).toContain("import { Show } from 'solid-js'");
+			expect(code).toContain("import { Show as __Show } from 'solid-js'");
 			expect(code).not.toContain('if (cond)');
 		});
 
@@ -778,9 +781,9 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<For each={__for_items(items)}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).not.toContain('keyed=');
-			expect(code).toContain('<Show when={cond}');
+			expect(code).toContain('<__Show when={cond}');
 			expect(code).toContain('setup();');
 			expect(code).not.toContain('if (cond)');
 		});
@@ -803,8 +806,8 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('if (props.disabled)');
 			expect(code).toContain('return <span>disabled</span>;');
 			expect(code).toContain('return <span>enabled</span>;');
-			expect(code).not.toContain('<Show');
-			expect(code).not.toContain("import { Show } from 'solid-js'");
+			expect(code).not.toContain('<__Show');
+			expect(code).not.toContain("import { Show as __Show } from 'solid-js'");
 		});
 
 		it('preserves ordinary control flow for plain functions returning templates', () => {
@@ -825,8 +828,8 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('if (!user)');
 			expect(code).toContain('return <p>No user found</p>;');
 			expect(code).toContain('return <><h1>Welcome,{user}</h1><p>Here is your dashboard.</p></>;');
-			expect(code).not.toContain('<Show');
-			expect(code).not.toContain("import { Show } from 'solid-js'");
+			expect(code).not.toContain('<__Show');
+			expect(code).not.toContain("import { Show as __Show } from 'solid-js'");
 		});
 
 		it('component-body guard preserves switch trailing render fallback', () => {
@@ -849,12 +852,12 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Show when={!hidden}>');
-			expect(code).toContain("<Match when={kind === 'skip'}><span>{'rest'}</span></Match>");
-			expect(code).toContain("<Match when={kind === 'done'}><p>{'done'}</p></Match>");
+			expect(code).toContain('<__Show when={!hidden}>');
+			expect(code).toContain("<__Match when={kind === 'skip'}><span>{'rest'}</span></__Match>");
+			expect(code).toContain("<__Match when={kind === 'done'}><p>{'done'}</p></__Match>");
 			expect(code).toContain("fallback={<span>{'rest'}</span>}");
 			expect(code).not.toContain('StatementBodyHook');
-			expect(code).not.toContain("<Match when={kind === 'skip'}>{null}</Match>");
+			expect(code).not.toContain("<__Match when={kind === 'skip'}>{null}</__Match>");
 		});
 
 		it('component-body if/else returns lower to reactive <Show>', () => {
@@ -869,7 +872,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Show when={cond} fallback=');
+			expect(code).toContain('<__Show when={cond} fallback=');
 			expect(code).toContain("{'yes'}");
 			expect(code).toContain("{'no'}");
 			expect(code).not.toContain('if (cond)');
@@ -890,8 +893,8 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toContain("<Match when={kind === 'a'}>");
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toContain("<__Match when={kind === 'a'}>");
 			expect(code).not.toContain('switch (kind)');
 		});
 
@@ -913,11 +916,11 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain("<Match when={kind === 'skip'}><em>{'rest'}</em></Match>");
-			expect(code).toContain("<Match when={kind === 'a'}><span>{'A'}</span></Match>");
+			expect(code).toContain("<__Match when={kind === 'skip'}><em>{'rest'}</em></__Match>");
+			expect(code).toContain("<__Match when={kind === 'a'}><span>{'A'}</span></__Match>");
 			expect(code).toContain("fallback={<em>{'rest'}</em>}");
 			expect(code).not.toContain('StatementBodyHook');
-			expect(code).not.toContain("<Match when={kind === 'skip'}>{null}</Match>");
+			expect(code).not.toContain("<__Match when={kind === 'skip'}>{null}</__Match>");
 		});
 
 		it('component-body switch with final return lowers non-returning cases', () => {
@@ -935,8 +938,8 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Switch fallback=');
-			expect(code).toContain("<Match when={kind === 'a'}>");
+			expect(code).toContain('<__Switch fallback=');
+			expect(code).toContain("<__Match when={kind === 'a'}>");
 			expect(code).toContain("{'A'}");
 			expect(code).toContain("{'rest'}");
 			expect(code).not.toContain('switch (kind)');
@@ -952,7 +955,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<For each={__for_items(items)}>');
+			expect(code).toContain('<__For each={__for_items(items)}>');
 			expect(code).not.toContain('keyed=');
 			expect(code).toContain('(item) => <div>{item}</div>');
 			expect(code).not.toContain('for (const item of items)');
@@ -968,7 +971,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<For each={__for_items(items)}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).toMatch(/keyed=\{\(item\) =>\s*item\.id\}/);
 			expect(code).toContain('(item, i) => <div>{i() + item.name}</div>');
 		});
@@ -987,9 +990,11 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Errored');
-			expect(code).toContain('<Loading fallback=');
-			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
+			expect(code).toContain('<__Errored');
+			expect(code).toContain('<__Loading fallback=');
+			expect(code).toMatch(
+				/import \{[^}]*Errored as __Errored[^}]*Loading as __Loading[^}]*\} from 'solid-js'/,
+			);
 			expect(code).not.toContain('try {');
 		});
 
@@ -1009,11 +1014,13 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<Errored');
-			expect(code).toContain('<Loading fallback=');
+			expect(code).toContain('<__Errored');
+			expect(code).toContain('<__Loading fallback=');
 			expect(code).toContain('setup();');
 			expect(code).toContain('recover(err);');
-			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
+			expect(code).toMatch(
+				/import \{[^}]*Errored as __Errored[^}]*Loading as __Loading[^}]*\} from 'solid-js'/,
+			);
 			expect(code).not.toContain('try {');
 		});
 
