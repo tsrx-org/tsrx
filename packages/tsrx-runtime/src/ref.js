@@ -1,6 +1,7 @@
-/** @import { MergeableRef, RefProp, RefValue, SpreadFalsy, SpreadProps } from '../types/ref' */
+/** @import { ClassValueKind, MergeableRef, RefProp, RefValue, SpreadFalsy, SpreadProps } from '../types/ref' */
 
 import {
+	define_property,
 	has_own_property,
 	has_prototype_accessor,
 	is_array,
@@ -559,6 +560,18 @@ function normalize_spread(props, outer_refs, copy, merge) {
 			continue;
 		}
 
+		// Solid's `children` getter creates the children each time it is read,
+		// and children are never a ref, so the copy reads them through `source`
+		// only when the JSX runtime does.
+		if (key === 'children') {
+			Object.defineProperty(next, key, {
+				get: () => source.children,
+				enumerable: true,
+				configurable: true,
+			});
+			continue;
+		}
+
 		const value = source[key];
 
 		if (key === 'ref') {
@@ -732,4 +745,169 @@ function is_dom_node(value) {
 			'nodeName' in value &&
 			typeof (/** @type {{ nodeName?: unknown }} */ (value).nodeName) === 'string')
 	);
+}
+
+/**
+ * Join the class a host spread passes an element with the scope classes TSRX
+ * adds to it. The compiler wraps each spread written after the element's
+ * class attribute, so the spread's class replaces the authored one, as in
+ * plain JSX, and the scope classes stay. A bag without a class comes back as
+ * itself, leaving the class attribute to apply. Otherwise the copy reads the
+ * bag through getters, so a JSX runtime that reads a spread lazily (Solid's)
+ * still tracks each prop, and the bag is never written to. The copy's class
+ * prop comes after the bag's other props.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {unknown} scope_class the element's scope hashes and applied classes,
+ *   or `null` for a spread written before the class attribute: the copy then
+ *   leaves out the bag's class so that the attribute applies
+ * @param {string} key the class prop the copy carries
+ * @param {string} [alias] another prop the target reads a class from, such as
+ *   `className` beside Preact's `class`; its class moves to `key` so the
+ *   element keeps one class prop
+ * @param {ClassValueKind} [kind='text'] how the target renders a class value;
+ *   see `join_scope_class`
+ * @returns {object | SpreadFalsy}
+ */
+export function merge_spread_class(props, scope_class, key, alias, kind = 'text') {
+	if (props === null || (typeof props !== 'object' && typeof props !== 'function')) {
+		return props;
+	}
+
+	const source = /** @type {SpreadProps} */ (props);
+	const keys = Reflect.ownKeys(source);
+	/** @type {PropertyKey[]} */
+	const class_keys = [];
+	for (let i = 0; i < keys.length; i++) {
+		const name = keys[i];
+		if ((name === key || name === alias) && property_is_enumerable.call(source, name)) {
+			class_keys.push(name);
+		}
+	}
+	if (class_keys.length === 0) {
+		return props;
+	}
+
+	/** @type {SpreadProps} */
+	const next = {};
+	for (let i = 0; i < keys.length; i++) {
+		const name = keys[i];
+		if (name === key || name === alias || !property_is_enumerable.call(source, name)) {
+			continue;
+		}
+		define_property(next, name, {
+			enumerable: true,
+			configurable: true,
+			get: () => source[name],
+		});
+	}
+	if (scope_class !== null) {
+		define_property(next, key, {
+			enumerable: true,
+			configurable: true,
+			get: () => join_class(read_class(source, class_keys), scope_class, kind),
+		});
+	}
+	return next;
+}
+
+/**
+ * Join an element's authored class with the scope classes TSRX adds to it, the
+ * way the runtime renders that class. A class the runtime would leave out
+ * gives just the scope classes. `kind` names how the runtime renders it:
+ *
+ * - `'text'` (React, Hono DOM): `null`, `undefined`, `false`, `true` and an
+ *   empty class are left out; any other value renders as text.
+ * - `'text-true'` (Preact): as `'text'`, except that `true` renders as text.
+ * - `'text-both'` (Hono's server): as `'text'`, except that `true` and
+ *   `false` render as text.
+ * - `'list'` (Solid, Vue): the class also takes an object or a list, which
+ *   joins as `[class, scope_class]`; any other value that is not a string is
+ *   left out.
+ *
+ * On Hono's server, a promise class (its `css` helper's) joins once it settles.
+ *
+ * @param {unknown} value the authored class
+ * @param {unknown} scope_class the element's scope hashes and applied classes
+ * @param {ClassValueKind} [kind='text']
+ * @returns {unknown}
+ */
+export function join_scope_class(value, scope_class, kind = 'text') {
+	return join_class(value, scope_class, kind);
+}
+
+/**
+ * Of a bag's class props, the last one with a value, as a runtime that reads
+ * either renders it.
+ *
+ * @param {SpreadProps} source
+ * @param {PropertyKey[]} class_keys
+ * @returns {unknown}
+ */
+function read_class(source, class_keys) {
+	for (let i = class_keys.length - 1; i >= 0; i--) {
+		const value = source[class_keys[i]];
+		if (value != null) {
+			return value;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * @param {unknown} value
+ * @param {unknown} scope_class
+ * @param {ClassValueKind} kind
+ * @returns {unknown}
+ */
+function join_class(value, scope_class, kind) {
+	if (value == null || value === '') {
+		return scope_class;
+	}
+	if (typeof value === 'boolean') {
+		return kind === 'text-both' || (value && kind === 'text-true')
+			? `${value} ${scope_class}`
+			: scope_class;
+	}
+	if (kind === 'list' && typeof value !== 'string') {
+		return typeof value === 'object' ? [value, scope_class] : scope_class;
+	}
+	// Hono's server renderer awaits a promise class, such as the one its `css`
+	// helper returns, so that one joins the scope classes once it settles.
+	// Anywhere else a class joins as text, as it would in the class attribute;
+	// Hono DOM's `css` promise then turns into its class name and inserts its
+	// rule.
+	if (kind === 'text-both' && value instanceof Promise) {
+		return value.then((settled) => join_settled_class(settled, scope_class, kind));
+	}
+	return `${value} ${scope_class}`;
+}
+
+/** @type {Record<string, string>} */
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+/**
+ * Join the value a thenable class settles to. Hono's server `css` settles to
+ * an escaped `String` whose `callbacks` add its rule to `<Style />`; the
+ * joined class stays escaped and keeps those callbacks, so Hono still prints
+ * it as written and adds the rule.
+ *
+ * @param {unknown} settled
+ * @param {unknown} scope_class
+ * @param {ClassValueKind} kind
+ * @returns {unknown}
+ */
+function join_settled_class(settled, scope_class, kind) {
+	const escaped = /** @type {{ isEscaped?: unknown, callbacks?: unknown } | null} */ (settled);
+	if (typeof settled !== 'object' || escaped === null || !escaped.isEscaped) {
+		return join_class(settled, scope_class, kind);
+	}
+	const scope = String(scope_class).replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
+	const text = String(settled);
+	const joined = /** @type {String & { isEscaped?: boolean, callbacks?: unknown }} */ (
+		new String(text ? `${text} ${scope}` : scope)
+	);
+	joined.isEscaped = true;
+	joined.callbacks = escaped.callbacks;
+	return joined;
 }

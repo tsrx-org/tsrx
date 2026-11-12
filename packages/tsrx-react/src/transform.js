@@ -21,12 +21,14 @@ const react_platform = {
 		// type-only transform keeps the `Dynamic` component shape (types only).
 		dynamicFactory: {},
 		errorBoundary: '@tsrx/react/error-boundary',
+		tryBody: '@tsrx/react/try-body',
 		mergeRefs: '@tsrx/react/ref',
 		refProp: '@tsrx/react/ref',
 		forOfIterableHelper: '@tsrx/react/runtime/iterable',
 	},
 	directRuntimeImports: {
 		errorBoundary: '@tsrx/react-runtime/error-boundary',
+		tryBody: '@tsrx/react-runtime/try-body',
 		mergeRefs: '@tsrx/react-runtime/ref',
 		refProp: '@tsrx/react-runtime/ref',
 		forOfIterableHelper: '@tsrx/react-runtime/iterable',
@@ -34,10 +36,13 @@ const react_platform = {
 	jsx: {
 		rewriteClassAttr: false,
 		classAttrName: 'className',
+		hostSpreadClassProps: ['className'],
+		classValue: 'text',
 		multiRefStrategy: 'merge-refs',
 		// React keeps a ref's cleanup per fiber, so elements can share one merged ref.
 		shareMergedRefs: true,
 		hostSpreadRefBinding: 'in-place',
+		pendingFallback: 'try-body',
 	},
 	validation: {
 		requireUseServerForAwait: false,
