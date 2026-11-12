@@ -2525,8 +2525,9 @@ export function TSRXPlugin(config) {
 				}
 				// Just past a self-closing tag's `/>`: that element has no body, so any
 				// following raw text belongs to an enclosing template, not to it. With no
-				// enclosing template (e.g. a top-level `return <div />`), the trailing
-				// text is plain JS and must not be read as template raw text.
+				// enclosing template (e.g. a top-level `return <div />`), or one opened
+				// before the directive header the element is in (`@for (…; key <b />)`),
+				// the trailing text is plain JS and must not be read as template raw text.
 				// Inter-token whitespace has already advanced `pos`; `lastTokEnd` still
 				// identifies the consumed `>`, which whitespace or a comment can separate
 				// from the `/` (`<div / >`).
@@ -2541,7 +2542,7 @@ export function TSRXPlugin(config) {
 					const enclosing = this.#path.findLast(
 						(node) => node !== opening && this.#isNativeTemplateNode(node),
 					);
-					if (!enclosing) {
+					if (!enclosing || this.#readingHeaderStartedAfter(enclosing)) {
 						return false;
 					}
 					return true;
@@ -3046,7 +3047,7 @@ export function TSRXPlugin(config) {
 					this.type = tt.braceR;
 					this.exprAllowed = true;
 					const previous_reading_header = this.#readingJSXControlFlowHeader;
-					this.#readingJSXControlFlowHeader = true;
+					this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 					try {
 						this.nextToken();
 					} finally {
@@ -10959,10 +10960,15 @@ export function TSRXPlugin(config) {
 				const opening_template_node = this.#openingNativeTemplateNode;
 				let pushed_opening_template_node = false;
 				// `>` reads the next token: the first child, or, after `/>`, the token
-				// after the element. Outside a template that token is code, so a
-				// self-closing element stays off `#path` (`<span /> / 2` divides).
+				// after the element. Outside a template, or in a directive header that
+				// started after the enclosing element (`@for (…; key <b />)`), that token
+				// is code, so a self-closing element stays off `#path` (`<span /> / 2`
+				// divides).
+				const enclosing_node = this.#path.at(-1);
 				const reads_next_token_as_code =
-					node.selfClosing && !this.#isNativeTemplateNode(this.#path.at(-1));
+					node.selfClosing &&
+					(!this.#isNativeTemplateNode(enclosing_node) ||
+						this.#readingHeaderStartedAfter(enclosing_node));
 				if (opening_template_node) {
 					// The enclosing `parseElement` started this node before the opening tag
 					// said what it is; stamp its shape now that the tag has been read.

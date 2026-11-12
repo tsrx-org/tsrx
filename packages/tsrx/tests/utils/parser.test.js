@@ -13218,6 +13218,17 @@ describe('JSX whitespace in template text', () => {
 			'export const App = () => <main>@for (const item of [<div>5/2 #x<b /></div>]) { <>{item}</> }</main>;',
 			['5/2 #x', '<b>'],
 		],
+		// The code after a self-closing element in a header stays the header's
+		[
+			'text after an @for whose header holds a self-closing element',
+			'export const App = () => <div>@for (const item of [<b />]) { <>{item}</> } after</div>;',
+			['JSXForExpression', ' after'],
+		],
+		[
+			'text after an @if whose header holds a self-closing element',
+			'export const App = () => <div>@if (<b /> != null) { <p /> } after</div>;',
+			['JSXIfExpression', ' after'],
+		],
 		// A spread attribute's argument stays code
 		[
 			'text in an element with a spread attribute',

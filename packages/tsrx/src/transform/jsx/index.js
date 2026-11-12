@@ -5186,7 +5186,10 @@ function apply_key_to_rendered_value(expression, loop_key, transform_context) {
 		case 'CallExpression': {
 			if (!loop_key.branches) return expression;
 			if (is_map_iterable_call(expression)) {
-				// A nested `@for` renders an array, which takes no key of its own.
+				// A nested `@for` renders an array, which takes no key of its own. With
+				// no outer key (the pass that only places `@try` site keys), there is
+				// nothing to wrap it in.
+				if (!loop_key.expression) return expression;
 				transform_context.needs_fragment = true;
 				return keyed_fragment([to_jsx_expression_container(expression)], loop_key);
 			}
