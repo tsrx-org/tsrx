@@ -88,7 +88,18 @@ export function find_top_level_awaits(node, awaits = []) {
 		awaits.push(node);
 	}
 
-	for (const child of child_nodes(node)) find_top_level_awaits(child, awaits);
+	// An `@for` head that declares its item with `using` or `await using` is
+	// TSRX2027 (`FOR_HEAD_USING`), which reports it once, on its own.
+	const for_head_using =
+		node.type === 'JSXForExpression' &&
+		node.statementType === 'ForOfStatement' &&
+		node.left.type === 'VariableDeclaration' &&
+		(node.left.kind === 'using' || node.left.kind === 'await using')
+			? node.left
+			: null;
+	for (const child of child_nodes(node)) {
+		if (child !== for_head_using) find_top_level_awaits(child, awaits);
+	}
 	return awaits;
 }
 

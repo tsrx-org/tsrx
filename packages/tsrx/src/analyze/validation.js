@@ -7,6 +7,7 @@
 
 import { error } from '../errors.js';
 import { TSRX_ERRORS } from '../diagnostics.js';
+import { is_tsrx_render_output_node } from '../utils/ast.js';
 
 // The messages of `TSRX_ERRORS` entries, under the names `@tsrx/core` exports
 // them by, for matching an error that has no code, such as one from an older
@@ -41,6 +42,8 @@ export const TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR =
 	TSRX_ERRORS.CSS_GLOBAL_IN_PSEUDOCLASS.message;
 export const TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR = TSRX_ERRORS.CSS_GLOBAL_IN_MIDDLE.message;
 export const TSRX_CSS_IMPORT_ERROR = TSRX_ERRORS.CSS_IMPORT.message;
+export const TSRX_STYLE_IN_EXPRESSION_CONTAINER_ERROR =
+	TSRX_ERRORS.STYLE_IN_EXPRESSION_CONTAINER.message;
 
 /**
  * The message of `TSRX_ERRORS.STYLE_APPLY_TARGET(name)`.
@@ -261,6 +264,110 @@ export function validate_forgotten_statement_container(node, filename, errors, c
  */
 export function validate_jsx_spread_child(node, filename, errors, comments) {
 	error(TSRX_ERRORS.JSX_SPREAD_CHILD, filename ?? null, node, errors, comments);
+}
+
+/**
+ * The wrappers an expression's value passes through unchanged.
+ * @param {AST.Node} node
+ * @returns {node is AST.Node & { expression: AST.Expression }}
+ */
+function is_value_wrapper(node) {
+	return (
+		node.type === 'ParenthesizedExpression' ||
+		node.type === 'ChainExpression' ||
+		node.type === 'TSAsExpression' ||
+		node.type === 'TSSatisfiesExpression' ||
+		node.type === 'TSNonNullExpression' ||
+		node.type === 'TSInstantiationExpression' ||
+		node.type === 'TSTypeAssertion'
+	);
+}
+
+/**
+ * Whether `node`, run as a statement, is there only for its value, which the
+ * statement throws away. This judges the outermost operation, as ESLint's
+ * `no-unused-expressions` does with its `allowShortCircuit`, `allowTernary` and
+ * `allowTaggedTemplates` options on: `a.b` or `f() + 1` may still run a getter
+ * or a call, but the statement adds nothing to what it computes. A call, `new`,
+ * an assignment, `++`, `--`, `delete`, `void`, `await`, `yield` or `import()`
+ * may be there for its effect, and so may an `&&`, `||`, `??` or `?:` that can
+ * end in one.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_value_only(node) {
+	switch (node.type) {
+		case 'Identifier':
+		case 'Literal':
+		case 'TemplateLiteral':
+		case 'ThisExpression':
+		case 'MetaProperty':
+		case 'MemberExpression':
+		case 'BinaryExpression':
+		case 'ArrayExpression':
+		case 'ObjectExpression':
+		case 'FunctionExpression':
+		case 'ArrowFunctionExpression':
+		case 'ClassExpression':
+		case 'JSXElement':
+		case 'JSXFragment':
+			return true;
+		case 'UnaryExpression':
+			return node.operator !== 'void' && node.operator !== 'delete';
+		case 'LogicalExpression':
+			return is_value_only(node.right);
+		case 'ConditionalExpression':
+			return is_value_only(node.consequent) && is_value_only(node.alternate);
+		case 'SequenceExpression':
+			return node.expressions.every(is_value_only);
+		default:
+			return is_value_wrapper(node) && is_value_only(node.expression);
+	}
+}
+
+/**
+ * Warn about a `@{ … }` with no output whose only statement is an expression
+ * there only for its value, such as `<p>@{user.name}</p>`: the block runs the
+ * expression, throws its value away and renders nothing. In a child list the
+ * `@` was likely meant as text, so the warning says how to write that. An
+ * expression that may be there for its effect, such as `@{log(user)}`, is left
+ * alone, and so is a directive (`@{ 'use server' }` as a function body) and
+ * JSX, which `validate_forgotten_statement_container` reports.
+ *
+ * It is only a warning, so a compile that doesn't collect drops it.
+ * @param {AST.JSXCodeBlock} node
+ * @param {AST.Node | undefined} parent
+ * @param {string | null | undefined} filename
+ * @param {CompileError[]} [errors]
+ * @param {AST.CommentWithLocation[]} [comments]
+ */
+export function validate_code_block_expression_only(node, parent, filename, errors, comments) {
+	if (node.render || node.body.length !== 1) return;
+	const [statement] = node.body;
+	if (
+		statement.type !== 'ExpressionStatement' ||
+		typeof (/** @type {{ directive?: unknown }} */ (statement).directive) === 'string'
+	) {
+		return;
+	}
+	/** @type {AST.Node} */
+	let expression = statement.expression;
+	while (is_value_wrapper(expression)) {
+		expression = expression.expression;
+	}
+	if (is_tsrx_render_output_node(expression) || !is_value_only(expression)) return;
+	const is_child =
+		(parent?.type === 'JSXElement' || parent?.type === 'JSXFragment') &&
+		/** @type {AST.Node[]} */ (parent.children).includes(node);
+	error(
+		is_child ? TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD : TSRX_ERRORS.CODE_BLOCK_EXPRESSION_ONLY,
+		filename ?? null,
+		node,
+		errors,
+		comments,
+		undefined,
+		'warning',
+	);
 }
 
 /**
