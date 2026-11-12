@@ -8637,9 +8637,10 @@ export function TSRXPlugin(config) {
 					return this.#asCollecting(read);
 				}
 				const list = this.#parameterList;
-				// On a method's parameter, TS1187 for a binding pattern comes first, as
-				// it's raised as the parameter is read.
-				if (!modified || !(allowModifiers === false || (list?.outside && modified !== 'pattern'))) {
+				// A binding pattern's parameter is held as well, so that TS2369 on a
+				// method's comes before the errors in its body too. Its TS1187, raised as
+				// the parameter is read, still comes first there, at the same place.
+				if (!modified || !(allowModifiers === false || list?.outside)) {
 					return read();
 				}
 				if (!list) {

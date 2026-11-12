@@ -13372,6 +13372,71 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it('reports a method’s pattern parameter property before the errors in its body (#1214)', () => {
+		// TS1187 and TS2369 at its start, then the errors in the body and the
+		// duplicate names after it, as TypeScript reports them. TS2369 came after
+		// the body's errors when collecting, and a strict parse threw TS1187
+		// before an earlier duplicate name.
+		const pattern = code_of(TS_ERRORS.PATTERN_PARAMETER_PROPERTY);
+		const parameter_property = code_of(TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR);
+		const reserved_word = code_of(TS_ERRORS.STRICT_MODE_RESERVED_WORD_IN_CLASS);
+		const reserved_word_in_module = code_of(TS_ERRORS.STRICT_MODE_RESERVED_WORD);
+		const let_name = code_of(TS_ERRORS.LET_DECLARATION_NAME);
+		const uninitialized = code_of(TS_ERRORS.DECLARATION_NOT_INITIALIZED);
+		const clash = code_of(TS_ERRORS.ARGUMENT_NAME_CLASH);
+		/** @type {Array<[source: string, errors: Array<[code: string | undefined, at: string]>]>} */
+		const cases = [
+			[
+				'class A { m(public [a]) { let let = 1; } }',
+				[
+					[pattern, 'public'],
+					[parameter_property, 'public'],
+					[reserved_word, 'let ='],
+					[let_name, 'let ='],
+				],
+			],
+			[
+				'class A { m(public [a] = [1]) { const q; } }',
+				[
+					[pattern, 'public'],
+					[parameter_property, 'public'],
+					[uninitialized, 'q;'],
+				],
+			],
+			[
+				'const o = { m(readonly { a }) { let let = 1; } };',
+				[
+					[pattern, 'readonly'],
+					[parameter_property, 'readonly'],
+					[reserved_word_in_module, 'let ='],
+					[let_name, 'let ='],
+				],
+			],
+			[
+				'class A { m(x, public [x]) {} }',
+				[
+					[clash, 'x,'],
+					[pattern, 'public'],
+					[parameter_property, 'public'],
+					[clash, 'x]'],
+				],
+			],
+		];
+		for (const [source, expected] of cases) {
+			const [code, at] = expected[0];
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code, pos: source.indexOf(at) }),
+			);
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'App.tsrx', { collect: true, errors });
+			expect(
+				errors.map(({ code, pos }) => [code, pos]),
+				source,
+			).toEqual(expected.map(([code, at]) => [code, source.indexOf(at)]));
+		}
+	});
+
 	it('holds no errors after an abandoned parse that held some (#1214)', () => {
 		// acorn-typescript tries `async <U>(…)` and `f<U>(…)` as a generic arrow
 		// function first, and abandons the attempt. The errors held in a parameter
