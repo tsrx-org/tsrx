@@ -72,6 +72,7 @@ import {
 	node_children,
 	render_children,
 } from '../../utils/ast.js';
+import { is_reference } from '../../utils/is-reference.js';
 
 const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
 const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
@@ -2920,14 +2921,17 @@ function lower_remaining_jsx_code_blocks(node, transform_context, seen = new Set
  * such closure the missing kind and suspends where it is called, so the value
  * still settles in the enclosing function, in source order:
  *
- * - an IIFE holding an `await` becomes `await (async () => { … })()`;
+ * - an IIFE holding an `await` (or an `await using` declaration) becomes
+ *   `await (async () => { … })()`;
  * - an IIFE holding a `yield` becomes a generator the call delegates to,
- *   `yield* (function* () { … })()`, which is also `async` when it awaits.
- *   An arrow shares `this` and `arguments` with the enclosing function and a
- *   generator does not, so the runtime call passes whichever the body reads
- *   (`.call(this)` or `.apply(this, arguments)`). The type-only print keeps
- *   the plain call, the form TypeScript types the delegated `yield` results
- *   from;
+ *   `yield* (function* () { … })()`, which is also `async` when it awaits or
+ *   runs in an async generator, where the authored `yield*` may delegate to
+ *   an async iterable. An arrow shares `this` and `arguments` with the
+ *   enclosing function and a generator does not, so the runtime call passes
+ *   whichever the body reads (`.call(this)`, or `.call(this, arguments)` with
+ *   the body reading its `arguments` from a parameter). The type-only print
+ *   keeps the plain call, the form TypeScript types the delegated `yield`
+ *   results from;
  * - a `map_iterable` call given an async callback becomes
  *   `await map_iterable_async(…)`, which settles one item before the next,
  *   like a `for...of` loop with an `await` in its body.
@@ -2972,6 +2976,10 @@ function suspend_generated_closures(program, transform_context) {
 	const made_generator = new Map();
 	let sync_iterable_calls = 0;
 	let async_iterable_calls = 0;
+	/** @type {string | undefined} */
+	let arguments_name;
+	/** A name for the enclosing `arguments` that no identifier in the module uses. */
+	const get_arguments_name = () => (arguments_name ??= unused_name('__arguments', program));
 
 	/**
 	 * Returns the node with its generated closures made async or generators,
@@ -2983,15 +2991,19 @@ function suspend_generated_closures(program, transform_context) {
 	 *   it becomes an async closure
 	 * @param {boolean} delegable whether the parent delegates to this node's
 	 *   call when it becomes a generator
+	 * @param {boolean} in_async_generator whether the code runs in an async
+	 *   generator, so a closure made a generator there is async as well
 	 * @returns {SuspendResult}
 	 */
-	const visit = (node, awaitable, delegable) => {
+	const visit = (node, awaitable, delegable, in_async_generator) => {
 		const cached = results.get(node);
 		if (cached) return cached;
 
 		/** @type {AST.Node | null} */
 		let first_await =
-			node.type === 'AwaitExpression' || (node.type === 'ForOfStatement' && node.await)
+			node.type === 'AwaitExpression' ||
+			(node.type === 'ForOfStatement' && node.await) ||
+			(node.type === 'VariableDeclaration' && node.kind === 'await using')
 				? node
 				: null;
 		/** @type {AST.Node | null} */
@@ -3003,6 +3015,10 @@ function suspend_generated_closures(program, transform_context) {
 			node.callee.name === MAP_ITERABLE_INTERNAL_NAME;
 		/** @type {AST.TraversableAstNode} */
 		let out = /** @type {AST.TraversableAstNode} */ (node);
+		// A generated closure is not a generator yet: if it becomes one, it runs
+		// where the enclosing function does.
+		const child_in_async_generator =
+			is_function_node(node) && node.generator ? !!node.async : in_async_generator;
 
 		for (const key of Object.keys(node)) {
 			if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
@@ -3016,7 +3032,7 @@ function suspend_generated_closures(program, transform_context) {
 			 * @returns {AST.Node}
 			 */
 			const visit_child = (child) => {
-				const result = visit(child, child_awaitable, is_callee);
+				const result = visit(child, child_awaitable, is_callee, child_in_async_generator);
 				first_await ??= result.first_await;
 				first_yield ??= result.first_yield;
 				return result.node;
@@ -3059,7 +3075,7 @@ function suspend_generated_closures(program, transform_context) {
 			}
 			if (make_generator) {
 				if (delegable) {
-					fn = to_generator_function(fn);
+					fn = to_generator_function(fn, in_async_generator);
 				} else {
 					error(
 						TSRX_ERRORS.TARGET_YIELD_UNSUPPORTED(transform_context.platform.name),
@@ -3086,7 +3102,10 @@ function suspend_generated_closures(program, transform_context) {
 				// `yield*` also settles a delegated async generator, so a closure
 				// made both async and a generator is not awaited as well.
 				result = {
-					node: b.yield(delegate_to_generated_generator(call, transform_context), true),
+					node: b.yield(
+						delegate_to_generated_generator(call, transform_context, get_arguments_name),
+						true,
+					),
 					first_await: made_async.get(call.callee) ?? first_await,
 					first_yield: made_generator.get(call.callee) ?? first_yield,
 				};
@@ -3118,7 +3137,7 @@ function suspend_generated_closures(program, transform_context) {
 		return result;
 	};
 
-	const lowered = /** @type {T} */ (visit(program, false, false).node);
+	const lowered = /** @type {T} */ (visit(program, false, false, false).node);
 	if (async_iterable_calls > 0) {
 		transform_context.needs_for_of_iterable = sync_iterable_calls > 0;
 		transform_context.needs_for_of_iterable_async = true;
@@ -3131,13 +3150,17 @@ function suspend_generated_closures(program, transform_context) {
  * body becomes a `return`, since a generator has no concise form.
  *
  * @param {AST.Function} fn
+ * @param {boolean} make_async whether it runs in an async generator, where an
+ *   authored `yield*` may delegate to an async iterable, which only an async
+ *   generator can
  * @returns {AST.FunctionExpression}
  */
-function to_generator_function(fn) {
+function to_generator_function(fn, make_async) {
 	return /** @type {AST.FunctionExpression} */ ({
 		...fn,
 		type: 'FunctionExpression',
 		id: fn.type === 'ArrowFunctionExpression' ? null : fn.id,
+		async: fn.async || make_async,
 		generator: true,
 		body: fn.body.type === 'BlockStatement' ? fn.body : b.block([b.return(fn.body)]),
 	});
@@ -3146,14 +3169,17 @@ function to_generator_function(fn) {
 /**
  * The call a `yield*` delegates to for an IIFE made a generator. The arrow it
  * replaces read `this` and `arguments` from the enclosing function, so the
- * runtime call passes on whichever the body reads. `super` has no such
- * hand-off: a function expression cannot reference it, so it is reported.
+ * runtime call passes on whichever the body reads. The enclosing `arguments`
+ * object itself is passed, as a parameter the body reads instead, so a write
+ * to it reaches the enclosing function. `super` has no such hand-off: a
+ * function expression cannot reference it, so it is reported.
  *
  * @param {AST.CallExpression} call
  * @param {TransformContext} transform_context
+ * @param {() => string} get_arguments_name the name of that parameter
  * @returns {AST.CallExpression}
  */
-function delegate_to_generated_generator(call, transform_context) {
+function delegate_to_generated_generator(call, transform_context, get_arguments_name) {
 	const generator = /** @type {AST.FunctionExpression} */ (call.callee);
 	/** @type {{ this: boolean, arguments: boolean, super: AST.Node | null }} */
 	const found = { this: false, arguments: false, super: null };
@@ -3174,7 +3200,15 @@ function delegate_to_generated_generator(call, transform_context) {
 	// TypeScript types the delegated `yield` results only for a direct call.
 	if (transform_context.typeOnly) return call;
 	if (found.arguments) {
-		return b.call(b.member(generator, 'apply'), b.this, b.id('arguments'));
+		const name = get_arguments_name();
+		const receives_arguments = {
+			...generator,
+			params: [b.id(name)],
+			body: /** @type {AST.BlockStatement} */ (
+				rename_function_context_arguments(generator.body, name)
+			),
+		};
+		return b.call(b.member(receives_arguments, 'call'), b.this, b.id('arguments'));
 	}
 	if (found.this) {
 		return b.call(b.member(generator, 'call'), b.this, ...call.arguments);
@@ -3193,9 +3227,16 @@ function delegate_to_generated_generator(call, transform_context) {
  * @returns {void}
  */
 function find_function_context_references(node, found) {
-	if (node.type === 'ThisExpression') {
+	// A JSX tag can read `this` too: `<this.Widget />`
+	if (node.type === 'ThisExpression' || (node.type === 'JSXIdentifier' && node.name === 'this')) {
 		found.this = true;
-	} else if (node.type === 'Identifier' && node.name === 'arguments') {
+	} else if (
+		(node.type === 'Identifier' && node.name === 'arguments') ||
+		// and `arguments`, as the object of a member tag: `<arguments.Widget />`
+		(node.type === 'JSXMemberExpression' &&
+			node.object.type === 'JSXIdentifier' &&
+			node.object.name === 'arguments')
+	) {
 		found.arguments = true;
 	} else if (node.type === 'Super') {
 		found.super ??= node;
@@ -3210,6 +3251,88 @@ function find_function_context_references(node, found) {
 	for (const child of child_nodes(node, node.type === 'PropertyDefinition' ? 'value' : undefined)) {
 		find_function_context_references(child, found);
 	}
+}
+
+/**
+ * `node` with each `arguments` it reads from the function a generated closure
+ * sits in renamed to the parameter the closure receives that object as. The
+ * same functions bind their own `arguments` as in
+ * `find_function_context_references`.
+ *
+ * @param {AST.Node} node
+ * @param {string} name the parameter's name
+ * @param {AST.Node | null} [parent]
+ * @returns {AST.Node}
+ */
+function rename_function_context_arguments(node, name, parent = null) {
+	if (node.type === 'Identifier') {
+		return node.name === 'arguments' && is_reference(node, parent) ? { ...node, name } : node;
+	}
+	if (
+		node.type === 'JSXMemberExpression' &&
+		node.object.type === 'JSXIdentifier' &&
+		node.object.name === 'arguments'
+	) {
+		return { ...node, object: { ...node.object, name } };
+	}
+	if (
+		node.type === 'FunctionExpression' ||
+		node.type === 'FunctionDeclaration' ||
+		node.type === 'StaticBlock'
+	) {
+		return node;
+	}
+
+	/** @type {AST.TraversableAstNode} */
+	let out = /** @type {AST.TraversableAstNode} */ (node);
+	for (const key of Object.keys(node)) {
+		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
+		if (key === 'value' && node.type === 'PropertyDefinition') continue;
+		// Names, not references: a key that is not computed (a shorthand
+		// property's key can be its value node too), and an enum member's name
+		if (key === 'key' && !(/** @type {any} */ (node).computed)) continue;
+		if (key === 'id' && /** @type {string} */ (node.type) === 'TSEnumMember') continue;
+		const value = /** @type {AST.TraversableAstNode} */ (node)[key];
+		/** @type {unknown} */
+		let next = value;
+		if (Array.isArray(value)) {
+			const renamed = value.map((child) =>
+				is_ast_node(child) ? rename_function_context_arguments(child, name, node) : child,
+			);
+			if (renamed.some((child, index) => child !== value[index])) next = renamed;
+		} else if (is_ast_node(value)) {
+			next = rename_function_context_arguments(value, name, node);
+		}
+		if (next !== value) {
+			if (out === node) out = { ...out };
+			out[key] = next;
+		}
+	}
+	// `{ arguments }` keeps its key and reads the parameter
+	if (out !== node && node.type === 'Property') out.shorthand = false;
+	return /** @type {AST.Node} */ (out);
+}
+
+/**
+ * `base`, or `base` with the first number after it that makes it a name no
+ * identifier in `program` uses, so a declaration of it shadows nothing.
+ *
+ * @param {string} base
+ * @param {AST.Node} program
+ * @returns {string}
+ */
+function unused_name(base, program) {
+	/** @type {Set<string>} */
+	const names = new Set();
+	/** @param {AST.Node} node */
+	const collect = (node) => {
+		if (node.type === 'Identifier' || node.type === 'JSXIdentifier') names.add(node.name);
+		for (const child of child_nodes(node)) collect(child);
+	};
+	collect(program);
+	let name = base;
+	for (let index = 1; names.has(name); index++) name = `${base}${index}`;
+	return name;
 }
 
 /**
