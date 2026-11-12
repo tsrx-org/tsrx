@@ -17,8 +17,8 @@ interface ParseResult {
 const visitorKeys: Record<string, string[]> = {
 	Program: ['body'],
 	JSXElement: ['openingElement', 'children', 'closingElement'],
-	JSXOpeningElement: ['name', 'attributes'],
-	JSXClosingElement: ['name'],
+	JSXOpeningElement: ['name', 'tagExpression', 'attributes'],
+	JSXClosingElement: ['name', 'tagExpression'],
 	JSXFragment: ['openingFragment', 'children', 'closingFragment'],
 	JSXOpeningFragment: [],
 	JSXClosingFragment: [],
@@ -38,7 +38,8 @@ const visitorKeys: Record<string, string[]> = {
 	JSXCodeBlock: ['body', 'render'],
 	StyleSheet: [],
 	ForOfStatement: ['left', 'right', 'body'],
-	IfStatement: ['test', 'consequent', 'alternate'],
+	// eslint-scope's default keys leave out `pending`, so without this, scope
+	// analysis would skip the `pending` block of a plain `try`.
 	TryStatement: ['block', 'pending', 'handler', 'finalizer'],
 };
 
@@ -51,6 +52,22 @@ const visitorKeys: Record<string, string[]> = {
 class TSRXReferencer extends Referencer {
 	#tsrx_for_by_loop = new Map<any, any>();
 	#var_heads = new Set<any>();
+
+	JSXOpeningElement(node: any): void {
+		if (!node.tagExpression) {
+			super.JSXOpeningElement(node);
+			return;
+		}
+		// A dynamic tag's expression holds its references, with or without JSX
+		// enabled. The name that mirrors it holds none.
+		this.visit(node.tagExpression);
+		node.attributes.forEach(this.visit, this);
+	}
+
+	// A closing tag repeats the opening tag's name, so it adds no references.
+	// With JSX enabled, eslint-scope read the `</style>` of a `<style>` element
+	// as one.
+	JSXClosingElement(): void {}
 
 	JSXForExpression(node: any): void {
 		this.#tsrx_for_by_loop.set(node.loop, node);
@@ -158,6 +175,48 @@ const SIGNATURE_TYPES = new Set([
 	'TSMethodSignature',
 ]);
 
+/** The name rules see for a dynamic tag that no JSX name can mirror. */
+const DYNAMIC_TAG_NAME = 'tsrx-dynamic-tag';
+
+/**
+ * The JSX name rules see for a dynamic tag: a `JSXIdentifier` or
+ * `JSXMemberExpression` that mirrors its expression (`<{as}>` is `as`,
+ * `<{ui.Box}>` is `ui.Box`), or a synthetic `JSXIdentifier` for any other
+ * expression (`<{'div'}>`, `<{icons[key]}>`, `<{pick()}>`). The name spans the
+ * braces, so a rule that fixes the text before or after it keeps them.
+ */
+function dynamic_tag_name(container: any): any {
+	const name = mirror_tag_expression(container.expression) ?? {
+		type: 'JSXIdentifier',
+		name: DYNAMIC_TAG_NAME,
+	};
+	return { ...name, start: container.start, end: container.end };
+}
+
+/** The JSX name for an identifier or a chain of `.name` accesses, or `null`. */
+function mirror_tag_expression(node: any): any {
+	if (node.type === 'Identifier') {
+		return { type: 'JSXIdentifier', name: node.name, start: node.start, end: node.end };
+	}
+	if (node.type !== 'MemberExpression' || node.computed || node.property.type !== 'Identifier') {
+		return null;
+	}
+	// `<this.Item>` is a JSX member name too.
+	const object =
+		node.object.type === 'ThisExpression'
+			? { type: 'JSXIdentifier', name: 'this', start: node.object.start, end: node.object.end }
+			: mirror_tag_expression(node.object);
+	return (
+		object && {
+			type: 'JSXMemberExpression',
+			object,
+			property: mirror_tag_expression(node.property),
+			start: node.start,
+			end: node.end,
+		}
+	);
+}
+
 /**
  * Keep this hook for small ESLint-only AST normalizations. Returns the `JSXText`
  * nodes, which each get a token of their own.
@@ -217,9 +276,10 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 		// `if`. A `@try` keeps its blocks, in source order: as a `try` statement,
 		// its body would be inside a `try`, though the React, Preact and Hono
 		// output has none.
-		// `react-hooks/rules-of-hooks` would then report each hook after the first
-		// as conditional, except `use()`, which 6.1.1 and 7.1.1 report anywhere in
-		// the body as inside a try/catch block.
+		// `react-hooks/rules-of-hooks` would then report as conditional every hook
+		// after the body's first call, member access or identifier, except `use()`,
+		// which 6.1.1 and 7.1.1 report anywhere in the body as inside a try/catch
+		// block.
 		// `@switch` keeps its cases: a `switch` would fall through from each case
 		// into the next.
 		if (node.type in STATEMENT_FIELDS) {
@@ -234,6 +294,18 @@ function normalize_tsrx_ast_for_eslint(ast: any, code: string): Span[] {
 				delete node[key];
 			}
 			node.statement = statement;
+		}
+
+		// Rules read a tag name as a JSX name, and crash on the expression
+		// container of a dynamic tag. They see a name that mirrors it instead, and
+		// the container moves to `tagExpression`, where rules still lint the code
+		// and scope analysis reads the opening tag's (see `TSRXReferencer`).
+		if (
+			(node.type === 'JSXOpeningElement' || node.type === 'JSXClosingElement') &&
+			node.name?.type === 'JSXExpressionContainer'
+		) {
+			node.tagExpression = node.name;
+			node.name = dynamic_tag_name(node.name);
 		}
 
 		// typescript-eslint names the parameters of a function type or signature
