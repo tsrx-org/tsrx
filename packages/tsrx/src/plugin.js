@@ -1997,7 +1997,8 @@ export function TSRXPlugin(config) {
 				const after = this.end;
 				let index = after;
 				// Whitespace and line terminators as the tokenizer skips them (`\s`, as
-				// `regex_space_and_comments`), then block comments.
+				// `regex_space_and_comments`), block comments, and the line comments
+				// template text reads as comments, to the end of their line.
 				while (index < this.input.length) {
 					if (regex_whitespace_character.test(this.input[index])) {
 						index++;
@@ -2005,11 +2006,14 @@ export function TSRXPlugin(config) {
 						const close = this.input.indexOf('*/', index + 2);
 						if (close === -1) return false;
 						index = close + 2;
+					} else if (this.#isTemplateLineCommentStart(index, after)) {
+						index += 2;
+						while (index < this.input.length && !this.#isNewlineCharCode(index)) index++;
 					} else {
 						break;
 					}
 				}
-				if (!this.input.startsWith('//', index) || this.#isTemplateLineCommentStart(index, after)) {
+				if (!this.input.startsWith('//', index)) {
 					return false;
 				}
 				const pos = this.pos;
@@ -2580,13 +2584,24 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Whether the source from `start` to `end` holds only text: no tag,
-			 * container, code block or directive starts in it.
+			 * Whether the source from `start` to `end` holds only text and comments:
+			 * no tag, container, code block or directive starts in it. As in
+			 * `#parseTemplateRawText`, a comment isn't text, so a `<` or a brace in
+			 * one doesn't count.
 			 * @param {number} start
 			 * @param {number} end
 			 */
 			#isPlainTemplateText(start, end) {
 				for (let index = start; index < end; index++) {
+					if (this.#isTemplateBlockCommentStart(index)) {
+						const close = this.input.indexOf('*/', index + 2);
+						// The comment runs to `end` or past it.
+						if (close === -1 || close + 2 >= end) return true;
+						index = close + 1;
+						continue;
+					}
+					// The rest of the line is a comment.
+					if (this.#isTemplateLineCommentStart(index)) return true;
 					const ch = this.input.charCodeAt(index);
 					if (
 						(ch === CharCode.lessThan && can_start_tag_after_lt(this.input, index)) ||

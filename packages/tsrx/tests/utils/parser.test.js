@@ -15196,6 +15196,9 @@ describe('comments between template children', () => {
 			// JavaScript whitespace and line terminators before the comment.
 			'%s\u2028/* c */// c\n\t\t1st prize\n\t',
 			'%s\u00a0/* c */// c\n\t\t1st prize\n\t',
+			// A line comment before the comment, on its own line or after the block.
+			'%s\n\t\t// note\n\t\t/* c */// c\n\t\t1st prize\n\t',
+			"%s // note\n\t\t/* c */// c\n\t\t's fine\n\t",
 		];
 		/** @type {Array<(children: string) => string>} */
 		const positions = [
@@ -15214,6 +15217,10 @@ describe('comments between template children', () => {
 			'%s/* c */// c\n',
 			'%s<b />/* c */// c\n',
 			'%s<b />/* a */// b /* c */\n',
+			// A comment in the text line that holds a tag or a brace.
+			'%s/* c */// c /* <b> */\n',
+			'%s<b />/* c */// c /* { */\n',
+			'%s<b />/* c */// c // <b> {\n',
 		]) {
 			cases.push([child, (content) => `const e = <main>{ok && <p>${content}}</main>;`]);
 		}
@@ -15237,6 +15244,25 @@ describe('comments between template children', () => {
 				for (const directive of directives) {
 					expect(outline(directive), `${directive} in ${position(child)}`).toEqual(expected);
 				}
+			}
+		}
+	});
+
+	// In an unclosed `<p>` before its container's `}`, the line the tokenizer
+	// skipped is added as text when it holds only text and comments. A tag or a
+	// brace inside a comment there is part of the comment, not a child.
+	it('reads a `//` after a block comment as text when a later comment holds a tag or a brace', () => {
+		for (const tail of ['/* <b> */', '/* { */', '// <b> {']) {
+			const source = `const e = <main>{ok && <p>@if (ok) {<i />}<b />/* c */// c ${tail}\n}</main>;`;
+			for (const options of modes) {
+				/** @type {AST.CommentWithLocation[]} */
+				const comments = [];
+				const element = paragraph(source, { ...options, collect: true, comments });
+				expect(read(element), tail).toEqual(['JSXIfExpression', '<b>', '{}', '// c ', '{}', '\n']);
+				expect(comments.map((comment) => source.slice(comment.start, comment.end))).toEqual([
+					'/* c */',
+					tail,
+				]);
 			}
 		}
 	});
