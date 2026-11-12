@@ -16863,9 +16863,10 @@ describe('TypeScript-coded errors that had no source (#964)', () => {
 
 	it("reports the element left open at the end of the input in an attribute's JSX as TSRX1001", () => {
 		const source = 'export function C() @{ <p title={<i>abc';
+		// A collecting parse records it at the tag's name (#1288).
 		expect(outcome(source)).toEqual({
 			strict: [unclosed, source.length],
-			collected: [[unclosed, source.length]],
+			collected: [[unclosed, source.indexOf('i>abc')]],
 			thrown: [code_of(TS_ERRORS.TOKEN_EXPECTED), source.length],
 		});
 	});
