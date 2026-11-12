@@ -133,6 +133,98 @@ describe('@tsrx/vite-plugin-hono', () => {
 		}
 	});
 
+	it("keeps the scope hash on a class from Hono's css helper with Hono SSR", async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-'),
+		);
+
+		try {
+			const source_id = path.join(directory, 'App.tsrx');
+			const output_id = path.join(directory, 'App.js');
+			const transformed = await plugin.transform.call(
+				context,
+				`import { css, Style } from 'hono/css';
+
+				const red = () => css\`color: red;\`;
+				// Hono's server prints a thenable that is not a Promise as text.
+				const thenable = { then() {}, toString: () => 'from-thenable' };
+
+				export function Native() @{
+					<div>
+						<Style />
+						<span data-probe="attribute" class={red()} />
+						<span data-probe="spread" {...{ class: red() }} />
+						<span data-probe="thenable" class={thenable} />
+					</div>
+				}
+
+				export function Scoped() @{
+					<div>
+						<Style />
+						<style>
+							span {
+								margin: 0;
+							}
+						</style>
+						<span data-probe="attribute" class={red()} />
+						<span data-probe="spread" {...{ class: red() }} />
+						<span data-probe="thenable" class={thenable} />
+					</div>
+				}`,
+				source_id,
+			);
+			await writeFile(output_id, transformed.code.replace(/^import ".*\?tsrx-css.*";$/m, ''));
+
+			const [{ Native, Scoped }, { jsx }, { HtmlEscapedCallbackPhase, resolveCallback }] =
+				await Promise.all([
+					import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+					import('hono/jsx'),
+					import('hono/utils/html'),
+				]);
+			// Resolve Hono's callbacks as `c.html()` does, which fills <Style />.
+			/** @param {unknown} component */
+			const render = async (component) =>
+				String(
+					await resolveCallback(
+						await jsx(/** @type {any} */ (component), {}).toString(),
+						HtmlEscapedCallbackPhase.Stringify,
+						false,
+						{},
+					),
+				);
+			/**
+			 * @param {string} html
+			 * @param {string} probe
+			 */
+			const classes = (html, probe) =>
+				(new RegExp(`data-probe="${probe}" class="([^"]*)"`).exec(html)?.[1] ?? '')
+					.split(' ')
+					.filter(Boolean);
+
+			const native = await render(Native);
+			const scoped = await render(Scoped);
+			for (const probe of ['attribute', 'spread']) {
+				expect(classes(native, probe)).toEqual([expect.stringMatching(/^css-\d+$/)]);
+			}
+			expect(classes(native, 'thenable')).toEqual(['from-thenable']);
+			for (const probe of ['attribute', 'spread', 'thenable']) {
+				expect(classes(scoped, probe)).toEqual([
+					...classes(native, probe),
+					expect.stringMatching(/^tsrx-[0-9a-f]+$/),
+				]);
+			}
+			// Hono's callbacks still add the rule to <Style />.
+			const style = (/** @type {string} */ html) =>
+				/<style id="hono-css">(.*?)<\/style>/.exec(html)?.[1];
+			expect(style(native)).toContain('color:red');
+			expect(style(scoped)).toBe(style(native));
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it('renders a class beside scoped styles as Hono SSR renders it without them', async () => {
 		const plugin = tsrxHono();
 		const context = create_context();

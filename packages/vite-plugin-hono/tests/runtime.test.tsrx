@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { use, useState } from 'hono/jsx';
 import { createContext, render, useContext } from 'hono/jsx/dom';
-import { Style, css } from 'hono/css';
+import { Style, createCssContext, css } from 'hono/css';
 import {
 	NullishSpreadRefApp,
 	NullishSpreadRefInIfApp,
@@ -329,6 +329,41 @@ function ClassValueApp({ value }: { value?: ClassValue }) @{
 		<NativeClassValue value={value} />
 		<ScopedClassValue value={value} />
 	</>
+}
+
+// Its own context, so its style sheet isn't one an earlier test cached.
+const css_context = createCssContext({ id: 'tsrx-scoped-css' });
+const css_red = () => css_context.css`
+	color: rgb(255, 0, 0);
+`;
+
+function NativeCssClasses() @{
+	<div>
+		<span data-probe="native-css-attribute" class={css_red()} />
+		<span data-probe="native-css-spread" {...{ class: css_red() }} />
+		<span data-probe="native-css-cx" class={css_context.cx(css_red(), 'extra')} />
+	</div>
+}
+
+function ScopedCssClasses() @{
+	<div>
+		<style>
+			span {
+				margin: 0;
+			}
+		</style>
+		<span data-probe="css-attribute" class={css_red()} />
+		<span data-probe="css-spread" {...{ class: css_red() }} />
+		<span data-probe="css-cx" class={css_context.cx(css_red(), 'extra')} />
+	</div>
+}
+
+function CssClassesApp() @{
+	<div>
+		<css_context.Style />
+		<NativeCssClasses />
+		<ScopedCssClasses />
+	</div>
 }
 
 function class_list(probe: string): string[] {
@@ -696,6 +731,24 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			expect(class_list('scoped')).toEqual([...class_list('native'), SCOPE_HASH]);
 		});
 	}
+
+	// Hono DOM's `css` value turns into its class name when stringified, and
+	// inserts its rule.
+	it("keeps the scope hash on a class from Hono's css helper", async () => {
+		render(<CssClassesApp />, container);
+		await Promise.resolve();
+
+		for (const probe of ['css-attribute', 'css-spread', 'css-cx']) {
+			expect(class_list(`native-${probe}`)[0]).toMatch(/^css-\d+$/);
+			expect(class_list(probe)).toEqual([...class_list(`native-${probe}`), SCOPE_HASH]);
+		}
+		const sheet = (document.querySelector('style#tsrx-scoped-css') as HTMLStyleElement).sheet;
+		const selectors = Array.from(
+			sheet?.cssRules ?? [],
+			(rule) => (rule as CSSStyleRule).selectorText,
+		);
+		expect(selectors).toContain(`.${class_list('css-attribute')[0]}`);
+	});
 
 	// Like the object Hono DOM's `css` returns.
 	it('joins a class object with a toString beside the scope hash', () => {

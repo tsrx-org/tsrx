@@ -715,7 +715,7 @@ export function merge_spread_class(props, scope_class, key, alias, kind = 'text'
  *   joins as `[class, scope_class]`; any other value that is not a string is
  *   left out.
  *
- * A thenable class (Hono's server `css`) applies unchanged.
+ * On Hono's server, a promise class (its `css` helper's) joins once it settles.
  *
  * @param {unknown} value the authored class
  * @param {unknown} scope_class the element's scope hashes and applied classes
@@ -762,14 +762,42 @@ function join_class(value, scope_class, kind) {
 	if (kind === 'list' && typeof value !== 'string') {
 		return typeof value === 'object' ? [value, scope_class] : scope_class;
 	}
-	// A thenable class, such as the promise Hono's server `css` returns, applies
-	// as the runtime resolves it. Any other value joins as text, as it would in
-	// the class attribute.
-	if (
-		(typeof value === 'object' || typeof value === 'function') &&
-		typeof (/** @type {{ then?: unknown }} */ (value).then) === 'function'
-	) {
-		return value;
+	// Hono's server renderer awaits a promise class, such as the one its `css`
+	// helper returns, so that one joins the scope classes once it settles.
+	// Anywhere else a class joins as text, as it would in the class attribute;
+	// Hono DOM's `css` promise then turns into its class name and inserts its
+	// rule.
+	if (kind === 'text-both' && value instanceof Promise) {
+		return value.then((settled) => join_settled_class(settled, scope_class, kind));
 	}
 	return `${value} ${scope_class}`;
+}
+
+/** @type {Record<string, string>} */
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+/**
+ * Join the value a thenable class settles to. Hono's server `css` settles to
+ * an escaped `String` whose `callbacks` add its rule to `<Style />`; the
+ * joined class stays escaped and keeps those callbacks, so Hono still prints
+ * it as written and adds the rule.
+ *
+ * @param {unknown} settled
+ * @param {unknown} scope_class
+ * @param {ClassValueKind} kind
+ * @returns {unknown}
+ */
+function join_settled_class(settled, scope_class, kind) {
+	const escaped = /** @type {{ isEscaped?: unknown, callbacks?: unknown } | null} */ (settled);
+	if (typeof settled !== 'object' || escaped === null || !escaped.isEscaped) {
+		return join_class(settled, scope_class, kind);
+	}
+	const scope = String(scope_class).replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
+	const text = String(settled);
+	const joined = /** @type {String & { isEscaped?: boolean, callbacks?: unknown }} */ (
+		new String(text ? `${text} ${scope}` : scope)
+	);
+	joined.isEscaped = true;
+	joined.callbacks = escaped.callbacks;
+	return joined;
 }

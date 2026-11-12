@@ -2014,8 +2014,38 @@ describe('join_scope_class', () => {
 		expect(join_scope_class(0, 'tsrx-a')).toBe('0 tsrx-a');
 		expect(join_scope_class(['a', 'b'], 'tsrx-a')).toBe('a,b tsrx-a');
 		expect(join_scope_class({ toString: () => 'css-1' }, 'tsrx-a')).toBe('css-1 tsrx-a');
-		const thenable = Promise.resolve('css-2');
-		expect(join_scope_class(thenable, 'tsrx-a')).toBe(thenable);
+	});
+
+	it("joins a promise class once it settles on Hono's server, keeping an escaped value and its callbacks", async () => {
+		const callbacks = [() => {}];
+		const escaped = Object.assign(new String('css-1'), { isEscaped: true, callbacks });
+
+		const joined = /** @type {any} */ (
+			await join_scope_class(Promise.resolve(escaped), 'tsrx-a', 'text-both')
+		);
+		expect(String(joined)).toBe('css-1 tsrx-a');
+		expect(joined.isEscaped).toBe(true);
+		expect(joined.callbacks).toBe(callbacks);
+
+		expect(join_scope_class(Promise.resolve('css-2'), 'tsrx-a', 'text-both')).toBeInstanceOf(
+			Promise,
+		);
+		expect(await join_scope_class(Promise.resolve('css-2'), 'tsrx-a', 'text-both')).toBe(
+			'css-2 tsrx-a',
+		);
+		expect(await join_scope_class(Promise.resolve(undefined), 'tsrx-a', 'text-both')).toBe(
+			'tsrx-a',
+		);
+	});
+
+	it('joins any other thenable class as text, through its own toString', () => {
+		// Like Hono DOM's `css` promise, whose toString inserts its rule.
+		const css_promise = Object.assign(Promise.resolve('ignored'), { toString: () => 'css-1' });
+		expect(join_scope_class(css_promise, 'tsrx-a')).toBe('css-1 tsrx-a');
+		expect(join_scope_class(css_promise, 'tsrx-a', 'text-true')).toBe('css-1 tsrx-a');
+		// Hono's server prints a thenable that is not a Promise as text.
+		const thenable = { then: () => {}, toString: () => 'css-2' };
+		expect(join_scope_class(thenable, 'tsrx-a', 'text-both')).toBe('css-2 tsrx-a');
 	});
 
 	it('joins a boolean class as text where the runtime renders it', () => {
@@ -2111,12 +2141,16 @@ describe('merge_spread_class', () => {
 		);
 	});
 
-	it('applies a thenable class unchanged', () => {
-		const promise = Promise.resolve('css-class');
+	it("joins a promise class as text, or once it settles on Hono's server", async () => {
+		const promise = Object.assign(Promise.resolve('css-class'), { toString: () => 'css-text' });
 
 		expect(merge_spread_class({ class: promise }, 'tsrx-a', 'class', 'className').class).toBe(
-			promise,
+			'css-text tsrx-a',
 		);
+		expect(
+			await merge_spread_class({ class: promise }, 'tsrx-a', 'class', 'className', 'text-both')
+				.class,
+		).toBe('css-class tsrx-a');
 	});
 
 	it('joins a boolean class as the target renders it', () => {

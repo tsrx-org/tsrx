@@ -489,8 +489,8 @@ export interface JsxPlatform {
 		 *   `mergeProps`.
 		 *
 		 * A spread's class joins the scope classes as `classValue` says, or as
-		 * text without it; a thenable class (Hono's server `css`) applies
-		 * unchanged.
+		 * text without it. On Hono's server (`'text-both'`), a promise class
+		 * such as the `css` helper's joins once it settles.
 		 */
 		hostSpreadClassProps?: ReadonlyArray<'class' | 'className'>;
 		/**
