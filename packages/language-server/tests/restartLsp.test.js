@@ -92,6 +92,41 @@ describe('TSRX language server: restart after package state changed', () => {
 		expect(await client.exited).toBe(0);
 	});
 
+	it('ignores package files in generated directories and waits for package state to settle', async () => {
+		const client = await session({ restartNotification: true });
+		const watched = client.registrations
+			.filter((registration) => registration.method === 'workspace/didChangeWatchedFiles')
+			.flatMap((registration) =>
+				registration.registerOptions.watchers.map(
+					(/** @type {{ globPattern: string }} */ watcher) => watcher.globPattern,
+				),
+			);
+		// The plugin backend hosts no TypeScript project, so it watches no JavaScript.
+		expect(watched).toContain('**/*.json');
+		expect(watched).not.toContain('**/*.js');
+
+		// Vite writes this file whenever it optimizes dependencies.
+		const ignored = client.wait_for_notification('tsrx/restartServer', undefined, 2500);
+		client.watched_files_changed([['node_modules/.vite/deps/package.json', 'created']]);
+		await expect(ignored).rejects.toThrow(/Timed out/);
+
+		const restart = client.wait_for_notification('tsrx/restartServer');
+		client.watched_files_changed([['package.json', 'changed']]);
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		const last_change = Date.now();
+		client.watched_files_changed([['pnpm-lock.yaml', 'changed']]);
+		await restart;
+		expect(Date.now() - last_change).toBeGreaterThanOrEqual(900);
+	});
+
+	it('restarts after an install that leaves the lockfile alone', async () => {
+		// After `git pull` changed the lockfile, `pnpm install` writes only node_modules.
+		const client = await session({ restartNotification: true });
+		const restart = client.wait_for_notification('tsrx/restartServer');
+		client.watched_files_changed([['node_modules/.modules.yaml', 'changed']]);
+		await restart;
+	});
+
 	it('exits by itself for other clients', async () => {
 		const client = await session({});
 		client.watched_files_changed([['package.json', 'changed']]);
