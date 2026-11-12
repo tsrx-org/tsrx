@@ -50,9 +50,14 @@ Fixture conventions that make this work:
   order: enclosing scope hashes outer → inner, then applied themes. Static labels
   are appended to the authored literal (`class="e1 scopeA <hashA>"`). A runtime
   label makes it a template literal (``class={`e1 <hashA> ${theme.$class}`}``). A
-  key wrapped in braces is an expression-valued authored class and matches
-  ``class={`${theme.dark} <hashA>`}`` (or the untouched `class={theme.dark}` when
-  the chain is empty). Both `class=` and `className=` are accepted.
+  key wrapped in braces is an expression-valued authored class. One that is always
+  a string (a template literal, a choice between string literals, a `$class` read)
+  matches ``class={`${x.$class} <hashA>`}``. Any other, such as `{theme.dark}`,
+  joins the scope classes through the target's helper,
+  `class={__join_scope_class(theme.dark, "<hashA>")}`, with the target's class
+  value kind as a third argument where it has one (`"list"` on Solid and Vue).
+  With an empty chain it stays untouched (`class={theme.dark}`). Both `class=` and
+  `className=` are accepted.
 - **`cssOrder`** — labels of the marker rules in emission order: a scope's sheets
   contiguous in source order, nested scopes after their parent, siblings in source
   order, assigned blocks at their declaration position. `cssHash` must equal the
