@@ -86,13 +86,12 @@ The examples pin Storybook and its official frameworks to `10.6.2`, and
 `storybook-solidjs-vite` to `10.7.2`. They use the repository's Vite 8 catalog.
 Solid uses `solid-js` and `@solidjs/web` `2.0.0-rc.3` with
 `vite-plugin-solid@3.0.0-next.5` and the repository's Babel overrides. Vue uses
-`vue@3.6.0-beta.12` and `vue-jsx-vapor@3.2.14`.
+`vue@3.6.0-rc.14` and `vue-jsx-vapor@3.2.29`.
 
-Two upstream peer mismatches remain: the pinned Solid Vite plugin and
-`solid-refresh` declare prerelease ranges that exclude Solid rc.3;
-`@vue-jsx-vapor/runtime@3.2.14` declares the exact Vue peer `3.6.0-beta.10`. The
-browser checks use the versions above; they do not establish compatibility with
-every version in the frameworks' peer ranges.
+One upstream peer mismatch remains: the pinned Solid Vite plugin and
+`solid-refresh` declare prerelease ranges that exclude Solid rc.3. The browser
+checks use the versions above; they do not establish compatibility with every
+version in the frameworks' peer ranges.
 
 These examples render browser canvases, including when the Storybook site is built
 statically. Hono's example selects its DOM compiler mode. Server rendering and

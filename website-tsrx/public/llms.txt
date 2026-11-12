@@ -53,8 +53,8 @@ npm install -D @tsrx/vite-plugin-solid
 npm install -D @tsrx/rspack-plugin-solid
 npm install -D @tsrx/bun-plugin-solid      # Bun
 
-# Vue target
-npm install @tsrx/vue vue vue-jsx-vapor
+# Vue target (Vapor needs Vue 3.6 or later)
+npm install @tsrx/vue "vue@^3.6.0-0" vue-jsx-vapor
 npm install -D @tsrx/vite-plugin-vue
 npm install -D @tsrx/rspack-plugin-vue
 npm install -D @tsrx/bun-plugin-vue        # Bun
@@ -98,8 +98,8 @@ React, Preact, Solid, and Vue use the imported component directly in their
 stories. Explicit `args` and `argTypes` supply Controls; these examples do not
 establish automatic native `.tsrx` docgen or `.stories.tsrx` indexing. They cover
 browser canvases and static Storybook sites, not server rendering, hydration,
-or mobile hosts. See the examples' README for pinned versions, upstream Solid
-and Vue prerelease peer caveats, and the typecheck/browser-test commands.
+or mobile hosts. See the examples' README for pinned versions, the upstream
+Solid prerelease peer caveat, and the typecheck/browser-test commands.
 
 Octane's existing external example:
 https://github.com/octanejs/octane/blob/main/examples/storybook/README.md.
@@ -459,7 +459,8 @@ via `@tsrx/react` and returns the result to Turbopack as `*.tsx` so Next's
 React pipeline can handle the final JSX transform. When a component contains a
 local `<style>` block, the loader injects a sibling `?tsrx-css&lang.css`
 import, and the second Turbopack rule re-runs the compiler to extract the
-scoped CSS and hands it back to Turbopack as a CSS module type.
+scoped CSS and hands it back to Turbopack as a `*.css` module, so Next links
+the stylesheet into App Router pages.
 
 ```ts
 // next.config.ts
@@ -1493,12 +1494,27 @@ to exactly the elements of one scope.
 ### React and Preact
 
 Hooks run where they are written. TSRX does not move a hook inside a template
-branch, loop, switch, or try block into a generated component, so the Rules of
-Hooks apply as they do in TSX: give hook state that belongs to a branch or a
-list item its own component. React and Preact can also emit async component
-functions when template body `await` is supported by the target pipeline. An
-`await` in an `@for`, `@empty`, `@switch`, or `@if` body is awaited by that
-component, and a loop body finishes one item before it starts the next.
+branch, loop, or switch into a generated component, so the Rules of Hooks apply
+as they do in TSX: give hook state that belongs to a branch or a list item its
+own component.
+
+`@try` is the exception. Its body and its `@pending` body each render through a
+`TsrxTryBody` component inside the boundaries its `@catch` and `@pending`
+create, so hook state and context reads written there belong to that component,
+not to the component that contains the `@try`:
+
+- `useContext` in either body sees providers that the same component renders
+  around the `@try`.
+- State in the `@try` body is dropped when `@catch` takes over, and `reset()`
+  mounts the body fresh.
+- On the client, a `@pending` body runs only while the `@try` body suspends, and
+  its state starts fresh each time it appears.
+- A body that uses `await` or `yield` stays in the component that contains it.
+
+React and Preact can also emit async component functions when template body
+`await` is supported by the target pipeline. An `await` in an `@for`, `@empty`,
+`@switch`, or `@if` body is awaited by that component, and a loop body finishes
+one item before it starts the next.
 
 ```tsrx
 import { useEffect, useState } from 'react';
@@ -1534,9 +1550,10 @@ const UserProfile = ({ user, posts }: { user: User | null; posts: Post[] }) => @
 
 `@if` lowers to `<Show>`, `@switch` lowers to `<Switch>/<Match>`, `@for` lowers
 to `<For>`, `@try/catch` lowers to Solid error primitives, and `@try/pending`
-lowers to loading primitives. Read props as `props.name` (or split them with
-`splitProps`) rather than destructuring them, so Solid's getter-based prop
-reactivity is preserved.
+lowers to loading primitives. As on every target, the `@catch` binding is the
+thrown value (`e.message`), not Solid's error accessor (`e()`). Read props as
+`props.name` (or split them with `splitProps`) rather than destructuring them, so
+Solid's getter-based prop reactivity is preserved.
 
 ### Vue
 
