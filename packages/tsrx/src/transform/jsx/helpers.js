@@ -6,7 +6,7 @@ import {
 	format_comment,
 	get_line_comments_after,
 	is_file_level_pragma,
-	is_jsx_child_tooling_comment,
+	is_ts_suppression_directive,
 	should_preserve_comment,
 	should_preserve_jsx_tooling_comment,
 } from '../../comment-utils.js';
@@ -118,14 +118,19 @@ export function tsx_with_ts_locations(
 	/**
 	 * @param {AST.CommentWithLocation} comment
 	 * @param {ESRap.Context} context
+	 * @param {boolean} [inline] Follow the comment with a space, not a line break.
+	 * @param {boolean} [kept] The caller keeps a comment the policy would drop.
 	 */
-	const write_preserved_comment = (comment, context) => {
+	const write_preserved_comment = (comment, context, inline = false, kept = false) => {
 		if (
 			!emitted_comments ||
 			(hashbang !== null && comment.start === 0) ||
-			!(preserve_owner_comments
-				? should_preserve_jsx_tooling_comment(comment)
-				: should_preserve_comment(comment))
+			!(
+				kept ||
+				(preserve_owner_comments
+					? should_preserve_jsx_tooling_comment(comment)
+					: should_preserve_comment(comment))
+			)
 		) {
 			return;
 		}
@@ -135,7 +140,11 @@ export function tsx_with_ts_locations(
 		if (comment.loc) context.location(comment.loc.start.line, comment.loc.start.column);
 		context.write(format_comment(comment));
 		if (comment.loc) context.location(comment.loc.end.line, comment.loc.end.column);
-		context.newline();
+		if (inline) {
+			context.write(' ');
+		} else {
+			context.newline();
+		}
 	};
 
 	/**
@@ -170,14 +179,79 @@ export function tsx_with_ts_locations(
 	};
 
 	/**
+	 * Write the leading comments the type view keeps so that each TypeScript
+	 * directive covers the same code as in the source. TypeScript applies a
+	 * directive to the first line after the one where it ends that is neither
+	 * blank nor a line comment. So comments that share a line stay on one line,
+	 * a block comment after a directive stays, since it ends the directive's
+	 * reach, and a directive on the line where the node starts is left out: it
+	 * covers the source line after it, which the printer may split or join.
 	 * @param {AST.Node} node
 	 * @param {ESRap.Context} context
 	 */
 	const write_leading_comments = (node, context) => {
-		if (!node.leadingComments || !is_comment_owner(node)) return;
+		if (!node.leadingComments || !is_comment_owner(node) || !node.loc) return;
+		const start_line = node.loc.start.line;
+		/** @type {Array<{ comment: AST.CommentWithLocation, kept: boolean }>} */
+		const written = [];
+		let after_directive = false;
 		for (const comment of node.leadingComments) {
-			if (has_location(comment)) write_preserved_comment(comment, context);
+			if (!has_location(comment)) continue;
+			const directive = is_ts_suppression_directive(comment);
+			if (directive && comment.loc.end.line === start_line) continue;
+			const kept = after_directive && comment.type === 'Block';
+			if (kept || should_preserve_jsx_tooling_comment(comment)) written.push({ comment, kept });
+			after_directive ||= directive;
 		}
+		for (let i = 0; i < written.length; i++) {
+			const { comment, kept } = written[i];
+			const next_line = written[i + 1]?.comment.loc.start.line ?? start_line;
+			write_preserved_comment(comment, context, comment.loc.end.line === next_line, kept);
+		}
+	};
+
+	/**
+	 * Elements and fragments that print in parentheses. TSX reads an element
+	 * only as a unary operand: `<b>ok</b>.type` is the element followed by a
+	 * separate `.type` statement, and `class A extends <div /> {}` doesn't
+	 * parse. So an element needs its parentheses as the object of a member,
+	 * call, tagged-template, `!` or type-argument suffix (an instantiation
+	 * expression), a `new` callee, or a superclass. TSX also reads a `<` right
+	 * after an element as the start of another element, so an element that
+	 * ends the left operand of `<` needs them too (see
+	 * `element_before_less_than`). The build parse drops the source's
+	 * parentheses, and esrap ranks an element as a primary expression, which
+	 * it never wraps there. The editor parse keeps them as a
+	 * `ParenthesizedExpression`, which prints them.
+	 * @type {WeakSet<AST.Node>}
+	 */
+	const parenthesized_elements = new WeakSet();
+
+	/**
+	 * @template {AST.Node} T
+	 * @param {((node: T, context: ESRap.Context) => void) | undefined} print
+	 * @param {T} node
+	 * @param {AST.Node | null | undefined} operand
+	 * @param {ESRap.Context} context
+	 */
+	const print_with_element_operand = (print, node, operand, context) => {
+		const wrap = operand?.type === 'JSXElement' || operand?.type === 'JSXFragment';
+		if (wrap) parenthesized_elements.add(operand);
+		/** @type {NonNullable<typeof print>} */ (print)(node, context);
+		if (wrap) parenthesized_elements.delete(operand);
+	};
+
+	/**
+	 * @template {AST.Node} T
+	 * @param {((node: T, context: ESRap.Context) => void) | undefined} print
+	 * @param {T} node
+	 * @param {ESRap.Context} context
+	 */
+	const print_element = (print, node, context) => {
+		const wrap = parenthesized_elements.has(node);
+		if (wrap) context.write('(');
+		/** @type {NonNullable<typeof print>} */ (print)(node, context);
+		if (wrap) context.write(')');
 	};
 
 	const leading_preserved = (/** @type {AST.Program} */ program) => {
@@ -214,10 +288,38 @@ export function tsx_with_ts_locations(
 			/** @type {NonNullable<typeof base.Program>} */ (base.Program)(node, context);
 		},
 		ArrayPattern: (node, context) => {
-			/** @type {NonNullable<typeof base.ArrayPattern>} */ (base.ArrayPattern)(node, context);
-			if (node.typeAnnotation) {
-				context.visit(node.typeAnnotation);
+			print_binding_pattern(
+				/** @type {NonNullable<typeof base.ArrayPattern>} */ (base.ArrayPattern),
+				node,
+				context,
+			);
+		},
+		ObjectPattern: (node, context) => {
+			print_binding_pattern(
+				/** @type {NonNullable<typeof base.ObjectPattern>} */ (base.ObjectPattern),
+				node,
+				context,
+			);
+		},
+		// esrap prints a string statement that is not a directive without its
+		// parentheses, so `('use strict');` became a directive.
+		// UPSTREAM(sveltejs/esrap#246): remove once a release includes the fix
+		ExpressionStatement: (node, context) => {
+			const expression = node.expression;
+			if (
+				!('directive' in node && typeof node.directive === 'string') &&
+				expression.type === 'Literal' &&
+				typeof expression.value === 'string'
+			) {
+				context.write('(');
+				context.visit(expression);
+				context.write(');');
+				return;
 			}
+			/** @type {NonNullable<typeof base.ExpressionStatement>} */ (base.ExpressionStatement)(
+				node,
+				context,
+			);
 		},
 		// esrap's tsx printer writes `<T,>` for every one-parameter list, but
 		// only an arrow needs it: TSX reads `<T>(…) => …` as a JSX tag. Other
@@ -310,7 +412,7 @@ export function tsx_with_ts_locations(
 		JSXEmptyExpression: (node, context) => {
 			if (!emitted_comments || !preserve_owner_comments) return;
 			for (const comment of /** @type {AST.CommentWithLocation[]} */ (node.innerComments ?? [])) {
-				if (!is_jsx_child_tooling_comment(comment) || comment.value.includes('*/')) continue;
+				if (!should_preserve_jsx_tooling_comment(comment) || comment.value.includes('*/')) continue;
 				const key = `${comment.start}:${comment.end}:${comment.type}:${comment.value}`;
 				if (emitted_comments.has(key)) continue;
 				emitted_comments.add(key);
@@ -352,6 +454,31 @@ export function tsx_with_ts_locations(
 			}
 			context.write('>');
 		},
+		JSXElement: (node, context) => print_element(base.JSXElement, node, context),
+		JSXFragment: (node, context) => print_element(base.JSXFragment, node, context),
+		MemberExpression: (node, context) =>
+			print_with_element_operand(base.MemberExpression, node, node.object, context),
+		CallExpression: (node, context) =>
+			print_with_element_operand(base.CallExpression, node, node.callee, context),
+		NewExpression: (node, context) =>
+			print_with_element_operand(base.NewExpression, node, node.callee, context),
+		TaggedTemplateExpression: (node, context) =>
+			print_with_element_operand(base.TaggedTemplateExpression, node, node.tag, context),
+		BinaryExpression: (node, context) =>
+			print_with_element_operand(
+				base.BinaryExpression,
+				node,
+				node.operator === '<' ? element_before_less_than(node.left) : null,
+				context,
+			),
+		TSNonNullExpression: (node, context) =>
+			print_with_element_operand(base.TSNonNullExpression, node, node.expression, context),
+		TSInstantiationExpression: (node, context) =>
+			print_with_element_operand(base.TSInstantiationExpression, node, node.expression, context),
+		ClassDeclaration: (node, context) =>
+			print_with_element_operand(base.ClassDeclaration, node, node.superClass, context),
+		ClassExpression: (node, context) =>
+			print_with_element_operand(base.ClassExpression, node, node.superClass, context),
 		// esrap's TSExpressionWithTypeArguments printer only emits `expression`,
 		// dropping interface heritage arguments such as the `<T>` in
 		// `interface Foo<T> extends Bar<T> {}`. Besides changing the declaration's
@@ -481,6 +608,69 @@ const COMMENT_OWNER_NODE_TYPES = new Set([
 
 /** @type {WeakSet<AST.Node>} */
 const arrow_type_parameters = new WeakSet();
+
+/**
+ * esrap prints a binding pattern's type annotation but not the `?` of an
+ * optional one, `{ a }?: T` in a declared function or a signature, which then
+ * became a required parameter.
+ * UPSTREAM(sveltejs/esrap#245): remove once a release includes the fix
+ * @template {AST.ArrayPattern | AST.ObjectPattern} T
+ * @param {(node: T, context: ESRap.Context) => void} print
+ * @param {T} node
+ * @param {ESRap.Context} context
+ */
+function print_binding_pattern(print, node, context) {
+	if (!node.optional) {
+		print(node, context);
+		return;
+	}
+	print({ ...node, typeAnnotation: undefined }, context);
+	context.write('?');
+	if (node.typeAnnotation) context.visit(node.typeAnnotation);
+}
+
+/**
+ * The precedence esrap gives each binary operator that binds at least as
+ * tightly as `<`. esrap wraps any looser operand of these in parentheses.
+ * @type {Record<string, number>}
+ */
+const TIGHT_BINARY_PRECEDENCE = {
+	'<': 9,
+	'>': 9,
+	'<=': 9,
+	'>=': 9,
+	in: 9,
+	instanceof: 9,
+	'<<': 10,
+	'>>': 10,
+	'>>>': 10,
+	'+': 11,
+	'-': 11,
+	'*': 12,
+	'/': 12,
+	'%': 12,
+	'**': 13,
+};
+
+/**
+ * The element or fragment that `node` ends with when esrap prints it as the
+ * left operand of `<`, with no parentheses after it: `<b />` in `<b /> < x`
+ * and `x + <b /> < y`. A unary operand (`!<b /> < y`) is fine, as is an
+ * operand esrap wraps (`(x == <b />) < y`).
+ * @param {AST.Node} node
+ * @param {number} [min_precedence] The precedence below which esrap wraps
+ * `node`.
+ * @returns {AST.Node | null}
+ */
+function element_before_less_than(node, min_precedence = TIGHT_BINARY_PRECEDENCE['<']) {
+	if (node.type === 'JSXElement' || node.type === 'JSXFragment') return node;
+	if (node.type !== 'BinaryExpression') return null;
+	const precedence = TIGHT_BINARY_PRECEDENCE[node.operator];
+	if (precedence === undefined || precedence < min_precedence) return null;
+	// A right operand needs to bind more tightly to go unwrapped, except in
+	// right-associative `**`.
+	return element_before_less_than(node.right, node.operator === '**' ? precedence : precedence + 1);
+}
 
 /**
  * @param {AST.Node | null | undefined} node

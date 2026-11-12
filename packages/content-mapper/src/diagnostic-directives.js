@@ -2,6 +2,7 @@
 /** @import {CodeMapping, CompileError} from '@tsrx/core/types' */
 /** @import {DiagnosticDirectives} from './protocol.js' */
 
+import { DIAGNOSTIC_CODES } from '@tsrx/core/diagnostics';
 import { DiagnosticDirectivePolicy } from './protocol.js';
 
 /**
@@ -50,14 +51,19 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 		if (typeof error.pos !== 'number') {
 			continue;
 		}
-		const holder = source_ast ? holder_at(source_ast, error.pos) : null;
+		const on_tag = reported_on_tag(error);
+		const position = on_tag ? /** @type {number} */ (error.raisedAt) - 1 : error.pos;
+		const holder = source_ast ? holder_at(source_ast, position) : null;
 		const start = holder ? /** @type {number} */ (holder.start) : error.pos;
 		const end = holder
 			? /** @type {number} */ (holder.end)
 			: typeof error.end === 'number' && error.end > error.pos
 				? error.end
 				: error.pos + 1;
-		for (const generated of generated_ranges(mappings, start, end)) {
+		// With nothing holding an unclosed tag, only its own code is covered. Its
+		// anchor isn't that: it sits on whatever else is on its generated line.
+		const own_code = on_tag && !holder;
+		for (const generated of generated_ranges(mappings, start, end, own_code)) {
 			ranges.push([
 				Math.min(start, original_length),
 				Math.min(end, original_length),
@@ -94,6 +100,29 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 			DiagnosticDirectivePolicy.Ignore,
 		]),
 	};
+}
+
+/**
+ * Whether `error` is an unclosed tag reported on the tag and found where the
+ * parser stopped, one before `raisedAt`: the end of its template, or the start
+ * of a `<style>` or `<script>` body. Its directive holds there, not at the error:
+ * the closing tag that recovery adds has no mapping, so TypeScript's error on it
+ * could only show at the top of the file, and the tag's own statement can end
+ * before it. At the end of the file nothing holds that place, as the tag's
+ * declaration has stretched around the code that follows, which the directive
+ * must not hide. A compiler from before tags were reported on themselves has its
+ * error where the parser stopped already, with `raisedAt` no further than `end`,
+ * and the mapper runs whichever compiler the project has.
+ * @param {CompileError} error
+ * @returns {boolean}
+ */
+function reported_on_tag({ code, end, raisedAt }) {
+	return (
+		code === DIAGNOSTIC_CODES.UNCLOSED_TAG &&
+		typeof raisedAt === 'number' &&
+		typeof end === 'number' &&
+		raisedAt > end
+	);
 }
 
 /**
@@ -156,9 +185,13 @@ function child_at(node, position) {
  * @param {readonly CodeMapping[]} mappings
  * @param {number} start
  * @param {number} end
+ * @param {boolean} [own_code] Count only segments inside the range, and no
+ *   error's anchor. A segment that encloses the range doesn't count: a mapping of
+ *   the whole file can have the same length on both sides by chance. An anchor
+ *   still ends a range, as any code from outside the node does.
  * @returns {Array<[number, number]>}
  */
-function generated_ranges(mappings, start, end) {
+function generated_ranges(mappings, start, end, own_code = false) {
 	/** @type {Array<[generated_start: number, generated_end: number, inside: boolean]>} */
 	const segments = [];
 	for (const mapping of mappings) {
@@ -167,9 +200,16 @@ function generated_ranges(mappings, start, end) {
 			const length = mapping.lengths[i];
 			const generated = mapping.generatedOffsets[i];
 			const generated_length = mapping.generatedLengths?.[i] ?? length;
-			if (source >= start && source + length <= end) {
+			if (own_code && mapping.data?.customData?.diagnosticAnchor) {
+				segments.push([generated, generated + generated_length, false]);
+			} else if (source >= start && source + length <= end) {
 				segments.push([generated, generated + generated_length, true]);
-			} else if (source <= start && end <= source + length && generated_length === length) {
+			} else if (
+				!own_code &&
+				source <= start &&
+				end <= source + length &&
+				generated_length === length
+			) {
 				segments.push([generated + start - source, generated + end - source, true]);
 			} else {
 				segments.push([generated, generated + generated_length, false]);
