@@ -154,7 +154,8 @@ describe('to_span_mappings', () => {
 			[0, 5, 0, 5, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
 		]);
 		// One on its own stays a span without features, and a verify-only span still
-		// keeps apart from its neighbours.
+		// keeps apart from its neighbours: the identical `(` between them maps on its
+		// own, without features.
 		expect(to_span_mappings([m(2, 2, 1, { data: position_only })], text, text)).toEqual([
 			[2, 1, 2, 1, SpanMapKind.Verbatim, SpanMapFeature.None],
 		]);
@@ -162,10 +163,12 @@ describe('to_span_mappings', () => {
 			to_span_mappings([m(0, 0, 1), m(2, 2, 1, { data: verify_only })], text, text).map((span) => [
 				span[0],
 				span[1],
+				span[5],
 			]),
 		).toEqual([
-			[0, 1],
-			[2, 1],
+			[0, 1, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+			[1, 1, SpanMapFeature.None],
+			[2, 1, SpanMapFeature.None],
 		]);
 	});
 
