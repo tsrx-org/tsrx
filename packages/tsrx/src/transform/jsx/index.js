@@ -606,6 +606,7 @@ export function createJsxTransform(platform) {
 			errors: collect ? options?.errors : undefined,
 			comments: options?.comments,
 			typeOnly: !!options?.typeOnly,
+			uses_server_directive: has_use_server_directive(ast),
 			// Opt-in navigation origins (see stamp_directive_origin). OFF by
 			// default, and the editor pipeline never asks for it: with the flag
 			// clear the emitted code, the source map and therefore every Volar
@@ -1799,11 +1800,21 @@ function validate_native_await(node, transform_context) {
 		return;
 	}
 
+	const { validation } = transform_context.platform;
 	const validator = transform_context.platform.hooks?.validateComponentAwait;
 	if (validator) {
+		const uses_server_directive =
+			validation.scanUseServerDirectiveForAwaitWithCustomValidator !== false &&
+			transform_context.uses_server_directive;
 		for (const await_node of awaits) {
 			const reported = transform_context.errors?.length ?? 0;
-			validator(await_node, node, transform_context, false, transform_context.source || '');
+			validator(
+				await_node,
+				node,
+				transform_context,
+				uses_server_directive,
+				transform_context.source || '',
+			);
 			// The shared checks for an `await` the output can't hold skip one the
 			// target has reported, so each `await` is reported once.
 			if ((transform_context.errors?.length ?? 0) > reported) {
@@ -1813,7 +1824,7 @@ function validate_native_await(node, transform_context) {
 		return;
 	}
 
-	if (transform_context.platform.validation.requireUseServerForAwait) {
+	if (validation.requireUseServerForAwait && !transform_context.uses_server_directive) {
 		error(
 			TSRX_ERRORS.TOP_LEVEL_AWAIT_USE_SERVER,
 			transform_context.filename,
@@ -1822,6 +1833,23 @@ function validate_native_await(node, transform_context) {
 			transform_context.comments,
 		);
 	}
+}
+
+/**
+ * Whether the module's directive prologue holds `"use server"`. The parser
+ * marks only the leading string statements as directives, so a string after
+ * another statement, or a parenthesized one, doesn't count.
+ *
+ * @param {AST.Program} program
+ * @returns {boolean}
+ */
+function has_use_server_directive(program) {
+	return program.body.some(
+		(statement) =>
+			statement.type === 'ExpressionStatement' &&
+			'directive' in statement &&
+			statement.directive === 'use server',
+	);
 }
 
 /**
