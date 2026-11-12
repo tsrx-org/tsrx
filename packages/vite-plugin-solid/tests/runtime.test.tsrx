@@ -773,7 +773,45 @@ function ErrorBoundaryApp() @{
 	@try {
 		<ThrowingChild />
 	} @catch (err) {
-		<p class="caught">{(err() as Error).message}</p>
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
+function DestructuredErrorApp() @{
+	@try {
+		<ThrowingChild />
+	} @catch ({ message }) {
+		<p class="caught">{message}</p>
+	}
+}
+
+function ReassignedErrorApp() @{
+	@try {
+		<ThrowingChild />
+	} @catch (err) {
+		err = 'reassigned: ' + (err as Error).message;
+		<p class="caught">{err as string}</p>
+	}
+}
+
+function AccessorNamedErrorApp() @{
+	@try {
+		<ThrowingChild />
+	} @catch (_tsrx_error) {
+		<p class="caught">{(_tsrx_error as Error).message}</p>
+	}
+}
+
+function StringThrower(): JSX.Element @{
+	throw 'string boom';
+	<p>{'unreachable'}</p>
+}
+
+function ThrownStringApp() @{
+	@try {
+		<StringThrower />
+	} @catch (err) {
+		<p class="caught">{typeof err + ' ' + String(err)}</p>
 	}
 }
 
@@ -793,7 +831,7 @@ function ErrorToggleApp() @{
 			<MaybeThrow shouldThrow={fail()} />
 		} @catch (err, reset) {
 			<>
-				<p class="caught">{(err() as Error).message}</p>
+				<p class="caught">{(err as Error).message}</p>
 				<button
 					class="reset"
 					onClick={() => {
@@ -845,7 +883,7 @@ function SuspenseErrorApp(props: { loader: () => Promise<{ default: typeof Resol
 	} @pending {
 		<p class="pending">{'loading...'}</p>
 	} @catch (err) {
-		<p class="caught">{(err() as Error).message}</p>
+		<p class="caught">{(err as Error).message}</p>
 	}
 }
 
@@ -862,11 +900,11 @@ function NestedTryApp() @{
 			@try {
 				<InnerThrow />
 			} @catch (err) {
-				<p class="inner-caught">{(err() as Error).message}</p>
+				<p class="inner-caught">{(err as Error).message}</p>
 			}
 		</div>
 	} @catch (err) {
-		<p class="outer-caught">{(err() as Error).message}</p>
+		<p class="outer-caught">{(err as Error).message}</p>
 	}
 }
 
@@ -1603,6 +1641,26 @@ describe('tsrx-solid runtime', () => {
 	it('catches synchronous child errors (<Errored>)', async () => {
 		await render(ErrorBoundaryApp);
 		expect(text('.caught')).toBe('sync boom');
+	});
+
+	it('binds a destructured @catch pattern to the thrown value', async () => {
+		await render(DestructuredErrorApp);
+		expect(text('.caught')).toBe('sync boom');
+	});
+
+	it('lets the @catch body reassign its binding', async () => {
+		await render(ReassignedErrorApp);
+		expect(text('.caught')).toBe('reassigned: sync boom');
+	});
+
+	it('binds a @catch parameter named like the generated accessor', async () => {
+		await render(AccessorNamedErrorApp);
+		expect(text('.caught')).toBe('sync boom');
+	});
+
+	it('binds @catch to a thrown non-Error value', async () => {
+		await render(ThrownStringApp);
+		expect(text('.caught')).toBe('string string boom');
 	});
 
 	it('recovers from error via reset and re-triggers on signal change', async () => {
