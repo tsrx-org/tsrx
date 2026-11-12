@@ -248,6 +248,8 @@ export interface BaseNodeMetaData {
 	generated_local_helpers?: AST.Statement[];
 	has_unmappable_value?: boolean;
 	synthetic_ref?: boolean;
+	/** An element's own `ref`, assigned to a binding where it is written; the merged ref goes last. */
+	own_ref_bound?: boolean;
 	tsrx_reactive_block?: boolean;
 	/** Generated dynamic-tag render-block closure, not a user component boundary. */
 	tsrx_dynamic_wrapper?: boolean;
@@ -416,6 +418,14 @@ declare module 'estree' {
 		typeAnnotation?: TSTypeAnnotation | undefined;
 		decorators: TSESTree.Decorator[];
 		optional: boolean;
+	}
+
+	// An optional binding pattern parameter in a signature: `{ a }?: T`, `[a]?: T`.
+	interface ObjectPattern {
+		optional?: boolean;
+	}
+	interface ArrayPattern {
+		optional?: boolean;
 	}
 
 	// Target analysis may mark a whole member expression as tracked metadata.

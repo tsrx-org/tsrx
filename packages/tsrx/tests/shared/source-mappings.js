@@ -150,6 +150,11 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		<p>{i}{value}{await load(item)}</p>
 	}
 }`,
+			'@for head default (#224)': `export async function App({ rows }: { rows: number[][] }) @{
+	@for (const [item = await load(0)] of rows; index i) {
+		<p>{i}{item}</p>
+	}
+}`,
 			'@empty body': `export async function App({ items }: { items: number[] }) @{
 	@for (const item of items) {
 		<p>{item}</p>
