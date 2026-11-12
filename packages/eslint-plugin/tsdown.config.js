@@ -7,7 +7,13 @@ export default defineConfig({
 	dts: true,
 	deps: {
 		// Mark peer dependencies as external so they're not bundled
-		neverBundle: ['eslint', '@typescript-eslint/parser', '@tsrx/eslint-parser', '@tsrx/core'],
+		neverBundle: [
+			'eslint',
+			'eslint/use-at-your-own-risk',
+			'@typescript-eslint/parser',
+			'@tsrx/eslint-parser',
+			'@tsrx/core',
+		],
 		alwaysBundle: /.+/,
 		onlyBundle: false,
 	},

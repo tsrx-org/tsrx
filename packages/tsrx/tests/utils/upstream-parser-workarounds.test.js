@@ -313,9 +313,15 @@ describe('class named after a TypeScript contextual keyword (sveltejs/acorn-type
 
 	it('still rejects reserved words as class names', () => {
 		// acorn's `The keyword '…' is reserved` (TS1212).
-		expect(() => parse('class interface {}')).toThrow(error_with('TS1212'));
 		expect(() => parse('class enum {}')).toThrow(error_with('TS1212'));
-		expect(() => parse('class implements {}')).toThrow(error_with('TS1212'));
+		// A word reserved only in strict mode is TypeScript's TS1213 there, from
+		// its binder, which a collecting parse records (#786).
+		for (const source of ['class interface {}', 'class implements {}']) {
+			expect(
+				parse(source).errors.map((error) => [error.code, error.pos]),
+				source,
+			).toEqual([[TS_ERRORS.STRICT_MODE_RESERVED_WORD_IN_CLASS.code, 6]]);
+		}
 	});
 
 	it('keeps anonymous classes anonymous', () => {
@@ -625,6 +631,57 @@ describe("a repeated modifier's error (sveltejs/acorn-typescript#129)", () => {
 	});
 });
 
+describe("a modifier order or compatibility error's position (sveltejs/acorn-typescript#122)", () => {
+	// acorn-typescript raises these with the modifier's column as the position,
+	// which pointed into the first line of the file. TypeScript reports them from
+	// its checker (TS1029, TS1243), at the modifier (#735).
+	const prefix = "import { x } from './x';\n\n";
+	/** @type {Array<[source: string, modifier: string, error: ErrorKind]>} */
+	const cases = [
+		[
+			`${prefix}class A {\n\tconstructor(\n\t\treadonly public x: number,\n\t) {}\n}`,
+			'public x',
+			TS_ERRORS.MODIFIER_MUST_PRECEDE,
+		],
+		[
+			`${prefix}class B {\n\treadonly public y = 1;\n}`,
+			'public y',
+			TS_ERRORS.MODIFIER_MUST_PRECEDE,
+		],
+		[
+			`${prefix}abstract class C {\n\tabstract static z: number;\n}`,
+			'static z',
+			TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH,
+		],
+		[
+			`${prefix}class D {\n\treadonly static [k: string]: number;\n}`,
+			'static [',
+			TS_ERRORS.MODIFIER_MUST_PRECEDE,
+		],
+	];
+
+	it('throws it at the modifier', async () => {
+		const outcomes = await parse_in_worker(cases.map(([source]) => ({ source })));
+
+		expect(outcomes).toEqual(
+			cases.map(([source, modifier, error]) => thrown(error, source.indexOf(modifier))),
+		);
+	});
+
+	it('records it at the modifier when collecting', async () => {
+		const outcomes = await parse_in_worker_with_ast(
+			cases.map(([source]) => ({ source, options: { collect: true } })),
+		);
+
+		for (const [index, outcome] of outcomes.entries()) {
+			const [source, modifier, error] = cases[index];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			const pos = source.indexOf(modifier);
+			expect(outcome.errors, source).toEqual([{ code: code_of(error), pos, end: pos + 1 }]);
+		}
+	});
+});
+
 describe('a parameter property modifier outside a constructor (sveltejs/acorn-typescript#136)', () => {
 	// TypeScript's parser reads the modifiers before any parameter, and its
 	// checker reports TS2369 outside a constructor. acorn-typescript reads a
@@ -676,13 +733,43 @@ describe('a parameter property modifier outside a constructor (sveltejs/acorn-ty
 		);
 	});
 
-	it("leaves a method's parameters alone", async () => {
-		// acorn-typescript reads modifiers there and reports nothing, leaving TS2369
-		// to TypeScript.
+	// acorn-typescript reads the modifiers on every method's parameters, and
+	// reported nothing outside a constructor implementation (#886).
+	/** @type {Array<[source: string, modifiers: string[]]>} */
+	const method_cases = [
+		['class A { m(public x: number, private y: number) {} }', ['public x', 'private y']],
+		['class A { set x(readonly a: number) {} }', ['readonly a']],
+		['class A { static m(override a: number) {} }', ['override a']],
+		['const o = { m(readonly x: number) {} };', ['readonly x']],
+		['const o = { set x(protected a: number) {} };', ['protected a']],
+		[
+			'class A {\n\tconstructor(public a: number);\n\tconstructor(public a: number) {}\n}',
+			['public a: number);'],
+		],
+		['declare class B { constructor(public a: number); }', ['public a']],
+		['abstract class C { abstract m(public a: number): void; }', ['public a']],
+	];
+
+	it("records it on a method's parameters, and throws it without collecting", async () => {
+		const outcomes = await parse_in_worker_with_ast(
+			method_cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
+		);
+
+		for (const [index, [source, modifiers]] of method_cases.entries()) {
+			const positions = modifiers.map((modifier) => source.indexOf(modifier));
+			expect(outcomes[2 * index], source).toEqual(thrown(error, positions[0]));
+			const collected = outcomes[2 * index + 1];
+			if (!collected.ok) throw new Error(`${JSON.stringify(source)} threw ${collected.message}`);
+			expect(collected.errors, source).toEqual(
+				positions.map((pos) => ({ code: error.code, pos, end: pos + 1 })),
+			);
+		}
+	});
+
+	it("leaves a constructor implementation's parameters alone", async () => {
 		const sources = [
-			'class A { m(public x: number) {} }',
-			'const o = { m(readonly x: number) {} };',
 			'class A { constructor(private x: number) {} }',
+			'class A {\n\tconstructor(x: number);\n\tconstructor(public x: number) {}\n}',
 		];
 		const outcomes = await parse_in_worker(
 			sources.map((source) => ({ source, options: { collect: true } })),
@@ -727,7 +814,11 @@ describe('a parameter property with a pattern and a default (sveltejs/acorn-type
 			const source = sources[index];
 			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
 			const pos = source.search(modifier);
-			expect(outcome.errors, source).toEqual([{ code: error.code, pos, end: pos + 1 }]);
+			// Outside a constructor, TS2369 too (#886).
+			const codes = source.includes('constructor')
+				? [error.code]
+				: [error.code, TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR.code];
+			expect(outcome.errors, source).toEqual(codes.map((code) => ({ code, pos, end: pos + 1 })));
 			const method = as_type(
 				as_type(outcome.ast.body[0], 'ClassDeclaration').body.body[0],
 				'MethodDefinition',
@@ -774,10 +865,10 @@ describe("a parameter property modifier before a function type's first parameter
 		}
 	});
 
-	it('still fails after the modifier without collecting', async () => {
-		const outcomes = await parse_in_worker([{ source: sources[0] }]);
+	it('throws TS2369 at the modifier without collecting (#1162)', async () => {
+		const outcomes = await parse_in_worker(sources.map((source) => ({ source })));
 
-		expect(outcomes).toEqual([thrown(TS_ERRORS.UNEXPECTED_TOKEN, 17)]);
+		expect(outcomes).toEqual(sources.map((source) => thrown(error, source.indexOf('(') + 1)));
 	});
 
 	it('still reads a parenthesized type', async () => {
@@ -1078,7 +1169,8 @@ describe('a call after `async (…)` followed by `=>` (acornjs/acorn#1460)', () 
 			failing.flatMap((source) =>
 				modes.map(() => {
 					const pos = source.indexOf('=>');
-					return thrown(TS_ERRORS.UNEXPECTED_TOKEN, pos);
+					// `';' expected.`, as TypeScript reports it (#1053).
+					return thrown(TS_ERRORS.TOKEN_EXPECTED, pos);
 				}),
 			),
 		);
@@ -1548,8 +1640,9 @@ describe('`assert` on the line after an import (sveltejs/acorn-typescript#121)',
 	});
 
 	it('rejects `assert { … }` after a line break, as TypeScript does', () => {
+		// TypeScript takes `assert` for a misspelled `asserts` (#1053).
 		expect(() => parse('import "x"\nassert { type: "json" };')).toThrow(
-			error_with(TS_ERRORS.UNEXPECTED_TOKEN),
+			error_with(TS_ERRORS.UNKNOWN_KEYWORD_OR_IDENTIFIER, '2:0'),
 		);
 	});
 });
@@ -1661,8 +1754,8 @@ describe('anonymous default-exported class with `implements` or `abstract` (svel
 	it('still rejects `implements` as the name of a class statement', async () => {
 		const [{ strict, collect }] = await parseBothModes(['class implements I {}']);
 		for (const outcome of [strict, collect]) {
-			// acorn's `The keyword 'implements' is reserved` (TS1212).
-			expect(outcome).toMatchObject(thrown('TS1212', 6));
+			// TypeScript's TS1213 for a word reserved in strict mode in a class.
+			expect(outcome).toMatchObject(thrown(TS_ERRORS.STRICT_MODE_RESERVED_WORD_IN_CLASS, 6));
 		}
 	});
 });
@@ -1719,8 +1812,9 @@ describe('decorated default-exported class (sveltejs/acorn-typescript#124)', () 
 
 	it('still rejects decorators before anything but a class', async () => {
 		const error = TS_ERRORS.UNEXPECTED_LEADING_DECORATOR;
-		// When collecting, TypeScript's checker error before another declaration
-		// is recorded at the decorators instead (TS1206).
+		// TypeScript's checker error before another declaration is at the
+		// decorators (TS1206): a strict parse throws it there (#1162), and a
+		// collecting one records it.
 		const declarations = [
 			'export default @dec function f() {}',
 			'export default @dec interface I {}',
@@ -1728,7 +1822,7 @@ describe('decorated default-exported class (sveltejs/acorn-typescript#124)', () 
 		const expression = 'export default @dec 1;';
 		const outcomes = await parseBothModes([...declarations, expression]);
 		for (const { source, strict } of outcomes) {
-			expect(strict, source).toMatchObject(thrown(error, 20));
+			expect(strict, source).toMatchObject(thrown(error, source === expression ? 20 : 15));
 		}
 		for (const { source, collect } of outcomes.slice(0, declarations.length)) {
 			expect(collect, source).toMatchObject({ ok: true, errors: [{ code: error.code, pos: 15 }] });
@@ -1786,7 +1880,7 @@ describe('decorators before `export` (sveltejs/acorn-typescript#125)', () => {
 		expect([exported.start, exported.declaration.start]).toEqual([5, 0]);
 	});
 
-	it('rejects them before any other export, at the exported declaration, or records them when collecting', async () => {
+	it('rejects them before any other export, at the decorators, or records them there when collecting', async () => {
 		const cases = /** @type {Array<[string, string]>} */ ([
 			['@dec export default (class {});', '(class'],
 			['@dec export const A = class {};', 'const'],
@@ -1807,12 +1901,14 @@ describe('decorators before `export` (sveltejs/acorn-typescript#125)', () => {
 		for (const [index, [source, declaration]] of cases.entries()) {
 			const { strict, collect } = outcomes[index];
 			const column = source.indexOf(declaration);
-			expect(strict, source).toMatchObject(thrown(error, column));
-			// When collecting, the error before an export is recorded at the
-			// decorators instead, as TypeScript reports it from its checker
-			// (TS1206), and no class takes them. An at-sign construct is no
-			// declaration, so the error is still thrown there.
-			if (/@if|@\{/.test(declaration)) {
+			const at_sign_construct = /@if|@\{/.test(declaration);
+			// The error before an export is at the decorators, as TypeScript reports
+			// it from its checker (TS1206): a strict parse throws it there (#1162),
+			// and a collecting one records it there, and no class takes them. An
+			// at-sign construct is no declaration, so the error is still thrown
+			// after the decorators.
+			expect(strict, source).toMatchObject(thrown(error, at_sign_construct ? column : 0));
+			if (at_sign_construct) {
 				expect(collect, source).toMatchObject(thrown(error, column));
 			} else {
 				const { ast, errors } = parsed(collect, source);
@@ -1872,13 +1968,14 @@ describe('decorators on a rest parameter (sveltejs/acorn-typescript#126)', () =>
 		const plain = 'function f(...rest, b) {}';
 		const ambient = 'declare function f(@a ...rest: number[],): void;';
 		const [withDecorator, without, trailing] = await parseBothModes([decorated, plain, ambient]);
-		for (const [{ source, strict, collect }, comma] of /** @type {const} */ ([
-			[withDecorator, decorated.indexOf(', b')],
-			[without, plain.indexOf(', b')],
+		// TS1014 at the rest parameter (#956).
+		for (const [{ source, strict, collect }, rest] of /** @type {const} */ ([
+			[withDecorator, decorated.indexOf('...')],
+			[without, plain.indexOf('...')],
 		])) {
-			expect(strict, source).toMatchObject(thrown(TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, comma));
+			expect(strict, source).toMatchObject(thrown(TS_ERRORS.REST_PARAMETER_NOT_LAST, rest));
 			const { ast, errors } = parsed(collect, source);
-			expect(errors, source).toEqual([TS_ERRORS.REST_ELEMENT_TRAILING_COMMA.code]);
+			expect(errors, source).toEqual([TS_ERRORS.REST_PARAMETER_NOT_LAST.code]);
 			expect(
 				parameters(ast).map((param) => param.type),
 				source,
@@ -2527,6 +2624,8 @@ describe('`abstract` or `declare` followed by a line break (sveltejs/acorn-types
 
 	it('rejects decorators before `abstract` or `declare` and a line break', async () => {
 		// TypeScript's parser expects a declaration after the decorators (TS1146).
+		// A collecting parse records the decorators' error, which a strict parse
+		// throws (#1162), and then throws it again where the declaration isn't.
 		/** @type {Array<[source: string, at: string]>} */
 		const cases = [
 			['export default @dec abstract\nclass A {}', 'abstract'],
@@ -2540,7 +2639,9 @@ describe('`abstract` or `declare` followed by a line break (sveltejs/acorn-types
 		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
 		expect(outcomes).toEqual(
 			cases.flatMap(([source, at]) =>
-				thrown_in_every_mode(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, source.indexOf(at)),
+				PARSE_MODES.map((options) =>
+					thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, source.indexOf(options ? at : '@dec')),
+				),
 			),
 		);
 	});
@@ -2553,11 +2654,11 @@ describe('`abstract` or `declare` followed by a line break (sveltejs/acorn-types
 			['@dec export declare abstract\nclass A {}', 'declare'],
 		];
 		const outcomes = await parseBothModes(cases.map(([source]) => source));
-		for (const [index, { source, strict, collect }] of outcomes.entries()) {
-			const pos = source.indexOf(cases[index][1]);
-			expect(strict, source).toEqual(thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, pos));
-			// When collecting, the decorators are recorded (TS1206), and what follows
-			// `export` starts no declaration (TS1128).
+		for (const { source, strict, collect } of outcomes) {
+			// When collecting, the decorators are recorded (TS1206), which a strict
+			// parse throws (#1162), and what follows `export` starts no declaration
+			// (TS1128).
+			expect(strict, source).toEqual(thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, 0));
 			expect(collect, source).toEqual(thrown(TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 5));
 		}
 
@@ -2565,7 +2666,7 @@ describe('`abstract` or `declare` followed by a line break (sveltejs/acorn-types
 		// can't decorate. TypeScript reports them from its checker (TS1206).
 		const source = '@dec export default abstract\nclass A {}';
 		const [{ strict, collect }] = await parseBothModes([source]);
-		expect(strict).toEqual(thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, 20));
+		expect(strict).toEqual(thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, 0));
 		const { ast, errors } = parsed(collect, source);
 		expect(errors).toEqual([TS_ERRORS.UNEXPECTED_LEADING_DECORATOR.code]);
 		const [exported, declared] = ast.body;
@@ -3059,7 +3160,7 @@ describe('a TypeScript word in parentheses at the start of a statement (sveltejs
 		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
 		expect(outcomes).toEqual(
 			cases.flatMap(([source, at]) =>
-				thrown_in_every_mode(TS_ERRORS.UNEXPECTED_TOKEN, source.indexOf(at)),
+				thrown_in_every_mode(TS_ERRORS.TOKEN_EXPECTED, source.indexOf(at)),
 			),
 		);
 	});
@@ -3128,8 +3229,8 @@ describe('the `intrinsic` keyword of a type alias (sveltejs/acorn-typescript#152
 		/** @type {Array<[source: string, at: string, error: ErrorKind]>} */
 		const cases = [
 			// TypeScript reports TS1005 `';' expected.` after the keyword.
-			['type T = intrinsic[];', '[', TS_ERRORS.UNEXPECTED_TOKEN],
-			['type T = intrinsic | X;', '|', TS_ERRORS.UNEXPECTED_TOKEN],
+			['type T = intrinsic[];', '[', TS_ERRORS.TOKEN_EXPECTED],
+			['type T = intrinsic | X;', '|', TS_ERRORS.TOKEN_EXPECTED],
 			['type T = \\u0069ntrinsic;', '\\u0069ntrinsic', TS_ERRORS.KEYWORD_ESCAPE],
 		];
 		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
@@ -3546,7 +3647,7 @@ describe('`declare` after decorators after `export default` (sveltejs/acorn-type
 		const source = 'export default declare class A {}';
 		const outcomes = await parse_in_worker(in_every_mode([source]));
 		expect(outcomes).toEqual(
-			thrown_in_every_mode(TS_ERRORS.UNEXPECTED_TOKEN, source.indexOf('class')),
+			thrown_in_every_mode(TS_ERRORS.TOKEN_EXPECTED, source.indexOf('class')),
 		);
 	});
 });

@@ -57,6 +57,23 @@ function class_of(code, name) {
 }
 
 /**
+ * The class attribute value a target gives an authored class that may not be a
+ * string, joined with the printed scope classes `scope` (a string or template
+ * literal): through `join_scope_class` with the target's class value kind, or
+ * as text in one template literal when the kind is `null`.
+ *
+ * @param {'text' | 'text-true' | 'text-both' | 'list' | null} class_join
+ * @param {string} expression
+ * @param {string} scope
+ * @returns {string}
+ */
+export function joined_class_value(class_join, expression, scope) {
+	if (class_join === null) return `{\`\${${expression}} ${scope.slice(1, -1)}\`}`;
+	const kind = class_join === 'text' ? '' : `, "${class_join}"`;
+	return `{__join_scope_class(${expression}, ${scope}${kind})}`;
+}
+
+/**
  * Deterministic generator for the ordering property test: a small LCG so a
  * failing tree can be reproduced from its seed.
  *
@@ -185,10 +202,34 @@ export function runSharedScopedStyleTests({
 	name,
 	classAttrName,
 	generatedClassAttrName = classAttrName,
+	classJoin = null,
+	classNameAttr = 'className',
 }) {
 	const attr = generatedClassAttrName;
 
 	describe(`[${name}] style scopes`, () => {
+		it('joins an authored class that may not be a string with the scope classes as the target does', () => {
+			const { code, cssHash } = compile(
+				`export function App(props) @{
+					<>
+						<span ${attr}={props.value} />
+						<span ${attr}={\`a \${props.value}\`} />
+						<span ${attr}={props.on ? 'on' : 'off'} />
+						<style>span { color: red; }</style>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain(
+				`<span ${attr}=${joined_class_value(classJoin, 'props.value', `"${cssHash}"`)} />`,
+			);
+			// A class that is always a string joins as text.
+			expect(code).toContain(`<span ${attr}={\`\${\`a \${props.value}\`} ${cssHash}\`} />`);
+			expect(code).toContain(`<span ${attr}={\`\${props.on ? 'on' : 'off'} ${cssHash}\`} />`);
+			expect(code).toContain('join_scope_class as __join_scope_class');
+		});
+
 		it('rfc1-multiple-blocks: two blocks in one scope share the hash and emit in source order', () => {
 			const { code, css, cssHash } = compile(
 				`export function App() @{
@@ -249,6 +290,90 @@ export function runSharedScopedStyleTests({
 			const hash = hashes_of(cssHash)[0];
 			expect(css).toContain(String.raw`[data-a=\31 23].${hash} {`);
 			expect(css).not.toContain('(unused)');
+		});
+
+		it('matches the values of HTML case-insensitive attributes in any case', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							input[type="TEXT"] { color: red; }
+							[dir="RTL"] { margin: 0; }
+							[data-kind="TEXT"] { padding: 0; }
+							input[type="TEXT" s] { border: 0; }
+							input[type="TEXT" S] { outline: 0; }
+							[data-kind="TEXT" I] { float: left; }
+						</style>
+						<input type="text" dir="rtl" data-kind="text" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`input[type="TEXT"].${hash} {`);
+			expect(css).toContain(`[dir="RTL"].${hash} {`);
+			expect(css).toContain('/* (unused) [data-kind="TEXT"] { padding: 0; }*/');
+			expect(css).toContain('/* (unused) input[type="TEXT" s] { border: 0; }*/');
+			expect(css).toContain('/* (unused) input[type="TEXT" S] { outline: 0; }*/');
+			expect(css).toContain(`[data-kind="TEXT" I].${hash} {`);
+		});
+
+		it('matches attribute selectors against the React-style props that render them', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							meta[http-equiv] { --a: 1; }
+							form[accept-charset] { --b: 1; }
+							label[for="x"] { --c: 1; }
+							a[hreflang] { --d: 1; }
+							circle[stroke-width] { --e: 1; }
+							input[for] { --f: 1; }
+						</style>
+						<meta httpEquiv="refresh" content="5" />
+						<form acceptCharset="utf-8"></form>
+						<label htmlFor="x">{'l'}</label>
+						<a hrefLang="en">{'x'}</a>
+						<svg><circle strokeWidth={2} /></svg>
+						<input />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`meta[http-equiv].${hash} {`);
+			expect(css).toContain(`form[accept-charset].${hash} {`);
+			expect(css).toContain(`label[for="x"].${hash} {`);
+			expect(css).toContain(`a[hreflang].${hash} {`);
+			expect(css).toContain(`circle[stroke-width].${hash} {`);
+			expect(css).toContain('/* (unused) input[for] { --f: 1; }*/');
+		});
+
+		it('matches an attribute selector when any prop that renders the attribute matches', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							[data-foo="x"] { --a: 1; }
+							label[for="x"] { --b: 1; }
+							meta[http-equiv="a"] { --c: 1; }
+							[data-foo="z"] { --d: 1; }
+						</style>
+						<div dataFoo="y" data-foo="x" />
+						<label htmlFor="y" for="x">{'l'}</label>
+						<meta httpEquiv="b" http-equiv="a" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`[data-foo="x"].${hash} {`);
+			expect(css).toContain(`label[for="x"].${hash} {`);
+			expect(css).toContain(`meta[http-equiv="a"].${hash} {`);
+			expect(css).toContain('/* (unused) [data-foo="z"] { --d: 1; }*/');
 		});
 
 		it('splits class attributes on ASCII whitespace only, so a no-break space stays inside its class', () => {
@@ -619,6 +744,240 @@ export function runSharedScopedStyleTests({
 			expect(css).toMatch(/\.inner\.tsrx-[0-9a-f]+ \{ color: blue; \}/);
 		});
 
+		it('keeps sibling rules across text, fragments, and control flow between the siblings', () => {
+			const a = `<i ${attr}="a" />`;
+			const b = `<b ${attr}="b">{'b'}</b>`;
+			const bodies = [
+				`${a}text${b}`,
+				`<>${a}</>${b}`,
+				`${a}<>${b}</>`,
+				`@if (show) { ${a} }${b}`,
+				`@if (show) { <span /> } @else { ${a} }${b}`,
+				`${a}@if (show) { ${b} }`,
+				`@if (show) { <u /> } @else if (more) { ${a} }${b}`,
+				`@if (show) { <u /> } @else if (more) { <span /> } @else { ${a} }${b}`,
+				`${a}@if (show) { <u /> } @else if (more) { ${b} }`,
+				`${a}@if (show) { <u /> } @else if (more) { <span /> } @else { ${b} }`,
+				`@for (const item of items) { ${a} }${b}`,
+				`@for (const item of items) { <>${b}{item}${a}</> }`,
+				`@for (const item of items) { <span /> } @empty { ${a} }${b}`,
+				`@switch (show) { @case true: { <>${a}</> } }${b}`,
+				`@switch (show) { @case true: { <span /> } @default: { ${a} } }${b}`,
+				`@try { ${a} } @catch (error) { <span /> }${b}`,
+				`@try { <span /> } @pending { ${a} }${b}`,
+				`@{ const label = 'a'; <>{label}${a}</> }${b}`,
+			];
+
+			for (const body of bodies) {
+				const { css } = compile(
+					`export function App({ show, more, items }: { show: boolean, more: boolean, items: string[] }) @{
+						<>
+							<style>.a + .b { color: red; } .a ~ .b { margin: 0; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(css, body).not.toContain('(unused)');
+			}
+		});
+
+		it('keeps sibling rules when what renders between or around the siblings is not known', () => {
+			const a = `<i ${attr}="a" />`;
+			const b = `<b ${attr}="b">{'b'}</b>`;
+			const bodies = [
+				// React hoists these into <head>
+				`${a}<title>{'t'}</title>${b}`,
+				`${a}<><meta name="x" /></>${b}`,
+				`${a}<link rel="x" />${b}`,
+				// An expression renders the elements it holds in its place
+				`{show && ${a}}${b}`,
+				`{show ? ${a} : null}${b}`,
+				`${a}{show && ${b}}`,
+				// A component may render the elements passed to it in its place
+				`${a}<Comp />${b}`,
+				`<Comp>${a}</Comp>${b}`,
+				`<Comp render={${a}} />${b}`,
+				`${a}<Comp>${b}</Comp>`,
+				// A dynamic class may hold `a`
+				`<u ${attr}={cls} />${b}`,
+			];
+
+			for (const body of bodies) {
+				const { css } = compile(
+					`export function App({ show, cls }: { show: boolean, cls: string }) @{
+						<>
+							<style>.a + .b { color: red; } .a ~ .b { margin: 0; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(css, body).not.toContain('(unused)');
+				expect(css, body).toMatch(/\.a\.tsrx-[0-9a-f]+ \+ \.b/);
+			}
+		});
+
+		it('keeps a sibling chain through a global selector after a component', () => {
+			for (const [rule, body] of [
+				['.a:has(+ :global(.x) + .b)', `<div ${attr}="a" /><Comp />\n<b ${attr}="b" />`],
+				[
+					'.a:has(+ :global(.x) + .b)',
+					`<div ${attr}="a" /><Comp />@if (show) { <b ${attr}="b" /> }`,
+				],
+				['.a:has(~ :global(.x) ~ .b)', `<div ${attr}="a" /><Comp /><><b ${attr}="b" /></>`],
+			]) {
+				const { css } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>${rule} { color: red; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(css, body).not.toContain('(unused)');
+			}
+		});
+
+		it('scopes the rest of a chain kept for a component the search cannot place', () => {
+			for (const combinator of ['+', '~']) {
+				const { css, cssHash } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>:global(.x) ${combinator} .y ${combinator} .b { color: red; }</style>
+							{show && <Comp />}
+							<b ${attr}="b" />
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				// Unscoped, `.y` would match an element the component renders
+				const hash = hashes_of(cssHash)[0];
+				expect(css).toContain(`.x ${combinator} .y.${hash} ${combinator} .b:where(.${hash}) {`);
+			}
+		});
+
+		it('keeps every :not() argument in a chain kept without a match', () => {
+			const in_expression = `<i ${attr}="y" />{show && <b ${attr}="b" />}`;
+			const after_component = `{show && <Comp />}<b ${attr}="b" />`;
+			/** @type {Array<[string, string, (hash: string) => string]>} */
+			const cases = [
+				[
+					'.y:not(.z, :global(.w)) + .b',
+					in_expression,
+					(hash) => `.y.${hash}:not(.z, .w) + .b:where(.${hash}) {`,
+				],
+				[
+					'.y:not(.p .z) + .b',
+					in_expression,
+					(hash) => `.y.${hash}:not(.p:where(.${hash}) .z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					':global(.x) + .y:not(.z) + .b',
+					after_component,
+					(hash) => `.x + .y.${hash}:not(.z) + .b:where(.${hash}) {`,
+				],
+			];
+
+			for (const [rule, body, expected] of cases) {
+				const { css, cssHash } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>${rule} { color: red; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				// An empty `:not()` is invalid, and a shorter one matches more
+				expect(css, rule).not.toContain('(unused)');
+				expect(css, rule).toContain(expected(hashes_of(cssHash)[0]));
+			}
+		});
+
+		it('keeps every :is(), :where(), and :has() argument in a chain kept without a match', () => {
+			const in_expression = `{show && <b ${attr}="b" />}`;
+			/** @type {Array<[string, string, (hash: string) => string]>} */
+			const cases = [
+				// Matched normally, this compound keeps `> .z` as well
+				[
+					'.y:has(> .z) + .b',
+					`<i ${attr}="y"><span ${attr}="z" /></i>${in_expression}`,
+					(hash) => `.y.${hash}:has(> .z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					'.y:has(.z) + .b',
+					`<i ${attr}="y" />${in_expression}`,
+					(hash) => `.y.${hash}:has(.z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					'.y:is(.z, .q) + .b',
+					`<i ${attr}="y z" />${in_expression}`,
+					(hash) => `.y.${hash}:is(.z:where(.${hash}), .q:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+				[
+					':global(.x) + .y:where(.z) + .b',
+					`{show && <Comp />}<b ${attr}="b" />`,
+					(hash) => `.x + .y.${hash}:where(.z:where(.${hash})) + .b:where(.${hash}) {`,
+				],
+			];
+
+			for (const [rule, body, expected] of cases) {
+				const { css, cssHash } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>${rule} { color: red; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				// An empty `:has()` is invalid, so the browser drops the whole rule
+				expect(css, rule).not.toContain('(unused)');
+				expect(css, rule).toContain(expected(hashes_of(cssHash)[0]));
+			}
+		});
+
+		it('prunes sibling rules when another element or a parent boundary separates the siblings', () => {
+			const a = `<i ${attr}="a" />`;
+			const b = `<b ${attr}="b">{'b'}</b>`;
+			/** @type {Array<[string, string[]]>} */
+			const cases = [
+				[`${a}<u />${b}`, ['.a + .b']],
+				[`<>${a}<u /></>${b}`, ['.a + .b']],
+				[`@if (show) { <>${a}<u /></> }${b}`, ['.a + .b']],
+				[`<div>${a}</div>${b}`, ['.a + .b', '.a ~ .b']],
+				[`${b}<>${a}</>`, ['.a + .b', '.a ~ .b']],
+				[`@if (show) { ${a} } @else { ${b} }`, ['.a + .b', '.a ~ .b']],
+				[`@if (show) { ${a} } @else if (more) { ${b} }`, ['.a + .b', '.a ~ .b']],
+				[`${a}<title>{'t'}</title><u />${b}`, ['.a + .b']],
+			];
+
+			for (const [body, pruned] of cases) {
+				const { css } = compile(
+					`export function App({ show, more }: { show: boolean, more: boolean }) @{
+						<>
+							<style>.a + .b { color: red; } .a ~ .b { margin: 0; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(
+					[...css.matchAll(/\/\* \(unused\) (.*?) \{/g)].map((m) => m[1]),
+					body,
+				).toEqual(pruned);
+			}
+		});
+
 		it('stops stamping and pruning at a function boundary', () => {
 			const { code, css } = compile(
 				`export function App({ items }: { items: string[] }) @{
@@ -655,7 +1014,7 @@ export function runSharedScopedStyleTests({
 			const hash = hashes_of(cssHash)[0];
 			expect(code).toContain(`<span ${attr}="${hash}">`);
 			expect(code).toContain(`class="bold ${hash}"`);
-			expect(code).toContain(`className="italic ${hash}"`);
+			expect(code).toContain(`${classNameAttr}="italic ${hash}"`);
 		});
 
 		it('drops a scope whose only block matches nothing without emitting a style element', () => {
@@ -684,6 +1043,183 @@ export function runSharedScopedStyleTests({
 			);
 
 			expect(hashes_of(cssHash)).toHaveLength(1);
+		});
+	});
+
+	describe(`[${name}] scoped keyframes`, () => {
+		const frames = '{ from { opacity: 0; } to { opacity: 1; } }';
+
+		/**
+		 * @param {string} body
+		 * @returns {{ css: string, hash: string }}
+		 */
+		function compile_keyframes(body) {
+			const { css, cssHash, errors } = compile(
+				`export const theme = <style>${body}</style>;`,
+				'App.tsrx',
+			);
+			expect(errors).toEqual([]);
+			return { css, hash: hashes_of(cssHash)[0] };
+		}
+
+		it('prefixes the name after any whitespace that follows @keyframes', () => {
+			for (const space of ['\n', '\t', '\n\t ']) {
+				const { css, hash } = compile_keyframes(
+					`@keyframes${space}fade ${frames} .box { animation: fade 1s; }`,
+				);
+				expect(css).toContain(`@keyframes${space}${hash}-fade {`);
+				expect(css).toContain(`animation: ${hash}-fade 1s;`);
+			}
+		});
+
+		it('prefixes quoted keyframes names inside their quotes', () => {
+			const { css, hash } = compile_keyframes(
+				`@keyframes "fade" ${frames} @keyframes slide ${frames}
+				.a { animation: "fade" 1s infinite; }
+				.b { animation-name: fade, 'slide'; }`,
+			);
+			expect(css).toContain(`@keyframes "${hash}-fade" {`);
+			expect(css).toContain(`animation: "${hash}-fade" 1s infinite;`);
+			expect(css).toContain(`animation-name: ${hash}-fade, '${hash}-slide';`);
+		});
+
+		it('reads names around comments', () => {
+			const { css, hash } = compile_keyframes(
+				`@keyframes /* in */ fade/* after */ ${frames}
+				.box { animation: fade/*comment*/ 1s infinite; }`,
+			);
+			expect(css).toContain(`@keyframes /* in */ ${hash}-fade/* after */ {`);
+			expect(css).toContain(`animation: ${hash}-fade/*comment*/ 1s infinite;`);
+		});
+
+		it('leaves animation shorthand keywords alone even when local keyframes share their name', () => {
+			const { css, hash } = compile_keyframes(
+				`@keyframes linear ${frames} @keyframes fade ${frames}
+				.a { animation: fade 1s linear infinite; }
+				.b { animation: 1s ease linear; }
+				.c { animation: steps(4, end) linear 2s, linear 1s fade; }
+				.d { animation-name: linear; }`,
+			);
+			expect(css).toContain(`@keyframes ${hash}-linear {`);
+			expect(css).toContain(`animation: ${hash}-fade 1s linear infinite;`);
+			expect(css).toContain(`animation: 1s ease ${hash}-linear;`);
+			expect(css).toContain(`animation: steps(4, end) ${hash}-linear 2s, linear 1s ${hash}-fade;`);
+			expect(css).toContain(`animation-name: ${hash}-linear;`);
+		});
+
+		it('reads none as the fill mode before a keyword that names local keyframes', () => {
+			const { css, hash } = compile_keyframes(
+				`@keyframes backwards ${frames} .a { animation: 1s none backwards; }`,
+			);
+			expect(css).toContain(`@keyframes ${hash}-backwards {`);
+			expect(css).toContain(`animation: 1s none ${hash}-backwards;`);
+		});
+
+		it('renames names in var() and env() fallbacks', () => {
+			const { css, hash } = compile_keyframes(
+				`@keyframes fade ${frames} @keyframes linear ${frames}
+				.a { animation: var(--enter, fade 300ms ease-out); }
+				.b { animation-name: var(--name, var(--other, fade)); }
+				.c { animation: env(--x, linear 1s, fade 2s); }
+				.d { animation: 1s var(--easing, ease) linear; }`,
+			);
+			expect(css).toContain(`animation: var(--enter, ${hash}-fade 300ms ease-out);`);
+			expect(css).toContain(`animation-name: var(--name, var(--other, ${hash}-fade));`);
+			expect(css).toContain(`animation: env(--x, linear 1s, ${hash}-fade 2s);`);
+			expect(css).toContain(`animation: 1s var(--easing, ease) ${hash}-linear;`);
+		});
+
+		it('ends a hex escape after the whitespace it consumes', () => {
+			const { css, hash } = compile_keyframes(
+				String.raw`@keyframes \33 d-spin ${frames}
+				.a { animation: \33 d-flip 1s; }
+				.b { animation: \33 d-spin 1s; }`,
+			);
+			expect(css).toContain(String.raw`@keyframes ${hash}-\33 d-spin {`);
+			expect(css).toContain(String.raw`animation: \33 d-flip 1s;`);
+			expect(css).toContain(String.raw`animation: ${hash}-\33 d-spin 1s;`);
+		});
+
+		it('matches a name however its escapes are written', () => {
+			// `spin\31 `, `spin\31`, `spin\000031` and `spin1` all name `spin1`; the
+			// space after `\31` belongs to the escape, not to the name
+			const { css, hash } = compile_keyframes(
+				String.raw`.a { animation-name: \66 ade; }
+				@keyframes fade ${frames}
+				@keyframes spin\31  ${frames}
+				.b { animation-name: spin\31; }
+				.c { animation: 1s spin\31, 2s fade; }
+				.d { animation: 1s spin\000031; }
+				.e { animation: "spin1" 1s; }`,
+			);
+			expect(css).toContain(String.raw`animation-name: ${hash}-\66 ade;`);
+			expect(css).toContain(String.raw`@keyframes ${hash}-spin\31  {`);
+			expect(css).toContain(String.raw`animation-name: ${hash}-spin\31;`);
+			expect(css).toContain(String.raw`animation: 1s ${hash}-spin\31, 2s ${hash}-fade;`);
+			expect(css).toContain(String.raw`animation: 1s ${hash}-spin\000031;`);
+			expect(css).toContain(`animation: "${hash}-spin1" 1s;`);
+		});
+
+		it('reads an escaped animation keyword as the keyword', () => {
+			const { css, hash } = compile_keyframes(
+				String.raw`@keyframes ease ${frames} @keyframes infinite ${frames}
+				.a { animation: \65 ase 1s; }
+				.b { animation: 1s \69 nfinite; }
+				.c { animation: ease 1s \65 ase; }`,
+			);
+			expect(css).toContain(String.raw`animation: \65 ase 1s;`);
+			expect(css).toContain(String.raw`animation: 1s \69 nfinite;`);
+			expect(css).toContain(String.raw`animation: ease 1s ${hash}-\65 ase;`);
+		});
+
+		it('renames references written before their keyframes', () => {
+			const { css, hash } = compile_keyframes(
+				`.a { animation: fade 1s, "slide" 2s; }
+				.b { animation-name: slide; }
+				@keyframes fade ${frames}
+				@keyframes "slide" ${frames}
+				.c { animation: fade 3s; }`,
+			);
+			expect(css).toContain(`animation: ${hash}-fade 1s, "${hash}-slide" 2s;`);
+			expect(css).toContain(`animation-name: ${hash}-slide;`);
+			expect(css).toContain(`@keyframes ${hash}-fade {`);
+			expect(css).toContain(`@keyframes "${hash}-slide" {`);
+			expect(css).toContain(`animation: ${hash}-fade 3s;`);
+		});
+
+		it('keeps -global- names, :global blocks, and other keyframes unscoped', () => {
+			const { css } = compile_keyframes(
+				`@keyframes -global-spin ${frames}
+				@keyframes "-global-pulse" ${frames}
+				:global { @keyframes fade ${frames} }
+				.a { animation: spin 1s, pulse 2s, fade 3s, elsewhere 4s; }`,
+			);
+			expect(css).toContain(`@keyframes spin {`);
+			expect(css).toContain(`@keyframes "pulse" {`);
+			expect(css).toContain(`@keyframes fade {`);
+			expect(css).toContain('animation: spin 1s, pulse 2s, fade 3s, elsewhere 4s;');
+		});
+
+		it('renames vendor-prefixed keyframes and animation properties', () => {
+			const { css, hash } = compile_keyframes(
+				`@-webkit-keyframes fade ${frames}
+				.a { -webkit-animation: fade 1s; -webkit-animation-name: fade; }`,
+			);
+			expect(css).toContain(`@-webkit-keyframes ${hash}-fade {`);
+			expect(css).toContain(`-webkit-animation: ${hash}-fade 1s;`);
+			expect(css).toContain(`-webkit-animation-name: ${hash}-fade;`);
+		});
+
+		it('handles names that are also Object.prototype keys', () => {
+			const { css, hash } = compile_keyframes(
+				`@keyframes "constructor" ${frames} @keyframes __proto__ ${frames}
+				.a { animation: constructor 1s, "toString" 2s, __proto__ 3s, hasOwnProperty 4s; }`,
+			);
+			expect(css).toContain(`@keyframes "${hash}-constructor" {`);
+			expect(css).toContain(`@keyframes ${hash}-__proto__ {`);
+			expect(css).toContain(
+				`animation: ${hash}-constructor 1s, "toString" 2s, ${hash}-__proto__ 3s, hasOwnProperty 4s;`,
+			);
 		});
 	});
 
@@ -855,7 +1391,9 @@ export function runSharedScopedStyleTests({
 			expect(css.indexOf(`.dark.${theme_hash}`)).toBeLessThan(css.indexOf('color: purple'));
 			expect(css.indexOf('color: purple')).toBeLessThan(css.indexOf('font-weight: bold'));
 			// Class table: own classes, scope hashes outer→inner, then the theme.
-			expect(code).toContain(`${classAttrName}={\`\${theme.dark} ${scope_a} ${theme_hash}\`}`);
+			expect(code).toContain(
+				`${classAttrName}=${joined_class_value(classJoin, 'theme.dark', `"${scope_a} ${theme_hash}"`)}`,
+			);
 			expect(class_of(code, 'outer')).toBe(`outer ${scope_a} ${theme_hash}`);
 			expect(class_of(code, 'inner')).toBe(`inner ${scope_a} ${scope_b} ${theme_hash}`);
 		});
@@ -1101,7 +1639,9 @@ export function runSharedScopedStyleTests({
 			expect(code).toContain(
 				`<article ${classAttrName}={\`\${\`local \${parentClass}\`} ${local}\`}>`,
 			);
-			expect(code).toContain(`<h2 ${classAttrName}={\`\${parentClass} ${local}\`}>`);
+			expect(code).toContain(
+				`<h2 ${classAttrName}=${joined_class_value(classJoin, 'parentClass', `"${local}"`)}>`,
+			);
 		});
 
 		it('keeps every selector however $class leaves the block', () => {
@@ -1262,6 +1802,22 @@ export function runSharedScopedStyleTests({
 			expect(result.errors).toHaveLength(1);
 			expect(result.errors[0].code).toBe(DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION);
 			expect(result.errors[0].loc?.start).toEqual({ line: 1, column: 41 });
+		});
+
+		it('reports a theme that applies itself instead of overflowing the stack', () => {
+			for (const source of [
+				'export const theme = <style apply={theme} />;',
+				`export function App() @{
+					const theme = <style apply={theme}>.a { color: red; }</style>;
+					<div ${attr}={theme.$class}>{'a'}</div>
+				}`,
+				'export const t = { a: <style apply={t.b}>.a {}</style>, b: <style apply={t.a}>.b {}</style> };',
+			]) {
+				expect(codes(source), source).toEqual([DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION]);
+				expect(() => compile(source, 'App.tsrx'), source).toThrow(
+					expect.objectContaining({ code: DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION }),
+				);
+			}
 		});
 
 		it('reports a standalone block at module scope', () => {
