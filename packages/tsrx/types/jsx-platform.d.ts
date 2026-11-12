@@ -543,6 +543,19 @@ export interface JsxPlatform {
 		 */
 		multiRefStrategy?: 'merge-refs' | 'array';
 		/**
+		 * With `multiRefStrategy: 'merge-refs'`, merge an element's refs with
+		 * `merge_element_refs` instead of `mergeRefs`. It returns a single ref as
+		 * itself and the same callback for the same refs, so a JSX runtime that
+		 * applies a `ref` again whenever its identity changes applies them once.
+		 * Every element given the same refs shares that callback, so set this
+		 * only for a runtime that keeps a ref's cleanup per element: React keeps
+		 * it per fiber and Hono per DOM node, while Preact stores it on the
+		 * function, where another element's cleanup would replace it. The
+		 * platform's `imports.mergeRefs` module must export `merge_element_refs`,
+		 * as `@tsrx/runtime/ref` does. The type-only print keeps `mergeRefs`.
+		 */
+		shareMergedRefs?: boolean;
+		/**
 		 * How a host spread's `ref` reaches the element.
 		 *
 		 * - `undefined`: the JSX runtime applies a `ref` that arrives through a
@@ -603,8 +616,9 @@ export interface JsxPlatform {
 		 * platform's `imports.refProp` module must export them, as
 		 * `@tsrx/runtime/ref` does. With `multiRefStrategy:
 		 * 'merge-refs'` as well, the merged `ref` stays where the element's own
-		 * `ref` is written and reads the ref of a bag spread after it when it is
-		 * applied, unless `refAfterProps` is set.
+		 * `ref` is written, unless `refAfterProps` is set. When a spread follows
+		 * that `ref`, its expression is assigned to a binding where it is written
+		 * instead, and the merged `ref` follows the spreads.
 		 */
 		hostSpreadRefBinding?: 'in-place';
 		/**

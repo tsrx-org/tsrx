@@ -558,20 +558,33 @@ describe('@tsrx/preact basic', () => {
 			expect(type_only).toContain('{...App__spread_props1}');
 		});
 
-		it('keeps a ref written before a host spread in its authored position', () => {
+		it('evaluates a ref written before a host spread in its authored position', () => {
 			const source = `export function App() @{
 					function init() {
 						return () => {};
 					}
-					<div ref={init()} data-first="1" {...bag} />
+					<>
+						<div ref={init()} data-first="1" {...bag} />
+						<div ref={init()} {...bag} data-first="1" />
+					</>
 				}`;
 			const { code } = compile(source, 'App.tsrx');
 
+			// The merged ref follows the spread whose ref it reads. Preact stores a
+			// ref's cleanup on the function, so each element keeps its own
+			// `mergeRefs` callback rather than sharing a `merge_element_refs` one.
+			expect(code).toContain('mergeRefs as __mergeRefs');
+			expect(code).not.toContain('merge_element_refs');
 			expect(code).toContain(
-				'<div ref={__mergeRefs(init(), (node) => __mergeRefs(App__spread_props1?.ref)(node))} data-first="1" {...(App__spread_props1 = __normalize_spread_props_for_ref_attr(bag))} />',
+				'<div {...(App__ref1 = init(), null)} data-first="1" {...(App__spread_props2 = __normalize_spread_props_for_ref_attr(bag))} ref={__mergeRefs(App__ref1, App__spread_props2?.ref)} />',
+			);
+			expect(code.replace(/\s+/g, ' ')).toContain(
+				'<div {...( App__ref3 = init(), App__spread_props4 = __normalize_spread_props_for_ref_attr(bag) )} data-first="1" ref={__mergeRefs(App__ref3, App__spread_props4?.ref)} />',
 			);
 
 			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain('mergeRefs as __mergeRefs');
+			expect(type_only).not.toContain('merge_element_refs');
 			expect(type_only).toContain(
 				'<div data-first="1" {...App__spread_props1} ref={__mergeRefs(init(), App__spread_props1?.ref)} />',
 			);
