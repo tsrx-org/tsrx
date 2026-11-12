@@ -988,6 +988,13 @@ function if_statement_to_jsx_child(node, transform_context) {
 		}
 	}
 
+	const static_conditional = !transform_context.typeOnly
+		? build_static_conditional(branches, transform_context)
+		: null;
+	if (static_conditional) {
+		return static_conditional;
+	}
+
 	if (branches.length === 1) {
 		// Single `if` with no else → <Show when>
 		transform_context.needs_show = true;
@@ -1041,6 +1048,77 @@ function if_statement_to_jsx_child(node, transform_context) {
 	);
 
 	return create_jsx_element('Switch', attributes, children);
+}
+
+/**
+ * A condition that cannot change at runtime needs no `<Show>`: render
+ * `test ? a : b` instead. Only branches whose bodies are plain output qualify;
+ * a body with setup statements keeps `<Show>`, which runs it untracked.
+ *
+ * @param {[SolidIfTestBranch, ...SolidIfBranch[]]} branches
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXExpressionContainer | null}
+ */
+function build_static_conditional(branches, transform_context) {
+	const [if_branch, else_branch] = branches;
+	if (
+		branches.length > 2 ||
+		(else_branch && else_branch.test !== null) ||
+		!is_static_condition(if_branch.test)
+	) {
+		return null;
+	}
+
+	const consequent = body_to_jsx_child(if_branch.body, transform_context);
+	const alternate = else_branch
+		? body_to_jsx_child(else_branch.body, transform_context)
+		: create_null_literal();
+	if (!is_plain_output(consequent) || !is_plain_output(alternate)) {
+		return null;
+	}
+
+	return to_jsx_expression_container(b.conditional(if_branch.test, consequent, alternate));
+}
+
+/**
+ * An element, fragment or literal. Anything else, such as the IIFE of a branch
+ * with setup statements or of a nested `@switch`, would run inside the
+ * enclosing insert effect, where `<Show>` runs its children untracked.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_plain_output(node) {
+	return node.type === 'JSXElement' || node.type === 'JSXFragment' || node.type === 'Literal';
+}
+
+/**
+ * A literal, `import.meta.env.*`, or the negation of either.
+ *
+ * @param {AST.Expression} node
+ * @returns {boolean}
+ */
+function is_static_condition(node) {
+	if (node.type === 'Literal') return true;
+	if (node.type === 'UnaryExpression' && node.operator === '!') {
+		return is_static_condition(node.argument);
+	}
+	/** @type {AST.Node} */
+	let object = node;
+	while (object.type === 'MemberExpression' && !object.computed) {
+		/** @type {AST.Node} */
+		const inner = object.object;
+		if (
+			inner.type === 'MetaProperty' &&
+			inner.meta.name === 'import' &&
+			object.property.type === 'Identifier' &&
+			object.property.name === 'env'
+		) {
+			return true;
+		}
+		object = inner;
+	}
+	return false;
 }
 
 /**

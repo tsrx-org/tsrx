@@ -360,6 +360,42 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
 		});
 
+		it('static @if condition → plain conditional instead of <Show>', () => {
+			const { code } = compile(
+				`function App() @{
+					<div>
+						@if (true) { <Child /> } @else { <Fallback /> }
+						@if (import.meta.env.DEV) { <p>{'dev'}</p> }
+						@if (!import.meta.env.PROD) { <p>{'a'}</p> } @else { <p>{'b'}</p> }
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('{true ? <Child /> : <Fallback />}');
+			expect(code).toContain("{import.meta.env.DEV ? <p>{'dev'}</p> : null}");
+			expect(code).toContain("{!import.meta.env.PROD ? <p>{'a'}</p> : <p>{'b'}</p>}");
+			expect(code).not.toContain('Show');
+		});
+
+		it('static @if condition with setup statements or else-if keeps <Show>/<Switch>', () => {
+			const { code } = compile(
+				`function App(props) @{
+					<div>
+						@if (import.meta.env.DEV) {
+							const label = 'dev';
+							<p>{label}</p>
+						}
+						@if (true) { <a /> } @else if (props.b) { <b /> } @else { <i /> }
+						@if (import.meta.url) { <u /> }
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('<Show when={import.meta.env.DEV}>');
+			expect(code).toContain('<Match when={true}>');
+			expect(code).toContain('<Show when={import.meta.url}>');
+		});
+
 		it('switch statement → <Switch>/<Match> using ===', () => {
 			const { code } = compile(
 				`function App({ kind }: { kind: string }) @{

@@ -2126,6 +2126,33 @@ describe('tsrx-solid control-flow bodies', () => {
 	});
 });
 
+// ── Static @if conditions ──
+
+function StaticIfApp() @{
+	<div>
+		@if (true) {
+			<p class="static-true">{'shown'}</p>
+		} @else {
+			<p class="static-true">{'hidden'}</p>
+		}
+		@if (false) {
+			<p class="static-false">{'shown'}</p>
+		}
+		@if (import.meta.env.MODE) {
+			<p class="static-env">{'env'}</p>
+		}
+	</div>
+}
+
+describe('tsrx-solid static @if conditions', () => {
+	it('renders the branch a static condition selects', async () => {
+		await render(StaticIfApp);
+		expect(text('.static-true')).toBe('shown');
+		expect(container.querySelector('.static-false')).toBeNull();
+		expect(text('.static-env')).toBe('env');
+	});
+});
+
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
