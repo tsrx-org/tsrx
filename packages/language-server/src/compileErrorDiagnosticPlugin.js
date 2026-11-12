@@ -249,7 +249,9 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
  * The generated range of the source token that reports diagnostics and starts
  * nearest after `offset`, when it starts before `reach`. Otherwise the one that
  * ends nearest before `offset`, or starts nearest after it when none ends
- * before it. Of tokens the same distance away, the shortest.
+ * before it. Of tokens the same distance away, the shortest. A mapping over
+ * whitespace only, such as the indentation before a template's output, is not
+ * code to show the error on.
  * @param {TSRXVirtualCodeInstance} virtualCode
  * @param {number} offset
  * @param {number} [reach] Where the error's parser stopped, such as the token that ended a template
@@ -269,6 +271,9 @@ function nearest_reported_range(virtualCode, offset, reach = offset) {
 			// A hoisted sibling can leave a token a mapping that runs backwards in
 			// the generated code, and Volar drops a diagnostic on such a range.
 			if (length === 0 || generated_length <= 0) continue;
+			if (!/\S/.test(virtualCode.originalCode.slice(source_start, source_start + length))) {
+				continue;
+			}
 			const generated_start = mapping.generatedOffsets[i];
 			const ends_before = source_start + length <= offset;
 			if (!ends_before && source_start < offset) continue;

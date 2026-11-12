@@ -43,10 +43,7 @@ import {
 	jsx_id as build_jsx_id,
 } from '../../utils/builders.js';
 import * as b from '../../utils/builders.js';
-import {
-	find_first_top_level_await,
-	find_first_top_level_await_in_tsrx_function_body,
-} from '../await.js';
+import { find_first_top_level_await, find_top_level_awaits } from '../await.js';
 import {
 	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 	MERGE_SPREAD_CLASS_INTERNAL_NAME,
@@ -602,6 +599,7 @@ export function createJsxTransform(platform) {
 			type_only_style_anchors,
 			helper_state: null,
 			available_bindings: new Map(),
+			rejected_awaits: new Set(),
 			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast, parsed)),
 			filename: filename ?? null,
 			source,
@@ -884,6 +882,7 @@ export function createJsxTransform(platform) {
 			lower_remaining_jsx_code_blocks(expanded, transform_context),
 			transform_context,
 		);
+		report_deferred_template_yields(final_program, transform_context);
 		inject_dynamic_import(final_program, transform_context);
 		if (platform.hooks?.injectImports) {
 			platform.hooks.injectImports(final_program, transform_context, suspense_source);
@@ -1796,14 +1795,22 @@ function transform_native_tsrx_function(node, { next, state, path }, { nativeBod
  * @returns {void}
  */
 function validate_native_await(node, transform_context) {
-	const await_node = find_native_await(node);
-	if (!await_node) {
+	const awaits = find_native_awaits(node);
+	if (!awaits.length) {
 		return;
 	}
 
 	const validator = transform_context.platform.hooks?.validateComponentAwait;
 	if (validator) {
-		validator(await_node, node, transform_context, false, transform_context.source || '');
+		for (const await_node of awaits) {
+			const reported = transform_context.errors?.length ?? 0;
+			validator(await_node, node, transform_context, false, transform_context.source || '');
+			// The shared checks for an `await` the output can't hold skip one the
+			// target has reported, so each `await` is reported once.
+			if ((transform_context.errors?.length ?? 0) > reported) {
+				transform_context.rejected_awaits.add(/** @type {number} */ (await_node.start));
+			}
+		}
 		return;
 	}
 
@@ -1811,7 +1818,7 @@ function validate_native_await(node, transform_context) {
 		error(
 			TSRX_ERRORS.TOP_LEVEL_AWAIT_USE_SERVER,
 			transform_context.filename,
-			await_node,
+			awaits[0],
 			transform_context.errors,
 			transform_context.comments,
 		);
@@ -1819,88 +1826,72 @@ function validate_native_await(node, transform_context) {
 }
 
 /**
+ * The `await`s of a component outside nested functions, in source order.
+ *
  * @param {AST.Function} node
- * @returns {AST.TSRXAwaitNode | null}
+ * @returns {AST.TSRXAwaitNode[]}
  */
-function find_native_await(node) {
+function find_native_awaits(node) {
+	/** @type {AST.TSRXAwaitNode[]} */
+	const awaits = [];
 	if (
 		node.type === 'ArrowFunctionExpression' &&
 		node.body?.type !== 'BlockStatement' &&
 		node_contains_native_tsrx_template(node.body)
 	) {
-		return find_first_top_level_await(node.body, false);
+		find_top_level_awaits(node.body, awaits);
+	} else if (node.body?.type === 'JSXCodeBlock') {
+		find_native_awaits_in_list(get_raw_jsx_code_block_body_nodes(node.body), awaits);
+	} else if (node.body?.type === 'BlockStatement') {
+		find_native_awaits_in_list(node.body.body || [], awaits);
 	}
-
-	if (node.body?.type === 'JSXCodeBlock') {
-		return find_native_await_in_list(get_raw_jsx_code_block_body_nodes(node.body));
-	}
-
-	const body = node.body?.type === 'BlockStatement' ? node.body.body || [] : [];
-	return find_native_await_in_list(body);
+	return awaits;
 }
 
 /**
  * @param {AST.Node[]} statements
- * @returns {AST.TSRXAwaitNode | null}
+ * @param {AST.TSRXAwaitNode[]} awaits
+ * @returns {void}
  */
-function find_native_await_in_list(statements) {
+function find_native_awaits_in_list(statements, awaits) {
 	for (const statement of statements) {
-		const found = find_native_await_in_statement(statement);
-		if (found) return found;
+		find_native_awaits_in_statement(statement, awaits);
 	}
-	return null;
 }
 
 /**
  * @param {AST.Node | null | undefined} statement
- * @returns {AST.TSRXAwaitNode | null}
+ * @param {AST.TSRXAwaitNode[]} awaits
+ * @returns {void}
  */
-function find_native_await_in_statement(statement) {
-	if (!statement) return null;
+function find_native_awaits_in_statement(statement, awaits) {
+	if (!statement) return;
 
 	if (statement.type === 'ReturnStatement' && is_native_tsrx_node(statement.argument)) {
-		return find_first_top_level_await_in_tsrx_function_body(node_children(statement.argument));
-	}
-
-	if (
+		find_top_level_awaits(node_children(statement.argument), awaits);
+	} else if (
 		statement.type === 'ReturnStatement' &&
 		node_contains_native_tsrx_template(statement.argument)
 	) {
-		return find_first_top_level_await(statement.argument, false);
-	}
-
-	if (is_function_or_class_boundary(statement)) {
-		return null;
-	}
-
-	if (statement.type === 'BlockStatement') {
-		return find_native_await_in_list(statement.body || []);
-	}
-
-	if (is_if_control_node(statement)) {
-		return (
-			find_native_await_in_statement(statement.consequent) ||
-			find_native_await_in_statement(statement.alternate)
-		);
-	}
-
-	if (is_switch_control_node(statement)) {
+		find_top_level_awaits(statement.argument, awaits);
+	} else if (is_function_or_class_boundary(statement)) {
+		// An `await` there belongs to that function.
+	} else if (statement.type === 'BlockStatement') {
+		find_native_awaits_in_list(statement.body || [], awaits);
+	} else if (is_if_control_node(statement)) {
+		find_native_awaits_in_statement(statement.consequent, awaits);
+		find_native_awaits_in_statement(statement.alternate, awaits);
+	} else if (is_switch_control_node(statement)) {
 		for (const switch_case of statement.cases || []) {
-			const found = find_native_await_in_list(switch_case.consequent || []);
-			if (found) return found;
+			find_native_awaits_in_list(switch_case.consequent || [], awaits);
 		}
-		return null;
+	} else if (is_try_control_node(statement)) {
+		find_native_awaits_in_statement(statement.block, awaits);
+		find_native_awaits_in_statement(statement.handler?.body, awaits);
+		find_native_awaits_in_statement(statement.finalizer, awaits);
+	} else {
+		find_top_level_awaits(statement, awaits);
 	}
-
-	if (is_try_control_node(statement)) {
-		return (
-			find_native_await_in_statement(statement.block) ||
-			find_native_await_in_statement(statement.handler?.body) ||
-			find_native_await_in_statement(statement.finalizer)
-		);
-	}
-
-	return find_first_top_level_await(statement, false);
 }
 
 /**
@@ -3592,6 +3583,77 @@ function lower_remaining_jsx_code_blocks(node, transform_context, seen = new Set
 }
 
 /**
+ * Reports the `yield`s a target's own JSX compiler would move out of their
+ * generator (TSRX2034): Solid's and Vue's compilers evaluate some template
+ * expressions in effects, getters or callbacks, where a `yield` no longer
+ * runs in its generator and the compiled output fails to parse. The target's
+ * `findDeferredTemplateYields` hook finds them in the final output, which is
+ * what that compiler reads. A `yield*` that delegates to a generator made from
+ * a generated closure stands for the authored `yield`s inside it.
+ *
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function report_deferred_template_yields(program, transform_context) {
+	const find = transform_context.platform.hooks?.findDeferredTemplateYields;
+	if (!find || (transform_context.source && !transform_context.source.includes('yield'))) {
+		return;
+	}
+
+	/** @type {Map<number, AST.YieldExpression>} */
+	const authored = new Map();
+	/** @param {AST.YieldExpression} node */
+	const add = (node) => {
+		const generator = /** @type {AST.FunctionExpression | undefined} */ (
+			node.metadata?.generated_delegation
+		);
+		if (generator) {
+			for (const inner of find_own_yields(generator.body)) add(inner);
+		} else if (typeof node.start === 'number') {
+			authored.set(node.start, node);
+		}
+	};
+	for (const node of find(program, transform_context)) add(node);
+
+	// A `yield` with an error of its own already, or one inside it, needs no
+	// second: TSRX2022 for a callback the target calls itself, TSRX2023 for a
+	// `super` that the lowering for the `yield` can't read.
+	const reported = (transform_context.errors ?? []).map((error) => error.pos ?? -1);
+	for (const node of [...authored.values()]
+		.filter(
+			(node) =>
+				!reported.some(
+					(pos) =>
+						pos >= /** @type {number} */ (node.start) && pos < /** @type {number} */ (node.end),
+				),
+		)
+		.sort((a, b) => /** @type {number} */ (a.start) - /** @type {number} */ (b.start))) {
+		error(
+			TSRX_ERRORS.TARGET_TEMPLATE_YIELD_UNSUPPORTED(transform_context.platform.name),
+			transform_context.filename,
+			node,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	}
+}
+
+/**
+ * The `yield`s in `node` that belong to the function around it.
+ *
+ * @param {AST.Node} node
+ * @param {AST.YieldExpression[]} [found]
+ * @returns {AST.YieldExpression[]}
+ */
+function find_own_yields(node, found = []) {
+	if (is_function_node(node)) return found;
+	if (node.type === 'YieldExpression') found.push(node);
+	for (const child of child_nodes(node)) find_own_yields(child, found);
+	return found;
+}
+
+/**
  * An authored `await` or `yield` is valid where it was written, but lowering
  * can move it into a closure the compiler generated: the IIFE of a `@switch`,
  * of a branch with setup statements, or of an element whose spread and `ref`
@@ -3744,7 +3806,9 @@ function suspend_generated_closures(program, transform_context) {
 			if (make_async) {
 				if (awaitable) {
 					fn = { ...fn, async: true };
-				} else {
+				} else if (
+					!transform_context.rejected_awaits.has(/** @type {number} */ (first_await?.start))
+				) {
 					error(
 						TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED(transform_context.platform.name),
 						transform_context.filename,
@@ -3782,11 +3846,18 @@ function suspend_generated_closures(program, transform_context) {
 			if (made_generator.has(call.callee)) {
 				// `yield*` also settles a delegated async generator, so a closure
 				// made both async and a generator is not awaited as well.
+				const delegation = b.yield(
+					delegate_to_generated_generator(call, transform_context, get_arguments_name),
+					true,
+				);
+				// It stands for the authored `yield`s in the generated generator,
+				// which is where a later check reports them.
+				delegation.metadata = {
+					...delegation.metadata,
+					generated_delegation: /** @type {AST.FunctionExpression} */ (call.callee),
+				};
 				result = {
-					node: b.yield(
-						delegate_to_generated_generator(call, transform_context, get_arguments_name),
-						true,
-					),
+					node: delegation,
 					first_await: made_async.get(call.callee) ?? first_await,
 					first_yield: made_generator.get(call.callee) ?? first_yield,
 				};
@@ -5615,7 +5686,7 @@ function is_loop_statement(node) {
  * @returns {ESTreeJSX.JSXExpressionContainer}
  */
 function for_of_statement_to_jsx_child(node, transform_context) {
-	if (node.await) {
+	if (node.await && !transform_context.rejected_awaits.has(/** @type {number} */ (node.start))) {
 		error(
 			TSRX_ERRORS.TARGET_FOR_AWAIT_UNSUPPORTED(transform_context.platform.name),
 			transform_context.filename,
@@ -6930,9 +7001,10 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				);
 				// Bound in place, the bag is evaluated between the attributes around
 				// it, as in native JSX; the setup declaration only declares the name.
+				const in_place = bind_in_place && !yields_in_deferred_spread(attr, transform_context);
 				const spread = {
 					...attr,
-					argument: bind_in_place
+					argument: in_place
 						? b.parenthesized(b.assignment('=', clone_identifier(normalized_id), normalized))
 						: clone_identifier(normalized_id),
 				};
@@ -6948,7 +7020,7 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				ref_attr.metadata.synthetic_ref = true;
 				add_jsx_setup_declaration(
 					spread,
-					bind_in_place
+					in_place
 						? b.let(clone_identifier(normalized_id))
 						: b.let(clone_identifier(normalized_id), normalized),
 				);
@@ -7372,6 +7444,25 @@ function binds_host_spread_in_place(transform_context) {
 	return (
 		!transform_context.typeOnly &&
 		transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place'
+	);
+}
+
+/**
+ * Whether a host spread's bag yields on a target whose JSX compiler evaluates
+ * a spread in a render effect, which is one that reports the `yield`s it moves
+ * (`findDeferredTemplateYields`, TSRX2034). A `yield` can't run in that
+ * effect, so such a bag isn't bound in place: it is evaluated once, in its
+ * setup declaration before the element, where its generator runs it. A
+ * generator yields a value once, so the effect could never read it again.
+ *
+ * @param {ESTreeJSX.JSXSpreadAttribute} attr
+ * @param {TransformContext} transform_context
+ * @returns {boolean}
+ */
+function yields_in_deferred_spread(attr, transform_context) {
+	return (
+		!!transform_context.platform.hooks?.findDeferredTemplateYields &&
+		find_own_yields(/** @type {AST.Node} */ (attr.argument)).length > 0
 	);
 }
 

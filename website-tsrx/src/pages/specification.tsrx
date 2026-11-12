@@ -622,6 +622,8 @@ const TSRX_ERROR_CODES = [
 	"          import { defineVaporComponent } from './helpers';  (Vue)",
 	'TSRX2033  A dynamic tag takes no type arguments.',
 	'          <{Tag}<T> />',
+	'TSRX2034  <target> TSRX does not support `yield` in this part of the template.',
+	'          function* f(b) { return <input title={yield b.title} />; }  (Solid, Vue)',
 	"TSRX2035  This @{…} is a code block, not '@' text and an expression: it runs the expression as a statement and renders nothing.  (a warning)",
 	'          <p>@{user.name}</p>',
 	'TSRX2035  This @{…} code block holds only an expression statement, so it renders nothing.  (a warning)',

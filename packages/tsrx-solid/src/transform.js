@@ -17,6 +17,7 @@
  */
 
 import { walk } from 'zimmerframe';
+import { find_deferred_template_yields } from './template-yield.js';
 import {
 	DIAGNOSTIC_CODES,
 	DYNAMIC_FACTORY_LOCAL,
@@ -156,6 +157,7 @@ const solid_platform = {
 			// already hoists the parsed template and clones it per evaluation.
 			return false;
 		},
+		findDeferredTemplateYields: find_deferred_template_yields,
 		validateComponentAwait: (await_expression, _component, ctx, _requires, source) => {
 			const await_start = get_await_keyword_start(await_expression, source);
 			const adjusted_node = /** @type {AST.Node} */ ({
@@ -164,12 +166,11 @@ const solid_platform = {
 				end: await_start + 'await'.length,
 			});
 			error(
-				'`await` is not allowed inside Solid components.',
+				TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED(ctx.platform.name),
 				ctx?.filename ?? null,
 				adjusted_node,
 				ctx?.errors,
 				ctx?.comments,
-				DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED,
 			);
 		},
 		controlFlow: {

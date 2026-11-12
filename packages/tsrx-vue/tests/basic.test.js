@@ -19,6 +19,7 @@ runSharedSourceMappingTests({
 	compile_to_volar_mappings,
 	name: 'vue',
 	rejectsComponentAwait: true,
+	rejectsTemplateYield: true,
 });
 
 describe('@tsrx/vue direct runtime imports', () => {
@@ -2627,7 +2628,7 @@ export function Card(${params}: any) @{
 		expect(code).toContain('Suspense');
 		expect(code).toContain('fallback={(err, _reset) =>');
 		expect(code).toContain('default: () => (() => {');
-		expect(code).toContain('return <AsyncChild value="hello" />;');
+		expect(code).toContain('return <AsyncChild value="hello" />');
 		expect(code).not.toContain('catch(_error)');
 		expect(code).not.toContain('return ((err, _reset) =>');
 		expect(code).not.toContain('err: any');
@@ -2672,7 +2673,7 @@ export function Card(${params}: any) @{
 					}`,
 				'App.tsrx',
 			),
-		).toThrow(/`await` is not yet supported in Vue TSRX components\./);
+		).toThrow(expect.objectContaining(TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED('Vue')));
 	});
 
 	it('allows await in nested async functions inside component bodies', () => {
