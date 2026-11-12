@@ -1,12 +1,28 @@
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES, TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
+import { parseModule } from '../../src/index.js';
 import { error_with } from './errors.js';
 import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
 
 /** @import { CompileDiagnosticsHarness, CompileHarness } from '../../types/index' */
+
+/**
+ * Each first-party target's `jsx.classValue`.
+ *
+ * @type {Record<string, 'text' | 'text-true' | 'text-both' | 'list'>}
+ */
+const CLASS_VALUE_KINDS = {
+	react: 'text',
+	preact: 'text-true',
+	// The shared tests compile Hono for its server renderer.
+	hono: 'text-both',
+	solid: 'list',
+	vue: 'list',
+};
 
 /**
  * @param {string} haystack
@@ -24,6 +40,27 @@ function count_substring(haystack, needle) {
 function diagnostic_codes(result) {
 	return result.errors.map((error) => error.code);
 }
+
+/**
+ * Markup a loose compile recovers and reports (#978): its label, the source,
+ * the error, and the closing tag the editor's code adds.
+ * @type {Array<[label: string, source: string, error: { code: string }, closing: string]>}
+ */
+const BROKEN_MARKUP = [
+	['an unclosed tag', 'function App() @{\n\t<div>hi\n}', TSRX_ERRORS.UNCLOSED_TAG, '</div>'],
+	[
+		'a mismatched closing tag',
+		'function App() @{\n\t<div><span></div>\n}',
+		TSRX_ERRORS.MISMATCHED_CLOSING_TAG,
+		'</span>',
+	],
+	[
+		'an unclosed returned tag',
+		'function App() {\n\treturn <div>;\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</div>',
+	],
+];
 
 /**
  * Parse generated target output as TSX and return syntax diagnostics. Target
@@ -44,6 +81,74 @@ function virtual_parse_diagnostics(code) {
 	return /** @type {ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }} */ (source_file)
 		.parseDiagnostics;
 }
+
+/**
+ * The syntax tree TypeScript reads from TSX code, as nested node kinds with
+ * their names and text, leaving out parentheses and imports. Code with the
+ * same shape as its source has the same meaning.
+ *
+ * @param {string} code
+ * @returns {string}
+ */
+function tsx_shape(code) {
+	const source_file = ts.createSourceFile(
+		'shape.tsx',
+		code,
+		ts.ScriptTarget.Latest,
+		true,
+		ts.ScriptKind.TSX,
+	);
+	/**
+	 * @param {ts.Node} node
+	 * @returns {string}
+	 */
+	const shape = (node) => {
+		if (ts.isParenthesizedExpression(node)) return shape(node.expression);
+		/** @type {string[]} */
+		const children = [];
+		ts.forEachChild(node, (child) => {
+			children.push(shape(child));
+		});
+		const text = 'text' in node && typeof node.text === 'string' ? ` ${node.text}` : '';
+		return `${ts.SyntaxKind[node.kind]}${text}(${children.join(' ')})`;
+	};
+	return source_file.statements
+		.filter((statement) => !ts.isImportDeclaration(statement))
+		.map(shape)
+		.join('\n');
+}
+
+/**
+ * An element or fragment in each position where TSX needs it in parentheses.
+ * TSX reads an element only as a unary operand, not as the object of a
+ * member, call, tagged-template, `!` or type-argument suffix, a `new` callee
+ * or a superclass. And it reads a `<` right after an element as the start of
+ * another element, so an element that ends the left operand of `<` needs
+ * them too.
+ * @type {Array<[string, string]>}
+ */
+const ELEMENT_OPERAND_CASES = [
+	[
+		'a member access',
+		'export function f(x: unknown) {\n\treturn (<b>ok</b>).type === x ? 1 : 2;\n}',
+	],
+	['a fragment member access', 'export const value = (<></>).props;'],
+	['an optional member access', 'export const value = (<b />)?.props;'],
+	['an index', 'export const value = (<b />)[0];'],
+	['a call', 'export const value = (<b />)();'],
+	['an optional call', 'export const value = (<b />)?.();'],
+	['a `new` callee', 'export const value = new (<b />)();'],
+	['a tagged template', 'export const value = (<b />)`t`;'],
+	['a non-null assertion', 'export const value = (<b />)!;'],
+	['an instantiation expression', 'export const value = (<b />)<string>;'],
+	['a superclass', 'export class A extends (<div />) {}'],
+	['a class expression superclass', 'export const B = class extends (<></>) {};'],
+	['the left operand of `<`', 'export const value = (<b />) < x;'],
+	['a fragment as the left operand of `<`', 'export const value = (<></>) < x;'],
+	['the end of the left operand of `<`', 'export const value = x + (<b />) < y;'],
+	['the end of a nested left operand of `<`', 'export const value = x < y * (<b />) < z;'],
+	['the end of an exponent before `<`', 'export const value = x ** y ** (<b />) < z;'],
+];
 
 /**
  * @param {string} code
@@ -85,6 +190,40 @@ function virtual_semantic_diagnostics(code, extra_options = {}) {
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] control flow followed by another output node`, () => {
+		// A code block renders one node. The parser reports the second output node and
+		// keeps the control flow before it among the setup statements, which the loose
+		// compile used to print unlowered: it threw instead of reporting the error (#197).
+		it.each([
+			['@for', '@for (const item of items) {\n\t\t<li>{item}</li>\n\t}'],
+			['@if', '@if (items.length) {\n\t\t<li>{items[0]}</li>\n\t}'],
+			[
+				'@switch',
+				'@switch (items.length) {\n\t\t@case 1: {\n\t\t\t<li>{items[0]}</li>\n\t\t}\n\t}',
+			],
+			['@try', '@try {\n\t\t<li>{items[0]}</li>\n\t} @catch (error) {\n\t\t<b />\n\t}'],
+		])('reports the fragment error after %s and keeps its body', (_directive, control_flow) => {
+			for (const source of [
+				`export function List({ items }: { items: string[] }) @{\n\t${control_flow}\n\t<p>done</p>\n}\n`,
+				`export const List = ({ items }: { items: string[] }) => @{\n\t${control_flow}\n\t<p>done</p>\n};\n`,
+				`export function List({ items }: { items: string[] }) @{\n\t<ul>@{\n\t${control_flow}\n\t<p>done</p>\n\t}</ul>\n}\n`,
+			]) {
+				const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx', {
+					loose: true,
+				});
+
+				expect(
+					errors.map((error) => [error.code, error.pos]),
+					source,
+				).toContainEqual([TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT.code, source.indexOf('<p>done')]);
+				expect(errors.filter((error) => error.type === 'fatal')).toEqual([]);
+				expect(virtual_parse_diagnostics(code), code).toEqual([]);
+				const li = source.indexOf('li>');
+				expect(mappings.some((mapping) => mapping.sourceOffsets[0] === li)).toBe(true);
+			}
+		});
+	});
+
 	describe(`[${name}] virtual code for syntax newer than ES2022`, () => {
 		it('keeps a hashbang as the first line and maps the code after it', () => {
 			const source = `#!/usr/bin/env node
@@ -141,6 +280,20 @@ export function App() @{
 				expect(code.slice(generatedOffsets[0], generatedOffsets[0] + length)).toBe(text);
 			}
 		});
+	});
+
+	describe(`[${name}] parentheses around an element operand in virtual code`, () => {
+		// The editor parse keeps parentheses as nodes, so the virtual code
+		// prints them as the build output does.
+		it.each(ELEMENT_OPERAND_CASES)(
+			'keeps the parentheses around an element in %s',
+			(_label, source) => {
+				const { code } = compile_to_volar_mappings(source, 'App.tsrx');
+
+				expect(virtual_parse_diagnostics(code)).toEqual([]);
+				expect(tsx_shape(code)).toBe(tsx_shape(source));
+			},
+		);
 	});
 
 	describe(`[${name}] JSX spread children in virtual code`, () => {
@@ -204,6 +357,78 @@ export function App() @{
 			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
 			expect(code.slice(generated, generated + 'getTag'.length)).toBe('getTag');
 		});
+
+		it('maps the generated name of a dynamic tag to its expression', () => {
+			// TypeScript reports a component's missing or unknown props (TS2769) on
+			// the generated name of the lowered tag.
+			const source = `export function App({ C }: any) @{
+	<{C} title="x">child</{C}>
+}`;
+			const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			const tag = source.indexOf('{C}');
+			const names = mappings
+				.filter(
+					(mapping) =>
+						mapping.sourceOffsets[0] === tag &&
+						mapping.lengths[0] === '{C}'.length &&
+						mapping.data.verification,
+				)
+				.map((mapping) =>
+					code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					),
+				);
+			expect(names).toContain('TsrxDynamic');
+		});
+	});
+
+	describe(`[${name}] unclosed and mismatched tags in the editor (#978)`, () => {
+		// The editor's compile is loose: it recovers the markup, so the editor
+		// keeps working, and reports the mistake where a collecting parse does.
+		it.each(BROKEN_MARKUP)('reports %s', (_label, source, error) => {
+			const { errors } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			/** @type {Array<{ code?: string, pos?: number, end?: number }>} */
+			const collected = [];
+			parseModule(source, 'App.tsrx', { collect: true, errors: /** @type {any} */ (collected) });
+
+			expect(errors.map((reported) => [reported.code, reported.pos, reported.end])).toEqual(
+				collected.map((reported) => [reported.code, reported.pos, reported.end]),
+			);
+			expect(errors.map((reported) => reported.code)).toEqual([error.code]);
+		});
+
+		// The missing closing tag is added with no mapping of its own, so the code
+		// is valid TSX and TypeScript reports nothing more. A verification span of
+		// the parent's closing tag can cover it.
+		it.each(BROKEN_MARKUP)(
+			'adds the closing tag of %s with no mapping',
+			(_label, source, _error, closing) => {
+				const { code, mappings } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(virtual_parse_diagnostics(code), code).toEqual([]);
+				const start = code.indexOf(closing);
+				expect(start, code).toBeGreaterThan(-1);
+				expect(code.indexOf(closing, start + 1), code).toBe(-1);
+				const end = start + closing.length;
+				expect(
+					mappings.filter(
+						(mapping) =>
+							mapping.generatedOffsets.some(
+								(offset, index) =>
+									offset < end &&
+									offset + (mapping.generatedLengths?.[index] ?? mapping.lengths[index]) > start,
+							) &&
+							(mapping.data.completion ||
+								mapping.data.semantic ||
+								mapping.data.navigation ||
+								mapping.data.structure),
+					),
+				).toEqual([]);
+			},
+		);
 	});
 
 	describe(`[${name}] platform flag virtual types`, () => {
@@ -254,6 +479,21 @@ export function App() @{
 			expect(virtual_parse_diagnostics(code)).toEqual([]);
 			expect(code).toContain('void <style data-tsrx-apply={theme.$class} />');
 			expect(code).toContain('void <style></style>');
+		});
+
+		it('reports a theme that applies itself instead of overflowing the stack', () => {
+			for (const options of [undefined, { loose: true }]) {
+				const { code, errors } = compile_to_volar_mappings(
+					'export const theme = <style apply={theme} />;',
+					'App.tsrx',
+					options,
+				);
+
+				expect(errors.map((error) => error.code)).toEqual([
+					DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
+				]);
+				expect(virtual_parse_diagnostics(code)).toEqual([]);
+			}
 		});
 
 		it('recovers an unclosed <style> in loose type-only compile without losing mappings', function () {
@@ -1687,6 +1927,36 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			expect(code).toContain("<span key={item.id}>{'nested'}</span>");
 		});
 
+		it.runIf(keys_rows_by_prop)('keys a nested @for a keyed loop renders (#181)', () => {
+			const { code } = compile(
+				`export function App({ groups }: { groups: { id: string; open: boolean; children: string[] }[] }) @{
+					<ul>
+						@for (const group of groups; key group.id) {
+							@for (const child of group.children; index i) {
+								<li>{child}</li>
+							}
+						}
+						@for (const group of groups; key group.id) {
+							@if (group.open) {
+								@for (const child of group.children) {
+									<li>{child}</li>
+								}
+							}
+						}
+					</ul>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toMatch(
+				/return <Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child, i\) =>/,
+			);
+			expect(code).toMatch(
+				/group\.open\s*\? <Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child\) =>/,
+			);
+			expect(code).toContain('<li key={i}>{child}</li>');
+		});
+
 		it.runIf(keys_rows_by_prop)(
 			'keeps a key written inside a loop branch and keys the other branches',
 			() => {
@@ -1765,7 +2035,11 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('const Inline = (props: { x: string }) => <div>{props.x}</div>;');
+			expect(code).toContain(
+				name === 'vue'
+					? 'const Inline = defineVaporComponent((props: { x: string }) => <div>{props.x}</div>);'
+					: 'const Inline = (props: { x: string }) => <div>{props.x}</div>;',
+			);
 			expect(code).not.toContain('function Inline');
 		});
 
@@ -1777,7 +2051,11 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('const Inline = function (props: { x: string })');
+			expect(code).toContain(
+				name === 'vue'
+					? 'const Inline = defineVaporComponent(function (props: { x: string })'
+					: 'const Inline = function (props: { x: string })',
+			);
 			expect(code).toContain('<div>{props.x}</div>');
 			expect(code).not.toContain('function Inline');
 		});
@@ -1804,7 +2082,7 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 
 			expect(code).toContain('menuAlt2');
 			expect(code).toContain('items.push');
-			expect(code).toContain('return children(items);');
+			expect(code).toContain('return <>{children(items)}</>;');
 		});
 
 		it('lowers expression-bodied function component props', () => {
@@ -1824,7 +2102,7 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 			expect(code).toContain('children={({ items }: { items: JSX.Element[] }) => <ul>');
 			expect(code).toContain(
 				name === 'solid'
-					? '<For each={items}>'
+					? '<For each={items} keyed={false}>'
 					: name === 'vue'
 						? '<VaporFor in={items}'
 						: '__map_iterable(items, (item, i)',
@@ -1854,7 +2132,10 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('children({');
+			// Vue reads `children` from the default slot first, then the prop.
+			expect(code).toContain(
+				name === 'vue' ? '(_$_Child_slots.default?.() ?? children)({' : 'children({',
+			);
 			expect(code).toContain('Item 3');
 		});
 	});
@@ -2228,6 +2509,9 @@ export function runSharedCompileTests({
 	name,
 	classAttrName,
 	generatedClassAttrName = classAttrName,
+	classJoin = CLASS_VALUE_KINDS[name] ?? null,
+	// Solid and Vue compile an authored `className` to `class`.
+	classNameAttr = name === 'solid' || name === 'vue' ? 'class' : 'className',
 }) {
 	const componentClassAttrName = name === 'react' ? 'className' : 'class';
 	const componentClassParam =
@@ -2242,8 +2526,21 @@ export function runSharedCompileTests({
 	runSharedPlatformTests({ compile, name });
 
 	runSharedComponentLoopControlFlowTests({ compile, name });
-	runSharedScopedStyleTests({ compile, name, classAttrName, generatedClassAttrName });
-	runSharedScopedStyleConformanceTests({ compile, name, classAttrName, generatedClassAttrName });
+	runSharedScopedStyleTests({
+		compile,
+		name,
+		classAttrName,
+		generatedClassAttrName,
+		classJoin,
+		classNameAttr,
+	});
+	runSharedScopedStyleConformanceTests({
+		compile,
+		name,
+		classAttrName,
+		generatedClassAttrName,
+		classJoin,
+	});
 
 	describe(`[${name}] import phases`, () => {
 		it('preserves deferred imports in compiled output', () => {
@@ -2481,6 +2778,90 @@ export function App() @{
 				expect(virtual_parse_diagnostics(code)).toEqual([]);
 			},
 		);
+	});
+
+	describe(`[${name}] parentheses around an element operand`, () => {
+		// The output dropped the parentheses: TypeScript read
+		// `return <b>ok</b>.type …` as `return <b>ok</b>;` and a separate
+		// statement (#1166), and rejected `class A extends <div /> {}` (#745).
+		it.each(ELEMENT_OPERAND_CASES)(
+			'keeps the parentheses around an element in %s',
+			(_label, source) => {
+				const { code } = compile(source, 'App.tsrx');
+
+				expect(virtual_parse_diagnostics(code)).toEqual([]);
+				expect(tsx_shape(code)).toBe(tsx_shape(source));
+			},
+		);
+
+		it('applies the member access to the element when the output runs', () => {
+			const { code } = compile(ELEMENT_OPERAND_CASES[0][1], 'App.tsrx');
+			const module = { exports: /** @type {Record<string, any>} */ ({}) };
+			const commonjs = ts.transpileModule(code, {
+				compilerOptions: {
+					jsx: ts.JsxEmit.React,
+					jsxFactory: 'h',
+					module: ts.ModuleKind.CommonJS,
+					target: ts.ScriptTarget.ES2022,
+				},
+			}).outputText;
+			new Function('module', 'exports', 'h', commonjs)(
+				module,
+				module.exports,
+				(/** @type {string} */ type) => ({ type }),
+			);
+
+			expect(module.exports.f('b')).toBe(1);
+			expect(module.exports.f('i')).toBe(2);
+		});
+
+		// A template in a callee position compiles to a fragment around it.
+		it('parenthesizes an element that the transform creates', () => {
+			const { code } = compile('export const value = (@{ <b /> })(x);', 'App.tsrx');
+			const source_file = ts.createSourceFile(
+				'virtual.tsx',
+				code,
+				ts.ScriptTarget.Latest,
+				true,
+				ts.ScriptKind.TSX,
+			);
+			const statement = source_file.statements.find(ts.isVariableStatement);
+			const call = statement?.declarationList.declarations[0].initializer;
+
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(call && ts.isCallExpression(call)).toBe(true);
+			const callee = /** @type {ts.CallExpression} */ (call).expression;
+			expect(ts.isParenthesizedExpression(callee)).toBe(true);
+			expect(ts.isJsxFragment(/** @type {ts.ParenthesizedExpression} */ (callee).expression)).toBe(
+				true,
+			);
+		});
+
+		it('adds no parentheses around an element that is an operand of an operator', () => {
+			const source = `export function f(x: any, y: any) {
+	return [
+		!<b />,
+		typeof <b />,
+		<b /> as unknown,
+		<b /> satisfies unknown,
+		x ?? <b />,
+		() => <b />,
+		<b /> <= x,
+		<b /> > x,
+		<b /> << x,
+		x < <b />,
+		!<b /> < x,
+		x + -<b /> < y,
+		(x == <b />) < y,
+		x ** (y * <b />) < x,
+	];
+}`;
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code).not.toContain('(<');
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(tsx_shape(code)).toBe(tsx_shape(source));
+		});
 	});
 
 	describe(`[${name}] fragment expression children`, () => {
@@ -2771,7 +3152,9 @@ export function App() @{
 				'App.tsrx',
 			);
 
-			expect(code).toContain('export default defineVaporComponent(function App()');
+			// `export default function App` also binds `App` in the module.
+			expect(code).toContain('const App = defineVaporComponent(function App()');
+			expect(code).toContain('export default App;');
 			expect(code).toContain("{'Hello world'}");
 		});
 
@@ -2867,17 +3250,22 @@ export function App() @{
 			expect(diagnostic_codes(result)).toContain(TSRX_ERRORS.UNCLOSED_TAG.code);
 		});
 
-		it('keeps loose unclosed tag recovery silent', () => {
-			const result = compile(
-				`function App() @{
-					<div>hi
-				}`,
-				'App.tsrx',
-				{ loose: true },
-			);
+		// A loose compile, the editor's, recovers the markup and reports the
+		// mistake, as a collecting compile does (#978).
+		it.each(BROKEN_MARKUP)(
+			'reports %s in a loose compile, as when collecting',
+			(_label, source, error) => {
+				const loose = compile(source, 'App.tsrx', { loose: true });
+				const collected = compile(source, 'App.tsrx', { collect: true });
 
-			expect(result.errors).toEqual([]);
-		});
+				/** @param {{ errors: Array<{ code?: string, pos?: number, end?: number }> }} result */
+				const reported = (result) =>
+					result.errors.map((error) => [error.code, error.pos, error.end]);
+				expect(diagnostic_codes(loose)).toEqual([error.code]);
+				expect(reported(loose)).toEqual(reported(collected));
+				expect(virtual_parse_diagnostics(loose.code), loose.code).toEqual([]);
+			},
+		);
 
 		it('accepts adjacent JSX text and expression children', () => {
 			const { code } = compile(
@@ -3144,6 +3532,45 @@ break"}</p>
 			);
 
 			expect(code).toContain('export function getItems<Item>(props: Props<Item>)');
+		});
+
+		it('keeps a generic arrow with one type parameter from reading as a JSX tag', () => {
+			const { code } = compile(
+				`export const first = <T>(items: T[]) => items[0];
+				export const pair = <A, B>(a: A, b: B) => [a, b];`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('export const first = <T,>(items: T[]) => items[0];');
+			expect(code).toContain('export const pair = <A, B>(a: A, b: B) => [a, b];');
+		});
+
+		it('keeps parameter decorators before parameter property modifiers', () => {
+			const { code } = compile(
+				`class Service {
+					constructor(@Inject() private readonly dep: Dep) {}
+					find(@Param() id: string) {}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('constructor(@Inject() private readonly dep: Dep) {}');
+			expect(code).toContain('find(@Param() id: string) {}');
+		});
+
+		it('keeps the type arguments of a tagged template', () => {
+			const { code } = compile('export const query = sql<Row>`select 1`;', 'App.tsrx');
+
+			expect(code).toContain('export const query = sql<Row>`select 1`;');
+		});
+
+		it('prints the type annotation of a binding pattern parameter once', () => {
+			const { code } = compile(
+				'function f([a]: A, { b }: B, [c]: C = [], ...[d]: D) {}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('function f([a]: A, { b }: B, [c]: C = [], ...[d]: D) {}');
 		});
 
 		it('preserves optional markers in tuple members and function parameters', () => {
@@ -5622,5 +6049,91 @@ export function runSharedCodeBlockChildrenTests({ compile, name }) {
 			expect(code).toContain('<span class="sum">{x + y}</span>');
 			expect(count_substring(code, '(() => {')).toBe(1);
 		});
+	});
+}
+
+/**
+ * The `@catch` binding is the thrown value, which need not be an `Error`, so the
+ * type-only output must type it `unknown`, as a `catch (error)` clause is under
+ * `strict`. Checks the output against the real declarations the target package
+ * resolves.
+ *
+ * @param {CompileDiagnosticsHarness & {
+ *   package_dir: string,
+ *   jsx_import_source: string,
+ * }} harness
+ */
+export function runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings,
+	name,
+	package_dir,
+	jsx_import_source,
+}) {
+	/** @type {ts.CompilerOptions} */
+	const options = {
+		strict: true,
+		target: ts.ScriptTarget.ESNext,
+		module: ts.ModuleKind.ESNext,
+		moduleResolution: ts.ModuleResolutionKind.Bundler,
+		jsx: ts.JsxEmit.Preserve,
+		jsxImportSource: jsx_import_source,
+		lib: ['lib.esnext.d.ts', 'lib.dom.d.ts'],
+		types: [],
+		skipLibCheck: true,
+		noEmit: true,
+	};
+	// Not on disk, but inside the package, so its dependencies and its own
+	// `exports` resolve as they do for an app.
+	const file_name = path.join(package_dir, '__catch-type-probe__', 'App.tsx');
+
+	/**
+	 * @param {string} source
+	 * @returns {string[]}
+	 */
+	function diagnostics(source) {
+		const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+		expect(errors).toEqual([]);
+
+		const host = ts.createCompilerHost(options);
+		const read_file = host.readFile.bind(host);
+		const file_exists = host.fileExists.bind(host);
+		const get_source_file = host.getSourceFile.bind(host);
+		host.readFile = (name) => (name === file_name ? code : read_file(name));
+		host.fileExists = (name) => name === file_name || file_exists(name);
+		host.getSourceFile = (name, language_version, on_error, should_create_new) =>
+			name === file_name
+				? ts.createSourceFile(name, code, language_version, true)
+				: get_source_file(name, language_version, on_error, should_create_new);
+
+		return ts
+			.getPreEmitDiagnostics(ts.createProgram([file_name], options, host))
+			.filter((diagnostic) => diagnostic.file?.fileName === file_name)
+			.map(
+				(diagnostic) =>
+					`TS${diagnostic.code}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`,
+			);
+	}
+
+	describe(`${name} @catch error type`, () => {
+		// Building a program with the DOM lib takes seconds, so one program
+		// checks both forms.
+		it('types the error as unknown until it is narrowed', () => {
+			const source = `export function Unchecked() @{
+				@try {
+					<p>{'ok'}</p>
+				} @catch (error) {
+					<p>{error.message}</p>
+				}
+			}
+
+			export function Narrowed() @{
+				@try {
+					<p>{'ok'}</p>
+				} @catch (error) {
+					<p>{error instanceof Error ? error.message : String(error)}</p>
+				}
+			}`;
+			expect(diagnostics(source)).toEqual(["TS18046: 'error' is of type 'unknown'."]);
+		}, 60_000);
 	});
 }

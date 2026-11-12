@@ -1,5 +1,16 @@
 import type { MockInstance } from 'vitest';
-import { defineVaporAsyncComponent, inject, provide, reactive, ref, watch, watchEffect } from 'vue';
+import {
+	createVaporApp,
+	defineVaporAsyncComponent,
+	inject,
+	onMounted,
+	onUnmounted,
+	provide,
+	reactive,
+	ref,
+	watch,
+	watchEffect,
+} from 'vue';
 import { mergeRefs } from '@tsrx/vue/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
@@ -7,12 +18,16 @@ import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtim
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runLocalHelperNamesRuntimeTests } from '@tsrx/core/test-harness/runtime/local-helper-names';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
 	'conditional boom',
 	'inner error',
 	'pending catch boom',
+	'async reject boom',
+	'pending reset boom',
+	'watcher boom',
 	'Unhandled error during execution of setup function',
 	'Active effect was not restored correctly',
 ];
@@ -345,6 +360,34 @@ function ConditionalSpreadApp(props: { enabled: boolean }) @{
 			}}
 			{...(props.enabled ? { disabled: true } : null)}
 		/>
+	</>
+}
+
+let spread_reactive_ref_node: HTMLButtonElement | null = null;
+
+function SpreadReactiveApp() @{
+	const bag = ref({ title: 'before', disabled: false });
+	<>
+		<button
+			class="spread-reactive-update"
+			onClick={() => {
+				bag.value = { title: 'after', disabled: true };
+			}}
+		>
+			update
+		</button>
+		<button class="spread-reactive-target" {...bag.value}>
+			spread
+		</button>
+		<button
+			class="spread-reactive-target"
+			{...bag.value}
+			ref={(node: HTMLButtonElement | null) => {
+				spread_reactive_ref_node = node;
+			}}
+		>
+			spread with ref
+		</button>
 	</>
 }
 
@@ -735,6 +778,48 @@ function DestructuredKeyedRow(props: { id: string; label: string }) @{
 	>{`${props.label}:${count.value}`}</button>
 }
 
+function ForNestedArrayDestructuredKeyedApp() @{
+	const rows = ref<[string, [string, string][]][]>([
+		[
+			'p',
+			[
+				['x', 'X'],
+				['y', 'Y'],
+			],
+		],
+	]);
+	<ul>
+		@for (const [k, list] of rows.value; key k) {
+			@for (const [a, b] of list; key a) {
+				<li class="nested-array-destructured">{`${k}-${a}-${b}`}</li>
+			}
+		}
+	</ul>
+}
+
+function ForArrayDestructuredKeyedApp() @{
+	const rows = ref<Iterable<string>[]>([new Set(['a', 'Alpha']), '😀x', ['b']]);
+	<>
+		@for (const [id, label = 'none'] of rows.value; key id) {
+			<DestructuredKeyedRow {id} {label} />
+		}
+		<button
+			class="reverse-array-destructured-keyed"
+			onClick={() => (rows.value = [...rows.value].reverse())}
+		>
+			{'reverse'}
+		</button>
+		<button
+			class="rename-array-destructured-keyed-a"
+			onClick={() =>
+				(rows.value = rows.value.map((row) => ([...row][0] === 'a' ? ['a', 'Again'] : row)))
+			}
+		>
+			{'rename'}
+		</button>
+	</>
+}
+
 function ForDestructuredKeyedStateApp() @{
 	const items = ref([
 		{ id: 'a', label: 'Alpha' },
@@ -976,6 +1061,97 @@ function SuspenseErrorApp() @{
 	}
 }
 
+function loadOrThrow(state: { fail: boolean }) {
+	if (state.fail) throw new Error('pending reset boom');
+	return 'Ready';
+}
+
+function ElementChildBoundaryApp() @{
+	<div class="wrap">
+		@try {
+			<ThrowingChild />
+		} @catch (err) {
+			<p class="caught">{(err as Error).message}</p>
+		}
+	</div>
+}
+
+const watched = ref(0);
+
+function SyncWatcher() @{
+	watch(
+		watched,
+		() => {
+			throw new Error('watcher boom');
+		},
+		{ flush: 'sync' },
+	);
+	<p class="watcher">{'watcher'}</p>
+}
+
+function WatchedWriter() @{
+	watched.value++;
+	<p class="writer">{'writer'}</p>
+}
+
+function SiblingBoundariesApp() @{
+	<>
+		@try {
+			<SyncWatcher />
+		} @catch (err) {
+			<p class="watcher-caught">{(err as Error).message}</p>
+		}
+		@try {
+			<WatchedWriter />
+		} @catch (err) {
+			<p class="writer-caught">{(err as Error).message}</p>
+		}
+	</>
+}
+
+const null_state = { fail: true };
+
+function NullThrower() @{
+	if (null_state.fail) throw null;
+	<p class="ok">{'recovered'}</p>
+}
+
+function NullThrowApp() @{
+	@try {
+		<NullThrower />
+	} @catch (err, reset) {
+		<button
+			class="reset"
+			onClick={() => {
+				null_state.fail = false;
+				reset();
+			}}
+		>
+			{'caught ' + String(err)}
+		</button>
+	}
+}
+
+function SuspenseResetApp() @{
+	const state = { fail: true };
+	@try {
+		const result = loadOrThrow(state);
+		<p class="async-resolved">{result}</p>
+	} @pending {
+		<p class="async-pending">{'loading...'}</p>
+	} @catch (err, reset) {
+		<button
+			class="reset"
+			onClick={() => {
+				state.fail = false;
+				reset();
+			}}
+		>
+			{(err as Error).message}
+		</button>
+	}
+}
+
 // ── Static output rendered more than once ──
 // Vapor JSX evaluates to DOM nodes, so each use of a static subtree needs a
 // node of its own.
@@ -1181,6 +1357,26 @@ describe('tsrx-vue runtime', () => {
 		await click('.spread-html-update-markup');
 		expect(text('.spread-html-child')).toBe('updated');
 		expect(container.querySelector('.spread-html-child .html-node')?.tagName).toBe('STRONG');
+	});
+
+	it('updates host spreads when their expression changes', async () => {
+		spread_reactive_ref_node = null;
+		await render(SpreadReactiveApp);
+		const targets = Array.from(
+			container.querySelectorAll('.spread-reactive-target'),
+		) as HTMLButtonElement[];
+		expect(targets.map((target) => [target.title, target.disabled])).toEqual([
+			['before', false],
+			['before', false],
+		]);
+		expect(spread_reactive_ref_node).toBe(targets[1]);
+
+		await click('.spread-reactive-update');
+		expect(targets.map((target) => [target.title, target.disabled])).toEqual([
+			['after', true],
+			['after', true],
+		]);
+		expect(spread_reactive_ref_node).toBe(targets[1]);
 	});
 
 	it('supports ref callback on elements', async () => {
@@ -1542,6 +1738,25 @@ describe('tsrx-vue runtime', () => {
 		expect(text('.row-b')).toBe('Bravo:1');
 	});
 
+	it('reads the destructured names of each loop in nested keyed loops', async () => {
+		await render(ForNestedArrayDestructuredKeyedApp);
+		expect(texts('.nested-array-destructured')).toEqual(['p-x-X', 'p-y-Y']);
+	});
+
+	it('destructures keyed for-of array patterns the way for...of does (#938)', async () => {
+		await render(ForArrayDestructuredKeyedApp);
+		expect(texts('.destructured-keyed-row')).toEqual(['Alpha:0', 'x:0', 'none:0']);
+
+		await click('.row-a');
+		expect(text('.row-a')).toBe('Alpha:1');
+
+		await click('.reverse-array-destructured-keyed');
+		expect(texts('.destructured-keyed-row')).toEqual(['none:0', 'x:0', 'Alpha:1']);
+
+		await click('.rename-array-destructured-keyed-a');
+		expect(text('.row-a')).toBe('Again:1');
+	});
+
 	it('switches rendered branches reactively', async () => {
 		await render(SwitchReactiveApp);
 		expect(text('.page')).toBe('Home');
@@ -1562,6 +1777,47 @@ describe('tsrx-vue runtime', () => {
 		await render(ErrorBoundaryApp);
 		await flush();
 		expect(text('.caught')).toBe('sync boom');
+	});
+
+	it('catches a child setup error when the app has its own errorHandler', async () => {
+		const app = createVaporApp(ErrorBoundaryApp);
+		const handled: unknown[] = [];
+		app.config.errorHandler = (error) => {
+			handled.push(error);
+		};
+		app.mount(container);
+		await flush();
+		expect(text('.caught')).toBe('sync boom');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('catches inside element children when the app has its own errorHandler', async () => {
+		const app = createVaporApp(ElementChildBoundaryApp);
+		const handled: unknown[] = [];
+		app.config.errorHandler = (error) => {
+			handled.push(error);
+		};
+		app.mount(container);
+		await flush();
+		expect(text('.wrap .caught')).toBe('sync boom');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('does not render boundary props as DOM attributes', async () => {
+		await render(ElementChildBoundaryApp);
+		expect(container.querySelector('.wrap')?.hasAttribute('fallback')).toBe(false);
+		expect(container.querySelector('.wrap')?.hasAttribute('content')).toBe(false);
+	});
+
+	it('routes an error to the boundary around its source, not the one rendering', async () => {
+		watched.value = 0;
+		await render(SiblingBoundariesApp);
+		await flush();
+		expect(text('.watcher-caught')).toBe('watcher boom');
+		expect(text('.writer')).toBe('writer');
+		expect(container.querySelector('.writer-caught')).toBeNull();
 	});
 
 	it('recovers from error via reset and re-triggers on state change', async () => {
@@ -1672,6 +1928,42 @@ describe('tsrx-vue runtime', () => {
 		expect(text('.async-resolved')).toBe('hello');
 	});
 
+	it('routes a rejected Vapor async component to catch blocks', async () => {
+		let reject_fn: (error: Error) => void;
+		const promise = new Promise<typeof AsyncResolvedChild>((_resolve, reject) => {
+			reject_fn = reject;
+		});
+
+		await render(SuspenseCatchApp, { promise });
+		expect(text('.async-pending')).toBe('loading...');
+
+		reject_fn!(new Error('async reject boom'));
+		await flush();
+		expect(text('.async-caught')).toBe('async reject boom');
+		expect(container.querySelector('.async-pending')).toBeNull();
+		expect(container.querySelector('.async-resolved')).toBeNull();
+	});
+
+	it('catches a thrown null and recovers via reset', async () => {
+		null_state.fail = true;
+		await render(NullThrowApp);
+		expect(text('.reset')).toBe('caught null');
+
+		await click('.reset');
+		expect(text('.ok')).toBe('recovered');
+	});
+
+	it('re-renders the try body on reset after a sync error with pending', async () => {
+		await render(SuspenseResetApp);
+		await flush();
+		expect(text('.reset')).toBe('pending reset boom');
+
+		await click('.reset');
+		await flush();
+		expect(text('.async-resolved')).toBe('Ready');
+		expect(container.querySelector('.reset')).toBeNull();
+	});
+
 	it('routes errors from Suspense default content to catch blocks', async () => {
 		await render(SuspenseErrorApp);
 		await flush();
@@ -1748,11 +2040,481 @@ describe('tsrx-vue runtime', () => {
 		expect(branches.length).toBe(4);
 		expect([...branches].map((branch) => branch.textContent)).toEqual(['yes', 'yes', 'no', 'no']);
 	});
+
+	runLocalHelperNamesRuntimeTests();
+});
+
+const HandlerArrow = ({ label, onPick }: { label: string; onPick: (label: string) => void }) => (
+	<button class="handler" onClick={() => onPick(label)}>
+		{label}
+	</button>
+);
+
+function VariableCard({ title }: { title: string }) {
+	const element = <div class="card" title={title} />;
+	return element;
+}
+
+function VariableCardParent() @{
+	<section>
+		<VariableCard title="child" />
+	</section>
+}
+
+// Reads `RegisteredInner` above its declaration, so this module only loads
+// when the wrapped component is still initialized first.
+const component_registry = { inner: RegisteredInner };
+
+function RegisteredInner(props: { label: string }) @{
+	<span>{props.label}</span>
+}
+
+describe('tsrx-vue component wrapping', () => {
+	it('mounts an arrow component with an inline handler as the app root', async () => {
+		await render(HandlerArrow, { label: 'root', onPick: () => {} });
+		expect(container.innerHTML).toBe('<button class="handler">root</button>');
+	});
+
+	it('passes props to a component that returns JSX through a variable', async () => {
+		await render(VariableCardParent);
+		expect(container.innerHTML).toBe('<section><div class="card" title="child"></div></section>');
+	});
+
+	it('mounts a component that returns JSX through a variable as the app root', async () => {
+		await render(VariableCard, { title: 'root' });
+		expect(container.innerHTML).toBe('<div class="card" title="root"></div>');
+	});
+
+	it('renders a component read above its declaration', async () => {
+		await render(component_registry.inner, { label: 'registered' });
+		expect(container.innerHTML).toBe('<span>registered</span>');
+	});
+});
+
+function ChildrenCard(props: { title: string; children?: JSX.Element }) @{
+	<section class="card">
+		<h2>{props.title}</h2>
+		{props.children}
+	</section>
+}
+
+function DestructuredChildrenCard({ children }: { children?: JSX.Element }) @{
+	<section class="card">{children}</section>
+}
+
+function BodyDestructuredChildrenCard(props: { children?: JSX.Element }) @{
+	const { children } = props;
+	<section class="card">{children}</section>
+}
+
+function NestedChildrenApp() @{
+	const count = ref(0);
+	<>
+		<button class="inc" onClick={() => count.value++}>
+			{'inc'}
+		</button>
+		<ChildrenCard title="t">
+			<p class="nested">{`child ${count.value}`}</p>
+		</ChildrenCard>
+		<DestructuredChildrenCard>
+			<b>{'destructured'}</b>
+		</DestructuredChildrenCard>
+		<BodyDestructuredChildrenCard>
+			<b>{'body destructured'}</b>
+		</BodyDestructuredChildrenCard>
+	</>
+}
+
+function ChildrenPropApp() @{
+	<ChildrenCard title="t" children={<p>{'from prop'}</p>} />
+}
+
+const children_setups = { count: 0 };
+
+function CountedChild() @{
+	children_setups.count++;
+	<i class="counted">{'counted'}</i>
+}
+
+function MaybeChildren(props: { children?: JSX.Element }) @{
+	<div class="maybe">
+		{props.children ? (
+			<div class="has-children">{props.children}</div>
+		) : (
+			<span class="no-children" />
+		)}
+	</div>
+}
+
+function ComparedChildren(props: { children?: JSX.Element }) @{
+	<div class="compared">
+		{props.children != null ? <div class="has-children">{props.children}</div> : null}
+		{Boolean(props.children) ? <span class="boolean-children" /> : null}
+	</div>
+}
+
+function ComparedChildrenApp() @{
+	<ComparedChildren>
+		<CountedChild />
+	</ComparedChildren>
+}
+
+function CountedChildrenApp() @{
+	<MaybeChildren>
+		<CountedChild />
+	</MaybeChildren>
+}
+
+function NoChildrenApp() @{
+	<MaybeChildren />
+}
+
+function EmptiedChildrenApp() @{
+	const show = ref(true);
+	<>
+		<button class="hide" onClick={() => (show.value = false)}>
+			{'hide'}
+		</button>
+		<MaybeChildren>{show.value ? <p class="shown">{'shown'}</p> : null}</MaybeChildren>
+	</>
+}
+
+function SlotAndPropApp() @{
+	<>
+		<ChildrenCard title="both" children={<b class="from-prop">{'prop'}</b>}>
+			<i class="from-slot">{'slot'}</i>
+		</ChildrenCard>
+		<ChildrenCard title="null" children={null} />
+	</>
+}
+
+function DefaultChildrenCard({ children = 'none' }: { children?: JSX.Element | string }) @{
+	<p class="default-children">{children}</p>
+}
+
+function DefaultChildrenApp() @{
+	<>
+		<DefaultChildrenCard />
+		<DefaultChildrenCard>
+			<b>{'given'}</b>
+		</DefaultChildrenCard>
+		<DefaultChildrenCard children={null} />
+		<DefaultChildrenCard children={undefined} />
+	</>
+}
+
+function OuterChildren(props: { children?: JSX.Element }) @{
+	function InnerChildren(inner: { children?: JSX.Element }) @{
+		<span class="inner-children">
+			{inner.children}
+			{props.children}
+		</span>
+	}
+	<InnerChildren>
+		<b>{'inner'}</b>
+	</InnerChildren>
+}
+
+function OuterChildrenApp() @{
+	<OuterChildren>
+		<u>{'outer'}</u>
+	</OuterChildren>
+}
+
+function SpreadChildren(props: { children?: JSX.Element }) @{
+	<>
+		<ChildrenCard title="spread" {...props} />
+		<ChildrenCard title="passed">{props.children}</ChildrenCard>
+	</>
+}
+
+const child_life = { setups: 0, mounted: 0, unmounted: 0 };
+
+function LifecycleChild() @{
+	child_life.setups++;
+	onMounted(() => child_life.mounted++);
+	onUnmounted(() => child_life.unmounted++);
+	const clicks = ref(0);
+	<button class="life-child" onClick={() => clicks.value++}>{`n=${clicks.value}`}</button>
+}
+
+const children_open = ref(false);
+
+function TernaryChildren(props: { children?: JSX.Element }) @{
+	<div class="toggled">{children_open.value ? props.children : null}</div>
+}
+
+function AndChildren(props: { children?: JSX.Element }) @{
+	<div class="toggled">{children_open.value && props.children}</div>
+}
+
+function IfChildren(props: { children?: JSX.Element }) @{
+	<div class="toggled">
+		@if (children_open.value) {
+			<section>{props.children}</section>
+		}
+	</div>
+}
+
+function TernaryChildrenApp() @{
+	<TernaryChildren>
+		<LifecycleChild />
+	</TernaryChildren>
+}
+
+function AndChildrenApp() @{
+	<AndChildren>
+		<LifecycleChild />
+	</AndChildren>
+}
+
+function IfChildrenApp() @{
+	<IfChildren>
+		<LifecycleChild />
+	</IfChildren>
+}
+
+function HiddenChildren(props: { children?: JSX.Element }) @{
+	<div class="hidden-children">{false ? props.children : 'hidden'}</div>
+}
+
+function HiddenChildrenApp() @{
+	<HiddenChildren>
+		<LifecycleChild />
+	</HiddenChildren>
+}
+
+function SpreadChildrenApp() @{
+	<SpreadChildren>
+		<em>{'forwarded'}</em>
+	</SpreadChildren>
+}
+
+describe('tsrx-vue component children', () => {
+	it('renders nested children read through props.children', async () => {
+		await render(NestedChildrenApp);
+		expect(text('.nested')).toBe('child 0');
+		expect(texts('.card b')).toEqual(['destructured', 'body destructured']);
+
+		await click('.inc');
+		expect(text('.nested')).toBe('child 1');
+	});
+
+	it('still renders a children prop passed explicitly', async () => {
+		await render(ChildrenPropApp);
+		expect(text('.card p')).toBe('from prop');
+	});
+
+	it('renders the slot once for every read of props.children', async () => {
+		children_setups.count = 0;
+		await render(CountedChildrenApp);
+		expect(container.querySelectorAll('.has-children .counted')).toHaveLength(1);
+		expect(children_setups.count).toBe(1);
+	});
+
+	it('tests the slot without rendering it in a null comparison or Boolean()', async () => {
+		children_setups.count = 0;
+		await render(ComparedChildrenApp);
+		expect(container.querySelectorAll('.has-children .counted')).toHaveLength(1);
+		expect(container.querySelector('.boolean-children')).not.toBeNull();
+		expect(children_setups.count).toBe(1);
+	});
+
+	it('reads no children when the caller passes none', async () => {
+		await render(NoChildrenApp);
+		expect(container.querySelector('.no-children')).not.toBeNull();
+		expect(container.querySelector('.has-children')).toBeNull();
+	});
+
+	it('keeps the slot truthy when the caller writes children that render nothing', async () => {
+		// Vue passes nested children as a slot block, which exists whenever the
+		// caller writes children, so a truthiness check cannot see that they
+		// now render nothing. React would render the `no-children` branch here.
+		await render(EmptiedChildrenApp);
+		expect(text('.has-children .shown')).toBe('shown');
+
+		await click('.hide');
+		expect(container.querySelector('.shown')).toBeNull();
+		expect(container.querySelector('.has-children')).not.toBeNull();
+	});
+
+	it('prefers nested children over a children prop, and keeps a null children prop', async () => {
+		await render(SlotAndPropApp);
+		expect(texts('.card i')).toEqual(['slot']);
+		expect(container.querySelector('.from-prop')).toBeNull();
+		expect(texts('.card h2')).toEqual(['both', 'null']);
+	});
+
+	it('falls back to a destructured children default only without children', async () => {
+		await render(DefaultChildrenApp);
+		// A slot keeps a trailing text anchor in its host (#870). Like a
+		// destructuring default, it replaces only `undefined`, so `null` stays.
+		expect(texts('.default-children').map((value) => value?.trim())).toEqual([
+			'none',
+			'given',
+			'',
+			'none',
+		]);
+	});
+
+	it("reads the outer component's children inside a nested component", async () => {
+		await render(OuterChildrenApp);
+		expect(container.querySelector('.inner-children')?.innerHTML).toContain(
+			'<b>inner</b><u>outer</u>',
+		);
+	});
+
+	it.each([
+		['a ternary', TernaryChildrenApp],
+		['an && expression', AndChildrenApp],
+		['an @if body', IfChildrenApp],
+	])(
+		'sets the children up when %s shows them and tears them down when it hides them',
+		async (_name, App) => {
+			Object.assign(child_life, { setups: 0, mounted: 0, unmounted: 0 });
+			children_open.value = false;
+			await render(App);
+			expect(child_life).toEqual({ setups: 0, mounted: 0, unmounted: 0 });
+
+			children_open.value = true;
+			await flush();
+			await click('.life-child');
+			expect(text('.life-child')).toBe('n=1');
+
+			children_open.value = false;
+			await flush();
+			expect(container.querySelector('.life-child')).toBeNull();
+			expect(child_life).toEqual({ setups: 1, mounted: 1, unmounted: 1 });
+
+			// Shown again, the children are a fresh instance that keeps updating.
+			children_open.value = true;
+			await flush();
+			expect(text('.life-child')).toBe('n=0');
+			await click('.life-child');
+			expect(text('.life-child')).toBe('n=1');
+			expect(child_life).toEqual({ setups: 2, mounted: 2, unmounted: 1 });
+		},
+	);
+
+	it('never sets up children that are not shown', async () => {
+		Object.assign(child_life, { setups: 0, mounted: 0, unmounted: 0 });
+		await render(HiddenChildrenApp);
+		expect(text('.hidden-children')).toBe('hidden');
+		expect(child_life).toEqual({ setups: 0, mounted: 0, unmounted: 0 });
+	});
+
+	it('does not forward nested children through a props spread', async () => {
+		// `{...props}` carries props, and Vue passes nested children as a slot,
+		// so pass them on explicitly. React forwards them through the spread.
+		await render(SpreadChildrenApp);
+		expect(texts('.card em')).toEqual(['forwarded']);
+		expect(container.querySelectorAll('.card')[1]?.querySelector('em')).not.toBeNull();
+	});
+});
+
+const merged_ref_log: string[] = [];
+const merged_ref_object = ref<HTMLInputElement | null>(null);
+
+function MergedRefCleanupApp() @{
+	const shown = ref(true);
+	const withCleanup = (node: HTMLInputElement | null) => {
+		merged_ref_log.push(node ? 'set' : 'null');
+		return () => {
+			merged_ref_log.push('cleanup');
+		};
+	};
+	<>
+		@if (shown.value) {
+			<input class="merged-cleanup" ref={mergeRefs(withCleanup, merged_ref_object)} />
+		}
+		<button class="hide-merged" onClick={() => (shown.value = false)}>
+			{'hide'}
+		</button>
+	</>
+}
+
+const swapped_ref_log: string[] = [];
+const swapped_ref_which = ref(0);
+const swapped_ref_object = ref<HTMLInputElement | null>(null);
+
+function SwappedMergedRefApp() @{
+	const shown = ref(true);
+	const withCleanup = (node: HTMLInputElement | null) => {
+		swapped_ref_log.push(node ? 'A:set' : 'A:null');
+		return () => {
+			swapped_ref_log.push('A:cleanup');
+		};
+	};
+	const plain = (node: HTMLInputElement | null) => {
+		swapped_ref_log.push(node ? 'B:set' : 'B:null');
+	};
+	const other = (node: HTMLInputElement | null) => {
+		swapped_ref_log.push(node ? 'C:set' : 'C:null');
+	};
+	<>
+		@if (shown.value) {
+			<input
+				class="swapped-merged"
+				ref={mergeRefs(
+					withCleanup,
+					plain,
+					swapped_ref_object,
+					swapped_ref_which.value ? other : null,
+				)}
+			/>
+		}
+		<button class="hide-swapped" onClick={() => (shown.value = false)}>
+			{'hide'}
+		</button>
+	</>
+}
+
+describe('tsrx-vue merged refs', () => {
+	it('runs the replaced merged ref cleanup when a new one is set on the element', async () => {
+		swapped_ref_log.length = 0;
+		swapped_ref_which.value = 0;
+		await render(SwappedMergedRefApp);
+		expect(swapped_ref_log).toEqual(['A:set', 'B:set']);
+
+		// A reactive read re-creates the merged ref; Vue sets the new one without
+		// calling the old one with `null`.
+		swapped_ref_which.value = 1;
+		await flush();
+		expect(swapped_ref_log).toEqual([
+			'A:set',
+			'B:set',
+			'A:cleanup',
+			'B:null',
+			'A:set',
+			'B:set',
+			'C:set',
+		]);
+		expect(swapped_ref_object.value).toBeInstanceOf(HTMLInputElement);
+
+		await click('.hide-swapped');
+		expect(swapped_ref_log.slice(7)).toEqual(['A:cleanup', 'B:null', 'C:null']);
+		expect(swapped_ref_object.value).toBeNull();
+	});
+
+	it("runs a merged ref's cleanup when Vue unsets the ref", async () => {
+		merged_ref_log.length = 0;
+		await render(MergedRefCleanupApp);
+		expect(merged_ref_log).toEqual(['set']);
+		expect(merged_ref_object.value).toBeInstanceOf(HTMLInputElement);
+
+		await click('.hide-merged');
+		// Vue ignores a function ref's return value and calls it with `null`;
+		// the merged ref runs the stored cleanup on that call instead.
+		expect(merged_ref_log).toEqual(['set', 'cleanup']);
+		expect(merged_ref_object.value).toBeNull();
+	});
 });
 
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
-runJsxTextWhitespaceRuntimeTests({ nbsp: 'kept' });
+// Vapor leaves an empty comment where a constant `@if` with a following sibling
+// was inserted.
+runJsxTextWhitespaceRuntimeTests({ nbsp: 'kept', anchors: 'empty comments' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
