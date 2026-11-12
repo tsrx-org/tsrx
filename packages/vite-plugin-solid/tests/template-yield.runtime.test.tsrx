@@ -36,8 +36,10 @@ function* gated() @{
 	</div>
 }
 
-function* spread_beside_ref(enabled: boolean) {
-	return enabled ? <input {...{}} ref={() => {}} title={(yield 'title') as string} /> : null;
+// In a ternary arm (#246's shape) this is TSRX2034: TSRX normalizes the
+// spread with a call, so babel-preset-solid creates the element in an arrow.
+function* spread_beside_ref() {
+	return <input {...{}} ref={() => {}} title={(yield 'title') as string} />;
 }
 
 function* yielded_first() {
@@ -77,8 +79,8 @@ describe('a yield in a template position Solid evaluates in place', () => {
 		expect(container.querySelector('.gated .shown')?.textContent).toBe('yes');
 	});
 
-	it("runs beside a host spread and a ref in a ternary arm (#246's shape)", async () => {
-		await render(() => run(spread_beside_ref(true), { title: 'spread' }));
+	it('runs beside a host spread and a ref', async () => {
+		await render(() => run(spread_beside_ref(), { title: 'spread' }));
 		expect((container.querySelector('input') as HTMLInputElement).title).toBe('spread');
 	});
 

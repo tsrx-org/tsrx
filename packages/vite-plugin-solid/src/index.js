@@ -3,10 +3,12 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve as path_resolve, isAbsolute } from 'node:path';
+import { normalizePath, parseSync } from 'vite';
 import { compile } from '@tsrx/solid';
 import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
 import { resolveBuildPlatform } from '@tsrx/core/config';
 import { createDepScanLoadPlugin } from '@tsrx/core/vite/dep-scan';
+import { findUnconfiguredPlatformFlag, restartOnPlatformChange } from '@tsrx/core/vite/platform';
 import { createWorkerEntryMiddleware, stripWorkerEntryQuery } from '@tsrx/core/vite/worker';
 
 const DEFAULT_TSRX_PATTERN = /\.tsrx$/;
@@ -54,16 +56,20 @@ export function tsrxSolid(options = {}) {
 	const include_pattern = options.include ?? DEFAULT_TSRX_PATTERN;
 	const compile_options = { runtimeImports: options.runtimeImports, platform };
 
+	/** @type {import('@tsrx/core/config').BuildPlatformResolutionOptions} */
+	let platform_resolution = {};
+
 	/** @param {import('vite').UserConfig} config */
 	function resolve_platform(config) {
-		platform = resolveBuildPlatform({
+		platform_resolution = {
 			root: config.root ?? process.cwd(),
 			tsconfig:
 				options.tsconfig ??
 				/** @type {{ tsconfig?: string }} */ (/** @type {unknown} */ (config)).tsconfig,
 			platform: explicit_platform,
 			integration: '@tsrx/vite-plugin-solid',
-		});
+		};
+		platform = resolveBuildPlatform(platform_resolution);
 		compile_options.platform = platform;
 	}
 
@@ -160,6 +166,7 @@ export function tsrxSolid(options = {}) {
 		},
 
 		configureServer(server) {
+			restartOnPlatformChange(server, platform_resolution, () => platform);
 			server.middlewares.use(createWorkerEntryMiddleware(is_tsrx_source));
 		},
 
@@ -171,7 +178,17 @@ export function tsrxSolid(options = {}) {
 			// worker plugin reads it back to set the entry up as a worker.
 			const path = stripWorkerEntryQuery(source);
 			const worker_query = source.slice(path.length);
-			if (is_virtual(path)) return source;
+			if (is_virtual(path)) {
+				// Vitest can ask for a module by its root-relative URL. Anchor the id
+				// to the file, or imports from the module resolve against the root.
+				// Vite's resolver spells it (real path, `/` separators), so the file
+				// has one module id however it is reached.
+				const real_path = to_real_path(path);
+				if (real_path === path.slice(0, -VIRTUAL_TSX_SUFFIX.length)) return source;
+				const resolved = await this.resolve(real_path, importer, { ...options, skipSelf: true });
+				const id = resolved && !resolved.external ? resolved.id : real_path;
+				return normalizePath(id) + VIRTUAL_TSX_SUFFIX + worker_query;
+			}
 
 			// Rewrite tsrx source imports to their virtual `<path>.tsx` form
 			// so downstream extension-based plugins pick the module up as TSX.
@@ -194,7 +211,21 @@ export function tsrxSolid(options = {}) {
 					: path_resolve(root_dir, path.replace(/^\/+/, ''));
 				return absolute_source + VIRTUAL_TSX_SUFFIX + worker_query;
 			}
-			return null;
+
+			// A package export or an extensionless import can still resolve to
+			// a `.tsrx` file.
+			if (source.startsWith('\0') || source.includes('?')) return null;
+			const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+			if (
+				resolved &&
+				!resolved.id.startsWith('\0') &&
+				!resolved.id.includes('?') &&
+				is_tsrx_source(resolved.id)
+			) {
+				return { ...resolved, id: resolved.id + VIRTUAL_TSX_SUFFIX };
+			}
+			// Hand the resolution over, so Vite does not resolve the import again.
+			return resolved;
 		},
 
 		async load(id, load_options) {
@@ -224,6 +255,13 @@ export function tsrxSolid(options = {}) {
 			}
 
 			return { code, map };
+		},
+
+		transform(code, id) {
+			if (platform !== undefined) return null;
+			const flag = findUnconfiguredPlatformFlag(code, id, parseSync);
+			if (flag) this.error(flag, flag.pos);
+			return null;
 		},
 
 		handleHotUpdate(ctx) {

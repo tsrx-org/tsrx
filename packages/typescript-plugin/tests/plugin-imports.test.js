@@ -3,6 +3,17 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { create_tsserver_workspace, start_tsserver } from './tsserver.js';
 
+/** The text before the first statement of each preamble test file. */
+const PREAMBLES = {
+	Hashbang: '#!/usr/bin/env node\n',
+	HashbangBlankLine: '#!/usr/bin/env node\n\n',
+	License: '/** License */\n\n',
+	Pinned: '/*! keep */\n',
+	Directive: "'use client';\n\n",
+	TripleSlash: '/// <reference lib="dom" />\n',
+	Docs: '/** Docs */\n',
+};
+
 /**
  * Three imports, two of them unused, ended by `end` (`;` or nothing), with
  * `comment` after the second one.
@@ -77,6 +88,15 @@ export function Imports() {
 	return <p>{count}</p>;
 }
 `,
+	'src/NoSemicolonsComment.tsx': `import { useState } from 'react'
+import { label } from './label' // keep this
+import { App } from './App.tsrx'
+
+export function Imports() {
+	const [count] = useState(0)
+	return <p>{count}</p>
+}
+`,
 	'src/ReExports.tsrx': `import { label } from './label';
 import { useState } from 'react';
 export * from './lib';
@@ -85,6 +105,14 @@ export { label as other } from './label';
 export function ReExports() @{
 	const [count] = useState(label);
 	<p>{count}</p>
+}
+`,
+	'src/Flagged.tsrx': `import { label } from './label';
+import { useState } from 'react';
+
+export function Flagged() @{
+	const [count] = useState(import.meta.env.platform.web);
+	<p>{label}{String(count)}</p>
 }
 `,
 	'src/ReExports.tsx': `import { label } from './label';
@@ -141,7 +169,29 @@ export function NewLine() @{
 	<p>{helperB()}</p>
 }
 `,
+	...preamble_files(),
 };
+
+/**
+ * A `.tsrx` file and the same code as `.tsx` for each way a file can start before its
+ * first statement, where TypeScript places the first import of a file after the
+ * hashbang, the directive prologue, and pinned or detached leading comments.
+ */
+function preamble_files() {
+	/** @type {Record<string, string>} */
+	const files = {};
+	for (const [name, preamble] of Object.entries(PREAMBLES)) {
+		files[`src/${name}.tsrx`] = `${preamble}export function ${name}() @{
+	<p>{helperB()}</p>
+}
+`;
+		files[`src/${name}.tsx`] = `${preamble}export function ${name}() {
+	return <p>{helperB()}</p>;
+}
+`;
+	}
+	return files;
+}
 
 /** @typedef {keyof typeof FILES} FileName */
 
@@ -397,26 +447,32 @@ describe('tsserver plugin: imports in .tsrx files', () => {
 				[
 					'helperB',
 					"import { helperA as first, type Model as M, helperB } from './lib';",
-					"import { helperA as first, type Model as M,  } from './lib';",
+					"import { helperA as first, type Model as M } from './lib';",
 				],
 				[
 					'helperC',
 					"import { helperA as a1, helperB as b1, helperC } from './lib';",
-					"import { helperA as a1, helperB as b1,  } from './lib';",
+					"import { helperA as a1, helperB as b1 } from './lib';",
 				],
-				['a1', '', null],
-				['M3', '', null],
-				['helperD', '', null],
+				[
+					'a1',
+					"import { helperA as a1, helperB as b1, helperC } from './lib';",
+					"import { helperB as b1, helperC } from './lib';",
+				],
+				[
+					'M3',
+					"import type { Model as M3, Other as O3 } from './lib';",
+					"import type { Other as O3 } from './lib';",
+				],
+				['helperD', "import def, { helperD } from './def';", "import def from './def';"],
 			]),
 		)(
-			'removes the unused name %s only partly with its quick fix (#1025)',
+			'removes the unused name %s with its quick fix (#1025)',
 			async (name, line, fixed) => {
-				// In a `.tsx` file, TypeScript deletes the name with the comma before it (a last
-				// name) or after it (any other name). The text between the names has no
-				// mapping: for a last name only the edit that deletes the name maps, and the
-				// edit for another name covers the comma and does not map at all.
+				// As in a `.tsx` file, TypeScript deletes the name with the comma before it
+				// (a last name) or after it (any other name).
 				const result = await after_unused_fix('src/Mixed.tsrx', name);
-				expect(result).toBe(fixed === null ? null : FILES['src/Mixed.tsrx'].replace(line, fixed));
+				expect(result).toBe(FILES['src/Mixed.tsrx'].replace(line, fixed));
 			},
 			60_000,
 		);
@@ -450,21 +506,53 @@ import def from './def';
 			expect(imports_of(await after_completion('src/Extend.tsrx', 'helperB'))).toBe(expected);
 		}, 60_000);
 
-		it('adds a new import line with the quick fix', async () => {
+		it('adds a new import line with the quick fix and the completion (#1026)', async () => {
+			const expected = "import { label } from './label';\nimport { helperB } from './lib';\n\n";
 			expect(
 				imports_of(await after_quick_fix('src/NewLine.tsrx', 'helperB', 2304, 'Add import')),
-			).toBe("import { label } from './label';\nimport { helperB } from './lib';\n\n");
+			).toBe(expected);
+			expect(imports_of(await after_completion('src/NewLine.tsrx', 'helperB'))).toBe(expected);
 		}, 60_000);
 
-		it('does not add a new import line with the completion (#1026)', async () => {
-			// Volar maps a completion's edits only through mappings that enable
-			// completions, and the start of the line after the imports has none.
-			expect(await after_completion('src/NewLine.tsrx', 'helperB')).toBeNull();
-		}, 60_000);
+		it.each(Object.keys(PREAMBLES))(
+			'adds the first import of a file where it goes in a .tsx file (%s)',
+			async (name) => {
+				const tsrx = /** @type {FileName} */ (`src/${name}.tsrx`);
+				const tsx = /** @type {FileName} */ (`src/${name}.tsx`);
+				const expected = imports_of(await after_quick_fix(tsx, 'helperB', 2304, 'Add import'));
+				expect(expected).toContain('import { helperB }');
+				expect(imports_of(await after_quick_fix(tsrx, 'helperB', 2304, 'Add import'))).toBe(
+					expected,
+				);
+				expect(imports_of(await after_completion(tsrx, 'helperB'))).toBe(expected);
+			},
+			60_000,
+		);
 
-		it('does not add an import to a file without imports (#828)', async () => {
-			expect(await after_quick_fix('src/NoImports.tsrx', 'helperB', 2304, 'Add import')).toBeNull();
-			expect(await after_completion('src/NoImports.tsrx', 'helperB')).toBeNull();
+		it.each(/** @type {const} */ (['Directive', 'License']))(
+			'adds the first import of a file with Fix All where it goes in a .tsx file (%s)',
+			async (name) => {
+				/** @param {FileName} file */
+				const fix_all = async (file) => {
+					const response = await server.request('getCombinedCodeFix', {
+						scope: { type: 'file', args: { file: path.join(workspace, file) } },
+						fixId: 'fixMissingImport',
+					});
+					return imports_of(apply(file, response.body.changes));
+				};
+				const expected = await fix_all(/** @type {FileName} */ (`src/${name}.tsx`));
+				expect(expected).toContain('import { helperB }');
+				expect(await fix_all(/** @type {FileName} */ (`src/${name}.tsrx`))).toBe(expected);
+			},
+			60_000,
+		);
+
+		it('adds an import to a file without imports (#828)', async () => {
+			const expected = `import { helperB } from "./lib";\n\n${FILES['src/NoImports.tsrx']}`;
+			expect(await after_quick_fix('src/NoImports.tsrx', 'helperB', 2304, 'Add import')).toBe(
+				expected,
+			);
+			expect(await after_completion('src/NoImports.tsrx', 'helperB')).toBe(expected);
 		}, 60_000);
 	});
 
@@ -492,14 +580,36 @@ export { label as other } from './label';
 			);
 		}, 60_000);
 
-		it.each(/** @type {const} */ (['src/Semicolons.tsrx', 'src/NoSemicolons.tsrx']))(
-			'sorts the imports of %s',
-			async (file) => {
-				// TypeScript prints the sorted block with semicolons, as in a `.ts` file.
-				expect(await organized_imports(file, 'SortAndCombine')).toBe(
+		it.each(/** @type {const} */ (['SortAndCombine', 'All']))(
+			'organizes the imports of a module that keeps a platform flag in %s mode (#1207)',
+			async (mode) => {
+				// The compiler appends `export {};` to a module that reads a platform flag
+				// only when it has no import or export. TypeScript rewrites every export
+				// declaration, and an edit in generated code made the plugin drop them all.
+				expect(await organized_imports('src/Flagged.tsrx', mode)).toBe(
 					`import { useState } from 'react';
-import { App } from './App.tsrx';
 import { label } from './label';
+
+`,
+				);
+			},
+			60_000,
+		);
+
+		it.each(
+			/** @type {const} */ ([
+				['src/Semicolons.tsrx', ';'],
+				['src/NoSemicolons.tsrx', ''],
+			]),
+		)(
+			'sorts the imports of %s',
+			async (file, end) => {
+				// TypeScript prints the sorted block with semicolons when most statements of
+				// the file have one, as in a `.ts` file.
+				expect(await organized_imports(file, 'SortAndCombine')).toBe(
+					`import { useState } from 'react'${end}
+import { App } from './App.tsrx'${end}
+import { label } from './label'${end}
 
 `,
 				);
@@ -526,16 +636,18 @@ import { label } from './label';
 
 		it.each(
 			/** @type {const} */ ([
-				'src/Comment.tsx',
-				'src/Comment.tsrx',
-				'src/NoSemicolonsComment.tsrx',
+				['src/Comment.tsx', ';'],
+				['src/Comment.tsrx', ';'],
+				['src/NoSemicolonsComment.tsx', ''],
+				['src/NoSemicolonsComment.tsrx', ''],
 			]),
 		)(
 			'sorts the imports of %s with the comment after its import (#1024)',
-			async (file) => {
+			async (file, end) => {
+				// TypeScript writes a `;` before the comment it moves with its import.
 				expect(await organized_imports(file, 'SortAndCombine')).toBe(
-					`import { useState } from 'react';
-import { App } from './App.tsrx';
+					`import { useState } from 'react'${end}
+import { App } from './App.tsrx'${end}
 import { label } from './label'; // keep this
 
 `,

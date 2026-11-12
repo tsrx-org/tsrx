@@ -246,7 +246,14 @@ function create_project(scenario) {
 		prettier: installed_package_dir(repo_root, 'prettier'),
 		'@tsrx/prettier-plugin': path.join(repo_root, 'packages', 'prettier-plugin'),
 	};
-	if (scenario.projectTypeScript) {
+	if (scenario.projectTypeScript === 'no-binary') {
+		// An install that left out the optional platform package.
+		fs.mkdirSync(path.join(project, 'node_modules', 'typescript'), { recursive: true });
+		fs.copyFileSync(
+			path.join(project_typescript, 'package.json'),
+			path.join(project, 'node_modules', 'typescript', 'package.json'),
+		);
+	} else if (scenario.projectTypeScript) {
 		links.typescript =
 			scenario.projectTypeScript === 'classic' ? classic_typescript : project_typescript;
 	}
@@ -254,6 +261,13 @@ function create_project(scenario) {
 		const link = path.join(project, 'node_modules', name);
 		fs.mkdirSync(path.dirname(link), { recursive: true });
 		fs.symlinkSync(target, link, 'junction');
+	}
+	if (scenario.workspaceSettings) {
+		fs.mkdirSync(path.join(project, '.vscode'));
+		fs.writeFileSync(
+			path.join(project, '.vscode', 'settings.json'),
+			JSON.stringify(scenario.workspaceSettings, null, 2),
+		);
 	}
 	return project;
 }
@@ -298,6 +312,7 @@ async function run_scenario(scenario, index) {
 			command: scenario.command,
 			packageChange: scenario.packageChange,
 			serverCrash: scenario.serverCrash,
+			workspacePrompt: scenario.workspacePrompt,
 			actionWaitMs: ACTION_WAIT_MS,
 		}),
 	);
@@ -312,6 +327,9 @@ async function run_scenario(scenario, index) {
 		'--skip-welcome',
 		'--skip-release-notes',
 		'--disable-telemetry',
+		// The test instance is the installed app. Without this, its updater can check for an
+		// update while the scenarios run and try to install it over the app.
+		'--disable-updates',
 		`--extensionDevelopmentPath=${harness}`,
 		`--extensionTestsPath=${path.join(harness, 'checks.cjs')}`,
 		project,
@@ -513,6 +531,18 @@ function formatting_problem(result) {
 }
 
 /**
+ * In every setup, the TSRX language server folds `.tsrx` files: the imports, the component's
+ * `@{ ... }` body and the multi-line `<button>` of the fixture's `App.tsrx`.
+ * @param {Record<string, any>} result
+ */
+function folding_problem(result) {
+	const expected = ['1-2 imports', '4-9', '7-8'];
+	return JSON.stringify(result.folding) === JSON.stringify(expected)
+		? undefined
+		: `expected the folds ${JSON.stringify(expected)}, got ${JSON.stringify(result.folding)}`;
+}
+
+/**
  * The fallback for `hide-test-windows.swift`: VS Code brings its first window to the
  * front even when `open` starts it hidden in the background. When the instance is in
  * front, hide it: macOS then gives the front back to the app that had it. Hiding
@@ -596,7 +626,12 @@ for (const scenario of selected) {
 		: undefined;
 	const commands = scenario.expect === 'nothing' ? undefined : command_problem(result ?? {});
 	const feature =
-		imports ?? source_definition ?? formatting_problem(result ?? {}) ?? commands ?? unsaved;
+		imports ??
+		source_definition ??
+		formatting_problem(result ?? {}) ??
+		folding_problem(result ?? {}) ??
+		commands ??
+		unsaved;
 	const problem =
 		observed !== scenario.expect
 			? `expected ${scenario.expect}, got ${observed}`
@@ -618,6 +653,7 @@ for (const scenario of selected) {
 		imports: scenario.expect === 'nothing' ? '-' : imports ? 'FAIL' : 'ok',
 		'source definition': result?.sourceDefinition?.split('/').pop() ?? '-',
 		formatting: formatting_problem(result ?? {}) ? 'FAIL' : 'ok',
+		folding: folding_problem(result ?? {}) ? 'FAIL' : 'ok',
 		'after typing a tag': closing_tag,
 		'TypeScript status': [status, result?.typescriptStatus?.version].filter(Boolean).join(' '),
 		notices,

@@ -246,6 +246,7 @@ describe('error codes', () => {
 			],
 			['TSRX2013', 'const a = <div>{...items}</div>;'],
 			['TSRX2014', 'const a = <{x ? A : B} />;'],
+			['TSRX2033', 'const a = <{Tag}<T> />;'],
 			[
 				'TSRX3001',
 				`function App() @{
@@ -333,6 +334,12 @@ function App() @{
 		<style>p { color: red; </style>
 		<p />
 	</>
+}`,
+			],
+			[
+				'TSRX3014',
+				`function App() @{
+	<div>{<style>p {}</style>}</div>
 }`,
 			],
 			['TSRX4003', "import a from 'a' with { type: 'json', type: 'json' };"],
@@ -490,7 +497,6 @@ let E;`,
 			TS_ERRORS.ARGUMENT_NAME_CLASH,
 			TS_ERRORS.KEYWORD_ESCAPE_SEQUENCE,
 			TS_ERRORS.AWAIT_USING_OUTSIDE_ASYNC,
-			TS_ERRORS.FOR_OF_LET,
 			TS_ERRORS.FOR_IN_INITIALIZER,
 			TS_ERRORS.FOR_OF_INITIALIZER,
 			TS_ERRORS.MISSING_CATCH_OR_FINALLY,

@@ -50,10 +50,27 @@ describe('a yield in a Vue template (#259)', () => {
 		}
 	});
 
-	// TSRX evaluates a host spread into a variable before the element.
+	// TSRX evaluates a host spread that yields into a variable before the element.
 	it('allows a yield in a host spread, which TSRX evaluates before the element', () => {
 		const source = returning('<input {...(yield t)} />');
 		expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
 		expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
+	});
+
+	// A host spread is bound in place, so the render effect reads it again when
+	// it changes (#1108). One that yields can't be read there, so it keeps its
+	// setup declaration, and a spread beside it is still bound in place.
+	it('binds a host spread that yields before the element, and any other in place', () => {
+		const { code } = compile(
+			returning('<div><input {...(yield t)} /><input {...bag} /></div>'),
+			'App.tsrx',
+		);
+		expect(code).toContain(
+			'let f__spread_props1 = __normalize_spread_props_for_ref_attr(yield t);',
+		);
+		expect(code).toContain('<input {...f__spread_props1} ref={f__spread_props1?.ref} />');
+		expect(code).toContain(
+			'<input {...(f__spread_props2 = __normalize_spread_props_for_ref_attr(bag))} ref={f__spread_props2?.ref} />',
+		);
 	});
 });

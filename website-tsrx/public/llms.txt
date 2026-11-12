@@ -53,8 +53,8 @@ npm install -D @tsrx/vite-plugin-solid
 npm install -D @tsrx/rspack-plugin-solid
 npm install -D @tsrx/bun-plugin-solid      # Bun
 
-# Vue target
-npm install @tsrx/vue vue vue-jsx-vapor
+# Vue target (Vapor needs Vue 3.6 or later)
+npm install @tsrx/vue "vue@^3.6.0-0" vue-jsx-vapor
 npm install -D @tsrx/vite-plugin-vue
 npm install -D @tsrx/rspack-plugin-vue
 npm install -D @tsrx/bun-plugin-vue        # Bun
@@ -429,7 +429,8 @@ via `@tsrx/react` and returns the result to Turbopack as `*.tsx` so Next's
 React pipeline can handle the final JSX transform. When a component contains a
 local `<style>` block, the loader injects a sibling `?tsrx-css&lang.css`
 import, and the second Turbopack rule re-runs the compiler to extract the
-scoped CSS and hands it back to Turbopack as a CSS module type.
+scoped CSS and hands it back to Turbopack as a `*.css` module, so Next links
+the stylesheet into App Router pages.
 
 ```ts
 // next.config.ts
@@ -609,6 +610,11 @@ fragment in that output position. Branches that only exit may use normal
 statements such as `return`, `throw`, or `continue` where they are legal.
 For tooling and AST work, this syntax is represented as a `JSXCodeBlock` node
 with setup statements in `body` and the final rendered node in `render`.
+A `@{ ... }` that is a function's own body, as in `function Name() @{ ... }`,
+shares that function's scope. Any other `@{ ... }`, such as a child or a value,
+runs in a function of its own, so declare its variables with `const` or `let`:
+a `var` in it, or in a plain block or loop inside it, is an error, since it
+can't be read outside the block.
 
 ```tsrx
 const Greeting = ({ name }: { name?: string }) => @{
@@ -681,7 +687,8 @@ text on each side of it follows JSX's whitespace rules on its own.
 - `//` starts a comment after whitespace, at the start of a line, or right after
   a tag, `{…}` or block, and runs to the end of the line, a closing tag
   included: `<p>a // note</p>` on one line leaves `<p>` unclosed.
-- `//` touching other text (`https://example.com`, `a//b`) is text.
+- `//` touching other text or a block comment (`https://example.com`, `a//b`,
+  `/* c */// c`) is text.
 
 This differs from TSX, where `/* … */` and `//` lines between children are text.
 To show comment-like text, write the first `/` as `&#47;` or use a string:
@@ -760,6 +767,18 @@ props, pass `children={...}` explicitly.
 <List children={items.map(renderItem)} />
 ```
 
+### Several refs on one element
+
+An element takes one `ref`. To attach several, write a ref list: every target
+calls each ref in it, in order. A list can nest, and a falsy entry such as the
+`false` of `cond && cb` is skipped. React, Preact, Hono and Vue also accept ref
+objects in the list (`useRef()`, a Vue `ref()`); Solid takes callback refs
+only, as Solid itself does.
+
+```tsrx
+<input ref={[localRef, props.inputRef]} />
+```
+
 ### Dynamic elements and components
 
 Use the dynamic tag syntax `<{expression}>` when the element tag or component
@@ -806,6 +825,11 @@ non-self-closing element repeats the expression in its closing tag, so compute
 anything more above the element, as `Body` is in the example above, and use the
 result: `const Tag = c ? Child : Fallback;` followed by `<{Tag} />`.
 
+Type arguments after the tag expression, which TSX allows after a tag name, are
+an error too (TSRX2033): on the runtime helper a dynamic tag compiles to, they
+would type the helper, not the tag. Declare a typed alias above the element
+instead: `const Typed = Tag<T>;` followed by `<{Typed} />`.
+
 Do not use removed dynamic tag syntax such as `<@tag />`, `<@Component />`, or
 the imported `Dynamic` component with an `is` prop. Use `<{tag}>` instead.
 
@@ -817,7 +841,10 @@ inside each braced branch render into the current template. Use ordinary
 JavaScript `if` statements for guard returns before template output; direct
 `return`, `continue`, and `break` statements are invalid inside template `@if`
 branches. `@if`, `@for`, `@switch`, and `@try` bodies are implicit statement
-containers, so every body uses `{...}`.
+containers, so every body uses `{...}`. Declare a body's variables with `const`
+or `let`: a `var` in a body, or in a plain block or loop inside it, is an error,
+since it can't be read outside the body. A function inside the body keeps
+ordinary `var` scoping.
 
 ### `if` / `else if` / `else`
 
@@ -849,7 +876,10 @@ rendering constructs. Use `for...of` for rendered lists, filter the iterable
 before rendering when some items should be skipped, and use `@empty { ... }` for
 the no-items fallback. Direct `continue`, `break`, and `return` statements are
 not allowed in `@for` template loop bodies. Move imperative loops into a nested
-function.
+function. The head declares its loop variable with `const` or `let`, as in
+`@for (const item of items)`: assigning to an existing variable or property
+(`@for (state.item of items)`), `var` loop variables, which can't be read after
+the loop, and `using` loop variables are errors.
 
 ### `switch`
 
@@ -885,6 +915,10 @@ export const App = () => @try {
 };
 ```
 
+The `catch` binding is the thrown value as it is, which need not be an `Error`,
+so it has the type `unknown`, as in a TypeScript `catch` clause. Check it before
+reading properties such as `message`.
+
 The `catch` block also receives a `reset` function as its second argument.
 Calling `reset()` clears the error state and re-renders the children, which is
 useful for building retry UIs:
@@ -894,7 +928,7 @@ export const RetryBoundary = () => @try {
 	<ComponentThatMightFail />
 } @catch (e, reset) {
 	<div>
-		<p>Error: {e.message}</p>
+		<p>Error: {e instanceof Error ? e.message : String(e)}</p>
 		<button onClick={() => reset()}>Try again</button>
 	</div>
 };
@@ -1463,12 +1497,27 @@ to exactly the elements of one scope.
 ### React and Preact
 
 Hooks run where they are written. TSRX does not move a hook inside a template
-branch, loop, switch, or try block into a generated component, so the Rules of
-Hooks apply as they do in TSX: give hook state that belongs to a branch or a
-list item its own component. React and Preact can also emit async component
-functions when template body `await` is supported by the target pipeline. An
-`await` in an `@for`, `@empty`, `@switch`, or `@if` body is awaited by that
-component, and a loop body finishes one item before it starts the next.
+branch, loop, or switch into a generated component, so the Rules of Hooks apply
+as they do in TSX: give hook state that belongs to a branch or a list item its
+own component.
+
+`@try` is the exception. Its body and its `@pending` body each render through a
+`TsrxTryBody` component inside the boundaries its `@catch` and `@pending`
+create, so hook state and context reads written there belong to that component,
+not to the component that contains the `@try`:
+
+- `useContext` in either body sees providers that the same component renders
+  around the `@try`.
+- State in the `@try` body is dropped when `@catch` takes over, and `reset()`
+  mounts the body fresh.
+- On the client, a `@pending` body runs only while the `@try` body suspends, and
+  its state starts fresh each time it appears.
+- A body that uses `await` or `yield` stays in the component that contains it.
+
+React and Preact can also emit async component functions when template body
+`await` is supported by the target pipeline. An `await` in an `@for`, `@empty`,
+`@switch`, or `@if` body is awaited by that component, and a loop body finishes
+one item before it starts the next.
 
 ```tsrx
 import { useEffect, useState } from 'react';
@@ -1504,9 +1553,10 @@ const UserProfile = ({ user, posts }: { user: User | null; posts: Post[] }) => @
 
 `@if` lowers to `<Show>`, `@switch` lowers to `<Switch>/<Match>`, `@for` lowers
 to `<For>`, `@try/catch` lowers to Solid error primitives, and `@try/pending`
-lowers to loading primitives. Read props as `props.name` (or split them with
-`splitProps`) rather than destructuring them, so Solid's getter-based prop
-reactivity is preserved.
+lowers to loading primitives. As on every target, the `@catch` binding is the
+thrown value (`e.message`), not Solid's error accessor (`e()`). Read props as
+`props.name` (or split them with `splitProps`) rather than destructuring them, so
+Solid's getter-based prop reactivity is preserved.
 
 In a generator, a `yield` in a template value that Solid's JSX compiler moves
 into an effect, a getter or a callback is a compile error (TSRX2034). Yield the
@@ -1523,7 +1573,9 @@ option off, and the Rspack plugin follow the DOM output only.
 Vue output targets `vue-jsx-vapor` and `defineVaporComponent(...)`. It supports
 directive-prefixed template control flow, scoped styles, host `innerHTML`, and
 `@try/pending` lowering through Vue suspense APIs. Component-level `await` is
-not supported for Vue TSRX.
+not supported for Vue TSRX. vue-jsx-vapor finds components by calls to
+`defineVaporComponent`, so a Vue module can't declare its own binding of that
+name (TSRX2032); importing it from `vue-jsx-vapor` is fine.
 
 ### Octane
 
@@ -1638,9 +1690,10 @@ Two paths type-check `.tsrx` files; both use the same target-specific transform.
 Editors: in VS Code, VS Code's own TypeScript serves `.tsrx` files: its tsserver
 with the TSRX plugin the extension ships (no tsconfig `plugins` entry needed), or
 TypeScript 7.1 with the mapper from `tsconfig.json`. For TypeScript 7.1, install
-`typescript@next` in the project, set `"js/ts.experimental.useTsgo": true` and
-`"js/ts.tsdk.path": "node_modules/typescript"` in the VS Code settings, and
-install the TypeScript 7 extension (`TypeScriptTeam.native-preview`). The
+`typescript@next` in the project, set `"js/ts.experimental.useTsgo": true` in the
+VS Code settings, and install the TypeScript 7 extension
+(`TypeScriptTeam.native-preview`), version 1.0.2 or newer. When it asks whether to
+use the project's TypeScript, choose Use Workspace Version. The
 extension activates Microsoft's
 TypeScript extensions, leaving server selection to them, and registers `.tsrx`
 for project discovery on TypeScript 7. Other
@@ -1660,6 +1713,7 @@ behind them: https://github.com/tsrx-org/tsrx/issues/136.
 | Text content           | `<p>literal</p>`, `<p>{expr}</p>`                     |
 | Expression children    | `<List children={items.map(render)} />`                |
 | Prop shorthand         | `<Input {value} {onChange} />`                         |
+| Several refs           | `<input ref={[a, b]} />`                               |
 | Conditional rendering  | `@if (cond) { <Panel /> }`                             |
 | List rendering         | `@for (const x of xs; index i; key x.id) { <li /> }`   |
 | Multi-branch           | `@switch (x) { @case 'a': { <A /> } }`                 |
