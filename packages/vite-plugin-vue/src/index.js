@@ -5,6 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { isAbsolute, resolve as pathResolve } from 'node:path';
+import { normalizePath } from 'vite';
 import { compile } from '@tsrx/vue';
 import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
 import { resolveBuildPlatform } from '@tsrx/core/config';
@@ -197,6 +198,16 @@ function create_tsrx_vue_plugin(options) {
 			const workerQuery = source.slice(path.length);
 
 			if (isVirtual(path)) {
+				// Vitest can ask for a module by its root-relative URL. Anchor the
+				// id to the file, or imports from the module resolve against the
+				// root. Vite's resolver spells it (real path, `/` separators), so
+				// the file has one module id however it is reached.
+				const realPath = toRealPath(path);
+				if (realPath !== path.slice(0, -VIRTUAL_TSX_SUFFIX.length)) {
+					const resolved = await this.resolve(realPath, importer, { ...options, skipSelf: true });
+					const id = resolved && !resolved.external ? resolved.id : realPath;
+					return normalizePath(id) + VIRTUAL_TSX_SUFFIX + workerQuery;
+				}
 				return isAbsolute(source) ? source : pathResolve(rootDir, source.replace(/^\/+/, ''));
 			}
 
