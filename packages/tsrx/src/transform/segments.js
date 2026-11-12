@@ -730,6 +730,111 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map the start and the end of a node as the two points of one mapping, for
+	 * diagnostics only. Volar maps a range only when both of its ends fall in one
+	 * mapping, and points have no length, so a range inside the node still maps
+	 * through its own tokens.
+	 * @param {AST.Node} node
+	 * @param {string} start_text The text the node starts with.
+	 * @returns {CodeMapping | undefined}
+	 */
+	function push_points_mapping(node, start_text) {
+		if (!has_location(node)) return;
+		const mapping = declaration_mapping(node, start_text);
+		if (!mapping) return;
+		const generated_start = mapping.generatedOffsets[0];
+		mapping.sourceOffsets = [node.start, node.end];
+		mapping.generatedOffsets = [generated_start, generated_start + mapping.generatedLengths[0]];
+		mapping.lengths = [0, 0];
+		mapping.generatedLengths = [0, 0];
+		mappings.push(mapping);
+		return mapping;
+	}
+
+	/**
+	 * Map a literal for errors TypeScript reports on all of it (TS2344 on the
+	 * `{}` of `g<{}>()`, TS2322 on the `[]` of `[ {}, [] ]`), which the printer
+	 * respaces. A mapping over the whole literal would also map every position
+	 * inside it by offset, which is wrong wherever the printed text differs,
+	 * for example after a comment the printer leaves out. Instead:
+	 *
+	 * - Its start and its end are the two points of one diagnostics-only
+	 *   mapping (see {@link push_points_mapping}).
+	 * - Its brackets are mapped with no Volar feature at all. The TypeScript 7
+	 *   content mapper drops points, which have no length, but turns any
+	 *   mapping into a span that places diagnostics, and joins a span without
+	 *   features to its neighbours. Volar ignores a mapping without features;
+	 *   with diagnostics on, a bracket's end would also catch a range that
+	 *   starts right after it.
+	 * @param {AST.Node} node
+	 * @param {string} open
+	 * @param {string} close
+	 * @returns {void}
+	 */
+	function push_literal_mappings(node, open, close) {
+		if (!has_location(node)) return;
+		if (!push_points_mapping(node, open)) return;
+		const opening = find_source_token(source_tokens, open, node.start, 'after');
+		const closing = find_source_token(source_tokens, close, node.end, 'before');
+		if (opening?.start !== node.start || closing?.end !== node.end) return;
+		push_position_only_token(opening, open);
+		push_position_only_token(closing, close);
+	}
+
+	/**
+	 * Map a source token where the printer writes it, with no Volar feature, as
+	 * a place for TypeScript 7 diagnostics (see {@link push_literal_mappings}).
+	 * @param {Parse.Token} token
+	 * @param {string} text
+	 * @returns {void}
+	 */
+	function push_position_only_token(token, text) {
+		if (!token.loc || generated_offset_for_text(token.loc.start, text) === undefined) return;
+		tokens.push({ source: text, generated: text, loc: token.loc, metadata: {}, mappingData: {} });
+	}
+
+	/**
+	 * Map a statement TypeScript reports on as a whole (TS7027 on an unreachable
+	 * `break;`) like a literal: its start and its end, `;` included, as the
+	 * points of one diagnostics-only mapping, and its keyword for TypeScript 7.
+	 * Separate token mappings for the keyword and the `;` would lose to a mapping
+	 * around the statement, such as an arrow function's, which holds both ends
+	 * and maps them by offset.
+	 * @param {AST.Node} node
+	 * @param {string} keyword
+	 * @returns {void}
+	 */
+	function push_statement_mappings(node, keyword) {
+		if (!has_location(node)) return;
+		const mapping = push_points_mapping(node, keyword);
+		if (!mapping) return;
+		if (source[node.end - 1] !== ';' && generated_code[mapping.generatedOffsets[1]] === ';') {
+			mapping.generatedOffsets[1]++;
+		}
+		const token = find_source_token(source_tokens, keyword, node.start, 'after');
+		if (token && token.start === node.start) push_position_only_token(token, keyword);
+	}
+
+	/**
+	 * Map a type member TypeScript reports on as a whole (TS2374 on a duplicate
+	 * index signature) the same way: its start and its end as the points of one
+	 * diagnostics-only mapping, and its first token for TypeScript 7. The printer
+	 * writes a `;` after each member, which TypeScript counts in the member.
+	 * @param {AST.Node} node
+	 * @returns {void}
+	 */
+	function push_member_mappings(node) {
+		if (!has_location(node)) return;
+		const first = source_tokens?.find((token) => token.start === node.start);
+		if (!first) return;
+		const text = source.slice(first.start, first.end);
+		const mapping = push_points_mapping(node, text);
+		if (!mapping) return;
+		if (generated_code[mapping.generatedOffsets[1]] === ';') mapping.generatedOffsets[1]++;
+		push_position_only_token(first, text);
+	}
+
+	/**
 	 * Map the first `text` token at or after `from` that lies inside `node`.
 	 * @param {string} text
 	 * @param {number} from
@@ -741,6 +846,96 @@ export function convert_source_map_to_mappings(
 		if (keyword?.loc && keyword.start < node.end) {
 			tokens.push({ source: text, generated: text, loc: keyword.loc, metadata: {} });
 		}
+	}
+
+	/**
+	 * Map a source token to the same text where the printer writes it. A token
+	 * the printer leaves out or writes differently gets no mapping.
+	 * @param {AST.SourceLocation | null | undefined} loc
+	 * @param {string} text
+	 * @param {Partial<CodeMapping['data']>} [data]
+	 * @returns {void}
+	 */
+	function push_printed_token(loc, text, data = mapping_data) {
+		if (!loc || generated_offset_for_text(loc.start, text) === undefined) return;
+		tokens.push({ source: text, generated: text, loc, metadata: {}, mappingData: data });
+	}
+
+	/**
+	 * TypeScript reports unreachable code (TS7027) from the start of the first
+	 * unreachable statement to the end of the last. Map the keyword that starts
+	 * a statement, for diagnostics only.
+	 * @param {AST.Node} node
+	 * @param {string} keyword
+	 * @returns {void}
+	 */
+	function push_statement_keyword_token(node, keyword) {
+		if (!has_location(node)) return;
+		const token = find_source_token(source_tokens, keyword, node.start, 'after');
+		if (token?.start === node.start) {
+			push_printed_token(token.loc, keyword, mapping_data_verify_only);
+		}
+	}
+
+	/**
+	 * Map the `}` that ends a block, for diagnostics only, so that unreachable
+	 * code (TS7027) that ends with the block keeps its end.
+	 * @param {AST.Node | null | undefined} node
+	 * @returns {void}
+	 */
+	function push_block_end_token(node) {
+		if (!has_location(node) || source[node.end - 1] !== '}') return;
+		const token = find_source_token(source_tokens, '}', node.end, 'before');
+		if (token?.end === node.end) push_printed_token(token.loc, '}', mapping_data_verify_only);
+	}
+
+	/**
+	 * TypeScript reports some errors on a whole declaration, from its keyword
+	 * (TS6199 when all its variables are unused, TS7027), and on a whole binding
+	 * pattern, from its bracket (TS6198 when all its elements are unused).
+	 * In a `@{` body these start where no other mapping covers (#1062).
+	 * @param {AST.VariableDeclaration & AST.NodeWithLocation} node
+	 * @returns {void}
+	 */
+	function push_declaration_keyword_tokens(node) {
+		const keywords = node.declare ? ['declare', node.kind] : [node.kind];
+		const bound = node.declarations[0]?.start ?? node.end;
+		let from = node.start;
+		for (const keyword of keywords) {
+			// The printer writes `await using` as one piece.
+			const token = find_source_token(source_tokens, keyword.split(' ')[0], from, 'after');
+			if (!token?.loc || !source.startsWith(keyword, token.start)) return;
+			// The first keyword starts the declaration, which a declaration the
+			// compiler adds with the location of other code does not.
+			if (keyword === keywords[0] ? token.start !== node.start : token.start >= bound) return;
+			const { line, column } = token.loc.start;
+			push_printed_token(
+				{ start: token.loc.start, end: { line, column: column + keyword.length } },
+				keyword,
+			);
+			from = token.start + keyword.length;
+		}
+	}
+
+	/**
+	 * Map the opening or the closing bracket of a binding pattern.
+	 * @param {AST.ObjectPattern | AST.ArrayPattern} node
+	 * @param {'open' | 'close'} side
+	 * @returns {void}
+	 */
+	function push_pattern_bracket_token(node, side) {
+		if (!has_location(node)) return;
+		const [open, close] = node.type === 'ObjectPattern' ? ['{', '}'] : ['[', ']'];
+		const opening = find_source_token(source_tokens, open, node.start, 'after');
+		if (opening?.start !== node.start) return;
+		if (side === 'open') {
+			push_printed_token(opening.loc, open);
+			return;
+		}
+		const children = node.type === 'ObjectPattern' ? node.properties : node.elements;
+		const last = children.findLast((child) => has_location(child));
+		const closing = find_source_token(source_tokens, close, last?.end ?? opening.end, 'after');
+		if (closing && closing.end <= node.end) push_printed_token(closing.loc, close);
 	}
 
 	/**
@@ -764,6 +959,40 @@ export function convert_source_map_to_mappings(
 				lengths: [authored ? 1 : 0],
 				generatedOffsets: [semicolon],
 				generatedLengths: [1],
+				data: { ...mapping_data_verify_only, customData: {} },
+			});
+			return;
+		}
+	}
+
+	/**
+	 * A quick fix that adds a declaration before a statement, such as Add
+	 * missing function declaration, inserts it at the start of the statement's
+	 * line. A `return` the compiler adds around a template's output has no
+	 * source text, so map the start of its line to the start of the output's
+	 * line, when the output starts its line (#1027). The indentation maps too
+	 * when it is the same text in both files.
+	 * @param {AST.ReturnStatement} node
+	 * @returns {void}
+	 */
+	function push_output_line_start_mapping(node) {
+		const output = node.argument;
+		if (!has_location(output)) return;
+		const source_line_start = src_line_offsets[output.loc.start.line - 1];
+		const source_indent = source.slice(source_line_start, output.start);
+		if (!/^[ \t]*$/.test(source_indent)) return;
+		const { line, column } = output.loc.start;
+		for (const generated of src_to_gen_map.get(`${line}:${column}`) ?? []) {
+			const line_start = gen_line_offsets[generated.line - 1];
+			const before = generated_code.slice(line_start, line_start + generated.column);
+			const match = /^([ \t]*)return[ \t]+$/.exec(before);
+			if (!match) continue;
+			const length = match[1] === source_indent ? source_indent.length : 0;
+			mappings.push({
+				sourceOffsets: [source_line_start],
+				lengths: [length],
+				generatedOffsets: [line_start],
+				generatedLengths: [length],
 				data: { ...mapping_data_verify_only, customData: {} },
 			});
 			return;
@@ -800,12 +1029,18 @@ export function convert_source_map_to_mappings(
 				// A stripped or moved comment must not claim another node's shared
 				// source coordinate. The printer writes this exact formatted text.
 				if (start === undefined) continue;
+				// TypeScript completes inside a comment printed as written, such as
+				// the `/** */` template after `/**` and JSDoc tags (#1066).
+				const as_written = text === source.slice(comment.start, comment.end);
 				mappings.push({
 					sourceOffsets: [comment.start],
 					lengths: [comment.end - comment.start],
 					generatedOffsets: [start],
 					generatedLengths: [text.length],
-					data: { ...mapping_data_verify_only, customData: {} },
+					data: {
+						...(as_written ? mapping_data_verify_complete : mapping_data_verify_only),
+						customData: {},
+					},
 				});
 			}
 		}
@@ -857,6 +1092,35 @@ export function convert_source_map_to_mappings(
 			}
 			mappings.push(mapping);
 		}
+	}
+
+	/**
+	 * A lowered dynamic tag, `<{expr} … />`, prints as `<TsrxDynamic is={expr} … />`.
+	 * TypeScript reports a component's missing or unknown props (TS2769) on
+	 * the generated name, which has no source of its own, so it maps to the
+	 * authored `{expr}` (the `is` attribute's location) for diagnostics.
+	 * @param {ESTreeJSX.JSXOpeningElement | ESTreeJSX.TSRXJSXOpeningElement} opening
+	 * @returns {void}
+	 */
+	function add_dynamic_tag_name_mapping(opening) {
+		const name = opening.name;
+		if (!has_location(opening) || name.type !== 'JSXIdentifier' || has_location(name)) return;
+		const is = opening.attributes.find(
+			(attribute) =>
+				attribute.type === 'JSXAttribute' &&
+				attribute.name.type === 'JSXIdentifier' &&
+				attribute.name.name === 'is',
+		);
+		if (!has_location(is)) return;
+		const generated = generated_offset_for_text(opening.loc.start, `<${name.name}`);
+		if (generated === undefined) return;
+		mappings.push({
+			sourceOffsets: [is.start],
+			lengths: [is.end - is.start],
+			generatedOffsets: [generated + 1],
+			generatedLengths: [name.name.length],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
 	}
 
 	/**
@@ -1277,6 +1541,10 @@ export function convert_source_map_to_mappings(
 					}
 				}
 
+				if (node.metadata?.dynamicElement) {
+					add_dynamic_tag_name_mapping(opening);
+				}
+
 				visit(opening);
 
 				// 2. Visit children in order
@@ -1303,6 +1571,44 @@ export function convert_source_map_to_mappings(
 							mapping.generatedOffsets[0] + mapping.generatedLengths[0] - close_length,
 						];
 						mapping.generatedLengths = [close_length];
+					}
+					// Loose recovery adds a closing tag, with no source position, to a tag
+					// left unclosed (#978), and the closing tags around it can then be
+					// printed after children that follow them in the source. The first
+					// generated position of this closing tag's start can be an added tag,
+					// or the end of a child before one, so the span would cover it, and
+					// TypeScript's errors on the added tag would show here again. Start
+					// the span at this tag's own `</`, the last generated position of its
+					// start, and end it at its own `>`, keeping the extension above.
+					/** @param {any} element */
+					const has_recovered_closing = (element) =>
+						element.children?.some(
+							(/** @type {any} */ child) =>
+								(child.type === 'JSXElement' || child.type === 'JSXFragment') &&
+								(child.closingElement?.metadata?.recovered || has_recovered_closing(child)),
+						);
+					if (closing && has_recovered_closing(node)) {
+						const { start, end } = /** @type {AST.SourceLocation} */ (closing.loc);
+						const offsets = (/** @type {AST.Position} */ position) =>
+							(src_to_gen_map.get(`${position.line}:${position.column}`) ?? []).map((generated) =>
+								loc_to_offset(generated.line, generated.column, gen_line_offsets),
+							);
+						const own_start = offsets(start)
+							.filter((offset) => generated_code.startsWith('</', offset))
+							.at(-1);
+						const first_end = offsets(end)[0];
+						if (
+							own_start !== undefined &&
+							first_end !== undefined &&
+							own_start >= mapping.generatedOffsets[0]
+						) {
+							const extension =
+								mapping.generatedOffsets[0] + mapping.generatedLengths[0] - first_end;
+							mapping.generatedOffsets = [own_start];
+							mapping.generatedLengths = [
+								generated_code.indexOf('>', own_start) + 1 - own_start + extension,
+							];
+						}
 					}
 					mappings.push(mapping);
 				}
@@ -1443,6 +1749,9 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'VariableDeclaration') {
+				if (has_location(node)) {
+					push_declaration_keyword_tokens(node);
+				}
 				// Visit declarators in order
 				if (node.declarations) {
 					for (const declarator of node.declarations) {
@@ -1468,6 +1777,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'IfStatement') {
+				push_statement_keyword_token(node, 'if');
 				// Visit in source order: test, consequent, alternate
 				if (node.test) {
 					visit(node.test);
@@ -1557,6 +1867,7 @@ export function convert_source_map_to_mappings(
 
 				return;
 			} else if (node.type === 'ForStatement') {
+				push_statement_keyword_token(node, 'for');
 				// Visit in source order: init, test, update, body
 				if (node.init) {
 					visit(node.init);
@@ -1576,6 +1887,7 @@ export function convert_source_map_to_mappings(
 				);
 				return;
 			} else if (node.type === 'ForOfStatement' || node.type === 'ForInStatement') {
+				push_statement_keyword_token(node, 'for');
 				// Visit in source order: left, right, TSRX index extension, body
 				if (node.left) {
 					visit(node.left);
@@ -1614,22 +1926,27 @@ export function convert_source_map_to_mappings(
 			} else if (node.type === 'WhileStatement' || node.type === 'DoWhileStatement') {
 				// Visit in source order: test, body (while) or body, test (do-while)
 				if (node.type === 'WhileStatement') {
+					push_statement_keyword_token(node, 'while');
 					if (node.test) {
 						visit(node.test);
 					}
 					if (node.body) {
 						visit(node.body);
+						push_block_end_token(node.body);
 					}
 				} else {
+					push_statement_keyword_token(node, 'do');
 					if (node.body) {
 						visit(node.body);
 					}
 					if (node.test) {
 						visit(node.test);
 					}
+					push_statement_end_mapping(node);
 				}
 				return;
 			} else if (node.type === 'TryStatement') {
+				push_statement_keyword_token(node, 'try');
 				// Visit in source order: block, pending, handler, finalizer
 				if (node.block) {
 					mappings.push(
@@ -1656,9 +1973,11 @@ export function convert_source_map_to_mappings(
 				}
 				if (node.handler) {
 					visit(node.handler);
+					if (!node.finalizer) push_block_end_token(node.handler.body);
 				}
 				if (node.finalizer) {
 					visit(node.finalizer);
+					push_block_end_token(node.finalizer);
 				}
 				return;
 			} else if (node.type === 'CatchClause') {
@@ -1678,6 +1997,7 @@ export function convert_source_map_to_mappings(
 					mappings.push(
 						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
 					);
+					push_statement_keyword_token(node, 'new');
 				}
 
 				if (node.arguments) {
@@ -1761,10 +2081,9 @@ export function convert_source_map_to_mappings(
 
 				return;
 			} else if (node.type === 'ObjectExpression' || node.type === 'ObjectPattern') {
-				if (node.type === 'ObjectExpression' && has_location(node)) {
-					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
-					);
+				if (node.type === 'ObjectExpression') push_literal_mappings(node, '{', '}');
+				if (node.type === 'ObjectPattern') {
+					push_pattern_bracket_token(node, 'open');
 				}
 
 				// Visit properties in order
@@ -1772,6 +2091,9 @@ export function convert_source_map_to_mappings(
 					for (const prop of node.properties) {
 						visit(prop);
 					}
+				}
+				if (node.type === 'ObjectPattern') {
+					push_pattern_bracket_token(node, 'close');
 				}
 				return;
 			} else if (node.type === 'Property') {
@@ -1798,11 +2120,18 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'ArrayExpression' || node.type === 'ArrayPattern') {
+				if (node.type === 'ArrayExpression') push_literal_mappings(node, '[', ']');
+				if (node.type === 'ArrayPattern') {
+					push_pattern_bracket_token(node, 'open');
+				}
 				// Visit elements in order
 				if (node.elements) {
 					for (const element of node.elements) {
 						if (element) visit(element);
 					}
+				}
+				if (node.type === 'ArrayPattern') {
+					push_pattern_bracket_token(node, 'close');
 				}
 				return;
 			} else if (node.type === 'ConditionalExpression') {
@@ -1818,6 +2147,12 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'UnaryExpression' || node.type === 'UpdateExpression') {
+				// TypeScript reports some errors on a whole `typeof x` (TS2367 when it
+				// is compared with a string it can never be) or on a statement that
+				// starts with the keyword (TS7027).
+				if (node.type === 'UnaryExpression' && /^[a-z]/.test(node.operator)) {
+					push_statement_keyword_token(node, node.operator);
+				}
 				// Visit argument
 				if (node.argument) {
 					visit(node.argument);
@@ -1850,6 +2185,9 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'ReturnStatement' || node.type === 'ThrowStatement') {
+				if (node.type === 'ThrowStatement') {
+					push_statement_keyword_token(node, 'throw');
+				}
 				// Visit argument
 				if (node.argument) {
 					visit(node.argument);
@@ -1882,6 +2220,12 @@ export function convert_source_map_to_mappings(
 					mapping.generatedLengths = [RETURN_KEYWORD.length];
 
 					mappings.push(mapping);
+					push_statement_end_mapping(node);
+				} else if (node.type === 'ThrowStatement') {
+					push_statement_end_mapping(node);
+				} else {
+					// A return the compiler adds, around a template's output.
+					push_output_line_start_mapping(node);
 				}
 				return;
 			} else if (node.type === 'ExpressionStatement') {
@@ -1899,6 +2243,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'SwitchStatement') {
+				push_statement_keyword_token(node, 'switch');
 				// Visit in source order: discriminant, cases
 				if (node.discriminant) {
 					visit(node.discriminant);
@@ -2022,6 +2367,17 @@ export function convert_source_map_to_mappings(
 				if (node.type === 'RestElement' && has_location(node)) {
 					push_source_keyword_token('...', node.start, node);
 				}
+				// TypeScript reports some errors on a whole spread (TS2698 on
+				// `{ ...value }` when the value is not an object), so it maps like a
+				// literal: its ends as points, and its `...` for TypeScript 7.
+				if (
+					node.type === 'SpreadElement' &&
+					has_location(node) &&
+					push_points_mapping(node, '...')
+				) {
+					const ellipsis = find_source_token(source_tokens, '...', node.start, 'after');
+					if (ellipsis && ellipsis.start === node.start) push_position_only_token(ellipsis, '...');
+				}
 				// Visit the argument
 				if (node.argument) {
 					visit(node.argument);
@@ -2087,7 +2443,10 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'EmptyStatement' || node.type === 'DebuggerStatement') {
-				// No children to visit
+				if (node.type === 'DebuggerStatement') {
+					push_statement_keyword_token(node, 'debugger');
+					push_statement_end_mapping(node);
+				}
 				return;
 			} else if (node.type === 'LabeledStatement') {
 				// Visit label and statement
@@ -2099,10 +2458,14 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'BreakStatement' || node.type === 'ContinueStatement') {
+				const keyword = node.type === 'BreakStatement' ? 'break' : 'continue';
+				push_statement_mappings(node, keyword);
+				push_statement_keyword_token(node, keyword);
 				// Visit label if present
 				if (node.label) {
 					visit(node.label);
 				}
+				push_statement_end_mapping(node);
 				return;
 			} else if (node.type === 'WithStatement') {
 				// Visit object and body
@@ -2184,9 +2547,13 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'ImportExpression') {
-				// Visit source
+				// Visit in source order: source, then the options of
+				// `import(source, options)` and `import.defer(source, options)`
 				if (node.source) {
 					visit(node.source);
+				}
+				if (node.options) {
+					visit(node.options);
 				}
 				return;
 			} else if (node.type === 'ParenthesizedExpression') {
@@ -2344,6 +2711,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSTypeLiteral') {
+				push_literal_mappings(node, '{', '}');
 				// Object type literal { foo: string }
 				if (node.members) {
 					for (const member of node.members) {
@@ -2407,6 +2775,7 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSIndexSignature') {
+				push_member_mappings(node);
 				// Index signature [key: string]: Type
 				if (node.parameters) {
 					for (const param of node.parameters) {
@@ -2499,9 +2868,15 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSMappedType') {
-				// Mapped type: { [K in keyof T]: ... }
+				// Mapped type: { [K in keyof T as N]: ... }
 				if (node.typeParameter) {
 					visit(node.typeParameter);
+				}
+				if (node.nameType) {
+					// TypeScript reports a key type that is not a property key (TS2322) on
+					// the whole remapping type, which can have no mapped token, as `{}`.
+					push_verify_only_span_mapping(node.nameType);
+					visit(node.nameType);
 				}
 				if (node.typeAnnotation) {
 					visit(node.typeAnnotation);
@@ -2523,7 +2898,10 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSImportType') {
-				// Import type: import("module", { with: { … } }).Type
+				// Import type: import("module", { with: { … } }).Type<Args>
+				// TypeScript reports some errors on the whole import type (TS1340 on
+				// a module used as a type without `typeof`).
+				push_verify_only_span_mapping(node);
 				if (node.argument) {
 					visit(node.argument);
 				}
@@ -2533,8 +2911,8 @@ export function convert_source_map_to_mappings(
 				if (node.qualifier) {
 					visit(node.qualifier);
 				}
-				if (node.typeParameters) {
-					visit(node.typeParameters);
+				if (node.typeArguments) {
+					visit(node.typeArguments);
 				}
 				return;
 			} else if (node.type === 'TSTypeQuery') {
@@ -2584,6 +2962,13 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSEnumDeclaration') {
+				if (has_location(node)) {
+					const start = node.start;
+					const keyword = ['declare', 'const', 'enum'].find((text) =>
+						source.startsWith(text, start),
+					);
+					if (keyword) push_statement_keyword_token(node, keyword);
+				}
 				// Visit id and members
 				if (node.id) {
 					visit(node.id);
@@ -2591,6 +2976,7 @@ export function convert_source_map_to_mappings(
 				for (const member of node.body.members) {
 					visit(member);
 				}
+				push_block_end_token(node);
 				return;
 			} else if (node.type === 'TSEnumMember') {
 				// Visit id and initializer
@@ -2672,9 +3058,12 @@ export function convert_source_map_to_mappings(
 				if (node.typeParameters) {
 					visit(node.typeParameters);
 				}
-				if (node.params) {
-					for (const param of node.params) {
-						visit(param);
+				for (const param of node.params) {
+					visit(param);
+					const annotation = /** @type {Exclude<AST.Parameter, AST.TSParameterProperty>} */ (param)
+						.typeAnnotation;
+					if (annotation) {
+						visit(annotation);
 					}
 				}
 				if (node.returnType) {
@@ -2866,11 +3255,18 @@ export function convert_source_map_to_mappings(
 	});
 
 	// Add a mapping for the very beginning of the file to handle import additions
-	// This ensures that code actions adding imports at the top work correctly
+	// This ensures that code actions adding imports at the top work correctly.
+	// A completion maps its import edit only through a mapping with completions,
+	// so a keyword mapped for diagnostics only does not replace it.
 	if (
 		!isImportDeclarationPresent &&
 		mappings.length > 0 &&
-		(mappings[0].sourceOffsets[0] > 0 || mappings[0].generatedOffsets[0] > 0)
+		!mappings.some(
+			(mapping) =>
+				mapping.sourceOffsets[0] === 0 &&
+				mapping.generatedOffsets[0] === 0 &&
+				mapping.data.completion,
+		)
 	) {
 		mappings.unshift({
 			sourceOffsets: [0],
@@ -3019,18 +3415,19 @@ function add_diagnostic_mappings(
 		);
 		if (generated_start === null) continue;
 
+		// The anchor stays on its generated line. The source token isn't in the
+		// generated code, so running past the line would map unrelated code.
+		const line_end = generated_code.indexOf('\n', generated_start);
+		const room = (line_end === -1 ? generated_code.length : line_end) - generated_start;
+
 		diagnostic_mappings.push({
 			sourceOffsets: [start],
 			generatedOffsets: [generated_start],
 			lengths: [length],
-			generatedLengths: [
-				generated_code.length === 0
-					? 0
-					: Math.max(1, Math.min(length, generated_code.length - generated_start)),
-			],
+			generatedLengths: [generated_code.length === 0 ? 0 : Math.max(1, Math.min(length, room))],
 			data: {
 				...mapping_data_verify_only,
-				customData: {},
+				customData: { diagnosticAnchor: true },
 			},
 		});
 	}
@@ -3117,7 +3514,9 @@ function get_nearest_generated_offset_from_source_line_map(
 	const generated_offset =
 		loc_to_offset(position.line, position.column, gen_line_offsets) +
 		('sourceColumn' in position ? loc.column - position.sourceColumn : 0);
-	return Math.max(0, Math.min(generated_offset, generated_code.length - 1));
+	// The column only carries over on the generated line of the code it's from.
+	const next_line = gen_line_offsets[position.line] ?? generated_code.length;
+	return Math.max(0, Math.min(generated_offset, next_line - 1, generated_code.length - 1));
 }
 
 /**

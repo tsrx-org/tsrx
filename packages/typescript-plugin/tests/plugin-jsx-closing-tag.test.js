@@ -93,10 +93,11 @@ describe('tsserver plugin: closing JSX tags in .tsrx files', () => {
 }
 `;
 
-	it('answers `</b>` right after a typed `<b>`, through the source-to-generated mapping', () => {
+	it('answers `</b>` right after a typed `<b>`, from the parsed source', () => {
 		const { service, file_name, generated } = create_service(source);
-		// The type-only output keeps the recovered tag unclosed, as authored.
-		expect(generated).toContain('<b></button>');
+		// The type-only output closes the recovered tag (#978), so TypeScript sees
+		// no unclosed tag there, and the parsed source decides.
+		expect(generated).toContain('<b></b></button>');
 		const after_typed_tag = source.indexOf('<b>') + '<b>'.length;
 		expect(service.getJsxClosingTagAtPosition(file_name, after_typed_tag)).toEqual({
 			newText: '</b>',

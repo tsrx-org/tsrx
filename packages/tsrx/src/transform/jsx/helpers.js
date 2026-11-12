@@ -254,6 +254,50 @@ export function tsx_with_ts_locations(
 		return covers_node;
 	};
 
+	/**
+	 * Elements and fragments that print in parentheses. TSX reads an element
+	 * only as a unary operand: `<b>ok</b>.type` is the element followed by a
+	 * separate `.type` statement, and `class A extends <div /> {}` doesn't
+	 * parse. So an element needs its parentheses as the object of a member,
+	 * call, tagged-template, `!` or type-argument suffix (an instantiation
+	 * expression), a `new` callee, or a superclass. TSX also reads a `<` right
+	 * after an element as the start of another element, so an element that
+	 * ends the left operand of `<` needs them too (see
+	 * `element_before_less_than`). The build parse drops the source's
+	 * parentheses, and esrap ranks an element as a primary expression, which
+	 * it never wraps there. The editor parse keeps them as a
+	 * `ParenthesizedExpression`, which prints them.
+	 * @type {WeakSet<AST.Node>}
+	 */
+	const parenthesized_elements = new WeakSet();
+
+	/**
+	 * @template {AST.Node} T
+	 * @param {((node: T, context: ESRap.Context) => void) | undefined} print
+	 * @param {T} node
+	 * @param {AST.Node | null | undefined} operand
+	 * @param {ESRap.Context} context
+	 */
+	const print_with_element_operand = (print, node, operand, context) => {
+		const wrap = operand?.type === 'JSXElement' || operand?.type === 'JSXFragment';
+		if (wrap) parenthesized_elements.add(operand);
+		/** @type {NonNullable<typeof print>} */ (print)(node, context);
+		if (wrap) parenthesized_elements.delete(operand);
+	};
+
+	/**
+	 * @template {AST.Node} T
+	 * @param {((node: T, context: ESRap.Context) => void) | undefined} print
+	 * @param {T} node
+	 * @param {ESRap.Context} context
+	 */
+	const print_element = (print, node, context) => {
+		const wrap = parenthesized_elements.has(node);
+		if (wrap) context.write('(');
+		/** @type {NonNullable<typeof print>} */ (print)(node, context);
+		if (wrap) context.write(')');
+	};
+
 	const leading_preserved = (/** @type {AST.Program} */ program) => {
 		if (!preserve_comments || !comments?.length) return [];
 		// Injected statements (dynamic-import/try-import prepends) carry no
@@ -413,6 +457,17 @@ export function tsx_with_ts_locations(
 				context,
 			);
 		},
+		// esrap writes `readonly` but not `static` before an index signature (up to
+		// at least esrap 2.4.0), which would turn a static signature into an
+		// instance one (#1253).
+		// UPSTREAM(sveltejs/esrap, not reported yet): remove once a release prints `static`
+		TSIndexSignature: (node, context) => {
+			if (/** @type {{ static?: boolean }} */ (node).static) context.write('static ');
+			/** @type {NonNullable<typeof base.TSIndexSignature>} */ (base.TSIndexSignature)(
+				node,
+				context,
+			);
+		},
 		TSNamedTupleMember: (node, context) => {
 			context.visit(node.label);
 			if (node.optional) {
@@ -501,6 +556,31 @@ export function tsx_with_ts_locations(
 			}
 			context.write('>');
 		},
+		JSXElement: (node, context) => print_element(base.JSXElement, node, context),
+		JSXFragment: (node, context) => print_element(base.JSXFragment, node, context),
+		MemberExpression: (node, context) =>
+			print_with_element_operand(base.MemberExpression, node, node.object, context),
+		CallExpression: (node, context) =>
+			print_with_element_operand(base.CallExpression, node, node.callee, context),
+		NewExpression: (node, context) =>
+			print_with_element_operand(base.NewExpression, node, node.callee, context),
+		TaggedTemplateExpression: (node, context) =>
+			print_with_element_operand(base.TaggedTemplateExpression, node, node.tag, context),
+		BinaryExpression: (node, context) =>
+			print_with_element_operand(
+				base.BinaryExpression,
+				node,
+				node.operator === '<' ? element_before_less_than(node.left) : null,
+				context,
+			),
+		TSNonNullExpression: (node, context) =>
+			print_with_element_operand(base.TSNonNullExpression, node, node.expression, context),
+		TSInstantiationExpression: (node, context) =>
+			print_with_element_operand(base.TSInstantiationExpression, node, node.expression, context),
+		ClassDeclaration: (node, context) =>
+			print_with_element_operand(base.ClassDeclaration, node, node.superClass, context),
+		ClassExpression: (node, context) =>
+			print_with_element_operand(base.ClassExpression, node, node.superClass, context),
 		// esrap's TSExpressionWithTypeArguments printer only emits `expression`,
 		// dropping interface heritage arguments such as the `<T>` in
 		// `interface Foo<T> extends Bar<T> {}`. Besides changing the declaration's
@@ -931,6 +1011,49 @@ function print_binding_pattern(print, node, context) {
 	print({ ...node, typeAnnotation: undefined }, context);
 	context.write('?');
 	if (node.typeAnnotation) context.visit(node.typeAnnotation);
+}
+
+/**
+ * The precedence esrap gives each binary operator that binds at least as
+ * tightly as `<`. esrap wraps any looser operand of these in parentheses.
+ * @type {Record<string, number>}
+ */
+const TIGHT_BINARY_PRECEDENCE = {
+	'<': 9,
+	'>': 9,
+	'<=': 9,
+	'>=': 9,
+	in: 9,
+	instanceof: 9,
+	'<<': 10,
+	'>>': 10,
+	'>>>': 10,
+	'+': 11,
+	'-': 11,
+	'*': 12,
+	'/': 12,
+	'%': 12,
+	'**': 13,
+};
+
+/**
+ * The element or fragment that `node` ends with when esrap prints it as the
+ * left operand of `<`, with no parentheses after it: `<b />` in `<b /> < x`
+ * and `x + <b /> < y`. A unary operand (`!<b /> < y`) is fine, as is an
+ * operand esrap wraps (`(x == <b />) < y`).
+ * @param {AST.Node} node
+ * @param {number} [min_precedence] The precedence below which esrap wraps
+ * `node`.
+ * @returns {AST.Node | null}
+ */
+function element_before_less_than(node, min_precedence = TIGHT_BINARY_PRECEDENCE['<']) {
+	if (node.type === 'JSXElement' || node.type === 'JSXFragment') return node;
+	if (node.type !== 'BinaryExpression') return null;
+	const precedence = TIGHT_BINARY_PRECEDENCE[node.operator];
+	if (precedence === undefined || precedence < min_precedence) return null;
+	// A right operand needs to bind more tightly to go unwrapped, except in
+	// right-associative `**`.
+	return element_before_less_than(node.right, node.operator === '**' ? precedence : precedence + 1);
 }
 
 /**
