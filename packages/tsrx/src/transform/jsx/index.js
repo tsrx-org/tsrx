@@ -3477,6 +3477,11 @@ function is_statement_list_owner(node, key) {
 function collect_local_component_helpers(statement) {
 	/** @type {AST.Statement[]} */
 	const helpers = [];
+	// A block used as a statement (`{ … }`, a `case` body) is a statement list
+	// of its own, which `expand_local_component_helpers` fills when it visits
+	// the block. Collecting its helpers here too would declare them again
+	// outside it, where the block's own bindings are out of scope.
+	if (is_statement_list_owner(statement, 'body')) return helpers;
 	/** @param {AST.Node} node */
 	const visit = (node) => {
 		const local_helpers = node.metadata?.generated_local_helpers;
