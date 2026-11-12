@@ -1495,10 +1495,10 @@ function is_type_only_node(node) {
 
 /**
  * Replaces each reference to a name in `replacements` with its expression,
- * leaving names that a nested function, block, or loop declares again. A
- * component tag that names one (`<Icon />`, `<icons.Star />`) becomes a
- * `dynamic` component, declared in `tag_declarations`, so it follows the
- * row too.
+ * leaving names that a nested function, class expression, block, or loop
+ * declares again. A component tag that names one (`<Icon />`,
+ * `<icons.Star />`) becomes a `dynamic` component, declared in
+ * `tag_declarations`, so it follows the row too.
  *
  * @template {AST.Node} T
  * @param {T} node
@@ -1613,6 +1613,14 @@ function rewrite_binding_refs(node, replacements, tag_declarations, transform_co
 			},
 			BlockStatement(block, { state, next }) {
 				next(with_declared(state, lexical_names(block.body)));
+			},
+			// A class expression's name is bound inside it, heritage included.
+			ClassExpression(expression, { state, next }) {
+				next(
+					expression.id
+						? with_declared(state, new Map([[expression.id.name, expression.id]]))
+						: state,
+				);
 			},
 			CatchClause(clause, { state, next }) {
 				next(with_declared(state, collect_param_bindings(clause.param ? [clause.param] : [])));

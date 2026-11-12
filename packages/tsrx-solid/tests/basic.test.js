@@ -383,6 +383,25 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toMatch(/\{_\$_bindings_\d+\(\)\.id\}<\/li>/);
 		});
 
+		it("leaves a class expression's own name inside it in a destructured keyed loop", () => {
+			const { code } = compile(
+				`function App({ items }: { items: { Item: string }[] }) @{
+					@for (const { Item } of items; index i) {
+						const Made = class Item {
+							static label() {
+								return Item.name;
+							}
+						};
+						<li title={Item}>{Made.label()}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('return Item.name;');
+			expect(code).toMatch(/title=\{_\$_bindings_\d+\(\)\.Item\}/);
+		});
+
 		it('keeps the authored names in the type view of a destructured keyed loop', () => {
 			const { code, errors } = compile_to_volar_mappings(
 				`function App({ items }: { items: { id: number; Icon: () => any }[] }) @{
