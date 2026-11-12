@@ -86,12 +86,39 @@ export function merge_ref_props<T = Element>(...refs: Array<RefValue<T>>): RefVa
  */
 export type SpreadFalsy = false | 0 | '' | 0n | null | undefined | void;
 
+// Joins the class a host spread passes an element with its scope classes.
+export function merge_spread_class<T extends object | SpreadFalsy>(
+	props: T,
+	scope_class: unknown,
+	key: 'class' | 'className',
+	alias?: 'class' | 'className',
+	kind?: ClassValueKind,
+): T;
+
+/**
+ * How a runtime renders a host element's class value; see `join_scope_class`.
+ */
+export type ClassValueKind = 'text' | 'text-true' | 'text-both' | 'list';
+
+// Joins an element's authored class with its scope classes as the runtime
+// renders that class, leaving out a class the runtime would not render.
+export function join_scope_class(
+	value: unknown,
+	scope_class: unknown,
+	kind?: ClassValueKind,
+): unknown;
+
 export function normalize_spread_props<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): T | SpreadProps;
 // Returns the same merged `ref` for a bag carrying the same refs.
 export function normalize_spread_props_sharing_refs<T extends object | SpreadFalsy>(
+	props: T,
+	...outer_refs: Array<RefValue<Element>>
+): T | SpreadProps;
+// Always returns the normalized copy, for JSX runtimes that copy a spread once.
+export function copy_spread_props<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): T | SpreadProps;
@@ -106,6 +133,10 @@ export type SpreadRefProps<T> = (T | SpreadProps) & { readonly ref?: any };
 
 // A nullish bag comes back as an empty one so the compiler can read `.ref`.
 export function normalize_spread_props_for_ref_attr<T extends object | SpreadFalsy>(
+	props: T,
+	...outer_refs: Array<RefValue<Element>>
+): SpreadRefProps<Exclude<T, null | undefined | void>>;
+export function copy_spread_props_for_ref_attr<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): SpreadRefProps<Exclude<T, null | undefined | void>>;
