@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { use, useState } from 'hono/jsx';
 import { createContext, render, useContext } from 'hono/jsx/dom';
-import { Style, css } from 'hono/css';
+import { Style, createCssContext, css } from 'hono/css';
 import {
 	NullishSpreadRefApp,
 	NullishSpreadRefInIfApp,
@@ -9,6 +9,12 @@ import {
 } from '@tsrx/core/test-harness/runtime/nullish-spread-ref-components.tsrx';
 import {
 	NestedSpreadRefOrderApp,
+	RefBeforeAttributeApp,
+	RefBeforeSpreadApp,
+	SpreadClearsRefApp,
+	SpreadGetterApp,
+	SpreadGetterOwnRefApp,
+	SpreadGetterRefApp,
 	SpreadRefOrderApp,
 	SpreadsRefOrderApp,
 	spread_ref_order_nodes,
@@ -38,6 +44,11 @@ import {
 	ScriptBracesApp,
 	script_body_cases,
 } from '@tsrx/core/test-harness/runtime/script-body-components.tsrx';
+import {
+	ForOfSourceApp,
+	ForOfSourceEmptyApp,
+	for_of_source_cases,
+} from '@tsrx/core/test-harness/runtime/for-of-sources-components.tsrx';
 
 let container: HTMLDivElement;
 let resolveValue: (value: string) => void;
@@ -154,6 +165,38 @@ function BoundaryApp() @{
 	}
 }
 
+function loadOrThrow(): string {
+	throw new Error('body boom');
+}
+
+function BodyThrowBoundaryApp() @{
+	@try {
+		const value = loadOrThrow();
+		<p class="ok">{value}</p>
+	} @catch (error) {
+		<p class="error">{error.message}</p>
+	}
+}
+
+function pendingBoom(): string {
+	throw new Error('pending boom');
+}
+
+function ThrowingPendingOuterCatchApp() @{
+	@try {
+		<div class="outer">
+			@try {
+				<AsyncContent />
+			} @pending {
+				const label = pendingBoom();
+				<p class="pending">{label}</p>
+			}
+		</div>
+	} @catch (error) {
+		<p class="outer-caught">{(error as Error).message}</p>
+	}
+}
+
 const ThemeContext = createContext('light');
 
 function ThemeLabel() @{
@@ -200,6 +243,136 @@ function ConditionalSpreadApp(props: { enabled: boolean }) @{
 			{...(props.enabled ? { disabled: true } : null)}
 		/>
 	</>
+}
+
+const SCOPE_HASH = expect.stringMatching(/^tsrx-[0-9a-f]+$/);
+
+type SpreadBag = Record<string, unknown> | null | undefined;
+
+function SpreadClassApp({ bag }: { bag?: SpreadBag }) @{
+	<>
+		<style>
+			span {
+				color: rgb(0, 128, 0);
+			}
+		</style>
+		<span data-probe="spread" {...bag} />
+		<span data-probe="class-before" class="base" {...bag} />
+		<span data-probe="class-name-before" className="base" {...bag} />
+		<span data-probe="class-after" {...bag} class="last" />
+		<span data-probe="class-name-after" {...bag} className="last" />
+	</>
+}
+
+function ReactiveSpreadClassApp({ bags }: { bags: SpreadBag[] }) @{
+	const [index, setIndex] = useState(0);
+
+	<>
+		<style>
+			span {
+				color: rgb(0, 128, 0);
+			}
+		</style>
+		<span data-probe="spread" {...bags[index]} />
+		<span data-probe="class-before" class="base" {...bags[index]} />
+		<button data-probe="next" onClick={() => setIndex(index + 1)} />
+	</>
+}
+
+// Hono DOM applies the last of several class attributes.
+function NativeClassAttrs() @{
+	<>
+		<span data-probe="native-class-class-name" class="a" className="b" />
+		<span data-probe="native-class-name-class" className="a" class="b" />
+	</>
+}
+
+function ScopedClassAttrs() @{
+	<>
+		<style>
+			span {
+				color: rgb(0, 128, 0);
+			}
+		</style>
+		<span data-probe="class-class-name" class="a" className="b" />
+		<span data-probe="class-name-class" className="a" class="b" />
+	</>
+}
+
+function ClassAttrsApp() @{
+	<>
+		<NativeClassAttrs />
+		<ScopedClassAttrs />
+	</>
+}
+
+// Hono types `class` as a string, but untyped code can pass any of these.
+type ClassValue = string | number | boolean | null | undefined;
+
+function NativeClassValue({ value }: { value?: ClassValue }) @{
+	<span data-probe="native" class={value as string | undefined} />
+}
+
+function ScopedClassValue({ value }: { value?: ClassValue }) @{
+	<>
+		<style>
+			span {
+				color: rgb(0, 128, 0);
+			}
+		</style>
+		<span data-probe="scoped" class={value as string | undefined} />
+	</>
+}
+
+function ClassValueApp({ value }: { value?: ClassValue }) @{
+	<>
+		<NativeClassValue value={value} />
+		<ScopedClassValue value={value} />
+	</>
+}
+
+// Its own context, so its style sheet isn't one an earlier test cached.
+const css_context = createCssContext({ id: 'tsrx-scoped-css' });
+const css_red = () => css_context.css`
+	color: rgb(255, 0, 0);
+`;
+
+function NativeCssClasses() @{
+	<div>
+		<span data-probe="native-css-attribute" class={css_red()} />
+		<span data-probe="native-css-spread" {...{ class: css_red() }} />
+		<span data-probe="native-css-cx" class={css_context.cx(css_red(), 'extra')} />
+	</div>
+}
+
+function ScopedCssClasses() @{
+	<div>
+		<style>
+			span {
+				margin: 0;
+			}
+		</style>
+		<span data-probe="css-attribute" class={css_red()} />
+		<span data-probe="css-spread" {...{ class: css_red() }} />
+		<span data-probe="css-cx" class={css_context.cx(css_red(), 'extra')} />
+	</div>
+}
+
+function CssClassesApp() @{
+	<div>
+		<css_context.Style />
+		<NativeCssClasses />
+		<ScopedCssClasses />
+	</div>
+}
+
+function class_list(probe: string): string[] {
+	return Array.from((container.querySelector(`[data-probe="${probe}"]`) as HTMLElement).classList);
+}
+
+function classes(probe: string): string[] {
+	const element = container.querySelector(`[data-probe="${probe}"]`) as HTMLElement;
+	return element.className.split(' ');
 }
 
 describe('@tsrx/vite-plugin-hono DOM runtime', () => {
@@ -252,10 +425,25 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		expect(container.innerHTML).toBe('<span class="resolved">ready</span>');
 	});
 
+	// Hono keeps the @pending body inline, so it throws while the outer @try
+	// body renders, before anything suspends. A component fallback would
+	// throw inside Hono DOM's Suspense instead, which crashes its renderer.
+	it('catches a throw from a @pending body in an enclosing @catch', () => {
+		render(<ThrowingPendingOuterCatchApp />, container);
+
+		expect(container.innerHTML).toBe('<p class="outer-caught">pending boom</p>');
+	});
+
 	it('renders @catch through Hono DOM ErrorBoundary', () => {
 		render(<BoundaryApp />, container);
 
 		expect(container.innerHTML).toBe('<p class="error">boom</p>');
+	});
+
+	it('catches a throw from a @try body setup statement', () => {
+		render(<BodyThrowBoundaryApp />, container);
+
+		expect(container.innerHTML).toBe('<p class="error">body boom</p>');
 	});
 
 	// oxc, which compiles the target's JSX, trims a non-breaking space at the
@@ -288,6 +476,23 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			render(<JsxTextCharactersApp />, container);
 
 			expect(container.querySelector(selector)?.textContent).toBe(text);
+		});
+	}
+
+	// `@for` walks its source the way `for...of` does.
+	for (const [label, make, rows] of for_of_source_cases) {
+		it(`renders the items of ${label} in @for`, () => {
+			render(<ForOfSourceApp items={make()} />, container);
+			expect(
+				Array.from(container.querySelectorAll('.for-of-source li'), (li) => li.textContent),
+			).toEqual(rows);
+		});
+
+		it(`renders ${label} in @for with @empty`, () => {
+			render(<ForOfSourceEmptyApp items={make()} />, container);
+			expect(
+				Array.from(container.querySelectorAll('.for-of-source-empty li'), (li) => li.textContent),
+			).toEqual(rows.length > 0 ? rows : ['empty']);
 		});
 	}
 
@@ -333,6 +538,44 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 				(name) => element?.closest(`[${name}]`)?.getAttribute(name) ?? null,
 			);
 			expect(values).toEqual(['1', '2', '3']);
+			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
+		});
+	}
+
+	for (const [label, App, selector, refCalls] of [
+		['without a ref', SpreadGetterApp, '.spread-getter', 0],
+		['beside a ref', SpreadGetterRefApp, '.spread-getter-ref', 1],
+		['whose bag carries a ref', SpreadGetterOwnRefApp, '.spread-getter-own-ref', 1],
+	] as const) {
+		it(`reads a spread getter once ${label}`, () => {
+			spread_ref_order_nodes.length = 0;
+			render(<App />, container);
+
+			const element = container.querySelector(selector);
+			expect(element?.getAttribute('title')).toBe('1');
+			expect(element?.getAttribute('data-reads')).toBe('1');
+			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
+		});
+	}
+
+	it("lets a later spread's `ref: undefined` clear an earlier spread's ref", () => {
+		spread_ref_order_nodes.length = 0;
+		render(<SpreadClearsRefApp />, container);
+
+		expect(container.querySelector('.spread-clears-ref')).not.toBeNull();
+		expect(spread_ref_order_nodes).toEqual([]);
+	});
+
+	for (const [label, App, selector, refCalls] of [
+		['a spread', RefBeforeSpreadApp, '.ref-before-spread', 2],
+		['a later attribute', RefBeforeAttributeApp, '.ref-before-attribute', 1],
+	] as const) {
+		it(`evaluates a ref before ${label} in authored order`, () => {
+			spread_ref_order_nodes.length = 0;
+			render(<App />, container);
+
+			const element = container.querySelector(selector);
+			expect(element?.getAttribute('data-ready')).toBe('true');
 			expect(spread_ref_order_nodes).toEqual(Array(refCalls).fill(element));
 		});
 	}
@@ -424,4 +667,119 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			expect(conditional_spread_null_node).toBe(inputs[2]);
 		});
 	}
+
+	for (const key of ['class', 'className'] as const) {
+		it(`keeps the class a host spread supplies as \`${key}\` beside the scope hash`, () => {
+			render(<SpreadClassApp bag={{ [key]: 'from-spread', id: 'spread-id' }} />, container);
+
+			expect(classes('spread')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-before')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-name-before')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-after')).toEqual(['last', SCOPE_HASH]);
+			expect(classes('class-name-after')).toEqual(['last', SCOPE_HASH]);
+			expect(container.querySelector('[data-probe="spread"]')?.id).toBe('spread-id');
+		});
+
+		it(`updates the class a host spread supplies as \`${key}\``, async () => {
+			render(
+				<ReactiveSpreadClassApp bags={[{ [key]: 'one' }, { [key]: 'two' }, { id: 'none' }]} />,
+				container,
+			);
+			const next = container.querySelector('[data-probe="next"]') as HTMLButtonElement;
+
+			expect(classes('spread')).toEqual(['one', SCOPE_HASH]);
+			expect(classes('class-before')).toEqual(['one', SCOPE_HASH]);
+			next.click();
+			await Promise.resolve();
+			expect(classes('spread')).toEqual(['two', SCOPE_HASH]);
+			expect(classes('class-before')).toEqual(['two', SCOPE_HASH]);
+			next.click();
+			await Promise.resolve();
+			expect(classes('spread')).toEqual([SCOPE_HASH]);
+			expect(classes('class-before')).toEqual(['base', SCOPE_HASH]);
+		});
+	}
+
+	// Hono renders the class prop with a value.
+	for (const bag of [
+		{ class: 'from-spread', className: undefined },
+		{ className: 'from-spread', class: undefined },
+	]) {
+		it(`keeps the class a host spread supplies beside an undefined ${Object.keys(bag)[1]}`, () => {
+			render(<SpreadClassApp bag={bag} />, container);
+
+			expect(classes('spread')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-before')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-name-before')).toEqual(['from-spread', SCOPE_HASH]);
+			expect(classes('class-after')).toEqual(['last', SCOPE_HASH]);
+			expect(classes('class-name-after')).toEqual(['last', SCOPE_HASH]);
+		});
+	}
+
+	for (const [label, value] of [
+		['an undefined', undefined],
+		['a null', null],
+		['a false', false],
+		['an empty', ''],
+		['a true', true],
+		['a zero', 0],
+		['a string', 'a b'],
+	] as const) {
+		it(`renders ${label} class as Hono does, beside the scope hash`, () => {
+			render(<ClassValueApp value={value} />, container);
+
+			expect(class_list('scoped')).toEqual([...class_list('native'), SCOPE_HASH]);
+		});
+	}
+
+	// Hono DOM's `css` value turns into its class name when stringified, and
+	// inserts its rule.
+	it("keeps the scope hash on a class from Hono's css helper", async () => {
+		render(<CssClassesApp />, container);
+		await Promise.resolve();
+
+		for (const probe of ['css-attribute', 'css-spread', 'css-cx']) {
+			expect(class_list(`native-${probe}`)[0]).toMatch(/^css-\d+$/);
+			expect(class_list(probe)).toEqual([...class_list(`native-${probe}`), SCOPE_HASH]);
+		}
+		const sheet = (document.querySelector('style#tsrx-scoped-css') as HTMLStyleElement).sheet;
+		const selectors = Array.from(
+			sheet?.cssRules ?? [],
+			(rule) => (rule as CSSStyleRule).selectorText,
+		);
+		expect(selectors).toContain(`.${class_list('css-attribute')[0]}`);
+	});
+
+	// Like the object Hono DOM's `css` returns.
+	it('joins a class object with a toString beside the scope hash', () => {
+		render(<SpreadClassApp bag={{ class: { toString: () => 'from-object' } }} />, container);
+
+		expect(classes('spread')).toEqual(['from-object', SCOPE_HASH]);
+		expect(classes('class-name-before')).toEqual(['from-object', SCOPE_HASH]);
+	});
+
+	for (const [label, bag] of [
+		['without a class', { id: 'spread-id' }],
+		['with an undefined class', { class: undefined }],
+		['of an omitted bag', undefined],
+	] as const) {
+		it(`keeps the scope hash beside a host spread ${label}`, () => {
+			render(<SpreadClassApp bag={bag} />, container);
+
+			const base = bag && 'class' in bag ? [] : ['base'];
+			expect(classes('spread')).toEqual([SCOPE_HASH]);
+			expect(classes('class-before')).toEqual([...base, SCOPE_HASH]);
+			expect(classes('class-name-before')).toEqual([...base, SCOPE_HASH]);
+			expect(classes('class-after')).toEqual(['last', SCOPE_HASH]);
+			expect(classes('class-name-after')).toEqual(['last', SCOPE_HASH]);
+		});
+	}
+
+	it('stamps the class attribute Hono DOM applies when an element has several', () => {
+		render(<ClassAttrsApp />, container);
+
+		for (const probe of ['class-class-name', 'class-name-class']) {
+			expect(class_list(probe)).toEqual([...class_list(`native-${probe}`), SCOPE_HASH]);
+		}
+	});
 });
