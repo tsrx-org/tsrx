@@ -30,4 +30,16 @@ describe('Volar service plugins', () => {
 			expect(on_type_formatters, backend).toEqual([]);
 		}
 	});
+
+	it('offer no folding ranges on any backend, so the server folds `.tsrx` sources itself', () => {
+		// The server answers `textDocument/foldingRange` itself (`foldingRangeHandler.js`). A
+		// plugin that offers folding ranges would make Volar register its own handler, which
+		// replaces that one and folds only what maps back from the generated code.
+		for (const backend of /** @type {const} */ (['native', 'plugin', 'classic'])) {
+			const folders = createServicePlugins(backend, ts)
+				.filter((plugin) => plugin.capabilities.foldingRangeProvider)
+				.map((plugin) => plugin.name);
+			expect(folders, backend).toEqual([]);
+		}
+	});
 });
