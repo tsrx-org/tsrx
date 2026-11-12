@@ -946,7 +946,7 @@ function get_hono_exposed_path(identifier, ancestors, scopes, is_arrow_method) {
 				// `Object.assign` copies the members of its sources, unless a holder
 				// passes the value itself.
 				if (
-					get_hono_property_writer(callee) === 'assign' &&
+					get_hono_property_writer(callee, scope) === 'assign' &&
 					parent.arguments[0] !== child &&
 					!held
 				) {
@@ -1065,14 +1065,21 @@ function get_hono_static_truthiness(node) {
 }
 
 /**
- * The method name of a built-in that writes its first argument's properties.
+ * The method name of a built-in that writes its first argument's properties,
+ * unless a local binding shadows the built-in's name, as `is_hono_known_call`
+ * checks.
  *
  * @param {AST.Node} callee
+ * @param {import('@tsrx/core/types').ScopeInterface | null} scope
  * @returns {string | null}
  */
-function get_hono_property_writer(callee) {
+function get_hono_property_writer(callee, scope) {
 	const expression = unwrap_hono_transparent_expression(callee);
-	if (expression?.type !== 'MemberExpression' || expression.object.type !== 'Identifier') {
+	if (
+		expression?.type !== 'MemberExpression' ||
+		expression.object.type !== 'Identifier' ||
+		scope?.get(expression.object.name)
+	) {
 		return null;
 	}
 	const name = get_hono_member_name(expression);

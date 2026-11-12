@@ -341,6 +341,8 @@ describe('@tsrx/hono DOM compiler', () => {
 		'for (let registry in { key: 1 }) { registry &&= UI; registry.App = () => <span />; } <UI.App />;',
 		'for (let registry = {}; registry; registry = null) { registry &&= UI; registry.App = () => <span />; } <UI.App />;',
 		'function List() @{ <ul>@for (let registry of [{}]) { registry &&= UI; registry.App = () => <span />; <li /> }</ul> } <UI.App />;',
+		// A local `Object` is not the built-in, so its `assign` may write any argument.
+		'const Object = { assign: (_target: unknown, source: any) => { source.App = () => <span />; } }; Object.assign({}, UI); <UI.App />;',
 	])('does not diagnose a member overwritten through an alias or writer call: %s', (update) => {
 		const source = `const UI = { App: async () => <div />, nested: { App: async () => <div /> } };
 			${update}`;
