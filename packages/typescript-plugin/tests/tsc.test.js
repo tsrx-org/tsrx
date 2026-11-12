@@ -449,6 +449,60 @@ it('reports unresolved class field and heritage types in .tsrx files', () => {
 	}
 });
 
+it('reports errors in import types, import options, declared signatures and key remapping in .tsrx files', () => {
+	fs.writeFileSync(
+		path.join(workspace, 'store.ts'),
+		'export type Store<T> = { value: T };\nexport function create<T>(): T { return null!; }\n',
+	);
+	const lines = [
+		"export type A = import('./store.ts').Store<MissingA>;",
+		"export type B = typeof import('./store.ts').create<MissingB>;",
+		"export type M = import('./store.ts');",
+		"export const data = import('./store.ts', { with: { type: MissingC } });",
+		"export const lazy = import.defer('./store.ts', { with: { type: MissingD } });",
+		'export declare function request(options: MissingE): void;',
+		'export function overload(options: MissingF): void; export function overload(options: unknown) {}',
+		'export type Keys<T> = { [K in keyof T as MissingG]: T[K] };',
+		'export type Named<T> = { [K in keyof T as Capitalize<number>]: T[K] };',
+		'export type Indexed<T> = { [K in keyof T as T[K]]: 1 };',
+		'export type Literal<T> = { [K in keyof T as {}]: 1 };',
+		'export type Tuple<T> = { [K in keyof T as [K]]: 1 };',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	for (const [index, name] of /** @type {const} */ ([
+		[0, 'MissingA'],
+		[1, 'MissingB'],
+		[3, 'MissingC'],
+		[4, 'MissingD'],
+		[5, 'MissingE'],
+		[6, 'MissingF'],
+		[7, 'MissingG'],
+	])) {
+		expect(result.output).toContain(
+			`${at(index, name)}: error TS2304: Cannot find name '${name}'.`,
+		);
+	}
+	expect(result.output).toContain(
+		`${at(2, 'import(')}: error TS1340: Module './store.ts' does not refer to a type, but is used as a type here. Did you mean 'typeof import('./store.ts')'?`,
+	);
+	expect(result.output).toContain(
+		`${at(8, 'number')}: error TS2344: Type 'number' does not satisfy the constraint 'string'.`,
+	);
+	for (const [index, type] of /** @type {const} */ ([
+		[9, 'T[K]'],
+		[10, '{}'],
+		[11, '[K]'],
+	])) {
+		expect(result.output).toContain(
+			`${at(index, type)}: error TS2322: Type '${type}' is not assignable to type 'string | number | symbol'.`,
+		);
+	}
+});
+
 it('reports a failed satisfies check on its keyword in .tsrx files', () => {
 	const lines = [
 		'declare const count: number; declare function load(): number;',

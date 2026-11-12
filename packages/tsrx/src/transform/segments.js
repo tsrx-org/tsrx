@@ -2137,9 +2137,13 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'ImportExpression') {
-				// Visit source
+				// Visit in source order: source, then the options of
+				// `import(source, options)` and `import.defer(source, options)`
 				if (node.source) {
 					visit(node.source);
+				}
+				if (node.options) {
+					visit(node.options);
 				}
 				return;
 			} else if (node.type === 'ParenthesizedExpression') {
@@ -2452,9 +2456,15 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSMappedType') {
-				// Mapped type: { [K in keyof T]: ... }
+				// Mapped type: { [K in keyof T as N]: ... }
 				if (node.typeParameter) {
 					visit(node.typeParameter);
+				}
+				if (node.nameType) {
+					// TypeScript reports a key type that is not a property key (TS2322) on
+					// the whole remapping type, which can have no mapped token, as `{}`.
+					push_verify_only_span_mapping(node.nameType);
+					visit(node.nameType);
 				}
 				if (node.typeAnnotation) {
 					visit(node.typeAnnotation);
@@ -2476,7 +2486,10 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSImportType') {
-				// Import type: import("module", { with: { … } }).Type
+				// Import type: import("module", { with: { … } }).Type<Args>
+				// TypeScript reports some errors on the whole import type (TS1340 on
+				// a module used as a type without `typeof`).
+				push_verify_only_span_mapping(node);
 				if (node.argument) {
 					visit(node.argument);
 				}
@@ -2486,8 +2499,8 @@ export function convert_source_map_to_mappings(
 				if (node.qualifier) {
 					visit(node.qualifier);
 				}
-				if (node.typeParameters) {
-					visit(node.typeParameters);
+				if (node.typeArguments) {
+					visit(node.typeArguments);
 				}
 				return;
 			} else if (node.type === 'TSTypeQuery') {
@@ -2625,9 +2638,12 @@ export function convert_source_map_to_mappings(
 				if (node.typeParameters) {
 					visit(node.typeParameters);
 				}
-				if (node.params) {
-					for (const param of node.params) {
-						visit(param);
+				for (const param of node.params) {
+					visit(param);
+					const annotation = /** @type {Exclude<AST.Parameter, AST.TSParameterProperty>} */ (param)
+						.typeAnnotation;
+					if (annotation) {
+						visit(annotation);
 					}
 				}
 				if (node.returnType) {

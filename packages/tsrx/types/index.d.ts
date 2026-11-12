@@ -1323,8 +1323,6 @@ declare module 'estree' {
 		options: AST.ObjectExpression | null;
 		qualifier: EntityName | null;
 		typeArguments: TSTypeParameterInstantiation | undefined;
-		// looks like acorn-typescript has typeParameters
-		typeParameters: TSTypeParameterDeclaration | undefined | undefined;
 	}
 	interface TSIndexedAccessType extends Omit<
 		AcornTSNode<TSESTree.TSIndexedAccessType>,
