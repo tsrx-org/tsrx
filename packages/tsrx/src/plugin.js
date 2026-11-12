@@ -1368,6 +1368,16 @@ export function TSRXPlugin(config) {
 			/** @type {AST.NodeWithLocation | null}	*/
 			#lastClauseKeywordSpan = null;
 			#templateControlFlowTryDepth = 0;
+			// Where the statement being read starts: the depth of the tokenizer's
+			// context stack, and how many `[` are open (see `#parseJSXControlFlowValue`).
+			#statementContextDepth = 0;
+			#statementOpenBrackets = 0;
+			// How many `[` of array literals, array patterns and computed members are
+			// open. Unlike `(`, `{` and `${`, a `[` pushes no tokenizer context.
+			#openBrackets = 0;
+			// While a directive in brackets is read, the depth of the context stack
+			// that its bodies close at (see `#parseJSXControlFlowValue`), or -1.
+			#bracketedDirectiveDepth = -1;
 			/** @type {Parse.Parser['context']} */
 			context = [b_stat];
 			/** @type {AST.NativeTSRXTemplateNode | null} */
@@ -1388,10 +1398,16 @@ export function TSRXPlugin(config) {
 			// What enclosed each element when it started: `this.labels` and its length
 			// (see `#insideSwitchStartedAfter`), and the setup-statement depths (see
 			// `#elementStart`).
-			/** @type {WeakMap<AST.Node, { labels: Parse.Parser['labels'], labelsLength: number, scriptDepth: number, switchCaseScriptDepth: number, scriptJSXDepth: number }>} */
+			/** @type {WeakMap<AST.Node, { labels: Parse.Parser['labels'], labelsLength: number, scriptDepth: number, switchCaseScriptDepth: number, scriptJSXDepth: number, header: number | false }>} */
 			#elementStarts = new WeakMap();
 			#readingJSXControlFlowDirectiveKeyword = false;
+			// While a directive header (`@if (…)`, `@for (…)`, a `@case` test, …) is
+			// read, a number that tells that header apart from any other: an element
+			// opened in a header records it (see `#elementStart`), so the element's
+			// own children are still read as template text. `false` otherwise.
+			/** @type {number | false} */
 			#readingJSXControlFlowHeader = false;
+			#controlFlowHeaders = 0;
 			// Set while `@for` reads its statement, until `parseForStatement` takes it:
 			// the loop whose head may end with `index` and `key` clauses.
 			#readingForDirective = false;
@@ -1415,6 +1431,9 @@ export function TSRXPlugin(config) {
 			#bodilessPrivateMethods = new WeakMap();
 			// How many classes the parser is in (see `parseClass`).
 			#classDepth = 0;
+			// Set while `tsFillSignature` reads a signature's type parameters (see
+			// `tsTryParseTypeParameters`).
+			#readingSignatureTypeParameters = false;
 			// Where the import alias being read starts (see `raise`).
 			#importEqualsStart = -1;
 			// Where the last variable declarator ended, and where the expression of
@@ -1639,7 +1658,10 @@ export function TSRXPlugin(config) {
 				if (exitStrict) {
 					this.strict = false;
 				}
-				this.exprAllowed = true;
+				// After the last body of a directive in brackets, the next token is an
+				// operator (`(@if (c) {} / 2)`). After any other body of it, the next
+				// token is its clause's `@`, which reads the same either way.
+				this.exprAllowed = depth_before_brace !== this.#bracketedDirectiveDepth;
 				// The `}` popped the context of the `{` from the body's copy of the
 				// stack, so drop it from the enclosing stack too. Left there, every
 				// directive body would leave one entry behind, and each later sibling
@@ -1647,7 +1669,7 @@ export function TSRXPlugin(config) {
 				this.context = enclosing_context;
 				this.#truncateContext(depth_before_brace);
 				const previous_reading_header = this.#readingJSXControlFlowHeader;
-				this.#readingJSXControlFlowHeader = true;
+				this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 				try {
 					this.next();
 				} finally {
@@ -1701,8 +1723,9 @@ export function TSRXPlugin(config) {
 			 * statement of a `@{ … }` or directive body; `switchCaseScriptDepth` is
 			 * `#parsingJSXSwitchCaseScriptStatementDepth`, raised by one of an `@case`.
 			 * `scriptJSXDepth` is `#scriptJSXElementDepth` (see
-			 * `#insideScriptJSXElement`). A node that no element start recorded counts
-			 * from 0.
+			 * `#insideScriptJSXElement`). `header` is the directive header being read
+			 * (see `#readingJSXControlFlowHeader`). A node that no element start
+			 * recorded counts from 0.
 			 * @param {AST.Node} node
 			 */
 			#elementStart(node) {
@@ -1713,8 +1736,21 @@ export function TSRXPlugin(config) {
 						scriptDepth: 0,
 						switchCaseScriptDepth: 0,
 						scriptJSXDepth: 0,
+						header: false,
 					}
 				);
+			}
+
+			/**
+			 * Whether a directive header is being read that started after `node`, so
+			 * the position is in that header's code. In an element opened in the
+			 * header (`@for (const x of [<b>a<i /></b>])`), it is that element's
+			 * children.
+			 * @param {AST.Node | undefined} node
+			 */
+			#readingHeaderStartedAfter(node) {
+				const header = this.#readingJSXControlFlowHeader;
+				return header !== false && (!node || header !== this.#elementStart(node).header);
 			}
 
 			/**
@@ -2430,7 +2466,6 @@ export function TSRXPlugin(config) {
 				if (
 					this.#closingNativeTemplateNode ||
 					this.#readingJSXControlFlowDirectiveKeyword ||
-					this.#readingJSXControlFlowHeader ||
 					(!allow_inside_expression_container && this.#jsxExpressionContainerDepth > 0)
 				) {
 					return false;
@@ -2440,7 +2475,7 @@ export function TSRXPlugin(config) {
 					return false;
 				}
 				const current_template_node = this.#currentNativeTemplateNode();
-				if (!current_template_node) {
+				if (!current_template_node || this.#readingHeaderStartedAfter(current_template_node)) {
 					return false;
 				}
 				// Code that started after the innermost element, a setup statement, isn't
@@ -2506,8 +2541,9 @@ export function TSRXPlugin(config) {
 				}
 				// Just past a self-closing tag's `/>`: that element has no body, so any
 				// following raw text belongs to an enclosing template, not to it. With no
-				// enclosing template (e.g. a top-level `return <div />`), the trailing
-				// text is plain JS and must not be read as template raw text.
+				// enclosing template (e.g. a top-level `return <div />`), or one opened
+				// before the directive header the element is in (`@for (…; key <b />)`),
+				// the trailing text is plain JS and must not be read as template raw text.
 				// Inter-token whitespace has already advanced `pos`; `lastTokEnd` still
 				// identifies the consumed `>`, which whitespace or a comment can separate
 				// from the `/` (`<div / >`).
@@ -2522,7 +2558,7 @@ export function TSRXPlugin(config) {
 					const enclosing = this.#path.findLast(
 						(node) => node !== opening && this.#isNativeTemplateNode(node),
 					);
-					if (!enclosing) {
+					if (!enclosing || this.#readingHeaderStartedAfter(enclosing)) {
 						return false;
 					}
 					return true;
@@ -3008,15 +3044,35 @@ export function TSRXPlugin(config) {
 			 * then reads in the wrong mode: a `/` as a regular expression, a `<` as a
 			 * tag, the rest of a template literal as code (#1217). Put the enclosing
 			 * stack back and read that token again.
+			 *
+			 * In brackets opened in the statement being read (`(`, `[`, `{` or `${`),
+			 * the statement can't end right after the directive, so the token after
+			 * it is an operator, as after an element: `(a = @if (c) {} / 2) => a`,
+			 * `foo(@if (c) {} < y)`, `[@if (c) {} / 2]`. Elsewhere a semicolon can be
+			 * inserted after the directive, and a `/` or `<` on the next line starts
+			 * the next statement (`const x = @if (c) { <b /> }\n/re/.test(s);`), so
+			 * that token is read as the start of an expression, as after a block.
 			 * @returns {AST.JSXTemplateDirective}
 			 */
 			#parseJSXControlFlowValue() {
 				const enclosing_context = this.context;
+				const in_brackets =
+					enclosing_context.length > this.#statementContextDepth ||
+					this.#openBrackets > this.#statementOpenBrackets;
 				// The directive filters the stack before it checks the top, and filtering
 				// again changes nothing.
 				this.#filterTemplateScriptContexts();
 				const pushes_statement_context = this.curContext() !== b_stat;
-				const node = this.#parseJSXControlFlowExpression();
+				const outer_bracketed_directive_depth = this.#bracketedDirectiveDepth;
+				this.#bracketedDirectiveDepth = in_brackets
+					? this.context.length + (pushes_statement_context ? 1 : 0)
+					: -1;
+				let node;
+				try {
+					node = this.#parseJSXControlFlowExpression();
+				} finally {
+					this.#bracketedDirectiveDepth = outer_bracketed_directive_depth;
+				}
 				if (pushes_statement_context) {
 					const loc = get_line_info(this, this.start);
 					this.context = enclosing_context;
@@ -3025,9 +3081,9 @@ export function TSRXPlugin(config) {
 					this.lineStart = this.start - loc.column;
 					// As it was read, after the `}`.
 					this.type = tt.braceR;
-					this.exprAllowed = true;
+					this.exprAllowed = !in_brackets;
 					const previous_reading_header = this.#readingJSXControlFlowHeader;
-					this.#readingJSXControlFlowHeader = true;
+					this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 					try {
 						this.nextToken();
 					} finally {
@@ -3171,7 +3227,7 @@ export function TSRXPlugin(config) {
 					this.#templateControlFlowBlockDepth++;
 					let node;
 					const previous_reading_header = this.#readingJSXControlFlowHeader;
-					this.#readingJSXControlFlowHeader = true;
+					this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 					this.#readingForDirective = true;
 					try {
 						node = /** @type {AST.JSXForExpression} */ (
@@ -3386,7 +3442,7 @@ export function TSRXPlugin(config) {
 			#parseTemplateIfStatement() {
 				const node = /** @type {AST.IfStatement} */ (this.startNode());
 				const previous_reading_header = this.#readingJSXControlFlowHeader;
-				this.#readingJSXControlFlowHeader = true;
+				this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 				try {
 					this.next();
 					node.test = this.parseParenExpression();
@@ -3415,7 +3471,7 @@ export function TSRXPlugin(config) {
 			#parseJSXSwitchExpression(start, startLoc) {
 				const node = /** @type {AST.SwitchStatement} */ (this.startNodeAt(start, startLoc));
 				const previous_reading_header = this.#readingJSXControlFlowHeader;
-				this.#readingJSXControlFlowHeader = true;
+				this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 				try {
 					this.next();
 					node.discriminant = this.parseParenExpression();
@@ -3446,7 +3502,7 @@ export function TSRXPlugin(config) {
 						// itself starts before the leading whitespace.
 						current.keyword = this.#lastClauseKeywordSpan;
 						const previous_reading_header = this.#readingJSXControlFlowHeader;
-						this.#readingJSXControlFlowHeader = true;
+						this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 						try {
 							if (isCase) {
 								current.test = this.parseExpression();
@@ -3506,6 +3562,10 @@ export function TSRXPlugin(config) {
 				}
 
 				this.exitScope();
+				// As after a directive body (see `#parseTemplateControlFlowBlock`).
+				if (this.context.length === this.#bracketedDirectiveDepth) {
+					this.exprAllowed = false;
+				}
 				this.next();
 				this.labels.pop();
 				return this.#finishJSXControlFlowExpression(
@@ -4279,11 +4339,13 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * An unclosed or mismatched tag (TSRX1001, TSRX1002). A strict parse
+			 * throws it. Collecting records it, and so does a loose parse (the
+			 * editor's), which also goes on to recover the markup.
 			 * @param {number} position
 			 * @param {Diagnostic} message
 			 */
 			#report_broken_markup_error(position, message) {
-				if (this.#loose) return;
 				if (this.#collect) {
 					this.#report_recoverable_error(position, message);
 					return;
@@ -5224,6 +5286,8 @@ export function TSRXPlugin(config) {
 				// `parseBindingList` (see `parseBindingListItem`).
 				this.#readingGenericArrowParameters =
 					close === tt.parenR && this.#genericArrowFunction?.parametersStart === this.lastTokStart;
+				const array = close === tt.bracketR;
+				if (array) this.#openBrackets++;
 				try {
 					return this.#collect
 						? this.#parseBindingListPastRestElement(
@@ -5236,6 +5300,7 @@ export function TSRXPlugin(config) {
 				} finally {
 					this.#bindingListClose = outer;
 					this.#readingGenericArrowParameters = outer_generic_arrow;
+					if (array) this.#openBrackets--;
 				}
 			}
 
@@ -5535,11 +5600,47 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * acorn-typescript reads the type parameters of a function type, a
+			 * constructor type, or a call, construct or method signature
+			 * (`tsFillSignature`) without the `const` modifier, which TypeScript takes
+			 * on each, so `type F = <const T>(x: T) => T;` failed with `Unexpected
+			 * keyword 'const'` (#731). Read it there.
 			 * @type {Parse.Parser['tsTryParseTypeParameters']}
 			 */
 			tsTryParseTypeParameters(parseModifiers) {
+				const signature = this.#readingSignatureTypeParameters;
+				this.#readingSignatureTypeParameters = false;
 				this.#readTagStartAsTypeParameterStart();
-				return super.tsTryParseTypeParameters(parseModifiers);
+				return super.tsTryParseTypeParameters(
+					parseModifiers ?? (signature ? this.tsParseConstModifier : undefined),
+				);
+			}
+
+			/**
+			 * See `tsTryParseTypeParameters`, which this reads first.
+			 * @type {Parse.Parser['tsFillSignature']}
+			 */
+			tsFillSignature(returnToken, signature) {
+				this.#readingSignatureTypeParameters = true;
+				try {
+					return super.tsFillSignature(returnToken, signature);
+				} finally {
+					this.#readingSignatureTypeParameters = false;
+				}
+			}
+
+			/**
+			 * TypeScript reads `asserts` in a return type as the modifier of a type
+			 * predicate only before a name or `this` on its line
+			 * (`nextTokenIsIdentifierOrKeywordOnSameLine`), and otherwise as a type
+			 * named `asserts`, so `asserts` with `x` on the next line ends the return
+			 * type there. acorn-typescript read the predicate across the line break,
+			 * and the formatter joined the lines into code TypeScript accepts (#682).
+			 * @type {Parse.Parser['tsParseTypePredicateAsserts']}
+			 */
+			tsParseTypePredicateAsserts() {
+				if (this.type === tstt.asserts && this.#lineBreakAfter(this.end)) return false;
+				return super.tsParseTypePredicateAsserts();
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#119): remove once a release includes the fix
@@ -5750,6 +5851,11 @@ export function TSRXPlugin(config) {
 				}
 				const superClass = heading.superClass;
 				if (!superClass) return;
+				// TypeScript reads a left-hand-side expression there, which an element
+				// isn't without parentheses: `Expression expected.` at its `<` (#745).
+				if (is_tsrx_render_output_node(superClass) && !superClass.metadata?.parenthesized) {
+					this.raise(/** @type {number} */ (superClass.start), TS_ERRORS.EXPRESSION_EXPECTED);
+				}
 				if (
 					this.type === tstt.jsxTagStart &&
 					superClass.type !== 'TSInstantiationExpression' &&
@@ -8455,8 +8561,8 @@ export function TSRXPlugin(config) {
 					(code === CharCode.numberSign || code === CharCode.slash) &&
 					this.#functionBodyDepth === 0 &&
 					this.#jsxExpressionContainerDepth === 0 &&
-					!this.#readingJSXControlFlowHeader &&
 					this.#isNativeTemplateNode(template_parent) &&
+					!this.#readingHeaderStartedAfter(template_parent) &&
 					(!this.#openingNativeTemplateNode ||
 						this.#openingNativeTemplateNode === template_parent) &&
 					!(
@@ -8713,15 +8819,24 @@ export function TSRXPlugin(config) {
 						return this.#parseGenericArrowFunction(startPos, parse);
 					}
 				}
-				return super.parseSubscript(
-					base,
-					startPos,
-					startLoc,
-					noCalls,
-					maybeAsyncArrow,
-					optionalChained,
-					forInit,
-				);
+				// The `[` of a computed member (`a[i]`, `a?.[i]`).
+				const computed =
+					this.type === tt.bracketL ||
+					(this.type === tt.questionDot && this.lookaheadCharCode() === CharCode.openBracket);
+				if (computed) this.#openBrackets++;
+				try {
+					return super.parseSubscript(
+						base,
+						startPos,
+						startLoc,
+						noCalls,
+						maybeAsyncArrow,
+						optionalChained,
+						forInit,
+					);
+				} finally {
+					if (computed) this.#openBrackets--;
+				}
 			}
 
 			/**
@@ -8764,10 +8879,13 @@ export function TSRXPlugin(config) {
 					close === tt.parenR && async_arguments?.start === this.lastTokStart
 						? async_arguments
 						: NON_PARAMETER_LIST;
+				const array = close === tt.bracketR;
+				if (array) this.#openBrackets++;
 				try {
 					return super.parseExprList(close, allowTrailingComma, allowEmpty, refDestructuringErrors);
 				} finally {
 					this.#expressionList = outer;
+					if (array) this.#openBrackets--;
 				}
 			}
 
@@ -10414,6 +10532,9 @@ export function TSRXPlugin(config) {
 							}
 							const paramStart = skip_whitespace_from(this.input, this.start);
 							if (this.input.charCodeAt(paramStart) === CharCode.openParen) {
+								// Read as code, the `(` pushed its context. Drop it, or reading the
+								// `(` again leaves a second one and a statement context under it.
+								this.#truncateContext(this.context.length - this.#currentTokenContextCount());
 								this.pos = paramStart;
 								this.start = paramStart;
 								this.startLoc = get_line_info(this, paramStart);
@@ -10435,7 +10556,7 @@ export function TSRXPlugin(config) {
 								this.startNodeAt(clauseStart, clauseStartLoc)
 							);
 							const previous_reading_header = this.#readingJSXControlFlowHeader;
-							this.#readingJSXControlFlowHeader = true;
+							this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
 							try {
 								if (this.eat(tt.parenL)) {
 									const param = this.parseBindingAtom();
@@ -10940,10 +11061,15 @@ export function TSRXPlugin(config) {
 				const opening_template_node = this.#openingNativeTemplateNode;
 				let pushed_opening_template_node = false;
 				// `>` reads the next token: the first child, or, after `/>`, the token
-				// after the element. Outside a template that token is code, so a
-				// self-closing element stays off `#path` (`<span /> / 2` divides).
+				// after the element. Outside a template, or in a directive header that
+				// started after the enclosing element (`@for (…; key <b />)`), that token
+				// is code, so a self-closing element stays off `#path` (`<span /> / 2`
+				// divides).
+				const enclosing_node = this.#path.at(-1);
 				const reads_next_token_as_code =
-					node.selfClosing && !this.#isNativeTemplateNode(this.#path.at(-1));
+					node.selfClosing &&
+					(!this.#isNativeTemplateNode(enclosing_node) ||
+						this.#readingHeaderStartedAfter(enclosing_node));
 				if (opening_template_node) {
 					// The enclosing `parseElement` started this node before the opening tag
 					// said what it is; stamp its shape now that the tag has been read.
@@ -11034,6 +11160,7 @@ export function TSRXPlugin(config) {
 					scriptDepth: this.#templateScriptParsingDepth,
 					switchCaseScriptDepth: this.#parsingJSXSwitchCaseScriptStatementDepth,
 					scriptJSXDepth: this.#scriptJSXElementDepth,
+					header: this.#readingJSXControlFlowHeader,
 				});
 				if (tag_value_context_depth >= 0) {
 					this.#tagValueElements.add(node);
@@ -11252,14 +11379,16 @@ export function TSRXPlugin(config) {
 						// after the `>` is the parent's text. In a `{ … }` container only a
 						// parent opened in the container counts: above it, the container's
 						// expression goes on. Nor does a parent opened before the code the
-						// element is in (see `#elementStart`), whose text that code isn't.
+						// element is in (see `#elementStart`), whose text that code isn't, or
+						// before the directive header it is in.
 						const parent_template_node = this.#path
 							.slice(this.#containerPathBaseline(), -1)
 							.findLast((node) => this.#isNativeTemplateNode(node));
 						const inside_parent_template =
 							!!parent_template_node &&
 							this.#templateScriptParsingDepth <=
-								this.#elementStart(parent_template_node).scriptDepth;
+								this.#elementStart(parent_template_node).scriptDepth &&
+							!this.#readingHeaderStartedAfter(parent_template_node);
 						this.#closingNativeTemplateNode = true;
 						/** @type {ReturnType<Parse.Parser['jsx_parseElementName']>} */
 						let closingName;
@@ -11296,10 +11425,12 @@ export function TSRXPlugin(config) {
 						// tokenizer context returns to where the element began, as after a
 						// balanced closing tag, dropping residue its body left (a control-flow
 						// block's contexts). parseElement keeps the contexts the token pushes.
+						const parent_node = this.#path.at(-2);
 						const closes_outside_template =
 							this.#isNativeTemplateNode(current) &&
 							current_name === closing_name_str &&
-							(!this.#isNativeTemplateNode(this.#path.at(-2)) ||
+							(!this.#isNativeTemplateNode(parent_node) ||
+								this.#readingHeaderStartedAfter(parent_node) ||
 								this.#tagValueElements.has(current));
 						if (closes_outside_template) {
 							this.#path.pop();
@@ -11920,16 +12051,24 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Records the statement's `context` (see `#inStatementList`).
+			 * Records the statement's `context` (see `#inStatementList`), and where it
+			 * starts, for `#parseJSXControlFlowValue`. Its first token is already
+			 * read, and may have pushed a context.
 			 * @type {Parse.Parser['parseStatement']}
 			 */
 			parseStatement(context, topLevel, exports) {
 				const outer = this.#statementContext;
+				const outer_context_depth = this.#statementContextDepth;
+				const outer_open_brackets = this.#statementOpenBrackets;
 				this.#statementContext = context ?? null;
+				this.#statementContextDepth = this.context.length - this.#currentTokenContextCount();
+				this.#statementOpenBrackets = this.#openBrackets;
 				try {
 					return this.#parseStatement(context, topLevel, exports);
 				} finally {
 					this.#statementContext = outer;
+					this.#statementContextDepth = outer_context_depth;
+					this.#statementOpenBrackets = outer_open_brackets;
 				}
 			}
 
