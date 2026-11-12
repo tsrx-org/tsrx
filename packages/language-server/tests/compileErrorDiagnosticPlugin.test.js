@@ -146,6 +146,48 @@ export function App() @{
 	});
 });
 
+describe('compile error diagnostic plugin — a statement-only code block', () => {
+	it("shows TSRX2035 as a warning on the '@{…}', next to TypeScript's errors in it", async () => {
+		const { document, diagnostics } = await editor_diagnostics_for(
+			'CodeBlockExpression',
+			`export function App({ user }: { user: { name: string } }) @{
+	<p>@{user.nmae}</p>
+}`,
+		);
+
+		const shown = diagnostics
+			// The harness has no JSX types (TS7026).
+			.filter((diagnostic) => diagnostic.code !== 7026)
+			.map((diagnostic) => ({
+				source: diagnostic.source,
+				code: diagnostic.code,
+				severity: diagnostic.severity,
+				message: diagnostic.source === 'TSRX' ? diagnostic.message : undefined,
+				// The editor spans the tokens the virtual code maps, so not `@{`
+				// and `}`. The virtual code maps `user.nmae` from the line break
+				// and indent before it, so Volar maps the warning's start, at the
+				// generated `user`, to the source `nmae`.
+				text: document.getText(diagnostic.range),
+			}));
+		expect(shown).toEqual([
+			{
+				source: 'ts',
+				code: 2339,
+				severity: DiagnosticSeverity.Error,
+				message: undefined,
+				text: 'nmae',
+			},
+			{
+				source: 'TSRX',
+				code: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD.code,
+				severity: DiagnosticSeverity.Warning,
+				message: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD.message,
+				text: 'nmae',
+			},
+		]);
+	});
+});
+
 describe('compile error diagnostic plugin — a missing closing brace', () => {
 	it("reports '}' expected at the end of the document, with an empty range", async () => {
 		const source = `export function App() @{

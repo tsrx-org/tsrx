@@ -414,6 +414,104 @@ export const d: number = bad;
 			expect(code).not.toContain('@ts-expect-error');
 		});
 
+		/**
+		 * The diagnostics TypeScript reports on the virtual code for names,
+		 * assignments and unused directives, with the text each one covers.
+		 * @param {string} code
+		 * @returns {Array<[number, string]>}
+		 */
+		const suppression_diagnostics = (code) =>
+			virtual_semantic_diagnostics(code)
+				.filter((diagnostic) => [2304, 2322, 2578].includes(diagnostic.code))
+				.map((diagnostic) => [
+					diagnostic.code,
+					code.slice(diagnostic.start, (diagnostic.start ?? 0) + (diagnostic.length ?? 0)),
+				]);
+
+		it('keeps the later lines of a statement off the line a directive covers', () => {
+			// TypeScript applies a directive to the line after it, so that line must
+			// hold the code of the source line after it and no more (#1144).
+			const source = `declare function foo(a: number, b?: number): void;
+// @ts-expect-error
+foo(
+	1,
+	missingA
+);
+/* @ts-expect-error */
+foo(1,
+	missingB);
+// @ts-expect-error
+foo(missingC,
+	1);
+// @ts-expect-error
+export const o = { a: missingD, b: 'a long string to make the printer wrap', c: 'and another long string' };
+export function App() @{
+	// @ts-expect-error
+	const x: number = foo(
+		1,
+		missingE,
+	);
+	<div>{x}</div>
+}
+`;
+			const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(suppression_diagnostics(code)).toEqual([
+				[2578, '// @ts-expect-error'],
+				[2304, 'missingA'],
+				[2578, '/* @ts-expect-error */'],
+				[2304, 'missingB'],
+				[2304, 'missingE'],
+			]);
+		});
+
+		it('breaks the line a directive covers only where the code reads the same', () => {
+			// The break goes where the source breaks the line between the same two
+			// tokens, or after code that must go on. The TSRX parser reads import
+			// attributes across a line break, which TypeScript does not, so those
+			// lines stay joined. A parenthesis the printer adds maps to the next `(`
+			// of the source, which is on a later line.
+			const source = `declare const bad: string;
+export function f(a: number) {
+	// @ts-expect-error
+	return (
+		a + missingA
+	);
+}
+// @ts-expect-error
+export const b = (bad
+) as unknown as number;
+// @ts-expect-error
+import 'x'
+with { type: 'json' };
+// @ts-expect-error
+export const c = \`\${bad}
+\${missingC}\`;
+// @ts-expect-error
+export const p = 1
+(bad)();
+`;
+			const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+
+			expect(errors).toEqual([]);
+			expect(virtual_parse_diagnostics(code)).toEqual([]);
+			expect(code).toContain('return (\n\t\ta + missingA);');
+			expect(code).toContain('(bad\n\t) as unknown as number;');
+			expect(code).toContain("import 'x' with {");
+			expect(code).toContain('export const p = (1)(\n');
+			expect(suppression_diagnostics(code)).toEqual([
+				[2578, '// @ts-expect-error'],
+				[2304, 'missingA'],
+				[2578, '// @ts-expect-error'],
+				[2578, '// @ts-expect-error'],
+				[2578, '// @ts-expect-error'],
+				[2304, 'missingC'],
+				[2578, '// @ts-expect-error'],
+			]);
+		});
+
 		it('maps an object literal getter or setter with type parameters', () => {
 			const source = 'export const o = { get g<T>() { return 1; }, set s<T>(v: T) {} };';
 			const result = compile_to_volar_mappings(source, 'App.tsrx');

@@ -577,6 +577,42 @@ import Button from './Button.tsrx';`;
 		client.close('UnusedPattern.tsrx');
 	});
 
+	it('hovers the names in a braceless if or else body', async () => {
+		const source = [
+			'export function Braceless(c: number, b: number) {',
+			'\tif (c) c = b',
+			'\tif (c) b; else c = b',
+			'\treturn c',
+			'}',
+			'',
+		].join('\n');
+		client.open('Braceless.tsrx', source);
+		await client.diagnostics('Braceless.tsrx').catch(() => undefined);
+		/** @type {Array<[string | null, string | undefined]>} */
+		const hovers = [];
+		for (const [needle, skip] of /** @type {const} */ ([
+			['c = b', 0],
+			['c = b', 4],
+			['b; else', 0],
+			['c = b\n\treturn', 0],
+			['c = b\n\treturn', 4],
+		])) {
+			const hover = await client.request('textDocument/hover', {
+				textDocument: { uri: client.uri('Braceless.tsrx') },
+				position: position_of(source, needle, skip),
+			});
+			hovers.push([hover && range_text(source, hover.range), hover?.contents.value.split('\n')[1]]);
+		}
+		expect(hovers).toEqual([
+			['c', '(parameter) c: number'],
+			['b', '(parameter) b: number'],
+			['b', '(parameter) b: number'],
+			['c', '(parameter) c: number'],
+			['b', '(parameter) b: number'],
+		]);
+		client.close('Braceless.tsrx');
+	});
+
 	it('offers the /** */ template after /** above a function (#1066)', async () => {
 		const source = [
 			'/** */',

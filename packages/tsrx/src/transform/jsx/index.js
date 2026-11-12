@@ -74,7 +74,6 @@ import {
 	is_function_node,
 	is_function_or_class_node as is_function_or_class_boundary,
 	is_template_directive as is_jsx_control_flow_expression,
-	node_children,
 	render_children,
 } from '../../utils/ast.js';
 import { is_reference } from '../../utils/is-reference.js';
@@ -607,6 +606,7 @@ export function createJsxTransform(platform) {
 			errors: collect ? options?.errors : undefined,
 			comments: options?.comments,
 			typeOnly: !!options?.typeOnly,
+			uses_server_directive: has_use_server_directive(ast),
 			// Opt-in navigation origins (see stamp_directive_origin). OFF by
 			// default, and the editor pipeline never asks for it: with the flag
 			// clear the emitted code, the source map and therefore every Volar
@@ -1800,11 +1800,21 @@ function validate_native_await(node, transform_context) {
 		return;
 	}
 
+	const { validation } = transform_context.platform;
 	const validator = transform_context.platform.hooks?.validateComponentAwait;
 	if (validator) {
+		const uses_server_directive =
+			validation.scanUseServerDirectiveForAwaitWithCustomValidator !== false &&
+			transform_context.uses_server_directive;
 		for (const await_node of awaits) {
 			const reported = transform_context.errors?.length ?? 0;
-			validator(await_node, node, transform_context, false, transform_context.source || '');
+			validator(
+				await_node,
+				node,
+				transform_context,
+				uses_server_directive,
+				transform_context.source || '',
+			);
 			// The shared checks for an `await` the output can't hold skip one the
 			// target has reported, so each `await` is reported once.
 			if ((transform_context.errors?.length ?? 0) > reported) {
@@ -1814,7 +1824,7 @@ function validate_native_await(node, transform_context) {
 		return;
 	}
 
-	if (transform_context.platform.validation.requireUseServerForAwait) {
+	if (validation.requireUseServerForAwait && !transform_context.uses_server_directive) {
 		error(
 			TSRX_ERRORS.TOP_LEVEL_AWAIT_USE_SERVER,
 			transform_context.filename,
@@ -1826,72 +1836,39 @@ function validate_native_await(node, transform_context) {
 }
 
 /**
- * The `await`s of a component outside nested functions, in source order.
+ * Whether the module's directive prologue holds `"use server"`. The parser
+ * marks only the leading string statements as directives, so a string after
+ * another statement, or a parenthesized one, doesn't count.
+ *
+ * @param {AST.Program} program
+ * @returns {boolean}
+ */
+function has_use_server_directive(program) {
+	return program.body.some(
+		(statement) =>
+			statement.type === 'ExpressionStatement' &&
+			'directive' in statement &&
+			statement.directive === 'use server',
+	);
+}
+
+/**
+ * The `await`s of a component outside nested functions, in source order. Any of
+ * them makes the component async, so this walks the whole body, statement
+ * headers and the output's attributes included.
  *
  * @param {AST.Function} node
  * @returns {AST.TSRXAwaitNode[]}
  */
 function find_native_awaits(node) {
-	/** @type {AST.TSRXAwaitNode[]} */
-	const awaits = [];
-	if (
-		node.type === 'ArrowFunctionExpression' &&
-		node.body?.type !== 'BlockStatement' &&
-		node_contains_native_tsrx_template(node.body)
-	) {
-		find_top_level_awaits(node.body, awaits);
-	} else if (node.body?.type === 'JSXCodeBlock') {
-		find_native_awaits_in_list(get_raw_jsx_code_block_body_nodes(node.body), awaits);
-	} else if (node.body?.type === 'BlockStatement') {
-		find_native_awaits_in_list(node.body.body || [], awaits);
+	if (node.body?.type !== 'BlockStatement' && !node_contains_native_tsrx_template(node.body)) {
+		return [];
 	}
-	return awaits;
-}
-
-/**
- * @param {AST.Node[]} statements
- * @param {AST.TSRXAwaitNode[]} awaits
- * @returns {void}
- */
-function find_native_awaits_in_list(statements, awaits) {
-	for (const statement of statements) {
-		find_native_awaits_in_statement(statement, awaits);
-	}
-}
-
-/**
- * @param {AST.Node | null | undefined} statement
- * @param {AST.TSRXAwaitNode[]} awaits
- * @returns {void}
- */
-function find_native_awaits_in_statement(statement, awaits) {
-	if (!statement) return;
-
-	if (statement.type === 'ReturnStatement' && is_native_tsrx_node(statement.argument)) {
-		find_top_level_awaits(node_children(statement.argument), awaits);
-	} else if (
-		statement.type === 'ReturnStatement' &&
-		node_contains_native_tsrx_template(statement.argument)
-	) {
-		find_top_level_awaits(statement.argument, awaits);
-	} else if (is_function_or_class_boundary(statement)) {
-		// An `await` there belongs to that function.
-	} else if (statement.type === 'BlockStatement') {
-		find_native_awaits_in_list(statement.body || [], awaits);
-	} else if (is_if_control_node(statement)) {
-		find_native_awaits_in_statement(statement.consequent, awaits);
-		find_native_awaits_in_statement(statement.alternate, awaits);
-	} else if (is_switch_control_node(statement)) {
-		for (const switch_case of statement.cases || []) {
-			find_native_awaits_in_list(switch_case.consequent || [], awaits);
-		}
-	} else if (is_try_control_node(statement)) {
-		find_native_awaits_in_statement(statement.block, awaits);
-		find_native_awaits_in_statement(statement.handler?.body, awaits);
-		find_native_awaits_in_statement(statement.finalizer, awaits);
-	} else {
-		find_top_level_awaits(statement, awaits);
-	}
+	// The walk visits an element's children before its attributes. Strict mode
+	// throws at the first `await` reported, so report them in source order.
+	return find_top_level_awaits(node.body).sort(
+		(a, b) => /** @type {number} */ (a.start) - /** @type {number} */ (b.start),
+	);
 }
 
 /**
@@ -4869,14 +4846,6 @@ function get_jsx_code_block_body_nodes(node, transform_context) {
 	// Scoped styles were collected, stamped, and stripped by the pre-pass;
 	// style `ref` setup statements already sit at the end of `body`.
 	return [...(node.body || []), node.render];
-}
-
-/**
- * @param {AST.JSXCodeBlock} node
- * @returns {AST.Node[]}
- */
-function get_raw_jsx_code_block_body_nodes(node) {
-	return [...(node.body || []), ...(node.render ? [node.render] : [])];
 }
 
 /**

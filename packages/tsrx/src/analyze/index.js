@@ -11,7 +11,11 @@ import {
 	is_transparent_expression_wrapper,
 	is_tsrx_render_output_node,
 } from '../utils/ast.js';
-import { validate_forgotten_statement_container, validate_jsx_spread_child } from './validation.js';
+import {
+	validate_code_block_expression_only,
+	validate_forgotten_statement_container,
+	validate_jsx_spread_child,
+} from './validation.js';
 import { create_scopes, ScopeRoot } from '../scope.js';
 import { analyze_styles } from './style-analyze.js';
 
@@ -97,6 +101,22 @@ function visit_render_output(node, { next, path, state }) {
 }
 
 /**
+ * @param {AST.JSXCodeBlock} node
+ * @param {{ next: (state?: TSRXAnalysisState) => unknown, path: AST.Node[], state: TSRXAnalysisState }} context
+ */
+function visit_code_block(node, context) {
+	const { path, state } = context;
+	validate_code_block_expression_only(
+		node,
+		path.at(-1),
+		state.filename,
+		state.collect ? state.errors : undefined,
+		state.comments,
+	);
+	visit_render_output(node, context);
+}
+
+/**
  * @param {ESTreeJSX.JSXSpreadChild} node
  * @param {{ next: (state?: TSRXAnalysisState) => unknown, state: TSRXAnalysisState }} context
  */
@@ -136,7 +156,7 @@ const visitors = {
 	JSXElement: visit_render_output,
 	JSXFragment: visit_render_output,
 	JSXStyleElement: visit_render_output,
-	JSXCodeBlock: visit_render_output,
+	JSXCodeBlock: visit_code_block,
 	JSXIfExpression: visit_render_output,
 	JSXForExpression: visit_render_output,
 	JSXSwitchExpression: visit_render_output,

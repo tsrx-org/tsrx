@@ -12,6 +12,7 @@ import {
 } from '../../comment-utils.js';
 import { has_location, is_organized_import } from '../../utils/ast.js';
 import { with_deferred_imports } from '../imports.js';
+import { get_directive_line, print_on_directive_line } from './directive-line.js';
 
 /**
  * Zimmerframe provides `path` as the ancestor chain. A native template node in
@@ -223,9 +224,11 @@ export function tsx_with_ts_locations(
 	 * covers the source line after it, which the printer may split or join.
 	 * @param {AST.Node} node
 	 * @param {ESRap.Context} context
+	 * @returns {boolean} Whether a directive written here covers the line where
+	 * the node starts.
 	 */
 	const write_leading_comments = (node, context) => {
-		if (!node.leadingComments || !is_comment_owner(node) || !node.loc) return;
+		if (!node.leadingComments || !is_comment_owner(node) || !node.loc) return false;
 		const start_line = node.loc.start.line;
 		/** @type {Array<{ comment: AST.CommentWithLocation, kept: boolean }>} */
 		const written = [];
@@ -238,11 +241,17 @@ export function tsx_with_ts_locations(
 			if (kept || should_preserve_jsx_tooling_comment(comment)) written.push({ comment, kept });
 			after_directive ||= directive;
 		}
+		let covers_node = false;
 		for (let i = 0; i < written.length; i++) {
 			const { comment, kept } = written[i];
 			const next_line = written[i + 1]?.comment.loc.start.line ?? start_line;
 			write_preserved_comment(comment, context, comment.loc.end.line === next_line, kept);
+			covers_node ||=
+				source !== undefined &&
+				is_ts_suppression_directive(comment) &&
+				get_directive_line(comment, source) === start_line;
 		}
+		return covers_node;
 	};
 
 	/**
@@ -653,11 +662,13 @@ export function tsx_with_ts_locations(
 		},
 		_(node, context, visit) {
 			mark_semicolon_free(node);
-			if (preserve_owner_comments) write_leading_comments(node, context);
+			const covered = preserve_owner_comments && write_leading_comments(node, context);
 			// esrap's `_` maps the start and end of every located node. A program's
 			// start would map the source's first character to an import a target
 			// adds before the first statement.
-			if (base_visitor && node.type !== 'Program') {
+			if (covered && base_visitor && source !== undefined && node.loc) {
+				print_on_directive_line(node, context, node.loc.start.line, source, visitors, base_visitor);
+			} else if (base_visitor && node.type !== 'Program') {
 				base_visitor(node, context, visit);
 			} else {
 				visit(node);
@@ -666,7 +677,9 @@ export function tsx_with_ts_locations(
 		},
 	};
 
-	return { ...base_visitors, ...wrappers };
+	/** @type {ESRap.Visitors<AST.Node>} */
+	const visitors = { ...base_visitors, ...wrappers };
+	return visitors;
 }
 
 /**

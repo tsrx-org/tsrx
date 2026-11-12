@@ -102,6 +102,8 @@ export interface JsxTransformContext {
 	comments: AST.CommentWithLocation[] | undefined;
 	/** True when emitting a type-only virtual TSX module. */
 	typeOnly: boolean;
+	/** True when the module's directive prologue holds `"use server"`. */
+	uses_server_directive: boolean;
 	/**
 	 * True when generated nodes may be anchored on the directive keyword that
 	 * produced them. Off by default; the emitted code and its source map are
@@ -337,6 +339,9 @@ export interface JsxPlatformHooks {
 	/**
 	 * Custom validation for a component body that uses top-level `await`,
 	 * called once for each such `await`, in source order.
+	 * `moduleUsesServerDirective` is whether the module's directive prologue
+	 * holds `"use server"`; it is `false` when
+	 * `validation.scanUseServerDirectiveForAwaitWithCustomValidator` is `false`.
 	 * Default: enforce `validation.requireUseServerForAwait` at the first one.
 	 * Solid rejects component-level await outright with a keyword-precise
 	 * location.

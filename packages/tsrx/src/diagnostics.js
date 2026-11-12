@@ -110,6 +110,12 @@ export const DIAGNOSTIC_CODES = {
 	DYNAMIC_TAG_TYPE_ARGUMENTS: 'TSRX2033',
 	/** A `yield` in a template value the target's JSX compiler moves into an effect, getter or callback. */
 	TARGET_TEMPLATE_YIELD_UNSUPPORTED: 'TSRX2034',
+	/**
+	 * A warning: a `@{ … }` with no output whose only statement is an
+	 * expression there only for its value, such as `<p>@{user.name}</p>`, so
+	 * it renders nothing.
+	 */
+	CODE_BLOCK_EXPRESSION_ONLY: 'TSRX2035',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -497,6 +503,11 @@ export const TSRX_ERRORS = {
 		'TARGET_AWAIT_UNSUPPORTED',
 		'Hono JSX DOM does not support top-level `await` in components. Use `use(promise)` with `<Suspense>` instead.',
 	),
+	/** For an `async` component that a Hono DOM module renders. */
+	HONO_DOM_ASYNC_COMPONENT_UNSUPPORTED: tsrx(
+		'TARGET_AWAIT_UNSUPPORTED',
+		'Hono JSX DOM does not support async components. Use `use(promise)` with `<Suspense>` instead.',
+	),
 	/** `target` is the target's name. */
 	TARGET_YIELD_UNSUPPORTED: tsrx_with_values(
 		'TARGET_YIELD_UNSUPPORTED',
@@ -523,6 +534,11 @@ export const TSRX_ERRORS = {
 	TOP_LEVEL_AWAIT_USE_SERVER: tsrx(
 		'TOP_LEVEL_AWAIT_USE_SERVER',
 		'Top-level `await` in TSRX functions requires a module-level `"use server"` directive.',
+	),
+	/** Hono's ErrorBoundary calls its fallback with the error only. */
+	TARGET_CATCH_RESET_UNSUPPORTED: tsrx(
+		'TARGET_CATCH_RESET_UNSUPPORTED',
+		'Hono JSX ErrorBoundary does not provide a reset callback. Use `@catch (error)` without a reset parameter.',
 	),
 	/** `target` is the target's name, and `name` the component's. */
 	TARGET_COMPONENT_READ_BEFORE_DECLARATION: tsrx_with_values(
@@ -590,6 +606,18 @@ export const TSRX_ERRORS = {
 	DEFINE_VAPOR_COMPONENT_BINDING: tsrx(
 		'TARGET_RESERVED_NAME',
 		"Vue TSRX does not allow a binding named `defineVaporComponent`. vue-jsx-vapor finds components by calls to that exact name, and the compiler wraps each component in the one from 'vue-jsx-vapor', so the name can't be declared again or shadowed. Rename this binding.",
+	),
+	// A warning. This one is for a child of an element or fragment, where the
+	// `@` may have been meant as text.
+	CODE_BLOCK_EXPRESSION_CHILD: tsrx(
+		'CODE_BLOCK_EXPRESSION_ONLY',
+		"This @{…} is a code block, not '@' text and an expression: it runs the expression as a statement and renders nothing. To render '@' and the value, write {`@${value}`} or {'@' + value}; for the value alone, write {value}.",
+	),
+	// A warning. This one is for anywhere else: a function body, a value, or
+	// the output of another `@{ … }` or a directive body.
+	CODE_BLOCK_EXPRESSION_ONLY: tsrx(
+		'CODE_BLOCK_EXPRESSION_ONLY',
+		'This @{…} code block holds only an expression statement, so it renders nothing. To render the value, end the block with output, such as @{ <>{value}</> }.',
 	),
 
 	// TSRX3xxx
