@@ -106,6 +106,26 @@ describe('TSRX: Restart Language Server', () => {
 			'TSRX could not restart the language server: server crashed',
 		);
 	});
+
+	it('does not wait for TypeScript 7, which can hold its restart behind a question', async () => {
+		host.use_tsgo = true;
+		host.extensions.add('typescriptteam.native-preview');
+		host.executeCommand.mockReturnValueOnce(new Promise(() => {}));
+		const { run } = restart();
+		await run();
+		expect(host.setStatusBarMessage).toHaveBeenCalledOnce();
+	});
+
+	it("says so when TypeScript's restart fails", async () => {
+		host.executeCommand.mockRejectedValueOnce(new Error('no server'));
+		const { run } = restart();
+		await run();
+		await vi.waitFor(() =>
+			expect(host.showErrorMessage).toHaveBeenCalledWith(
+				'TSRX could not restart the language server: no server',
+			),
+		);
+	});
 });
 
 /** A client whose server can ask for a restart (`request`). */

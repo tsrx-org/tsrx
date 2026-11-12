@@ -1,6 +1,39 @@
 import { describe, expect, it } from 'vitest';
 import { map_iterable, map_iterable_async } from '../../src/runtime/iterable.js';
 
+/**
+ * An array whose own iterator yields `visible` instead of its indexed items.
+ *
+ * @param {string[]} array
+ * @returns {string[]}
+ */
+function with_visible_iterator(array) {
+	/** @type {any} */ (array)[Symbol.iterator] = function* () {
+		yield 'visible';
+	};
+	return array;
+}
+
+/**
+ * An iterable whose `Symbol.iterator` getter supplies a method only on its
+ * first read, which is all `for...of` does.
+ */
+function single_read_iterable() {
+	var state = { reads: 0 };
+	var source = /** @type {Iterable<string>} */ ({
+		get [Symbol.iterator]() {
+			var snapshot = ++state.reads;
+			if (snapshot > 1) {
+				return undefined;
+			}
+			return function* () {
+				yield 'snapshot ' + snapshot;
+			};
+		},
+	});
+	return { source, state };
+}
+
 describe('map_iterable', function () {
 	/**
 	 * @param {unknown} item
@@ -299,6 +332,45 @@ describe('map_iterable', function () {
 			map_iterable(/** @type {any} */ ({ next: 1 }), text_fn);
 		}).toThrow(TypeError);
 	});
+
+	it('walks a custom iterator on an array instead of its indexed items', function () {
+		expect(map_iterable(with_visible_iterator(['stored']), text_fn)).toEqual(['visible:0!']);
+		expect(
+			map_iterable(with_visible_iterator([]), text_fn, null, function () {
+				return 'empty';
+			}),
+		).toEqual(['visible:0!']);
+
+		var Reversed = class extends Array {
+			[Symbol.iterator]() {
+				return this.slice().reverse().values();
+			}
+		};
+		expect(map_iterable(Reversed.from(['a', 'b']), text_fn)).toEqual(['b:0', 'a:1!']);
+	});
+
+	it('reads Symbol.iterator once, like for...of', function () {
+		var { source, state } = single_read_iterable();
+		expect(map_iterable(source, text_fn)).toEqual(['snapshot 1:0!']);
+		expect(state.reads).toBe(1);
+	});
+
+	it('walks the iterator an iterable returns even when it is not iterable itself', function () {
+		var source = {
+			[Symbol.iterator]: function () {
+				var values = ['a', 'b'];
+				return {
+					next: function () {
+						return values.length
+							? { value: values.shift(), done: false }
+							: { value: undefined, done: true };
+					},
+				};
+			},
+		};
+
+		expect(map_iterable(source, text_fn)).toEqual(['a:0', 'b:1!']);
+	});
 });
 
 describe('map_iterable_async', function () {
@@ -407,5 +479,19 @@ describe('map_iterable_async', function () {
 		await expect(map_iterable_async(/** @type {any} */ ({ next: 1 }), text_fn)).rejects.toThrow(
 			TypeError,
 		);
+	});
+
+	it('walks a custom iterator on an array instead of its indexed items', async function () {
+		expect(
+			await map_iterable_async(with_visible_iterator([]), text_fn, null, function () {
+				return 'empty';
+			}),
+		).toEqual(['visible:0!']);
+	});
+
+	it('reads Symbol.iterator once, like for...of', async function () {
+		var { source, state } = single_read_iterable();
+		expect(await map_iterable_async(source, text_fn)).toEqual(['snapshot 1:0!']);
+		expect(state.reads).toBe(1);
 	});
 });

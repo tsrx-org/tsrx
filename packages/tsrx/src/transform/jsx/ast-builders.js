@@ -3,6 +3,7 @@
 
 import * as b from '../../utils/builders.js';
 import { has_location, is_ast_node } from '../../utils/ast.js';
+import { IDENTIFIER_OBFUSCATION_PREFIX } from '../../identifier-utils.js';
 
 /**
  * AST-building utilities shared across every JSX target (React, Preact,
@@ -229,10 +230,9 @@ export function is_component_jsx_name(name) {
 /**
  * Does this JSX subtree contain any component-shaped element (anywhere —
  * including nested under host elements or inside expression containers)?
- * Vue and Solid use this as their `canHoistStaticNode` predicate: hoisting a
- * subtree that invokes a component into a module-level constant pins that
- * component instance to module identity, which doesn't help either framework
- * the way it helps React, so it's wasted output.
+ * No built-in target calls it: Solid and Vue don't hoist static JSX at all,
+ * since their JSX evaluates to DOM nodes (#1236, #1240). It stays exported as
+ * part of `@tsrx/core`'s public API.
  *
  * @param {AST.Node | AST.Node[]} node
  * @returns {boolean}
@@ -339,23 +339,32 @@ export function is_bare_render_expression(node) {
 }
 
 /**
+ * The name of a loop callback's item parameter when the head's pattern can't
+ * be the parameter itself. Authored code can't use the prefix.
+ */
+export const FOR_OF_ITEM_PARAM_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'item';
+
+/**
  * Gather the params a `for (x of y; index i)` loop should expose to its body
  * JSX (value first, optional index second).
  *
  * @param {AST.ForOfStatement['left']} left
  * @param {AST.Identifier | null} [index]
+ * @param {AST.Expression | null} [key]
  * @returns {AST.Pattern[]}
  */
-export function get_for_of_iteration_params(left, index) {
+export function get_for_of_iteration_params(left, index, key) {
 	/** @type {AST.Pattern[]} */
 	const params = [];
-	if (left?.type !== 'VariableDeclaration') {
-		params.push(/** @type {AST.Pattern} */ (left));
-	} else if (left.declarations[0]) {
+	if (left?.type === 'VariableDeclaration' && left.declarations[0]) {
 		params.push(left.declarations[0].id);
+	} else if (index || key) {
+		// A declaration list with no name, which `collect` and `loose` mode parse
+		// (`@for (const of items)`), and an assignment target, which is reported
+		// (`@for (state.item of items)`), give the loop no item, but the index
+		// still comes second and a key callback still takes one.
+		params.push(b.id(FOR_OF_ITEM_PARAM_NAME));
 	}
-	// A declaration list with no name, which `collect` and `loose` mode parse
-	// (`@for (const of items)`), gives the loop none.
 	if (index) {
 		params.push(index);
 	}
