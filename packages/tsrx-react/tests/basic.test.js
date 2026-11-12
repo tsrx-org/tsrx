@@ -396,6 +396,37 @@ describe('@tsrx/react basic', () => {
 		expect(code.match(/__merge_spread_class\(/g)).toHaveLength(1);
 	});
 
+	it('joins a dynamic class with the scope classes through join_scope_class', () => {
+		const source = `import { theme } from './theme.tsrx';
+
+			export function App(props) @{
+				<>
+					<style apply={theme}>
+						span {
+							color: red;
+						}
+					</style>
+					<span className={props.c} />
+					<span className={theme.$class} />
+				</>
+			}`;
+		const { code, cssHash } = compile(source, 'App.tsrx');
+
+		expect(code).toMatch(
+			/import \{[^}]*join_scope_class as __join_scope_class[^}]*\} from '@tsrx\/react\/ref'/,
+		);
+		expect(code).toContain(
+			`<span className={__join_scope_class(props.c, \`${cssHash} \${theme.$class}\`)} />`,
+		);
+		// A `$class` read is a string.
+		expect(code).toContain(`<span className={\`\${theme.$class} ${cssHash} \${theme.$class}\`} />`);
+		// Types don't depend on how the class joins, so the type-only print keeps
+		// the template literal.
+		const type_only = compile_to_volar_mappings(source, 'App.tsrx').code;
+		expect(type_only).not.toContain('join_scope_class');
+		expect(type_only).toContain(`className={\`\${props.c} ${cssHash} \${theme.$class}\`}`);
+	});
+
 	it('imports no spread class helper when the class attribute follows every spread', () => {
 		const { code } = compile(
 			`export function App(props) @{

@@ -44,9 +44,11 @@ import {
 	find_first_top_level_await_in_tsrx_function_body,
 } from '../await.js';
 import {
+	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 	MERGE_SPREAD_CLASS_INTERNAL_NAME,
 	prepare_stylesheet_for_render,
 	is_style_element,
+	rewrite_class_name_attributes,
 } from '../scoping.js';
 import { prepare_style_scopes, type_only_style } from './style-scopes.js';
 import {
@@ -569,6 +571,7 @@ export function createJsxTransform(platform) {
 			needs_suspense: false,
 			needs_merge_refs: false,
 			needs_merge_spread_class: false,
+			needs_join_scope_class: false,
 			needs_normalize_spread_props: false,
 			needs_normalize_spread_props_for_ref_attr: false,
 			needs_spread_ref_bags: false,
@@ -618,6 +621,14 @@ export function createJsxTransform(platform) {
 		const source_ast = ast;
 		if (transform_context.typeOnly && platform.serverModule) {
 			ast = lower_server_module_for_types(ast, platform.serverModule);
+		}
+
+		// Before style scopes stamp it, an authored `className` becomes `class`
+		// on a runtime that reads only `class`. The type-only print renames it
+		// too, so it type-checks against the target's `class`, and maps the
+		// generated `class` back to the authored `className`.
+		if (platform.jsx.rewriteClassNameAttr) {
+			ast = rewrite_class_name_attributes(ast, transform_context.typeOnly);
 		}
 
 		// Style scopes: which `<style>` blocks scope which template, CSS emission
@@ -5742,6 +5753,14 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			platform.imports.refProp,
 			b.import_specifier('merge_spread_class', MERGE_SPREAD_CLASS_INTERNAL_NAME),
+		);
+	}
+
+	if (transform_context.needs_join_scope_class && platform.imports.refProp) {
+		add_ref_import_specifier(
+			ref_imports,
+			platform.imports.refProp,
+			b.import_specifier('join_scope_class', JOIN_SCOPE_CLASS_INTERNAL_NAME),
 		);
 	}
 

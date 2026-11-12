@@ -111,10 +111,10 @@ describe('@tsrx/hono server compiler', () => {
 			/import \{\s*merge_spread_class as __merge_spread_class,[^}]*\} from '@tsrx\/hono\/ref'/,
 		);
 		expect(code).toContain(
-			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", "className"))} />`,
+			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", "className", "text-both"))} />`,
 		);
 		expect(code).toContain(
-			`<span className="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "className", "class"))} />`,
+			`<span className="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "className", "class", "text-both"))} />`,
 		);
 		// A spread before the class attribute drops its class, so its
 		// `className` can't override the attribute.

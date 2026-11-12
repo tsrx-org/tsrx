@@ -260,6 +260,62 @@ function ReactiveSpreadClassApp({ bags }: { bags: SpreadBag[] }) @{
 	</>
 }
 
+// Hono DOM applies the last of several class attributes.
+function NativeClassAttrs() @{
+	<>
+		<span data-probe="native-class-class-name" class="a" className="b" />
+		<span data-probe="native-class-name-class" className="a" class="b" />
+	</>
+}
+
+function ScopedClassAttrs() @{
+	<>
+		<style>
+			span {
+				color: rgb(0, 128, 0);
+			}
+		</style>
+		<span data-probe="class-class-name" class="a" className="b" />
+		<span data-probe="class-name-class" className="a" class="b" />
+	</>
+}
+
+function ClassAttrsApp() @{
+	<>
+		<NativeClassAttrs />
+		<ScopedClassAttrs />
+	</>
+}
+
+// Hono types `class` as a string, but untyped code can pass any of these.
+type ClassValue = string | number | boolean | null | undefined;
+
+function NativeClassValue({ value }: { value?: ClassValue }) @{
+	<span data-probe="native" class={value as string | undefined} />
+}
+
+function ScopedClassValue({ value }: { value?: ClassValue }) @{
+	<>
+		<style>
+			span {
+				color: rgb(0, 128, 0);
+			}
+		</style>
+		<span data-probe="scoped" class={value as string | undefined} />
+	</>
+}
+
+function ClassValueApp({ value }: { value?: ClassValue }) @{
+	<>
+		<NativeClassValue value={value} />
+		<ScopedClassValue value={value} />
+	</>
+}
+
+function class_list(probe: string): string[] {
+	return Array.from((container.querySelector(`[data-probe="${probe}"]`) as HTMLElement).classList);
+}
+
 function classes(probe: string): string[] {
 	const element = container.querySelector(`[data-probe="${probe}"]`) as HTMLElement;
 	return element.className.split(' ');
@@ -597,6 +653,22 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		});
 	}
 
+	for (const [label, value] of [
+		['an undefined', undefined],
+		['a null', null],
+		['a false', false],
+		['an empty', ''],
+		['a true', true],
+		['a zero', 0],
+		['a string', 'a b'],
+	] as const) {
+		it(`renders ${label} class as Hono does, beside the scope hash`, () => {
+			render(<ClassValueApp value={value} />, container);
+
+			expect(class_list('scoped')).toEqual([...class_list('native'), SCOPE_HASH]);
+		});
+	}
+
 	// Like the object Hono DOM's `css` returns.
 	it('joins a class object with a toString beside the scope hash', () => {
 		render(<SpreadClassApp bag={{ class: { toString: () => 'from-object' } }} />, container);
@@ -621,4 +693,12 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			expect(classes('class-name-after')).toEqual(['last', SCOPE_HASH]);
 		});
 	}
+
+	it('stamps the class attribute Hono DOM applies when an element has several', () => {
+		render(<ClassAttrsApp />, container);
+
+		for (const probe of ['class-class-name', 'class-name-class']) {
+			expect(class_list(probe)).toEqual([...class_list(`native-${probe}`), SCOPE_HASH]);
+		}
+	});
 });

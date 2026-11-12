@@ -37,6 +37,7 @@ const react_platform = {
 		rewriteClassAttr: false,
 		classAttrName: 'className',
 		hostSpreadClassProps: ['className'],
+		classValue: 'text',
 		multiRefStrategy: 'merge-refs',
 		hostSpreadRefBinding: 'in-place',
 	},

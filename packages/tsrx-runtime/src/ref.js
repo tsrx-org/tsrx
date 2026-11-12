@@ -1,4 +1,4 @@
-/** @import { MergeableRef, RefProp, RefValue, SpreadFalsy, SpreadProps } from '../types/ref' */
+/** @import { ClassValueKind, MergeableRef, RefProp, RefValue, SpreadFalsy, SpreadProps } from '../types/ref' */
 
 import {
 	define_property,
@@ -655,12 +655,11 @@ function is_dom_node(value) {
  * @param {string} [alias] another prop the target reads a class from, such as
  *   `className` beside Preact's `class`; its class moves to `key` so the
  *   element keeps one class prop
- * @param {boolean} [list] the target's class also takes an object or a list,
- *   as Solid's does, so a class of another type joins the scope classes as
- *   `[class, scope_class]`
+ * @param {ClassValueKind} [kind='text'] how the target renders a class value;
+ *   see `join_scope_class`
  * @returns {object | SpreadFalsy}
  */
-export function merge_spread_class(props, scope_class, key, alias, list) {
+export function merge_spread_class(props, scope_class, key, alias, kind = 'text') {
 	if (props === null || (typeof props !== 'object' && typeof props !== 'function')) {
 		return props;
 	}
@@ -696,10 +695,35 @@ export function merge_spread_class(props, scope_class, key, alias, list) {
 		define_property(next, key, {
 			enumerable: true,
 			configurable: true,
-			get: () => join_class(read_class(source, class_keys), scope_class, list),
+			get: () => join_class(read_class(source, class_keys), scope_class, kind),
 		});
 	}
 	return next;
+}
+
+/**
+ * Join an element's authored class with the scope classes TSRX adds to it, the
+ * way the runtime renders that class. A class the runtime would leave out
+ * gives just the scope classes. `kind` names how the runtime renders it:
+ *
+ * - `'text'` (React, Hono DOM): `null`, `undefined`, `false`, `true` and an
+ *   empty class are left out; any other value renders as text.
+ * - `'text-true'` (Preact): as `'text'`, except that `true` renders as text.
+ * - `'text-both'` (Hono's server): as `'text'`, except that `true` and
+ *   `false` render as text.
+ * - `'list'` (Solid, Vue): the class also takes an object or a list, which
+ *   joins as `[class, scope_class]`; any other value that is not a string is
+ *   left out.
+ *
+ * A thenable class (Hono's server `css`) applies unchanged.
+ *
+ * @param {unknown} value the authored class
+ * @param {unknown} scope_class the element's scope hashes and applied classes
+ * @param {ClassValueKind} [kind='text']
+ * @returns {unknown}
+ */
+export function join_scope_class(value, scope_class, kind = 'text') {
+	return join_class(value, scope_class, kind);
 }
 
 /**
@@ -723,15 +747,20 @@ function read_class(source, class_keys) {
 /**
  * @param {unknown} value
  * @param {unknown} scope_class
- * @param {boolean | undefined} list
+ * @param {ClassValueKind} kind
  * @returns {unknown}
  */
-function join_class(value, scope_class, list) {
-	if (value == null || value === false || value === '') {
+function join_class(value, scope_class, kind) {
+	if (value == null || value === '') {
 		return scope_class;
 	}
-	if (list && typeof value !== 'string') {
-		return [value, scope_class];
+	if (typeof value === 'boolean') {
+		return kind === 'text-both' || (value && kind === 'text-true')
+			? `${value} ${scope_class}`
+			: scope_class;
+	}
+	if (kind === 'list' && typeof value !== 'string') {
+		return typeof value === 'object' ? [value, scope_class] : scope_class;
 	}
 	// A thenable class, such as the promise Hono's server `css` returns, applies
 	// as the runtime resolves it. Any other value joins as text, as it would in

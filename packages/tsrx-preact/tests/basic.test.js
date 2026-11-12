@@ -281,10 +281,10 @@ describe('@tsrx/preact basic', () => {
 			/import \{\s*merge_spread_class as __merge_spread_class,[^}]*\} from '@tsrx\/preact\/ref'/,
 		);
 		expect(code).toContain(
-			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", "className"))} />`,
+			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", "className", "text-true"))} />`,
 		);
 		expect(code).toContain(
-			`<span className="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "className", "class"))} />`,
+			`<span className="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "className", "class", "text-true"))} />`,
 		);
 		// A spread before the class attribute drops its class, so its
 		// `className` can't override the attribute.

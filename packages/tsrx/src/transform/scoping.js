@@ -7,7 +7,7 @@
 
 /** @import * as AST from 'estree' */
 /** @import * as ESTreeJSX from 'estree-jsx' */
-/** @import { ScopeClassParts, SpreadClassOptions, StyleRenderMode, Visitors } from '../../types/index' */
+/** @import { ScopeClassJoin, ScopeClassParts, SpreadClassOptions, StyleRenderMode, Visitors } from '../../types/index' */
 
 import { walk } from 'zimmerframe';
 import * as b from '../utils/builders.js';
@@ -195,16 +195,227 @@ function class_attribute_base(attr) {
 }
 
 /**
+ * Compile each intrinsic element's authored `className` attribute to `class`,
+ * for a runtime that reads a class only from `class` (the platform's
+ * `jsx.rewriteClassNameAttr`). A component, a member tag (`<ui.Button>`) and
+ * a dynamic tag (`<{Tag}>`) may be a component, so they keep `className`.
+ *
+ * An element with one `class` and one `className` joins them into the first
+ * one's place: as one string literal when both are string literals, otherwise
+ * as `[class, className]` in written order. With a spread between them, the
+ * runtime output renames `className` in place instead, so the runtime handles
+ * two `class` attributes around the spread as written; the type-only print
+ * joins them anyway, since TypeScript reports two `class` attributes even
+ * across a spread. Any other `className` is renamed in place. Copy-on-write.
+ *
+ * @template {AST.Node} T
+ * @param {T} node
+ * @param {boolean} [type_only]
+ * @param {Set<object>} [seen]
+ * @returns {T}
+ */
+export function rewrite_class_name_attributes(node, type_only = false, seen = new Set()) {
+	if (seen.has(node)) return node;
+	seen.add(node);
+
+	const source = /** @type {Record<string, any>} */ (node);
+	/** @type {Record<string, any>} */
+	let out = source;
+	for (const key of Object.keys(source)) {
+		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
+		const value = source[key];
+		/** @type {unknown} */
+		let next = value;
+		if (Array.isArray(value)) {
+			const mapped = value.map((entry) =>
+				is_ast_node(entry) ? rewrite_class_name_attributes(entry, type_only, seen) : entry,
+			);
+			if (mapped.some((entry, index) => entry !== value[index])) next = mapped;
+		} else if (is_ast_node(value)) {
+			next = rewrite_class_name_attributes(value, type_only, seen);
+		}
+		if (next !== value) {
+			if (out === source) out = { ...source };
+			out[key] = next;
+		}
+	}
+
+	if (out.type === 'JSXElement' && is_intrinsic_jsx_element(out)) {
+		const attributes = out.openingElement.attributes ?? [];
+		const merged = merge_class_name_attribute(attributes, type_only);
+		if (merged !== attributes) {
+			out = { ...out, openingElement: { ...out.openingElement, attributes: merged } };
+		}
+	}
+	return /** @type {T} */ (out);
+}
+
+/**
+ * Whether a JSX element is surely an intrinsic one: its tag is a lowercase
+ * name or a namespaced name, and not a dynamic `<{Tag}>`.
+ *
+ * @param {Record<string, any>} element
+ * @returns {boolean}
+ */
+function is_intrinsic_jsx_element(element) {
+	if (element.isDynamic === true || element.metadata?.dynamicElement === true) return false;
+	const name = element.openingElement?.name;
+	return (
+		name?.type === 'JSXNamespacedName' ||
+		(name?.type === 'JSXIdentifier' && /^[a-z]/.test(name.name))
+	);
+}
+
+/**
+ * @param {ESTreeJSX.JSXAttributeNode[]} attributes
+ * @param {boolean} type_only
+ * @returns {ESTreeJSX.JSXAttributeNode[]}
+ */
+function merge_class_name_attribute(attributes, type_only) {
+	/** @type {number[]} */
+	const class_indexes = [];
+	/** @type {number[]} */
+	const class_name_indexes = [];
+	for (let i = 0; i < attributes.length; i++) {
+		const attr = attributes[i];
+		if (!is_class_attribute(attr)) continue;
+		if (/** @type {ESTreeJSX.JSXIdentifier} */ (attr.name).name === 'className') {
+			class_name_indexes.push(i);
+		} else {
+			class_indexes.push(i);
+		}
+	}
+	if (class_name_indexes.length === 0) return attributes;
+
+	const pair = class_indexes.length === 1 && class_name_indexes.length === 1;
+	const low = Math.min(class_indexes[0], class_name_indexes[0]);
+	const high = Math.max(class_indexes[0], class_name_indexes[0]);
+	const spread_between =
+		pair && attributes.slice(low + 1, high).some((attr) => attr.type === 'JSXSpreadAttribute');
+	if (!pair || (spread_between && !type_only)) {
+		return attributes.map((attr, i) =>
+			class_name_indexes.includes(i)
+				? /** @type {ESTreeJSX.JSXAttribute} */ ({
+						...attr,
+						name: class_name_to_class(
+							/** @type {ESTreeJSX.JSXIdentifier} */ (
+								/** @type {ESTreeJSX.JSXAttribute} */ (attr).name
+							),
+						),
+					})
+				: attr,
+		);
+	}
+
+	const first = /** @type {ESTreeJSX.JSXAttribute} */ (attributes[low]);
+	const second = /** @type {ESTreeJSX.JSXAttribute} */ (attributes[high]);
+	const first_name = /** @type {ESTreeJSX.JSXIdentifier} */ (first.name);
+	const renamed = first_name.name === 'className' ? class_name_to_class(first_name) : first_name;
+	// The second attribute's name maps to the surviving `class` too, so the
+	// editor keeps hover and navigation on it.
+	const name = {
+		...renamed,
+		metadata: {
+			...renamed.metadata,
+			extra_source_mappings: [...(renamed.metadata?.extra_source_mappings ?? []), second.name],
+		},
+	};
+	const values = [class_attribute_base(first), class_attribute_base(second)].filter(
+		(value) => value !== null,
+	);
+	/** @type {ESTreeJSX.JSXAttribute['value']} */
+	let value;
+	if (values.every((value) => value.type === 'Literal' && typeof value.value === 'string')) {
+		const text = values
+			.map((value) => /** @type {string} */ (/** @type {AST.Literal} */ (value).value))
+			.filter(Boolean)
+			.join(' ');
+		value = b.literal(text, JSON.stringify(text));
+	} else {
+		value = b.jsx_expression_container(b.array(values));
+	}
+	const merged = /** @type {ESTreeJSX.JSXAttribute} */ ({ ...first, name, value });
+	return attributes.flatMap((attr, i) => (i === low ? [merged] : i === high ? [] : [attr]));
+}
+
+/**
+ * A `className` attribute name renamed to `class`, which the editor maps back
+ * to the authored `className`.
+ *
+ * @param {ESTreeJSX.JSXIdentifier} name
+ * @returns {ESTreeJSX.JSXIdentifier}
+ */
+function class_name_to_class(name) {
+	return {
+		...name,
+		name: 'class',
+		metadata: { ...name.metadata, source_name: 'className', source_length: 9 },
+	};
+}
+
+/**
+ * Internal name of the `join_scope_class` runtime helper.
+ */
+export const JOIN_SCOPE_CLASS_INTERNAL_NAME = '__join_scope_class';
+
+/**
+ * Whether a class expression always evaluates to a string, so it can join the
+ * scope classes as text. A `$class` read is a style block's class string.
+ *
+ * @param {AST.Expression} node
+ * @returns {boolean}
+ */
+function is_string_class(node) {
+	switch (node.type) {
+		case 'Literal':
+			return typeof node.value === 'string';
+		case 'TemplateLiteral':
+			return true;
+		case 'ConditionalExpression':
+			return is_string_class(node.consequent) && is_string_class(node.alternate);
+		case 'BinaryExpression':
+			return (
+				node.operator === '+' &&
+				((node.left.type !== 'PrivateIdentifier' && is_string_class(node.left)) ||
+					is_string_class(node.right))
+			);
+		case 'MemberExpression':
+			return (
+				!node.computed && node.property.type === 'Identifier' && node.property.name === '$class'
+			);
+		default:
+			return false;
+	}
+}
+
+/**
  * Build one attribute value from the accumulated parts — `authored hashes…
  * applied…` — as a single string literal when everything is static,
  * otherwise as one template literal (never a template literal nested in
  * another across repeated stamping).
  *
+ * With `join`, an authored class that may not be a string joins the scope
+ * classes through `join_scope_class`, which renders it as a runtime of that
+ * kind would: it leaves out a class the runtime would not render, and keeps
+ * an object or a list class for a runtime whose class takes one.
+ *
  * @param {ScopeClassParts} parts
+ * @param {ScopeClassJoin} [join=null]
  * @returns {AST.Expression}
  */
-function build_scope_class_value(parts) {
+function build_scope_class_value(parts, join = null) {
 	const { base, hashes, applied } = parts;
+	if (base && join && !is_string_class(base)) {
+		const scope_class = build_scope_class_value({ ...parts, base: null });
+		return join === 'text'
+			? b.call(JOIN_SCOPE_CLASS_INTERNAL_NAME, base, scope_class)
+			: b.call(
+					JOIN_SCOPE_CLASS_INTERNAL_NAME,
+					base,
+					scope_class,
+					b.literal(join, JSON.stringify(join)),
+				);
+	}
 	const base_literal = base?.type === 'Literal' && typeof base.value === 'string' ? base : null;
 	/** @type {Array<string | AST.Expression>} */
 	const sequence = [];
@@ -258,6 +469,9 @@ function build_scope_class_value(parts) {
  * @param {Array<string | AST.Expression>} applied theme classes: literals or `theme.$class` reads
  * @param {'class' | 'className'} [class_attr_name='class']
  * @param {SpreadClassOptions | null} [spread_class]
+ * @param {ScopeClassJoin} [class_join=null] how the runtime renders an authored
+ *   class that may not be a string; `'list'` applies to a `class` attribute
+ *   only
  * @returns {T}
  */
 export function add_scope_classes(
@@ -266,10 +480,30 @@ export function add_scope_classes(
 	applied,
 	class_attr_name = 'class',
 	spread_class = null,
+	class_join = null,
 ) {
 	if (hashes.length === 0 && applied.length === 0) return element;
 	const attrs = element.openingElement.attributes ?? [];
-	const index = attrs.findIndex(is_class_attribute);
+	// Of several class attributes, a runtime that reads a spread's class
+	// itself (`spread_class`) applies the last one written, so that one gets
+	// the scope classes. One that prints `class` and `className` apart
+	// (Hono's server) applies the last one named like the first, which a
+	// browser reads. Vue's `mergeProps` joins them all, so the first does.
+	let index = -1;
+	/** @type {string | null} */
+	let first_name = null;
+	for (let i = 0; i < attrs.length; i++) {
+		const attr = attrs[i];
+		if (!is_class_attribute(attr)) continue;
+		const attr_name = /** @type {ESTreeJSX.JSXIdentifier} */ (attr.name).name;
+		first_name ??= attr_name;
+		if (
+			index === -1 ||
+			(spread_class && (!spread_class.printed_apart || attr_name === first_name))
+		) {
+			index = i;
+		}
+	}
 	const existing = index === -1 ? undefined : /** @type {ESTreeJSX.JSXAttribute} */ (attrs[index]);
 	const metadata = element.metadata || (element.metadata = { path: [] });
 	const parts =
@@ -286,7 +520,13 @@ export function add_scope_classes(
 		if (typeof part !== 'string' || !parts.applied.includes(part)) parts.applied.push(part);
 	}
 
-	const value = build_scope_class_value(parts);
+	const name = existing
+		? /** @type {ESTreeJSX.JSXIdentifier} */ (existing.name).name
+		: class_attr_name;
+	const value = build_scope_class_value(
+		parts,
+		class_join === 'list' && name !== 'class' ? null : class_join,
+	);
 	const attr_value =
 		value.type === 'Literal' && typeof value.value === 'string'
 			? value
@@ -302,13 +542,7 @@ export function add_scope_classes(
 		next_attrs.splice(class_index, 0, b.jsx_attribute(b.jsx_id(class_attr_name), attr_value));
 	}
 	if (spread_class) {
-		merge_spread_classes(
-			next_attrs,
-			class_index,
-			parts,
-			existing ? /** @type {ESTreeJSX.JSXIdentifier} */ (existing.name).name : class_attr_name,
-			spread_class,
-		);
+		merge_spread_classes(next_attrs, class_index, parts, name, spread_class);
 	}
 	return {
 		...element,
@@ -333,7 +567,7 @@ export const MERGE_SPREAD_CLASS_INTERNAL_NAME = '__merge_spread_class';
  * @param {SpreadClassOptions} spread_class
  */
 function merge_spread_classes(attrs, class_index, parts, class_attr_name, spread_class) {
-	const { props, list } = spread_class;
+	const { props, kind } = spread_class;
 	const scope_class = build_scope_class_value({ ...parts, base: null });
 	// A runtime that reads either prop gets the spread's class under the
 	// attribute's name, so the element keeps one class prop.
@@ -358,10 +592,27 @@ function merge_spread_classes(attrs, class_index, parts, class_attr_name, spread
 				before ? b.literal(null, 'null') : scope_class,
 				b.literal(key, JSON.stringify(key)),
 				alias && b.literal(alias, JSON.stringify(alias)),
-				!before && list && b.literal(true, 'true'),
+				!before && kind !== null && kind !== 'text' && b.literal(kind, JSON.stringify(kind)),
 			),
 		};
 	}
+}
+
+/**
+ * Whether stamping joined the element's class through `join_scope_class`.
+ *
+ * @param {AST.TSRXJSXElement} element
+ * @returns {boolean}
+ */
+export function has_scope_class_join(element) {
+	return (element.openingElement.attributes ?? []).some(
+		(attr) =>
+			is_class_attribute(attr) &&
+			attr.value?.type === 'JSXExpressionContainer' &&
+			attr.value.expression.type === 'CallExpression' &&
+			attr.value.expression.callee.type === 'Identifier' &&
+			attr.value.expression.callee.name === JOIN_SCOPE_CLASS_INTERNAL_NAME,
+	);
 }
 
 /**

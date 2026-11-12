@@ -46,6 +46,32 @@ function classes(probe: string): string[] {
 	return element.className.split(' ');
 }
 
+function NativeClassValue(props: { value?: unknown }) @{
+	<span data-probe="native" className={props.value} />
+}
+
+function ScopedClassValue(props: { value?: unknown }) @{
+	<>
+		<style>
+			span {
+				color: rgb(0, 128, 0);
+			}
+		</style>
+		<span data-probe="scoped" className={props.value} />
+	</>
+}
+
+function ClassValueApp(props: { value?: unknown }) @{
+	<>
+		<NativeClassValue value={props.value} />
+		<ScopedClassValue value={props.value} />
+	</>
+}
+
+function class_list(probe: string): string[] {
+	return Array.from((container.querySelector(`[data-probe="${probe}"]`) as HTMLElement).classList);
+}
+
 describe('sibling-scoped apply runtime (react)', function () {
 	it('mounts a theme module plus applier and keeps the local rule later in the cascade', async function () {
 		await render(ThemeApplyApp);
@@ -102,6 +128,22 @@ describe('sibling-scoped apply runtime (react)', function () {
 		await act(async () => next.click());
 		expect(classes('spread')).toEqual([SCOPE_HASH]);
 	});
+
+	for (const [label, value] of [
+		['an undefined', undefined],
+		['a null', null],
+		['an empty', ''],
+		['a true', true],
+		['a zero', 0],
+		['a string', 'a b'],
+		['a list', ['a', 'b']],
+	] as const) {
+		it(`renders ${label} class as the target does, beside the scope hash`, async function () {
+			await render(ClassValueApp, { value });
+
+			expect(class_list('scoped')).toEqual([...class_list('native'), SCOPE_HASH]);
+		});
+	}
 
 	it('throws when an applier evaluates before its imported theme', async function () {
 		try {

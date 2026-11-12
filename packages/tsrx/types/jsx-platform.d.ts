@@ -39,6 +39,7 @@ export interface JsxTransformContext {
 	needs_suspense: boolean;
 	needs_merge_refs: boolean;
 	needs_merge_spread_class: boolean;
+	needs_join_scope_class: boolean;
 	needs_normalize_spread_props: boolean;
 	needs_normalize_spread_props_for_ref_attr: boolean;
 	needs_spread_ref_bags: boolean;
@@ -449,6 +450,22 @@ export interface JsxPlatform {
 		 */
 		rewriteClassAttr: boolean;
 		/**
+		 * Compile an authored `className` attribute on an intrinsic element
+		 * (a lowercase tag) to `class`, for a runtime that reads a class only
+		 * from `class` (Solid, Vue), so React-style source keeps its class. An
+		 * element with one `class` and one `className` joins them into one
+		 * `class`: their text when both are string literals, otherwise
+		 * `[class, className]` in written order, which needs a runtime whose
+		 * `class` takes a list. With a spread between them, `className` is
+		 * renamed where it is written instead, so the runtime handles them as
+		 * two `class` attributes around the spread, as written. The type-only
+		 * print renames it too, so it type-checks against the target's `class`,
+		 * and maps the generated `class` back to the authored `className`.
+		 * Components, member and dynamic tags (which may be components) and
+		 * spread bags keep `className`.
+		 */
+		rewriteClassNameAttr?: boolean;
+		/**
 		 * Attribute name to use when TSRX injects scoped CSS classes. This does
 		 * not rewrite authored attributes.
 		 */
@@ -470,17 +487,40 @@ export interface JsxPlatform {
 		 *   `class` across attributes and spreads itself, such as Vue's
 		 *   `mergeProps`.
 		 *
-		 * A spread's class joins the scope classes as text, as in the class
-		 * attribute, except a thenable class (Hono's server `css`), which applies
-		 * unchanged. `hostSpreadClassList` joins a non-string class as a list.
+		 * A spread's class joins the scope classes as `classValue` says, or as
+		 * text without it; a thenable class (Hono's server `css`) applies
+		 * unchanged.
 		 */
 		hostSpreadClassProps?: ReadonlyArray<'class' | 'className'>;
 		/**
-		 * The runtime's class prop also takes an object or a list, as Solid's
-		 * `class` does, so a spread's non-string class joins the scope classes
-		 * as `[class, scope]`.
+		 * Whether the runtime prints a host element's `class` and `className` as
+		 * two `class` attributes, as Hono's server renderer does. A browser reads
+		 * the first, so of several class attributes beside scoped CSS classes,
+		 * the last one named like the first gets the scope classes. Otherwise,
+		 * with `hostSpreadClassProps`, the last one written gets them, as the
+		 * runtime applies it.
 		 */
-		hostSpreadClassList?: boolean;
+		classPropsPrintedApart?: boolean;
+		/**
+		 * How the runtime renders a host element's class value. With it, a class
+		 * attribute beside scoped CSS classes whose value may not be a string
+		 * joins them through `join_scope_class` from `imports.refProp`, and a
+		 * spread's class through `merge_spread_class`; both render the class as
+		 * the runtime would and leave out a class the runtime would not render:
+		 *
+		 * - `'text'` (React, Hono DOM): `null`, `undefined`, `true` and `false`
+		 *   are left out; any other value renders as text.
+		 * - `'text-true'` (Preact): as `'text'`, but `true` renders as text.
+		 * - `'text-both'` (Hono's server): as `'text'`, but `true` and `false`
+		 *   render as text.
+		 * - `'list'` (Solid, Vue): `class` also takes an object or a list;
+		 *   other values that are not strings are left out.
+		 * - `undefined`: the class joins the scope classes as text in a
+		 *   template literal.
+		 *
+		 * The type-only print always uses the template literal.
+		 */
+		classValue?: 'text' | 'text-true' | 'text-both' | 'list';
 		/**
 		 * How to collapse multiple `ref` attributes on the same element into
 		 * one. React's and Preact's runtimes treat duplicate `ref` props as

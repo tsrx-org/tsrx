@@ -92,8 +92,21 @@ export function merge_spread_class<T extends object | SpreadFalsy>(
 	scope_class: unknown,
 	key: 'class' | 'className',
 	alias?: 'class' | 'className',
-	list?: boolean,
+	kind?: ClassValueKind,
 ): T;
+
+/**
+ * How a runtime renders a host element's class value; see `join_scope_class`.
+ */
+export type ClassValueKind = 'text' | 'text-true' | 'text-both' | 'list';
+
+// Joins an element's authored class with its scope classes as the runtime
+// renders that class, leaving out a class the runtime would not render.
+export function join_scope_class(
+	value: unknown,
+	scope_class: unknown,
+	kind?: ClassValueKind,
+): unknown;
 
 export function normalize_spread_props<T extends object | SpreadFalsy>(
 	props: T,
