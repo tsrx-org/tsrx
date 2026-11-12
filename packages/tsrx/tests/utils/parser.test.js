@@ -7513,6 +7513,99 @@ namespace N {
 		},
 	);
 
+	/**
+	 * Count the elements that `Array#indexOf`, `Array#includes`, and
+	 * `Array#some` look at while `run` runs: from where a search starts to its
+	 * match, or to the end of the array when there is none.
+	 * @param {() => void} run
+	 * @returns {number}
+	 */
+	function count_array_searches(run) {
+		const { indexOf, includes, some } = Array.prototype;
+		let compared = 0;
+		/**
+		 * @param {unknown[]} array
+		 * @param {unknown} search
+		 * @param {number} from
+		 */
+		const charge = (array, search, from) => {
+			const found = indexOf.call(array, search, from);
+			compared += found < 0 ? array.length - from : found + 1 - from;
+		};
+		Array.prototype.indexOf = function (search, from = 0) {
+			charge(this, search, from);
+			return indexOf.call(this, search, from);
+		};
+		Array.prototype.includes = function (search, from = 0) {
+			charge(this, search, from);
+			return includes.call(this, search, from);
+		};
+		Array.prototype.some = function (predicate, this_arg) {
+			return some.call(this, (...args) => {
+				compared++;
+				return predicate.apply(this_arg, args);
+			});
+		};
+		try {
+			run();
+		} finally {
+			Array.prototype.indexOf = indexOf;
+			Array.prototype.includes = includes;
+			Array.prototype.some = some;
+		}
+		return compared;
+	}
+
+	/** @type {Array<[string, (i: number) => string, (entries: string) => string]>} */
+	const long_lists = [
+		['statements', (i) => `x${i} = ${i};`, (entries) => entries],
+		['array elements', (i) => `x${i} = ${i},`, (entries) => `[\n${entries}\n];`],
+		['object properties', (i) => `k${i}: ${i},`, (entries) => `({\n${entries}\n});`],
+		[
+			'code block statements',
+			(i) => `x${i} = ${i};`,
+			(entries) => `export function App() @{\n${entries}\n<div />\n}`,
+		],
+		['parameters', (i) => `a${i},`, (entries) => `function f(\n${entries}\n) {}`],
+		['call arguments', (i) => `${i},`, (entries) => `f(\n${entries}\n);`],
+		[
+			'attributes',
+			(i) => `a${i}="${i}"`,
+			(entries) => `export function App() @{\n<div\n${entries}\n/>\n}`,
+		],
+		['specifiers', (i) => `a${i},`, (entries) => `export {\n${entries}\n} from './a';`],
+		['template literal expressions', (i) => `\${${i}}`, (entries) => `const t = \`${entries}\`;`],
+		[
+			'children before a comment in an element',
+			(i) => `<b>${i}</b>`,
+			(entries) => `export function App() @{\n<div>\n${entries}\n{/* c */}\n</div>\n}`,
+		],
+	];
+
+	it.each(long_lists)(
+		'finds each of many %s among its siblings without searching them (#1163)',
+		(_, entry, list) => {
+			/** @param {number} count */
+			const search = (count) => {
+				const source =
+					list(Array.from({ length: count }, (_, i) => entry(i)).join('\n')) +
+					'\n// A final comment\n';
+				/** @type {AST.Program | undefined} */
+				let ast;
+				const compared = count_array_searches(() => {
+					ast = parseModule(source, 'App.tsrx');
+				});
+				expect(ast?.body.at(-1)?.trailingComments?.map((comment) => comment.value)).toEqual([
+					' A final comment',
+				]);
+				return compared;
+			};
+
+			// Searching a list for each of its entries is four times the work
+			expect(search(800)).toBeLessThan(3 * search(400));
+		},
+	);
+
 	it('leaves a comment after a root node with no parent where it is', () => {
 		const source = 'a + b; // c';
 		/** @type {AST.CommentWithLocation[]} */
