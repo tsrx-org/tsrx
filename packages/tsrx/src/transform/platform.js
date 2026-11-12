@@ -381,22 +381,46 @@ export function merge_platform_definitions(definitions, platform_value, options 
 }
 
 /**
+ * Whether the generated program has a top-level import or export, which makes
+ * its printed code a module without a marker of its own. It must be the
+ * generated program, not the source: a transform can lower an authored import
+ * to something that is not one (`import { value } from 'server'` becomes
+ * `import value = server.value` under a `serverModule` platform).
+ *
+ * @param {AST.Program | null | undefined} program
+ * @returns {boolean}
+ */
+function has_module_syntax(program) {
+	return !!program?.body.some(
+		(statement) =>
+			statement.type === 'ImportDeclaration' ||
+			statement.type === 'ExportNamedDeclaration' ||
+			statement.type === 'ExportDefaultDeclaration' ||
+			statement.type === 'ExportAllDeclaration',
+	);
+}
+
+/**
  * Add editor-only ambient types for flags retained in virtual TSX (for example
  * a runtime `@if`). The original source is an external module by virtue of
  * using `import.meta`; `export {}` preserves that status if early pruning
- * removed its final import-meta expression.
+ * removed its final import-meta expression. A generated program that already
+ * has an import or export gets no marker: Organize Imports and Sort Imports
+ * also rewrite export declarations, and TypeScript 7 drops the whole action
+ * when one of its edits is in generated code. Without `generated_program` the
+ * marker is always added.
  *
  * @param {import('../../types/index').VolarMappingsResult} result
  * @param {unknown} platform_value
+ * @param {AST.Program | null} [generated_program] The program `result.code` was printed from.
  * @returns {import('../../types/index').VolarMappingsResult}
  */
-export function with_platform_types(result, platform_value) {
+export function with_platform_types(result, platform_value, generated_program) {
 	const platform = validate_platform(platform_value);
 	const value_type = (/** @type {Platform} */ name) =>
 		platform === undefined ? 'boolean' : name === platform ? 'true' : 'false';
 	const declarations = `
-export {};
-declare global {
+${has_module_syntax(generated_program) ? '' : 'export {};\n'}declare global {
 	interface ImportMetaEnv {
 		readonly platform: string & {
 			readonly web: ${value_type('web')};

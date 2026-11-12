@@ -7,6 +7,7 @@ import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtim
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -745,6 +746,113 @@ function SwitchReactiveApp() @{
 			{'other'}
 		</button>
 	</>
+}
+
+// ── Static control flow in a component rendered twice ──
+// Each subtree reads no binding, so only the generated control-flow component
+// keeps it from being hoisted to one module-level node that both instances
+// would share.
+
+function StaticIf() @{
+	<div class="static-if">
+		@if (true) {
+			<span>{'if'}</span>
+		}
+	</div>
+}
+
+function StaticFor() @{
+	<ul class="static-for">
+		@for (const item of ['for']) {
+			<li>{item}</li>
+		}
+	</ul>
+}
+
+function StaticSwitch() @{
+	<div class="static-switch">
+		@switch ('a') {
+			@case 'a': {
+				<span>{'switch'}</span>
+			}
+		}
+	</div>
+}
+
+function StaticPending() @{
+	<div class="static-pending">
+		@try {
+			<span>{'pending'}</span>
+		} @pending {
+			<span>{'loading'}</span>
+		}
+	</div>
+}
+
+function StaticCatch() @{
+	<div class="static-catch">
+		@try {
+			<span>{'catch'}</span>
+		} @catch (_error) {
+			<span>{'failed'}</span>
+		}
+	</div>
+}
+
+function StaticControlFlowTwiceApp() @{
+	<>
+		<StaticIf />
+		<StaticIf />
+		<StaticFor />
+		<StaticFor />
+		<StaticSwitch />
+		<StaticSwitch />
+		<StaticPending />
+		<StaticPending />
+		<StaticCatch />
+		<StaticCatch />
+	</>
+}
+
+// ── Bindings named like generated control-flow components ──
+
+function LoopVariableMatchNameApp() @{
+	const rows = [
+		['a', 'A'],
+		['b', 'B'],
+	];
+	<ul class="match-rows">
+		@for (const Match of rows) {
+			@switch (Match[0]) {
+				@case 'a': {
+					<li>{`a:${Match[1]}`}</li>
+				}
+				@default: {
+					<li>{'other'}</li>
+				}
+			}
+		}
+	</ul>
+}
+
+function LocalShowNameApp() @{
+	const Show = (props: { children?: JSX.Element }) => (
+		<section class="local-show">{props.children}</section>
+	);
+	const [on, setOn] = createSignal(true);
+	<div>
+		<Show>
+			<p class="authored-show-child">{'authored'}</p>
+		</Show>
+		@if (on()) {
+			<p class="generated-show-child">{'on'}</p>
+		} @else {
+			<p class="generated-show-child">{'off'}</p>
+		}
+		<button class="toggle-local-show" onClick={() => setOn(!on())}>
+			{'toggle'}
+		</button>
+	</div>
 }
 
 function GuardTrailingReturnApp() @{
@@ -1790,6 +1898,31 @@ describe('tsrx-solid runtime', () => {
 		expect(text('.page')).toBe('404');
 	});
 
+	it('renders @switch arms when the loop variable is named Match', async () => {
+		await render(LoopVariableMatchNameApp);
+		expect(
+			Array.from(container.querySelectorAll('.match-rows > li'), (item) => item.textContent),
+		).toEqual(['a:A', 'other']);
+	});
+
+	it('renders @if through the generated Show beside a setup local Show', async () => {
+		await render(LocalShowNameApp);
+		expect(text('.local-show .authored-show-child')).toBe('authored');
+		expect(text('.generated-show-child')).toBe('on');
+		expect(container.querySelector('.local-show .generated-show-child')).toBeNull();
+
+		await click('.toggle-local-show');
+		expect(text('.generated-show-child')).toBe('off');
+	});
+
+	it.each(['static-if', 'static-for', 'static-switch', 'static-pending', 'static-catch'])(
+		'renders each instance of a component whose %s subtree reads no binding',
+		async (class_name) => {
+			await render(StaticControlFlowTwiceApp);
+			expect(container.querySelectorAll(`.${class_name}`).length).toBe(2);
+		},
+	);
+
 	it('evaluates a plain guard return once at setup (non-reactive)', async () => {
 		await render(GuardTrailingReturnApp);
 		expect(text('.guard-rest')).toBe('rest');
@@ -2634,3 +2767,4 @@ runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
+runArraySpreadRefRuntimeTests({ refObjects: false, ownRef: false });

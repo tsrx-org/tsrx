@@ -12,7 +12,7 @@ import { parse_style } from './parse/style.js';
 import { regex_newline_characters, regex_not_whitespace } from './utils/patterns.js';
 import { error } from './errors.js';
 import { TS_ERRORS, TSRX_ERRORS, UPSTREAM_ERRORS, get_upstream_error } from './diagnostics.js';
-import { is_tsrx_render_output_node } from './utils/ast.js';
+import { extract_identifiers, is_tsrx_render_output_node } from './utils/ast.js';
 import { keyword_suggestion } from './utils/keyword-suggestion.js';
 
 /** Whitespace and comments from `lastIndex` on, like acorn's `skipSpace` */
@@ -88,6 +88,15 @@ const regex_space_and_comments = /(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\
  * annotation that only a parameter can have is in it, with its error (-1 and
  * `null` when there is none). See `#checkParameterSyntax`.
  * @typedef {{ parameters: boolean, position: number, error: Diagnostic | null }} ExpressionList
+ */
+
+/**
+ * The statements of a module or of a namespace's block, whose exports TypeScript
+ * declares in one table with the other blocks of the namespace (see
+ * `#findExportBlocks`): a key of its own, whether it exports each of its
+ * declarations, as an ambient block without export declarations does, and the
+ * statement lists around it, innermost first.
+ * @typedef {{ body: AST.Node[], block: string, exports_all: boolean, parents: AST.Node[][] }} ExportBlock
  */
 
 /**
@@ -440,11 +449,17 @@ const NESTED_IMPORT_EXPORT = "'import' and 'export' may only appear at the top l
 const IMPORT_ALIAS_IMPORT_TYPE = "An import alias can not use 'import type'.";
 // TypeScript's binder flags for what an export declares, and the flags of the
 // declarations each can't share a symbol with (see `#reportDuplicateExports`).
+const SYMBOL_FUNCTION_SCOPED_VARIABLE = 1;
+const SYMBOL_BLOCK_SCOPED_VARIABLE = 1 << 1;
 const SYMBOL_PROPERTY = 1 << 2;
 const SYMBOL_FUNCTION = 1 << 4;
 const SYMBOL_CLASS = 1 << 5;
 const SYMBOL_INTERFACE = 1 << 6;
+const SYMBOL_CONST_ENUM = 1 << 7;
+const SYMBOL_REGULAR_ENUM = 1 << 8;
 const SYMBOL_VALUE_MODULE = 1 << 9;
+const SYMBOL_NAMESPACE_MODULE = 1 << 10;
+const SYMBOL_TYPE_ALIAS = 1 << 19;
 const SYMBOL_ALIAS = 1 << 21;
 // `SymbolFlags.Value` and `SymbolFlags.Type`, as TypeScript 5.9 computes them.
 const SYMBOL_VALUE = 111551;
@@ -771,6 +786,13 @@ const deferred_parameter_errors = new WeakMap();
 const parameter_lists_with_clashes = new WeakSet();
 
 /**
+ * The names each scope declares first with a default-exported class (see
+ * `declareName`).
+ * @type {WeakMap<Parse.Scope, string[]>}
+ */
+const default_class_names = new WeakMap();
+
+/**
  * When collecting, the redeclarations each scope has recorded as TS2451: the
  * name, where it's recorded, and acorn's error, TS2300, which a function
  * declaration of the name later in the scope's list makes it (see
@@ -897,6 +919,238 @@ function end_after_parentheses(input, node) {
  */
 function is_function_declaration(node) {
 	return node.type === 'FunctionDeclaration' || node.type === 'TSDeclareFunction';
+}
+
+/**
+ * Whether `statement` is an export declaration or an export assignment to
+ * TypeScript (`hasExportDeclarations`): `export { … }`, `export * from`,
+ * `export =`, or a default export of an expression. An ambient namespace or
+ * module without one exports each of its declarations.
+ * @param {AST.Node} statement
+ */
+function is_export_declaration(statement) {
+	switch (statement.type) {
+		case 'ExportNamedDeclaration':
+			return !statement.declaration;
+		case 'ExportAllDeclaration':
+		case 'TSExportAssignment':
+			return true;
+		case 'ExportDefaultDeclaration': {
+			const declaration = /** @type {AST.Node} */ (statement.declaration);
+			return !(
+				is_function_declaration(declaration) ||
+				declaration.type === 'ClassDeclaration' ||
+				declaration.type === 'TSInterfaceDeclaration'
+			);
+		}
+		default:
+			return false;
+	}
+}
+
+// TypeScript's `ModuleInstanceState` (see `module_instance_state`).
+const MODULE_NON_INSTANTIATED = 0;
+const MODULE_INSTANTIATED = 1;
+const MODULE_CONST_ENUM_ONLY = 2;
+
+/**
+ * TypeScript's `getModuleInstanceState` for `module`, a namespace: whether it
+ * declares a value (`MODULE_INSTANTIATED`), only const enums
+ * (`MODULE_CONST_ENUM_ONLY`), or only types (`MODULE_NON_INSTANTIATED`), which
+ * decides whether its binder declares its name as a value. `visited` holds the
+ * nodes being or already checked, as TypeScript's cache does, where one being
+ * checked counts as not instantiated.
+ * @param {AST.Node} module
+ * @param {AST.Node[][]} bodies The statement lists around it, innermost first
+ * @param {Map<AST.Node, number | undefined>} visited
+ * @returns {number}
+ */
+function module_instance_state(module, bodies, visited) {
+	if (visited.has(module)) return visited.get(module) ?? MODULE_NON_INSTANTIATED;
+	visited.set(module, undefined);
+	const body = /** @type {AST.TSModuleDeclaration} */ (module).body;
+	let state = MODULE_INSTANTIATED;
+	if (body?.type === 'TSModuleDeclaration') {
+		state = module_instance_state(body, bodies, visited);
+	} else if (body?.type === 'TSModuleBlock') {
+		state = MODULE_NON_INSTANTIATED;
+		const inner = [body.body, ...bodies];
+		for (const statement of body.body) {
+			const child = statement_instance_state(statement, inner, visited);
+			if (child === MODULE_INSTANTIATED) {
+				state = MODULE_INSTANTIATED;
+				break;
+			}
+			if (child === MODULE_CONST_ENUM_ONLY) state = MODULE_CONST_ENUM_ONLY;
+		}
+	}
+	visited.set(module, state);
+	return state;
+}
+
+/**
+ * The instance state of `statement` in a namespace's body, as
+ * `getModuleInstanceStateWorker` gives it: a type, an import that isn't
+ * exported, or a namespace of types declares no value, a const enum only a
+ * const enum, and anything else a value. `export { … }` declares what the names
+ * it exports declare (`getModuleInstanceStateForAliasTarget`).
+ * @param {AST.Node} statement
+ * @param {AST.Node[][]} bodies The statement lists around it, innermost first
+ * @param {Map<AST.Node, number | undefined>} visited
+ * @returns {number}
+ */
+function statement_instance_state(statement, bodies, visited) {
+	switch (statement.type) {
+		case 'TSInterfaceDeclaration':
+		case 'TSTypeAliasDeclaration':
+		case 'ImportDeclaration':
+			return MODULE_NON_INSTANTIATED;
+		case 'TSEnumDeclaration':
+			return statement.const ? MODULE_CONST_ENUM_ONLY : MODULE_INSTANTIATED;
+		case 'TSImportEqualsDeclaration':
+			return statement.isExport ? MODULE_INSTANTIATED : MODULE_NON_INSTANTIATED;
+		case 'TSModuleDeclaration':
+			return module_instance_state(statement, bodies, visited);
+		case 'ExportDefaultDeclaration':
+			return /** @type {AST.Node} */ (statement.declaration).type === 'TSInterfaceDeclaration'
+				? MODULE_NON_INSTANTIATED
+				: MODULE_INSTANTIATED;
+		case 'ExportNamedDeclaration': {
+			// `export` is a modifier of the declaration in TypeScript's tree.
+			if (statement.declaration) {
+				return statement_instance_state(statement.declaration, bodies, visited);
+			}
+			if (statement.source) return MODULE_INSTANTIATED;
+			let state = MODULE_NON_INSTANTIATED;
+			for (const specifier of statement.specifiers) {
+				const local = /** @type {AST.Identifier | AST.Literal} */ (specifier.local);
+				const target =
+					local.type === 'Identifier'
+						? alias_target_instance_state(local.name, bodies, visited)
+						: MODULE_INSTANTIATED;
+				if (target > state) state = target;
+				if (state === MODULE_INSTANTIATED) return state;
+			}
+			return state;
+		}
+		default:
+			return MODULE_INSTANTIATED;
+	}
+}
+
+/**
+ * The instance state of what `name`, exported from a namespace's body, names:
+ * the declarations of the name in the nearest of `bodies` that has one, where
+ * an import alias counts as a value, or a value when none does.
+ * @param {string} name
+ * @param {AST.Node[][]} bodies
+ * @param {Map<AST.Node, number | undefined>} visited
+ * @returns {number}
+ */
+function alias_target_instance_state(name, bodies, visited) {
+	for (const [index, body] of bodies.entries()) {
+		/** @type {number | undefined} */
+		let found;
+		for (const statement of body) {
+			if (!statement_declares_name(statement, name)) continue;
+			const state = statement_instance_state(statement, bodies.slice(index), visited);
+			if (found === undefined || state > found) found = state;
+			if (found === MODULE_INSTANTIATED) return found;
+			if (statement.type === 'TSImportEqualsDeclaration') found = MODULE_INSTANTIATED;
+		}
+		if (found !== undefined) return found;
+	}
+	return MODULE_INSTANTIATED;
+}
+
+/**
+ * Whether `statement` declares `name` (TypeScript's `nodeHasName`): a named
+ * declaration, or a variable declaration with a declarator of that name.
+ * @param {AST.Node} statement
+ * @param {string} name
+ */
+function statement_declares_name(statement, name) {
+	const declaration =
+		statement.type === 'ExportNamedDeclaration' || statement.type === 'ExportDefaultDeclaration'
+			? /** @type {AST.Node | null | undefined} */ (statement.declaration)
+			: statement;
+	if (!declaration) return false;
+	if (declaration.type === 'VariableDeclaration') {
+		return declaration.declarations.some(
+			(declarator) => declarator.id.type === 'Identifier' && declarator.id.name === name,
+		);
+	}
+	const id = /** @type {{ id?: AST.Node | null }} */ (declaration).id;
+	return id?.type === 'Identifier' && id.name === name;
+}
+
+/**
+ * What TypeScript's binder declares in a namespace's exports for `declaration`,
+ * when the namespace exports it: the names, their flags, and the flags of the
+ * declarations they can't share a symbol with. `null` for a statement that
+ * declares no name there, and for a namespace, which can share its name or not
+ * as what it declares decides.
+ * @param {AST.Node} declaration
+ * @returns {{ names: AST.Identifier[], includes: number, excludes: number } | null}
+ */
+function exported_declaration_symbols(declaration) {
+	/**
+	 * @param {AST.Identifier | null | undefined} id
+	 * @param {number} includes
+	 * @param {number} excludes
+	 */
+	const named = (id, includes, excludes) => (id ? { names: [id], includes, excludes } : null);
+	switch (declaration.type) {
+		case 'VariableDeclaration': {
+			const names = declaration.declarations.flatMap((declarator) =>
+				extract_identifiers(declarator.id),
+			);
+			return declaration.kind === 'var'
+				? {
+						names,
+						includes: SYMBOL_FUNCTION_SCOPED_VARIABLE,
+						excludes: SYMBOL_VALUE & ~SYMBOL_FUNCTION_SCOPED_VARIABLE,
+					}
+				: { names, includes: SYMBOL_BLOCK_SCOPED_VARIABLE, excludes: SYMBOL_VALUE };
+		}
+		case 'FunctionDeclaration':
+		case 'TSDeclareFunction':
+			return named(
+				declaration.id,
+				SYMBOL_FUNCTION,
+				SYMBOL_VALUE & ~(SYMBOL_FUNCTION | SYMBOL_VALUE_MODULE | SYMBOL_CLASS),
+			);
+		case 'ClassDeclaration':
+			return named(
+				declaration.id,
+				SYMBOL_CLASS,
+				(SYMBOL_VALUE | SYMBOL_TYPE) & ~(SYMBOL_VALUE_MODULE | SYMBOL_INTERFACE | SYMBOL_FUNCTION),
+			);
+		case 'TSInterfaceDeclaration':
+			return named(
+				declaration.id,
+				SYMBOL_INTERFACE,
+				SYMBOL_TYPE & ~(SYMBOL_INTERFACE | SYMBOL_CLASS),
+			);
+		case 'TSTypeAliasDeclaration':
+			return named(declaration.id, SYMBOL_TYPE_ALIAS, SYMBOL_TYPE);
+		case 'TSEnumDeclaration':
+			return declaration.const
+				? named(
+						declaration.id,
+						SYMBOL_CONST_ENUM,
+						(SYMBOL_VALUE | SYMBOL_TYPE) & ~SYMBOL_CONST_ENUM,
+					)
+				: named(
+						declaration.id,
+						SYMBOL_REGULAR_ENUM,
+						(SYMBOL_VALUE | SYMBOL_TYPE) & ~(SYMBOL_REGULAR_ENUM | SYMBOL_VALUE_MODULE),
+					);
+		case 'TSImportEqualsDeclaration':
+			return named(declaration.id, SYMBOL_ALIAS, SYMBOL_ALIAS);
+		default:
+			return null;
+	}
 }
 
 /**
@@ -1462,6 +1716,9 @@ export function TSRXPlugin(config) {
 			// in (see `declareName`).
 			/** @type {{ kind: string, scope: Parse.Scope } | null} */
 			#declaration = null;
+			// While `parseClassId` reads the name of a class after `export default`,
+			// where the name starts (see `declareName`).
+			#defaultClassNameStart = -1;
 			// While `declareName` declares a name that TypeScript reports as a
 			// redeclaration with another code than acorn's TS2300, the name and the
 			// error, which `raiseRecoverable` reports in place of acorn's, and for
@@ -2112,6 +2369,10 @@ export function TSRXPlugin(config) {
 				this.lineStart = index - endLoc.column;
 				this.pos = index;
 				this.#popTemplateLiteralTokenContext();
+				// The token after text is read as after text, even when the text's first
+				// token was read as code (after a directive's `}`), so the `<` of
+				// `}a<br />` starts a tag, not type arguments after `a`.
+				this.type = tstt.jsxText;
 				this.next();
 
 				if (comments.length > 0) {
@@ -3911,7 +4172,12 @@ export function TSRXPlugin(config) {
 				const unclosed = relativeCloseStart === -1;
 
 				if (unclosed) {
-					this.#report_broken_markup_error(open.end, TSRX_ERRORS.UNCLOSED_TAG(tagName));
+					// The whole opening tag: the editor's code has no reporting mapping
+					// for a `<style>`'s name alone, so a diagnostic there wouldn't show.
+					this.#report_broken_markup_error(open.end, TSRX_ERRORS.UNCLOSED_TAG(tagName), [
+						/** @type {number} */ (open.start),
+						/** @type {number} */ (open.end),
+					]);
 					node.unclosed = true;
 					relativeCloseStart = input.length;
 					if (!this.#loose) {
@@ -4470,17 +4736,27 @@ export function TSRXPlugin(config) {
 
 			/**
 			 * An unclosed or mismatched tag (TSRX1001, TSRX1002). A strict parse
-			 * throws it. Collecting records it, and so does a loose parse (the
-			 * editor's), which also goes on to recover the markup.
+			 * throws it at `position`. Collecting records it, and so does a loose
+			 * parse (the editor's), which also goes on to recover the markup. It is
+			 * recorded at `range` when given, such as an unclosed tag's name, and its
+			 * `raisedAt` stays one past `position`, even at the end of the input, so
+			 * the error still says where the parser stopped.
 			 * @param {number} position
 			 * @param {Diagnostic} message
+			 * @param {[number, number]} [range]
 			 */
-			#report_broken_markup_error(position, message) {
-				if (this.#collect) {
+			#report_broken_markup_error(position, message, range) {
+				if (!this.#collect) {
+					this.raise(position, message);
+				} else if (range) {
+					this.#report_recoverable_error_range(range[0], range[1], message);
+					const recorded = /** @type {import('../types/index').CompileError} */ (
+						this.#errors?.at(-1)
+					);
+					recorded.raisedAt = position + 1;
+				} else {
 					this.#report_recoverable_error(position, message);
-					return;
 				}
-				this.raise(position, message);
 			}
 
 			/**
@@ -4958,11 +5234,28 @@ export function TSRXPlugin(config) {
 			 * declarations with those of classes (`lexical`), and a module's or
 			 * function's function declarations with its `var`s, so the parser keeps
 			 * the kinds apart, and has `raiseRecoverable` report TypeScript's code
-			 * (see `#redeclarationError`).
+			 * (see `#redeclarationError`). The name of a default-exported class
+			 * declares the default export in TypeScript, and the name only locally,
+			 * where another default-exported class can share it: the two are
+			 * multiple default exports (TS2528, see `#reportDuplicateExports`), not a
+			 * redeclaration (#1213).
 			 * @type {Parse.Parser['declareName']}
 			 */
 			declareName(name, bindingType, pos) {
 				const scope = this.currentScope();
+				if (pos === this.#defaultClassNameStart) {
+					let names = default_class_names.get(scope);
+					if (names?.includes(name)) return;
+					if (
+						!scope.lexical.includes(name) &&
+						!scope.var.includes(name) &&
+						!scope.functions.includes(name)
+					) {
+						if (!names) default_class_names.set(scope, (names = []));
+						this.parseEffects?.willAppend(names);
+						names.push(name);
+					}
+				}
 				const kind =
 					this.#declaration?.scope === scope &&
 					(bindingType === BINDING_TYPES.BIND_LEXICAL || bindingType === BINDING_TYPES.BIND_VAR)
@@ -5055,16 +5348,29 @@ export function TSRXPlugin(config) {
 			 * TS2300 `Duplicate identifier '…'.`, and a default export that can't merge
 			 * with an earlier one, TS2528 `A module cannot have multiple default
 			 * exports.`, as `export default 1; export default 2;` (#882, #1161).
-			 * acorn-typescript turned acorn's check off, since TypeScript merges some
-			 * declarations of a name. They are checker errors: a strict parse throws
-			 * the first, and a collecting one records them.
+			 * The blocks of one namespace or ambient module share its exports, so
+			 * two of them can also declare a name twice (#1213). acorn-typescript
+			 * turned acorn's check off, since TypeScript merges some declarations of a
+			 * name. They are checker errors: a strict parse throws the first, and a
+			 * collecting one records them.
 			 * @param {AST.Program} program
 			 */
 			#reportDuplicateExports(program) {
 				/** @type {Array<{ position: number, error: Diagnostic }>} */
 				const found = [];
-				this.#findDuplicateExports(program.body, found);
-				found.sort((a, b) => a.position - b.position);
+				/** @type {Map<string, ExportBlock[]>} */
+				const tables = new Map();
+				this.#findExportBlocks(program.body, '', false, tables);
+				for (const blocks of tables.values()) {
+					this.#findDuplicateExports(blocks, found);
+					if (blocks.length > 1) this.#findDuplicateExportedDeclarations(blocks, found);
+				}
+				// At one position, by code, as tsc sorts them (#1263).
+				found.sort(
+					(a, b) =>
+						a.position - b.position ||
+						Number(a.error.code?.slice(2)) - Number(b.error.code?.slice(2)),
+				);
 				for (const { position, error } of found) {
 					if (!this.#collect) this.#throwError(position, error);
 					this.#recordCheckerLevelError(position, position + 1, error);
@@ -5072,18 +5378,214 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Add to `found` the exports of `body`, a module's or a namespace's
-			 * statements, that TypeScript's binder declares twice, and those of each
-			 * namespace in it. Like the binder, this declares the function declarations
-			 * first, then the other statements in order. A declaration that can't share
+			 * Add `body`, the statements of a module or of a namespace's block, to
+			 * `tables` under `key`, the symbol whose exports it declares, and the
+			 * block of each namespace in it under that namespace's key. TypeScript's
+			 * binder merges the namespaces of one name in a symbol table, and the
+			 * ambient modules of one specifier, so their blocks share one table of
+			 * exports. A namespace is in its parent's exports when the parent exports
+			 * it: with `export`, as the inner names of `A.B`, or in an ambient block
+			 * without export declarations, which exports each of its declarations.
+			 * Otherwise it's local to the block, as are ambient modules and
+			 * `declare global`.
+			 * @param {AST.Node[]} body
+			 * @param {string} key
+			 * @param {boolean} ambient Whether `body` is in an ambient context
+			 * @param {Map<string, ExportBlock[]>} tables
+			 * @param {AST.Node[][]} [parents] The statement lists around `body`,
+			 *   innermost first
+			 */
+			#findExportBlocks(body, key, ambient, tables, parents = []) {
+				let blocks = tables.get(key);
+				if (!blocks) tables.set(key, (blocks = []));
+				const block = `${key}#${blocks.length}`;
+				const exports_all = ambient && !body.some(is_export_declaration);
+				blocks.push({ body, block, exports_all, parents });
+				for (const statement of body) {
+					const exported = statement.type === 'ExportNamedDeclaration';
+					/** @type {AST.Node | null | undefined} */
+					let module = exported ? statement.declaration : statement;
+					if (module?.type !== 'TSModuleDeclaration') continue;
+					const id = /** @type {AST.Identifier | AST.Literal} */ (module.id);
+					let module_key =
+						module.kind === 'global'
+							? `${block} global`
+							: id.type === 'Literal'
+								? `${block} ${JSON.stringify(id.value)}`
+								: `${exported || exports_all ? key : block}.${id.name}`;
+					const module_ambient = ambient || module.declare === true;
+					while (module.body?.type === 'TSModuleDeclaration') {
+						module = module.body;
+						module_key += `.${/** @type {AST.Identifier} */ (module.id).name}`;
+					}
+					if (module.body?.type === 'TSModuleBlock') {
+						this.#findExportBlocks(module.body.body, module_key, module_ambient, tables, [
+							body,
+							...parents,
+						]);
+					}
+				}
+			}
+
+			/**
+			 * Add to `found` the declarations that two of `blocks`, the blocks of one
+			 * namespace or ambient module, export with one name, where TypeScript's
+			 * binder declares it twice in their shared exports: TS2567 when an enum is
+			 * among them, TS2451 `Cannot redeclare block-scoped variable '…'.` when a
+			 * `let` or `const` declaration comes before, and otherwise TS2300
+			 * `Duplicate identifier '…'.`, at each name, as written. The binder
+			 * declares each block's functions first. Two declarations in one block
+			 * are the scope check's (see `declareName`), which reports the second as
+			 * it reads it, so they're left to it. A namespace declares its name as a
+			 * value only when it's instantiated (`module_instance_state`), and
+			 * otherwise shares it with anything (#1263). An export specifier and
+			 * `export * as` are aliases, as `export import` is: two of them are
+			 * `#findDuplicateExports`'s, and one with an `export import` is reported
+			 * here.
+			 * @param {ExportBlock[]} blocks
+			 * @param {Array<{ position: number, error: Diagnostic }>} found
+			 */
+			#findDuplicateExportedDeclarations(blocks, found) {
+				/** @typedef {{ name: string, written: string, position: number, block: string, includes: number, excludes: number, specifier: boolean }} Entry */
+				/** @type {Entry[]} */
+				const entries = [];
+				for (const { body, block, exports_all, parents } of blocks) {
+					/** @type {Entry[]} */
+					const functions = [];
+					/** @type {Entry[]} */
+					const others = [];
+					for (const statement of body) {
+						if (
+							(statement.type === 'ExportNamedDeclaration' && !statement.declaration) ||
+							(statement.type === 'ExportAllDeclaration' && statement.exported)
+						) {
+							const names =
+								statement.type === 'ExportAllDeclaration'
+									? [statement.exported]
+									: statement.specifiers.map((specifier) => specifier.exported);
+							for (const exported of /** @type {Array<AST.Identifier | AST.Literal>} */ (names)) {
+								const name =
+									exported.type === 'Identifier' ? exported.name : String(exported.value);
+								if (name === 'default') continue;
+								others.push({
+									name,
+									written: this.input.slice(/** @type {number} */ (exported.start), exported.end),
+									position: /** @type {number} */ (exported.start),
+									block,
+									includes: SYMBOL_ALIAS,
+									excludes: SYMBOL_ALIAS,
+									specifier: true,
+								});
+							}
+							continue;
+						}
+						/** @type {AST.Node | null | undefined} */
+						let declaration = null;
+						if (statement.type === 'ExportNamedDeclaration') {
+							declaration = statement.declaration;
+						} else if (statement.type === 'TSImportEqualsDeclaration') {
+							// Only `export` exports an import alias.
+							if (statement.isExport) declaration = statement;
+						} else if (exports_all) {
+							declaration = statement;
+						}
+						if (!declaration) continue;
+						if (declaration.type === 'TSModuleDeclaration') {
+							if (declaration.id.type !== 'Identifier') continue;
+							const instantiated =
+								module_instance_state(declaration, [body, ...parents], new Map()) !==
+								MODULE_NON_INSTANTIATED;
+							others.push({
+								name: declaration.id.name,
+								written: declaration.id.name,
+								position: /** @type {number} */ (declaration.id.start),
+								block,
+								includes: instantiated ? SYMBOL_VALUE_MODULE : SYMBOL_NAMESPACE_MODULE,
+								excludes: instantiated
+									? SYMBOL_VALUE &
+										~(SYMBOL_FUNCTION | SYMBOL_CLASS | SYMBOL_REGULAR_ENUM | SYMBOL_VALUE_MODULE)
+									: 0,
+								specifier: false,
+							});
+							continue;
+						}
+						const symbols = exported_declaration_symbols(declaration);
+						if (!symbols) continue;
+						for (const id of symbols.names) {
+							(is_function_declaration(declaration) ? functions : others).push({
+								name: id.name,
+								written: id.name,
+								position: /** @type {number} */ (id.start),
+								block,
+								includes: symbols.includes,
+								excludes: symbols.excludes,
+								specifier: false,
+							});
+						}
+					}
+					entries.push(...functions, ...others);
+				}
+				/** @type {Map<string, { flags: number, declarations: Entry[] }>} */
+				const symbols = new Map();
+				/** @type {Set<string>} */
+				const reported = new Set();
+				for (const entry of entries) {
+					const symbol = symbols.get(entry.name);
+					if (!symbol) {
+						symbols.set(entry.name, { flags: entry.includes, declarations: [entry] });
+						continue;
+					}
+					if ((symbol.flags & entry.excludes) === 0) {
+						symbol.flags |= entry.includes;
+						symbol.declarations.push(entry);
+						continue;
+					}
+					if (symbol.declarations.every((other) => other.block === entry.block)) continue;
+					if (entry.specifier && symbol.declarations.every((other) => other.specifier)) continue;
+					for (const other of [...symbol.declarations, entry]) {
+						const error =
+							(symbol.flags | entry.includes) & (SYMBOL_CONST_ENUM | SYMBOL_REGULAR_ENUM)
+								? TS_ERRORS.ENUM_REDECLARED
+								: symbol.flags & SYMBOL_BLOCK_SCOPED_VARIABLE
+									? TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED(other.written)
+									: TS_ERRORS.DUPLICATE_IDENTIFIER(other.written);
+						const id = `${other.position} ${error.message}`;
+						if (reported.has(id) || this.#redeclarationRecorded(other.position)) continue;
+						reported.add(id);
+						found.push({ position: other.position, error });
+					}
+				}
+			}
+
+			/**
+			 * Whether the scope check has recorded a redeclaration at `position`.
+			 * @param {number} position
+			 */
+			#redeclarationRecorded(position) {
+				return (
+					this.#errors?.some(
+						(error) =>
+							error.pos === position &&
+							(error.code === UPSTREAM_ERRORS.REDECLARED.code ||
+								error.code === TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED.code ||
+								error.code === TS_ERRORS.ENUM_REDECLARED.code),
+					) ?? false
+				);
+			}
+
+			/**
+			 * Add to `found` the exports of `blocks`, the statements of a module or of
+			 * the blocks of one namespace, that TypeScript's binder declares twice.
+			 * Like the binder, this declares each block's function declarations
+			 * first, then its other statements in order. A declaration that can't share
 			 * the symbol of its name with the ones before it reports each of them and
 			 * itself, at its name, or at `export`: TS2528 when it's a default export
 			 * (not `export * as default`), and otherwise TS2300, with each one's name as
 			 * written. A declaration reports a message once.
-			 * @param {AST.Node[]} body
+			 * @param {ExportBlock[]} blocks
 			 * @param {Array<{ position: number, error: Diagnostic }>} found
 			 */
-			#findDuplicateExports(body, found) {
+			#findDuplicateExports(blocks, found) {
 				/** @type {Map<string, { flags: number, declarations: Array<{ position: number, name: string }> }>} */
 				const symbols = new Map();
 				/** @type {Set<string>} */
@@ -5202,16 +5704,13 @@ export function TSRXPlugin(config) {
 				const exports_function = (statement) =>
 					statement.type === 'ExportDefaultDeclaration' &&
 					is_function_declaration(/** @type {AST.Node} */ (statement.declaration));
-				for (const statement of body) {
-					if (exports_function(statement)) declare_statement(statement);
-				}
-				for (const statement of body) {
-					if (!exports_function(statement)) declare_statement(statement);
-					/** @type {AST.Node | null | undefined} */
-					let module =
-						statement.type === 'ExportNamedDeclaration' ? statement.declaration : statement;
-					while (module?.type === 'TSModuleDeclaration') module = module.body;
-					if (module?.type === 'TSModuleBlock') this.#findDuplicateExports(module.body, found);
+				for (const { body } of blocks) {
+					for (const statement of body) {
+						if (exports_function(statement)) declare_statement(statement);
+					}
+					for (const statement of body) {
+						if (!exports_function(statement)) declare_statement(statement);
+					}
 				}
 			}
 
@@ -6107,15 +6606,19 @@ export function TSRXPlugin(config) {
 					this.type = tt.name;
 				}
 				const outer = this.#declaration;
+				const outer_default = this.#defaultClassNameStart;
 				// A class declaration, not one after `export default` (`'nullableID'`),
 				// which TypeScript reports as another default export (TS2528).
 				if (isStatement === true) {
 					this.#declaration = { kind: 'class', scope: this.currentScope() };
+				} else if (isStatement === 'nullableID') {
+					this.#defaultClassNameStart = this.start;
 				}
 				try {
 					super.parseClassId(node, isStatement);
 				} finally {
 					this.#declaration = outer;
+					this.#defaultClassNameStart = outer_default;
 				}
 			}
 
@@ -11995,9 +12498,16 @@ export function TSRXPlugin(config) {
 						const displayTag = is_fragment
 							? ''
 							: this.getElementName(/** @type {ESTreeJSX.JSXElement} */ (node).openingElement.name);
+						// Recorded at the tag's name (a fragment's `<>`), so that each tag
+						// left open shows on itself, not all of them at the token that ends
+						// the template (#1288).
+						const tag = is_fragment
+							? /** @type {ESTreeJSX.JSXFragment} */ (node).openingFragment
+							: /** @type {ESTreeJSX.JSXElement} */ (node).openingElement.name;
 						this.#report_broken_markup_error(
 							this.start,
 							TSRX_ERRORS.UNCLOSED_TAG(String(displayTag)),
+							[/** @type {number} */ (tag.start), /** @type {number} */ (tag.end)],
 						);
 						slots.unclosed = true;
 						/** @type {AST.SourceLocation} */ (node.loc).end = {

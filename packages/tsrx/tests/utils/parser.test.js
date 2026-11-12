@@ -2984,6 +2984,59 @@ export function App() @{ <div /> }`;
 		expect(reported(loose)).toEqual(reported(collected));
 	});
 
+	// A collecting or loose parse records each tag left open at the end of its
+	// template at the tag's name (a fragment's `<>`), so the editor shows each
+	// error on its own tag, and keeps `raisedAt` one past the token that ends the
+	// template. A strict parse still throws the first one at that token (#1288).
+	it.each([
+		['export function C() @{\n\t<main><section>\n}\n', ['section', 'main'], '\n}'],
+		['export function C() @{\n\t<ul><li>a\n}\n', ['li', 'ul'], '\n}'],
+		['export function C() @{\n\t<a><b><c><d>\n}\n', ['d', 'c', 'b', 'a'], '\n}'],
+		['export function C() @{\n\t<><div>\n}\n', ['div', '<>'], '\n}'],
+		['export function C() @{\n\t<>\n}\n', ['<>'], '\n}'],
+		['export function C() {\n\treturn <div>;\n}\n', ['div'], '\n}'],
+		['export const a = <><div>;\n', ['div', '<>'], null],
+		['export function C({ Tag }) @{\n\t<{Tag}>\n}\n', ['{Tag}'], '\n}'],
+		['export function C() @{\n\t<a.b class="x">\n}\n', ['a.b'], '\n}'],
+		['export function C() @{\n\t@if (x) {\n\t\t<div>\n\t}\n}\n', ['div'], '\n\t}'],
+	])('records each unclosed tag of %j at its name', (source, tags, before_end) => {
+		const end =
+			before_end === null ? source.length : source.indexOf(before_end) + before_end.length - 1;
+		for (const options of [{ collect: true }, { loose: true, collect: true }]) {
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'App.tsrx', { ...options, errors });
+			expect(errors.map((error) => [error.code, source.slice(error.pos, error.end)])).toEqual(
+				tags.map((tag) => [TSRX_ERRORS.UNCLOSED_TAG.code, tag]),
+			);
+			expect(errors.map((error) => error.raisedAt)).toEqual(tags.map(() => end + 1));
+		}
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			error_with(TSRX_ERRORS.UNCLOSED_TAG, line_column(source, end)),
+		);
+	});
+
+	// `<style>` and `<script>` read their body as raw text, so they report an
+	// unclosed tag from their own path: on the opening tag in a loose parse,
+	// and where the body starts when thrown. Only a loose parse goes on past
+	// it; a collecting one records it, then throws its next error (#1288).
+	it.each([
+		['export const y = <style>.a {}\n', '<style>', '.a'],
+		['export const y = <script>const a = 1;\n', '<script>', 'const a'],
+	])('records the unclosed raw text tag of %j on its opening tag', (source, tag, body) => {
+		const start = source.indexOf(body);
+		/** @type {CompileError[]} */
+		const errors = [];
+		parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
+		expect(errors.map((error) => [error.code, source.slice(error.pos, error.end)])).toEqual([
+			[TSRX_ERRORS.UNCLOSED_TAG.code, tag],
+		]);
+		expect(errors[0].raisedAt).toBe(start + 1);
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			error_with(TSRX_ERRORS.UNCLOSED_TAG, line_column(source, start)),
+		);
+	});
+
 	it('parses module-scope style expressions followed by JavaScript statements', () => {
 		const source = `const styles = <style>
 			.card {
@@ -10761,6 +10814,185 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			],
 			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '2:1'],
 		},
+		// The blocks of one namespace, and of one ambient module, share their
+		// exports (#1213).
+		{
+			source:
+				'declare namespace N { const a: number; export { a }; }\ndeclare namespace N { const b: number; export { b as a }; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a }; }\ndeclare'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a }; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:48'],
+		},
+		{
+			source:
+				'declare module \'m\' { const a: number; export { a }; }\ndeclare module "m" { const b: number; export { b as a }; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a }; }\ndeclare'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a }; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:47'],
+		},
+		{
+			source: "declare module 'm' { export default 1; }\ndeclare module 'm' { export default 2; }",
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 1'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 2'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '1:21'],
+		},
+		{
+			// `A.B` exports `B` from `A`, as an ambient `A` without export
+			// declarations exports each of its declarations.
+			source:
+				'declare namespace A.B { const a: number; export { a }; }\ndeclare namespace A { namespace B { const b: number; export { b as a }; } }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a }; }\n'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a }; } }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:50'],
+		},
+		// So do the declarations they export.
+		{
+			source:
+				'declare namespace N { export const a: number; }\ndeclare namespace N { export const a: number; }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a: number; }\n'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a: number; }'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:35'],
+		},
+		{
+			// Each block's functions first, and the first declaration's kind sets
+			// the code.
+			source:
+				'declare namespace N { let a: 1; function f(): void; }\ndeclare namespace N { const f: 1; var a: 1; }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a: 1; f'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'f(): void'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'f: 1'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a: 1; }'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:26'],
+		},
+		{
+			source: 'namespace N { export enum E {} }\nnamespace N { export const E = 1; }',
+			errors: [
+				[TS_ERRORS.ENUM_REDECLARED, 'E {}'],
+				[TS_ERRORS.ENUM_REDECLARED, 'E = 1'],
+			],
+			throws: [TS_ERRORS.ENUM_REDECLARED, '1:26'],
+		},
+		{
+			source:
+				'namespace N { export const [a, { b }] = [1, { b: 2 }]; }\nnamespace N { export let b = 1; }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'b }'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'b = 1'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:33'],
+		},
+		{
+			source: 'namespace N { export import A = X.Y; }\nnamespace N { export import A = X.Z; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'A = X.Y'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'A = X.Z'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:28'],
+		},
+		{
+			// Within one block, the scope check reports the second declaration as
+			// it reads it.
+			source:
+				'namespace N { export const a = 1; }\nnamespace N { export const a = 2; export const a = 3; }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 3'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 2'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '2:47'],
+		},
+		// A namespace's name is a value when the namespace is instantiated, and
+		// shares the name with anything otherwise (#1263).
+		{
+			source:
+				'declare namespace N { var X: number; }\ndeclare namespace N { let X: number; }\ndeclare namespace N { namespace X {} }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'X: number; }\ndeclare namespace N { let'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'X: number; }\ndeclare namespace N { namespace'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:26'],
+		},
+		{
+			source:
+				'namespace N { export namespace a { export const x = 1; } }\nnamespace N { export const a = 1; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a { export'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a = 1'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:31'],
+		},
+		{
+			// An exported name whose declaration is a value makes it instantiated.
+			source:
+				'declare namespace N { namespace a { const x: number; export { x }; } }\ndeclare namespace N { const a: number; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a { const'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a: number; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:32'],
+		},
+		{
+			source:
+				'namespace N { export const a = 1; }\nnamespace N { export namespace a { export const enum E {} } }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a { export const enum'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:27'],
+		},
+		// An export specifier and `export import` are both aliases (#1263).
+		{
+			source:
+				'declare namespace N { export import A = Y.Z; }\ndeclare namespace N { const b: number; export { b as A }; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'A = Y.Z'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'A }; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:36'],
+		},
+		// At one position, by code, as tsc sorts them (#1263).
+		{
+			source:
+				'namespace N { export var a = 1; }\nnamespace N { export enum a {} }\nnamespace N { export let a = 1; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a = 1; }\nnamespace N { export enum'],
+				[TS_ERRORS.ENUM_REDECLARED, 'a = 1; }\nnamespace N { export enum'],
+				[TS_ERRORS.ENUM_REDECLARED, 'a {}'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a = 1; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:25'],
+		},
+		// A default-exported class's name is the default export's, so a second
+		// one is another default export, not a redeclaration (#1213).
+		{
+			source: 'export default class C {}\nexport default class C {}',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'C {}\nexport'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'C {}'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '1:21'],
+		},
+		{
+			source:
+				"declare module 'm' {\n\texport default abstract class C {}\n\texport default class C {}\n}",
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'C {}\n\texport'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'C {}\n}'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '2:31'],
+		},
 		// A type-only import with a default and named bindings (#881).
 		{
 			source: "import type a, { b } from 'a';",
@@ -12780,6 +13012,18 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 					['A module cannot have multiple default exports.', 'export default 1'],
 				],
 			],
+			[
+				// Declarations that two blocks of a namespace export (#1213).
+				'declare namespace N { let a: 1; function f(): void; enum E {} }\ndeclare namespace N { const f: 1; var a: 1; const E: 1; }',
+				[
+					["Cannot redeclare block-scoped variable 'a'.", 'a: 1; f'],
+					["Duplicate identifier 'f'.", 'f(): void'],
+					['Enum declarations can only merge with namespace or other enum declarations.', 'E {}'],
+					["Duplicate identifier 'f'.", 'f: 1'],
+					["Cannot redeclare block-scoped variable 'a'.", 'a: 1; const'],
+					['Enum declarations can only merge with namespace or other enum declarations.', 'E: 1'],
+				],
+			],
 		];
 		for (const [source, expected] of cases) {
 			/** @type {CompileError[]} */
@@ -12803,6 +13047,47 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'let a = { b: 1 }, c = 1;\nexport default a!.b;\nexport { c as default };',
 			'export default 1;\nexport * as default from "m";',
 			'export * as default from "m";\nexport default function f() {}',
+		];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) =>
+				[undefined, ...collect_modes].map((options) => ({ source, options })),
+			),
+		);
+
+		expect(outcomes).toEqual(
+			sources.flatMap(() => [
+				{ ok: true, errors: undefined },
+				...collect_modes.map(() => ({ ok: true, errors: [] })),
+			]),
+		);
+	});
+
+	it('keeps apart the exports of blocks that TypeScript does not merge', async () => {
+		// Other names or specifiers; a namespace local to each block, or exported
+		// from one and local to the other; an ambient block with an export
+		// declaration, which exports only what it names; and declarations the
+		// binder merges (#1213).
+		const sources = [
+			'declare namespace N { const a: number; export { a }; }\ndeclare namespace M { const b: number; export { b as a }; }',
+			"declare module 'm' { const a: number; export { a }; }\ndeclare module 'n' { const b: number; export { b as a }; }",
+			'declare namespace N { namespace M { const a: number; export { a }; } export {}; }\ndeclare namespace N { namespace M { const b: number; export { b as a }; } export {}; }',
+			'namespace A.B { export const a = 1; }\nnamespace A { namespace B { export const a = 1; } }',
+			'namespace N { declare namespace M { const a: number; } }\nnamespace N { declare namespace M { const a: number; } }',
+			'export namespace N { export const a = 1; }\nnamespace N { export const a = 1; }',
+			'declare namespace N { const a: number; export {}; }\ndeclare namespace N { const a: number; }',
+			'namespace N { export interface I {} }\nnamespace N { export interface I {} export class I {} }',
+			'namespace N { export function f(): void; export function f() {} }\nnamespace N { export function f() {} }',
+			'namespace N { export var a = 1; }\nnamespace N { export var a = 2; }',
+			'namespace N { export enum E { A } }\nnamespace N { export enum E { B = 1 } }',
+			'namespace N { export const [a, { b }] = [1, { b: 2 }]; }\nnamespace N { export import b = X.Y; }',
+			'export default class C {}\nexport default interface C {}',
+			// A namespace that declares no value shares its name (#1263).
+			'namespace N { export const a = 1; }\nnamespace N { export namespace a {} }',
+			'namespace N { export class a {} }\nnamespace N { export namespace a { export const x = 1; } }',
+			'declare namespace N { namespace a { interface I {} export { I }; } }\ndeclare namespace N { const a: number; }',
+			'declare namespace N { interface J {} namespace a { export { J }; } }\ndeclare namespace N { const a: number; }',
+			'namespace N { export namespace a { export namespace b { export type T = 1; } } }\nnamespace N { export const a = 1; }',
+			'namespace N { export enum a {} }\nnamespace N { export namespace a { export const x = 1; } }',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) =>
@@ -13828,12 +14113,14 @@ describe('JSX whitespace in template text', () => {
 
 	it('reports a token that text cannot start at instead of reading it forever', async () => {
 		// The `<` of `<T,>` reads as a type parameter list's, where the text of
-		// `<b>` would start, so the text reads nothing
+		// `<b>` would start, so the text reads nothing. Read again after it, the
+		// `<` starts a tag, as in TSX, and the error is at the `,`, where
+		// TypeScript reports it (#1270).
 		const source = 'const f = <b><T,>() => 1;';
 		const outcomes = await parse_in_worker(modes.map((options) => ({ source, options })));
 
 		for (const outcome of outcomes) {
-			expect(outcome).toEqual(thrown(TS_ERRORS.UNEXPECTED_TOKEN, 13));
+			expect(outcome).toEqual(thrown(TS_ERRORS.UNEXPECTED_TOKEN, 15));
 		}
 	});
 
@@ -13894,7 +14181,7 @@ describe('syntax errors in an element that is a value', () => {
 		[
 			'text that reads nothing in a setup statement',
 			'export function App() @{\n\tconst f = <b><T,>() => 1;\n\t<main />\n}',
-			[TS_ERRORS.UNEXPECTED_TOKEN, '2:14'],
+			[TS_ERRORS.UNEXPECTED_TOKEN, '2:16'],
 		],
 	];
 
