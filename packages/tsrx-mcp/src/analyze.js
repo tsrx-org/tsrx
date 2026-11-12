@@ -226,7 +226,8 @@ export function analyze_tsrx_result(input) {
  *   cwd?: string,
  *   collect?: boolean,
  *   loose?: boolean,
- *   mode?: 'client' | 'server'
+ *   mode?: 'client' | 'server',
+ *   resolvePlatform?: boolean
  * }} input
  */
 export async function analyze_tsrx(input) {

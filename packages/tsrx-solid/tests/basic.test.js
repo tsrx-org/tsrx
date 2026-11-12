@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -44,6 +45,7 @@ runSharedCodeBlockChildrenTests({ compile, name: 'solid' });
 runSharedClassFunctionComponentTests({ compile, compile_to_volar_mappings, name: 'solid' });
 runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'solid' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'solid' });
+runSharedAnonymousComponentTests({ compile, name: 'solid' });
 
 describe('@tsrx/solid basic', () => {
 	describe('component → function', () => {
@@ -322,19 +324,21 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toMatch(/keyed=\{\(item\) =>\s*item\.id\}/);
 		});
 
-		it('try/catch → <Errored fallback={(err, reset) => ...}>', () => {
+		it('try/catch → <Errored fallback> binding the thrown value', () => {
 			const { code } = compile(
 				`function App() @{
 						@try {
 						<div>{'content'}</div>
 					} @catch (err, reset) {
-						<div>{err().message}</div>
+						<div>{err.message}</div>
 					}
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Errored fallback={(err, reset) =>');
-			expect(code).toContain('<div>{err().message}</div>');
+			// `<Errored>` passes an accessor; `err` is the value it returns.
+			expect(code).toContain('<Errored fallback={(_tsrx_error, reset) => {');
+			expect(code).toContain('let err = _tsrx_error();');
+			expect(code).toContain('<div>{err.message}</div>');
 			expect(code).toContain("import { Errored } from 'solid-js'");
 		});
 
@@ -370,6 +374,116 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('<Switch fallback=');
 			expect(code).toMatch(/<Match when=\{kind === 'a'\}>/);
 			expect(code).toMatch(/<Match when=\{kind === 'b'\}>/);
+		});
+
+		it('switch reads a discriminant with a side effect once through a memo', () => {
+			const source = `function App() @{
+				@switch (queue.shift()) {
+					@case 'loading': { <p>{'Loading'}</p> }
+					@case 'ready': { <p>{'Ready'}</p> }
+				}
+			}`;
+			const { code } = compile(source, 'App.tsrx');
+			expect(code).toContain(
+				"import { Switch, Match, createMemo as _$_createMemo } from 'solid-js';",
+			);
+			// Boxed, so a thenable discriminant is compared rather than awaited.
+			expect(code).toContain('const _$_switch_value = _$_createMemo(() => [queue.shift()]);');
+			expect(code).toContain("<Match when={_$_switch_value()[0] === 'loading'}>");
+			expect(code).toContain("<Match when={_$_switch_value()[0] === 'ready'}>");
+			expect(code.match(/queue\.shift\(\)/g)).toHaveLength(1);
+
+			const type_only = compile_to_volar_mappings(source, 'App.tsrx').code;
+			expect(type_only).toContain("<Match when={queue.shift() === 'loading'}>");
+			expect(type_only).not.toContain('createMemo');
+		});
+
+		it('switch memo names cannot collide with authored names', () => {
+			const { code } = compile(
+				`import { createMemo } from 'solid-js';
+				function App(__switch_value, __createMemo) @{
+					@switch (__switch_value.read()) {
+						@case 1: { <p>{createMemo(() => __createMemo)()}</p> }
+					}
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain(
+				'const _$_switch_value = _$_createMemo(() => [__switch_value.read()]);',
+			);
+		});
+
+		it("lowers an element's @{ } child inside a control-flow body to its output", () => {
+			const { code } = compile(
+				`function App(props: { on: boolean }) @{
+					<div>
+						@if (props.on) {
+							<p>@{
+								const v = 1;
+								<b>{v}</b>
+							}</p>
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toMatch(
+				/<p>\{\(\(\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\)\(\)\}<\/p>/,
+			);
+			expect(code).not.toContain('return null');
+		});
+
+		it('lowers a @{ } block that is a whole control-flow body to its output', () => {
+			const { code } = compile(
+				`function App(props: { on: boolean }) @{
+					<div>
+						@if (props.on) {
+							@{
+								const v = 1;
+								<b>{v}</b>
+							}
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			// The block's setup becomes the branch's function child, which `<Show>`
+			// runs untracked, like a body without the `@{ }`.
+			expect(code).toMatch(
+				/<Show when=\{props\.on\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Show>/,
+			);
+			expect(code).not.toContain('return null');
+		});
+
+		it('lowers a @{ } block that is a whole @case or @default body to its output', () => {
+			const { code } = compile(
+				`function App(kind: string) @{
+					<div>
+						@switch (kind) {
+							@case 'a': {
+								@{
+									const v = 1;
+									<b>{v}</b>
+								}
+							}
+							@default: {
+								@{
+									const w = 2;
+									<i>{w}</i>
+								}
+							}
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toMatch(
+				/<Match when=\{kind === 'a'\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Match>/,
+			);
+			expect(code).toMatch(
+				/fallback=\{\(\(\) => \{\s*const w = 2;\s*return <i>\{w\}<\/i>;\s*\}\)\(\)\}/,
+			);
+			expect(code).not.toContain('return null');
 		});
 
 		it('element children mixing JSX and statements wrap in an IIFE', () => {
@@ -689,7 +803,7 @@ describe('@tsrx/solid basic', () => {
 						} @pending {
 							<div>{'loading'}</div>
 						} @catch (err) {
-							recover(err());
+							recover(err);
 						}
 				}`,
 				'App.tsrx',
@@ -698,7 +812,7 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('<Errored');
 			expect(code).toContain('<Loading fallback=');
 			expect(code).toContain('setup();');
-			expect(code).toContain('recover(err());');
+			expect(code).toContain('recover(err);');
 			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
 			expect(code).not.toContain('try {');
 		});
@@ -870,6 +984,38 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('styles.root');
 			expect(code).toContain('root');
 		});
+	});
+
+	// Solid reads a class only from `class`, which also takes an object or a
+	// list.
+	it('keeps the class a host spread passes beside the scope classes', () => {
+		const { code, cssHash } = compile(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span class="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			"import { merge_spread_class as __merge_spread_class } from '@tsrx/solid/ref';",
+		);
+		expect(code).toContain(
+			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", void 0, true))} />`,
+		);
+		expect(code).toContain(
+			`<span class="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", void 0, true))} />`,
+		);
+		expect(code).toContain(`<span {...__normalize_spread_props(props)} class="last ${cssHash}" />`);
 	});
 
 	it('applies scoped css hashes and keeps type selectors for dynamic tags', () => {

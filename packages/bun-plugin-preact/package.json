@@ -20,7 +20,8 @@
     }
   },
   "scripts": {
-    "test": "pnpm -w test --project bun-plugin-preact"
+    "test": "pnpm -w test --project bun-plugin-preact",
+    "test:native": "bun test tests/native.test.ts"
   },
   "dependencies": {
     "@tsrx/core": "workspace:*",

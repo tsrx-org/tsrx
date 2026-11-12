@@ -816,7 +816,45 @@ function ErrorBoundaryApp() @{
 	@try {
 		<ThrowingChild />
 	} @catch (err) {
-		<p class="caught">{(err() as Error).message}</p>
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
+function DestructuredErrorApp() @{
+	@try {
+		<ThrowingChild />
+	} @catch ({ message }) {
+		<p class="caught">{message}</p>
+	}
+}
+
+function ReassignedErrorApp() @{
+	@try {
+		<ThrowingChild />
+	} @catch (err) {
+		err = 'reassigned: ' + (err as Error).message;
+		<p class="caught">{err as string}</p>
+	}
+}
+
+function AccessorNamedErrorApp() @{
+	@try {
+		<ThrowingChild />
+	} @catch (_tsrx_error) {
+		<p class="caught">{(_tsrx_error as Error).message}</p>
+	}
+}
+
+function StringThrower(): JSX.Element @{
+	throw 'string boom';
+	<p>{'unreachable'}</p>
+}
+
+function ThrownStringApp() @{
+	@try {
+		<StringThrower />
+	} @catch (err) {
+		<p class="caught">{typeof err + ' ' + String(err)}</p>
 	}
 }
 
@@ -836,7 +874,7 @@ function ErrorToggleApp() @{
 			<MaybeThrow shouldThrow={fail()} />
 		} @catch (err, reset) {
 			<>
-				<p class="caught">{(err() as Error).message}</p>
+				<p class="caught">{(err as Error).message}</p>
 				<button
 					class="reset"
 					onClick={() => {
@@ -888,7 +926,7 @@ function SuspenseErrorApp(props: { loader: () => Promise<{ default: typeof Resol
 	} @pending {
 		<p class="pending">{'loading...'}</p>
 	} @catch (err) {
-		<p class="caught">{(err() as Error).message}</p>
+		<p class="caught">{(err as Error).message}</p>
 	}
 }
 
@@ -905,11 +943,11 @@ function NestedTryApp() @{
 			@try {
 				<InnerThrow />
 			} @catch (err) {
-				<p class="inner-caught">{(err() as Error).message}</p>
+				<p class="inner-caught">{(err as Error).message}</p>
 			}
 		</div>
 	} @catch (err) {
-		<p class="outer-caught">{(err() as Error).message}</p>
+		<p class="outer-caught">{(err as Error).message}</p>
 	}
 }
 
@@ -1686,6 +1724,26 @@ describe('tsrx-solid runtime', () => {
 		expect(text('.caught')).toBe('sync boom');
 	});
 
+	it('binds a destructured @catch pattern to the thrown value', async () => {
+		await render(DestructuredErrorApp);
+		expect(text('.caught')).toBe('sync boom');
+	});
+
+	it('lets the @catch body reassign its binding', async () => {
+		await render(ReassignedErrorApp);
+		expect(text('.caught')).toBe('reassigned: sync boom');
+	});
+
+	it('binds a @catch parameter named like the generated accessor', async () => {
+		await render(AccessorNamedErrorApp);
+		expect(text('.caught')).toBe('sync boom');
+	});
+
+	it('binds @catch to a thrown non-Error value', async () => {
+		await render(ThrownStringApp);
+		expect(text('.caught')).toBe('string string boom');
+	});
+
 	it('recovers from error via reset and re-triggers on signal change', async () => {
 		await render(ErrorToggleApp);
 		expect(text('.ok')).toBe('no error');
@@ -1977,6 +2035,175 @@ describe('tsrx-solid runtime', () => {
 	it('object destructuring in variables works at runtime', async () => {
 		await render(DestructuredObjVarApp);
 		expect(text('.destructured-pos')).toBe('10,20');
+	});
+});
+
+// ── Element `@{ }` children inside control-flow bodies ──
+
+function BlockChildControlFlowApp() @{
+	const [on, setOn] = createSignal(false);
+	const kind = 'a';
+	<div>
+		@if (on()) {
+			<p class="if-block">@{
+				const v = 'if';
+				<b>{v}</b>
+			}</p>
+		}
+		@for (const item of ['x', 'y']) {
+			<p class="for-block">@{
+				const v = `for-${item}`;
+				<b>{v}</b>
+			}</p>
+		}
+		@switch (kind) {
+			@case 'a': {
+				<p class="switch-block">@{
+					const v = 'switch';
+					<b>{v}</b>
+				}</p>
+			}
+		}
+		@try {
+			<p class="try-block">@{
+				const v = 'try';
+				<b>{v}</b>
+			}</p>
+		} @catch (error) {
+			<p>{'failed'}</p>
+		}
+		<button class="show-if-block" onClick={() => setOn(true)}>
+			{'show'}
+		</button>
+	</div>
+}
+
+// ── Switch discriminant with a side effect ──
+
+const switch_queue: string[] = [];
+
+function SwitchQueueApp() @{
+	@switch (switch_queue.shift()) {
+		@case 'loading': {
+			<p class="queue-branch">{'Loading'}</p>
+		}
+		@case 'ready': {
+			<p class="queue-branch">{'Ready'}</p>
+		}
+		@default: {
+			<p class="queue-branch">{'Unknown'}</p>
+		}
+	}
+}
+
+// ── Whole-body `@{ }` blocks ──
+
+const block_runs = { if: 0, elseIf: 0, case: 0 };
+
+function WholeBodyBlockApp() @{
+	const [k, setK] = createSignal(0);
+	const [on] = createSignal(true);
+	const [off] = createSignal(false);
+	const kind = 'a';
+	const other = 'z';
+	<div>
+		@if (on()) {
+			@{
+				const value = (block_runs.if++, k());
+				<i class="whole-if">{`if ${value}`}</i>
+			}
+		}
+		@if (off()) {
+			<b />
+		} @else if (on()) {
+			@{
+				const value = (block_runs.elseIf++, k());
+				<i class="whole-else-if">{`else-if ${value}`}</i>
+			}
+		}
+		@switch (kind) {
+			@case 'a': {
+				@{
+					const value = (block_runs.case++, k());
+					<i class="whole-case">{`case ${value}`}</i>
+				};
+			}
+		}
+		@switch (other) {
+			@case 'a': {
+				<b />
+			}
+			@default: {
+				@{
+					const value = 'default';
+					<i class="whole-default">{value}</i>
+				};
+			}
+		}
+		<button class="bump-k" onClick={() => setK(k() + 1)}>
+			{'bump'}
+		</button>
+	</div>
+}
+
+// ── Switch discriminant that is a promise ──
+
+const switch_promise: Promise<string> = Promise.resolve('a');
+
+function SwitchPromiseApp() @{
+	const read = (): unknown => switch_promise;
+	@switch (read()) {
+		@case 'a': {
+			<p class="promise-branch">{'a'}</p>
+		}
+		@default: {
+			<p class="promise-branch">{'default'}</p>
+		}
+	}
+}
+
+describe('tsrx-solid control-flow bodies', () => {
+	it('renders a whole-body @{ } block and runs its setup once', async () => {
+		block_runs.if = block_runs.elseIf = block_runs.case = 0;
+		await render(WholeBodyBlockApp);
+		expect(text('.whole-if')).toBe('if 0');
+		expect(text('.whole-else-if')).toBe('else-if 0');
+		expect(text('.whole-case')).toBe('case 0');
+		expect(text('.whole-default')).toBe('default');
+		const nodes = Array.from(container.querySelectorAll('i'));
+
+		await click('.bump-k');
+		await click('.bump-k');
+		// The setup reads `k()` but runs untracked, as a body without `@{ }` does.
+		expect(block_runs).toEqual({ if: 1, elseIf: 1, case: 1 });
+		expect(Array.from(container.querySelectorAll('i'))).toEqual(nodes);
+	});
+
+	it('compares a promise discriminant as a value, as a JavaScript switch does', async () => {
+		await render(SwitchPromiseApp);
+		await flush();
+		expect(text('.promise-branch')).toBe('default');
+	});
+
+	it("renders an element's @{ } child inside @if, @for, @switch and @try bodies", async () => {
+		await render(BlockChildControlFlowApp);
+		expect(Array.from(container.querySelectorAll('.for-block'), (node) => node.innerHTML)).toEqual([
+			'<b>for-x</b>',
+			'<b>for-y</b>',
+		]);
+		expect(text('.switch-block')).toBe('switch');
+		expect(text('.try-block')).toBe('try');
+		expect(container.querySelector('.if-block')).toBeNull();
+
+		await click('.show-if-block');
+		expect(container.querySelector('.if-block')?.innerHTML).toBe('<b>if</b>');
+	});
+
+	it('reads a @switch discriminant once for all cases', async () => {
+		switch_queue.splice(0, switch_queue.length, 'ready', 'loading');
+		await render(SwitchQueueApp);
+		expect(text('.queue-branch')).toBe('Ready');
+		expect(switch_queue).toEqual(['loading']);
 	});
 });
 
