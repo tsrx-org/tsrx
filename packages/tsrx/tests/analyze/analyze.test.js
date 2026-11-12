@@ -2,7 +2,7 @@
 /** @import { CompileError, TSRXAnalysisOptions } from '../../types/index' */
 
 import { describe, expect, it } from 'vitest';
-import { analyzeTsrx, DIAGNOSTIC_CODES, parseModule } from '../../src/index.js';
+import { analyzeTsrx, DIAGNOSTIC_CODES, parseModule, TSRX_ERRORS } from '../../src/index.js';
 import {
 	TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR,
 	TSRX_JSX_SPREAD_CHILD_ERROR,
@@ -59,6 +59,35 @@ describe('target-neutral TSRX analysis', () => {
 			expect(
 				errors.every((error) => error.message === TSRX_FORGOTTEN_STATEMENT_CONTAINER_ERROR),
 			).toBe(true);
+		});
+
+		it('leaves the output a second output or a statement displaces in `@{ … }` to the parser (#981)', () => {
+			for (const [source, code] of [
+				[
+					'export function C() @{\n\t<a />\n\t<b />\n\t<c />\n}',
+					DIAGNOSTIC_CODES.CODE_BLOCK_SINGLE_OUTPUT,
+				],
+				[
+					'export function C() @{\n\t<a />\n\tconsole.log(1);\n}',
+					DIAGNOSTIC_CODES.CODE_BLOCK_STATEMENT_AFTER_OUTPUT,
+				],
+				[
+					'export function C() @{\n\t@if (x) {\n\t\t<a />\n\t\t<b />\n\t}\n}',
+					DIAGNOSTIC_CODES.CODE_BLOCK_SINGLE_OUTPUT,
+				],
+			]) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				/** @type {AST.CommentWithLocation[]} */
+				const comments = [];
+				const ast = parseModule(source, filename, { collect: true, errors, comments });
+				const result = analyzeTsrx(ast, filename, { collect: true, comments });
+				expect(
+					[...errors, ...result.errors].map((error) => error.code),
+					source,
+				).toEqual(errors.map(() => code));
+				expect(errors.length, source).toBeGreaterThan(0);
+			}
 		});
 
 		it('reports every free-floating TSRX output shape once', () => {
@@ -355,6 +384,222 @@ function List({ items }) {
 			for (const options of [{ loose: true }, { typeOnly: true }, { to_ts: true }]) {
 				expect(analyze(source, options).errors, JSON.stringify(options)).toHaveLength(5);
 			}
+		});
+	});
+
+	describe('a code block whose only statement is an expression', () => {
+		const { CODE_BLOCK_EXPRESSION_CHILD, CODE_BLOCK_EXPRESSION_ONLY } = TSRX_ERRORS;
+
+		/**
+		 * The warnings `source` gets, each with its message's entry and the
+		 * source it covers.
+		 * @param {string} source
+		 * @param {TSRXAnalysisOptions} [options]
+		 */
+		function warnings(source, options) {
+			return analyze(source, options).errors.map((error) => ({
+				entry:
+					error.message === CODE_BLOCK_EXPRESSION_CHILD.message
+						? 'child'
+						: error.message === CODE_BLOCK_EXPRESSION_ONLY.message
+							? 'only'
+							: error.message,
+				code: error.code,
+				severity: error.severity,
+				text: source.slice(error.pos, error.end),
+			}));
+		}
+
+		/**
+		 * @param {'child' | 'only'} entry
+		 * @param {string} text
+		 */
+		function warning(entry, text) {
+			return {
+				entry,
+				code: DIAGNOSTIC_CODES.CODE_BLOCK_EXPRESSION_ONLY,
+				severity: 'warning',
+				text,
+			};
+		}
+
+		it("warns in a child list, where the '@' may be text", () => {
+			expect(
+				warnings(`function Plain({ user }) {
+	return <p>@{user.name}</p>;
+}
+function Template({ user }) @{
+	<p>Hi @{user.name}!</p>
+}
+const fragment = <>@{user.name}</>;
+const mail = <a>name@{domain}</a>;`),
+			).toEqual([
+				warning('child', '@{user.name}'),
+				warning('child', '@{user.name}'),
+				warning('child', '@{user.name}'),
+				warning('child', '@{domain}'),
+			]);
+		});
+
+		it('warns wherever else a code block can be', () => {
+			expect(
+				warnings(`function Body({ user }) @{ user.name }
+const Arrow = ({ user }) => @{ user.name };
+class Card { render() @{ this.props } }
+const value = @{ x };
+function Returned() { return @{ x }; }
+const attribute = <A title={@{ x }} />;
+const argument = f(@{ x });
+function Nested() @{
+	@{ x }
+}
+function Directives({ c, items, k }) @{
+	<>
+		@if (c) { @{ c } }
+		@for (const item of items) { @{ item } }
+		@switch (k) { @case 1: { @{ k } } }
+		@try { @{ c } } @catch (e) { @{ e } }
+	</>
+}`),
+			).toEqual([
+				warning('only', '@{ user.name }'),
+				warning('only', '@{ user.name }'),
+				warning('only', '@{ this.props }'),
+				warning('only', '@{ x }'),
+				warning('only', '@{ x }'),
+				warning('only', '@{ x }'),
+				warning('only', '@{ x }'),
+				warning('only', '@{ x }'),
+				warning('only', '@{ c }'),
+				warning('only', '@{ item }'),
+				warning('only', '@{ k }'),
+				warning('only', '@{ c }'),
+				warning('only', '@{ e }'),
+			]);
+		});
+
+		it('warns for every expression whose value is all it makes', () => {
+			const expressions = [
+				'name',
+				'"text"',
+				'1',
+				'`@${name}`',
+				'`${format(name)}`',
+				"'@' + name",
+				'user.name',
+				'user?.name',
+				'users[0]',
+				'!ok',
+				'typeof x',
+				'ok ? a : b',
+				'ok && name',
+				'ok ?? <b />',
+				'(name)',
+				'name as string',
+				'name!',
+				'name satisfies string',
+				'[a, b]',
+				'({ a })',
+				'() => name',
+				'a, b',
+				'this',
+				'import.meta',
+			];
+			for (const expression of expressions) {
+				expect(warnings(`const e = <p>@{${expression}}</p>;`), expression).toEqual([
+					warning('child', `@{${expression}}`),
+				]);
+			}
+		});
+
+		it('leaves alone an expression that may be there for its effect', () => {
+			const expressions = [
+				'log(user)',
+				'user.save()',
+				'user?.save()',
+				'new Thing()',
+				'x = 1',
+				'x += 1',
+				'count++',
+				'--count',
+				'delete cache[key]',
+				'void track()',
+				'ok && save()',
+				'ok ? save() : null',
+				'tag`text`',
+				'import("./a.js")',
+				'log(), name',
+			];
+			for (const expression of expressions) {
+				expect(warnings(`async function* A() @{ <p>@{${expression}}</p> }`), expression).toEqual(
+					[],
+				);
+			}
+			expect(warnings('async function A() @{ <p>@{await load()}</p> }')).toEqual([]);
+			expect(warnings('function* A() @{ <p>@{yield x}</p> }')).toEqual([]);
+		});
+
+		it('leaves alone a block with output, more statements, or no expression statement', () => {
+			expect(
+				warnings(`function A({ user }) @{
+	<>
+		<p>@{const name = user.name; <b>{name}</b>}</p>
+		<p>@{log(user); user.name}</p>
+		<p>@{const name = user.name}</p>
+		<p>@{if (user) log(user)}</p>
+		<p>@{ }</p>
+		<p>{\`@\${user.name}\`}</p>
+		<p>&#64;{user.name}</p>
+	</>
+}`),
+			).toEqual([]);
+		});
+
+		it("leaves alone a function body's directive, but not the same string as a child", () => {
+			expect(
+				warnings(`export async function action() @{ 'use server' }
+const Client = () => @{ 'use client' };
+const text = <p>@{'use server'}</p>;`),
+			).toEqual([warning('child', "@{'use server'}")]);
+		});
+
+		it("leaves JSX to the unused-output error, and a directive's own body alone", () => {
+			const result = analyze(`function A({ ok }) @{
+	<>
+		<p>@{(<b />)}</p>
+		@if (ok) { ok }
+	</>
+}`);
+
+			expect(result.errors.map((error) => error.code)).toEqual([
+				DIAGNOSTIC_CODES.FORGOTTEN_STATEMENT_CONTAINER,
+			]);
+		});
+
+		it('is dropped by a compile that does not collect, and does not throw', () => {
+			const ast = parseModule('const e = <p>@{user.name}</p>;', filename);
+
+			expect(analyzeTsrx(ast, filename).errors).toEqual([]);
+		});
+
+		it('collects for editor and type-only analysis modes', () => {
+			for (const options of [{ loose: true }, { typeOnly: true }, { to_ts: true }]) {
+				expect(
+					warnings('const e = <p>@{user.name}</p>;', options),
+					JSON.stringify(options),
+				).toEqual([warning('child', '@{user.name}')]);
+			}
+		});
+
+		it('is suppressed by @tsrx-ignore on the line before', () => {
+			expect(
+				warnings(`function A({ user }) @{
+	<p>
+		// @tsrx-ignore
+		@{user.name}
+	</p>
+}`),
+			).toEqual([]);
 		});
 	});
 

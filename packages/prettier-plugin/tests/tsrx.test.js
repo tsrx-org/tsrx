@@ -723,6 +723,22 @@ export function List({ items }) @{
 		);
 	});
 
+	// `<p>@{user.name}</p>` is TSRX2035, a warning, which the parse the plugin
+	// runs doesn't report; the plugin prints the block as it does any other.
+	test('prints a block whose only statement is an expression', async () => {
+		await expectFormat(
+			`export function A({ user }) @{
+  <p>@{user.name}</p>
+}`,
+			`export function A({ user }) @{
+  <p>@{
+    user.name;
+  }</p>
+}
+`,
+		);
+	});
+
 	test('hugs after attributes that break, and keeps comments in the block', async () => {
 		await expectFormat(
 			`export function A() @{
@@ -1627,7 +1643,7 @@ const b = (
 	});
 
 	test('a comment takes a closing tag on its line with it', async () => {
-		await expect_reported(`const a = <p>a //comment </p>;`, TSRX_ERRORS.UNCLOSED_TAG, '1:31');
+		await expect_reported(`const a = <p>a //comment </p>;`, TSRX_ERRORS.UNCLOSED_TAG, '1:12');
 	});
 });
 
@@ -2252,7 +2268,7 @@ describe('a comment between an enum name and its `{` (#840)', () => {
 
 describe('parse errors', () => {
 	test('unclosed or mismatched tags are errors, not guessed markup', async () => {
-		await expect_reported('const x = 1;\nconst y = <div>\n', TSRX_ERRORS.UNCLOSED_TAG, '3:1');
+		await expect_reported('const x = 1;\nconst y = <div>\n', TSRX_ERRORS.UNCLOSED_TAG, '2:12');
 		await expect(format('const a = <div></span>;\n')).rejects.toThrow();
 	});
 
@@ -2280,6 +2296,12 @@ describe('parse errors', () => {
 		]) {
 			await expect_reported(source, TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION, at);
 		}
+		// Type arguments after a dynamic tag (TSRX2033, #1243).
+		await expect_reported(
+			'const a = <{Tag}<T> />;',
+			TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS,
+			'1:17',
+		);
 		await expectFormat(
 			`export function App({ tag, props }) @{
   <>
@@ -2306,7 +2328,9 @@ describe('parse errors', () => {
 				TS_ERRORS.TOKEN_EXPECTED,
 				{ line: 4, column: 1 },
 			],
-			['const y = <div>\n', TSRX_ERRORS.UNCLOSED_TAG, { line: 2, column: 1 }],
+			// Prettier's typescript parser: `JSX element 'div' has no corresponding
+			// closing tag. (1:12)`.
+			['const y = <div>\n', TSRX_ERRORS.UNCLOSED_TAG, { line: 1, column: 12 }],
 			// Prettier's typescript parser: `Property assignment expected. (1:13)`.
 			['const o = { @dec m() {} };', TS_ERRORS.UNEXPECTED_TOKEN, { line: 1, column: 13 }],
 			// `index` belongs to `@for`: the output used to drop it (#896).
@@ -2479,6 +2503,8 @@ describe('parse errors', () => {
 			['import.foo;', 'TS17012', '1:8'],
 			// #881, #785, #784.
 			['import type a, { b } from "a";', TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, '1:8'],
+			// #1161: empty named bindings too.
+			['import type a, {} from "a";', TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, '1:8'],
 			['import type A = B.C;', TS_ERRORS.IMPORT_ALIAS_IMPORT_TYPE, '1:1'],
 			['declare function f(): void {}', TS_ERRORS.AMBIENT_IMPLEMENTATION, '1:28'],
 			['import.foo("x");', TS_ERRORS.IMPORT_META_PROPERTY_CALL, '1:8'],
@@ -2527,6 +2553,19 @@ describe('parse errors', () => {
 				'declare namespace N {\n  abstract declare interface I {}\n}',
 				TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED,
 				'2:3',
+			],
+			// TypeScript reports TS1038 only there, which the parser records; the
+			// modifier the tree leaves out comes from the declaration's metadata
+			// (#961).
+			[
+				'declare namespace N {\n  declare public class A {}\n}',
+				TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT('public'),
+				'2:11',
+			],
+			[
+				'declare global {\n  declare readonly class A {}\n}',
+				TS_ERRORS.READONLY_MODIFIER_NOT_ALLOWED,
+				'2:11',
 			],
 			// A parameter property on a method or a constructor overload (#886).
 			['class A { m(public a) {} }', TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '1:13'],

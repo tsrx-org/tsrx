@@ -36,15 +36,24 @@ Bun.plugin(tsrxSolid());
 
 ## Options
 
-- `solid`: options forwarded to `babel-preset-solid`.
+- `solid`: options forwarded to `babel-preset-solid`. TSRX2034 (a `yield` in a
+  template value that Solid's JSX compiler moves out of its generator) follows the
+  DOM output, and with `generate: 'ssr'` and `hydratable: true` the SSR output as
+  well. With `generate: 'ssr'` alone it follows the DOM output only, so a `yield`
+  that only the non-hydratable SSR output moves isn't reported.
 - `runtimeImports`: helper import mode (`'compiler'` by default, or `'direct'` for
   standalone runtime imports).
 - `platform`: optional override/fallback for the compile-time platform. Normally
   the plugin reads `tsrx.platform` from Bun's selected/nearest tsconfig, including
   `extends`. An override must match tsconfig. For `Bun.build`, all three exact
-  flags are defined and conflicting definitions are rejected.
+  flags are defined and conflicting definitions are rejected. With `Bun.plugin()`,
+  including `bun:test` preloads, flags left in compiled `.tsrx` output are
+  replaced with their values.
 - `emitCss`: whether to emit virtual CSS imports (default: `true`).
-- `include`, `exclude`: regex filters for source files.
+- `include`, `exclude`: regex filters for source files. Under `Bun.plugin()`, an
+  instance hands a `.tsrx` file it leaves out to the first registered TSRX plugin
+  instance that includes it. When no instance includes the file, Bun loads it as
+  it would without a plugin.
 
 When using `runtimeImports: 'direct'`, install the runtime as a direct production
 dependency of the package that owns the compiled modules:

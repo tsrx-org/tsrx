@@ -46,6 +46,24 @@ export function stripFormatting(plugin) {
 }
 
 /**
+ * Strip the folding capability from a Volar service plugin.
+ *
+ * Volar runs service plugins on the generated TS and CSS, and keeps the folds whose ends
+ * map back to the `.tsrx` source: the CSS service's folds in `<style>` blocks do, but none
+ * of TypeScript's. The server folds `.tsrx` sources itself (`foldingRangeHandler.js`) and
+ * adds the folds Volar maps back: a plugin that offered folding ranges would make Volar
+ * register its own `textDocument/foldingRange` handler, which would replace that one.
+ *
+ * @template {{ capabilities?: Record<string, unknown> }} T
+ * @param {T} plugin
+ * @returns {T}
+ */
+export function stripFoldingRanges(plugin) {
+	const { foldingRangeProvider: _folding, ...capabilities } = plugin.capabilities ?? {};
+	return { ...plugin, capabilities };
+}
+
+/**
  * The Volar service plugins for a backend, in registration order.
  *
  * Classic: the TypeScript services run in this process and the TSRX
@@ -71,7 +89,7 @@ export function createServicePlugins(backend, ts) {
 	const shared_last = [
 		createDefinitionPlugin(),
 		createDocumentSymbolPlugin(),
-		stripFormatting(createCssService()),
+		stripFoldingRanges(stripFormatting(createCssService())),
 	];
 	if (backend === 'native' || backend === 'plugin') {
 		return [
@@ -89,7 +107,7 @@ export function createServicePlugins(backend, ts) {
 		...shared_first,
 		createCompileErrorDiagnosticPlugin(),
 		...shared_last,
-		...createTypeScriptServices(ts).map(stripFormatting),
+		...createTypeScriptServices(ts).map((plugin) => stripFoldingRanges(stripFormatting(plugin))),
 		// !IMPORTANT 'createTypeScriptDiagnosticFilterPlugin', 'createHoverPlugin',
 		// and 'createDocumentHighlightPlugin' must come after TypeScript services
 		// to intercept volar's and vscode default providers

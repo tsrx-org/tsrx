@@ -26,14 +26,16 @@ export const TSRX_DIRECTIVES = new Set([
 
 /**
  * Markup that breaks TSRX's grammar: an unclosed or mismatched tag, after which
- * the parser guessed at the markup's structure, and a dynamic tag whose
- * expression isn't an identifier, a member access or a string literal
- * (`<{getTag()} />`, TSRX2014, decision 58 of #852).
+ * the parser guessed at the markup's structure, a dynamic tag whose expression
+ * isn't an identifier, a member access or a string literal (`<{getTag()} />`,
+ * TSRX2014, decision 58 of #852), and a dynamic tag with type arguments
+ * (`<{Tag}<T> />`, TSRX2033).
  */
 const BROKEN_MARKUP_CODES = new Set([
 	DIAGNOSTIC_CODES.UNCLOSED_TAG,
 	DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG,
 	DIAGNOSTIC_CODES.DYNAMIC_TAG_EXPRESSION,
+	DIAGNOSTIC_CODES.DYNAMIC_TAG_TYPE_ARGUMENTS,
 ]);
 
 /**
@@ -409,6 +411,15 @@ class Adapter {
 		if (node.type === 'TSParenthesizedType') {
 			return this.visit(node.typeAnnotation);
 		}
+
+		// A modifier the core parser's tree leaves out, which Prettier's own
+		// parser rejects (`declare public class A {}` in a `declare namespace`).
+		// TypeScript reports only the declaration's first modifier error, which
+		// the parser records, and keeps the others in the metadata.
+		const dropped = node.metadata?.dropped_modifiers?.find((/** @type {ParseError} */ error) =>
+			isRejected(error, this.text),
+		);
+		if (dropped) throw createParseError(dropped);
 
 		// The core parser attaches comments itself; Prettier attaches them again
 		// from `program.comments`.
