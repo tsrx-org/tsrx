@@ -1,6 +1,7 @@
 /** @import { CompileError } from '@tsrx/core/types' */
 /** @import { ErrorEntry, ErrorExample } from './error-examples.js' */
 
+import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
 	DIAGNOSTIC_SOURCE,
@@ -11,9 +12,10 @@ import {
 } from '@tsrx/core/diagnostics';
 import * as react from '@tsrx/react';
 import * as solid from '@tsrx/solid';
+import * as vue from '@tsrx/vue';
 import { transform_tsrx } from '@tsrx/typescript-plugin/src/transform.js';
 import { ERROR_EXAMPLES, KNOWN_PROBLEMS, WITHOUT_EXAMPLE } from './error-examples.js';
-import { create_native_workspace } from './fixture-utils.js';
+import { create_native_workspace, repo_root } from './fixture-utils.js';
 import { NativeLspClient } from './lsp-client.js';
 
 /** Every entry of `@tsrx/core/diagnostics`, with its name. */
@@ -29,6 +31,13 @@ const ENTRIES = /** @type {Map<ErrorEntry, string>} */ (
 const COMPILERS = /** @type {Record<string, any>} */ ({
 	'@tsrx/react': react,
 	'@tsrx/solid': solid,
+	'@tsrx/vue': vue,
+});
+
+/** The workspace directory of each compiler's examples, under its own tsconfig.json. */
+const COMPILER_DIRECTORIES = /** @type {Record<string, string>} */ ({
+	'@tsrx/solid': 'solid/',
+	'@tsrx/vue': 'vue/',
 });
 
 /** @param {ErrorEntry} entry */
@@ -38,7 +47,7 @@ function name_of(entry) {
 
 const CASES = ERROR_EXAMPLES.map((example) => {
 	const name = name_of(example.error);
-	const directory = example.compiler === '@tsrx/solid' ? 'solid/' : '';
+	const directory = COMPILER_DIRECTORIES[example.compiler ?? ''] ?? '';
 	return { name, example, file: `${directory}${name}.tsrx` };
 });
 
@@ -101,13 +110,16 @@ describe('error examples through TypeScript 7', () => {
 	let client;
 
 	beforeAll(async () => {
-		/** @param {string} compiler */
-		const tsconfig = (compiler) =>
+		/**
+		 * @param {string} compiler
+		 * @param {Record<string, string>} [jsx]
+		 */
+		const tsconfig = (compiler, jsx = { jsx: 'react-jsx' }) =>
 			JSON.stringify({
 				tsrx: { compiler },
 				compilerOptions: {
 					strict: true,
-					jsx: 'react-jsx',
+					...jsx,
 					module: 'esnext',
 					target: 'esnext',
 					moduleResolution: 'bundler',
@@ -122,8 +134,24 @@ describe('error examples through TypeScript 7', () => {
 				'tsconfig.json': tsconfig('@tsrx/react'),
 				'main.ts': 'export {};\n',
 				'solid/tsconfig.json': tsconfig('@tsrx/solid'),
+				'vue/tsconfig.json': tsconfig('@tsrx/vue', {
+					jsx: 'preserve',
+					jsxImportSource: 'vue-jsx-vapor',
+				}),
 			},
-			{ dependencies: ['@tsrx/react', 'react', '@types/react', '@tsrx/solid', 'solid-js'] },
+			{
+				dependencies: [
+					'@tsrx/react',
+					'react',
+					'@types/react',
+					'@tsrx/solid',
+					'solid-js',
+					'@tsrx/vue',
+					'vue',
+					// Borrowed from the Vite Vue plugin's install, as in targets.test.js.
+					['vue-jsx-vapor', path.join(repo_root, 'packages', 'vite-plugin-vue')],
+				],
+			},
 		);
 		client = new NativeLspClient(workspace.dir);
 		await client.initialize({ runExternalCode: true });

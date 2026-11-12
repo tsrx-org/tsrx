@@ -844,6 +844,35 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * A lowered dynamic tag, `<{expr} … />`, prints as `<TsrxDynamic is={expr} … />`.
+	 * TypeScript reports a component's missing or unknown props (TS2769) on
+	 * the generated name, which has no source of its own, so it maps to the
+	 * authored `{expr}` (the `is` attribute's location) for diagnostics.
+	 * @param {ESTreeJSX.JSXOpeningElement | ESTreeJSX.TSRXJSXOpeningElement} opening
+	 * @returns {void}
+	 */
+	function add_dynamic_tag_name_mapping(opening) {
+		const name = opening.name;
+		if (!has_location(opening) || name.type !== 'JSXIdentifier' || has_location(name)) return;
+		const is = opening.attributes.find(
+			(attribute) =>
+				attribute.type === 'JSXAttribute' &&
+				attribute.name.type === 'JSXIdentifier' &&
+				attribute.name.name === 'is',
+		);
+		if (!has_location(is)) return;
+		const generated = generated_offset_for_text(opening.loc.start, `<${name.name}`);
+		if (generated === undefined) return;
+		mappings.push({
+			sourceOffsets: [is.start],
+			lengths: [is.end - is.start],
+			generatedOffsets: [generated + 1],
+			generatedLengths: [name.name.length],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
+	}
+
+	/**
 	 * @param {AST.Identifier | ESTreeJSX.JSXIdentifier} generated_node
 	 * @returns {void}
 	 */
@@ -1259,6 +1288,10 @@ export function convert_source_map_to_mappings(
 							mappingData: mapping_data_verify_complete,
 						});
 					}
+				}
+
+				if (node.metadata?.dynamicElement) {
+					add_dynamic_tag_name_mapping(opening);
 				}
 
 				visit(opening);
@@ -2168,9 +2201,13 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'ImportExpression') {
-				// Visit source
+				// Visit in source order: source, then the options of
+				// `import(source, options)` and `import.defer(source, options)`
 				if (node.source) {
 					visit(node.source);
+				}
+				if (node.options) {
+					visit(node.options);
 				}
 				return;
 			} else if (node.type === 'ParenthesizedExpression') {
@@ -2483,9 +2520,15 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSMappedType') {
-				// Mapped type: { [K in keyof T]: ... }
+				// Mapped type: { [K in keyof T as N]: ... }
 				if (node.typeParameter) {
 					visit(node.typeParameter);
+				}
+				if (node.nameType) {
+					// TypeScript reports a key type that is not a property key (TS2322) on
+					// the whole remapping type, which can have no mapped token, as `{}`.
+					push_verify_only_span_mapping(node.nameType);
+					visit(node.nameType);
 				}
 				if (node.typeAnnotation) {
 					visit(node.typeAnnotation);
@@ -2507,7 +2550,10 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSImportType') {
-				// Import type: import("module", { with: { … } }).Type
+				// Import type: import("module", { with: { … } }).Type<Args>
+				// TypeScript reports some errors on the whole import type (TS1340 on
+				// a module used as a type without `typeof`).
+				push_verify_only_span_mapping(node);
 				if (node.argument) {
 					visit(node.argument);
 				}
@@ -2517,8 +2563,8 @@ export function convert_source_map_to_mappings(
 				if (node.qualifier) {
 					visit(node.qualifier);
 				}
-				if (node.typeParameters) {
-					visit(node.typeParameters);
+				if (node.typeArguments) {
+					visit(node.typeArguments);
 				}
 				return;
 			} else if (node.type === 'TSTypeQuery') {
@@ -2656,9 +2702,12 @@ export function convert_source_map_to_mappings(
 				if (node.typeParameters) {
 					visit(node.typeParameters);
 				}
-				if (node.params) {
-					for (const param of node.params) {
-						visit(param);
+				for (const param of node.params) {
+					visit(param);
+					const annotation = /** @type {Exclude<AST.Parameter, AST.TSParameterProperty>} */ (param)
+						.typeAnnotation;
+					if (annotation) {
+						visit(annotation);
 					}
 				}
 				if (node.returnType) {

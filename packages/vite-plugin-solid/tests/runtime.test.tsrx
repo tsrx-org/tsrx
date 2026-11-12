@@ -445,6 +445,181 @@ function MultiSpreadExplicitRefApp() @{
 	/>
 }
 
+// ── A host spread beside the element's own ref ──
+
+let spread_assigned_ref_node: HTMLInputElement | null = null;
+
+function SpreadAssignedRefApp() @{
+	let input: HTMLInputElement | undefined;
+	const rest = { title: 'assigned' };
+	<>
+		<input ref={input} {...rest} class="spread-assigned-ref" />
+		<button
+			class="spread-assigned-ref-check"
+			onClick={() => {
+				spread_assigned_ref_node = input ?? null;
+			}}
+		>
+			{'check'}
+		</button>
+	</>
+}
+
+const spread_ref_calls: string[] = [];
+
+function spreadBagRef(node: HTMLInputElement | null) {
+	if (node) spread_ref_calls.push('bag');
+}
+
+function spreadOwnRef(node: HTMLInputElement | null) {
+	if (node) spread_ref_calls.push('own');
+}
+
+function SpreadRefOnceApp() @{
+	<>
+		<input {...{ ref: spreadBagRef }} ref={spreadOwnRef} />
+		@if (true) {
+			<input {...{ ref: spreadBagRef }} ref={spreadOwnRef} />
+		}
+	</>
+}
+
+function SpreadRefReactiveApp() @{
+	const [bag, setBag] = createSignal({ title: 'before', disabled: false });
+	<>
+		<button
+			class="spread-ref-reactive-update"
+			onClick={() => setBag({ title: 'after', disabled: true })}
+		>
+			{'update'}
+		</button>
+		<button {...bag()} ref={() => {}} class="spread-ref-reactive-target">
+			{'target'}
+		</button>
+	</>
+}
+
+// ── Several host spreads beside the element's own ref ──
+
+const spreads_ref_calls: string[] = [];
+let spreads_assigned_node: HTMLInputElement | undefined;
+
+function spreadsRef(name: string) {
+	return (node: HTMLInputElement | null) => {
+		if (node) spreads_ref_calls.push(name);
+	};
+}
+
+function SpreadsRefOnceApp() @{
+	let input: HTMLInputElement | undefined;
+	const first = { title: 'first', ref: spreadsRef('first') };
+	const second = { 'data-second': 'second', ref: spreadsRef('second') };
+	<>
+		<input ref={spreadsRef('own')} {...first} {...second} class="spreads-ref-once" />
+		@if (true) {
+			<input ref={input} {...first} {...second} class="spreads-ref-assigned" />
+		}
+		<button
+			class="spreads-ref-check"
+			onClick={() => {
+				spreads_assigned_node = input;
+			}}
+		>
+			{'check'}
+		</button>
+	</>
+}
+
+let set_spreads_first: (bag: Record<string, unknown>) => void = () => {};
+let set_spreads_second: (bag: Record<string, unknown>) => void = () => {};
+
+function SpreadsRefReactiveApp() @{
+	const [first, setFirst] = createSignal<Record<string, unknown>>({ title: 'before' });
+	const [second, setSecond] = createSignal<Record<string, unknown>>({
+		disabled: false,
+		ref: spreadsRef('second'),
+	});
+	set_spreads_first = setFirst;
+	set_spreads_second = setSecond;
+	<button ref={spreadsRef('own')} {...first()} {...second()} class="spreads-ref-reactive">
+		{'target'}
+	</button>
+}
+
+// ── Refs of several host spreads across bag updates ──
+
+let set_spreads_churn_first: (bag: Record<string, unknown>) => void = () => {};
+let set_spreads_churn_second: (bag: Record<string, unknown>) => void = () => {};
+const spreads_churn_first_ref = spreadsRef('first');
+const spreads_churn_second_ref = spreadsRef('second');
+
+function SpreadsRefChurnApp() @{
+	const [first, setFirst] = createSignal<Record<string, unknown>>({
+		title: 'a',
+		ref: spreads_churn_first_ref,
+	});
+	const [second, setSecond] = createSignal<Record<string, unknown>>({
+		'data-x': '1',
+		ref: spreads_churn_second_ref,
+	});
+	set_spreads_churn_first = setFirst;
+	set_spreads_churn_second = setSecond;
+	<input ref={spreadsRef('own')} {...first()} {...second()} class="spreads-ref-churn" />
+}
+
+// ── A spread wrapper creates its children once ──
+
+let spread_wrapper_child_runs = 0;
+let set_spread_wrapper_title: (title: string) => void = () => {};
+
+function SpreadWrapperChild() @{
+	spread_wrapper_child_runs += 1;
+	<span class="spread-wrapper-child">{'child'}</span>
+}
+
+function SpreadWrapper(props: { title: string; children?: JSX.Element }) @{
+	<div {...props} class="spread-wrapper" />
+}
+
+function SpreadWrapperApp() @{
+	const [title, setTitle] = createSignal('a');
+	set_spread_wrapper_title = setTitle;
+	<SpreadWrapper title={title()}>
+		<SpreadWrapperChild />
+	</SpreadWrapper>
+}
+
+// ── A spread host keeps its children across prop changes ──
+
+function SpreadChildHost(props: { title: string; children?: JSX.Element }) @{
+	<div {...props} ref={() => {}} class="spread-child-host" />
+}
+
+function SpreadsChildHost(props: {
+	title: string;
+	children?: JSX.Element;
+	ref?: (node: HTMLDivElement) => void;
+}) @{
+	const extra = { 'data-extra': 'extra' };
+	<div {...props} {...extra} ref={() => {}} class="spreads-child-host" />
+}
+
+let set_spread_child_title: (title: string) => void = () => {};
+
+function SpreadChildApp() @{
+	const [title, setTitle] = createSignal('before');
+	set_spread_child_title = setTitle;
+	<>
+		<SpreadChildHost title={title()}>
+			<span class="spread-child">{'child'}</span>
+		</SpreadChildHost>
+		{/* A `ref` prop puts a `ref` in the bag, which the runtime leaves out of its spread. */}
+		<SpreadsChildHost title={title()} ref={spreadsRef('prop')}>
+			<span class="spreads-child">{'child'}</span>
+		</SpreadsChildHost>
+	</>
+}
+
 // ── Conditional host spreads ──
 
 let conditional_spread_and_node: HTMLInputElement | null = null;
@@ -641,7 +816,45 @@ function ErrorBoundaryApp() @{
 	@try {
 		<ThrowingChild />
 	} @catch (err) {
-		<p class="caught">{(err() as Error).message}</p>
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
+function DestructuredErrorApp() @{
+	@try {
+		<ThrowingChild />
+	} @catch ({ message }) {
+		<p class="caught">{message}</p>
+	}
+}
+
+function ReassignedErrorApp() @{
+	@try {
+		<ThrowingChild />
+	} @catch (err) {
+		err = 'reassigned: ' + (err as Error).message;
+		<p class="caught">{err as string}</p>
+	}
+}
+
+function AccessorNamedErrorApp() @{
+	@try {
+		<ThrowingChild />
+	} @catch (_tsrx_error) {
+		<p class="caught">{(_tsrx_error as Error).message}</p>
+	}
+}
+
+function StringThrower(): JSX.Element @{
+	throw 'string boom';
+	<p>{'unreachable'}</p>
+}
+
+function ThrownStringApp() @{
+	@try {
+		<StringThrower />
+	} @catch (err) {
+		<p class="caught">{typeof err + ' ' + String(err)}</p>
 	}
 }
 
@@ -661,7 +874,7 @@ function ErrorToggleApp() @{
 			<MaybeThrow shouldThrow={fail()} />
 		} @catch (err, reset) {
 			<>
-				<p class="caught">{(err() as Error).message}</p>
+				<p class="caught">{(err as Error).message}</p>
 				<button
 					class="reset"
 					onClick={() => {
@@ -713,7 +926,7 @@ function SuspenseErrorApp(props: { loader: () => Promise<{ default: typeof Resol
 	} @pending {
 		<p class="pending">{'loading...'}</p>
 	} @catch (err) {
-		<p class="caught">{(err() as Error).message}</p>
+		<p class="caught">{(err as Error).message}</p>
 	}
 }
 
@@ -730,11 +943,11 @@ function NestedTryApp() @{
 			@try {
 				<InnerThrow />
 			} @catch (err) {
-				<p class="inner-caught">{(err() as Error).message}</p>
+				<p class="inner-caught">{(err as Error).message}</p>
 			}
 		</div>
 	} @catch (err) {
-		<p class="outer-caught">{(err() as Error).message}</p>
+		<p class="outer-caught">{(err as Error).message}</p>
 	}
 }
 
@@ -1249,6 +1462,137 @@ describe('tsrx-solid runtime', () => {
 		expect(container.querySelector('.multi-spread-explicit-ref')!.hasAttribute('ref')).toBe(false);
 	});
 
+	it('assigns a variable ref on an element with a spread', async () => {
+		spread_assigned_ref_node = null;
+		await render(SpreadAssignedRefApp);
+		await click('.spread-assigned-ref-check');
+		const input = container.querySelector('.spread-assigned-ref');
+		expect(input).toBeInstanceOf(HTMLInputElement);
+		expect(spread_assigned_ref_node).toBe(input);
+		expect(input!.getAttribute('title')).toBe('assigned');
+	});
+
+	it("calls a spread's ref and the element's own ref once each", async () => {
+		spread_ref_calls.length = 0;
+		await render(SpreadRefOnceApp);
+		await flush();
+		expect(spread_ref_calls).toEqual(['own', 'bag', 'own', 'bag']);
+	});
+
+	it('updates a reactive host spread beside a ref', async () => {
+		await render(SpreadRefReactiveApp);
+		const target = container.querySelector('.spread-ref-reactive-target') as HTMLButtonElement;
+		expect(target.title).toBe('before');
+		expect(target.disabled).toBe(false);
+		await click('.spread-ref-reactive-update');
+		expect(target.title).toBe('after');
+		expect(target.disabled).toBe(true);
+	});
+
+	it("applies every spread's ref and the element's own ref once each", async () => {
+		spreads_ref_calls.length = 0;
+		spreads_assigned_node = undefined;
+		await render(SpreadsRefOnceApp);
+		await flush();
+		expect(spreads_ref_calls).toEqual(['own', 'first', 'second', 'first', 'second']);
+
+		const input = container.querySelector('.spreads-ref-once')!;
+		expect(input.getAttribute('title')).toBe('first');
+		expect(input.getAttribute('data-second')).toBe('second');
+		expect(input.hasAttribute('ref')).toBe(false);
+
+		await click('.spreads-ref-check');
+		expect(spreads_assigned_node).toBe(container.querySelector('.spreads-ref-assigned'));
+	});
+
+	it('updates several reactive host spreads and their refs beside a ref', async () => {
+		spreads_ref_calls.length = 0;
+		await render(SpreadsRefReactiveApp);
+		await flush();
+		const target = container.querySelector('.spreads-ref-reactive') as HTMLButtonElement;
+		expect(spreads_ref_calls).toEqual(['own', 'second']);
+		expect([target.title, target.disabled]).toEqual(['before', false]);
+
+		set_spreads_second({ disabled: true, ref: spreadsRef('second') });
+		await flush();
+		expect([target.title, target.disabled]).toEqual(['before', true]);
+
+		// A bag that gains a ref applies it; one that loses it no longer does.
+		spreads_ref_calls.length = 0;
+		set_spreads_first({ title: 'after', ref: spreadsRef('gained') });
+		await flush();
+		expect(target.title).toBe('after');
+		expect(spreads_ref_calls).toContain('gained');
+		expect(spreads_ref_calls).not.toContain('own');
+
+		spreads_ref_calls.length = 0;
+		set_spreads_first({ title: 'last' });
+		await flush();
+		expect(target.title).toBe('last');
+		expect(spreads_ref_calls).not.toContain('gained');
+		expect(spreads_ref_calls).not.toContain('own');
+		expect(target.hasAttribute('ref')).toBe(false);
+	});
+
+	it("applies a spread's ref again only when that ref changes", async () => {
+		spreads_ref_calls.length = 0;
+		await render(SpreadsRefChurnApp);
+		await flush();
+		const input = container.querySelector('.spreads-ref-churn') as HTMLInputElement;
+		expect(spreads_ref_calls).toEqual(['own', 'first', 'second']);
+
+		spreads_ref_calls.length = 0;
+		set_spreads_churn_second({ 'data-x': '2', ref: spreads_churn_second_ref });
+		await flush();
+		set_spreads_churn_first({ title: 'b', ref: spreads_churn_first_ref });
+		await flush();
+		expect([input.title, input.getAttribute('data-x')]).toEqual(['b', '2']);
+		expect(spreads_ref_calls).toEqual([]);
+
+		set_spreads_churn_second({ 'data-x': '3', ref: spreadsRef('replaced') });
+		await flush();
+		expect(input.getAttribute('data-x')).toBe('3');
+		expect(spreads_ref_calls).toEqual(['replaced']);
+	});
+
+	it('creates the children of a spread wrapper once', async () => {
+		spread_wrapper_child_runs = 0;
+		await render(SpreadWrapperApp);
+		await flush();
+		const child = container.querySelector('.spread-wrapper-child');
+		expect(child).not.toBeNull();
+		expect(spread_wrapper_child_runs).toBe(1);
+
+		for (const title of ['b', 'c', 'd']) {
+			set_spread_wrapper_title(title);
+			await flush();
+		}
+		expect(container.querySelector('.spread-wrapper')!.getAttribute('title')).toBe('d');
+		expect(container.querySelector('.spread-wrapper-child')).toBe(child);
+		expect(spread_wrapper_child_runs).toBe(1);
+	});
+
+	it('keeps the children of a spread host across prop changes', async () => {
+		spreads_ref_calls.length = 0;
+		await render(SpreadChildApp);
+		await flush();
+		const child = container.querySelector('.spread-child');
+		const children = container.querySelector('.spreads-child');
+		expect(child).not.toBeNull();
+		expect(children).not.toBeNull();
+
+		set_spread_child_title('after');
+		await flush();
+		expect(container.querySelector('.spread-child-host')!.getAttribute('title')).toBe('after');
+		expect(container.querySelector('.spreads-child-host')!.getAttribute('title')).toBe('after');
+		expect(container.querySelector('.spreads-child-host')!.getAttribute('data-extra')).toBe(
+			'extra',
+		);
+		expect(container.querySelector('.spread-child')).toBe(child);
+		expect(container.querySelector('.spreads-child')).toBe(children);
+		expect(spreads_ref_calls).toEqual(['prop']);
+	});
+
 	for (const enabled of [false, true]) {
 		it(`renders conditional host spreads when the condition is ${enabled}`, async () => {
 			conditional_spread_and_node = null;
@@ -1378,6 +1722,26 @@ describe('tsrx-solid runtime', () => {
 	it('catches synchronous child errors (<Errored>)', async () => {
 		await render(ErrorBoundaryApp);
 		expect(text('.caught')).toBe('sync boom');
+	});
+
+	it('binds a destructured @catch pattern to the thrown value', async () => {
+		await render(DestructuredErrorApp);
+		expect(text('.caught')).toBe('sync boom');
+	});
+
+	it('lets the @catch body reassign its binding', async () => {
+		await render(ReassignedErrorApp);
+		expect(text('.caught')).toBe('reassigned: sync boom');
+	});
+
+	it('binds a @catch parameter named like the generated accessor', async () => {
+		await render(AccessorNamedErrorApp);
+		expect(text('.caught')).toBe('sync boom');
+	});
+
+	it('binds @catch to a thrown non-Error value', async () => {
+		await render(ThrownStringApp);
+		expect(text('.caught')).toBe('string string boom');
 	});
 
 	it('recovers from error via reset and re-triggers on signal change', async () => {
@@ -1671,6 +2035,202 @@ describe('tsrx-solid runtime', () => {
 	it('object destructuring in variables works at runtime', async () => {
 		await render(DestructuredObjVarApp);
 		expect(text('.destructured-pos')).toBe('10,20');
+	});
+});
+
+// ── Element `@{ }` children inside control-flow bodies ──
+
+function BlockChildControlFlowApp() @{
+	const [on, setOn] = createSignal(false);
+	const kind = 'a';
+	<div>
+		@if (on()) {
+			<p class="if-block">@{
+				const v = 'if';
+				<b>{v}</b>
+			}</p>
+		}
+		@for (const item of ['x', 'y']) {
+			<p class="for-block">@{
+				const v = `for-${item}`;
+				<b>{v}</b>
+			}</p>
+		}
+		@switch (kind) {
+			@case 'a': {
+				<p class="switch-block">@{
+					const v = 'switch';
+					<b>{v}</b>
+				}</p>
+			}
+		}
+		@try {
+			<p class="try-block">@{
+				const v = 'try';
+				<b>{v}</b>
+			}</p>
+		} @catch (error) {
+			<p>{'failed'}</p>
+		}
+		<button class="show-if-block" onClick={() => setOn(true)}>
+			{'show'}
+		</button>
+	</div>
+}
+
+// ── Switch discriminant with a side effect ──
+
+const switch_queue: string[] = [];
+
+function SwitchQueueApp() @{
+	@switch (switch_queue.shift()) {
+		@case 'loading': {
+			<p class="queue-branch">{'Loading'}</p>
+		}
+		@case 'ready': {
+			<p class="queue-branch">{'Ready'}</p>
+		}
+		@default: {
+			<p class="queue-branch">{'Unknown'}</p>
+		}
+	}
+}
+
+// ── Whole-body `@{ }` blocks ──
+
+const block_runs = { if: 0, elseIf: 0, case: 0 };
+
+function WholeBodyBlockApp() @{
+	const [k, setK] = createSignal(0);
+	const [on] = createSignal(true);
+	const [off] = createSignal(false);
+	const kind = 'a';
+	const other = 'z';
+	<div>
+		@if (on()) {
+			@{
+				const value = (block_runs.if++, k());
+				<i class="whole-if">{`if ${value}`}</i>
+			}
+		}
+		@if (off()) {
+			<b />
+		} @else if (on()) {
+			@{
+				const value = (block_runs.elseIf++, k());
+				<i class="whole-else-if">{`else-if ${value}`}</i>
+			}
+		}
+		@switch (kind) {
+			@case 'a': {
+				@{
+					const value = (block_runs.case++, k());
+					<i class="whole-case">{`case ${value}`}</i>
+				};
+			}
+		}
+		@switch (other) {
+			@case 'a': {
+				<b />
+			}
+			@default: {
+				@{
+					const value = 'default';
+					<i class="whole-default">{value}</i>
+				};
+			}
+		}
+		<button class="bump-k" onClick={() => setK(k() + 1)}>
+			{'bump'}
+		</button>
+	</div>
+}
+
+// ── Switch discriminant that is a promise ──
+
+const switch_promise: Promise<string> = Promise.resolve('a');
+
+function SwitchPromiseApp() @{
+	const read = (): unknown => switch_promise;
+	@switch (read()) {
+		@case 'a': {
+			<p class="promise-branch">{'a'}</p>
+		}
+		@default: {
+			<p class="promise-branch">{'default'}</p>
+		}
+	}
+}
+
+describe('tsrx-solid control-flow bodies', () => {
+	it('renders a whole-body @{ } block and runs its setup once', async () => {
+		block_runs.if = block_runs.elseIf = block_runs.case = 0;
+		await render(WholeBodyBlockApp);
+		expect(text('.whole-if')).toBe('if 0');
+		expect(text('.whole-else-if')).toBe('else-if 0');
+		expect(text('.whole-case')).toBe('case 0');
+		expect(text('.whole-default')).toBe('default');
+		const nodes = Array.from(container.querySelectorAll('i'));
+
+		await click('.bump-k');
+		await click('.bump-k');
+		// The setup reads `k()` but runs untracked, as a body without `@{ }` does.
+		expect(block_runs).toEqual({ if: 1, elseIf: 1, case: 1 });
+		expect(Array.from(container.querySelectorAll('i'))).toEqual(nodes);
+	});
+
+	it('compares a promise discriminant as a value, as a JavaScript switch does', async () => {
+		await render(SwitchPromiseApp);
+		await flush();
+		expect(text('.promise-branch')).toBe('default');
+	});
+
+	it("renders an element's @{ } child inside @if, @for, @switch and @try bodies", async () => {
+		await render(BlockChildControlFlowApp);
+		expect(Array.from(container.querySelectorAll('.for-block'), (node) => node.innerHTML)).toEqual([
+			'<b>for-x</b>',
+			'<b>for-y</b>',
+		]);
+		expect(text('.switch-block')).toBe('switch');
+		expect(text('.try-block')).toBe('try');
+		expect(container.querySelector('.if-block')).toBeNull();
+
+		await click('.show-if-block');
+		expect(container.querySelector('.if-block')?.innerHTML).toBe('<b>if</b>');
+	});
+
+	it('reads a @switch discriminant once for all cases', async () => {
+		switch_queue.splice(0, switch_queue.length, 'ready', 'loading');
+		await render(SwitchQueueApp);
+		expect(text('.queue-branch')).toBe('Ready');
+		expect(switch_queue).toEqual(['loading']);
+	});
+});
+
+// ── Static @if conditions ──
+
+function StaticIfApp() @{
+	<div>
+		@if (true) {
+			<p class="static-true">{'shown'}</p>
+		} @else {
+			<p class="static-true">{'hidden'}</p>
+		}
+		@if (false) {
+			<p class="static-false">{'shown'}</p>
+		}
+		@if (import.meta.env.MODE) {
+			<p class="static-env">{'env'}</p>
+		}
+	</div>
+}
+
+describe('tsrx-solid static @if conditions', () => {
+	it('renders the branch a static condition selects', async () => {
+		await render(StaticIfApp);
+		expect(text('.static-true')).toBe('shown');
+		expect(container.querySelector('.static-false')).toBeNull();
+		expect(text('.static-env')).toBe('env');
 	});
 });
 
