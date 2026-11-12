@@ -19,6 +19,7 @@ import { transform_tsrx } from '@tsrx/typescript-plugin/src/transform.js';
 import { DIAGNOSTIC_SOURCE, MAPPER_CODES, TYPESCRIPT_CODE_PREFIX } from '@tsrx/core/diagnostics';
 import { ignore_directives } from './diagnostic-directives.js';
 import { build_export_stub } from './export-stub.js';
+import { share_platform_globals } from './platform-globals.js';
 import { to_span_mappings, to_verification_mappings } from './span-mappings.js';
 
 const require = createRequire(import.meta.url);
@@ -187,7 +188,7 @@ export function create_tsrx_content_mapper(context = {}) {
 		// The one generated output every consumer below reads, so that a rewrite of
 		// the text and its mappings reaches the spans, the directives and the
 		// verification mappings alike.
-		const generated = { text: result.text, mappings: result.mappings };
+		const generated = share_platform_globals(result.text, result.mappings);
 		const language_features = state.options.languageFeatures !== false;
 		const mappings = to_span_mappings(generated.mappings, generated.text, content, {
 			languageFeatures: language_features,

@@ -24,6 +24,7 @@
   "scripts": {
     "generate": "tree-sitter generate",
     "build": "tree-sitter generate && node-gyp rebuild",
+    "build:library": "tree-sitter build --output tsrx.so",
     "install": "node-gyp-build",
     "prestart": "tree-sitter build --wasm",
     "start": "tree-sitter playground",

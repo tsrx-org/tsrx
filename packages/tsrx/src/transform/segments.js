@@ -832,6 +832,33 @@ export function convert_source_map_to_mappings(
 		}
 	}
 
+	/**
+	 * TypeScript reports some errors on a whole statement, up to its `;` (TS7027
+	 * on unreachable code), and Volar drops a diagnostic whose end no mapping
+	 * covers. Map the `;` the printer writes after a statement: an authored one
+	 * to itself, and one the printer adds to the end of the statement.
+	 * @param {AST.Node} node
+	 * @returns {void}
+	 */
+	function push_statement_end_mapping(node) {
+		if (!has_location(node)) return;
+		const authored = source[node.end - 1] === ';';
+		const { line, column } = node.loc.end;
+		for (const generated of src_to_gen_map.get(`${line}:${column}`) ?? []) {
+			const end = loc_to_offset(generated.line, generated.column, gen_line_offsets);
+			const semicolon = authored ? end - 1 : end;
+			if (generated_code[semicolon] !== ';') continue;
+			mappings.push({
+				sourceOffsets: [authored ? node.end - 1 : node.end],
+				lengths: [authored ? 1 : 0],
+				generatedOffsets: [semicolon],
+				generatedLengths: [1],
+				data: { ...mapping_data_verify_only, customData: {} },
+			});
+			return;
+		}
+	}
+
 	/** @type {Set<string>} */
 	const mapped_comments = new Set();
 
@@ -922,6 +949,35 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * A lowered dynamic tag, `<{expr} … />`, prints as `<TsrxDynamic is={expr} … />`.
+	 * TypeScript reports a component's missing or unknown props (TS2769) on
+	 * the generated name, which has no source of its own, so it maps to the
+	 * authored `{expr}` (the `is` attribute's location) for diagnostics.
+	 * @param {ESTreeJSX.JSXOpeningElement | ESTreeJSX.TSRXJSXOpeningElement} opening
+	 * @returns {void}
+	 */
+	function add_dynamic_tag_name_mapping(opening) {
+		const name = opening.name;
+		if (!has_location(opening) || name.type !== 'JSXIdentifier' || has_location(name)) return;
+		const is = opening.attributes.find(
+			(attribute) =>
+				attribute.type === 'JSXAttribute' &&
+				attribute.name.type === 'JSXIdentifier' &&
+				attribute.name.name === 'is',
+		);
+		if (!has_location(is)) return;
+		const generated = generated_offset_for_text(opening.loc.start, `<${name.name}`);
+		if (generated === undefined) return;
+		mappings.push({
+			sourceOffsets: [is.start],
+			lengths: [is.end - is.start],
+			generatedOffsets: [generated + 1],
+			generatedLengths: [name.name.length],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
+	}
+
+	/**
 	 * @param {AST.Identifier | ESTreeJSX.JSXIdentifier} generated_node
 	 * @returns {void}
 	 */
@@ -975,7 +1031,7 @@ export function convert_source_map_to_mappings(
 	// We have to visit everything in generated order to maintain correct indices
 
 	walk(ast, null, {
-		_(node, { visit }) {
+		_(node, { visit, path }) {
 			add_line_comments_mapping(node);
 			add_preserved_comment_mappings(node);
 
@@ -1339,6 +1395,10 @@ export function convert_source_map_to_mappings(
 					}
 				}
 
+				if (node.metadata?.dynamicElement) {
+					add_dynamic_tag_name_mapping(opening);
+				}
+
 				visit(opening);
 
 				// 2. Visit children in order
@@ -1357,22 +1417,52 @@ export function convert_source_map_to_mappings(
 						gen_line_offsets,
 						closing ? mapping_data_verify_only : mapping_data_verify_complete,
 					);
-					// The generated code includes a semicolon after the closing or self-closed tag
-					// We're extending the mapping to include the semicolon
-					// because the diagnostics errors can include the whole element
-					// and we need to account for the semicolon as it's a part of the diagnostic
-					// At the same time, we could've instead applied this logic to the whole `node` element
-					// but since we already map the opening - start, we just need the proper end
-					// and it was causing some issues with mappings
-					mapping.generatedLengths = [mapping.generatedLengths[0] + 1];
 					if (!closing && opening.selfClosing) {
-						const generated_close_length = '/>;'.length;
-						mapping.sourceOffsets = [target_node.end - 2];
-						mapping.lengths = ['/>'.length];
+						const close_length = '/>'.length;
+						mapping.sourceOffsets = [target_node.end - close_length];
+						mapping.lengths = [close_length];
 						mapping.generatedOffsets = [
-							mapping.generatedOffsets[0] + mapping.generatedLengths[0] - generated_close_length,
+							mapping.generatedOffsets[0] + mapping.generatedLengths[0] - close_length,
 						];
-						mapping.generatedLengths = [generated_close_length];
+						mapping.generatedLengths = [close_length];
+					}
+					// Loose recovery adds a closing tag, with no source position, to a tag
+					// left unclosed (#978), and the closing tags around it can then be
+					// printed after children that follow them in the source. The first
+					// generated position of this closing tag's start can be an added tag,
+					// or the end of a child before one, so the span would cover it, and
+					// TypeScript's errors on the added tag would show here again. Start
+					// the span at this tag's own `</`, the last generated position of its
+					// start, and end it at its own `>`, keeping the extension above.
+					/** @param {any} element */
+					const has_recovered_closing = (element) =>
+						element.children?.some(
+							(/** @type {any} */ child) =>
+								(child.type === 'JSXElement' || child.type === 'JSXFragment') &&
+								(child.closingElement?.metadata?.recovered || has_recovered_closing(child)),
+						);
+					if (closing && has_recovered_closing(node)) {
+						const { start, end } = /** @type {AST.SourceLocation} */ (closing.loc);
+						const offsets = (/** @type {AST.Position} */ position) =>
+							(src_to_gen_map.get(`${position.line}:${position.column}`) ?? []).map((generated) =>
+								loc_to_offset(generated.line, generated.column, gen_line_offsets),
+							);
+						const own_start = offsets(start)
+							.filter((offset) => generated_code.startsWith('</', offset))
+							.at(-1);
+						const first_end = offsets(end)[0];
+						if (
+							own_start !== undefined &&
+							first_end !== undefined &&
+							own_start >= mapping.generatedOffsets[0]
+						) {
+							const extension =
+								mapping.generatedOffsets[0] + mapping.generatedLengths[0] - first_end;
+							mapping.generatedOffsets = [own_start];
+							mapping.generatedLengths = [
+								generated_code.indexOf('>', own_start) + 1 - own_start + extension,
+							];
+						}
 					}
 					mappings.push(mapping);
 				}
@@ -1518,6 +1608,10 @@ export function convert_source_map_to_mappings(
 					for (const declarator of node.declarations) {
 						visit(declarator);
 					}
+				}
+				// The head of a `for` loop has no `;` of its own.
+				if (!/^For(?:In|Of)?Statement$/.test(path.at(-1)?.type ?? '')) {
+					push_statement_end_mapping(node);
 				}
 				return;
 			} else if (node.type === 'VariableDeclarator') {
@@ -1951,6 +2045,7 @@ export function convert_source_map_to_mappings(
 				if (node.expression) {
 					visit(node.expression);
 				}
+				push_statement_end_mapping(node);
 				return;
 			} else if (node.type === 'BlockStatement' || node.type === 'Program') {
 				// Visit body statements in order
@@ -2079,6 +2174,11 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'SpreadElement' || node.type === 'RestElement') {
+				// TypeScript reports some errors on a whole rest parameter (TS2370 on a
+				// type that is not an array), which starts at the `...`.
+				if (node.type === 'RestElement' && has_location(node)) {
+					push_source_keyword_token('...', node.start, node);
+				}
 				// TypeScript reports some errors on a whole spread (TS2698 on
 				// `{ ...value }` when the value is not an object), so it maps like a
 				// literal: its ends as points, and its `...` for TypeScript 7.
@@ -2111,21 +2211,23 @@ export function convert_source_map_to_mappings(
 					visit(node.argument);
 				}
 
-				// An `await` the compiler added around a generated closure has no
-				// authored keyword to map.
-				if (node.type === 'AwaitExpression' && node.loc) {
-					const max_len = 'await'.length;
-					// We need a mapping for diagnostics but only on the 'await' keyword
-					const mapping = get_mapping_from_node(
-						node,
-						src_to_gen_map,
-						gen_line_offsets,
-						mapping_data_verify_only,
-						max_len,
-						max_len,
-					);
-
-					mappings.push(mapping);
+				// An `await` the compiler added around a generated closure, or a
+				// `yield*` that delegates to a generated generator, has no authored
+				// keyword to map. The keyword maps for diagnostics only, from where
+				// its own text is printed: a lowered `@if (yield 1)` prints the
+				// expression in parentheses that share its start.
+				if (has_location(node)) {
+					const text = node.type === 'AwaitExpression' ? 'await' : 'yield';
+					const keyword = find_source_token(source_tokens, text, node.start, 'after');
+					if (keyword?.loc && keyword.start < node.end) {
+						tokens.push({
+							source: text,
+							generated: text,
+							loc: keyword.loc,
+							metadata: {},
+							mappingData: mapping_data_verify_only,
+						});
+					}
 				}
 				return;
 			} else if (node.type === 'ChainExpression') {
@@ -2774,6 +2876,19 @@ export function convert_source_map_to_mappings(
 				return;
 			} else if (node.type === 'TSNamespaceExportDeclaration') {
 				// TypeScript namespace export: export as namespace foo;
+				if (has_location(node)) {
+					// TypeScript reports a nested one (TS1316) on the whole statement,
+					// up to the `;` the printer writes whether or not the source has one.
+					const mapping = declaration_mapping(node, EXPORT_KEYWORD);
+					if (mapping) {
+						const end = mapping.generatedOffsets[0] + mapping.generatedLengths[0];
+						if (generated_code[end] === ';') mapping.generatedLengths[0]++;
+						mappings.push(mapping);
+					}
+					push_source_keyword_token('export', node.start, node);
+					push_source_keyword_token('as', node.start, node);
+					push_source_keyword_token('namespace', node.start, node);
+				}
 				if (node.id) {
 					visit(node.id);
 				}
@@ -3091,18 +3206,19 @@ function add_diagnostic_mappings(
 		);
 		if (generated_start === null) continue;
 
+		// The anchor stays on its generated line. The source token isn't in the
+		// generated code, so running past the line would map unrelated code.
+		const line_end = generated_code.indexOf('\n', generated_start);
+		const room = (line_end === -1 ? generated_code.length : line_end) - generated_start;
+
 		diagnostic_mappings.push({
 			sourceOffsets: [start],
 			generatedOffsets: [generated_start],
 			lengths: [length],
-			generatedLengths: [
-				generated_code.length === 0
-					? 0
-					: Math.max(1, Math.min(length, generated_code.length - generated_start)),
-			],
+			generatedLengths: [generated_code.length === 0 ? 0 : Math.max(1, Math.min(length, room))],
 			data: {
 				...mapping_data_verify_only,
-				customData: {},
+				customData: { diagnosticAnchor: true },
 			},
 		});
 	}
@@ -3189,7 +3305,9 @@ function get_nearest_generated_offset_from_source_line_map(
 	const generated_offset =
 		loc_to_offset(position.line, position.column, gen_line_offsets) +
 		('sourceColumn' in position ? loc.column - position.sourceColumn : 0);
-	return Math.max(0, Math.min(generated_offset, generated_code.length - 1));
+	// The column only carries over on the generated line of the code it's from.
+	const next_line = gen_line_offsets[position.line] ?? generated_code.length;
+	return Math.max(0, Math.min(generated_offset, next_line - 1, generated_code.length - 1));
 }
 
 /**
