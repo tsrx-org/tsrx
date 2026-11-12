@@ -86,7 +86,21 @@ export function merge_ref_props<T = Element>(...refs: Array<RefValue<T>>): RefVa
  */
 export type SpreadFalsy = false | 0 | '' | 0n | null | undefined | void;
 
+// Joins the class a host spread passes an element with its scope classes.
+export function merge_spread_class<T extends object | SpreadFalsy>(
+	props: T,
+	scope_class: unknown,
+	key: 'class' | 'className',
+	alias?: 'class' | 'className',
+	list?: boolean,
+): T;
+
 export function normalize_spread_props<T extends object | SpreadFalsy>(
+	props: T,
+	...outer_refs: Array<RefValue<Element>>
+): T | SpreadProps;
+// Always returns the normalized copy, for JSX runtimes that copy a spread once.
+export function copy_spread_props<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): T | SpreadProps;
@@ -101,6 +115,10 @@ export type SpreadRefProps<T> = (T | SpreadProps) & { readonly ref?: any };
 
 // A nullish bag comes back as an empty one so the compiler can read `.ref`.
 export function normalize_spread_props_for_ref_attr<T extends object | SpreadFalsy>(
+	props: T,
+	...outer_refs: Array<RefValue<Element>>
+): SpreadRefProps<Exclude<T, null | undefined | void>>;
+export function copy_spread_props_for_ref_attr<T extends object | SpreadFalsy>(
 	props: T,
 	...outer_refs: Array<RefValue<Element>>
 ): SpreadRefProps<Exclude<T, null | undefined | void>>;
