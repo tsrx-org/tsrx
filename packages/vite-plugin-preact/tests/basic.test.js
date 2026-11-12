@@ -125,4 +125,19 @@ describe('@tsrx/vite-plugin-preact basic', () => {
 		expect(invalidated).toEqual([css_module]);
 		expect(modules).toContain(css_module);
 	});
+
+	it('does not compile a file imported only as `?raw` during hot updates', async () => {
+		const plugin = tsrxPreact();
+		const id = '/virtual/Example.tsrx';
+		const raw_module = { id: `${id}?raw` };
+		const handle_hot_update = /** @type {(ctx: any) => Promise<any[]>} */ (plugin.handleHotUpdate);
+		const modules = await handle_hot_update({
+			file: id,
+			modules: [raw_module],
+			read: async () => 'export function Example() @{ <section>',
+			server: { moduleGraph: { getModuleById: () => undefined } },
+		});
+
+		expect(modules).toEqual([raw_module]);
+	});
 });

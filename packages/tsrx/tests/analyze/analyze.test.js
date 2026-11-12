@@ -61,6 +61,35 @@ describe('target-neutral TSRX analysis', () => {
 			).toBe(true);
 		});
 
+		it('leaves the output a second output or a statement displaces in `@{ … }` to the parser (#981)', () => {
+			for (const [source, code] of [
+				[
+					'export function C() @{\n\t<a />\n\t<b />\n\t<c />\n}',
+					DIAGNOSTIC_CODES.CODE_BLOCK_SINGLE_OUTPUT,
+				],
+				[
+					'export function C() @{\n\t<a />\n\tconsole.log(1);\n}',
+					DIAGNOSTIC_CODES.CODE_BLOCK_STATEMENT_AFTER_OUTPUT,
+				],
+				[
+					'export function C() @{\n\t@if (x) {\n\t\t<a />\n\t\t<b />\n\t}\n}',
+					DIAGNOSTIC_CODES.CODE_BLOCK_SINGLE_OUTPUT,
+				],
+			]) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				/** @type {AST.CommentWithLocation[]} */
+				const comments = [];
+				const ast = parseModule(source, filename, { collect: true, errors, comments });
+				const result = analyzeTsrx(ast, filename, { collect: true, comments });
+				expect(
+					[...errors, ...result.errors].map((error) => error.code),
+					source,
+				).toEqual(errors.map(() => code));
+				expect(errors.length, source).toBeGreaterThan(0);
+			}
+		});
+
 		it('reports every free-floating TSRX output shape once', () => {
 			const result = analyze(
 				`function Test(ok, items, value) {
