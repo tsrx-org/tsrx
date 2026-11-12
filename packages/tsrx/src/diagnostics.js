@@ -127,6 +127,8 @@ export const DIAGNOSTIC_CODES = {
 	CSS_IMPORT: 'TSRX3012',
 	/** CSS in a `<style>` block that doesn't parse. */
 	CSS_SYNTAX: 'TSRX3013',
+	/** A `<style>` block in a child expression container (`{<style>…</style>}`), which renders its class map. */
+	STYLE_IN_EXPRESSION_CONTAINER: 'TSRX3014',
 
 	/** A recognized `import.meta.env.platform.*` flag is used without a selected platform. */
 	PLATFORM_REQUIRED: 'TSRX4001',
@@ -543,6 +545,10 @@ export const TSRX_ERRORS = {
 		'CSS_IMPORT',
 		"@import is not supported in <style> blocks: the imported rules would not be scoped. Share scoped styles with an assigned block (const theme = <style>…</style>) and apply={theme}. For global CSS, use :global in the block, or import the stylesheet in JavaScript: import './global.css'.",
 	),
+	STYLE_IN_EXPRESSION_CONTAINER: tsrx(
+		'STYLE_IN_EXPRESSION_CONTAINER',
+		'A <style> block inside an expression container, such as {<style>…</style>}, evaluates to its class map, so as a child it styles nothing. Remove the braces to write a standalone block in the element or fragment it styles: <><style>…</style><div>…</div></>. To reuse the block, assign it: const theme = <style>…</style>.',
+	),
 
 	// TSRX4xxx
 	PLATFORM_REQUIRED: tsrx(
@@ -635,6 +641,10 @@ export const TS_ERRORS = {
 		(modifier) => `'${modifier}' modifier cannot appear on an 'await using' declaration.`,
 	),
 	MODIFIERS_CANNOT_APPEAR_HERE: { code: 'TS1184', message: 'Modifiers cannot appear here.' },
+	MODIFIER_ON_CONSTRUCTOR: with_values(
+		'TS1089',
+		(modifier) => `'${modifier}' modifier cannot appear on a constructor declaration.`,
+	),
 	ACCESSIBILITY_MODIFIER_ALREADY_SEEN: {
 		code: 'TS1028',
 		message: 'Accessibility modifier already seen.',
@@ -655,6 +665,8 @@ export const TS_ERRORS = {
 		code: 'TS1038',
 		message: "A 'declare' modifier cannot be used in an already ambient context.",
 	},
+	/** Decorators on a class `static` block. */
+	DECORATORS_NOT_VALID_HERE: { code: 'TS1206', message: 'Decorators are not valid here.' },
 	MODIFIER_ON_IMPORT: with_values(
 		'TS1079',
 		(modifier) => `A '${modifier}' modifier cannot be used with an import declaration.`,

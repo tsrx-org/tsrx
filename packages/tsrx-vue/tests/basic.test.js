@@ -1,6 +1,7 @@
 import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -49,6 +50,7 @@ runSharedCodeBlockChildrenTests({ compile, name: 'vue' });
 runSharedClassFunctionComponentTests({ compile, compile_to_volar_mappings, name: 'vue' });
 runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'vue' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'vue' });
+runSharedAnonymousComponentTests({ compile, name: 'vue' });
 
 describe('@tsrx/vue basic', () => {
 	it('merges defineVaporComponent into existing vue imports', () => {
@@ -246,6 +248,51 @@ describe('@tsrx/vue basic', () => {
 		);
 	});
 
+	it('reports a mutation through a parenthesized TypeScript wrapper in the editor too', () => {
+		const { errors } = compile_to_volar_mappings(
+			`const cfg = { size: 1 };
+const registry = { card: Card };
+(cfg as any).size = 2;
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.code)).toEqual(['TSRX2028']);
+	});
+
+	it("moves a component past a namespace's own var", () => {
+		const { code } = compile(
+			`const X = 'outer';
+export const registry = { inner: Inner };
+namespace Types { var X = 1; }
+export function Inner({ x = X }: { x?: string }) @{
+	<span>{x}</span>
+}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('export const registry'),
+		);
+	});
+
+	it('moves a component past an ambient enum or namespace its prop default reads', () => {
+		const { code } = compile(
+			`export const registry = { inner: Inner };
+declare enum Size { S }
+declare namespace Defaults { const label: string; }
+export function Inner({ size = Size, ns = Defaults }: { size?: unknown; ns?: unknown }) @{
+	<span>{String(size)}{String(ns)}</span>
+}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('export const registry'),
+		);
+	});
+
 	it('reports a read above a component whose prop default reads a binding it would move past', () => {
 		for (const [source, read_line] of [
 			[
@@ -301,6 +348,89 @@ const registry = { card: Card };
 cfg.size = 2;
 export function Card({ s = cfg }: { s?: { size: number } }) @{
 	<div>{s.size}</div>
+}`,
+				2,
+			],
+			// Mutated through a TypeScript wrapper.
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+(cfg as any).size = 2;
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`let cfg: { size: number } | null = { size: 1 };
+const registry = { card: Card };
+cfg!.size = 2;
+export function Card({ s = cfg }: { s?: { size: number } | null }) @{
+	<div>{s?.size}</div>
+}`,
+				2,
+			],
+			// Mutated through a pattern, `delete` or a parenthesized chain.
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+[cfg.size] = [2];
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+({ size: (cfg as any).size } = { size: 2 });
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg: { size?: number } = { size: 1 };
+const registry = { card: Card };
+delete cfg.size;
+export function Card({ s = cfg }: { s?: { size?: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg = { nested: { size: 1 } };
+const registry = { card: Card };
+(cfg?.nested).size = 2;
+export function Card({ s = cfg }: { s?: { nested: { size: number } } }) @{
+	<div>{s.nested.size}</div>
+}`,
+				2,
+			],
+			// An enum, a namespace or an `import x = …` alias compiles to a
+			// binding set when it runs.
+			[
+				`export const registry = { inner: Inner };
+enum Size { S = 1 }
+export function Inner({ size = Size }: { size?: unknown }) @{
+	<span>{String(size)}</span>
+}`,
+				1,
+			],
+			[
+				`export const registry = { inner: Inner };
+namespace Defaults { export const label = 'p'; }
+export function Inner({ ns = Defaults }: { ns?: unknown }) @{
+	<span>{String(ns)}</span>
+}`,
+				1,
+			],
+			[
+				`namespace Defaults { export const label = 'p'; }
+export const registry = { inner: Inner };
+import Label = Defaults.label;
+export function Inner({ label = Label }: { label?: string }) @{
+	<span>{label}</span>
 }`,
 				2,
 			],
@@ -725,6 +855,31 @@ export function Card(${params}: any) @{
 		expect(code).toContain(`class="card ${cssHash}"`);
 		expect(css).toContain(`.card.${cssHash}`);
 		expect(css).toContain('color: red;');
+	});
+
+	// Vue's `mergeProps` joins `class` across attributes and spreads itself.
+	it('leaves host spreads as written beside the scope classes', () => {
+		const { code, cssHash } = compile(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span class="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('merge_spread_class');
+		expect(code).toMatch(
+			new RegExp(`<span \\{\\.\\.\\.(\\w+)\\} ref=\\{\\1\\?\\.ref\\} class="${cssHash}" />`),
+		);
 	});
 
 	it('applies scoped css hashes and keeps type selectors for dynamic tags', () => {
@@ -1237,6 +1392,164 @@ export function Card(${params}: any) @{
 		expect(code).not.toContain('<Fragment');
 	});
 
+	it('destructures a keyed array pattern from the item, not by index (#938)', () => {
+		const { code, errors } = compile(
+			`function App({ rows }: { rows: Iterable<string>[] }) @{
+				@for (const [first, second = 'none'] of rows; key first) {
+					<p>{first}|{second}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain("<VaporFor in={rows} getKey={([first, second = 'none']) => first}>");
+		expect(code).toMatch(
+			/const _\$_vapor_bindings_1 = _\$_vapor_computed\(\(\) => \{\s*const \[first, second = 'none'\] = __vapor_item\.value;\s*return \{ first, second \};/,
+		);
+		expect(code).toContain('{_$_vapor_bindings_1.value.first}|{_$_vapor_bindings_1.value.second}');
+		expect(code).not.toContain('__vapor_item.value[0]');
+		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
+	});
+
+	it('imports computed for a keyed array pattern beside type and namespace imports of vue', () => {
+		for (const authored of [
+			"import type { Ref } from 'vue';",
+			"import * as Vue from 'vue';",
+			"import { type Ref, ref } from 'vue';",
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function App({ rows }: { rows: string[][] }) @{
+					@for (const [first] of rows; key first) {
+						<p>{first}</p>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code, authored).toContain("import { computed as _$_vapor_computed } from 'vue';");
+		}
+	});
+
+	it('imports Suspense once, as a value, beside the computed import and authored vue imports', () => {
+		for (const [authored, suspense_import] of [
+			["import { Suspense } from 'vue';", "import { Suspense } from 'vue';"],
+			[
+				"import type { Ref } from 'vue';",
+				"import { computed as _$_vapor_computed, Suspense } from 'vue';",
+			],
+			[
+				"import * as Vue from 'vue';",
+				"import { computed as _$_vapor_computed, Suspense } from 'vue';",
+			],
+			[
+				"import { ref } from 'vue';\nimport { Suspense } from 'vue';",
+				"import { Suspense } from 'vue';",
+			],
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function Data() @{
+					<i />
+				}
+				function App({ rows }: { rows: string[][] }) @{
+					<div>
+						@for (const [first] of rows; key first) {
+							<p>{first}</p>
+						}
+						@try {
+							<Data />
+						} @pending {
+							<p>{'loading'}</p>
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual([suspense_import]);
+			expect(code, authored).toMatch(/^import \{ computed as _\$_vapor_computed\b/);
+		}
+	});
+
+	it('imports Suspense on its own beside a type-only or namespace import of vue', () => {
+		for (const authored of [
+			"import type { Ref } from 'vue';",
+			"import * as Vue from 'vue';",
+			"import type { Ref } from 'vue';\nimport * as Vue from 'vue';",
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function Data() @{
+					<i />
+				}
+				function App() @{
+					@try {
+						<Data />
+					} @pending {
+						<p>{'loading'}</p>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual([
+				"import { Suspense } from 'vue';",
+			]);
+		}
+	});
+
+	it('leaves type parameters and type references in a keyed slot alone (#922)', () => {
+		const { code, errors } = compile(
+			`function List({ items }: { items: { id: string; label: string }[] }) @{
+				<ul>
+					@for (const item of items; key item.id) {
+						<button onClick={function <item>(x: item, y: typeof item): item[] { return [x as item]; }}>{item.label}</button>
+					}
+				</ul>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain('function <item>(x: item, y: typeof item.value): item[] {');
+		expect(code).toContain('return [x as item];');
+		expect(code).toContain('{item.value.label}');
+		expect(code).not.toContain('<item.value>');
+	});
+
+	it('leaves type declarations and qualified type queries in a keyed slot alone (#922)', () => {
+		const { code, errors } = compile(
+			`function List({ items, Types }: { items: { id: string; label: string }[]; Types: { item: string } }) @{
+				<ul>
+					@for (const item of items; key item.id) {
+						<button onClick={() => {
+							type item = string;
+							interface Row { label: item }
+							const typed: typeof Types.item = item.label;
+							return typed satisfies item;
+						}}>{item.label}</button>
+					}
+				</ul>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain('type item = string;');
+		expect(code).toContain('interface Row {');
+		expect(code).toContain('label: item');
+		expect(code).toContain('const typed: typeof Types.item = item.value.label;');
+		expect(code).toContain('return typed satisfies item;');
+	});
+
 	it('falls back without injecting VaporFor for keyed destructuring patterns it cannot rewrite', () => {
 		const { code } = compile(
 			`function App({ items, keyName }: { items: Array<Record<string, string>>, keyName: string }) @{
@@ -1320,6 +1633,26 @@ export function Card(${params}: any) @{
 		expect(code).not.toContain('Suspense');
 	});
 
+	it('renders a @try inside element children as a boundary component', () => {
+		const { code } = compile(
+			`function App() @{
+				<div class="wrap">
+					@try {
+						<Child />
+					} @catch (error) {
+						<p>{'Failed'}</p>
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		// A component instance registers the boundary's error hook; a plain call
+		// has none.
+		expect(code).toContain('{<TsrxErrorBoundary fallback=');
+		expect(code).not.toContain('TsrxErrorBoundary({');
+	});
+
 	it('does not generate a catch fallback component without @pending', () => {
 		const { code } = compile(
 			`export function App() @{
@@ -1387,6 +1720,10 @@ export function Card(${params}: any) @{
 		expect(code.match(/error\.message/g)).toHaveLength(1);
 		expect(code).toContain('StatementBodyHook');
 		expect(code).toContain('suffix={suffix}');
+		// The Suspense default slot renders the body through its own boundary,
+		// so `reset` works for errors thrown there.
+		expect(code).toMatch(/default: \(\) => <TsrxErrorBoundary fallback=\{\(error, reset\) => \{/);
+		expect(code).not.toContain('reset={() => {}}');
 
 		const error_boundary_index = code.indexOf('<TsrxErrorBoundary');
 		const suspense_index = code.indexOf('<Suspense');

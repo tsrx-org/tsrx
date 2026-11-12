@@ -335,6 +335,12 @@ function App() @{
 	</>
 }`,
 			],
+			[
+				'TSRX3014',
+				`function App() @{
+	<div>{<style>p {}</style>}</div>
+}`,
+			],
 			['TSRX4003', "import a from 'a' with { type: 'json', type: 'json' };"],
 		];
 		for (const [code, source] of cases) {
