@@ -1680,6 +1680,15 @@ export interface ScopeClassParts {
 }
 
 /**
+ * How a scope pre-pass keeps the class a host spread passes an element: the
+ * platform's `jsx.hostSpreadClassProps` and `jsx.hostSpreadClassList`.
+ */
+export interface SpreadClassOptions {
+	props: ReadonlyArray<'class' | 'className'>;
+	list: boolean;
+}
+
+/**
  * Result of parsing operation
  */
 export interface ParseResult {

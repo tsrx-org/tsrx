@@ -255,6 +255,42 @@ describe('@tsrx/preact basic', () => {
 		expect(code).toContain('return <div>{Date.now()}</div>;');
 	});
 
+	// Preact reads a class from `class` or `className`, so a spread's class
+	// moves to the name of the element's class attribute.
+	it('keeps the class a host spread passes beside the scope classes', () => {
+		const { code, cssHash } = compile(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span className="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(
+			/import \{\s*merge_spread_class as __merge_spread_class,[^}]*\} from '@tsrx\/preact\/ref'/,
+		);
+		expect(code).toContain(
+			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", "className"))} />`,
+		);
+		expect(code).toContain(
+			`<span className="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "className", "class"))} />`,
+		);
+		// A spread before the class attribute drops its class, so its
+		// `className` can't override the attribute.
+		expect(code).toContain(
+			`<span {...__normalize_spread_props(__merge_spread_class(props, null, "class", "className"))} class="last ${cssHash}" />`,
+		);
+	});
+
 	it('applies scoped css hashes and keeps type selectors for dynamic tags', () => {
 		const { code, css, cssHash } = compile(
 			`export function App() @{

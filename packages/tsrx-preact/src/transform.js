@@ -45,6 +45,8 @@ const preact_platform = {
 	},
 	jsx: {
 		rewriteClassAttr: false,
+		// Preact reads a class from either prop.
+		hostSpreadClassProps: ['class', 'className'],
 		multiRefStrategy: 'merge-refs',
 		hostSpreadRefBinding: 'in-place',
 		// preact-render-to-string escapes a string child of `<script>` like
