@@ -12,15 +12,18 @@ import {
 	createHookSafeHelper,
 	create_generated_identifier,
 	createJsxTransform,
+	ERROR_BOUNDARY_INTERNAL_NAME,
 	error,
 	has_location,
 	IDENTIFIER_OBFUSCATION_PREFIX,
+	insertAfterDirectives,
 	is_component_like_element,
 	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 	MERGE_REFS_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	setLocation,
+	SUSPENSE_INTERNAL_NAME,
 	TSRX_ERRORS,
 } from '@tsrx/core';
 
@@ -209,7 +212,7 @@ function create_vapor_pending_boundary_from_default_slot(default_slot, fallback_
 
 	const boundary = b.jsx_element_fresh(
 		b.jsx_opening_element(
-			b.jsx_id('Suspense'),
+			b.jsx_id(SUSPENSE_INTERNAL_NAME),
 			[b.jsx_attribute(b.jsx_id('v-slots'), to_jsx_expression_container(slots))],
 			true,
 		),
@@ -284,7 +287,7 @@ function jsx_child_to_expression(child) {
 function create_vapor_error_boundary(content, fallback_fn) {
 	return b.jsx_element_fresh(
 		b.jsx_opening_element(
-			b.jsx_id('TsrxErrorBoundary'),
+			b.jsx_id(ERROR_BOUNDARY_INTERNAL_NAME),
 			[
 				b.jsx_attribute(b.jsx_id('fallback'), to_jsx_expression_container(fallback_fn)),
 				b.jsx_attribute(
@@ -2601,7 +2604,9 @@ function inject_vue_imports(program, transform_context) {
 	if (transform_context.needs_vapor_computed) {
 		// Its own declaration: an authored `import type` or `import * as` from
 		// 'vue' can't take a value specifier.
-		program.body.unshift(b.imports([['computed', VUE_COMPUTED_INTERNAL_NAME, 'value']], 'vue'));
+		insertAfterDirectives(program, [
+			b.imports([['computed', VUE_COMPUTED_INTERNAL_NAME, 'value']], 'vue'),
+		]);
 	}
 
 	if (transform_context.needs_use_slots) {
@@ -2609,7 +2614,7 @@ function inject_vue_imports(program, transform_context) {
 	}
 
 	if (transform_context.needs_suspense) {
-		ensure_named_import(program, 'vue', 'Suspense');
+		ensure_named_import(program, 'vue', 'Suspense', SUSPENSE_INTERNAL_NAME);
 	}
 
 	if (transform_context.needs_error_boundary) {
@@ -2617,6 +2622,7 @@ function inject_vue_imports(program, transform_context) {
 			program,
 			transform_context.platform.imports.errorBoundary,
 			'TsrxErrorBoundary',
+			ERROR_BOUNDARY_INTERNAL_NAME,
 		);
 	}
 
@@ -2702,7 +2708,7 @@ function ensure_named_import(program, source, name, local = name) {
 		return;
 	}
 
-	program.body.unshift(b.imports([[name, local, 'value']], source));
+	insertAfterDirectives(program, [b.imports([[name, local, 'value']], source)]);
 }
 
 /**

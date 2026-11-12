@@ -25,6 +25,7 @@ import {
 	clone_jsx_name,
 	create_generated_identifier,
 	create_null_literal,
+	FOR_OF_ITEM_PARAM_NAME,
 	get_for_of_iteration_params,
 	identifier_to_jsx_identifier,
 	is_bare_render_expression,
@@ -39,7 +40,7 @@ import {
 	jsx_id as build_jsx_id,
 } from '../../utils/builders.js';
 import * as b from '../../utils/builders.js';
-import { find_top_level_awaits } from '../await.js';
+import { find_first_top_level_await, find_top_level_awaits } from '../await.js';
 import {
 	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 	MERGE_SPREAD_CLASS_INTERNAL_NAME,
@@ -854,7 +855,7 @@ export function createJsxTransform(platform) {
 			transformed_program = { ...transformed_program, body: [...transformed_program.body] };
 		}
 		if (type_only_style_anchors.length > 0) {
-			transformed_program.body.unshift(...type_only_style_anchors);
+			insert_after_directives(transformed_program, type_only_style_anchors);
 		}
 		let expanded = expand_component_helpers(transformed_program);
 		if (transform_context.has_local_helpers) {
@@ -1071,17 +1072,46 @@ function lower_dynamic_jsx_element(node, transform_context) {
 function inject_dynamic_import(program, transform_context) {
 	const factory = transform_context.platform.imports.dynamicFactory;
 	if (transform_context.needs_dynamic_factory && factory?.name && factory.source) {
-		program.body.unshift(
+		insert_after_directives(program, [
 			b.import_declaration(
 				[b.import_specifier(factory.name, DYNAMIC_FACTORY_LOCAL)],
 				factory.source,
 			),
-		);
+		]);
 	}
 	const source = transform_context.platform.imports.dynamic;
 	if (!transform_context.needs_dynamic_element || !source) return;
-	program.body.unshift(
+	insert_after_directives(program, [
 		b.import_declaration([b.import_specifier('Dynamic', DYNAMIC_IMPORT_LOCAL)], source),
+	]);
+}
+
+/**
+ * Insert generated top-level statements ahead of the module's own code but
+ * after its directive prologue. A statement above `'use client'` (or any
+ * other directive) turns the directive into a plain expression.
+ *
+ * @param {AST.Program} program
+ * @param {AST.Program['body']} statements
+ * @returns {void}
+ */
+export function insert_after_directives(program, statements) {
+	let index = 0;
+	while (index < program.body.length && is_directive_statement(program.body[index])) {
+		index += 1;
+	}
+	program.body.splice(index, 0, ...statements);
+}
+
+/**
+ * @param {AST.Program['body'][number]} statement
+ * @returns {boolean}
+ */
+function is_directive_statement(statement) {
+	return (
+		statement.type === 'ExpressionStatement' &&
+		statement.expression.type === 'Literal' &&
+		typeof statement.expression.value === 'string'
 	);
 }
 
@@ -5080,6 +5110,36 @@ function validate_if_body_control_flow(node, transform_context) {
 }
 
 /**
+ * Every target hands an `@for` item to a callback, so the head has to declare
+ * its loop variable the way a parameter can: assigning to an existing variable
+ * or property would only shadow it, and a `using` item would never be disposed.
+ * A target that lowers `@for` itself calls this from its own lowering.
+ *
+ * @param {AST.ForOfStatement['left']} left
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+export function validate_for_of_head(left, transform_context) {
+	if (left.type !== 'VariableDeclaration') {
+		error(
+			TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
+			transform_context.filename,
+			left,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	} else if (left.kind === 'using' || left.kind === 'await using') {
+		error(
+			TSRX_ERRORS.FOR_HEAD_USING(left.kind),
+			transform_context.filename,
+			left,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	}
+}
+
+/**
  * @param {AST.Node | null | undefined} node
  * @returns {boolean}
  */
@@ -5102,6 +5162,7 @@ function is_loop_statement(node) {
  * @returns {ESTreeJSX.JSXExpressionContainer}
  */
 function for_of_statement_to_jsx_child(node, transform_context) {
+	validate_for_of_head(node.left, transform_context);
 	if (node.await && !transform_context.rejected_awaits.has(/** @type {number} */ (node.start))) {
 		error(
 			TSRX_ERRORS.TARGET_FOR_AWAIT_UNSUPPORTED(transform_context.platform.name),
@@ -5112,7 +5173,7 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		);
 	}
 
-	const loop_params = get_for_of_iteration_params(node.left, node.index);
+	const loop_params = get_for_of_iteration_params(node.left, node.index, node.key);
 	/** @type {AST.Node[]} */
 	let loop_body = node.body.type === 'BlockStatement' ? node.body.body : [node.body];
 	validate_for_body_control_flow(loop_body, transform_context);
@@ -5173,7 +5234,28 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 	// Restore bindings
 	transform_context.available_bindings = saved_bindings;
 
-	const iter_callback = b.arrow(loop_params, b.block(body_statements));
+	// An `await` in a default of the head's pattern can't stay in the
+	// parameters of the async callback the loop becomes, so that callback takes
+	// the item whole and destructures it as its first statement.
+	let callback_params = loop_params;
+	if (
+		node.left.type === 'VariableDeclaration' &&
+		loop_params[0] === node.left.declarations[0]?.id &&
+		find_first_top_level_await(loop_params[0], false)
+	) {
+		const item = b.id(FOR_OF_ITEM_PARAM_NAME);
+		// `using` binds only a name, so a pattern that awaits is never one.
+		const kind = /** @type {'const' | 'let' | 'var'} */ (node.left.kind);
+		callback_params = [item, ...loop_params.slice(1)];
+		// The head runs before the body's scope is entered, so the body's own
+		// declarations stay in a block of their own and can't shadow the head.
+		body_statements = [
+			b.declaration(kind, [b.declarator(loop_params[0], item)]),
+			b.block(body_statements),
+		];
+	}
+
+	const iter_callback = b.arrow(callback_params, b.block(body_statements));
 	const empty_fallback = node.empty
 		? b.call(
 				b.arrow(
@@ -5642,7 +5724,7 @@ function is_key_attribute(attr) {
  * @returns {AST.TSRXJSXElement}
  */
 function keyed_fragment(children, loop_key) {
-	const name = b.jsx_id('Fragment');
+	const name = b.jsx_id(FRAGMENT_INTERNAL_NAME);
 
 	return b.jsx_element_fresh(
 		b.jsx_opening_element(name, [create_loop_key_attribute(loop_key)]),
@@ -5761,7 +5843,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 				transform_context,
 			);
 			result = create_jsx_element(
-				'Suspense',
+				SUSPENSE_INTERNAL_NAME,
 				[b.jsx_attribute(fallback_name, fallback_content)],
 				[result],
 			);
@@ -5847,7 +5929,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 				transform_context,
 			);
 			result = create_jsx_element(
-				'TsrxErrorBoundary',
+				ERROR_BOUNDARY_INTERNAL_NAME,
 				[
 					b.jsx_attribute(fallback_name, to_jsx_expression_container(fallback_fn)),
 					...(boundary_content
@@ -5986,19 +6068,12 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	/** @type {AST.ImportDeclaration[]} */
 	const imports = [];
 
-	if (
-		transform_context.needs_fragment &&
-		platform.imports.fragment &&
-		!has_named_value_import(program, platform.imports.fragment, 'Fragment')
-	) {
-		imports.push(b.imports([['Fragment', 'Fragment']], platform.imports.fragment));
+	if (transform_context.needs_fragment && platform.imports.fragment) {
+		imports.push(b.imports([['Fragment', FRAGMENT_INTERNAL_NAME]], platform.imports.fragment));
 	}
 
-	if (
-		transform_context.needs_suspense &&
-		!has_named_value_import(program, suspense_source, 'Suspense')
-	) {
-		imports.push(b.imports([['Suspense', 'Suspense']], suspense_source));
+	if (transform_context.needs_suspense) {
+		imports.push(b.imports([['Suspense', SUSPENSE_INTERNAL_NAME]], suspense_source));
 	}
 
 	if (
@@ -6017,7 +6092,10 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 
 	if (transform_context.needs_error_boundary) {
 		imports.push(
-			b.imports([['TsrxErrorBoundary', 'TsrxErrorBoundary']], platform.imports.errorBoundary),
+			b.imports(
+				[['TsrxErrorBoundary', ERROR_BOUNDARY_INTERNAL_NAME]],
+				platform.imports.errorBoundary,
+			),
 		);
 	}
 
@@ -6050,7 +6128,12 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 		add_ref_import_specifier(
 			ref_imports,
 			merge_refs_source,
-			b.import_specifier('mergeRefs', MERGE_REFS_INTERNAL_NAME),
+			b.import_specifier(
+				!transform_context.typeOnly && transform_context.platform.jsx?.shareMergedRefs
+					? 'merge_element_refs'
+					: 'mergeRefs',
+				MERGE_REFS_INTERNAL_NAME,
+			),
 		);
 	}
 
@@ -6105,35 +6188,8 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	}
 
 	if (imports.length > 0) {
-		program.body.unshift(...imports);
+		insert_after_directives(program, imports);
 	}
-}
-
-/**
- * Whether the module already imports the value `name` from `source` under the
- * same local name, which the generated JSX can use as is. Injecting it again
- * would declare the binding twice.
- *
- * @param {AST.Program} program
- * @param {string} source
- * @param {string} name
- * @returns {boolean}
- */
-function has_named_value_import(program, source, name) {
-	return program.body.some(
-		(statement) =>
-			statement.type === 'ImportDeclaration' &&
-			statement.source.value === source &&
-			statement.importKind !== 'type' &&
-			statement.specifiers.some(
-				(specifier) =>
-					specifier.type === 'ImportSpecifier' &&
-					specifier.importKind !== 'type' &&
-					specifier.imported.type === 'Identifier' &&
-					specifier.imported.name === name &&
-					specifier.local.name === name,
-			),
-	);
 }
 
 /**
@@ -6374,14 +6430,23 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 	// the initialized setup declaration.
 	const bind_in_place = binds_host_spread_in_place(transform_context);
 	const own_ref_index = attrs.findIndex((attr) => is_jsx_ref_attribute(attr));
+	// The merged `ref` reads each bag's ref, so it has to follow the last spread.
+	// An own `ref` written before a spread is still evaluated where it is
+	// written: it is assigned to a binding ahead of the next attribute, and the
+	// merged ref reads the binding.
+	const own_ref_id =
+		keeps_merged_ref_in_place(transform_context) &&
+		own_ref_index !== -1 &&
+		attrs.some((attr, index) => index > own_ref_index && attr.type === 'JSXSpreadAttribute')
+			? create_generated_identifier(create_own_ref_name(transform_context))
+			: null;
 
-	return attrs.flatMap(
+	const lowered = attrs.flatMap(
 		/**
 		 * @param {ESTreeJSX.JSXAttributeNode} attr
-		 * @param {number} index
 		 * @returns {ESTreeJSX.JSXAttributeNode[]}
 		 */
-		(attr, index) => {
+		(attr) => {
 			if (attr.type !== 'JSXSpreadAttribute') {
 				return [attr];
 			}
@@ -6410,25 +6475,9 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				};
 				// A spread bag may be nullish (`{...props.optional}`) and spread to
 				// nothing, as in native JSX, so its ref is read without throwing.
-				/** @type {AST.Expression} */
-				let spread_ref = b.maybe_member(clone_identifier(normalized_id), 'ref');
-				// `merge_duplicate_refs` keeps a bound-in-place element's merged ref
-				// where its own `ref` is written, so the `ref` expression is evaluated
-				// in authored order. A bag spread after it is assigned only later in
-				// the attributes, so its ref is read when the merged ref is applied.
-				if (
-					keeps_merged_ref_in_place(transform_context) &&
-					own_ref_index !== -1 &&
-					index > own_ref_index
-				) {
-					spread_ref = b.arrow(
-						[b.id('node')],
-						b.call(b.call(MERGE_REFS_INTERNAL_NAME, spread_ref), b.id('node')),
-					);
-				}
 				const ref_attr = b.jsx_attribute(
 					b.jsx_id('ref'),
-					to_jsx_expression_container(spread_ref, attr),
+					to_jsx_expression_container(b.maybe_member(clone_identifier(normalized_id), 'ref'), attr),
 					false,
 					has_location(attr) ? attr : undefined,
 				);
@@ -6452,6 +6501,48 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 			];
 		},
 	);
+
+	if (own_ref_id !== null) {
+		const own_ref = /** @type {ESTreeJSX.JSXRefAttribute} */ (attrs[own_ref_index]);
+		const binding = b.assignment('=', clone_identifier(own_ref_id), own_ref.value.expression);
+		const position = lowered.indexOf(own_ref);
+		lowered[position] = {
+			...own_ref,
+			value: to_jsx_expression_container(clone_identifier(own_ref_id)),
+			metadata: { ...own_ref.metadata, own_ref_bound: true },
+		};
+		// An attribute value may not be a sequence (oxc rejects one there), but a
+		// spread argument may: the binding is evaluated in the spread right after
+		// the `ref`, or else in a spread of its own.
+		const next = lowered[position + 1];
+		/** @type {ESTreeJSX.JSXSpreadAttribute} */
+		let spread;
+		if (next.type === 'JSXSpreadAttribute') {
+			const argument =
+				next.argument.type === 'ParenthesizedExpression' ? next.argument.expression : next.argument;
+			spread = { ...next, argument: b.sequence([binding, argument]) };
+			lowered[position + 1] = spread;
+		} else {
+			spread = b.jsx_spread_attribute(b.sequence([binding, b.literal(null)]));
+			lowered.splice(position, 0, spread);
+		}
+		add_jsx_setup_declaration(spread, b.let(clone_identifier(own_ref_id)));
+	}
+
+	return lowered;
+}
+
+/**
+ * @param {TransformContext} transform_context
+ * @returns {string}
+ */
+function create_own_ref_name(transform_context) {
+	if (transform_context.helper_state) {
+		return create_helper_name(transform_context.helper_state, 'ref');
+	}
+
+	transform_context.local_statement_component_index += 1;
+	return `_tsrx_ref_${transform_context.local_statement_component_index}`;
 }
 
 /**
@@ -6739,8 +6830,14 @@ export function merge_duplicate_refs(jsx_attrs, transform_context) {
 	);
 	// Bound in place, the merged ref stays where the element's own `ref` is
 	// written, so a JSX runtime that evaluates attributes left to right
-	// evaluates that expression in authored order.
-	if (source_index !== -1 && keeps_merged_ref_in_place(transform_context)) {
+	// evaluates that expression in authored order. An own `ref` written before
+	// a spread is already bound to a name there, and the merged ref follows the
+	// spread whose ref it reads.
+	if (
+		source_index !== -1 &&
+		!source_attr?.metadata?.own_ref_bound &&
+		keeps_merged_ref_in_place(transform_context)
+	) {
 		result.splice(source_index, 0, merged_attr);
 	} else {
 		result.push(merged_attr);
@@ -6805,6 +6902,15 @@ export const NORMALIZE_SPREAD_PROPS_INTERNAL_NAME = '__normalize_spread_props';
 export const NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME =
 	'__normalize_spread_props_for_ref_attr';
 export const SPREAD_REF_BAGS_INTERNAL_NAME = '__spread_ref_bags';
+/**
+ * Local aliases for the components the transform imports itself: `Suspense`
+ * for `@pending`, `TsrxErrorBoundary` for `@catch`, and `Fragment` for keyed
+ * fragment rows. An authored binding of the public name, imported or local,
+ * then neither collides with the import nor replaces the generated element.
+ */
+export const SUSPENSE_INTERNAL_NAME = '__Suspense';
+export const ERROR_BOUNDARY_INTERNAL_NAME = '__TsrxErrorBoundary';
+export const FRAGMENT_INTERNAL_NAME = '__Fragment';
 /**
  * Point a generated node at the DIRECTIVE KEYWORD that produced it.
  *

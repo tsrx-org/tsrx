@@ -39,6 +39,8 @@ const react_platform = {
 		hostSpreadClassProps: ['className'],
 		classValue: 'text',
 		multiRefStrategy: 'merge-refs',
+		// React keeps a ref's cleanup per fiber, so elements can share one merged ref.
+		shareMergedRefs: true,
 		hostSpreadRefBinding: 'in-place',
 		pendingFallback: 'try-body',
 	},
