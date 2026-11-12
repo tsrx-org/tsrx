@@ -1219,3 +1219,73 @@ it('reports errors that start at a statement keyword or a binding pattern in .ts
 		expect(result.output).toContain(`${at(index, text)}: error TS7027: Unreachable code detected.`);
 	}
 });
+
+it('reports unreachable code in a for (;;) body and an unreachable for (;;) in place in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	// The printer writes `for (; ; )` and adds a blank line after `return;`.
+	const lines = [
+		'declare function foo(): void;',
+		'export function a() {',
+		'\tfor (;;) {',
+		'\t\treturn;',
+		'\t\tbreak;',
+		'\t}',
+		'}',
+		'export function b() { for (;;) { return; foo(); } }',
+		'export function c() { outer: for (;;) { for (;;) { return; break outer; } } }',
+		'export function d() { return; for (;;) {} }',
+		'export function e() { return; for (;;); }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	for (const [index, text] of /** @type {const} */ ([
+		[4, 'break'],
+		[7, 'foo'],
+		[8, 'break'],
+		[9, 'for'],
+		[10, 'for'],
+	])) {
+		expect(result.output).toContain(`${at(index, text)}: error TS7027: Unreachable code detected.`);
+	}
+});
+
+it('reports unreachable code in a for…of or for…in body and an unreachable loop in place in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	// The printer adds a blank line after `return;` and splits a one-line body.
+	const lines = [
+		'declare function foo(): void; declare const xs: number[]; declare const o: { a: number };',
+		'export function a() {',
+		'\tfor (const x of xs) {',
+		'\t\treturn;',
+		'\t\tfoo();',
+		'\t}',
+		'}',
+		'export function b() { for (const k in o) { return; foo(); } }',
+		'export function c() { for (const x of xs) { return; foo(); } }',
+		'export function d() { return; for (const x of xs) {} }',
+		'export function e() { return; for (const k in o); }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	for (const [index, text] of /** @type {const} */ ([
+		[4, 'foo'],
+		[7, 'foo'],
+		[8, 'foo'],
+		[9, 'for'],
+		[10, 'for'],
+	])) {
+		expect(result.output).toContain(`${at(index, text)}: error TS7027: Unreachable code detected.`);
+	}
+});
