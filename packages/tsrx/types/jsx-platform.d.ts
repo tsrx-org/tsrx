@@ -53,15 +53,21 @@ export interface JsxTransformContext {
 	needs_switch: boolean;
 	/** Solid: a `@switch` reads its discriminant through `createMemo`. */
 	needs_switch_memo?: boolean;
+	/** Solid: a fallback body with setup runs through `untrack`. */
+	needs_untrack?: boolean;
 	needs_match: boolean;
 	needs_errored: boolean;
 	needs_loading: boolean;
 	needs_define_vapor_component: boolean;
 	needs_vapor_for: boolean;
 	needs_vapor_computed: boolean;
+	/** Vue: a component reads its children from the default slot. */
+	needs_use_slots?: boolean;
 	stylesheets: AST.CSS.StyleSheet[];
 	type_only_style_anchors: AST.Statement[];
 	helper_state: JsxHelperState | null;
+	/** Set once a helper is declared beside a component inside another function. */
+	has_local_helpers?: boolean;
 	available_bindings: Map<string, AST.Identifier>;
 	/**
 	 * Whether each tag in the module can be read where a static hoisted out of
@@ -593,8 +599,11 @@ export interface JsxPlatform {
 		 * - `'in-place'`: assign the bag inside the spread
 		 *   (`{...(bag = normalize(expr))}`) and declare `let bag;` ahead of the
 		 *   element, so attribute expressions keep their authored evaluation
-		 *   order. Requires a JSX runtime that evaluates attributes left to
-		 *   right, as `jsx()` and `createElement` calls do.
+		 *   order and a reactive spread is evaluated again with the element's
+		 *   other attributes. Requires compiled JSX that evaluates the spread
+		 *   before it reads the `ref`: `jsx()` and `createElement` calls evaluate
+		 *   attributes left to right, and vue-jsx-vapor sets a template ref after
+		 *   the element's props.
 		 * - `undefined`: evaluate the spread in a `let bag = normalize(expr);`
 		 *   declaration ahead of the element, for compiled JSX that reads `ref`
 		 *   before the spread or evaluates the spread lazily, such as Solid's.
@@ -607,11 +616,20 @@ export interface JsxPlatform {
 		 * platform's `imports.refProp` module must export them, as
 		 * `@tsrx/runtime/ref` does. With `multiRefStrategy:
 		 * 'merge-refs'` as well, the merged `ref` stays where the element's own
-		 * `ref` is written. When a spread follows that `ref`, its expression is
-		 * assigned to a binding where it is written instead, and the merged `ref`
-		 * follows the spreads.
+		 * `ref` is written, unless `refAfterProps` is set. When a spread follows
+		 * that `ref`, its expression is assigned to a binding where it is written
+		 * instead, and the merged `ref` follows the spreads.
 		 */
 		hostSpreadRefBinding?: 'in-place';
+		/**
+		 * Set when the compiled JSX applies an element's `ref` after all of its
+		 * other attributes, wherever the `ref` is written, as vue-jsx-vapor sets
+		 * a template ref after the element's props. With `hostSpreadRefBinding:
+		 * 'in-place'`, a merged `ref` then goes last, as it does without the
+		 * in-place binding, and reads each bag's `ref` directly, since every
+		 * spread is assigned by the time it is applied.
+		 */
+		refAfterProps?: boolean;
 		/**
 		 * How a raw-text `<script>` element's body (its `content`, as written)
 		 * is output, in the form the target renders exactly on the client and
