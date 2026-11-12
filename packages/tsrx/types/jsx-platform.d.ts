@@ -553,6 +553,15 @@ export interface JsxPlatform {
 		 * function, where another element's cleanup would replace it. The
 		 * platform's `imports.mergeRefs` module must export `merge_element_refs`,
 		 * as `@tsrx/runtime/ref` does. The type-only print keeps `mergeRefs`.
+		 *
+		 * With `hostSpreadRefBinding: 'in-place'` as well, the spread
+		 * normalizers merge a bag's refs the same way, so a new bag carrying the
+		 * same refs gets the same `ref`. Core then imports
+		 * `copy_spread_props_sharing_refs` and
+		 * `copy_spread_props_for_ref_attr_sharing_refs` in place of
+		 * `copy_spread_props` and `copy_spread_props_for_ref_attr`, and the
+		 * platform's `imports.refProp` module must export them, as
+		 * `@tsrx/runtime/ref` does.
 		 */
 		shareMergedRefs?: boolean;
 		/**

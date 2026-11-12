@@ -855,9 +855,10 @@ rendering constructs. Use `for...of` for rendered lists, filter the iterable
 before rendering when some items should be skipped, and use `@empty { ... }` for
 the no-items fallback. Direct `continue`, `break`, and `return` statements are
 not allowed in `@for` template loop bodies. Move imperative loops into a nested
-function. The head declares its loop variable, as in `@for (const item of
-items)`: assigning to an existing variable or property (`@for (state.item of
-items)`) and `using` loop variables are errors.
+function. The head declares its loop variable with `const` or `let`, as in
+`@for (const item of items)`: assigning to an existing variable or property
+(`@for (state.item of items)`), `var` loop variables, which can't be read after
+the loop, and `using` loop variables are errors.
 
 ### `switch`
 
@@ -1541,7 +1542,9 @@ Solid's getter-based prop reactivity is preserved.
 Vue output targets `vue-jsx-vapor` and `defineVaporComponent(...)`. It supports
 directive-prefixed template control flow, scoped styles, host `innerHTML`, and
 `@try/pending` lowering through Vue suspense APIs. Component-level `await` is
-not supported for Vue TSRX.
+not supported for Vue TSRX. vue-jsx-vapor finds components by calls to
+`defineVaporComponent`, so a Vue module can't declare its own binding of that
+name (TSRX2032); importing it from `vue-jsx-vapor` is fine.
 
 ### Octane
 

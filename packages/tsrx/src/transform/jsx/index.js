@@ -543,6 +543,7 @@ export function createJsxTransform(platform) {
 	 * @returns {JsxTransformResult}
 	 */
 	function transform(ast, source, filename, options) {
+		const parsed = ast;
 		/** @type {Map<number, boolean> | undefined} */
 		let hoistable_tags;
 		const effective_platform =
@@ -594,7 +595,7 @@ export function createJsxTransform(platform) {
 			type_only_style_anchors,
 			helper_state: null,
 			available_bindings: new Map(),
-			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast)),
+			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast, parsed)),
 			filename: filename ?? null,
 			source,
 			collect,
@@ -2623,6 +2624,9 @@ function references_scope_bindings(node, scope_bindings, referenced_bindings) {
  * Hoisting prevents React from recreating the element on every render, allowing
  * the reconciler to skip diffing when it sees the same element identity.
  *
+ * A static element that an expression container renders is hoisted too,
+ * wherever the container sits in the rendered JSX (#81).
+ *
  * @param {ESTreeJSX.JSXRenderChild[]} render_nodes
  * @param {TransformContext} transform_context
  */
@@ -2631,35 +2635,236 @@ function hoist_static_render_nodes(render_nodes, transform_context) {
 
 	for (let i = 0; i < render_nodes.length; i++) {
 		const node = render_nodes[i];
-		if (node.type !== 'JSXElement') continue;
-		if (!is_hoist_safe_jsx_node(node)) continue;
-		if (is_bare_component_invocation(node)) {
-			// `<Helper />` with no attributes and no children is just an
-			// invocation reference. Hoisting it would produce
-			// `const App__staticN = <Helper />` aliases that bloat the output
-			// without enabling React's element-identity fast path (the helper
-			// isn't memoized, so the parent re-invokes it every render either
-			// way). Inline the reference at the call site instead.
-			continue;
-		}
-		if (
-			transform_context.platform.hooks?.canHoistStaticNode &&
-			!transform_context.platform.hooks.canHoistStaticNode(node, transform_context)
-		) {
-			continue;
-		}
-		if (references_scope_bindings(node, transform_context.available_bindings)) continue;
-		if (reads_unhoistable_tag(node, transform_context.hoistable_tags())) continue;
-
-		const name = create_helper_name(transform_context.helper_state, 'static');
-		const id = create_generated_identifier(name);
-
-		transform_context.helper_state.statics.push(
-			b.const(id, lower_static_script_bodies(node, transform_context)),
-		);
-
-		render_nodes[i] = to_jsx_expression_container(clone_identifier(id), node);
+		const id = hoist_static_jsx(node, transform_context);
+		render_nodes[i] = id
+			? to_jsx_expression_container(id, node)
+			: hoist_static_jsx_in_containers(node, false, transform_context);
 	}
+}
+
+/**
+ * Moves `node` to a module-level static when it is a static element, and
+ * returns an identifier that reads the static.
+ *
+ * @param {AST.Node} node
+ * @param {TransformContext} transform_context
+ * @returns {AST.Identifier | null}
+ */
+function hoist_static_jsx(node, transform_context) {
+	const helper_state = transform_context.helper_state;
+	if (!helper_state || node.type !== 'JSXElement') return null;
+	if (!is_hoist_safe_jsx_node(node)) return null;
+	if (is_bare_component_invocation(node)) {
+		// `<Helper />` with no attributes and no children is just an
+		// invocation reference. Hoisting it would produce
+		// `const App__staticN = <Helper />` aliases that bloat the output
+		// without enabling React's element-identity fast path (the helper
+		// isn't memoized, so the parent re-invokes it every render either
+		// way). Inline the reference at the call site instead.
+		return null;
+	}
+	if (
+		transform_context.platform.hooks?.canHoistStaticNode &&
+		!transform_context.platform.hooks.canHoistStaticNode(node, transform_context)
+	) {
+		return null;
+	}
+	if (references_scope_bindings(node, transform_context.available_bindings)) return null;
+	if (reads_unhoistable_tag(node, transform_context.hoistable_tags())) return null;
+
+	// Skip a name the source already uses, so the static can't redeclare or be
+	// shadowed by an authored `App__static1`.
+	/** @type {string} */
+	let name;
+	do {
+		name = create_helper_name(helper_state, 'static');
+	} while (source_mentions_identifier(transform_context.source, name));
+	const id = create_generated_identifier(name);
+	helper_state.statics.push(b.const(id, lower_static_script_bodies(node, transform_context)));
+	return clone_identifier(id);
+}
+
+/**
+ * Hoists an element that an expression container renders, unless it has a
+ * `key`. When a branch decides whether it renders (`conditional`), only host
+ * elements are hoisted: a static reads its tags when the module loads, and a
+ * component or member tag that the render may never reach (`<ui.Button>` in
+ * `{false && …}`) can be uninitialized there, as in a cyclic import.
+ *
+ * @param {AST.Node} node
+ * @param {boolean} conditional
+ * @param {TransformContext} transform_context
+ * @returns {AST.Identifier | null}
+ */
+function hoist_contained_static_jsx(node, conditional, transform_context) {
+	if (node.type !== 'JSXElement' || has_key_attribute(node)) return null;
+	if (conditional && reads_tag_binding(node)) return null;
+	return hoist_static_jsx(node, transform_context);
+}
+
+/**
+ * Returns `node` with the static elements that its expression containers
+ * render hoisted: a container in an element's or a fragment's children or in
+ * an attribute value, through `?:`, `&&`, `||` and `??` branches and nested
+ * containers. A bare child of a dynamic element stays in place, and the walk
+ * doesn't enter a function or any other expression, so `{items.map(() =>
+ * <li />)}` keeps its JSX. (A function whose returned JSX is lowered as render
+ * output, such as a render helper in the component body, gets its own pass.)
+ * Each node on the way to a hoisted element is copied rather than changed,
+ * since the parsed tree that editor features read can hold the same nodes.
+ *
+ * @template {AST.Node} T
+ * @param {T} node
+ * @param {boolean} conditional whether a branch above decides if `node` renders
+ * @param {TransformContext} transform_context
+ * @returns {T}
+ */
+function hoist_static_jsx_in_containers(node, conditional, transform_context) {
+	/** @type {AST.Node} */
+	const current = node;
+	if (current.type === 'JSXElement') {
+		const { openingElement } = current;
+		const attributes = map_changed(openingElement.attributes, (attribute) => {
+			if (
+				attribute.type !== 'JSXAttribute' ||
+				attribute.value?.type !== 'JSXExpressionContainer' ||
+				(attribute.name.type === 'JSXIdentifier' &&
+					(attribute.name.name === 'key' || attribute.name.name === 'ref'))
+			) {
+				return attribute;
+			}
+			const value = hoist_static_jsx_in_containers(attribute.value, conditional, transform_context);
+			return value === attribute.value ? attribute : { ...attribute, value };
+		});
+		const children = map_changed(current.children, (child) =>
+			hoist_static_jsx_in_containers(child, conditional, transform_context),
+		);
+		if (attributes === openingElement.attributes && children === current.children) return node;
+		return /** @type {T} */ ({
+			...current,
+			openingElement:
+				attributes === openingElement.attributes
+					? openingElement
+					: { ...openingElement, attributes },
+			children,
+		});
+	}
+	if (current.type === 'JSXFragment') {
+		const children = map_changed(current.children, (child) =>
+			hoist_static_jsx_in_containers(child, conditional, transform_context),
+		);
+		return children === current.children ? node : /** @type {T} */ ({ ...current, children });
+	}
+	if (
+		current.type === 'JSXExpressionContainer' &&
+		current.expression.type !== 'JSXEmptyExpression'
+	) {
+		const expression = hoist_static_jsx_in_expression(
+			current.expression,
+			conditional,
+			transform_context,
+		);
+		return expression === current.expression ? node : /** @type {T} */ ({ ...current, expression });
+	}
+	return node;
+}
+
+/**
+ * Returns `expression`, a container's value, as a static's identifier when it
+ * is a static element, or with the static elements it renders through branches
+ * and containers hoisted. A fragment keeps its children: each static child is
+ * hoisted on its own, as in a component's top-level fragment, so the children
+ * React sees keep their shape.
+ *
+ * @param {AST.Expression} expression
+ * @param {boolean} conditional
+ * @param {TransformContext} transform_context
+ * @returns {AST.Expression}
+ */
+function hoist_static_jsx_in_expression(expression, conditional, transform_context) {
+	switch (expression.type) {
+		case 'JSXElement':
+			return (
+				hoist_contained_static_jsx(expression, conditional, transform_context) ??
+				hoist_static_jsx_in_containers(expression, conditional, transform_context)
+			);
+		case 'JSXFragment': {
+			const children = map_changed(expression.children, (child) => {
+				const id = hoist_contained_static_jsx(child, conditional, transform_context);
+				return id
+					? to_jsx_expression_container(id, child)
+					: hoist_static_jsx_in_containers(child, conditional, transform_context);
+			});
+			return children === expression.children ? expression : { ...expression, children };
+		}
+		case 'ConditionalExpression': {
+			const consequent = hoist_static_jsx_in_expression(
+				expression.consequent,
+				true,
+				transform_context,
+			);
+			const alternate = hoist_static_jsx_in_expression(
+				expression.alternate,
+				true,
+				transform_context,
+			);
+			return consequent === expression.consequent && alternate === expression.alternate
+				? expression
+				: { ...expression, consequent, alternate };
+		}
+		case 'LogicalExpression': {
+			const right = hoist_static_jsx_in_expression(expression.right, true, transform_context);
+			return right === expression.right ? expression : { ...expression, right };
+		}
+		case 'ParenthesizedExpression': {
+			const inner = hoist_static_jsx_in_expression(
+				expression.expression,
+				conditional,
+				transform_context,
+			);
+			return inner === expression.expression ? expression : { ...expression, expression: inner };
+		}
+		default:
+			return expression;
+	}
+}
+
+/**
+ * `items` mapped through `map`, or `items` itself when no item changed.
+ *
+ * @template T
+ * @param {T[]} items
+ * @param {(item: T) => T} map
+ * @returns {T[]}
+ */
+function map_changed(items, map) {
+	const mapped = items.map(map);
+	return mapped.some((item, index) => item !== items[index]) ? mapped : items;
+}
+
+/**
+ * @param {AST.TSRXJSXElement} element
+ * @returns {boolean}
+ */
+function has_key_attribute(element) {
+	return element.openingElement.attributes.some(
+		(attribute) =>
+			attribute.type === 'JSXAttribute' &&
+			attribute.name.type === 'JSXIdentifier' &&
+			attribute.name.name === 'key',
+	);
+}
+
+/**
+ * Whether `node` has a tag that reads a binding: a component, or a member tag
+ * such as `<ui.Button>`.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function reads_tag_binding(node) {
+	if (node.type === 'JSXOpeningElement' && !is_intrinsic_tag(node.name)) return true;
+	return child_nodes(node).some(reads_tag_binding);
 }
 
 /**
@@ -2672,12 +2877,17 @@ function hoist_static_render_nodes(render_nodes, transform_context) {
  * assign after it loads (`Menu.Item = …`), so only one that starts with an
  * import is hoisted. A tag that starts with `this`, `super`, a local binding,
  * a binding that can be reassigned (`let`, `var`, an enum, a namespace, an
- * import alias), or a name the module does not bind stays at render time.
+ * import alias), a binding the module assigns anywhere (`Tag = Replacement`
+ * after `function Tag() {}`, or any binding once it calls `eval` directly),
+ * or a name the module does not bind stays at render time, since a static
+ * would keep the value it read when the module loaded.
  *
  * @param {AST.Program} program
+ * @param {AST.Program} [parsed] the program before the passes that can move
+ * authored code out of the tree, which the assignments are read from
  * @returns {Map<number, boolean>}
  */
-function collect_hoistable_tags(program) {
+function collect_hoistable_tags(program, parsed = program) {
 	/** @type {Map<string, { kind: string, end: number }>} */
 	const module_bindings = new Map();
 	/**
@@ -2700,10 +2910,11 @@ function collect_hoistable_tags(program) {
 	// A `var` in a block outside any function is module-level too
 	for (const name of var_names(program)) declare(name, 'mutable', Infinity);
 
-	/** @type {Map<number, boolean>} */
-	const hoistable = new Map();
 	/** @type {Set<string>[]} */
 	const scopes = [];
+	// A name a local binding shadows counts too: that only keeps a static at
+	// render time
+	const assigned = collect_assigned_names(parsed);
 	/**
 	 * @param {string} name
 	 * @param {boolean} member
@@ -2713,6 +2924,7 @@ function collect_hoistable_tags(program) {
 	const is_hoistable = (name, member, position) => {
 		if (name === 'this' || name === 'super') return false;
 		if (scopes.some((names) => names.has(name))) return false;
+		if (!assigned || assigned.has(name)) return false;
 		const binding = module_bindings.get(name);
 		switch (binding?.kind) {
 			case 'import':
@@ -2726,6 +2938,8 @@ function collect_hoistable_tags(program) {
 				return false;
 		}
 	};
+	/** @type {Map<number, boolean>} */
+	const hoistable = new Map();
 	/** @param {AST.Node} node */
 	const visit = (node) => {
 		const names = node === program ? null : scope_names(node);
@@ -2744,6 +2958,92 @@ function collect_hoistable_tags(program) {
 	};
 	visit(program);
 	return hoistable;
+}
+
+/**
+ * The names `program` assigns anywhere: the targets of an assignment, an
+ * update, or a `for … in`/`for … of` head without a declaration, through
+ * destructuring and type assertions. `null` when the program calls `eval`
+ * directly, which can assign any name it can see. Read from the program as
+ * parsed: the style pass moves the `ref` of a `<style>` in a nested root to
+ * the root's metadata, which `child_nodes` skips.
+ *
+ * @param {AST.Program} program
+ * @returns {Set<string> | null}
+ */
+function collect_assigned_names(program) {
+	/** @type {Set<string>} */
+	const names = new Set();
+	let calls_eval = false;
+	/** @param {AST.Node} node */
+	const visit = (node) => {
+		if (node.type === 'AssignmentExpression') add_target_names(node.left, names);
+		else if (node.type === 'UpdateExpression') add_target_names(node.argument, names);
+		else if (
+			(node.type === 'ForInStatement' || node.type === 'ForOfStatement') &&
+			node.left.type !== 'VariableDeclaration'
+		) {
+			add_target_names(node.left, names);
+		} else if (node.type === 'CallExpression') {
+			const callee = unwrap_expression(node.callee);
+			if (callee.type === 'Identifier' && callee.name === 'eval') calls_eval = true;
+		}
+		for (const child of child_nodes(node)) visit(child);
+	};
+	visit(program);
+	return calls_eval ? null : names;
+}
+
+/**
+ * `node` without the parentheses and type assertions around it.
+ *
+ * @param {AST.Node} node
+ * @returns {AST.Node}
+ */
+function unwrap_expression(node) {
+	/** @type {any} */
+	let current = node;
+	while (
+		current.type === 'ParenthesizedExpression' ||
+		current.type === 'TSAsExpression' ||
+		current.type === 'TSSatisfiesExpression' ||
+		current.type === 'TSNonNullExpression' ||
+		current.type === 'TSTypeAssertion'
+	) {
+		current = current.expression;
+	}
+	return current;
+}
+
+/**
+ * @param {AST.Node | null} target
+ * @param {Set<string>} names
+ */
+function add_target_names(target, names) {
+	/** @type {any} */
+	const node = target && unwrap_expression(target);
+	switch (node?.type) {
+		case 'Identifier':
+			names.add(node.name);
+			break;
+		case 'ObjectPattern':
+			for (const property of node.properties) {
+				add_target_names(
+					property.type === 'RestElement' ? property.argument : property.value,
+					names,
+				);
+			}
+			break;
+		case 'ArrayPattern':
+			for (const element of node.elements) add_target_names(element, names);
+			break;
+		case 'RestElement':
+			add_target_names(node.argument, names);
+			break;
+		case 'AssignmentPattern':
+			add_target_names(node.left, names);
+			break;
+	}
 }
 
 /**
@@ -5122,8 +5422,9 @@ function validate_if_body_control_flow(node, transform_context) {
 /**
  * Every target hands an `@for` item to a callback, so the head has to declare
  * its loop variable the way a parameter can: assigning to an existing variable
- * or property would only shadow it, and a `using` item would never be disposed.
- * A target that lowers `@for` itself calls this from its own lowering.
+ * or property would only shadow it, a `var` would not reach the enclosing
+ * function, and a `using` item would never be disposed. A target that lowers
+ * `@for` itself calls this from its own lowering.
  *
  * @param {AST.ForOfStatement['left']} left
  * @param {TransformContext} transform_context
@@ -5133,6 +5434,14 @@ export function validate_for_of_head(left, transform_context) {
 	if (left.type !== 'VariableDeclaration') {
 		error(
 			TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
+			transform_context.filename,
+			left,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	} else if (left.kind === 'var') {
+		error(
+			TSRX_ERRORS.FOR_HEAD_VAR,
 			transform_context.filename,
 			left,
 			transform_context.errors,
@@ -6130,6 +6439,10 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	// so it gets the normalizers that return their copy: handing back the
 	// original bag would make the copy read its getters a second time.
 	const copies_spread = transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place';
+	// Those normalizers merge a bag's refs as `merge_element_refs` does when the
+	// platform lets elements share a merged ref.
+	const shares_merged_refs =
+		!transform_context.typeOnly && transform_context.platform.jsx?.shareMergedRefs === true;
 
 	/** @type {Map<string, AST.ImportSpecifier[]>} */
 	const ref_imports = new Map();
@@ -6139,9 +6452,7 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			merge_refs_source,
 			b.import_specifier(
-				!transform_context.typeOnly && transform_context.platform.jsx?.shareMergedRefs
-					? 'merge_element_refs'
-					: 'mergeRefs',
+				shares_merged_refs ? 'merge_element_refs' : 'mergeRefs',
 				MERGE_REFS_INTERNAL_NAME,
 			),
 		);
@@ -6168,7 +6479,11 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			normalize_spread_props_source,
 			b.import_specifier(
-				copies_spread ? 'copy_spread_props' : 'normalize_spread_props',
+				copies_spread
+					? shares_merged_refs
+						? 'copy_spread_props_sharing_refs'
+						: 'copy_spread_props'
+					: 'normalize_spread_props',
 				NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 			),
 		);
@@ -6179,7 +6494,11 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 			ref_imports,
 			normalize_spread_props_for_ref_attr_source,
 			b.import_specifier(
-				copies_spread ? 'copy_spread_props_for_ref_attr' : 'normalize_spread_props_for_ref_attr',
+				copies_spread
+					? shares_merged_refs
+						? 'copy_spread_props_for_ref_attr_sharing_refs'
+						: 'copy_spread_props_for_ref_attr'
+					: 'normalize_spread_props_for_ref_attr',
 				NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 			),
 		);
@@ -6395,8 +6714,9 @@ function transform_element_attributes_dispatch(attrs, transform_context, element
 export function is_component_like_element(element) {
 	const name = element?.openingElement?.name;
 	if (!name) return false;
-	if (name.type === 'Identifier') return /^[A-Z]/.test(name.name);
-	if (name.type === 'JSXIdentifier') return /^[A-Z]/.test(name.name);
+	// As in `is_component_jsx_name`, only a lowercase first letter makes a host tag.
+	if (name.type === 'Identifier') return !/^[a-z]/.test(name.name);
+	if (name.type === 'JSXIdentifier') return !/^[a-z]/.test(name.name);
 	if (name.type === 'MemberExpression') return true;
 	if (name.type === 'JSXMemberExpression') return true;
 	return false;
@@ -6408,7 +6728,7 @@ export function is_component_like_element(element) {
  */
 function is_component_like_jsx_name(name) {
 	if (!name) return false;
-	if (name.type === 'JSXIdentifier') return /^[A-Z]/.test(name.name);
+	if (name.type === 'JSXIdentifier') return !/^[a-z]/.test(name.name);
 	if (name.type === 'JSXMemberExpression') return true;
 	return false;
 }
