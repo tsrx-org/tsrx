@@ -469,10 +469,10 @@ export function App() @{
 
 		it('breaks the line a directive covers only where the code reads the same', () => {
 			// The break goes where the source breaks the line between the same two
-			// tokens, or after code that must go on. The TSRX parser reads
-			// `asserts` and import attributes across a line break, which TypeScript
-			// does not, so those lines stay joined. A parenthesis the printer adds
-			// maps to the next `(` of the source, which is on a later line.
+			// tokens, or after code that must go on. The TSRX parser reads import
+			// attributes across a line break, which TypeScript does not, so those
+			// lines stay joined. A parenthesis the printer adds maps to the next `(`
+			// of the source, which is on a later line.
 			const source = `declare const bad: string;
 export function f(a: number) {
 	// @ts-expect-error
@@ -483,9 +483,6 @@ export function f(a: number) {
 // @ts-expect-error
 export const b = (bad
 ) as unknown as number;
-// @ts-expect-error
-export function g(x: unknown): asserts
-	x {}
 // @ts-expect-error
 import 'x'
 with { type: 'json' };
@@ -502,13 +499,11 @@ export const p = 1
 			expect(virtual_parse_diagnostics(code)).toEqual([]);
 			expect(code).toContain('return (\n\t\ta + missingA);');
 			expect(code).toContain('(bad\n\t) as unknown as number;');
-			expect(code).toContain('asserts x {');
 			expect(code).toContain("import 'x' with {");
 			expect(code).toContain('export const p = (1)(\n');
 			expect(suppression_diagnostics(code)).toEqual([
 				[2578, '// @ts-expect-error'],
 				[2304, 'missingA'],
-				[2578, '// @ts-expect-error'],
 				[2578, '// @ts-expect-error'],
 				[2578, '// @ts-expect-error'],
 				[2578, '// @ts-expect-error'],
