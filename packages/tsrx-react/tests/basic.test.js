@@ -1458,7 +1458,7 @@ describe('@tsrx/react basic', () => {
 		expect(code).toContain("import { TsrxTryBody } from '@tsrx/react/try-body';");
 		// The body renders as a child of <Suspense>, so `use()` suspends to it.
 		expect(code).toMatch(
-			/<Suspense fallback=[\s\S]*><TsrxTryBody render=\{\(\) => \{\s*const data = use\(fetchData\(\)\);/,
+			/<__Suspense fallback=[\s\S]*><TsrxTryBody render=\{\(\) => \{\s*const data = use\(fetchData\(\)\);/,
 		);
 	});
 
@@ -1510,7 +1510,8 @@ describe('@tsrx/react basic', () => {
 		/** @type {Array<[string, string[]]>} */
 		const imports = [...code.matchAll(/^import \{([^}]*)\} from '([^']+)';$/gm)].map((match) => [
 			match[2],
-			match[1].split(',').map((name) => name.trim()),
+			// The imported name: the generated import binds a private local.
+			match[1].split(',').map((name) => name.trim().split(/\s+as\s+/)[0]),
 		]);
 		expect(imports).toEqual([
 			['react', ['Suspense']],
@@ -1564,8 +1565,8 @@ describe('@tsrx/react basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toMatch(/<TsrxErrorBoundary fallback=[\s\S]*? key='try1'>/);
-		expect(code).toMatch(/<TsrxErrorBoundary fallback=[\s\S]*? key='try2'>/);
+		expect(code).toMatch(/<__TsrxErrorBoundary fallback=[\s\S]*? key='try1'>/);
+		expect(code).toMatch(/<__TsrxErrorBoundary fallback=[\s\S]*? key='try2'>/);
 		// A loop key is combined with the site name rather than dropped.
 		expect(code).toContain("key={'try3:' + item.id}");
 	});
@@ -1585,7 +1586,7 @@ describe('@tsrx/react basic', () => {
 		);
 
 		// Every row would repeat the same site key.
-		expect(code).toContain('<TsrxErrorBoundary');
+		expect(code).toContain('<__TsrxErrorBoundary');
 		expect(code).not.toContain('key=');
 	});
 
@@ -1607,7 +1608,7 @@ describe('@tsrx/react basic', () => {
 		// As a component inside both boundaries, the fallback runs only while
 		// the body suspends, and its throw reaches `@catch`.
 		expect(code).toMatch(
-			/<Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
+			/<__Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
 		);
 	});
 
@@ -1625,7 +1626,7 @@ describe('@tsrx/react basic', () => {
 		);
 
 		expect(code).not.toContain('TsrxTryBody');
-		expect(code).toMatch(/<Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
+		expect(code).toMatch(/<__Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
 	});
 
 	it('keeps a @pending body that awaits inline', () => {
@@ -1641,7 +1642,7 @@ describe('@tsrx/react basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toMatch(/<Suspense fallback=\{await \(async \(\) => \{/);
+		expect(code).toMatch(/<__Suspense fallback=\{await \(async \(\) => \{/);
 	});
 
 	it.each([
