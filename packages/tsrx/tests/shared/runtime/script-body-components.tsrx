@@ -22,6 +22,13 @@ export function ScriptBodyApp() @{
 				{ "imports": { "x": "./x.js" } }
 			</script>
 		</div>
+		<div class="script-container">
+			{
+				<script type="application/json">
+					{ "c": 1 }
+				</script>
+			}
+		</div>
 	</div>
 }
 
@@ -61,6 +68,13 @@ export const script_body_cases: Array<[string, string, string]> = [
 		`
 				{ "imports": { "x": "./x.js" } }
 			`,
+	],
+	[
+		'a body in an expression container of static JSX',
+		'.script-container',
+		`
+					{ "c": 1 }
+				`,
 	],
 	['braces, as text', '.script-braces', '{typeof globalThis}'],
 ];
