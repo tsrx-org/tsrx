@@ -58,7 +58,15 @@ function apply_rspack_plugin(plugin, config = {}) {
 	}
 	const compiler = {
 		context: config.root,
-		webpack: { DefinePlugin },
+		webpack: {
+			DefinePlugin,
+			experiments: {
+				VirtualModulesPlugin: class {
+					apply() {}
+				},
+			},
+		},
+		hooks: { compilation: { tap() {} } },
 		options: {
 			mode: 'development',
 			plugins: [],
@@ -147,7 +155,7 @@ describe('platform options across build integrations', () => {
 			}
 
 			const turbopack = tsrxReactTurbopack({ turbopack: { root } });
-			expect(turbopack.turbopack.rules['*.tsrx'][0].loaders[0]).toMatchObject({
+			expect(turbopack.turbopack.rules['*.tsrx'][1].loaders[0]).toMatchObject({
 				options: { platform: 'ios' },
 			});
 		} finally {
@@ -187,7 +195,7 @@ describe('platform options across build integrations', () => {
 				turbopack: { root },
 				typescript: { tsconfigPath: 'tsconfig.native.json' },
 			});
-			expect(next_config.turbopack.rules['*.tsrx'][0].loaders[0]).toMatchObject({
+			expect(next_config.turbopack.rules['*.tsrx'][1].loaders[0]).toMatchObject({
 				options: { platform: 'ios' },
 			});
 		} finally {
@@ -315,6 +323,25 @@ describe('platform options across build integrations', () => {
 		expect(transformed.map).toBeTruthy();
 		expect(transformed.map.sources).toEqual(['/original/example.ts']);
 		expect(transformed.map.sourcesContent).toEqual(['export const flags = ORIGINAL;']);
+	});
+
+	it('keeps comment-like JSX text in Turbopack ordinary modules', async () => {
+		const source = `export default function Page() {
+			return <main><pre>/*</pre><pre>// docs</pre></main>;
+		}`;
+		const transformed = await new Promise((resolve) => {
+			turbopackPlatformLoader.call(
+				{
+					resourcePath: '/virtual/app/page.jsx',
+					getOptions: () => ({ platform: 'web' }),
+					async: () => (error, output, map) => resolve({ error, output, map }),
+				},
+				source,
+			);
+		});
+
+		expect(transformed.error).toBeNull();
+		expect(transformed.output).toBe(source);
 	});
 
 	it('preserves the TSRX compile map when no runtime flags remain', async () => {

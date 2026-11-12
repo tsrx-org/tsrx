@@ -69,6 +69,14 @@ export interface CompileError extends Error {
 	loc: AST.SourceLocation | undefined;
 	fileName: string | null;
 	type: 'fatal' | 'usage';
+	/**
+	 * Diagnostic severity of a collected error; absent means `'error'`.
+	 * Consumer compilers may mark collected diagnostics `'warning'` so the
+	 * language server and `tsrx-tsc` surface them as warnings, not errors.
+	 * `error()` never throws a warning: with no `errors` to record it in, it
+	 * drops it.
+	 */
+	severity?: 'error' | 'warning';
 }
 
 /** Platform selected for compile-time `import.meta.env.platform` flags. */
@@ -155,6 +163,12 @@ export interface BaseNodeMetaData {
 	script_only?: boolean;
 	/** A synthetic wrapper for a nested `@{ @{ ... } }` code-block render chain. */
 	tsrx_code_block_chain?: boolean;
+	/**
+	 * Output of a `@{ … }` body that a later output or statement displaced, which
+	 * the parser reported (TSRX2011, TSRX2012), so the analysis doesn't report it
+	 * as unused (TSRX2010).
+	 */
+	misplaced_output?: boolean;
 	/** A synthesized render-body fragment (see create_native_tsrx_render_function). */
 	tsrx_render_fragment?: boolean;
 	/** A merged text run produced by normalize_children - renders through the text path. */
@@ -233,6 +247,8 @@ export interface BaseNodeMetaData {
 	/** Top-level scoped classes collected while pruning the component's CSS. */
 	topScopedClasses?: TopScopedClasses;
 	vapor_pending_fallback?: ESTreeJSX.JSXRenderNode;
+	/** Vue: the name a wrapped component declaration binds, so it can be hoisted. */
+	vue_component_binding?: string;
 	/**
 	 * Solid: control flow that must lower into a reactive `<Show>`/`<For>`/
 	 * `<Switch>` rather than run once at setup time.
@@ -288,6 +304,8 @@ declare module 'estree' {
 		 * mapping collector needs the source positions.
 		 */
 		tsrx_keyword_tokens?: Parse.KeywordToken[];
+		/** Every token, recorded with `tsrx_keyword_tokens`, for esrap's `tokens` option. */
+		tsrx_tokens?: Parse.Token[];
 	}
 
 	interface FunctionDeclaration extends FunctionLikeTS {
@@ -1305,8 +1323,6 @@ declare module 'estree' {
 		options: AST.ObjectExpression | null;
 		qualifier: EntityName | null;
 		typeArguments: TSTypeParameterInstantiation | undefined;
-		// looks like acorn-typescript has typeParameters
-		typeParameters: TSTypeParameterDeclaration | undefined | undefined;
 	}
 	interface TSIndexedAccessType extends Omit<
 		AcornTSNode<TSESTree.TSIndexedAccessType>,
@@ -1670,6 +1686,26 @@ export interface ScopeClassParts {
 }
 
 /**
+ * How a runtime renders a host element's class value, which picks how the
+ * `join_scope_class` runtime helper joins an authored class that may not be a
+ * string with the scope classes (the platform's `jsx.classValue`). `null`
+ * joins it as text in a template literal.
+ */
+export type ScopeClassJoin = 'text' | 'text-true' | 'text-both' | 'list' | null;
+
+/**
+ * How a scope pre-pass keeps the class a host spread passes an element: the
+ * platform's `jsx.hostSpreadClassProps`, its `jsx.classValue` for how the
+ * runtime renders the spread's class, and its `jsx.classPropsPrintedApart`
+ * for which of several class attributes applies.
+ */
+export interface SpreadClassOptions {
+	props: ReadonlyArray<'class' | 'className'>;
+	kind: ScopeClassJoin;
+	printed_apart: boolean;
+}
+
+/**
  * Result of parsing operation
  */
 export interface ParseResult {
@@ -1961,6 +1997,11 @@ export interface JsxHelperState {
 	next_id: number;
 	helpers: AST.Statement[];
 	statics: AST.Statement[];
+	/**
+	 * True for a component inside another function, whose statics and helper
+	 * components can't reach module level, so they stay in place.
+	 */
+	local?: boolean;
 }
 
 /** Override zimmerframe types and provide our own */
@@ -2258,6 +2299,10 @@ export interface VolarMappingsResult {
 	 * Mirrors {@link cssMappings} for `<style>` bodies.
 	 */
 	scriptMappings: CodeMapping[];
+	/**
+	 * Non-fatal diagnostics collected during compilation. Entries may carry
+	 * `severity: 'warning'`; editors must surface those as warnings, not errors.
+	 */
 	errors: CompileError[];
 	sourceAst: AST.Program;
 }
@@ -2280,6 +2325,8 @@ export interface CompileResult {
 	/**
 	 * Non-fatal errors collected during compilation. Populated only when the
 	 * caller passes `collect: true` or `loose: true`; empty otherwise.
+	 * Entries may carry `severity: 'warning'` for diagnostics that should not
+	 * fail a build.
 	 */
 	errors: CompileError[];
 }
@@ -2415,6 +2462,18 @@ export interface CompileHarness {
 	 * hashes. Defaults to `classAttrName`.
 	 */
 	generatedClassAttrName?: 'class' | 'className';
+	/**
+	 * The platform's `jsx.classValue`, which picks how an authored class that
+	 * may not be a string joins the scope classes (see `ScopeClassJoin`).
+	 * `runSharedCompileTests` defaults it from the target's name.
+	 */
+	classJoin?: ScopeClassJoin;
+	/**
+	 * The attribute an authored `className` compiles to: `class` where the
+	 * platform sets `jsx.rewriteClassNameAttr`. `runSharedCompileTests`
+	 * defaults it from the target's name.
+	 */
+	classNameAttr?: 'class' | 'className';
 }
 
 /** The per-target entry points the shared source-mapping tests run against. */
