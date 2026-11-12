@@ -556,6 +556,8 @@ export function createJsxTransform(platform) {
 			platform: effective_platform,
 			local_statement_component_index: 0,
 			needs_error_boundary: false,
+			needs_try_body: false,
+			try_site_index: 0,
 			needs_suspense: false,
 			needs_merge_refs: false,
 			needs_normalize_spread_props: false,
@@ -4412,6 +4414,14 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		(body_key_expression ? create_loop_key(body_key_expression, transform_context) : null);
 	if (loop_key) {
 		body_statements = apply_key_to_render_statements(body_statements, loop_key, transform_context);
+	} else {
+		// Rows without a key are matched by position, and a `@try` site key would
+		// repeat in every row.
+		body_statements = apply_key_to_render_statements(
+			body_statements,
+			{ expression: null, mapped: true, branches: !transform_context.platform.hooks?.renderForOf },
+			transform_context,
+		);
 	}
 
 	// Restore bindings
@@ -4492,7 +4502,10 @@ function for_of_statement_to_jsx_child(node, transform_context) {
  * only expects a key on the body's top-level output, including when it falls
  * back to the default lowering.
  *
- * @typedef {{ expression: AST.Expression, mapped: boolean, branches: boolean }} LoopKey
+ * `expression` is null for a loop without a key, whose rows only lose their
+ * `@try` site keys (see `apply_key_to_jsx_element`).
+ *
+ * @typedef {{ expression: AST.Expression | null, mapped: boolean, branches: boolean }} LoopKey
  */
 
 /**
@@ -4513,7 +4526,10 @@ function create_loop_key(expression, transform_context) {
  * @returns {ESTreeJSX.JSXAttribute}
  */
 function create_loop_key_attribute(loop_key) {
-	const expression = clone_ast_node(loop_key.expression, !loop_key.mapped);
+	const expression = clone_ast_node(
+		/** @type {AST.Expression} */ (loop_key.expression),
+		!loop_key.mapped,
+	);
 	loop_key.mapped = true;
 	return b.jsx_attribute(b.jsx_id('key'), to_jsx_expression_container(expression));
 }
@@ -4673,6 +4689,7 @@ function apply_key_to_rendered_value(expression, loop_key, transform_context) {
 		case 'JSXElement':
 			return apply_key_to_jsx_element(expression, loop_key);
 		case 'JSXFragment':
+			if (!loop_key.expression) return expression;
 			transform_context.needs_fragment = true;
 			return keyed_fragment_to_jsx_element(expression, loop_key);
 		case 'ConditionalExpression': {
@@ -4794,7 +4811,24 @@ function apply_key_to_returned_value(statement, loop_key, transform_context) {
  */
 function apply_key_to_jsx_element(element, loop_key) {
 	const attributes = element.openingElement?.attributes || [];
-	if (attributes.some(is_key_attribute)) return element;
+	const site_key = attributes.find(
+		/** @returns {attr is ESTreeJSX.JSXAttribute} */
+		(attr) => attr.type === 'JSXAttribute' && try_site_keys.has(attr),
+	);
+	if (site_key) {
+		return {
+			...element,
+			openingElement: {
+				...element.openingElement,
+				attributes: loop_key.expression
+					? attributes.map((attr) =>
+							attr === site_key ? create_try_site_loop_key_attribute(site_key, loop_key) : attr,
+						)
+					: attributes.filter((attr) => attr !== site_key),
+			},
+		};
+	}
+	if (!loop_key.expression || attributes.some(is_key_attribute)) return element;
 
 	return {
 		...element,
@@ -4803,6 +4837,26 @@ function apply_key_to_jsx_element(element, loop_key) {
 			attributes: [...attributes, create_loop_key_attribute(loop_key)],
 		},
 	};
+}
+
+/**
+ * `key={'try1:' + loopKey}`: the loop key keeps rows apart and the site name
+ * keeps each row's `@try` sites apart.
+ *
+ * @param {ESTreeJSX.JSXAttribute} site_key
+ * @param {LoopKey} loop_key
+ * @returns {ESTreeJSX.JSXAttribute}
+ */
+function create_try_site_loop_key_attribute(site_key, loop_key) {
+	const loop_key_attribute = create_loop_key_attribute(loop_key);
+	const site = /** @type {AST.Literal} */ (site_key.value).value;
+	const loop_expression = /** @type {AST.Expression} */ (
+		/** @type {ESTreeJSX.JSXExpressionContainer} */ (loop_key_attribute.value).expression
+	);
+	return b.jsx_attribute(
+		b.jsx_id('key'),
+		to_jsx_expression_container(b.binary('+', b.literal(`${site}:`), loop_expression)),
+	);
 }
 
 /**
@@ -4901,7 +4955,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 
 	// Build the try body content as JSX children
 	const try_body_nodes = node.block.body || [];
-	const try_content = statement_body_to_jsx_child(try_body_nodes, transform_context);
+	const try_content = try_body_to_jsx_child(try_body_nodes, transform_context);
 
 	/** @type {ESTreeJSX.JSXRenderNode} */
 	let result = try_content;
@@ -5050,12 +5104,88 @@ function try_statement_to_jsx_child(node, transform_context) {
 	// result is a JSXElement, but we need to return a JSXExpressionContainer
 	// for embedding in the parent component's render return
 	if (result.type === 'JSXElement') {
+		if (transform_context.platform.imports.tryBody && !transform_context.typeOnly) {
+			key_try_site(result, transform_context);
+		}
 		return to_jsx_expression_container(result);
 	}
 
 	return result.type === 'JSXExpressionContainer'
 		? result
 		: to_jsx_expression_container(/** @type {AST.Expression} */ (result));
+}
+
+/**
+ * The `@try` body as the boundary's child. See `imports.tryBody`.
+ *
+ * @param {AST.Node[]} body_nodes
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXRenderNode}
+ */
+function try_body_to_jsx_child(body_nodes, transform_context) {
+	if (
+		!transform_context.platform.imports.tryBody ||
+		transform_context.typeOnly ||
+		body_nodes.some(suspends_enclosing_function)
+	) {
+		return statement_body_to_jsx_child(body_nodes, transform_context);
+	}
+
+	transform_context.needs_try_body = true;
+	const render_fn = b.arrow(
+		[],
+		b.block(build_render_statements(body_nodes, true, transform_context)),
+	);
+	return create_jsx_element(
+		'TsrxTryBody',
+		[b.jsx_attribute(b.jsx_id('render'), to_jsx_expression_container(render_fn))],
+		[],
+	);
+}
+
+/**
+ * Key attributes `key_try_site` added, which a loop key extends.
+ *
+ * @type {WeakSet<ESTreeJSX.JSXAttribute>}
+ */
+const try_site_keys = new WeakSet();
+
+/**
+ * Keys the outermost element a `@try` produced with a name for its site.
+ * Every `@try` lowers to the same component types, so without it React would
+ * reuse one site's boundary state and body hooks for another `@try` rendered
+ * in the same slot, such as the other arm of an `@if`. A loop key placed on
+ * the element later is combined with it (see `apply_key_to_jsx_element`).
+ *
+ * @param {AST.TSRXJSXElement} element
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function key_try_site(element, transform_context) {
+	transform_context.try_site_index += 1;
+	const key = b.jsx_attribute(b.jsx_id('key'), b.literal(`try${transform_context.try_site_index}`));
+	try_site_keys.add(key);
+	element.openingElement.attributes.push(key);
+}
+
+/**
+ * Whether `node` holds an `await` or `yield` that belongs to the function
+ * enclosing it.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function suspends_enclosing_function(node) {
+	if (is_function_node(node)) return false;
+	if (
+		node.type === 'AwaitExpression' ||
+		node.type === 'YieldExpression' ||
+		(node.type === 'ForOfStatement' && node.await) ||
+		(node.type === 'JSXForExpression' && node.statementType === 'ForOfStatement' && node.await)
+	) {
+		return true;
+	}
+	return child_nodes(node).some(suspends_enclosing_function);
 }
 
 /**
@@ -5123,6 +5253,10 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 		imports.push(
 			b.imports([['TsrxErrorBoundary', 'TsrxErrorBoundary']], platform.imports.errorBoundary),
 		);
+	}
+
+	if (transform_context.needs_try_body && platform.imports.tryBody) {
+		imports.push(b.imports([['TsrxTryBody', 'TsrxTryBody']], platform.imports.tryBody));
 	}
 
 	const merge_refs_source =

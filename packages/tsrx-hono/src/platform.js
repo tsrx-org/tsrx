@@ -65,6 +65,7 @@ function create_hono_platform(mode) {
 			dynamic: '@tsrx/hono/dynamic',
 			dynamicFactory: {},
 			errorBoundary: is_dom ? '@tsrx/hono/dom/error-boundary' : '@tsrx/hono/error-boundary',
+			tryBody: '@tsrx/hono/try-body',
 			mergeRefs: '@tsrx/hono/ref',
 			refProp: '@tsrx/hono/ref',
 			forOfIterableHelper: '@tsrx/hono/runtime/iterable',

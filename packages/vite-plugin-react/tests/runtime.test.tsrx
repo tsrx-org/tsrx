@@ -16,6 +16,7 @@ const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'async fail',
 	'rejected',
 	'inner error',
+	'body boom',
 	'The above error occurred in the <',
 	'React will try to recreate this component tree from scratch using the error boundary you provided',
 ];
@@ -1004,6 +1005,141 @@ function ForInsideTryApp() @{
 	</>
 }
 
+// ── Setup statements inside the try body ──
+
+function InlineUseApp(props: { promise: Promise<string> }) @{
+	@try {
+		const data = use(props.promise);
+		<p className="resolved">{data}</p>
+	} @pending {
+		<p className="pending">{'loading...'}</p>
+	}
+}
+
+function loadOrThrow(fail: boolean) {
+	if (fail) throw new Error('body boom');
+	return 'loaded';
+}
+
+function BodyThrowApp() @{
+	const [fail, setFail] = useState(true);
+
+	@try {
+		const result = loadOrThrow(fail);
+		<p className="ok">{result}</p>
+	} @catch (err, reset: () => void) {
+		<button
+			className="reset"
+			onClick={() => {
+				setFail(false);
+				reset();
+			}}
+		>
+			{(err as Error).message}
+		</button>
+	}
+}
+
+// ── Distinct try sites rendered in one slot ──
+
+function SameHookCountArmsApp() @{
+	const [first, setFirst] = useState(true);
+
+	<>
+		<button className="flip" onClick={() => setFirst(!first)}>
+			{'flip'}
+		</button>
+		@if (first) {
+			@try {
+				const [label] = useState('A');
+				<p className="arm">{label}</p>
+			} @catch (err) {
+				<p className="caught">{(err as Error).message}</p>
+			}
+		} @else {
+			@try {
+				const [label] = useState('B');
+				<p className="arm">{label}</p>
+			} @catch (err) {
+				<p className="caught">{(err as Error).message}</p>
+			}
+		}
+	</>
+}
+
+function DifferentHookCountArmsApp() @{
+	const [first, setFirst] = useState(true);
+
+	<>
+		<button className="flip" onClick={() => setFirst(!first)}>
+			{'flip'}
+		</button>
+		@if (first) {
+			@try {
+				const [label] = useState('A');
+				<p className="arm">{label}</p>
+			} @catch (err) {
+				<p className="caught">{(err as Error).message}</p>
+			}
+		} @else {
+			@try {
+				const [label] = useState('B');
+				const [suffix] = useState('!');
+				<p className="arm">{label + suffix}</p>
+			} @catch (err) {
+				<p className="caught">{(err as Error).message}</p>
+			}
+		}
+	</>
+}
+
+function UnkeyedTryRowsApp() @{
+	const [items, setItems] = useState(['a', 'b', 'c']);
+
+	<>
+		<button className="drop-first" onClick={() => setItems(items.slice(1))}>
+			{'drop'}
+		</button>
+		<ul>
+			@for (const item of items) {
+				@try {
+					<li className="try-row">{item}</li>
+				} @catch (err) {
+					<li className="caught">{(err as Error).message}</li>
+				}
+			}
+		</ul>
+	</>
+}
+
+// ── Try/catch with a thrown non-Error value ──
+
+function ValueThrower(props: { value: unknown }): never {
+	throw props.value;
+}
+
+function ThrownValueApp(props: { value: unknown }) @{
+	const [fail, setFail] = useState(true);
+
+	@try {
+		@if (fail) {
+			<ValueThrower value={props.value} />
+		} @else {
+			<p className="ok">{'recovered'}</p>
+		}
+	} @catch (err, reset: () => void) {
+		<button
+			className="reset"
+			onClick={() => {
+				setFail(false);
+				reset();
+			}}
+		>
+			{'caught ' + String(err)}
+		</button>
+	}
+}
+
 // ── Explicit hook component inside control flow ──
 
 function ExplicitHookPanel(props: { multiplier: number }) {
@@ -1695,6 +1831,85 @@ describe('tsrx-react runtime', () => {
 		expect(container.querySelectorAll('.try-item').length).toBe(3);
 		expect(container.querySelectorAll('.try-item')[2].textContent).toBe('z');
 	});
+
+	// ── Setup statements inside the try body ──
+
+	it('shows pending fallback for use() called in the try body', async () => {
+		let resolve_fn: (value: string) => void;
+		const promise = new Promise<string>((r) => {
+			resolve_fn = r;
+		});
+
+		await render(InlineUseApp, { promise });
+		expect(text('.pending')).toBe('loading...');
+
+		await act(async () => {
+			resolve_fn('inline');
+		});
+		expect(text('.resolved')).toBe('inline');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('catches a synchronous throw from a try body setup statement', async () => {
+		await render(BodyThrowApp);
+		expect(text('.reset')).toBe('body boom');
+
+		await click('.reset');
+		expect(text('.ok')).toBe('loaded');
+		expect(container.querySelector('.reset')).toBeNull();
+	});
+
+	// ── Distinct try sites rendered in one slot ──
+
+	it('gives each try site in an if/else its own body state', async () => {
+		await render(SameHookCountArmsApp);
+		expect(text('.arm')).toBe('A');
+
+		await click('.flip');
+		expect(text('.arm')).toBe('B');
+		expect(container.querySelector('.caught')).toBeNull();
+	});
+
+	it('switches between try sites whose bodies call different hooks', async () => {
+		await render(DifferentHookCountArmsApp);
+		expect(text('.arm')).toBe('A');
+
+		await click('.flip');
+		expect(text('.arm')).toBe('B!');
+		expect(container.querySelector('.caught')).toBeNull();
+
+		await click('.flip');
+		expect(text('.arm')).toBe('A');
+	});
+
+	it('renders try sites in a loop without a key without duplicate keys', async () => {
+		await render(UnkeyedTryRowsApp);
+		expect([...container.querySelectorAll('.try-row')].map((row) => row.textContent)).toEqual([
+			'a',
+			'b',
+			'c',
+		]);
+
+		await click('.drop-first');
+		expect([...container.querySelectorAll('.try-row')].map((row) => row.textContent)).toEqual([
+			'b',
+			'c',
+		]);
+		const logged = console_error_spy!.mock.calls.map((args) => args.map(String).join(' '));
+		expect(logged.filter((message) => message.includes('the same key'))).toEqual([]);
+	});
+
+	// ── Try/catch with a thrown non-Error value ──
+
+	for (const value of [null, undefined, false, 0, 'boom']) {
+		it(`catches a thrown ${String(value)} and recovers via reset`, async () => {
+			await render(ThrownValueApp, { value });
+			expect(text('.reset')).toBe('caught ' + String(value));
+
+			await click('.reset');
+			expect(text('.ok')).toBe('recovered');
+		});
+	}
 
 	// ── Explicit hook components inside control flow ──
 

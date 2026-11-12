@@ -292,6 +292,46 @@ describe('@tsrx/vite-plugin-hono', () => {
 		}
 	});
 
+	it('catches a throw from a @try body setup statement with Hono SSR', async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-try-body-'),
+		);
+
+		try {
+			const source_id = path.join(directory, 'BodyThrowPage.tsrx');
+			const output_id = path.join(directory, 'BodyThrowPage.js');
+			const transformed = await plugin.transform.call(
+				context,
+				`function load() {
+					throw new Error('server body boom');
+				}
+
+				export function BodyThrowPage() @{
+					@try {
+						const value = load();
+						<p>{value}</p>
+					} @catch (error) {
+						<p>{'caught ' + error.message}</p>
+					}
+				}`,
+				source_id,
+			);
+			await writeFile(output_id, transformed.code);
+
+			const [{ BodyThrowPage }, { jsx }] = await Promise.all([
+				import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+				import('hono/jsx'),
+			]);
+			expect(String(await jsx(BodyThrowPage, {}).toString())).toBe(
+				'<p>caught server body boom</p>',
+			);
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it('selects the Hono DOM runtime and forwards direct runtime imports', async () => {
 		const plugin = tsrxHono({ mode: 'dom', runtimeImports: 'direct' });
 		const transformed = await plugin.transform.call(

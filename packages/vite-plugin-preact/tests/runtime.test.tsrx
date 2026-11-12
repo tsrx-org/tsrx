@@ -99,6 +99,74 @@ function EmptyPendingSuspenseApp(props: {
 	}
 }
 
+// ── Setup statements inside the try body ──
+
+type Resource = { value?: string; promise: Promise<void> };
+
+function read(resource: Resource) {
+	if (resource.value === undefined) throw resource.promise;
+	return resource.value;
+}
+
+function InlineSuspendApp(props: { resource: Resource }) @{
+	@try {
+		const data = read(props.resource);
+		<p class="resolved">{data}</p>
+	} @pending {
+		<p class="pending">{'loading...'}</p>
+	}
+}
+
+function loadOrThrow(fail: boolean) {
+	if (fail) throw new Error('body boom');
+	return 'loaded';
+}
+
+function BodyThrowApp() @{
+	const [fail, setFail] = useState(true);
+
+	@try {
+		const result = loadOrThrow(fail);
+		<p class="ok">{result}</p>
+	} @catch (err, reset: () => void) {
+		<button
+			class="reset"
+			onClick={() => {
+				setFail(false);
+				reset();
+			}}
+		>
+			{(err as Error).message}
+		</button>
+	}
+}
+
+function DifferentHookCountArmsApp() @{
+	const [first, setFirst] = useState(true);
+
+	<>
+		<button class="flip" onClick={() => setFirst(!first)}>
+			{'flip'}
+		</button>
+		@if (first) {
+			@try {
+				const [label] = useState('A');
+				<p class="arm">{label}</p>
+			} @catch (err) {
+				<p class="caught">{(err as Error).message}</p>
+			}
+		} @else {
+			@try {
+				const [label] = useState('B');
+				const [suffix] = useState('!');
+				<p class="arm">{label + suffix}</p>
+			} @catch (err) {
+				<p class="caught">{(err as Error).message}</p>
+			}
+		}
+	</>
+}
+
 function ForFilteredApp() @{
 	const items = ['a', '', 'c'];
 	const visibleItems = items.filter(Boolean);
@@ -387,6 +455,47 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 			resolve_fn!({ default: ResolvedChild });
 		});
 		expect(container.querySelector('.resolved')?.textContent).toBe('hello');
+	});
+
+	it('shows pending fallback for a try body setup statement that suspends', async () => {
+		let resolve_fn: () => void;
+		const resource: Resource = {
+			promise: new Promise<void>((r) => {
+				resolve_fn = r;
+			}),
+		};
+
+		await render(InlineSuspendApp, { resource });
+		expect(text('.pending')).toBe('loading...');
+
+		await act(async () => {
+			resource.value = 'inline';
+			resolve_fn!();
+		});
+		expect(text('.resolved')).toBe('inline');
+		expect(container.querySelector('.pending')).toBeNull();
+	});
+
+	it('catches a synchronous throw from a try body setup statement', async () => {
+		await render(BodyThrowApp);
+		expect(text('.reset')).toBe('body boom');
+
+		await act(async () => {
+			(container.querySelector('.reset') as HTMLButtonElement).click();
+		});
+		expect(text('.ok')).toBe('loaded');
+		expect(container.querySelector('.reset')).toBeNull();
+	});
+
+	it('gives each try site in an if/else its own body state', async () => {
+		await render(DifferentHookCountArmsApp);
+		expect(text('.arm')).toBe('A');
+
+		await act(async () => {
+			(container.querySelector('.flip') as HTMLButtonElement).click();
+		});
+		expect(text('.arm')).toBe('B!');
+		expect(container.querySelector('.caught')).toBeNull();
 	});
 
 	it('renders dynamic host elements', async () => {

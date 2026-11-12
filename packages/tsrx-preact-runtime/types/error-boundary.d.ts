@@ -6,6 +6,7 @@ export interface TsrxErrorBoundaryProps {
 }
 
 export interface TsrxErrorBoundaryState {
+	hasError: boolean;
 	error: Error | null;
 }
 
