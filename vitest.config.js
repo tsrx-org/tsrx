@@ -114,6 +114,13 @@ const vue_runtime_alias_plugin = {
 	},
 };
 
+/**
+ * Suites that spawn `tsc`, `tsrx-tsc` or a language server can run past the 5s
+ * default once the rest of the suite is competing for workers. They assert
+ * results, not speed, so this limit is only here to catch a hang.
+ */
+const spawning_test_timeout = 60_000;
+
 export default defineConfig({
 	test: {
 		...configDefaults,
@@ -454,6 +461,7 @@ export default defineConfig({
 					include: ['packages/typescript-plugin/tests/**/*.test.js'],
 					environment: 'node',
 					globals: true,
+					testTimeout: spawning_test_timeout,
 				},
 				plugins: [],
 			},
@@ -463,6 +471,7 @@ export default defineConfig({
 					include: ['packages/content-mapper/tests/**/*.test.js'],
 					environment: 'node',
 					globals: true,
+					testTimeout: spawning_test_timeout,
 				},
 				plugins: [],
 			},
@@ -472,6 +481,7 @@ export default defineConfig({
 					include: ['packages/language-server/tests/**/*.test.js'],
 					environment: 'node',
 					globals: true,
+					testTimeout: spawning_test_timeout,
 				},
 				plugins: [],
 			},
