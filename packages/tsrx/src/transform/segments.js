@@ -566,12 +566,19 @@ export function convert_source_map_to_mappings(
 	 * all unused on the whole declaration, and Organize Imports replaces or
 	 * deletes imports up to the start of the next line. The points have no
 	 * length, so the names inside keep their own mappings, and an unused name is
-	 * still reported on the name. The generated import always ends with `;`, and
-	 * the end point includes it, with or without a `;` in the source.
+	 * still reported on the name. An import that the printer could not write as
+	 * written ends with `;`, and the end point includes it, with or without a `;`
+	 * in the source.
 	 *
-	 * An import gets the mapping only when it is printed as written: a name the
-	 * compiler adds has no location, and Organize Imports would copy it into the
-	 * source.
+	 * The editor output writes an import as written (`ImportDeclaration` in
+	 * `tsx_with_ts_locations`), and then the start point is the whole import
+	 * instead: a quick fix that removes one name also deletes the text between
+	 * the names, which no token covers, in an edit of its own (#1025). The text
+	 * is the same in both files, so every offset in it maps to itself.
+	 *
+	 * An import gets the mapping only when its names are the source's: a name
+	 * the compiler adds has no location, and Organize Imports would copy it into
+	 * the source.
 	 * @param {(AST.ImportDeclaration | AST.TSRXImportDeclaration) & AST.NodeWithLocation} node
 	 */
 	function add_import_mapping(node) {
@@ -590,6 +597,14 @@ export function convert_source_map_to_mappings(
 			data: { ...mapping_data_verify_only, customData: {} },
 		};
 		add_line_point(mapping);
+		const text = source.slice(node.start, node.end);
+		if (
+			generated_end === generated_start + text.length &&
+			generated_code.startsWith(text, generated_start)
+		) {
+			mapping.lengths[0] = text.length;
+			/** @type {number[]} */ (mapping.generatedLengths)[0] = text.length;
+		}
 		mappings.push(mapping);
 	}
 
@@ -614,9 +629,10 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
-	 * The generated offset after the `;` that ends an import. The printer records
-	 * the import's end after the `;`. Without a `;` in the source, the end of the
-	 * module string maps to the generated position before the `;`.
+	 * The generated offset where an import ends, after its `;`. The printer
+	 * records the import's end after the `;`. When the printer adds a `;` that
+	 * the source does not have, the end of the module string maps to the
+	 * generated position before it.
 	 * @param {(AST.ImportDeclaration | AST.TSRXImportDeclaration) & AST.NodeWithLocation} node
 	 * @param {number} generated_start
 	 * @returns {number | undefined}

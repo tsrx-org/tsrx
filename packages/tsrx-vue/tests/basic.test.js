@@ -2628,7 +2628,7 @@ export function Card(${params}: any) @{
 		expect(code).toContain('Suspense');
 		expect(code).toContain('fallback={(err, _reset) =>');
 		expect(code).toContain('default: () => (() => {');
-		expect(code).toContain('return <AsyncChild value="hello" />;');
+		expect(code).toContain('return <AsyncChild value="hello" />');
 		expect(code).not.toContain('catch(_error)');
 		expect(code).not.toContain('return ((err, _reset) =>');
 		expect(code).not.toContain('err: any');
