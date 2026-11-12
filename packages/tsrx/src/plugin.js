@@ -1431,6 +1431,9 @@ export function TSRXPlugin(config) {
 			#bodilessPrivateMethods = new WeakMap();
 			// How many classes the parser is in (see `parseClass`).
 			#classDepth = 0;
+			// Set while `tsFillSignature` reads a signature's type parameters (see
+			// `tsTryParseTypeParameters`).
+			#readingSignatureTypeParameters = false;
 			// Where the import alias being read starts (see `raise`).
 			#importEqualsStart = -1;
 			// Where the last variable declarator ended, and where the expression of
@@ -5597,11 +5600,47 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * acorn-typescript reads the type parameters of a function type, a
+			 * constructor type, or a call, construct or method signature
+			 * (`tsFillSignature`) without the `const` modifier, which TypeScript takes
+			 * on each, so `type F = <const T>(x: T) => T;` failed with `Unexpected
+			 * keyword 'const'` (#731). Read it there.
 			 * @type {Parse.Parser['tsTryParseTypeParameters']}
 			 */
 			tsTryParseTypeParameters(parseModifiers) {
+				const signature = this.#readingSignatureTypeParameters;
+				this.#readingSignatureTypeParameters = false;
 				this.#readTagStartAsTypeParameterStart();
-				return super.tsTryParseTypeParameters(parseModifiers);
+				return super.tsTryParseTypeParameters(
+					parseModifiers ?? (signature ? this.tsParseConstModifier : undefined),
+				);
+			}
+
+			/**
+			 * See `tsTryParseTypeParameters`, which this reads first.
+			 * @type {Parse.Parser['tsFillSignature']}
+			 */
+			tsFillSignature(returnToken, signature) {
+				this.#readingSignatureTypeParameters = true;
+				try {
+					return super.tsFillSignature(returnToken, signature);
+				} finally {
+					this.#readingSignatureTypeParameters = false;
+				}
+			}
+
+			/**
+			 * TypeScript reads `asserts` in a return type as the modifier of a type
+			 * predicate only before a name or `this` on its line
+			 * (`nextTokenIsIdentifierOrKeywordOnSameLine`), and otherwise as a type
+			 * named `asserts`, so `asserts` with `x` on the next line ends the return
+			 * type there. acorn-typescript read the predicate across the line break,
+			 * and the formatter joined the lines into code TypeScript accepts (#682).
+			 * @type {Parse.Parser['tsParseTypePredicateAsserts']}
+			 */
+			tsParseTypePredicateAsserts() {
+				if (this.type === tstt.asserts && this.#lineBreakAfter(this.end)) return false;
+				return super.tsParseTypePredicateAsserts();
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#119): remove once a release includes the fix
@@ -5812,6 +5851,11 @@ export function TSRXPlugin(config) {
 				}
 				const superClass = heading.superClass;
 				if (!superClass) return;
+				// TypeScript reads a left-hand-side expression there, which an element
+				// isn't without parentheses: `Expression expected.` at its `<` (#745).
+				if (is_tsrx_render_output_node(superClass) && !superClass.metadata?.parenthesized) {
+					this.raise(/** @type {number} */ (superClass.start), TS_ERRORS.EXPRESSION_EXPECTED);
+				}
 				if (
 					this.type === tstt.jsxTagStart &&
 					superClass.type !== 'TSInstantiationExpression' &&

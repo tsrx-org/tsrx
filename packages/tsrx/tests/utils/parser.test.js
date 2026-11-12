@@ -14411,6 +14411,29 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		]);
 	});
 
+	it('ends a return type at `asserts` before a line break, as TypeScript does (#682)', async () => {
+		await expect_thrown([
+			['function f(x): asserts\n  x {}', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'x {}'],
+			[
+				'function f(x): asserts\n  x is string {}',
+				TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+				'x is',
+			],
+			['function f(this: A): asserts\n  this {}', TS_ERRORS.TOKEN_EXPECTED, '{}'],
+		]);
+	});
+
+	it('reports an element that is a superclass without parentheses (#745)', async () => {
+		await expect_thrown([
+			['class A extends <div /> {}', TS_ERRORS.EXPRESSION_EXPECTED, '<div'],
+			['const B = class extends <></> {};', TS_ERRORS.EXPRESSION_EXPECTED, '<>'],
+		]);
+		expect(
+			as_type(parseModule('class C extends (<div />) {}', 'App.tsrx').body[0], 'ClassDeclaration')
+				.superClass,
+		).toMatchObject({ type: 'JSXElement' });
+	});
+
 	it('reports type arguments after `?.` without a call at the token after them (#884)', async () => {
 		await expect_thrown([
 			['a?.<T>`c`;', TS_ERRORS.OPTIONAL_CHAIN_TAGGED_TEMPLATE, '`c`'],
@@ -14424,6 +14447,47 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			['a?.<T>b;', TS_ERRORS.IDENTIFIER_EXPECTED, '<'],
 			['a?.<T>-1;', TS_ERRORS.IDENTIFIER_EXPECTED, '<'],
 		]);
+	});
+});
+
+describe('a `const` type parameter in a function type or a signature (#731)', () => {
+	it('parses it as TypeScript does', () => {
+		for (const source of [
+			'type F = <const T>(value: T) => T;',
+			'type C = new <const T>(value: T) => T;',
+			'interface I { <const T>(value: T): T }',
+			'interface I { new <const T>(value: T): T }',
+			'interface I { m<const T>(value: T): T }',
+			'type O = { m<const T>(value: T): T };',
+			'class A { m<const T, U>(value: T): T { return value; } }',
+		]) {
+			/** @type {CompileError[]} */
+			const errors = [];
+			const ast = parseModule(source, 'App.tsrx', { collect: true, errors, comments: [] });
+			expect(errors, source).toEqual([]);
+			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
+			expect(
+				find_first(ast, (node) => node.type === 'TSTypeParameter'),
+				source,
+			).toMatchObject({ const: true, name: { name: 'T' } });
+		}
+	});
+
+	it("still rejects one inside a method's parentheses", async () => {
+		// acorn-typescript reads type parameters after a method's `(`, which
+		// TypeScript doesn't (TS1003); `const` there stays unexpected.
+		const sources = [
+			'class A { m(<const T>x) {} }',
+			'let o = { m(<const T>x) {} };',
+			'class B { constructor(<const T>x) {} }',
+		];
+		const modes = [undefined, { collect: true, comments: [] }, { loose: true }];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+		expect(outcomes).toEqual(
+			sources.flatMap((source) => modes.map(() => thrown('TS1359', source.indexOf('<const') + 1))),
+		);
 	});
 });
 
