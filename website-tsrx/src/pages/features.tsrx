@@ -137,7 +137,7 @@ const TRY_RESET_HTML = highlight_tsrx(
     <ComponentThatMightFail />
   } @catch (e, reset) {
     <div>
-      <p>Error: {e.message}</p>
+      <p>Error: {e instanceof Error ? e.message : String(e)}</p>
       <button onClick={() => reset()}>Try again</button>
     </div>
   }

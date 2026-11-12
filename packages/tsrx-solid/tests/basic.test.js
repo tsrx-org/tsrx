@@ -64,9 +64,8 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain("const App__static1 = <h1>{'a'}</h1>;");
-			expect(code).toContain("const App__static2 = <h2>{'b'}</h2>;");
-			expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+			expect(code).toContain("return <><h1>{'a'}</h1><h2>{'b'}</h2></>;");
+			expect(code).not.toContain('__static');
 		});
 
 		it('rejects await in component body', () => {
@@ -522,9 +521,82 @@ describe('@tsrx/solid basic', () => {
 				/<Match when=\{kind === 'a'\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Match>/,
 			);
 			expect(code).toMatch(
-				/fallback=\{\(\(\) => \{\s*const w = 2;\s*return <i>\{w\}<\/i>;\s*\}\)\(\)\}/,
+				/fallback=\{_\$_untrack\(\(\) => \{\s*const w = 2;\s*return <i>\{w\}<\/i>;\s*\}\)\}/,
 			);
 			expect(code).not.toContain('return null');
+		});
+
+		it('runs the setup of a fallback body untracked', () => {
+			const { code } = compile(
+				`function App(props: { show: boolean; mode: string; items: string[] }) @{
+					<div>
+						@if (props.show) {
+							<b />
+						} @else {
+							const a = 1;
+							<i>{a}</i>
+						}
+						@switch (props.mode) {
+							@case 'a': {
+								<b />
+							}
+							@default: {
+								const b = 2;
+								<i>{b}</i>
+							}
+						}
+						@for (const item of props.items) {
+							<b>{item}</b>
+						} @empty {
+							const c = 3;
+							<i>{c}</i>
+						}
+						@try {
+							<b />
+						} @pending {
+							const d = 4;
+							<i>{d}</i>
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('untrack as _$_untrack');
+			for (const [name, value] of [
+				['a', 1],
+				['b', 2],
+				['c', 3],
+				['d', 4],
+			]) {
+				expect(code).toMatch(
+					new RegExp(
+						`fallback=\\{_\\$_untrack\\(\\(\\) => \\{\\s*const ${name} = ${value};\\s*return <i>\\{${name}\\}</i>;\\s*\\}\\)\\}`,
+					),
+				);
+			}
+		});
+
+		it('runs the setup of a @try or @catch body untracked', () => {
+			const { code } = compile(
+				`function App() @{
+					@try {
+						const e = 5;
+						<i>{e}</i>
+					} @catch (err, reset) {
+						const f = 6;
+						<i>{f}</i>
+					}
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('untrack as _$_untrack');
+			// The fallback binds the thrown value (`err`) before the untracked body.
+			expect(code).toMatch(
+				/fallback=\{\(_tsrx_error, reset\) => \{\s*let err = _tsrx_error\(\);\s*return _\$_untrack\(\(\) => \{\s*const f = 6;\s*return <i>\{f\}<\/i>;\s*\}\);\s*\}\}/,
+			);
+			expect(code).toMatch(
+				/>\{_\$_untrack\(\(\) => \{\s*const e = 5;\s*return <i>\{e\}<\/i>;\s*\}\)\}<\/Errored>/,
+			);
 		});
 
 		it('element children mixing JSX and statements wrap in an IIFE', () => {
@@ -642,8 +714,8 @@ describe('@tsrx/solid basic', () => {
 			);
 
 			expect(code).toContain('if (props.disabled)');
-			expect(code).toContain('return StatusBadge__static1;');
-			expect(code).toContain('return StatusBadge__static2;');
+			expect(code).toContain('return <span>disabled</span>;');
+			expect(code).toContain('return <span>enabled</span>;');
 			expect(code).not.toContain('<Show');
 			expect(code).not.toContain("import { Show } from 'solid-js'");
 		});
@@ -664,8 +736,8 @@ describe('@tsrx/solid basic', () => {
 			);
 
 			expect(code).toContain('if (!user)');
-			expect(code).toContain('return Dashboard__static1;');
-			expect(code).toContain('return <><h1>Welcome,{user}</h1>{Dashboard__static2}</>;');
+			expect(code).toContain('return <p>No user found</p>;');
+			expect(code).toContain('return <><h1>Welcome,{user}</h1><p>Here is your dashboard.</p></>;');
 			expect(code).not.toContain('<Show');
 			expect(code).not.toContain("import { Show } from 'solid-js'");
 		});
@@ -877,16 +949,12 @@ describe('@tsrx/solid basic', () => {
 		});
 	});
 
-	describe('component static-alias suppression', () => {
-		// Covers Solid's `canHoistStaticNode` veto on trees that contain a
-		// component — a Solid-specific optimization decision that doesn't apply
-		// to React's `App__static` hoisting policy.
-		it('does not hoist component invocations into App__static aliases', () => {
-			// On Solid the static-element-identity optimization React relies on
-			// doesn't apply, so hoisting a component invocation into a
-			// module-level `App__static` const only adds an alias indirection.
-			// Truly-static DOM trees (e.g. `<h1>{'a'}</h1>` with no scope refs)
-			// are still hoisted — those are real DOM nodes worth caching.
+	describe('static JSX', () => {
+		// Solid JSX evaluates to a DOM node, so a module-level `App__static`
+		// const would be one node that every use of the component moves (#1236).
+		// Solid's compiler already hoists the parsed template and clones it on
+		// each evaluation.
+		it('leaves static DOM and component invocations in place', () => {
 			const { code } = compile(
 				`function App() @{
 					<>
@@ -897,9 +965,8 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain("const App__static1 = <h1>{'a'}</h1>;");
-			expect(code).not.toMatch(/const App__static\d+\s*=\s*<section>/);
-			expect(code).toContain('return <>{App__static1}<section><Child /></section></>;');
+			expect(code).not.toContain('__static');
+			expect(code).toContain("return <><h1>{'a'}</h1><section><Child /></section></>;");
 		});
 	});
 
@@ -914,9 +981,8 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain("const App__static1 = <h1>{'a'}</h1>;");
-			expect(code).toContain("const App__static2 = <h2>{'b'}</h2>;");
-			expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+			expect(code).toContain("return <><h1>{'a'}</h1><h2>{'b'}</h2></>;");
+			expect(code).not.toContain('__static');
 		});
 
 		it('rejects namespaced template tags', () => {
@@ -1334,6 +1400,31 @@ describe('@tsrx/solid basic', () => {
 			expect(type_only).toContain('ref={[App__spread_props1?.ref, App__spread_props2?.ref, cb]}');
 			expect(type_only).not.toContain('spread_ref_bags');
 		});
+
+		it.each(['App', 'App$'])(
+			'names the spread temporary in a branch of %s apart from an authored binding of that name',
+			(component) => {
+				// A lone spread keeps its `ref` as written; two spreads beside a `ref`
+				// still go through a named `spread_ref_bags` group.
+				const { code } = compile(
+					`export function ${component}(props: any) @{
+						const ${component}__spread_props1 = 'mine';
+						<section>
+							@if (props.on) {
+								<div {...props.rest} {...props.more} ref={props.r} title={${component}__spread_props1} />
+							}
+						</section>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(code).toContain(
+					`let ${component}__spread_props2 = __spread_ref_bags(() => props.rest, () => props.more);`,
+				);
+				expect(code).toContain(`title={${component}__spread_props1}`);
+				expect(code).not.toContain(`let ${component}__spread_props1 `);
+			},
+		);
 
 		it('keeps the ref as written beside a single host spread', () => {
 			const template = `function App() @{

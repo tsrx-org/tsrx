@@ -9,8 +9,7 @@ import { tsrxSolid } from '../src/index.js';
 
 // `@{ }` blocks that are a whole control-flow body. The `@if`, `@else if` and
 // `@case` blocks count their setup runs and read `k()`, so a block that
-// re-runs when `k` changes shows up. (A fallback body, `@else` or
-// `@default`, re-runs on a tracked read with or without `@{ }`.)
+// re-runs when `k` changes shows up.
 const APP = `import { createSignal } from 'solid-js';
 
 export const runs = { if: 0, elseIf: 0, case: 0 };

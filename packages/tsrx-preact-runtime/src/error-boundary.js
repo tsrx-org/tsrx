@@ -21,7 +21,7 @@ export class TsrxErrorBoundary extends Component {
 	}
 
 	/**
-	 * @param {Error} error
+	 * @param {unknown} error
 	 * @returns {TsrxErrorBoundaryState}
 	 */
 	static getDerivedStateFromError(error) {
@@ -35,7 +35,7 @@ export class TsrxErrorBoundary extends Component {
 		const { hasError, error } = this.state;
 		if (hasError) {
 			const reset = () => this.setState({ hasError: false, error: null });
-			return this.props.fallback(/** @type {Error} */ (error), reset);
+			return this.props.fallback(error, reset);
 		}
 		return this.props.children;
 	}
