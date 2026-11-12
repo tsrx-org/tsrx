@@ -362,6 +362,12 @@ export class TSRXVirtualCode {
 	originalCode = '';
 	/** @type {AST.Program | null} */
 	sourceAst = null;
+	/**
+	 * The `<script>` bodies of code (not data blocks) the transform appends to the
+	 * generated TSX as blocks; empty while the file has a fatal compile error.
+	 * @type {EmbeddedRegion[]}
+	 */
+	scriptRegions = [];
 	/** @type {boolean} */
 	isDotCompletionMode = false;
 	/** @type {unknown[]} */
@@ -414,6 +420,7 @@ export class TSRXVirtualCode {
 		this.fatalErrors = [];
 		this.usageErrors = [];
 		this.sourceAst = null;
+		this.scriptRegions = [];
 		this.isDotCompletionMode = false;
 
 		// Check if a single "." was typed using changeRange
@@ -515,6 +522,7 @@ export class TSRXVirtualCode {
 			this.mappings = result.mappings;
 			this.usageErrors = result.errors;
 			this.sourceAst = result.sourceAst;
+			this.scriptRegions = result.scriptRegions;
 
 			if (process.env.TSRX_TSC === 'true' && result.errors.length > 0) {
 				logTSRXErrors(this.fileName, result.errors);
