@@ -363,6 +363,56 @@ function merge_ref_list(refs) {
 }
 
 /**
+ * @typedef {{
+ *   next: WeakMap<object, MergedRefEntry> | undefined,
+ *   ref: RefValue<any> | undefined,
+ * }} MergedRefEntry
+ */
+
+/**
+ * `merge_element_refs` callbacks by their refs, one level per ref.
+ * @type {MergedRefEntry}
+ */
+const merged_element_refs = { next: undefined, ref: undefined };
+
+/**
+ * Merge the refs of one compiled element into its `ref`. A single ref comes back
+ * as itself, and the same refs give back the same callback, so a JSX runtime
+ * that applies a `ref` again whenever its identity changes applies them once
+ * rather than on every render.
+ *
+ * Every element given the same refs shares the callback, so only a runtime
+ * that keeps a ref's cleanup per element can use it (React, Hono): Preact
+ * stores the cleanup on the function, where another element's would replace
+ * it.
+ *
+ * @template [T=Element]
+ * @param {...RefValue<T>} refs
+ * @returns {RefValue<T>}
+ */
+export function merge_element_refs(...refs) {
+	// Only a function or an object is a ref; `ref={cond && cb}` may be `false`.
+	const live = refs.filter(
+		(ref) => typeof ref === 'function' || (typeof ref === 'object' && ref !== null),
+	);
+	if (live.length < 2) {
+		return live[0];
+	}
+
+	let entry = merged_element_refs;
+	for (const ref of live) {
+		const next = (entry.next ??= new WeakMap());
+		let child = next.get(/** @type {object} */ (ref));
+		if (child === undefined) {
+			child = { next: undefined, ref: undefined };
+			next.set(/** @type {object} */ (ref), child);
+		}
+		entry = child;
+	}
+	return (entry.ref ??= merge_ref_list(live));
+}
+
+/**
  * Collect ref cleanups as flat `[kind, payload]` pairs, matching
  * `apply_ref_value`'s observable behavior for every ref shape: kind 0 is a
  * cleanup a callback ref returned, kind 1 a callback ref to re-invoke with

@@ -78,6 +78,8 @@ export function apply_ref_value<T = Element>(
 	set_ref_value?: (value: T | null) => void,
 ): void | (() => void);
 export function merge_ref_props<T = Element>(...refs: Array<RefValue<T>>): RefValue<T>;
+// Returns the same callback for the same refs; see the runtime JSDoc.
+export function merge_element_refs<T = Element>(...refs: Array<RefValue<T>>): RefValue<T>;
 /**
  * The non-object values a JSX spread accepts: TypeScript drops the
  * definitely-falsy members of a spread's type, so the `false` of
