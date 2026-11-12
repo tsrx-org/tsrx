@@ -1,7 +1,7 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { tsrxReact } from '../src/index.js';
 
 /**
@@ -11,67 +11,16 @@ import { tsrxReact } from '../src/index.js';
  * }} Hooks
  */
 
-const original_bun = Reflect.get(globalThis, 'Bun');
-
-afterEach(() => {
-	if (original_bun === undefined) {
-		Reflect.deleteProperty(globalThis, 'Bun');
-	} else {
-		Object.defineProperty(globalThis, 'Bun', {
-			value: original_bun,
-			writable: true,
-			configurable: true,
-		});
-	}
-});
-
-/**
- * @returns {{ options: unknown[] }}
- */
-function install_transpiler_stub() {
-	/** @type {unknown[]} */
-	const options = [];
-
-	class TranspilerStub {
-		/**
-		 * @param {unknown} transpiler_options
-		 */
-		constructor(transpiler_options) {
-			options.push(transpiler_options);
-		}
-
-		/**
-		 * @param {string} source
-		 * @returns {string}
-		 */
-		transformSync(source) {
-			return `// transformed\n${source}`;
-		}
-	}
-
-	Object.defineProperty(globalThis, 'Bun', {
-		value: { Transpiler: TranspilerStub },
-		writable: true,
-		configurable: true,
-	});
-
-	return { options };
-}
-
 /**
  * @param {import('../types/index.js').TsrxReactBunPluginOptions} [options]
- * @param {{ target?: import('bun').Target, root?: string }} [config]
+ * @param {{ target?: import('bun').Target, root?: string, entrypoints?: string[], files?: Record<string, string> } | null} [config]
+ * @param {Hooks} [hooks] hooks shared with other instances in the same build
  */
-function setup_plugin(options, config = {}) {
-	/** @type {Hooks} */
-	const hooks = { onResolve: [], onLoad: [] };
+function setup_plugin(options, config = {}, hooks = { onResolve: [], onLoad: [] }) {
 	const plugin = tsrxReact(options);
 	const build = {
-		config: {
-			entrypoints: [],
-			plugins: [],
-			...config,
-		},
+		// `null` stands for Bun.plugin() registration, which has no build config.
+		config: config === null ? undefined : { entrypoints: [], plugins: [], ...config },
 		/**
 		 * @param {{ filter: RegExp, namespace?: string }} hook_options
 		 * @param {Function} callback
@@ -117,9 +66,25 @@ function load_css(hooks, id) {
 	return load_hook.callback({ path: resolved.path, namespace: resolved.namespace });
 }
 
+/**
+ * Run hooks the way Bun does: the first one whose namespace and filter match
+ * and that returns a result handles the request.
+ *
+ * @param {Hooks['onLoad']} hooks
+ * @param {{ path: string, namespace: string }} args
+ */
+async function dispatch(hooks, args) {
+	for (const { options, callback } of hooks) {
+		if (options.namespace !== undefined && options.namespace !== args.namespace) continue;
+		if (!options.filter.test(args.path)) continue;
+		const result = await callback({ importer: '', kind: 'import-statement', ...args });
+		if (result !== undefined) return result;
+	}
+	return undefined;
+}
+
 describe('@tsrx/bun-plugin-react', () => {
 	it('compiles .tsrx files, transforms TSX, and serves emitted CSS', async () => {
-		const transpiler = install_transpiler_stub();
 		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-react-'));
 		try {
 			const file_path = path.join(dir, 'App.tsrx');
@@ -146,8 +111,9 @@ describe('@tsrx/bun-plugin-react', () => {
 			const css = load_css(hooks, css_id);
 
 			expect(transformed).toBeDefined();
-			expect(transformed?.loader).toBe('js');
-			expect(transformed?.contents).toContain('// transformed');
+			// Bun's own TSX transform selects the development or production runtime.
+			expect(transformed?.loader).toBe('tsx');
+			expect(transformed?.contents).toMatch(/^\/\*\* @jsxImportSource react \*\/\n/);
 			expect(transformed?.contents).toContain(css_id);
 			expect(String(transformed?.contents).indexOf('./reset.css')).toBeGreaterThan(-1);
 			expect(String(transformed?.contents).indexOf('./reset.css')).toBeLessThan(
@@ -156,57 +122,21 @@ describe('@tsrx/bun-plugin-react', () => {
 			expect(css.loader).toBe('css');
 			expect(css.contents).toContain('.div.');
 			expect(css.contents).toContain('color: red;');
-			expect(transpiler.options).toEqual([
-				expect.objectContaining({
-					loader: 'tsx',
-					target: 'browser',
-					autoImportJSX: true,
-					tsconfig: {
-						compilerOptions: {
-							jsx: 'react-jsx',
-							jsxImportSource: 'react',
-						},
-					},
-				}),
-			]);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
 	});
 
-	it('uses a custom jsx import source', () => {
-		const transpiler = install_transpiler_stub();
-		setup_plugin({ jsxImportSource: 'react-custom' }, { target: 'browser' });
-
-		expect(transpiler.options).toEqual([
-			expect.objectContaining({
-				tsconfig: {
-					compilerOptions: {
-						jsx: 'react-jsx',
-						jsxImportSource: 'react-custom',
-					},
-				},
-			}),
-		]);
-	});
-
-	it('falls back to TSX output when Bun.Transpiler is unavailable', async () => {
+	it('uses a custom jsx import source', async () => {
 		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-react-'));
 		try {
 			const file_path = path.join(dir, 'App.tsrx');
-			await writeFile(
-				file_path,
-				`export function App() @{
-					<div>{'Hello world'}</div>
-				}`,
-			);
+			await writeFile(file_path, `export function App() @{ <div>{'Hello world'}</div> }`);
 
-			const hooks = setup_plugin(undefined, { target: 'browser', root: dir });
+			const hooks = setup_plugin({ jsxImportSource: 'react-custom' }, { target: 'browser' });
 			const transformed = await load_tsrx(hooks, file_path);
 
-			expect(transformed).toBeDefined();
-			expect(transformed?.loader).toBe('tsx');
-			expect(transformed?.contents).not.toContain('?tsrx-css&lang.css');
+			expect(transformed?.contents).toMatch(/^\/\*\* @jsxImportSource react-custom \*\/\n/);
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
@@ -231,9 +161,213 @@ describe('@tsrx/bun-plugin-react', () => {
 		}
 	});
 
+	it('reads the platform from the tsconfig nearest the entrypoints when root is omitted', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-react-root-'));
+		try {
+			await mkdir(path.join(dir, 'src/pages'), { recursive: true });
+			await mkdir(path.join(dir, 'src/widgets'), { recursive: true });
+			for (const [config_dir, platform] of [
+				['', 'web'],
+				['src', 'ios'],
+				['src/pages', 'android'],
+			]) {
+				await writeFile(
+					path.join(dir, config_dir, 'tsconfig.json'),
+					JSON.stringify({ tsrx: { platform } }),
+				);
+			}
+			const file_path = path.join(dir, 'src/widgets/Platform.tsrx');
+			await writeFile(
+				file_path,
+				`if (import.meta.env.platform.ios) {
+					const selected_ios = 'selected_ios';
+				} else {
+					const selected_other = 'selected_other';
+				}`,
+			);
+			// Bun's default root is the entrypoints' common ancestor, here src/.
+			const hooks = setup_plugin(undefined, {
+				entrypoints: [path.join(dir, 'src/pages/Page.tsrx'), file_path],
+			});
+			const transformed = await load_tsrx(hooks, file_path);
+
+			expect(transformed?.contents).toContain('selected_ios');
+			expect(transformed?.contents).not.toContain('selected_other');
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('writes platform flag values into the output for Bun.plugin() registration', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-react-runtime-'));
+		try {
+			const file_path = path.join(dir, 'Platform.tsrx');
+			await writeFile(
+				file_path,
+				`export function flags() {
+					return [import.meta.env.platform.web, import.meta.env.platform.ios, import.meta.env.platform.android];
+				}`,
+			);
+			const hooks = setup_plugin({ platform: 'ios' }, null);
+			const transformed = await load_tsrx(hooks, file_path);
+
+			expect(transformed?.contents).toMatch(/\[\s*false,\s*true,\s*false\s*\]/);
+			expect(transformed?.contents).not.toContain('import.meta.env.platform');
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('reads the platform from the working directory when every entrypoint is an in-memory file', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-react-files-'));
+		const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
+		try {
+			await writeFile(
+				path.join(dir, 'tsconfig.json'),
+				JSON.stringify({ tsrx: { platform: 'ios' } }),
+			);
+			const file_path = path.join(dir, 'Platform.tsrx');
+			await writeFile(
+				file_path,
+				`if (import.meta.env.platform.ios) {
+					const selected_ios = 'selected_ios';
+				} else {
+					const selected_other = 'selected_other';
+				}`,
+			);
+			// Bun builds from the working directory when every entrypoint is a `files` key.
+			const hooks = setup_plugin(undefined, {
+				entrypoints: ['/virtual/main.ts'],
+				files: { '/virtual/main.ts': `import ${JSON.stringify(file_path)};` },
+			});
+			const transformed = await load_tsrx(hooks, file_path);
+
+			expect(transformed?.contents).toContain('selected_ios');
+			expect(transformed?.contents).not.toContain('selected_other');
+		} finally {
+			cwd.mockRestore();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('restores the automatic runtime under a classic jsx tsconfig', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-react-classic-'));
+		try {
+			await writeFile(
+				path.join(dir, 'tsconfig.json'),
+				JSON.stringify({ compilerOptions: { jsx: 'react' } }),
+			);
+			const file_path = path.join(dir, 'App.tsrx');
+			await writeFile(file_path, `export function App() @{ <p>{'x'}</p> }`);
+			const hooks = setup_plugin(undefined, { root: dir });
+			const transformed = await load_tsrx(hooks, file_path);
+
+			// Bun ignores a lone @jsxImportSource under `"jsx": "react"`.
+			expect(transformed?.contents).toMatch(
+				/^\/\*\* @jsxRuntime automatic @jsxImportSource react \*\/\n/,
+			);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('reads the jsx setting from the working directory for Bun.plugin() registration', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-react-runtime-classic-'));
+		const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
+		try {
+			await writeFile(
+				path.join(dir, 'tsconfig.json'),
+				JSON.stringify({ compilerOptions: { jsx: 'react' } }),
+			);
+			await mkdir(path.join(dir, 'src'));
+			await writeFile(
+				path.join(dir, 'src/tsconfig.json'),
+				JSON.stringify({ compilerOptions: { jsx: 'react-jsx' } }),
+			);
+			const file_path = path.join(dir, 'src/App.tsrx');
+			await writeFile(file_path, `export function App() @{ <p>{'x'}</p> }`);
+			// Bun's runtime transpiler applies only the working directory's tsconfig.
+			const hooks = setup_plugin(undefined, null);
+			const transformed = await load_tsrx(hooks, file_path);
+
+			expect(transformed?.contents).toMatch(
+				/^\/\*\* @jsxRuntime automatic @jsxImportSource react \*\/\n/,
+			);
+		} finally {
+			cwd.mockRestore();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('ignores tsconfigs above the working directory for Bun.plugin() registration', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-react-runtime-parent-'));
+		const cwd = vi.spyOn(process, 'cwd').mockReturnValue(path.join(dir, 'app'));
+		try {
+			await writeFile(
+				path.join(dir, 'tsconfig.json'),
+				JSON.stringify({ compilerOptions: { jsx: 'react' } }),
+			);
+			await mkdir(path.join(dir, 'app'));
+			const file_path = path.join(dir, 'app/App.tsrx');
+			await writeFile(file_path, `export function App() @{ <p>{'x'}</p> }`);
+			// Bun's runtime transpiler reads only the working directory's own tsconfig.
+			const hooks = setup_plugin(undefined, null);
+			const transformed = await load_tsrx(hooks, file_path);
+
+			expect(transformed?.contents).toMatch(/^\/\*\* @jsxImportSource react \*\/\n/);
+		} finally {
+			cwd.mockRestore();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('keeps a leading shebang above the JSX pragma', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-react-shebang-'));
+		try {
+			const file_path = path.join(dir, 'cli.tsrx');
+			await writeFile(file_path, `#!/usr/bin/env bun\nexport function App() @{ <p>{'x'}</p> }`);
+			const hooks = setup_plugin(undefined, { root: dir });
+			const transformed = await load_tsrx(hooks, file_path);
+
+			expect(transformed?.contents).toMatch(
+				/^#!\/usr\/bin\/env bun\n\/\*\* @jsxImportSource react \*\/\n/,
+			);
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it('honors exclude filters', async () => {
 		const hooks = setup_plugin({ exclude: /ignored\.tsrx$/ }, { target: 'browser' });
 		const transformed = await load_tsrx(hooks, '/project/ignored.tsrx');
 		expect(transformed).toBeUndefined();
+	});
+
+	it('serves each instance its own CSS when instances split the source files', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-react-instances-'));
+		try {
+			const hooks = setup_plugin({ include: /a\.tsrx$/ }, { target: 'browser', root: dir });
+			setup_plugin({ include: /b\.tsrx$/ }, { target: 'browser', root: dir }, hooks);
+			for (const name of ['a', 'b']) {
+				const file_path = path.join(dir, `${name}.tsrx`);
+				await writeFile(
+					file_path,
+					`export function App() @{ <><style>div { --marker-${name}: 1; }</style><div /></> }`,
+				);
+				expect(await dispatch(hooks.onLoad, { path: file_path, namespace: 'file' })).toBeDefined();
+			}
+
+			for (const name of ['a', 'b']) {
+				const css_id = `${path.join(dir, `${name}.tsrx`)}?tsrx-css&lang.css`;
+				const resolved = await dispatch(hooks.onResolve, { path: css_id, namespace: 'file' });
+				const css = await dispatch(hooks.onLoad, {
+					path: resolved.path,
+					namespace: resolved.namespace ?? 'file',
+				});
+				expect(css?.contents).toContain(`--marker-${name}`);
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 });
