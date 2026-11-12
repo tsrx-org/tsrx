@@ -817,7 +817,15 @@ let a = 2;`,
 	}
 }`,
 	},
-	{ error: UPSTREAM_ERRORS.LET_RESERVED, source: `const let = 1;` },
+	{ error: TS_ERRORS.STRICT_MODE_RESERVED_WORD, source: `var let = 1;` },
+	{ error: TS_ERRORS.STRICT_MODE_RESERVED_WORD_IN_CLASS, source: `class let {}` },
+	{ error: TS_ERRORS.IMPORT_META_PROPERTY_CALL, source: `import.foo();` },
+	{ error: TS_ERRORS.OPTIONAL_CHAIN_TAGGED_TEMPLATE, source: 'a?.<T>`c`;' },
+	{ error: TS_ERRORS.REST_PARAMETER_NOT_LAST, source: `function f(...a: number[], b: number) {}` },
+	{ error: TS_ERRORS.REST_ELEMENT_NOT_LAST, source: `const [...a, b] = [1];` },
+	{ error: TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, source: `a b;` },
+	{ error: TS_ERRORS.UNKNOWN_KEYWORD_OR_IDENTIFIER, source: `cosnt x = 1;` },
+	{ error: TS_ERRORS.VARIABLE_DECLARATION_NOT_ALLOWED, source: `let "a";` },
 	{
 		error: UPSTREAM_ERRORS.ABSTRACT_METHOD_IN_CLASS,
 		source: `class A {
@@ -856,6 +864,14 @@ let a = 2;`,
 		source: `declare namespace N {
 	declare class A {}
 }`,
+	},
+	{
+		error: TS_ERRORS.BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK,
+		source: `if (ready) let x = 1;`,
+	},
+	{
+		error: TS_ERRORS.LABEL_NOT_ALLOWED,
+		source: `outer: let x = 1;`,
 	},
 	{
 		error: TS_ERRORS.MODIFIER_ON_CONSTRUCTOR,
@@ -931,8 +947,8 @@ export const WITHOUT_EXAMPLE = new Map(
 		[TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE, 'No source found (#964).'],
 		[TS_ERRORS.SIGNATURE_PARAMETER_NAME, 'No source found (#964).'],
 		[
-			UPSTREAM_ERRORS.LET_BINDING,
-			"`let` as a name gives `The keyword 'let' is reserved` (TS1212) at the same place first (#962).",
+			TS_ERRORS.LET_DECLARATION_NAME,
+			'Reported only with TS1214 (`TS_ERRORS.STRICT_MODE_RESERVED_WORD`) at the same name, as TypeScript reports both (`const let = 1;`).',
 		],
 	]),
 );

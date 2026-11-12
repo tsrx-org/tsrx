@@ -2314,7 +2314,7 @@ describe('parse errors', () => {
 			// Prettier's typescript parser: `';' expected. (1:25)`.
 			['const f = (x as number) => x;', TS_ERRORS.TYPE_CAST_IN_PARAMETER, { line: 1, column: 12 }],
 			// Prettier's typescript parser: `';' expected. (1:23)`.
-			['const k = async(a)(b) => 1;', TS_ERRORS.UNEXPECTED_TOKEN, { line: 1, column: 23 }],
+			['const k = async(a)(b) => 1;', TS_ERRORS.TOKEN_EXPECTED, { line: 1, column: 23 }],
 			// Prettier's typescript parser: `Expression expected. (1:31)`.
 			['const g = <T,>(x: T) => { x = ; };', TS_ERRORS.UNEXPECTED_TOKEN, { line: 1, column: 31 }],
 			// Prettier's typescript parser: `'=>' expected. (1:22)`.
@@ -2406,6 +2406,9 @@ describe('parse errors', () => {
 		);
 		// Prettier's typescript parser formats `let` as a name the same way.
 		await expectFormat('var let = 1;\nclass let {}', 'var let = 1;\nclass let {}\n');
+		// And a label before a `let`, `const` or `using` declaration (TS1344).
+		await expectFormat('l: let x = 1;', 'l: let x = 1;\n');
+		await expectFormat('if (a) l: const [x] = b;', 'if (a) l: const [x] = b;\n');
 		// And a parameter after an arrow function's rest parameter.
 		await expectFormat('const f = (...a, b) => [a, b];', 'const f = (...a, b) => [a, b];\n');
 		await expectFormat(
@@ -2468,7 +2471,8 @@ describe('parse errors', () => {
 				TS_ERRORS.PATTERN_PARAMETER_PROPERTY,
 				'1:23',
 			],
-			['import.foo("x");', 'TS17012', '1:8'],
+			['import.foo;', 'TS17012', '1:8'],
+			['import.foo("x");', TS_ERRORS.IMPORT_META_PROPERTY_CALL, '1:8'],
 			['import defer a from "m";', TS_ERRORS.IMPORT_DEFER_DEFAULT, '1:8'],
 			['import defer { a } from "m";', TS_ERRORS.IMPORT_DEFER_NAMED, '1:8'],
 			['@dec function f() {}', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:1'],

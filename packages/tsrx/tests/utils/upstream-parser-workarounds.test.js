@@ -313,9 +313,15 @@ describe('class named after a TypeScript contextual keyword (sveltejs/acorn-type
 
 	it('still rejects reserved words as class names', () => {
 		// acorn's `The keyword '…' is reserved` (TS1212).
-		expect(() => parse('class interface {}')).toThrow(error_with('TS1212'));
 		expect(() => parse('class enum {}')).toThrow(error_with('TS1212'));
-		expect(() => parse('class implements {}')).toThrow(error_with('TS1212'));
+		// A word reserved only in strict mode is TypeScript's TS1213 there, from
+		// its binder, which a collecting parse records (#786).
+		for (const source of ['class interface {}', 'class implements {}']) {
+			expect(
+				parse(source).errors.map((error) => [error.code, error.pos]),
+				source,
+			).toEqual([[TS_ERRORS.STRICT_MODE_RESERVED_WORD_IN_CLASS.code, 6]]);
+		}
 	});
 
 	it('keeps anonymous classes anonymous', () => {
@@ -1163,7 +1169,8 @@ describe('a call after `async (…)` followed by `=>` (acornjs/acorn#1460)', () 
 			failing.flatMap((source) =>
 				modes.map(() => {
 					const pos = source.indexOf('=>');
-					return thrown(TS_ERRORS.UNEXPECTED_TOKEN, pos);
+					// `';' expected.`, as TypeScript reports it (#1053).
+					return thrown(TS_ERRORS.TOKEN_EXPECTED, pos);
 				}),
 			),
 		);
@@ -1633,8 +1640,9 @@ describe('`assert` on the line after an import (sveltejs/acorn-typescript#121)',
 	});
 
 	it('rejects `assert { … }` after a line break, as TypeScript does', () => {
+		// TypeScript takes `assert` for a misspelled `asserts` (#1053).
 		expect(() => parse('import "x"\nassert { type: "json" };')).toThrow(
-			error_with(TS_ERRORS.UNEXPECTED_TOKEN),
+			error_with(TS_ERRORS.UNKNOWN_KEYWORD_OR_IDENTIFIER, '2:0'),
 		);
 	});
 });
@@ -1746,8 +1754,8 @@ describe('anonymous default-exported class with `implements` or `abstract` (svel
 	it('still rejects `implements` as the name of a class statement', async () => {
 		const [{ strict, collect }] = await parseBothModes(['class implements I {}']);
 		for (const outcome of [strict, collect]) {
-			// acorn's `The keyword 'implements' is reserved` (TS1212).
-			expect(outcome).toMatchObject(thrown('TS1212', 6));
+			// TypeScript's TS1213 for a word reserved in strict mode in a class.
+			expect(outcome).toMatchObject(thrown(TS_ERRORS.STRICT_MODE_RESERVED_WORD_IN_CLASS, 6));
 		}
 	});
 });
@@ -1957,13 +1965,14 @@ describe('decorators on a rest parameter (sveltejs/acorn-typescript#126)', () =>
 		const plain = 'function f(...rest, b) {}';
 		const ambient = 'declare function f(@a ...rest: number[],): void;';
 		const [withDecorator, without, trailing] = await parseBothModes([decorated, plain, ambient]);
-		for (const [{ source, strict, collect }, comma] of /** @type {const} */ ([
-			[withDecorator, decorated.indexOf(', b')],
-			[without, plain.indexOf(', b')],
+		// TS1014 at the rest parameter (#956).
+		for (const [{ source, strict, collect }, rest] of /** @type {const} */ ([
+			[withDecorator, decorated.indexOf('...')],
+			[without, plain.indexOf('...')],
 		])) {
-			expect(strict, source).toMatchObject(thrown(TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, comma));
+			expect(strict, source).toMatchObject(thrown(TS_ERRORS.REST_PARAMETER_NOT_LAST, rest));
 			const { ast, errors } = parsed(collect, source);
-			expect(errors, source).toEqual([TS_ERRORS.REST_ELEMENT_TRAILING_COMMA.code]);
+			expect(errors, source).toEqual([TS_ERRORS.REST_PARAMETER_NOT_LAST.code]);
 			expect(
 				parameters(ast).map((param) => param.type),
 				source,
@@ -3144,7 +3153,7 @@ describe('a TypeScript word in parentheses at the start of a statement (sveltejs
 		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
 		expect(outcomes).toEqual(
 			cases.flatMap(([source, at]) =>
-				thrown_in_every_mode(TS_ERRORS.UNEXPECTED_TOKEN, source.indexOf(at)),
+				thrown_in_every_mode(TS_ERRORS.TOKEN_EXPECTED, source.indexOf(at)),
 			),
 		);
 	});
@@ -3213,8 +3222,8 @@ describe('the `intrinsic` keyword of a type alias (sveltejs/acorn-typescript#152
 		/** @type {Array<[source: string, at: string, error: ErrorKind]>} */
 		const cases = [
 			// TypeScript reports TS1005 `';' expected.` after the keyword.
-			['type T = intrinsic[];', '[', TS_ERRORS.UNEXPECTED_TOKEN],
-			['type T = intrinsic | X;', '|', TS_ERRORS.UNEXPECTED_TOKEN],
+			['type T = intrinsic[];', '[', TS_ERRORS.TOKEN_EXPECTED],
+			['type T = intrinsic | X;', '|', TS_ERRORS.TOKEN_EXPECTED],
 			['type T = \\u0069ntrinsic;', '\\u0069ntrinsic', TS_ERRORS.KEYWORD_ESCAPE],
 		];
 		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
@@ -3631,7 +3640,7 @@ describe('`declare` after decorators after `export default` (sveltejs/acorn-type
 		const source = 'export default declare class A {}';
 		const outcomes = await parse_in_worker(in_every_mode([source]));
 		expect(outcomes).toEqual(
-			thrown_in_every_mode(TS_ERRORS.UNEXPECTED_TOKEN, source.indexOf('class')),
+			thrown_in_every_mode(TS_ERRORS.TOKEN_EXPECTED, source.indexOf('class')),
 		);
 	});
 });
