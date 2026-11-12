@@ -1,7 +1,11 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { DIAGNOSTIC_CODES } from '@tsrx/core';
 import { handleTSRXMcpNodeRequest } from '../src/index.js';
 
 /** @type {Array<import('node:http').Server>} */
@@ -149,6 +153,36 @@ describe('@tsrx/mcp HTTP server', () => {
 				cwd: 'remote',
 			});
 		});
+	});
+
+	it('does not read a tsconfig platform from the server filesystem', async () => {
+		const server_dir = await mkdtemp(join(tmpdir(), 'tsrx-mcp-remote-'));
+		try {
+			await writeFile(
+				join(server_dir, 'tsconfig.json'),
+				JSON.stringify({ tsrx: { platform: 'ios' } }),
+				'utf8',
+			);
+			await with_http_client(async (client) => {
+				const result = await client.callTool({
+					name: 'compile-tsrx',
+					arguments: {
+						code: 'export const ios = import.meta.env.platform.ios;\n',
+						filename: join(server_dir, 'deep', 'App.tsrx'),
+						target: 'react',
+					},
+				});
+				const output = JSON.parse(expect_text_content(expect_first_tool_content(result)));
+
+				expect(output.ok).toBe(false);
+				expect(output.errors).toEqual([
+					expect.objectContaining({ code: DIAGNOSTIC_CODES.PLATFORM_REQUIRED }),
+				]);
+				expect(output.errors[0].message).not.toContain(server_dir);
+			});
+		} finally {
+			await rm(server_dir, { recursive: true, force: true });
+		}
 	});
 
 	it('supports optional bearer auth', async () => {

@@ -200,6 +200,312 @@ const rects = new Map<string | number, DOMRect>();
               (identifier)))
           (arguments))))))
 
+==================================
+Call Expressions With Type Arguments
+==================================
+
+const [items, setItems] = useState<T[]>([]);
+const [tag] = useState<'a' | 'b'>('a');
+const result = obj.method<A, B>(x);
+const rows = sql<Row>`select`;
+const negated = !isType<T>(value);
+const compared = a < b > c;
+const both = a < b && c > d;
+
+async function load() {
+  return await fetchJson<T>(url);
+}
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      name: (array_pattern
+        (identifier)
+        (identifier))
+      (initializer
+        (call_expression
+          function: (identifier)
+          type_arguments: (type_arguments
+            (type
+              (array_type
+                (type
+                  (identifier)))))
+          arguments: (arguments
+            (array))))))
+  (variable_declaration
+    (variable_declarator
+      name: (array_pattern
+        (identifier))
+      (initializer
+        (call_expression
+          function: (identifier)
+          type_arguments: (type_arguments
+            (type
+              (union_type
+                (type
+                  (literal_type
+                    (string)))
+                (type
+                  (literal_type
+                    (string))))))
+          arguments: (arguments
+            (string))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (call_expression
+          function: (member_expression
+            object: (identifier)
+            property: (identifier))
+          type_arguments: (type_arguments
+            (type
+              (identifier))
+            (type
+              (identifier)))
+          arguments: (arguments
+            (identifier))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (call_expression
+          function: (identifier)
+          type_arguments: (type_arguments
+            (type
+              (identifier)))
+          arguments: (template_string)))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (unary_expression
+          argument: (call_expression
+            function: (identifier)
+            type_arguments: (type_arguments
+              (type
+                (identifier)))
+            arguments: (arguments
+              (identifier)))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (binary_expression
+          left: (binary_expression
+            left: (identifier)
+            right: (identifier))
+          right: (identifier)))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (binary_expression
+          left: (binary_expression
+            left: (identifier)
+            right: (identifier))
+          right: (binary_expression
+            left: (identifier)
+            right: (identifier))))))
+  (function_declaration
+    name: (identifier)
+    parameters: (formal_parameters)
+    body: (statement_block
+      (return_statement
+        (await_expression
+          (call_expression
+            function: (identifier)
+            type_arguments: (type_arguments
+              (type
+                (identifier)))
+            arguments: (arguments
+              (identifier))))))))
+
+==================================
+As And Satisfies With Array Types
+==================================
+
+const list = value as T[];
+const checked = value satisfies T[];
+const item = value as T[K];
+const first = (value as T[])[0];
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (as_expression
+          (identifier)
+          (type
+            (array_type
+              (type
+                (identifier))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (satisfies_expression
+          (identifier)
+          (type
+            (array_type
+              (type
+                (identifier))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (as_expression
+          (identifier)
+          (type
+            (lookup_type
+              (type
+                (identifier))
+              (type
+                (identifier))))))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (subscript_expression
+          object: (parenthesized_expression
+            (as_expression
+              (identifier)
+              (type
+                (array_type
+                  (type
+                    (identifier))))))
+          index: (number))))))
+
+==================================
+Generic Arrow Functions
+==================================
+
+const id = <T,>(x: T) => x;
+const f = <T extends U>(x: T) => x;
+const g = async <T, U = T>(x: T): U => x;
+const after = 1;
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (arrow_function
+          type_parameters: (type_parameters
+            (type_parameter
+              (identifier)))
+          parameters: (formal_parameters
+            (required_parameter
+              pattern: (identifier)
+              (type
+                (identifier))))
+          body: (identifier)))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (arrow_function
+          type_parameters: (type_parameters
+            (type_parameter
+              (identifier)
+              (type
+                (identifier))))
+          parameters: (formal_parameters
+            (required_parameter
+              pattern: (identifier)
+              (type
+                (identifier))))
+          body: (identifier)))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (arrow_function
+          type_parameters: (type_parameters
+            (type_parameter
+              (identifier))
+            (type_parameter
+              (identifier)
+              (type
+                (identifier))))
+          parameters: (formal_parameters
+            (required_parameter
+              pattern: (identifier)
+              (type
+                (identifier))))
+          (type
+            (identifier))
+          body: (identifier)))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (number)))))
+
+==================================
+Tags That Start Like Generic Arrows
+==================================
+
+const el = <Foo extends={x} />;
+
+function App() @{
+  <div>
+    <Foo extends />
+    <Foo>(text)</Foo>
+  </div>
+}
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (jsx_self_closing_element
+          name: (jsx_non_namespaced_element_name
+            (identifier))
+          attribute: (jsx_attribute
+            name: (identifier)
+            value: (jsx_expression
+              (component_statement
+                (expression_statement
+                  (identifier)))))))))
+  (function_declaration
+    name: (identifier)
+    parameters: (formal_parameters)
+    body: (jsx_statement_container
+      children: (jsx_element
+        open_tag: (jsx_opening_element
+          name: (jsx_element_name
+            (identifier)))
+        children: (jsx_text)
+        children: (jsx_self_closing_element
+          name: (jsx_non_namespaced_element_name
+            (identifier))
+          attribute: (jsx_attribute
+            name: (identifier)))
+        children: (jsx_text)
+        children: (jsx_element
+          open_tag: (jsx_opening_element
+            name: (jsx_element_name
+              (identifier)))
+          children: (jsx_text)
+          close_tag: (jsx_closing_element
+            name: (jsx_element_name
+              (identifier))))
+        children: (jsx_text)
+        close_tag: (jsx_closing_element
+          name: (jsx_element_name
+            (identifier)))))))
+
 ==================
 Object Type With Semicolon Separators
 ==================
