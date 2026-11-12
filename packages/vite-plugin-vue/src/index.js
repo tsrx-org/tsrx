@@ -5,7 +5,7 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { isAbsolute, resolve as pathResolve } from 'node:path';
-import { parseSync } from 'vite';
+import { normalizePath, parseSync } from 'vite';
 import { compile } from '@tsrx/vue';
 import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
 import { resolveBuildPlatform } from '@tsrx/core/config';
@@ -204,6 +204,16 @@ function create_tsrx_vue_plugin(options) {
 			const workerQuery = source.slice(path.length);
 
 			if (isVirtual(path)) {
+				// Vitest can ask for a module by its root-relative URL. Anchor the
+				// id to the file, or imports from the module resolve against the
+				// root. Vite's resolver spells it (real path, `/` separators), so
+				// the file has one module id however it is reached.
+				const realPath = toRealPath(path);
+				if (realPath !== path.slice(0, -VIRTUAL_TSX_SUFFIX.length)) {
+					const resolved = await this.resolve(realPath, importer, { ...options, skipSelf: true });
+					const id = resolved && !resolved.external ? resolved.id : realPath;
+					return normalizePath(id) + VIRTUAL_TSX_SUFFIX + workerQuery;
+				}
 				return isAbsolute(source) ? source : pathResolve(rootDir, source.replace(/^\/+/, ''));
 			}
 
@@ -227,7 +237,20 @@ function create_tsrx_vue_plugin(options) {
 				return absoluteSource + VIRTUAL_TSX_SUFFIX + workerQuery;
 			}
 
-			return null;
+			// A package export or an extensionless import can still resolve to
+			// a `.tsrx` file.
+			if (source.startsWith('\0') || source.includes('?')) return null;
+			const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+			if (
+				resolved &&
+				!resolved.id.startsWith('\0') &&
+				!resolved.id.includes('?') &&
+				isTsrxSource(resolved.id)
+			) {
+				return { ...resolved, id: resolved.id + VIRTUAL_TSX_SUFFIX };
+			}
+			// Hand the resolution over, so Vite does not resolve the import again.
+			return resolved;
 		},
 
 		async load(id) {

@@ -21,3 +21,9 @@ export function resolveBuildPlatform(
  * theirs.
  */
 export function getBuildPlatformConfigFiles(options?: BuildPlatformResolutionOptions): string[];
+
+/** Effective `compilerOptions.jsx` of the nearest tsconfig above a file or directory, including `extends`. */
+export function resolveTsconfigJsx(
+	searchPath: string,
+	cache?: Map<string, unknown>,
+): string | undefined;
