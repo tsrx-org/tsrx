@@ -1074,10 +1074,11 @@ export function SpecificationPage() @{
 								<code class="inline-code">{'//'}</code> starts a line comment where whitespace comes
 								right before it, at the start of a line, or right after a tag, an expression
 								container, or a block, and the comment runs to the end of the line, a closing tag on
-								it included. A <code class="inline-code">{'//'}</code> that touches other text, as
-								in <code class="inline-code">{'https://example.com'}</code> or{' '}
-								<code class="inline-code">{'a//b'}</code>, is text. So is a character reference or a
-								string expression: only <code class="inline-code">{'/*'}</code> and{' '}
+								it included. A <code class="inline-code">{'//'}</code> that touches other text or a
+								block comment, as in <code class="inline-code">{'https://example.com'}</code>,{' '}
+								<code class="inline-code">{'a//b'}</code> or{' '}
+								<code class="inline-code">{'/* c */// c'}</code>, is text. So is a character
+								reference or a string expression: only <code class="inline-code">{'/*'}</code> and{' '}
 								<code class="inline-code">{'//'}</code> start a comment, so{' '}
 								<code class="inline-code">{'&#47;*'}</code>,{' '}
 								<code class="inline-code">{'&#47;/'}</code> and{' '}

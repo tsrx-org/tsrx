@@ -199,6 +199,12 @@ export namespace Parse {
 			loose: boolean;
 			errors: CoreCompiler.CompileError[] | undefined;
 			filename: string | undefined;
+			/**
+			 * Collects the `[start, end]` of each line comment the tokenizer
+			 * recorded that template text reads as text, which the caller drops
+			 * after the parse.
+			 */
+			textComments?: Array<[number, number]>;
 		};
 		// The type has "latest" but it's converted to 1e8 at runtime
 		// and if (ecmaVersion >= 2015) { ecmaVersion -= 2009 }
