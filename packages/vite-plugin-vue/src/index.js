@@ -5,10 +5,12 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { isAbsolute, resolve as pathResolve } from 'node:path';
+import { normalizePath, parseSync } from 'vite';
 import { compile } from '@tsrx/vue';
 import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
 import { resolveBuildPlatform } from '@tsrx/core/config';
 import { createDepScanLoadPlugin } from '@tsrx/core/vite/dep-scan';
+import { findUnconfiguredPlatformFlag, restartOnPlatformChange } from '@tsrx/core/vite/platform';
 import { createWorkerEntryMiddleware, stripWorkerEntryQuery } from '@tsrx/core/vite/worker';
 import vueJsxVaporModule from 'vue-jsx-vapor/vite';
 import { createVaporInteropPlugin } from './interop.js';
@@ -94,16 +96,20 @@ function create_tsrx_vue_plugin(options) {
 	const includePattern = options.include ?? DEFAULT_TSRX_PATTERN;
 	const compile_options = { runtimeImports: options.runtimeImports, platform };
 
+	/** @type {import('@tsrx/core/config').BuildPlatformResolutionOptions} */
+	let platform_resolution = {};
+
 	/** @param {import('vite').UserConfig} config */
 	function resolve_platform(config) {
-		platform = resolveBuildPlatform({
+		platform_resolution = {
 			root: config.root ?? process.cwd(),
 			tsconfig:
 				options.tsconfig ??
 				/** @type {{ tsconfig?: string }} */ (/** @type {unknown} */ (config)).tsconfig,
 			platform: explicit_platform,
 			integration: '@tsrx/vite-plugin-vue',
-		});
+		};
+		platform = resolveBuildPlatform(platform_resolution);
 		compile_options.platform = platform;
 	}
 
@@ -184,6 +190,7 @@ function create_tsrx_vue_plugin(options) {
 		},
 
 		configureServer(server) {
+			restartOnPlatformChange(server, platform_resolution, () => platform);
 			server.middlewares.use(createWorkerEntryMiddleware(isTsrxSource));
 		},
 
@@ -197,6 +204,16 @@ function create_tsrx_vue_plugin(options) {
 			const workerQuery = source.slice(path.length);
 
 			if (isVirtual(path)) {
+				// Vitest can ask for a module by its root-relative URL. Anchor the
+				// id to the file, or imports from the module resolve against the
+				// root. Vite's resolver spells it (real path, `/` separators), so
+				// the file has one module id however it is reached.
+				const realPath = toRealPath(path);
+				if (realPath !== path.slice(0, -VIRTUAL_TSX_SUFFIX.length)) {
+					const resolved = await this.resolve(realPath, importer, { ...options, skipSelf: true });
+					const id = resolved && !resolved.external ? resolved.id : realPath;
+					return normalizePath(id) + VIRTUAL_TSX_SUFFIX + workerQuery;
+				}
 				return isAbsolute(source) ? source : pathResolve(rootDir, source.replace(/^\/+/, ''));
 			}
 
@@ -220,7 +237,20 @@ function create_tsrx_vue_plugin(options) {
 				return absoluteSource + VIRTUAL_TSX_SUFFIX + workerQuery;
 			}
 
-			return null;
+			// A package export or an extensionless import can still resolve to
+			// a `.tsrx` file.
+			if (source.startsWith('\0') || source.includes('?')) return null;
+			const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+			if (
+				resolved &&
+				!resolved.id.startsWith('\0') &&
+				!resolved.id.includes('?') &&
+				isTsrxSource(resolved.id)
+			) {
+				return { ...resolved, id: resolved.id + VIRTUAL_TSX_SUFFIX };
+			}
+			// Hand the resolution over, so Vite does not resolve the import again.
+			return resolved;
 		},
 
 		async load(id) {
@@ -246,6 +276,13 @@ function create_tsrx_vue_plugin(options) {
 			}
 
 			return { code, map };
+		},
+
+		transform(code, id) {
+			if (platform !== undefined) return null;
+			const flag = findUnconfiguredPlatformFlag(code, id, parseSync);
+			if (flag) this.error(flag, flag.pos);
+			return null;
 		},
 
 		handleHotUpdate(ctx) {

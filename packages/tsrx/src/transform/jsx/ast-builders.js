@@ -3,6 +3,7 @@
 
 import * as b from '../../utils/builders.js';
 import { has_location, is_ast_node } from '../../utils/ast.js';
+import { IDENTIFIER_OBFUSCATION_PREFIX } from '../../identifier-utils.js';
 
 /**
  * AST-building utilities shared across every JSX target (React, Preact,
@@ -198,9 +199,9 @@ export function identifier_to_jsx_identifier(id) {
 
 /**
  * A JSX tag name refers to a *component* (rather than a host/DOM tag) iff:
- * - it's a `JSXIdentifier` whose first character is uppercase (the convention
- *   every framework's JSX runtime keys off — `<div>` is a host element,
- *   `<Foo>` is a component), or
+ * - it's a `JSXIdentifier` whose first character isn't a lowercase ASCII
+ *   letter, as JSX itself decides (`<div>` is a host element; `<Foo>`, and the
+ *   compiler's own `<__Show>`, are components), or
  * - it's a `JSXMemberExpression` (e.g. `<Icons.Button />`).
  *
  * Used by platforms that veto static-hoisting of component JSX (Vue, Solid)
@@ -216,7 +217,7 @@ export function is_component_jsx_name(name) {
 
 	if (name.type === 'JSXIdentifier') {
 		const first = name.name?.[0];
-		return first != null && first >= 'A' && first <= 'Z';
+		return first != null && !(first >= 'a' && first <= 'z');
 	}
 
 	if (name.type === 'JSXMemberExpression') {
@@ -338,23 +339,32 @@ export function is_bare_render_expression(node) {
 }
 
 /**
+ * The name of a loop callback's item parameter when the head's pattern can't
+ * be the parameter itself. Authored code can't use the prefix.
+ */
+export const FOR_OF_ITEM_PARAM_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'item';
+
+/**
  * Gather the params a `for (x of y; index i)` loop should expose to its body
  * JSX (value first, optional index second).
  *
  * @param {AST.ForOfStatement['left']} left
  * @param {AST.Identifier | null} [index]
+ * @param {AST.Expression | null} [key]
  * @returns {AST.Pattern[]}
  */
-export function get_for_of_iteration_params(left, index) {
+export function get_for_of_iteration_params(left, index, key) {
 	/** @type {AST.Pattern[]} */
 	const params = [];
-	if (left?.type !== 'VariableDeclaration') {
-		params.push(/** @type {AST.Pattern} */ (left));
-	} else if (left.declarations[0]) {
+	if (left?.type === 'VariableDeclaration' && left.declarations[0]) {
 		params.push(left.declarations[0].id);
+	} else if (index || key) {
+		// A declaration list with no name, which `collect` and `loose` mode parse
+		// (`@for (const of items)`), and an assignment target, which is reported
+		// (`@for (state.item of items)`), give the loop no item, but the index
+		// still comes second and a key callback still takes one.
+		params.push(b.id(FOR_OF_ITEM_PARAM_NAME));
 	}
-	// A declaration list with no name, which `collect` and `loose` mode parse
-	// (`@for (const of items)`), gives the loop none.
 	if (index) {
 		params.push(index);
 	}
