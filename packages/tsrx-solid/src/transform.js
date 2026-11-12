@@ -1442,9 +1442,14 @@ function bind_loop_item(arrow, item, param, value, transform_context) {
 		);
 		/** @type {AST.Statement[]} */
 		const tag_declarations = [];
-		body = body.map((statement) =>
-			rewrite_binding_refs(statement, replacements, tag_declarations, transform_context),
-		);
+		// Rewritten as one block, so a name the loop body declares again (as a
+		// `for…of` body may) shadows the item's binding in every statement.
+		body = rewrite_binding_refs(
+			b.block(body),
+			replacements,
+			tag_declarations,
+			transform_context,
+		).body;
 		declarations = [
 			b.const(
 				bindings,
@@ -1495,8 +1500,8 @@ function is_type_only_node(node) {
 
 /**
  * Replaces each reference to a name in `replacements` with its expression,
- * leaving names that a nested function, class expression, block, or loop
- * declares again. A component tag that names one (`<Icon />`,
+ * leaving names that a nested function, class expression, block, `switch`, or
+ * loop declares again. A component tag that names one (`<Icon />`,
  * `<icons.Star />`) becomes a `dynamic` component, declared in
  * `tag_declarations`, so it follows the row too.
  *
@@ -1613,6 +1618,20 @@ function rewrite_binding_refs(node, replacements, tag_declarations, transform_co
 			},
 			BlockStatement(block, { state, next }) {
 				next(with_declared(state, lexical_names(block.body)));
+			},
+			// The cases share one block, which the discriminant is read outside of.
+			SwitchStatement(statement, { state, visit }) {
+				const inner = with_declared(
+					state,
+					lexical_names(statement.cases.flatMap((switch_case) => switch_case.consequent)),
+				);
+				return {
+					...statement,
+					discriminant: /** @type {AST.Expression} */ (visit(statement.discriminant, state)),
+					cases: statement.cases.map(
+						(switch_case) => /** @type {AST.SwitchCase} */ (visit(switch_case, inner)),
+					),
+				};
 			},
 			// A class expression's name is bound inside it, heritage included.
 			ClassExpression(expression, { state, next }) {

@@ -402,6 +402,37 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toMatch(/title=\{_\$_bindings_\d+\(\)\.Item\}/);
 		});
 
+		it('leaves names the loop body declares again in a destructured keyed loop', () => {
+			const { code } = compile(
+				`function App({ items, other }: { items: { id: number; name: string }[]; other: { name: string } }) @{
+					@for (const { id, name } of items; key id) {
+						const { name } = other;
+						const label = (() => {
+							switch (id) {
+								case 1:
+									const id = 'one';
+									return id;
+								default:
+									return 'other';
+							}
+						})();
+						<li title={name}>{label}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			// A for…of body may declare a loop binding's name again; its own
+			// declaration then wins in the whole body, as in JavaScript.
+			expect(code).toContain('const { name } = other;');
+			expect(code).toContain('title={name}');
+			// Unbraced cases share the switch's block; the discriminant is outside it.
+			expect(code).toMatch(/switch \(_\$_bindings_\d+\(\)\.id\)/);
+			expect(code).toContain("const id = 'one';");
+			expect(code).toContain('return id;');
+			expect(code).toMatch(/keyed=\{\(\{ id, name \}\) => id\}/);
+		});
+
 		it('keeps the authored names in the type view of a destructured keyed loop', () => {
 			const { code, errors } = compile_to_volar_mappings(
 				`function App({ items }: { items: { id: number; Icon: () => any }[] }) @{
