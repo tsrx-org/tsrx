@@ -183,6 +183,9 @@ these without misdescribing the source to other rules:
   `@else`, `@else if` or `@for` body that holds a single statement, such as
   `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
   doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
+- A `@pending` block shows while the `@try` body suspends, but code path analysis
+  runs it after the body. So `no-useless-assignment` can flag a value only
+  `@pending` reads, when the body overwrites it or can't complete.
 
 ## Related Packages
 

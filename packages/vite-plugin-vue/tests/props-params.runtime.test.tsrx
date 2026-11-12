@@ -1,9 +1,12 @@
-import { defineVaporComponent, ref } from 'vue';
+import { ref } from 'vue';
+import { defineVaporComponent } from 'vue-jsx-vapor';
 
 // Props patterns @tsrx/vue reports as TSRX2031, run through vue-jsx-vapor's
 // props macro as the compiler would wrap them, and the form it suggests. An
 // explicit `defineVaporComponent` call is not a component TSRX checks, so
-// these reach the macro as written.
+// these reach the macro as written. It is imported from vue-jsx-vapor, as the
+// compiler imports it: Vue TSRX reports any other binding of the name
+// (TSRX2032).
 
 const DefaultedParam = defineVaporComponent(function ({ s }: { s?: string } = {}) {
 	return <p>{String(s)}</p>;

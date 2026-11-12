@@ -2187,7 +2187,7 @@ describe('destructuring', () => {
 			);
 		});
 
-		it('imports the spread normalizers that return their copy', () => {
+		it('imports the spread normalizers that return their copy and share merged refs', () => {
 			const { code } = compile(
 				`export function App() @{
 					<>
@@ -2198,9 +2198,9 @@ describe('destructuring', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('copy_spread_props as __normalize_spread_props');
+			expect(code).toContain('copy_spread_props_sharing_refs as __normalize_spread_props');
 			expect(code).toContain(
-				'copy_spread_props_for_ref_attr as __normalize_spread_props_for_ref_attr',
+				'copy_spread_props_for_ref_attr_sharing_refs as __normalize_spread_props_for_ref_attr',
 			);
 			expect(code).toContain('{...__normalize_spread_props(props.first)}');
 		});
