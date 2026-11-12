@@ -132,6 +132,8 @@ function Greeting({ name }: { name: string }) @{
 
 JavaScript comments are also allowed between template children and are not rendered. Use braces for JavaScript expressions, including string literals that should be evaluated as JavaScript.
 
+An \`@\` right before \`{\` opens a \`@{ ... }\` code block, in children too, so \`<p>@{user.name}</p>\` runs \`user.name\` as a statement and renders nothing (the \`TSRX2035\` warning). To render an \`@\` and then a value, write \`<p>&#64;{user.name}</p>\`, \`\`<p>{\`@\${user.name}\`}</p>\`\`, or \`<p>{'@' + user.name}</p>\`.
+
 A \`<script>\` body is raw text, like a \`<style>\` body, in a template and in plain TSX: everything up to \`</script>\`, kept as written, with its comments, \`<\`, \`>\`, character references, and line breaks. \`{…}\` in it is text, not an expression container: \`<script>{code}</script>\` is a script whose text is \`{code}\`. The body ends at \`</script\`, optional whitespace, and \`>\`; any other \`</script\` in it, in any letter case, is the \`TSRX1004\` error, so write \`<\\/script\` instead. For a body computed at runtime, use the target's property on a self-closing \`<script>\`: \`dangerouslySetInnerHTML={{ __html: code }}\` in React, Preact, and Hono, \`innerHTML={code}\` in Solid and Vue. Whether a script runs is each target's decision.
 
 Specification grammar:

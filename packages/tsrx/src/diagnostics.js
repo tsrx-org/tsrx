@@ -110,6 +110,12 @@ export const DIAGNOSTIC_CODES = {
 	DYNAMIC_TAG_TYPE_ARGUMENTS: 'TSRX2033',
 	/** A `yield` in a template value the target's JSX compiler moves into an effect, getter or callback. */
 	TARGET_TEMPLATE_YIELD_UNSUPPORTED: 'TSRX2034',
+	/**
+	 * A warning: a `@{ … }` with no output whose only statement is an
+	 * expression there only for its value, such as `<p>@{user.name}</p>`, so
+	 * it renders nothing.
+	 */
+	CODE_BLOCK_EXPRESSION_ONLY: 'TSRX2035',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -549,6 +555,18 @@ export const TSRX_ERRORS = {
 	DEFINE_VAPOR_COMPONENT_BINDING: tsrx(
 		'TARGET_RESERVED_NAME',
 		"Vue TSRX does not allow a binding named `defineVaporComponent`. vue-jsx-vapor finds components by calls to that exact name, and the compiler wraps each component in the one from 'vue-jsx-vapor', so the name can't be declared again or shadowed. Rename this binding.",
+	),
+	// A warning. This one is for a child of an element or fragment, where the
+	// `@` may have been meant as text.
+	CODE_BLOCK_EXPRESSION_CHILD: tsrx(
+		'CODE_BLOCK_EXPRESSION_ONLY',
+		"This @{…} is a code block, not '@' text and an expression: it runs the expression as a statement and renders nothing. To render '@' and the value, write {`@${value}`} or {'@' + value}; for the value alone, write {value}.",
+	),
+	// A warning. This one is for anywhere else: a function body, a value, or
+	// the output of another `@{ … }` or a directive body.
+	CODE_BLOCK_EXPRESSION_ONLY: tsrx(
+		'CODE_BLOCK_EXPRESSION_ONLY',
+		'This @{…} code block holds only an expression statement, so it renders nothing. To render the value, end the block with output, such as @{ <>{value}</> }.',
 	),
 
 	// TSRX3xxx

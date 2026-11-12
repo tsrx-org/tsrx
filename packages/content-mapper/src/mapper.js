@@ -197,11 +197,16 @@ export function create_tsrx_content_mapper(context = {}) {
 		// generated code can lose the mistake (a repeated modifier, a rest
 		// parameter's `?`), and then TypeScript never reports it. Where TypeScript
 		// does, the directives hide its copy until the mapper's error is fixed.
-		const diagnostics = result.errors.map((error) =>
+		// A warning doesn't go: TypeScript shows each of the mapper's diagnostics
+		// as an error, as the protocol has no severity, so `tsc` would fail on
+		// code that compiles, and its directive would hide TypeScript's own
+		// errors in the statement that holds it.
+		const errors = result.errors.filter((error) => error.severity !== 'warning');
+		const diagnostics = errors.map((error) =>
 			to_diagnostic(error, content.length, MAPPER_CODES.USAGE_ERROR),
 		);
 		const diagnosticDirectives = ignore_directives(
-			result.errors,
+			errors,
 			result.sourceAst,
 			generated.mappings,
 			content.length,

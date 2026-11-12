@@ -4,6 +4,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { TSRX_ERRORS } from '@tsrx/core/diagnostics';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 const cli_path = fileURLToPath(new URL('../src/tsc.js', import.meta.url));
@@ -176,6 +177,28 @@ describe.each(['native', 'bypass', 'legacy'])('tsrx-tsc with the %s loader', (lo
 		expect(result.status).toBe(0);
 	});
 });
+
+describe('tsrx-tsc with a warning', () => {
+	it('prints it as a warning, with its code and position, and still exits 0', () => {
+		fs.writeFileSync(
+			path.join(workspace, 'layout.tsrx'),
+			'export default function MainLayout({ title }: { title: string }) @{\n\t<div>@{title}</div>\n}\n',
+		);
+		const result = run_cli('native');
+		const { code, message } = TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD;
+		expect(result.output).toMatch(
+			new RegExp(
+				`^\\[tsrx-tsc\\] \\S*layout\\.tsrx\\(2,7\\): warning ${code}: ${escape_regexp(message)}\n$`,
+			),
+		);
+		expect(result.status).toBe(0);
+	});
+});
+
+/** @param {string} text */
+function escape_regexp(text) {
+	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 /**
  * Stand in for what `typescript@7` resolves to: a launcher with an export map
