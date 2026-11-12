@@ -58,7 +58,15 @@ function apply_rspack_plugin(plugin, config = {}) {
 	}
 	const compiler = {
 		context: config.root,
-		webpack: { DefinePlugin },
+		webpack: {
+			DefinePlugin,
+			experiments: {
+				VirtualModulesPlugin: class {
+					apply() {}
+				},
+			},
+		},
+		hooks: { compilation: { tap() {} } },
 		options: {
 			mode: 'development',
 			plugins: [],

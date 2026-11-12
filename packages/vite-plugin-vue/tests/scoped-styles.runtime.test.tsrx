@@ -3,10 +3,32 @@ import {
 	expect_cyclic_apply_error,
 	expect_mark_before,
 } from '@tsrx/core/test-harness/runtime/scoped-styles-dom';
+import { reactive } from 'vue';
 import { ThemeApplyApp } from '@tsrx/vite-plugin-vue-test/scoped-styles/applier.tsrx';
 
 const THEME_MARK = '--tsrx-theme-mark';
 const APPLIER_MARK = '--tsrx-applier-mark';
+const SCOPE_HASH = expect.stringMatching(/^tsrx-[0-9a-f]+$/);
+
+type SpreadBag = Record<string, unknown> | null | undefined;
+
+function SpreadClassApp({ bag }: { bag?: SpreadBag }) @{
+	<>
+		<style>
+			span {
+				color: rgb(0, 128, 0);
+			}
+		</style>
+		<span data-probe="spread" {...bag} />
+		<span data-probe="class-before" class="base" {...bag} />
+		<span data-probe="class-after" {...bag} class="last" />
+	</>
+}
+
+function classes(probe: string): string[] {
+	const element = container.querySelector(`[data-probe="${probe}"]`) as HTMLElement;
+	return element.className.split(' ');
+}
 
 describe('sibling-scoped apply runtime (vue)', function () {
 	it('mounts a theme module plus applier and keeps the local rule later in the cascade', async function () {
@@ -27,6 +49,46 @@ describe('sibling-scoped apply runtime (vue)', function () {
 
 		expect(getComputedStyle(applied).color).toBe('rgb(0, 0, 0)');
 		expect(getComputedStyle(opted_in).color).toBe('rgb(0, 128, 0)');
+	});
+
+	// Vue's `mergeProps` joins `class` across attributes and spreads, so an
+	// authored class and the scope hash stay beside the class a spread supplies.
+	it('keeps the class a host spread supplies beside the scope hash', async function () {
+		await render(SpreadClassApp, { bag: { class: 'from-spread', id: 'spread-id' } });
+
+		expect(classes('spread')).toEqual(['from-spread', SCOPE_HASH]);
+		expect(classes('class-before')).toEqual(['base', SCOPE_HASH, 'from-spread']);
+		expect(classes('class-after')).toEqual(['from-spread', 'last', SCOPE_HASH]);
+		expect(container.querySelector('[data-probe="spread"]')?.id).toBe('spread-id');
+	});
+
+	for (const [label, bag] of [
+		['without a class', { id: 'spread-id' }],
+		['with an undefined class', { class: undefined }],
+		['of an omitted bag', undefined],
+	] as const) {
+		it(`keeps the scope hash beside a host spread ${label}`, async function () {
+			await render(SpreadClassApp, { bag });
+
+			expect(classes('spread')).toEqual([SCOPE_HASH]);
+			expect(classes('class-before')).toEqual(['base', SCOPE_HASH]);
+			expect(classes('class-after')).toEqual(['last', SCOPE_HASH]);
+		});
+	}
+
+	it('updates the class a host spread supplies', async function () {
+		const bag = reactive<Record<string, unknown>>({ class: 'one' });
+		await render(SpreadClassApp, { bag });
+
+		expect(classes('spread')).toEqual(['one', SCOPE_HASH]);
+
+		bag.class = 'two';
+		await flush();
+		expect(classes('spread')).toEqual(['two', SCOPE_HASH]);
+
+		delete bag.class;
+		await flush();
+		expect(classes('spread')).toEqual([SCOPE_HASH]);
 	});
 
 	it('throws when an applier evaluates before its imported theme', async function () {

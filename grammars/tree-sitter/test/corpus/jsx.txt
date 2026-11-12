@@ -1249,6 +1249,58 @@ function App() @{
             (identifier)))))))
 
 ==================
+Script Element Closing Tag With Whitespace
+==================
+
+function App() @{
+  <div>
+    <script>go();</script >
+    <script></script >
+    <script>
+      go();
+    </script
+    >
+    <p>{text}</p>
+  </div>
+}
+
+---
+
+(program
+  (function_declaration
+    (identifier)
+    (formal_parameters)
+    (jsx_statement_container
+      (jsx_element
+        (jsx_opening_element
+          (jsx_element_name
+            (identifier)))
+        (jsx_text)
+        (script_element
+          (raw_text))
+        (jsx_text)
+        (script_element)
+        (jsx_text)
+        (script_element
+          (raw_text))
+        (jsx_text)
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_expression
+            (component_statement
+              (expression_statement
+                (identifier))))
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))
+        (jsx_text)
+        (jsx_closing_element
+          (jsx_element_name
+            (identifier)))))))
+
+==================
 Element Named Like Script Stays Generic
 ==================
 

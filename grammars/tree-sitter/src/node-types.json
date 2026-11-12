@@ -28,6 +28,10 @@
         "named": true
       },
       {
+        "type": "using_declaration",
+        "named": true
+      },
+      {
         "type": "variable_declaration",
         "named": true
       }
@@ -1208,6 +1212,10 @@
         },
         {
           "type": "try_statement",
+          "named": true
+        },
+        {
+          "type": "using_declaration",
           "named": true
         },
         {
@@ -5233,6 +5241,21 @@
     }
   },
   {
+    "type": "using_declaration",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "variable_declarator",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "variable_declaration",
     "named": true,
     "fields": {},
@@ -5897,6 +5920,10 @@
   },
   {
     "type": "untrack",
+    "named": false
+  },
+  {
+    "type": "using",
     "named": false
   },
   {

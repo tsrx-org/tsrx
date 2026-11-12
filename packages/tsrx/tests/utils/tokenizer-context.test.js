@@ -1,9 +1,12 @@
 /** @import * as AST from 'estree' */
 /** @import { ParseOptions } from '../../types/index' */
 /** @import { ErrorKind } from '../shared/errors.js' */
+/** @import { Parse } from '../../types/parse' */
 
 import { describe, expect, it } from 'vitest';
 import { TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
+import { createParser } from '../../src/parse/index.js';
+import { TSRXPlugin } from '../../src/plugin.js';
 import { thrown } from '../shared/errors.js';
 import { parse_in_worker, parse_in_worker_with_ast } from '../shared/parse-in-worker.js';
 
@@ -613,5 +616,46 @@ describe('type arguments where a tag could start (#545, #578)', () => {
 			['x = class {}<div>a</div>;', TS_ERRORS.UNEXPECTED_TOKEN, '</'],
 			['x = <div>{function () {}</div>', TS_ERRORS.TOKEN_EXPECTED, '</'],
 		]);
+	});
+});
+
+describe('the token context stack after sibling directives (#1194)', () => {
+	/**
+	 * The deepest the tokenizer's context stack gets while `source` is parsed.
+	 * @param {string} source
+	 */
+	function max_context_depth(source) {
+		let deepest = 0;
+		/** @type {Parse.AcornPlugin} */
+		const measure = (Parser) =>
+			class extends Parser {
+				nextToken() {
+					super.nextToken();
+					deepest = Math.max(deepest, this.context.length);
+				}
+			};
+		createParser(TSRXPlugin(), measure)(source, 'App.tsrx');
+		return deepest;
+	}
+
+	it.each([
+		'@if (c) { <i /> }',
+		'@if (c) { <i /> } @else { <b /> }',
+		'@if (c) { <i /> } @else if (d) { <b /> } @else { <u /> }',
+		'@for (const x of xs) { <i /> }',
+		'@for (const x of xs) { <i /> } @empty { <b /> }',
+		'@switch (v) { @case 1: { <i /> } @default: { <b /> } }',
+		'@try { <i /> } @catch (e) { <b /> }',
+		'@try { <i /> } @pending { <b /> } @catch (e) { <u /> }',
+	])('follows nesting, not the number of siblings, after `%s`', (directive) => {
+		/** @param {number} count */
+		const depth = (count) =>
+			max_context_depth(
+				`export function App() @{\n\t<div>\n${Array(count).fill(directive).join('\n')}\n\t</div>\n}\n`,
+			);
+
+		// Every later directive copies the stack, so a deeper stack per sibling
+		// makes parse time grow with the square of the sibling count.
+		expect(depth(40)).toBe(depth(2));
 	});
 });

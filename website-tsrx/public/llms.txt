@@ -53,8 +53,8 @@ npm install -D @tsrx/vite-plugin-solid
 npm install -D @tsrx/rspack-plugin-solid
 npm install -D @tsrx/bun-plugin-solid      # Bun
 
-# Vue target
-npm install @tsrx/vue vue vue-jsx-vapor
+# Vue target (Vapor needs Vue 3.6 or later)
+npm install @tsrx/vue "vue@^3.6.0-0" vue-jsx-vapor
 npm install -D @tsrx/vite-plugin-vue
 npm install -D @tsrx/rspack-plugin-vue
 npm install -D @tsrx/bun-plugin-vue        # Bun
@@ -1505,9 +1505,10 @@ const UserProfile = ({ user, posts }: { user: User | null; posts: Post[] }) => @
 
 `@if` lowers to `<Show>`, `@switch` lowers to `<Switch>/<Match>`, `@for` lowers
 to `<For>`, `@try/catch` lowers to Solid error primitives, and `@try/pending`
-lowers to loading primitives. Read props as `props.name` (or split them with
-`splitProps`) rather than destructuring them, so Solid's getter-based prop
-reactivity is preserved.
+lowers to loading primitives. As on every target, the `@catch` binding is the
+thrown value (`e.message`), not Solid's error accessor (`e()`). Read props as
+`props.name` (or split them with `splitProps`) rather than destructuring them, so
+Solid's getter-based prop reactivity is preserved.
 
 ### Vue
 
