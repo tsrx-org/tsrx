@@ -34,6 +34,20 @@ import tsrxVue from '@tsrx/bun-plugin-vue';
 Bun.plugin(tsrxVue());
 ```
 
+A preload compiles `.tsrx` modules and leaves every other module to Bun. It
+doesn't add `vaporInteropPlugin` to `createVaporApp()` calls, as `Bun.build()`
+does, so install it yourself where you need it:
+
+```ts
+import { createVaporApp, vaporInteropPlugin } from 'vue';
+
+createVaporApp(App).use(vaporInteropPlugin).mount('#app');
+```
+
+Preloads cover `.tsrx` modules that export plain values. A component with a
+template fails to load under `bun:test`, because Vue 3.6's `node` entry, which
+Bun's runtime resolves, has no Vapor APIs such as `template`.
+
 ## Options
 
 - `vapor`: options forwarded to `vue-jsx-vapor`.
@@ -46,7 +60,10 @@ Bun.plugin(tsrxVue());
   including `bun:test` preloads, flags left in compiled `.tsrx` output are
   replaced with their values.
 - `emitCss`: whether to emit virtual CSS imports (default: `true`).
-- `include`, `exclude`: regex filters for source files.
+- `include`, `exclude`: regex filters for source files. Under `Bun.plugin()`, an
+  instance hands a `.tsrx` file it leaves out to the first registered TSRX plugin
+  instance that includes it. When no instance includes the file, Bun loads it as
+  it would without a plugin.
 
 When using `runtimeImports: 'direct'`, install the runtime as a direct production
 dependency of the package that owns the compiled modules:

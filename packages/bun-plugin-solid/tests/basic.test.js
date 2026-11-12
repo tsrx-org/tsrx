@@ -1,8 +1,13 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tsrxSolid } from '../src/index.js';
+
+// Bun.plugin() registrations share state across instances; start each test clean.
+afterEach(() => {
+	Reflect.deleteProperty(globalThis, Symbol.for('@tsrx/bun-plugin.runtime.v1'));
+});
 
 /**
  * @typedef {{
@@ -81,6 +86,24 @@ async function dispatch(hooks, args) {
 		if (result !== undefined) return result;
 	}
 	return undefined;
+}
+
+/**
+ * Run hooks the way Bun.plugin() registration does: only the first hook whose
+ * namespace and filter match is called, and it has to return an object.
+ *
+ * @param {Hooks['onLoad']} hooks
+ * @param {{ path: string, namespace: string }} args
+ */
+async function runtime_dispatch(hooks, args) {
+	const hook = hooks.find(
+		({ options }) =>
+			(options.namespace ?? 'file') === args.namespace && options.filter.test(args.path),
+	);
+	if (!hook) throw new Error(`no onLoad hook for ${args.path}`);
+	const result = await hook.callback({ importer: '', kind: 'import-statement', ...args });
+	if (result === undefined) throw new Error(`onLoad() expects an object returned for ${args.path}`);
+	return result;
 }
 
 describe('@tsrx/bun-plugin-solid', () => {
@@ -286,6 +309,47 @@ describe('@tsrx/bun-plugin-solid', () => {
 		const hooks = setup_plugin({ exclude: /ignored\.tsrx$/ }, { target: 'browser' });
 		const transformed = await load_tsrx(hooks, '/project/ignored.tsrx');
 		expect(transformed).toBeUndefined();
+	});
+
+	// Bun.plugin() registration calls only the first matching onLoad hook.
+	it('splits the source files between instances under Bun.plugin() registration', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-solid-runtime-'));
+		try {
+			const hooks = setup_plugin({ exclude: /b\.tsrx$/ }, null);
+			setup_plugin({ include: /b\.tsrx$/ }, null, hooks);
+			for (const name of ['a', 'b']) {
+				const file_path = path.join(dir, `${name}.tsrx`);
+				await writeFile(
+					file_path,
+					`export function App() @{ <><style>div { --marker-${name}: 1; }</style><div /></> }`,
+				);
+				const result = await runtime_dispatch(hooks.onLoad, { path: file_path, namespace: 'file' });
+				expect(result.contents).toContain(`${file_path}?tsrx-css&lang.css`);
+			}
+
+			for (const name of ['a', 'b']) {
+				const css_id = `${path.join(dir, `${name}.tsrx`)}?tsrx-css&lang.css`;
+				const resolved = await dispatch(hooks.onResolve, { path: css_id, namespace: 'file' });
+				const css = await runtime_dispatch(hooks.onLoad, {
+					path: resolved.path,
+					namespace: resolved.namespace ?? 'file',
+				});
+				expect(css).toEqual({
+					contents: expect.stringContaining(`--marker-${name}`),
+					loader: 'css',
+				});
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('loads a file every instance leaves out the way Bun does without a plugin', async () => {
+		const hooks = setup_plugin({ exclude: /ignored\.tsrx$/ }, null);
+
+		expect(
+			await runtime_dispatch(hooks.onLoad, { path: '/project/ignored.tsrx', namespace: 'file' }),
+		).toEqual({ exports: { default: '/project/ignored.tsrx' }, loader: 'object' });
 	});
 
 	it('serves each instance its own CSS when instances split the source files', async () => {

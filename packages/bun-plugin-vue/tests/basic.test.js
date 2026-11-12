@@ -14,6 +14,7 @@ import { tsrxVue } from '../src/index.js';
 const original_bun = Reflect.get(globalThis, 'Bun');
 
 afterEach(() => {
+	Reflect.deleteProperty(globalThis, Symbol.for('@tsrx/bun-plugin.runtime.v1'));
 	if (original_bun === undefined) {
 		Reflect.deleteProperty(globalThis, 'Bun');
 	} else {
@@ -141,6 +142,24 @@ async function dispatch(hooks, args) {
 		if (result !== undefined) return result;
 	}
 	return undefined;
+}
+
+/**
+ * Run hooks the way Bun.plugin() registration does: only the first hook whose
+ * namespace and filter match is called, and it has to return an object.
+ *
+ * @param {Hooks['onLoad']} hooks
+ * @param {{ path: string, namespace: string }} args
+ */
+async function runtime_dispatch(hooks, args) {
+	const hook = hooks.find(
+		({ options }) =>
+			(options.namespace ?? 'file') === args.namespace && options.filter.test(args.path),
+	);
+	if (!hook) throw new Error(`no onLoad hook for ${args.path}`);
+	const result = await hook.callback({ importer: '', kind: 'import-statement', ...args });
+	if (result === undefined) throw new Error(`onLoad() expects an object returned for ${args.path}`);
+	return result;
 }
 
 describe('@tsrx/bun-plugin-vue', () => {
@@ -364,6 +383,47 @@ describe('@tsrx/bun-plugin-vue', () => {
 		expect(transformed).toBeUndefined();
 	});
 
+	// Bun.plugin() registration calls only the first matching onLoad hook.
+	it('splits the source files between instances under Bun.plugin() registration', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-vue-runtime-'));
+		try {
+			const hooks = setup_plugin({ exclude: /b\.tsrx$/ }, null);
+			setup_plugin({ include: /b\.tsrx$/ }, null, hooks);
+			for (const name of ['a', 'b']) {
+				const file_path = path.join(dir, `${name}.tsrx`);
+				await writeFile(
+					file_path,
+					`export function App() @{ <><style>div { --marker-${name}: 1; }</style><div /></> }`,
+				);
+				const result = await runtime_dispatch(hooks.onLoad, { path: file_path, namespace: 'file' });
+				expect(result.contents).toContain(`${file_path}?tsrx-css&lang.css`);
+			}
+
+			for (const name of ['a', 'b']) {
+				const css_id = `${path.join(dir, `${name}.tsrx`)}?tsrx-css&lang.css`;
+				const resolved = await dispatch(hooks.onResolve, { path: css_id, namespace: 'file' });
+				const css = await runtime_dispatch(hooks.onLoad, {
+					path: resolved.path,
+					namespace: resolved.namespace ?? 'file',
+				});
+				expect(css).toEqual({
+					contents: expect.stringContaining(`--marker-${name}`),
+					loader: 'css',
+				});
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('loads a file every instance leaves out the way Bun does without a plugin', async () => {
+		const hooks = setup_plugin({ exclude: /ignored\.tsrx$/ }, null);
+
+		expect(
+			await runtime_dispatch(hooks.onLoad, { path: '/project/ignored.tsrx', namespace: 'file' }),
+		).toEqual({ exports: { default: '/project/ignored.tsrx' }, loader: 'object' });
+	});
+
 	it('serves each instance its own CSS when instances split the source files', async () => {
 		install_transpiler_stub();
 		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-vue-instances-'));
@@ -419,6 +479,45 @@ createVaporApp(App).mount('#root');`,
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}
+	});
+
+	it("loads rewritten modules with Bun's default loader for their extension", async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-vue-'));
+		try {
+			const hooks = setup_plugin(undefined, { target: 'browser', root: dir });
+			for (const [name, loader] of [
+				['main.js', 'jsx'],
+				['main.mjs', 'js'],
+				['main.ts', 'ts'],
+				['main.tsx', 'tsx'],
+			]) {
+				const file_path = path.join(dir, name);
+				await writeFile(
+					file_path,
+					`import { createVaporApp } from 'vue';\ncreateVaporApp({}).mount('#root');\n`,
+				);
+
+				expect((await load_source(hooks, file_path))?.loader).toBe(loader);
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	// A module an async hook loads can't be `require()`d.
+	it('leaves project modules to Bun under Bun.plugin() registration', () => {
+		const hooks = setup_plugin(undefined, null);
+
+		expect(hooks.onLoad.some(({ options }) => options.filter.test('/app/src/main.ts'))).toBe(false);
+	});
+
+	it('leaves dependencies to Bun before calling the interop hook', () => {
+		const hooks = setup_plugin(undefined, {});
+		const hook = hooks.onLoad.find(({ options }) => options.filter.test('/app/src/main.ts'));
+
+		expect(hook?.options.filter.test('/app/src/main.ts')).toBe(true);
+		expect(hook?.options.filter.test('/app/node_modules/vue/index.mjs')).toBe(false);
+		expect(hook?.options.filter.test('C:\\app\\node_modules\\vue\\index.mjs')).toBe(false);
 	});
 
 	it('leaves manually installed interop alone', async () => {

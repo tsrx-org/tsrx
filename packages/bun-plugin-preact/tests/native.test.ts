@@ -90,3 +90,42 @@ test.each([
 		},
 	);
 });
+
+// Bun.plugin() registration calls only the first onLoad hook whose filter
+// matches, so instances that split the source files have to hand them on.
+test('splits the source files between two instances in a bun:test preload', async () => {
+	await with_fixture(
+		{
+			'First.tsrx':
+				"export function First() @{ <><style>p { color: red; }</style><p>{'first'}</p></> }",
+			'Second.tsrx':
+				"export function Second() @{ <><style>p { color: blue; }</style><p>{'second'}</p></> }",
+			'Asset.tsrx': 'export const unused = true;',
+			'preload.mjs': `import { tsrxPreact } from ${JSON.stringify(join(import.meta.dir, '../src/index.js'))};
+Bun.plugin(tsrxPreact({ exclude: [/Second\\.tsrx$/, /Asset\\.tsrx$/] }));
+Bun.plugin(tsrxPreact({ include: /Second\\.tsrx$/ }));
+`,
+			'split.test.js': `import { expect, test } from 'bun:test';
+import { First } from './First.tsrx';
+import { Second } from './Second.tsrx';
+import asset from './Asset.tsrx';
+test('renders both and loads the left-out file as Bun does', () => {
+	for (const [App, text] of [[First, 'first'], [Second, 'second']]) {
+		const json = JSON.stringify(App());
+		expect(json).toContain(text);
+		expect(json).toMatch(/tsrx-[0-9a-f]+/);
+	}
+	expect(asset).toEndWith('/Asset.tsrx');
+});
+`,
+		},
+		async (dir) => {
+			const child = Bun.spawnSync({
+				cmd: [process.execPath, 'test', '--preload', './preload.mjs', './split.test.js'],
+				cwd: dir,
+			});
+			expect(child.stderr.toString()).toContain(' 1 pass');
+			expect(child.exitCode).toBe(0);
+		},
+	);
+});

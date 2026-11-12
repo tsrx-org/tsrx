@@ -1,4 +1,4 @@
-/** @import { BunPlugin } from 'bun' */
+/** @import { BunPlugin, OnLoadResult } from 'bun' */
 /** @import { Platform, RuntimeImportMode } from '@tsrx/hono' */
 
 import { existsSync } from 'node:fs';
@@ -12,7 +12,6 @@ import { resolveBuildPlatform, resolveTsconfigJsx } from '@tsrx/core/config';
 const TSRX_EXTENSION_PATTERN = /\.tsrx$/;
 const CSS_QUERY = '?tsrx-css&lang.css';
 const CSS_QUERY_PATTERN = /\?tsrx-css&lang\.css$/;
-const CSS_NAMESPACE = '@tsrx/bun-plugin-hono-css';
 
 /**
  * @typedef {'server' | 'dom'} TsrxHonoMode
@@ -25,6 +24,31 @@ const CSS_NAMESPACE = '@tsrx/bun-plugin-hono-css';
  *   platform?: Platform,
  * }} TsrxHonoBunPluginOptions
  */
+
+const RUNTIME_STATE = Symbol.for('@tsrx/bun-plugin.runtime.v1');
+
+/**
+ * @typedef {{
+ * 	loaders: Array<{ compiles: (file_path: string) => boolean, load: (file_path: string) => Promise<OnLoadResult> }>,
+ * 	css: Map<string, string>,
+ * }} RuntimeState
+ */
+
+/**
+ * State that every TSRX Bun plugin instance registered with Bun.plugin()
+ * shares. There Bun calls only the first onLoad hook whose filter matches and
+ * needs an object back, so the instance it calls serves the stylesheets any
+ * instance compiled and hands on the `.tsrx` files it leaves out. The key has
+ * a version, so a later change to this shape can take a new key without
+ * breaking older plugins installed alongside. `Bun.plugin.clearAll()` doesn't
+ * tell plugins, so instances registered before it stay in the list.
+ *
+ * @returns {RuntimeState}
+ */
+function get_runtime_state() {
+	const scope = /** @type {any} */ (globalThis);
+	return (scope[RUNTIME_STATE] ??= { loaders: [], css: new Map() });
+}
 
 /**
  * Directory the tsconfig lookup starts from. Without `root`, Bun builds from
@@ -103,16 +127,6 @@ export function tsrxHono(options = {}) {
 	/** @type {Map<string, string>} */
 	const css_cache = new Map();
 
-	/** @param {string} code @param {string} id @param {string | undefined} css @param {boolean} emit_css */
-	function append_css_import(code, id, css, emit_css) {
-		if (!emit_css || !css) {
-			css_cache.delete(id);
-			return code;
-		}
-		css_cache.set(id, css);
-		return `${code}\nimport ${JSON.stringify(id)};\n`;
-	}
-
 	return {
 		name: '@tsrx/bun-plugin-hono',
 
@@ -151,31 +165,60 @@ export function tsrxHono(options = {}) {
 					? resolveTsconfigJsx(file_path, tsconfig_cache) === 'react'
 					: runtime_classic_jsx;
 
+			const runtime = build.config ? undefined : get_runtime_state();
+			const stylesheets = runtime ? runtime.css : css_cache;
+
+			// Every instance sees every virtual CSS request. Leave the ones another
+			// instance compiled to that instance, except under Bun.plugin(), where
+			// the first instance has to answer and every instance shares the sheets.
+			// The stylesheets stay in the file namespace, the only one where
+			// Bun.plugin() registration accepts the css loader.
 			build.onResolve({ filter: CSS_QUERY_PATTERN }, (args) => {
-				if (!css_cache.has(args.path)) return undefined;
-				return { path: args.path, namespace: CSS_NAMESPACE };
+				if (!stylesheets.has(args.path)) return undefined;
+				return { path: args.path };
 			});
 
-			build.onLoad({ filter: CSS_QUERY_PATTERN, namespace: CSS_NAMESPACE }, (args) => ({
-				contents: css_cache.get(args.path) ?? '',
-				loader: 'css',
-			}));
+			build.onLoad({ filter: CSS_QUERY_PATTERN }, (args) => {
+				const css = stylesheets.get(args.path);
+				if (css !== undefined) return { contents: css, loader: 'css' };
+				return runtime ? { contents: '', loader: 'css' } : undefined;
+			});
 
-			build.onLoad({ filter: TSRX_EXTENSION_PATTERN, namespace: 'file' }, async (args) => {
-				const source = await readFile(args.path, 'utf-8');
-				const { code: compiled, css } = compile(source, args.path, compile_options);
+			/**
+			 * @param {string} file_path
+			 * @returns {Promise<OnLoadResult>}
+			 */
+			const load_tsrx = async (file_path) => {
+				const source = await readFile(file_path, 'utf-8');
+				const { code: compiled, css } = compile(source, file_path, compile_options);
 				const code =
 					inline_platform === undefined
 						? compiled
-						: replacePlatformFlags(compiled, args.path, inline_platform).code;
-				const css_id = args.path + CSS_QUERY;
-				const output = append_css_import(code, css_id, css, emit_css);
+						: replacePlatformFlags(compiled, file_path, inline_platform).code;
+				const css_id = file_path + CSS_QUERY;
+
+				let output = code;
+				if (emit_css && css) {
+					stylesheets.set(css_id, css);
+					output = `${code}\nimport ${JSON.stringify(css_id)};\n`;
+				} else {
+					stylesheets.delete(css_id);
+				}
 
 				return {
-					contents: add_jsx_pragma(output, jsx_import_source, uses_classic_jsx(args.path)),
+					contents: add_jsx_pragma(output, jsx_import_source, uses_classic_jsx(file_path)),
 					loader: 'tsx',
 				};
+			};
+			// Other TSRX plugins hand on the `.tsrx` files they leave out.
+			runtime?.loaders.push({
+				compiles: (file_path) => TSRX_EXTENSION_PATTERN.test(file_path),
+				load: load_tsrx,
 			});
+
+			build.onLoad({ filter: TSRX_EXTENSION_PATTERN, namespace: 'file' }, (args) =>
+				load_tsrx(args.path),
+			);
 		},
 	};
 }
