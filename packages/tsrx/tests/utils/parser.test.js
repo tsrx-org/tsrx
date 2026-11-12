@@ -2683,7 +2683,8 @@ abc
 		);
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2715,7 +2716,8 @@ abc
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2759,7 +2761,8 @@ export function App() @{
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2790,7 +2793,8 @@ export function App() @{
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2817,7 +2821,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 		expect(ast.body.map((statement) => statement.type)).toEqual(['VariableDeclaration']);
 
 		const style = find_first(ast, function (node) {
@@ -2842,7 +2847,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2877,7 +2883,8 @@ export function App() @{ <div /> }`;
 		);
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const section = find_first(ast, function (node) {
 			return (
@@ -2905,7 +2912,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const fragment = find_first(ast, function (node) {
 			return node.type === 'JSXFragment';
@@ -2930,7 +2938,8 @@ export function App() @{ <div /> }`;
 		const ast = parseModule(source, 'App.tsrx', { loose: true, collect: true, errors });
 
 		assert_type(ast, 'Program');
-		expect(errors).toEqual([]);
+		// A loose parse reports the unclosed tag too, as collecting does (#978).
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
 
 		const div = find_first(ast, function (node) {
 			return (
@@ -2948,6 +2957,31 @@ export function App() @{ <div /> }`;
 		expect(child(div, 0, 'JSXStyleElement').unclosed).toBe(true);
 		expect(div.unclosed).toBeFalsy();
 		expect(div.closingElement).toBeTruthy();
+	});
+
+	// A loose parse, the editor's, recovers unclosed and mismatched markup and
+	// reports it where a collecting parse does (#978).
+	it.each([
+		['export function C() @{\n\t<div>\n}\n', 'TSRX1001'],
+		['export function C() @{\n\t<div><span></div>\n}\n', 'TSRX1002'],
+		['export function C() {\n\treturn <div>;\n}\n', 'TSRX1001'],
+		[
+			'export function C() @{\n\t<main>\n\t\t<section>\n\t\t\t<p>x\n\t\t</section>\n\t</main>\n}\n',
+			'TSRX1002',
+		],
+		['export const a = <><div>;\n', 'TSRX1001'],
+	])('reports the broken markup of %j in a loose parse, as when collecting', (source, code) => {
+		/** @type {CompileError[]} */
+		const loose = [];
+		/** @type {CompileError[]} */
+		const collected = [];
+		parseModule(source, 'App.tsrx', { loose: true, collect: true, errors: loose });
+		parseModule(source, 'App.tsrx', { collect: true, errors: collected });
+
+		/** @param {CompileError[]} errors */
+		const reported = (errors) => errors.map((error) => [error.code, error.pos, error.end]);
+		expect(new Set(loose.map((error) => error.code))).toEqual(new Set([code]));
+		expect(reported(loose)).toEqual(reported(collected));
 	});
 
 	it('parses module-scope style expressions followed by JavaScript statements', () => {
