@@ -2,7 +2,7 @@
  * @import { ParserOptions } from 'prettier'
  */
 
-import { DIAGNOSTIC_CODES, parseModule } from '@tsrx/core';
+import { DIAGNOSTIC_CODES, parseModule, TS_ERRORS } from '@tsrx/core';
 import { parsers as acornParsers } from 'prettier/plugins/acorn';
 
 /**
@@ -96,6 +96,45 @@ function isModifierBeforeExport(error, text) {
 }
 
 /**
+ * Whether `error` is for `abstract` before a declaration other than a class in
+ * a block (`function f() { abstract interface I {} }`): TS1184, which TypeScript
+ * reports there before TS1242. Prettier's `typescript` parser rejects
+ * `abstract` before anything but a class wherever it is, as the plugin does
+ * outside a block (TS1242).
+ * @param {ParseError} error
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isAbstractInBlock(error, text) {
+	return (
+		error.code === 'TS1184' &&
+		error.pos !== undefined &&
+		text.startsWith('abstract', error.pos) &&
+		// Not modifiers before a class `static` block, which the tree leaves out,
+		// as Prettier's does.
+		!regex_static_block_modifiers.test(text.slice(error.pos))
+	);
+}
+
+/** Modifiers, then a class `static` block's `static {`, with comments between them. */
+const regex_static_block_modifiers =
+	/^(?:(?:abstract|accessor|declare|override|private|protected|public|readonly)(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)+static(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*\{/u;
+
+/**
+ * Whether `error` is for decorators on a class `static` block (`@dec static
+ * {}`, TS1206), which Prettier's `typescript` parser leaves out, as the plugin
+ * does, instead of rejecting them as it does decorators elsewhere.
+ * @param {ParseError} error
+ * @returns {boolean}
+ */
+function isStaticBlockDecorator(error) {
+	return (
+		error.code === TS_ERRORS.DECORATORS_NOT_VALID_HERE.code &&
+		error.message === TS_ERRORS.DECORATORS_NOT_VALID_HERE.message
+	);
+}
+
+/**
  * @param {ParseError} error
  * @param {string} text
  * @returns {boolean}
@@ -104,8 +143,9 @@ function isRejected(error, text) {
 	return (
 		!!error.code &&
 		(BROKEN_MARKUP_CODES.has(error.code) ||
-			REJECTED_CODES.has(error.code) ||
-			isModifierBeforeExport(error, text))
+			(REJECTED_CODES.has(error.code) && !isStaticBlockDecorator(error)) ||
+			isModifierBeforeExport(error, text) ||
+			isAbstractInBlock(error, text))
 	);
 }
 
@@ -421,6 +461,9 @@ class Adapter {
 			case 'Program':
 			case 'StaticBlock':
 			case 'TSModuleBlock':
+				// Prettier's `typescript` parser leaves out a `static` block's
+				// decorators (see `isStaticBlockDecorator`).
+				if (node.type === 'StaticBlock') delete node.decorators;
 				node.body = node.body.map(plainStatement);
 				break;
 			case 'IfStatement':

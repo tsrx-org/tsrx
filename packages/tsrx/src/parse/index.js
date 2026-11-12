@@ -3408,8 +3408,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 								// ends the header: like Prettier, a comment after it leads the body,
 								// unless another `)` follows it (`if ((a) /* c */) b();`)
 								const isAfterStatementHeader =
-									slice.includes(')') &&
+									!!parent &&
 									endsStatementHeader(node, parent) &&
+									slice.includes(')') &&
 									getNextNonSpaceNonCommentCharacter(comments[0].end) !== ')';
 								// A comment after the `)` that ends the parent, as in
 								// `const x = (a >> 6) // c` without a `;`, lies outside the
@@ -3428,7 +3429,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 									!isAfterParent &&
 									(opensNamedSpecifiers ? /^[,{ \t]*$/ : /^[,) \t]*$/).test(slice);
 								const onlyWhitespace = /^\s*$/.test(slice);
-								const hasBlankLine = includesBlankLine(slice);
+								const hasBlankLine = onlyWhitespace && includesBlankLine(slice);
 								const nodeEndLine = end_node.loc?.end?.line ?? null;
 								const commentStartLine = comments[0].loc?.start?.line ?? null;
 								const commentOnSameLine =

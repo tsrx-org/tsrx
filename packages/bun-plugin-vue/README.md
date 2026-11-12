@@ -42,7 +42,9 @@ Bun.plugin(tsrxVue());
 - `platform`: optional override/fallback for the compile-time platform. Normally
   the plugin reads `tsrx.platform` from Bun's selected/nearest tsconfig, including
   `extends`. An override must match tsconfig. For `Bun.build`, all three exact
-  flags are defined and conflicting definitions are rejected.
+  flags are defined and conflicting definitions are rejected. With `Bun.plugin()`,
+  including `bun:test` preloads, flags left in compiled `.tsrx` output are
+  replaced with their values.
 - `emitCss`: whether to emit virtual CSS imports (default: `true`).
 - `include`, `exclude`: regex filters for source files.
 
