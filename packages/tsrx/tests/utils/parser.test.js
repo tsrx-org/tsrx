@@ -10860,6 +10860,67 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			],
 			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '2:47'],
 		},
+		// A namespace's name is a value when the namespace is instantiated, and
+		// shares the name with anything otherwise (#1263).
+		{
+			source:
+				'declare namespace N { var X: number; }\ndeclare namespace N { let X: number; }\ndeclare namespace N { namespace X {} }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'X: number; }\ndeclare namespace N { let'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'X: number; }\ndeclare namespace N { namespace'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:26'],
+		},
+		{
+			source:
+				'namespace N { export namespace a { export const x = 1; } }\nnamespace N { export const a = 1; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a { export'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a = 1'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:31'],
+		},
+		{
+			// An exported name whose declaration is a value makes it instantiated.
+			source:
+				'declare namespace N { namespace a { const x: number; export { x }; } }\ndeclare namespace N { const a: number; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a { const'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a: number; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:32'],
+		},
+		{
+			source:
+				'namespace N { export const a = 1; }\nnamespace N { export namespace a { export const enum E {} } }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a { export const enum'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:27'],
+		},
+		// An export specifier and `export import` are both aliases (#1263).
+		{
+			source:
+				'declare namespace N { export import A = Y.Z; }\ndeclare namespace N { const b: number; export { b as A }; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'A = Y.Z'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'A }; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:36'],
+		},
+		// At one position, by code, as tsc sorts them (#1263).
+		{
+			source:
+				'namespace N { export var a = 1; }\nnamespace N { export enum a {} }\nnamespace N { export let a = 1; }',
+			errors: [
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a = 1; }\nnamespace N { export enum'],
+				[TS_ERRORS.ENUM_REDECLARED, 'a = 1; }\nnamespace N { export enum'],
+				[TS_ERRORS.ENUM_REDECLARED, 'a {}'],
+				[TS_ERRORS.DUPLICATE_IDENTIFIER, 'a = 1; }'],
+			],
+			throws: [TS_ERRORS.DUPLICATE_IDENTIFIER, '1:25'],
+		},
 		// A default-exported class's name is the default export's, so a second
 		// one is another default export, not a redeclaration (#1213).
 		{
@@ -12967,6 +13028,13 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'namespace N { export enum E { A } }\nnamespace N { export enum E { B = 1 } }',
 			'namespace N { export const [a, { b }] = [1, { b: 2 }]; }\nnamespace N { export import b = X.Y; }',
 			'export default class C {}\nexport default interface C {}',
+			// A namespace that declares no value shares its name (#1263).
+			'namespace N { export const a = 1; }\nnamespace N { export namespace a {} }',
+			'namespace N { export class a {} }\nnamespace N { export namespace a { export const x = 1; } }',
+			'declare namespace N { namespace a { interface I {} export { I }; } }\ndeclare namespace N { const a: number; }',
+			'declare namespace N { interface J {} namespace a { export { J }; } }\ndeclare namespace N { const a: number; }',
+			'namespace N { export namespace a { export namespace b { export type T = 1; } } }\nnamespace N { export const a = 1; }',
+			'namespace N { export enum a {} }\nnamespace N { export namespace a { export const x = 1; } }',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) =>
