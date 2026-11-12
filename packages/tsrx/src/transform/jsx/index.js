@@ -6554,9 +6554,10 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				);
 				// Bound in place, the bag is evaluated between the attributes around
 				// it, as in native JSX; the setup declaration only declares the name.
+				const in_place = bind_in_place && !yields_in_deferred_spread(attr, transform_context);
 				const spread = {
 					...attr,
-					argument: bind_in_place
+					argument: in_place
 						? b.parenthesized(b.assignment('=', clone_identifier(normalized_id), normalized))
 						: clone_identifier(normalized_id),
 				};
@@ -6572,7 +6573,7 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				ref_attr.metadata.synthetic_ref = true;
 				add_jsx_setup_declaration(
 					spread,
-					bind_in_place
+					in_place
 						? b.let(clone_identifier(normalized_id))
 						: b.let(clone_identifier(normalized_id), normalized),
 				);
@@ -6941,6 +6942,25 @@ function binds_host_spread_in_place(transform_context) {
 	return (
 		!transform_context.typeOnly &&
 		transform_context.platform.jsx?.hostSpreadRefBinding === 'in-place'
+	);
+}
+
+/**
+ * Whether a host spread's bag yields on a target whose JSX compiler evaluates
+ * a spread in a render effect, which is one that reports the `yield`s it moves
+ * (`findDeferredTemplateYields`, TSRX2034). A `yield` can't run in that
+ * effect, so such a bag isn't bound in place: it is evaluated once, in its
+ * setup declaration before the element, where its generator runs it. A
+ * generator yields a value once, so the effect could never read it again.
+ *
+ * @param {ESTreeJSX.JSXSpreadAttribute} attr
+ * @param {TransformContext} transform_context
+ * @returns {boolean}
+ */
+function yields_in_deferred_spread(attr, transform_context) {
+	return (
+		!!transform_context.platform.hooks?.findDeferredTemplateYields &&
+		find_own_yields(/** @type {AST.Node} */ (attr.argument)).length > 0
 	);
 }
 
