@@ -13218,6 +13218,384 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it('throws first, and records first, the error TypeScript reports first (#1214)', async () => {
+		// Each duplicate parameter at every binding, the first first; a parameter
+		// property outside a constructor before its modifiers' own errors and the
+		// errors in the body, and after a duplicate name before it; decorators
+		// written before `export` and after it at the first; and a static block's
+		// decorators or modifiers before the checker errors in the block, but not
+		// before a syntax error there.
+		// A collecting parse records an unclosed tag at its name, and a strict one
+		// throws it at the end of its template (#1288): `collected_at`.
+		/** @type {Array<[source: string, error: ErrorKind, at: string, collected_at?: string]>} */
+		const cases = [
+			['function f(a, b, b, a) {}', TS_ERRORS.ARGUMENT_NAME_CLASH, 'a, b, b'],
+			['class A { m(x, public x) {} }', TS_ERRORS.ARGUMENT_NAME_CLASH, 'x, public'],
+			['function f(x, public x) {}', TS_ERRORS.ARGUMENT_NAME_CLASH, 'x, public'],
+			[
+				'class A { m(public x, x) {} }',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'public x',
+			],
+			['const f = (a, b, b, a) => 1;', TS_ERRORS.ARGUMENT_NAME_CLASH, 'a, b, b'],
+			['class A { m([a, b], { b, a }) {} }', TS_ERRORS.ARGUMENT_NAME_CLASH, 'a, b]'],
+			[
+				'const k = (public public x: number) => x;',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'public public',
+			],
+			[
+				'const k = (readonly public x: number) => x;',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'readonly',
+			],
+			[
+				'function f(public public x: number) {}',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'public public',
+			],
+			[
+				'class A { m(public public x: number) {} }',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'public public',
+			],
+			[
+				'class A { m(public a) { let let = 1; } }',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'public a',
+			],
+			[
+				'const o = { m(readonly a) { let let = 1; } };',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'readonly a',
+			],
+			[
+				'const g = async <T,>(public public x: T) => x;',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'public public',
+			],
+			[
+				'const g = async <T,>(public [a]: T[]) => a;',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'public [a]',
+			],
+			['@a export @b function f() {}', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@a'],
+			['@a @c export @b const x = 1;', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@a'],
+			[
+				'class A { @dec static { abstract interface I {} } }',
+				TS_ERRORS.DECORATORS_NOT_VALID_HERE,
+				'@dec',
+			],
+			[
+				'class A { public static { abstract interface I {} } }',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'public',
+			],
+			[
+				'class A { @dec public static { let let = 1; } }',
+				TS_ERRORS.DECORATORS_NOT_VALID_HERE,
+				'@dec',
+			],
+			['class A { public static { <div> } }', TSRX_ERRORS.UNCLOSED_TAG, '} }', 'div'],
+			[
+				'function f(public x, y = (() => { const q; })()) {}',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'public x',
+			],
+			[
+				'function f(public x, y = class { m(z, public z) {} }) {}',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'public x',
+			],
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
+		);
+
+		for (const [index, [source, error, at, collected_at = at]] of cases.entries()) {
+			const strict = outcomes[2 * index];
+			const collected = outcomes[2 * index + 1];
+			expect(strict, source).toEqual(thrown(error, source.indexOf(at)));
+			if (!collected.ok) throw new Error(`${source} threw ${collected.message}`);
+			const first = collected.errors?.[0];
+			expect([first?.code, first?.pos], source).toEqual([
+				code_of(error),
+				source.indexOf(collected_at),
+			]);
+		}
+	});
+
+	it('reports an arrow function’s TS7060 before the errors in it in a .mts file (#1214)', () => {
+		// Those of the arrow functions in its parameters and body, and the
+		// checker errors in its parameters and body, in the order TypeScript
+		// reports them.
+		const reserved = code_of(TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER);
+		const reserved_word = code_of(TS_ERRORS.STRICT_MODE_RESERVED_WORD);
+		const let_name = code_of(TS_ERRORS.LET_DECLARATION_NAME);
+		const uninitialized = code_of(TS_ERRORS.DECLARATION_NOT_INITIALIZED);
+		const optional_rest = code_of(TS_ERRORS.OPTIONAL_REST_PARAMETER);
+		/** @type {Array<[source: string, errors: Array<[code: string | undefined, at: string]>]>} */
+		const cases = [
+			[
+				'const f = <T>(a = <U>(b: U) => b) => a;',
+				[
+					[reserved, 'T>'],
+					[reserved, 'U>'],
+				],
+			],
+			[
+				'const f = async <T>(a = <U>(b: U) => b) => a;',
+				[
+					[reserved, 'T>'],
+					[reserved, 'U>'],
+				],
+			],
+			[
+				'const f = <A>(a = <B>(b = <C>(c: C) => c) => b) => a;',
+				[
+					[reserved, 'A>'],
+					[reserved, 'B>'],
+					[reserved, 'C>'],
+				],
+			],
+			[
+				'const f = <T>(x: T) => <U>(y: U) => y;',
+				[
+					[reserved, 'T>'],
+					[reserved, 'U>'],
+				],
+			],
+			[
+				'const f = <T>(x: T) => { let let = 1; };',
+				[
+					[reserved, 'T>'],
+					[reserved_word, 'let ='],
+					[let_name, 'let ='],
+				],
+			],
+			[
+				'const f = <T>(x = <U>(u: U) => u, y = () => { const z; }) => x;',
+				[
+					[reserved, 'T>'],
+					[reserved, 'U>'],
+					[uninitialized, 'z;'],
+				],
+			],
+			[
+				'const f = async <T>(x = () => { const z; }, y = <U>(u: U) => u) => x;',
+				[
+					[reserved, 'T>'],
+					[uninitialized, 'z;'],
+					[reserved, 'U>'],
+				],
+			],
+			// Not after a mistake in its parameter list (`checkGrammarParameterList`).
+			['const f = <T>(...a?: number[]) => a;', [[optional_rest, '?:']]],
+			['const f = async <T>(...a?: number[]) => a;', [[optional_rest, '?:']]],
+		];
+		for (const [source, expected] of cases) {
+			const [code, at] = expected[0];
+			expect(() => parseModule(source, 'a.mts'), source).toThrow(
+				expect.objectContaining({ code, pos: source.indexOf(at) }),
+			);
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'a.mts', { collect: true, errors });
+			expect(
+				errors.map(({ code, pos }) => [code, pos]),
+				source,
+			).toEqual(expected.map(([code, at]) => [code, source.indexOf(at)]));
+		}
+	});
+
+	it('reports a method’s pattern parameter property before the errors in its body (#1214)', () => {
+		// TS1187 and TS2369 at its start, then the errors in the body and the
+		// duplicate names after it, as TypeScript reports them. TS2369 came after
+		// the body's errors when collecting, and a strict parse threw TS1187
+		// before an earlier duplicate name.
+		const pattern = code_of(TS_ERRORS.PATTERN_PARAMETER_PROPERTY);
+		const parameter_property = code_of(TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR);
+		const reserved_word = code_of(TS_ERRORS.STRICT_MODE_RESERVED_WORD_IN_CLASS);
+		const reserved_word_in_module = code_of(TS_ERRORS.STRICT_MODE_RESERVED_WORD);
+		const let_name = code_of(TS_ERRORS.LET_DECLARATION_NAME);
+		const uninitialized = code_of(TS_ERRORS.DECLARATION_NOT_INITIALIZED);
+		const clash = code_of(TS_ERRORS.ARGUMENT_NAME_CLASH);
+		/** @type {Array<[source: string, errors: Array<[code: string | undefined, at: string]>]>} */
+		const cases = [
+			[
+				'class A { m(public [a]) { let let = 1; } }',
+				[
+					[pattern, 'public'],
+					[parameter_property, 'public'],
+					[reserved_word, 'let ='],
+					[let_name, 'let ='],
+				],
+			],
+			[
+				'class A { m(public [a] = [1]) { const q; } }',
+				[
+					[pattern, 'public'],
+					[parameter_property, 'public'],
+					[uninitialized, 'q;'],
+				],
+			],
+			[
+				'const o = { m(readonly { a }) { let let = 1; } };',
+				[
+					[pattern, 'readonly'],
+					[parameter_property, 'readonly'],
+					[reserved_word_in_module, 'let ='],
+					[let_name, 'let ='],
+				],
+			],
+			[
+				'class A { m(x, public [x]) {} }',
+				[
+					[clash, 'x,'],
+					[pattern, 'public'],
+					[parameter_property, 'public'],
+					[clash, 'x]'],
+				],
+			],
+		];
+		for (const [source, expected] of cases) {
+			const [code, at] = expected[0];
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code, pos: source.indexOf(at) }),
+			);
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'App.tsrx', { collect: true, errors });
+			expect(
+				errors.map(({ code, pos }) => [code, pos]),
+				source,
+			).toEqual(expected.map(([code, at]) => [code, source.indexOf(at)]));
+		}
+	});
+
+	it('holds no errors after an abandoned parse that held some (#1214)', () => {
+		// acorn-typescript tries `async <U>(…)` and `f<U>(…)` as a generic arrow
+		// function first, and abandons the attempt. The errors held in a parameter
+		// list or a `static` block in it, around a reserved arrow function, aren't
+		// held anymore after it: a strict parse throws the first, and a collecting
+		// one records the errors after it too.
+		const parameter_property = code_of(TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR);
+		const reserved = code_of(TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER);
+		const modifiers = code_of(TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE);
+		const after = '\nconst k = (public x: number) => x;';
+		/** @type {Array<[source: string, errors: Array<[code: string | undefined, at: string]>]>} */
+		const cases = [
+			[
+				`const a = async <U>(function (public p, q = <T>(y: T) => y) {});${after}`,
+				[
+					[parameter_property, 'public p'],
+					[reserved, 'T>'],
+					[parameter_property, 'public x'],
+				],
+			],
+			[
+				`const a = f<U>(class { public static { const g = <T>(y: T) => y; } });${after}`,
+				[
+					[modifiers, 'public static'],
+					[reserved, 'T>'],
+					[parameter_property, 'public x'],
+				],
+			],
+		];
+		for (const [source, expected] of cases) {
+			const [code, at] = expected[0];
+			expect(() => parseModule(source, 'a.mts'), source).toThrow(
+				expect.objectContaining({ code, pos: source.indexOf(at) }),
+			);
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'a.mts', { collect: true, errors });
+			expect(
+				errors.map(({ code, pos }) => [code, pos]),
+				source,
+			).toEqual(expected.map(([code, at]) => [code, source.indexOf(at)]));
+		}
+		// A collecting parse recorded none of them here.
+		const source = `const a = async <U,>(b = function (public p, q = <T>(y: T) => y) {}, 1);${after}`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		parseModule(source, 'a.mts', { collect: true, errors });
+		expect(errors.map(({ code, pos }) => [code, pos])).toEqual([
+			[parameter_property, source.indexOf('public p')],
+			[reserved, source.indexOf('T>')],
+			[parameter_property, source.indexOf('public x')],
+		]);
+	});
+
+	it('keeps the held errors that come before a syntax error, and drops the later ones (#1214)', () => {
+		// A strict parse throws what it threw before holding them, and a collecting
+		// one records them before it throws the syntax error. A method's TS2369
+		// comes once the method is read, and a generic arrow function's TS7060
+		// once it's read (an async one's at its `=>`).
+		const unexpected = code_of(TS_ERRORS.UNEXPECTED_TOKEN);
+		const parameter_property = code_of(TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR);
+		const reserved = code_of(TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER);
+		/** @type {Array<[filename: string, source: string, strict: [code: string | undefined, at: string], collected: Array<[code: string | undefined, at: string]>, thrown: [code: string | undefined, at: string]]>} */
+		const cases = [
+			[
+				'a.ts',
+				'function f(public x y) {}',
+				[parameter_property, 'public x'],
+				[[parameter_property, 'public x']],
+				[unexpected, 'y)'],
+			],
+			[
+				'a.ts',
+				'function f(public x, :) {}',
+				[parameter_property, 'public x'],
+				[[parameter_property, 'public x']],
+				[unexpected, ':)'],
+			],
+			[
+				'a.ts',
+				'class A { m(public a, public b = ) {} }',
+				[unexpected, ') {}'],
+				[],
+				[unexpected, ') {}'],
+			],
+			[
+				'a.ts',
+				'class A { public static { class B { m(public x) {} } const y = ; } }',
+				[parameter_property, 'public x'],
+				[[parameter_property, 'public x']],
+				[unexpected, '; } }'],
+			],
+			[
+				'a.mts',
+				'const f = <T>(x: T) => { const y = ; };',
+				[unexpected, '; };'],
+				[],
+				[unexpected, '; };'],
+			],
+			[
+				'a.mts',
+				'const f = <T>(x = <U>(u: U) => u, y = ) => x;',
+				[reserved, 'U>'],
+				[[reserved, 'U>']],
+				[unexpected, '<T>'],
+			],
+		];
+		for (const [filename, source, [code, at], collected, [thrown_code, thrown_at]] of cases) {
+			expect(() => parseModule(source, filename), source).toThrow(
+				expect.objectContaining({ code, pos: source.indexOf(at) }),
+			);
+			/** @type {CompileError[]} */
+			const errors = [];
+			expect(() => parseModule(source, filename, { collect: true, errors }), source).toThrow(
+				expect.objectContaining({ code: thrown_code, pos: source.indexOf(thrown_at) }),
+			);
+			expect(
+				errors.map(({ code, pos }) => [code, pos]),
+				source,
+			).toEqual(collected.map(([code, at]) => [code, source.indexOf(at)]));
+		}
+	});
+
 	it('compares them with valid code', async () => {
 		const sources = cases.flatMap(({ valid }) => (valid ? [valid] : []));
 		const outcomes = await parse_in_worker(sources.map((source) => ({ source })));
