@@ -23,3 +23,7 @@ export function map_iterable_async<I extends Iterable<unknown> | Iterator<unknow
 	tail?: (() => U | U[] | Promise<U | U[]>) | null,
 	empty?: () => U | U[] | Promise<U | U[]>,
 ): Promise<U[]>;
+
+export function iterable_to_array<I extends Iterable<unknown> | Iterator<unknown>>(
+	value: I,
+): IterationValue<I>[];

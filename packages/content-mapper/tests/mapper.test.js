@@ -386,7 +386,7 @@ export function B() {
 				result.text.slice(generated_start, generated_end),
 			]),
 		).toEqual([
-			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), '<script></script>;'],
+			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), '<script></script>'],
 			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), "{'x'}"],
 			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), 'const s = 1;'],
 		]);

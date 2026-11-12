@@ -123,8 +123,9 @@ mapper then sends that error alone, and a stub of the file's exports.
   `Verbatim` spans with the same feature bits whose gap is identical text in both
   files are coalesced into one span, so a statement such as
   `import { a } from './x';` is one edit-safe span and TypeScript can place an
-  auto-import edit inside it. Fragments of identifiers (the transform's
-  one-character file-start anchor) are dropped.
+  auto-import edit inside it. A span from a mapping with no feature at all joins
+  either neighbour. Fragments of identifiers (the transform's one-character
+  file-start anchor) are dropped.
 - Each embedded `<script>` body as a block statement appended to the generated
   TSX, with a verbatim span back to the source (the shared transform does this on
   every path). A block keeps one body's declarations from colliding with another's

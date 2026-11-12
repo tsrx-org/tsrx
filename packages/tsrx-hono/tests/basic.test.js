@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedAnonymousComponentTests,
+	runSharedArrayRefTests,
 	runSharedCatchErrorTypeTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
@@ -40,6 +41,18 @@ runSharedCatchErrorTypeTests({
 });
 runSharedCodeBlockChildrenTests({ compile: compileServer, name: 'hono' });
 runSharedAnonymousComponentTests({ compile: compileServer, name: 'hono' });
+runSharedArrayRefTests({
+	compile: compileServer,
+	compile_to_volar_mappings: compileServerToVolarMappings,
+	name: 'hono',
+	merge: 'merge_element_refs',
+});
+runSharedArrayRefTests({
+	compile: compileDom,
+	compile_to_volar_mappings: compileDomToVolarMappings,
+	name: 'hono-dom',
+	merge: 'merge_element_refs',
+});
 runSharedHookBodyTests({
 	compile: compileServer,
 	compile_to_volar_mappings: compileServerToVolarMappings,

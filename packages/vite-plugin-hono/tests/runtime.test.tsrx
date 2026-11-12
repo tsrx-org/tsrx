@@ -46,6 +46,20 @@ import {
 	array_spread_ref_value,
 } from '@tsrx/core/test-harness/runtime/array-spread-ref-components.tsrx';
 import {
+	ArrayRefApp,
+	ArrayRefSpreadApp,
+	ArrayRefSpreadRefApp,
+	EmptyArrayRefApp,
+	FalsyArrayRefApp,
+	NestedArrayRefApp,
+	ObjectArrayRefApp,
+	SingleArrayRefApp,
+	SpreadArrayRefApp,
+	array_ref_log,
+	array_ref_object,
+	array_ref_value,
+} from '@tsrx/core/test-harness/runtime/array-ref-components.tsrx';
+import {
 	JsxTextCharactersApp,
 	JsxTextWhitespaceApp,
 	jsx_text_braced_value_cases,
@@ -315,6 +329,22 @@ function SpreadRefListRenderApp() @{
 			{count}
 		</button>
 		<button class="ref-list-replace" onClick={() => setReplaced(true)}>
+			{'replace'}
+		</button>
+	</>
+}
+
+function ArrayRefRenderApp() @{
+	const [count, setCount] = useState(0);
+	const [replaced, setReplaced] = useState(false);
+	const last_ref = replaced ? bag_replaced_ref : bag_second_ref;
+
+	<>
+		<input class="inline-ref-list" data-count={count} ref={[bag_first_ref, last_ref]} />
+		<button class="inline-ref-list-rerender" onClick={() => setCount(count + 1)}>
+			{count}
+		</button>
+		<button class="inline-ref-list-replace" onClick={() => setReplaced(true)}>
 			{'replace'}
 		</button>
 	</>
@@ -822,6 +852,69 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		const element = container.querySelector('.object-array-spread-ref');
 		expect(array_spread_ref_log).toEqual(['first']);
 		expect(array_spread_ref_object.current).toBe(element);
+	});
+
+	it('applies an inline ref list again only when one of its refs changes', async () => {
+		async function click(selector: string) {
+			(container.querySelector(selector) as HTMLButtonElement).click();
+			await Promise.resolve();
+		}
+
+		spread_ref_render_log.length = 0;
+		render(<ArrayRefRenderApp />, container);
+		expect(spread_ref_render_log).toEqual(['bag-first:attach', 'bag-second:attach']);
+
+		spread_ref_render_log.length = 0;
+		await click('.inline-ref-list-rerender');
+		await click('.inline-ref-list-rerender');
+		expect(container.querySelector('.inline-ref-list')?.getAttribute('data-count')).toBe('2');
+		expect(spread_ref_render_log).toEqual([]);
+
+		await click('.inline-ref-list-replace');
+		expect(spread_ref_render_log).toEqual([
+			'bag-first:detach',
+			'bag-second:detach',
+			'bag-first:attach',
+			'bag-replaced:attach',
+		]);
+	});
+
+	for (const [label, App, selector, title, calls] of [
+		['a list of two', ArrayRefApp, '.array-ref', null, ['first', 'second']],
+		['a nested list', NestedArrayRefApp, '.nested-array-ref', null, ['first', 'second', 'third']],
+		['a list of one', SingleArrayRefApp, '.single-array-ref', null, ['first']],
+		['an empty list', EmptyArrayRefApp, '.empty-array-ref', null, []],
+		['with falsy entries', FalsyArrayRefApp, '.falsy-array-ref', null, ['first', 'third']],
+		['before a spread', ArrayRefSpreadApp, '.array-ref-spread', 'bag', ['first', 'second']],
+		['after a spread', SpreadArrayRefApp, '.spread-array-ref', 'bag', ['first', 'second']],
+		[
+			"beside a spread's ref",
+			ArrayRefSpreadRefApp,
+			'.array-ref-spread-ref',
+			'bag',
+			['first', 'second', 'third'],
+		],
+	] as const) {
+		it(`calls every ref in a ref list written on the element: ${label}`, () => {
+			array_ref_log.length = 0;
+			render(<App />, container);
+
+			const element = container.querySelector(selector);
+			expect(element).toBeInstanceOf(HTMLInputElement);
+			expect(element?.getAttribute('title')).toBe(title);
+			expect(array_ref_log).toEqual(calls);
+		});
+	}
+
+	it('calls every ref in a ref list written on the element: with ref objects', () => {
+		array_ref_log.length = 0;
+		array_ref_object.current = null;
+		array_ref_value.value = null;
+		render(<ObjectArrayRefApp />, container);
+
+		expect(array_ref_log).toEqual(['first']);
+		expect(array_ref_object.current).toBe(container.querySelector('.object-array-ref'));
+		expect(array_ref_value.value).toBe(container.querySelector('.lone-value-array-ref'));
 	});
 
 	it("calls every ref in a spread's ref list: a lone ref object", () => {
