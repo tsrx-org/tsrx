@@ -2391,7 +2391,7 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 			expect(code).toContain('children={({ items }: { items: JSX.Element[] }) => <ul>');
 			expect(code).toContain(
 				name === 'solid'
-					? '<__For each={items} keyed={false}>'
+					? '<__For each={__for_items(items)} keyed={false}>'
 					: name === 'vue'
 						? '<__VaporFor in={items}'
 						: '__map_iterable(items, (item, i)',

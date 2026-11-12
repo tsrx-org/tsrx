@@ -165,6 +165,7 @@ export {
 	with_platform_types as withPlatformTypes,
 } from './transform/platform.js';
 export { with_deferred_imports as withDeferredImports } from './transform/imports.js';
+export { is_reference as isReference } from './utils/is-reference.js';
 export {
 	add_jsx_setup_declaration as addJsxSetupDeclaration,
 	collect_param_bindings as collectParamBindings,
@@ -175,6 +176,8 @@ export {
 	create_script_body as createScriptBody,
 	build_return_expression as buildReturnExpression,
 	createJsxTransform,
+	DYNAMIC_FACTORY_LOCAL,
+	DYNAMIC_IMPORT_LOCAL,
 	ERROR_BOUNDARY_INTERNAL_NAME,
 	extract_jsx_setup_declarations as extractJsxSetupDeclarations,
 	insert_after_directives as insertAfterDirectives,
