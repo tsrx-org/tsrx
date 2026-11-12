@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -44,6 +45,7 @@ runSharedCodeBlockChildrenTests({ compile, name: 'solid' });
 runSharedClassFunctionComponentTests({ compile, compile_to_volar_mappings, name: 'solid' });
 runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'solid' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'solid' });
+runSharedAnonymousComponentTests({ compile, name: 'solid' });
 
 describe('@tsrx/solid basic', () => {
 	describe('component → function', () => {
@@ -57,9 +59,8 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain("const App__static1 = <h1>{'a'}</h1>;");
-			expect(code).toContain("const App__static2 = <h2>{'b'}</h2>;");
-			expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+			expect(code).toContain("return <><h1>{'a'}</h1><h2>{'b'}</h2></>;");
+			expect(code).not.toContain('__static');
 		});
 
 		it('rejects await in component body', () => {
@@ -322,19 +323,21 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toMatch(/keyed=\{\(item\) =>\s*item\.id\}/);
 		});
 
-		it('try/catch → <Errored fallback={(err, reset) => ...}>', () => {
+		it('try/catch → <Errored fallback> binding the thrown value', () => {
 			const { code } = compile(
 				`function App() @{
 						@try {
 						<div>{'content'}</div>
 					} @catch (err, reset) {
-						<div>{err().message}</div>
+						<div>{err.message}</div>
 					}
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<Errored fallback={(err, reset) =>');
-			expect(code).toContain('<div>{err().message}</div>');
+			// `<Errored>` passes an accessor; `err` is the value it returns.
+			expect(code).toContain('<Errored fallback={(_tsrx_error, reset) => {');
+			expect(code).toContain('let err = _tsrx_error();');
+			expect(code).toContain('<div>{err.message}</div>');
 			expect(code).toContain("import { Errored } from 'solid-js'");
 		});
 
@@ -356,6 +359,42 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
 		});
 
+		it('static @if condition → plain conditional instead of <Show>', () => {
+			const { code } = compile(
+				`function App() @{
+					<div>
+						@if (true) { <Child /> } @else { <Fallback /> }
+						@if (import.meta.env.DEV) { <p>{'dev'}</p> }
+						@if (!import.meta.env.PROD) { <p>{'a'}</p> } @else { <p>{'b'}</p> }
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('{true ? <Child /> : <Fallback />}');
+			expect(code).toContain("{import.meta.env.DEV ? <p>{'dev'}</p> : null}");
+			expect(code).toContain("{!import.meta.env.PROD ? <p>{'a'}</p> : <p>{'b'}</p>}");
+			expect(code).not.toContain('Show');
+		});
+
+		it('static @if condition with setup statements or else-if keeps <Show>/<Switch>', () => {
+			const { code } = compile(
+				`function App(props) @{
+					<div>
+						@if (import.meta.env.DEV) {
+							const label = 'dev';
+							<p>{label}</p>
+						}
+						@if (true) { <a /> } @else if (props.b) { <b /> } @else { <i /> }
+						@if (import.meta.url) { <u /> }
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('<Show when={import.meta.env.DEV}>');
+			expect(code).toContain('<Match when={true}>');
+			expect(code).toContain('<Show when={import.meta.url}>');
+		});
+
 		it('switch statement → <Switch>/<Match> using ===', () => {
 			const { code } = compile(
 				`function App({ kind }: { kind: string }) @{
@@ -370,6 +409,189 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('<Switch fallback=');
 			expect(code).toMatch(/<Match when=\{kind === 'a'\}>/);
 			expect(code).toMatch(/<Match when=\{kind === 'b'\}>/);
+		});
+
+		it('switch reads a discriminant with a side effect once through a memo', () => {
+			const source = `function App() @{
+				@switch (queue.shift()) {
+					@case 'loading': { <p>{'Loading'}</p> }
+					@case 'ready': { <p>{'Ready'}</p> }
+				}
+			}`;
+			const { code } = compile(source, 'App.tsrx');
+			expect(code).toContain(
+				"import { Switch, Match, createMemo as _$_createMemo } from 'solid-js';",
+			);
+			// Boxed, so a thenable discriminant is compared rather than awaited.
+			expect(code).toContain('const _$_switch_value = _$_createMemo(() => [queue.shift()]);');
+			expect(code).toContain("<Match when={_$_switch_value()[0] === 'loading'}>");
+			expect(code).toContain("<Match when={_$_switch_value()[0] === 'ready'}>");
+			expect(code.match(/queue\.shift\(\)/g)).toHaveLength(1);
+
+			const type_only = compile_to_volar_mappings(source, 'App.tsrx').code;
+			expect(type_only).toContain("<Match when={queue.shift() === 'loading'}>");
+			expect(type_only).not.toContain('createMemo');
+		});
+
+		it('switch memo names cannot collide with authored names', () => {
+			const { code } = compile(
+				`import { createMemo } from 'solid-js';
+				function App(__switch_value, __createMemo) @{
+					@switch (__switch_value.read()) {
+						@case 1: { <p>{createMemo(() => __createMemo)()}</p> }
+					}
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain(
+				'const _$_switch_value = _$_createMemo(() => [__switch_value.read()]);',
+			);
+		});
+
+		it("lowers an element's @{ } child inside a control-flow body to its output", () => {
+			const { code } = compile(
+				`function App(props: { on: boolean }) @{
+					<div>
+						@if (props.on) {
+							<p>@{
+								const v = 1;
+								<b>{v}</b>
+							}</p>
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toMatch(
+				/<p>\{\(\(\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\)\(\)\}<\/p>/,
+			);
+			expect(code).not.toContain('return null');
+		});
+
+		it('lowers a @{ } block that is a whole control-flow body to its output', () => {
+			const { code } = compile(
+				`function App(props: { on: boolean }) @{
+					<div>
+						@if (props.on) {
+							@{
+								const v = 1;
+								<b>{v}</b>
+							}
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			// The block's setup becomes the branch's function child, which `<Show>`
+			// runs untracked, like a body without the `@{ }`.
+			expect(code).toMatch(
+				/<Show when=\{props\.on\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Show>/,
+			);
+			expect(code).not.toContain('return null');
+		});
+
+		it('lowers a @{ } block that is a whole @case or @default body to its output', () => {
+			const { code } = compile(
+				`function App(kind: string) @{
+					<div>
+						@switch (kind) {
+							@case 'a': {
+								@{
+									const v = 1;
+									<b>{v}</b>
+								}
+							}
+							@default: {
+								@{
+									const w = 2;
+									<i>{w}</i>
+								}
+							}
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toMatch(
+				/<Match when=\{kind === 'a'\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Match>/,
+			);
+			expect(code).toMatch(
+				/fallback=\{_\$_untrack\(\(\) => \{\s*const w = 2;\s*return <i>\{w\}<\/i>;\s*\}\)\}/,
+			);
+			expect(code).not.toContain('return null');
+		});
+
+		it('runs the setup of a fallback body untracked', () => {
+			const { code } = compile(
+				`function App(props: { show: boolean; mode: string; items: string[] }) @{
+					<div>
+						@if (props.show) {
+							<b />
+						} @else {
+							const a = 1;
+							<i>{a}</i>
+						}
+						@switch (props.mode) {
+							@case 'a': {
+								<b />
+							}
+							@default: {
+								const b = 2;
+								<i>{b}</i>
+							}
+						}
+						@for (const item of props.items) {
+							<b>{item}</b>
+						} @empty {
+							const c = 3;
+							<i>{c}</i>
+						}
+						@try {
+							<b />
+						} @pending {
+							const d = 4;
+							<i>{d}</i>
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('untrack as _$_untrack');
+			for (const [name, value] of [
+				['a', 1],
+				['b', 2],
+				['c', 3],
+				['d', 4],
+			]) {
+				expect(code).toMatch(
+					new RegExp(
+						`fallback=\\{_\\$_untrack\\(\\(\\) => \\{\\s*const ${name} = ${value};\\s*return <i>\\{${name}\\}</i>;\\s*\\}\\)\\}`,
+					),
+				);
+			}
+		});
+
+		it('runs the setup of a @try or @catch body untracked', () => {
+			const { code } = compile(
+				`function App() @{
+					@try {
+						const e = 5;
+						<i>{e}</i>
+					} @catch (err, reset) {
+						const f = 6;
+						<i>{f}</i>
+					}
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('untrack as _$_untrack');
+			// The fallback binds the thrown value (`err`) before the untracked body.
+			expect(code).toMatch(
+				/fallback=\{\(_tsrx_error, reset\) => \{\s*let err = _tsrx_error\(\);\s*return _\$_untrack\(\(\) => \{\s*const f = 6;\s*return <i>\{f\}<\/i>;\s*\}\);\s*\}\}/,
+			);
+			expect(code).toMatch(
+				/>\{_\$_untrack\(\(\) => \{\s*const e = 5;\s*return <i>\{e\}<\/i>;\s*\}\)\}<\/Errored>/,
+			);
 		});
 
 		it('element children mixing JSX and statements wrap in an IIFE', () => {
@@ -487,8 +709,8 @@ describe('@tsrx/solid basic', () => {
 			);
 
 			expect(code).toContain('if (props.disabled)');
-			expect(code).toContain('return StatusBadge__static1;');
-			expect(code).toContain('return StatusBadge__static2;');
+			expect(code).toContain('return <span>disabled</span>;');
+			expect(code).toContain('return <span>enabled</span>;');
 			expect(code).not.toContain('<Show');
 			expect(code).not.toContain("import { Show } from 'solid-js'");
 		});
@@ -509,8 +731,8 @@ describe('@tsrx/solid basic', () => {
 			);
 
 			expect(code).toContain('if (!user)');
-			expect(code).toContain('return Dashboard__static1;');
-			expect(code).toContain('return <><h1>Welcome,{user}</h1>{Dashboard__static2}</>;');
+			expect(code).toContain('return <p>No user found</p>;');
+			expect(code).toContain('return <><h1>Welcome,{user}</h1><p>Here is your dashboard.</p></>;');
 			expect(code).not.toContain('<Show');
 			expect(code).not.toContain("import { Show } from 'solid-js'");
 		});
@@ -689,7 +911,7 @@ describe('@tsrx/solid basic', () => {
 						} @pending {
 							<div>{'loading'}</div>
 						} @catch (err) {
-							recover(err());
+							recover(err);
 						}
 				}`,
 				'App.tsrx',
@@ -698,7 +920,7 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('<Errored');
 			expect(code).toContain('<Loading fallback=');
 			expect(code).toContain('setup();');
-			expect(code).toContain('recover(err());');
+			expect(code).toContain('recover(err);');
 			expect(code).toMatch(/import \{[^}]*Errored[^}]*Loading[^}]*\} from 'solid-js'/);
 			expect(code).not.toContain('try {');
 		});
@@ -722,16 +944,12 @@ describe('@tsrx/solid basic', () => {
 		});
 	});
 
-	describe('component static-alias suppression', () => {
-		// Covers Solid's `canHoistStaticNode` veto on trees that contain a
-		// component — a Solid-specific optimization decision that doesn't apply
-		// to React's `App__static` hoisting policy.
-		it('does not hoist component invocations into App__static aliases', () => {
-			// On Solid the static-element-identity optimization React relies on
-			// doesn't apply, so hoisting a component invocation into a
-			// module-level `App__static` const only adds an alias indirection.
-			// Truly-static DOM trees (e.g. `<h1>{'a'}</h1>` with no scope refs)
-			// are still hoisted — those are real DOM nodes worth caching.
+	describe('static JSX', () => {
+		// Solid JSX evaluates to a DOM node, so a module-level `App__static`
+		// const would be one node that every use of the component moves (#1236).
+		// Solid's compiler already hoists the parsed template and clones it on
+		// each evaluation.
+		it('leaves static DOM and component invocations in place', () => {
 			const { code } = compile(
 				`function App() @{
 					<>
@@ -742,9 +960,8 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain("const App__static1 = <h1>{'a'}</h1>;");
-			expect(code).not.toMatch(/const App__static\d+\s*=\s*<section>/);
-			expect(code).toContain('return <>{App__static1}<section><Child /></section></>;');
+			expect(code).not.toContain('__static');
+			expect(code).toContain("return <><h1>{'a'}</h1><section><Child /></section></>;");
 		});
 	});
 
@@ -759,9 +976,8 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain("const App__static1 = <h1>{'a'}</h1>;");
-			expect(code).toContain("const App__static2 = <h2>{'b'}</h2>;");
-			expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+			expect(code).toContain("return <><h1>{'a'}</h1><h2>{'b'}</h2></>;");
+			expect(code).not.toContain('__static');
 		});
 
 		it('rejects namespaced template tags', () => {
@@ -870,6 +1086,121 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('styles.root');
 			expect(code).toContain('root');
 		});
+	});
+
+	// Solid reads a class only from `class`, which also takes an object or a
+	// list.
+	it('keeps the class a host spread passes beside the scope classes', () => {
+		const { code, cssHash } = compile(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span class="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			"import { merge_spread_class as __merge_spread_class } from '@tsrx/solid/ref';",
+		);
+		expect(code).toContain(
+			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", void 0, "list"))} />`,
+		);
+		expect(code).toContain(
+			`<span class="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", void 0, "list"))} />`,
+		);
+		expect(code).toContain(`<span {...__normalize_spread_props(props)} class="last ${cssHash}" />`);
+	});
+
+	it('compiles an authored className on a host element to class', () => {
+		const source = `export function App(props) @{
+				const Tag = Child;
+				<>
+					<div className="x" />
+					<div className={props.c} />
+					<div class="a" className="b" />
+					<div class="a" className={props.c} />
+					<div class="a" {...props.bag} className={props.d} />
+					<div className="a" className="b" />
+					<Child className="kept" />
+					<ui.Child className="member" />
+					<{Tag} className="dynamic" />
+				</>
+			}`;
+		const { code } = compile(source, 'App.tsrx');
+
+		expect(code).toContain('<div class="x" />');
+		expect(code).toContain('<div class={props.c} />');
+		expect(code).toContain('<div class="a b" />');
+		expect(code).toContain('<div class={["a", props.c]} />');
+		// With a spread between, `className` stays where it is written, so the
+		// last class written still wins over the spread's.
+		expect(code).toMatch(
+			/<div class="a" \{\.\.\.[^}]+\}(?: ref=\{[^}]+\})? class=\{props\.d\} \/>/,
+		);
+		// Two `className` attributes stay two attributes.
+		expect(code).toContain('<div class="a" class="b" />');
+		// A component, member tag or dynamic tag may read `className`.
+		expect(code).toContain('<Child className="kept" />');
+		expect(code).toContain('<ui.Child className="member" />');
+		expect(code).toContain('className="dynamic"');
+
+		// The type-only print renames it too, so it type-checks against `class`,
+		// and maps the generated `class` back to the authored `className`.
+		const { code: type_only, mappings } = compile_to_volar_mappings(source, 'App.tsrx');
+		expect(type_only).toContain('<div class={props.c} />');
+		expect(type_only).toContain('<div class={["a", props.c]} />');
+		// TypeScript reports two `class` attributes even across a spread.
+		expect(type_only).toMatch(/<div class=\{\["a", props\.d\]\} \{\.\.\./);
+		expect(type_only).toContain('<Child className="kept" />');
+		expect(type_only).toContain('className="dynamic"');
+		for (const authored of ['className={props.c}', 'className={props.d}', 'className="x"']) {
+			const at = source.indexOf(authored);
+			const mapping = mappings.find((entry) => entry.sourceOffsets[0] === at);
+			expect(mapping).toMatchObject({ lengths: [9], generatedLengths: [5] });
+			const generated = /** @type {NonNullable<typeof mapping>} */ (mapping).generatedOffsets[0];
+			expect(type_only.slice(generated, generated + 5)).toBe('class');
+			expect(mapping?.data).toMatchObject({ verification: true, semantic: true, navigation: true });
+		}
+	});
+
+	it('joins a dynamic class with the scope classes as a list', () => {
+		const { code, cssHash } = compile(
+			`export function App(props) @{
+				<>
+					<span class={{ active: props.active }} />
+					<span class={props.c} />
+					<span className={props.c} />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			"import { join_scope_class as __join_scope_class } from '@tsrx/solid/ref';",
+		);
+		expect(code).toContain(
+			`<span class={__join_scope_class({ active: props.active }, "${cssHash}", "list")} />`,
+		);
+		// Solid doesn't read `className`, so an authored one compiles to `class`.
+		expect(
+			code.match(/<span class=\{__join_scope_class\(props\.c, "tsrx-[0-9a-f]+", "list"\)\} \/>/g),
+		).toHaveLength(2);
+		expect(code).not.toContain('className');
 	});
 
 	it('applies scoped css hashes and keeps type selectors for dynamic tags', () => {
@@ -1033,49 +1364,104 @@ describe('@tsrx/solid basic', () => {
 			expect(code).not.toContain('normalize_spread_props');
 		});
 
-		it('normalizes multiple host spreads once while merging one explicit ref', () => {
-			const { code } = compile(
-				`function App() @{
+		it('groups several host spreads beside an explicit ref', () => {
+			const source = `function App() @{
 					const first = {};
 					const second = {};
 					function cb(_node) {}
-					<input {...first} {...second} ref={cb} />
-				}`,
-				'App.tsrx',
-			);
+					<input {...first} title="t" {...second} ref={cb} />
+				}`;
+			const { code } = compile(source, 'App.tsrx');
 
 			expect(code).toContain(
+				"import { spread_ref_bags as __spread_ref_bags } from '@tsrx/solid/ref';",
+			);
+			expect(code).toContain(
+				'let App__spread_props1 = __spread_ref_bags(() => first, () => second);',
+			);
+			expect(code).toContain(
+				'<input {...App__spread_props1.bag(0)} title="t" {...App__spread_props1.bag(1)} {...App__spread_props1.refs} ref={cb} />',
+			);
+			expect(code).not.toContain('normalize_spread_props');
+
+			// The type-only print merges the bags' refs into the element's own.
+			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain(
 				'let App__spread_props1 = __normalize_spread_props_for_ref_attr(first);',
 			);
-			expect(code).toContain(
+			expect(type_only).toContain(
 				'let App__spread_props2 = __normalize_spread_props_for_ref_attr(second);',
 			);
-			expect(code).toContain('{...App__spread_props1}');
-			expect(code).toContain('{...App__spread_props2}');
-			expect(code).toContain('ref={[App__spread_props1?.ref, App__spread_props2?.ref, cb]}');
-			expect(code.match(/__normalize_spread_props_for_ref_attr\(/g)).toHaveLength(2);
-			expect(code).not.toContain('create_ref_prop');
-			expect(code).not.toContain('__normalize_spread_props(first, cb)');
-			expect(code).not.toContain('__normalize_spread_props(second, cb)');
+			expect(type_only).toContain('ref={[App__spread_props1?.ref, App__spread_props2?.ref, cb]}');
+			expect(type_only).not.toContain('spread_ref_bags');
 		});
 
-		it('lowers a host spread beside a ref in expression position once', () => {
-			const source = `export function App({ enabled, bag, cb }) {
+		it.each(['App', 'App$'])(
+			'names the spread temporary in a branch of %s apart from an authored binding of that name',
+			(component) => {
+				// A lone spread keeps its `ref` as written; two spreads beside a `ref`
+				// still go through a named `spread_ref_bags` group.
+				const { code } = compile(
+					`export function ${component}(props: any) @{
+						const ${component}__spread_props1 = 'mine';
+						<section>
+							@if (props.on) {
+								<div {...props.rest} {...props.more} ref={props.r} title={${component}__spread_props1} />
+							}
+						</section>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(code).toContain(
+					`let ${component}__spread_props2 = __spread_ref_bags(() => props.rest, () => props.more);`,
+				);
+				expect(code).toContain(`title={${component}__spread_props1}`);
+				expect(code).not.toContain(`let ${component}__spread_props1 `);
+			},
+		);
+
+		it('keeps the ref as written beside a single host spread', () => {
+			const template = `function App() @{
+					let input;
+					<input ref={input} {...props.rest} />
+				}`;
+			const expression = `export function App({ enabled, bag, cb }) {
 					return enabled ? <input {...bag} ref={cb} /> : null;
 				}`;
 
-			for (const { code } of [
-				compile(source, 'App.tsrx'),
-				compile_to_volar_mappings(source, 'App.tsrx'),
-			]) {
-				expect(code).toContain(
-					'let App__spread_props1 = __normalize_spread_props_for_ref_attr(bag);',
+			for (const compile_fn of [compile, compile_to_volar_mappings]) {
+				const template_code = compile_fn(template, 'App.tsrx').code;
+				expect(template_code).toContain(
+					'<input ref={input} {...__normalize_spread_props(props.rest)} />',
 				);
-				expect(code).toContain(
-					'<input {...App__spread_props1} ref={[App__spread_props1?.ref, cb]} />',
-				);
-				expect(code).not.toContain('App__spread_props2');
+				expect(template_code).not.toContain('spread_props1');
+
+				const expression_code = compile_fn(expression, 'App.tsrx').code;
+				expect(expression_code).toContain('<input {...__normalize_spread_props(bag)} ref={cb} />');
+				expect(expression_code).not.toContain('spread_props1');
 			}
+		});
+
+		it('lowers host spreads beside a ref in expression position once', () => {
+			const source = `export function App({ enabled, first, second, cb }) {
+					return enabled ? <input {...first} {...second} ref={cb} /> : null;
+				}`;
+
+			const { code } = compile(source, 'App.tsrx');
+			expect(code).toContain(
+				'let App__spread_props1 = __spread_ref_bags(() => first, () => second);',
+			);
+			expect(code).toContain(
+				'<input {...App__spread_props1.bag(0)} {...App__spread_props1.bag(1)} {...App__spread_props1.refs} ref={cb} />',
+			);
+			expect(code).not.toContain('App__spread_props2');
+
+			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain(
+				'<input {...App__spread_props1} {...App__spread_props2} ref={[App__spread_props1?.ref, App__spread_props2?.ref, cb]} />',
+			);
+			expect(type_only).not.toContain('App__spread_props3');
 		});
 
 		it('keeps named ref-like props as ordinary props on host elements', () => {

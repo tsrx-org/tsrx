@@ -5,7 +5,7 @@ import MagicString from 'magic-string';
 import { decode, encode } from '@jridgewell/sourcemap-codec';
 import { TSRX_ERRORS } from '../diagnostics.js';
 import { error } from '../errors.js';
-import { parse_module } from '../parse/parse-module.js';
+import { parse_ordinary_module } from '../parse/parse-module.js';
 import { child_nodes, extract_identifiers, is_ast_node } from '../utils/ast.js';
 import * as b from '../utils/builders.js';
 
@@ -116,7 +116,7 @@ function is_platform_namespace(node) {
  * @param {AST.Node} node
  * @returns {AST.Node | null}
  */
-function find_platform_flag(node) {
+export function find_platform_flag(node) {
 	if (get_platform_flag(node) !== null) return node;
 
 	for (const child of child_nodes(node)) {
@@ -555,7 +555,7 @@ export function replace_platform_flags(source, filename, platform_value, input_m
 	}
 
 	const incoming = normalize_source_map(input_map);
-	const ast = parse_module(source, filename);
+	const ast = parse_ordinary_module(source, filename);
 	const output = new MagicString(source);
 
 	/** @param {AST.Node} node */

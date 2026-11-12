@@ -10,12 +10,6 @@ import { fileURLToPath } from 'node:url';
 const vue_runtime_path = fileURLToPath(
 	new URL('./packages/vite-plugin-vue/tests/vue-runtime-shim.js', import.meta.url),
 );
-const vue_jsx_vapor_runtime_path = fileURLToPath(
-	new URL('./packages/vite-plugin-vue/tests/vue-jsx-vapor-shim.js', import.meta.url),
-);
-const vue_jsx_vapor_jsx_runtime_path = fileURLToPath(
-	new URL('./packages/vite-plugin-vue/tests/vue-jsx-vapor-jsx-runtime-shim.js', import.meta.url),
-);
 
 /**
  * `vite-plugin-solid` and `vue-jsx-vapor` rewrite `.tsrx` test files into
@@ -93,7 +87,7 @@ const solid_runtime_dependency_resolver = create_test_dependency_resolver(
 const vue_runtime_dependency_resolver = create_test_dependency_resolver(
 	'tsrx-vue-runtime-dependencies',
 	'./packages/vite-plugin-vue/package.json',
-	['@tsrx/vue'],
+	['@tsrx/vue', 'vue-jsx-vapor'],
 );
 
 const hono_runtime_dependency_resolver = create_test_dependency_resolver(
@@ -108,11 +102,16 @@ const vue_runtime_alias_plugin = {
 	/** @param {string} source */
 	resolveId(source) {
 		if (source === 'vue') return vue_runtime_path;
-		if (source === 'vue-jsx-vapor/jsx-runtime') return vue_jsx_vapor_jsx_runtime_path;
-		if (source === 'vue-jsx-vapor') return vue_jsx_vapor_runtime_path;
 		return null;
 	},
 };
+
+/**
+ * Suites that spawn `tsc`, `tsrx-tsc` or a language server can run past the 5s
+ * default once the rest of the suite is competing for workers. They assert
+ * results, not speed, so this limit is only here to catch a hang.
+ */
+const spawning_test_timeout = 60_000;
 
 export default defineConfig({
 	test: {
@@ -264,7 +263,7 @@ export default defineConfig({
 						}
 					: { alias: [...tsrx_core_test_harness_alias, ...vue_scoped_styles_alias] },
 				ssr: {
-					noExternal: ['vue', 'vue-jsx-vapor', '@tsrx/vue'],
+					noExternal: ['vue', 'vue-jsx-vapor', '@vue-jsx-vapor/runtime', '@tsrx/vue'],
 				},
 			},
 			{
@@ -454,6 +453,7 @@ export default defineConfig({
 					include: ['packages/typescript-plugin/tests/**/*.test.js'],
 					environment: 'node',
 					globals: true,
+					testTimeout: spawning_test_timeout,
 				},
 				plugins: [],
 			},
@@ -463,6 +463,7 @@ export default defineConfig({
 					include: ['packages/content-mapper/tests/**/*.test.js'],
 					environment: 'node',
 					globals: true,
+					testTimeout: spawning_test_timeout,
 				},
 				plugins: [],
 			},
@@ -472,6 +473,7 @@ export default defineConfig({
 					include: ['packages/language-server/tests/**/*.test.js'],
 					environment: 'node',
 					globals: true,
+					testTimeout: spawning_test_timeout,
 				},
 				plugins: [],
 			},
@@ -508,6 +510,11 @@ export default defineConfig({
 					include: ['packages/tsrx-mcp/tests/**/*.test.js'],
 					environment: 'node',
 					globals: true,
+					// The first compile in a file pays for a cold `import()` of the
+					// target compiler, which can run past the 5s default once the rest
+					// of the suite is competing for workers (#310). The tests assert
+					// results, not speed, so the timeout is only here to catch a hang.
+					testTimeout: 30_000,
 				},
 				plugins: [],
 			},
