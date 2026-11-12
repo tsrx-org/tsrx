@@ -862,7 +862,9 @@ rendering constructs. Use `for...of` for rendered lists, filter the iterable
 before rendering when some items should be skipped, and use `@empty { ... }` for
 the no-items fallback. Direct `continue`, `break`, and `return` statements are
 not allowed in `@for` template loop bodies. Move imperative loops into a nested
-function.
+function. The head declares its loop variable, as in `@for (const item of
+items)`: assigning to an existing variable or property (`@for (state.item of
+items)`) and `using` loop variables are errors.
 
 ### `switch`
 
@@ -898,6 +900,10 @@ export const App = () => @try {
 };
 ```
 
+The `catch` binding is the thrown value as it is, which need not be an `Error`,
+so it has the type `unknown`, as in a TypeScript `catch` clause. Check it before
+reading properties such as `message`.
+
 The `catch` block also receives a `reset` function as its second argument.
 Calling `reset()` clears the error state and re-renders the children, which is
 useful for building retry UIs:
@@ -907,7 +913,7 @@ export const RetryBoundary = () => @try {
 	<ComponentThatMightFail />
 } @catch (e, reset) {
 	<div>
-		<p>Error: {e.message}</p>
+		<p>Error: {e instanceof Error ? e.message : String(e)}</p>
 		<button onClick={() => reset()}>Try again</button>
 	</div>
 };
@@ -1657,9 +1663,10 @@ Two paths type-check `.tsrx` files; both use the same target-specific transform.
 Editors: in VS Code, VS Code's own TypeScript serves `.tsrx` files: its tsserver
 with the TSRX plugin the extension ships (no tsconfig `plugins` entry needed), or
 TypeScript 7.1 with the mapper from `tsconfig.json`. For TypeScript 7.1, install
-`typescript@next` in the project, set `"js/ts.experimental.useTsgo": true` and
-`"js/ts.tsdk.path": "node_modules/typescript"` in the VS Code settings, and
-install the TypeScript 7 extension (`TypeScriptTeam.native-preview`). The
+`typescript@next` in the project, set `"js/ts.experimental.useTsgo": true` in the
+VS Code settings, and install the TypeScript 7 extension
+(`TypeScriptTeam.native-preview`), version 1.0.2 or newer. When it asks whether to
+use the project's TypeScript, choose Use Workspace Version. The
 extension activates Microsoft's
 TypeScript extensions, leaving server selection to them, and registers `.tsrx`
 for project discovery on TypeScript 7. Other

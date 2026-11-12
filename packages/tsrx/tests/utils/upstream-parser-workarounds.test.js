@@ -865,10 +865,10 @@ describe("a parameter property modifier before a function type's first parameter
 		}
 	});
 
-	it('still fails after the modifier without collecting', async () => {
-		const outcomes = await parse_in_worker([{ source: sources[0] }]);
+	it('throws TS2369 at the modifier without collecting (#1162)', async () => {
+		const outcomes = await parse_in_worker(sources.map((source) => ({ source })));
 
-		expect(outcomes).toEqual([thrown(TS_ERRORS.UNEXPECTED_TOKEN, 17)]);
+		expect(outcomes).toEqual(sources.map((source) => thrown(error, source.indexOf('(') + 1)));
 	});
 
 	it('still reads a parenthesized type', async () => {
@@ -1812,8 +1812,9 @@ describe('decorated default-exported class (sveltejs/acorn-typescript#124)', () 
 
 	it('still rejects decorators before anything but a class', async () => {
 		const error = TS_ERRORS.UNEXPECTED_LEADING_DECORATOR;
-		// When collecting, TypeScript's checker error before another declaration
-		// is recorded at the decorators instead (TS1206).
+		// TypeScript's checker error before another declaration is at the
+		// decorators (TS1206): a strict parse throws it there (#1162), and a
+		// collecting one records it.
 		const declarations = [
 			'export default @dec function f() {}',
 			'export default @dec interface I {}',
@@ -1821,7 +1822,7 @@ describe('decorated default-exported class (sveltejs/acorn-typescript#124)', () 
 		const expression = 'export default @dec 1;';
 		const outcomes = await parseBothModes([...declarations, expression]);
 		for (const { source, strict } of outcomes) {
-			expect(strict, source).toMatchObject(thrown(error, 20));
+			expect(strict, source).toMatchObject(thrown(error, source === expression ? 20 : 15));
 		}
 		for (const { source, collect } of outcomes.slice(0, declarations.length)) {
 			expect(collect, source).toMatchObject({ ok: true, errors: [{ code: error.code, pos: 15 }] });
@@ -1879,7 +1880,7 @@ describe('decorators before `export` (sveltejs/acorn-typescript#125)', () => {
 		expect([exported.start, exported.declaration.start]).toEqual([5, 0]);
 	});
 
-	it('rejects them before any other export, at the exported declaration, or records them when collecting', async () => {
+	it('rejects them before any other export, at the decorators, or records them there when collecting', async () => {
 		const cases = /** @type {Array<[string, string]>} */ ([
 			['@dec export default (class {});', '(class'],
 			['@dec export const A = class {};', 'const'],
@@ -1900,12 +1901,14 @@ describe('decorators before `export` (sveltejs/acorn-typescript#125)', () => {
 		for (const [index, [source, declaration]] of cases.entries()) {
 			const { strict, collect } = outcomes[index];
 			const column = source.indexOf(declaration);
-			expect(strict, source).toMatchObject(thrown(error, column));
-			// When collecting, the error before an export is recorded at the
-			// decorators instead, as TypeScript reports it from its checker
-			// (TS1206), and no class takes them. An at-sign construct is no
-			// declaration, so the error is still thrown there.
-			if (/@if|@\{/.test(declaration)) {
+			const at_sign_construct = /@if|@\{/.test(declaration);
+			// The error before an export is at the decorators, as TypeScript reports
+			// it from its checker (TS1206): a strict parse throws it there (#1162),
+			// and a collecting one records it there, and no class takes them. An
+			// at-sign construct is no declaration, so the error is still thrown
+			// after the decorators.
+			expect(strict, source).toMatchObject(thrown(error, at_sign_construct ? column : 0));
+			if (at_sign_construct) {
 				expect(collect, source).toMatchObject(thrown(error, column));
 			} else {
 				const { ast, errors } = parsed(collect, source);
@@ -2621,6 +2624,8 @@ describe('`abstract` or `declare` followed by a line break (sveltejs/acorn-types
 
 	it('rejects decorators before `abstract` or `declare` and a line break', async () => {
 		// TypeScript's parser expects a declaration after the decorators (TS1146).
+		// A collecting parse records the decorators' error, which a strict parse
+		// throws (#1162), and then throws it again where the declaration isn't.
 		/** @type {Array<[source: string, at: string]>} */
 		const cases = [
 			['export default @dec abstract\nclass A {}', 'abstract'],
@@ -2634,7 +2639,9 @@ describe('`abstract` or `declare` followed by a line break (sveltejs/acorn-types
 		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
 		expect(outcomes).toEqual(
 			cases.flatMap(([source, at]) =>
-				thrown_in_every_mode(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, source.indexOf(at)),
+				PARSE_MODES.map((options) =>
+					thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, source.indexOf(options ? at : '@dec')),
+				),
 			),
 		);
 	});
@@ -2647,11 +2654,11 @@ describe('`abstract` or `declare` followed by a line break (sveltejs/acorn-types
 			['@dec export declare abstract\nclass A {}', 'declare'],
 		];
 		const outcomes = await parseBothModes(cases.map(([source]) => source));
-		for (const [index, { source, strict, collect }] of outcomes.entries()) {
-			const pos = source.indexOf(cases[index][1]);
-			expect(strict, source).toEqual(thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, pos));
-			// When collecting, the decorators are recorded (TS1206), and what follows
-			// `export` starts no declaration (TS1128).
+		for (const { source, strict, collect } of outcomes) {
+			// When collecting, the decorators are recorded (TS1206), which a strict
+			// parse throws (#1162), and what follows `export` starts no declaration
+			// (TS1128).
+			expect(strict, source).toEqual(thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, 0));
 			expect(collect, source).toEqual(thrown(TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 5));
 		}
 
@@ -2659,7 +2666,7 @@ describe('`abstract` or `declare` followed by a line break (sveltejs/acorn-types
 		// can't decorate. TypeScript reports them from its checker (TS1206).
 		const source = '@dec export default abstract\nclass A {}';
 		const [{ strict, collect }] = await parseBothModes([source]);
-		expect(strict).toEqual(thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, 20));
+		expect(strict).toEqual(thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, 0));
 		const { ast, errors } = parsed(collect, source);
 		expect(errors).toEqual([TS_ERRORS.UNEXPECTED_LEADING_DECORATOR.code]);
 		const [exported, declared] = ast.body;

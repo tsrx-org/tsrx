@@ -1,6 +1,8 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedAnonymousComponentTests,
+	runSharedCatchErrorTypeTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -30,6 +32,12 @@ runSharedCompileDiagnosticsTests({
 	compile_to_volar_mappings: compileServerToVolarMappings,
 	name: 'hono',
 });
+runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings: compileServerToVolarMappings,
+	name: 'hono',
+	package_dir: fileURLToPath(new URL('..', import.meta.url)),
+	jsx_import_source: 'hono/jsx',
+});
 runSharedCodeBlockChildrenTests({ compile: compileServer, name: 'hono' });
 runSharedAnonymousComponentTests({ compile: compileServer, name: 'hono' });
 runSharedHookBodyTests({
@@ -48,6 +56,12 @@ runSharedTsxExpressionTsrxTests({ compile: compileDom, name: 'hono-dom', classAt
 runSharedCompileDiagnosticsTests({
 	compile_to_volar_mappings: compileDomToVolarMappings,
 	name: 'hono-dom',
+});
+runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings: compileDomToVolarMappings,
+	name: 'hono-dom',
+	package_dir: fileURLToPath(new URL('..', import.meta.url)),
+	jsx_import_source: 'hono/jsx/dom',
 });
 runSharedCodeBlockChildrenTests({ compile: compileDom, name: 'hono-dom' });
 runSharedAnonymousComponentTests({ compile: compileDom, name: 'hono-dom' });
@@ -101,7 +115,7 @@ describe('@tsrx/hono @pending fallback', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toMatch(/<Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
+		expect(code).toMatch(/<__Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
 	});
 });
 
@@ -167,9 +181,9 @@ describe('@tsrx/hono server compiler', () => {
 		expect(code).toContain("from '@tsrx/hono/error-boundary'");
 		expect(code).toContain("from '@tsrx/hono/runtime/iterable'");
 		expect(code).toContain('export async function App');
-		expect(code).toContain('<Suspense');
-		expect(code).toContain('<TsrxErrorBoundary');
-		expect(code).toContain('<TsrxErrorBoundary fallbackRender={');
+		expect(code).toContain('<__Suspense');
+		expect(code).toContain('<__TsrxErrorBoundary');
+		expect(code).toContain('<__TsrxErrorBoundary fallbackRender={');
 		expect(code).not.toContain('_reset');
 		expect(code).toContain('class="item"');
 	});

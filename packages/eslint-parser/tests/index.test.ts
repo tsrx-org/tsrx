@@ -301,6 +301,32 @@ export function A({ items }) @{
 		]);
 	});
 
+	it('defines the reset function of a @catch in its scope, as the error is', () => {
+		const code = `export function A() @{
+	<div>
+		@try { <b /> } @catch (e, reset) { <button onClick={() => reset()}>{e.message}</button> }
+		@try { <b /> } @catch (error, unusedReset) { <p>{error.message}</p> }
+		@try { <b /> } @catch (e) { <p>{e.message}</p> }
+		<p>{reset}</p>
+	</div>
+}`;
+		expect(lint(code, { rules: { 'no-undef': 'error', 'no-unused-vars': 'error' } })).toEqual([
+			"4: no-unused-vars: 'unusedReset' is defined but never used.",
+			"6: no-undef: 'reset' is not defined.",
+		]);
+	});
+
+	it('resolves names in the pending block of a plain try', () => {
+		const code = `export function App() {
+	try { foo(); } pending { bar(); } catch (e) { baz(e); }
+}`;
+		expect(lint(code, { rules: { 'no-undef': 'error' } })).toEqual([
+			"2: no-undef: 'foo' is not defined.",
+			"2: no-undef: 'bar' is not defined.",
+			"2: no-undef: 'baz' is not defined.",
+		]);
+	});
+
 	it('locates the loop of a @for with any line break', () => {
 		for (const line_break of ['\n', '\r\n', '\r', ' ']) {
 			const code = [
@@ -318,6 +344,153 @@ export function A({ items }) @{
 				end: { line: 3, column: 48 },
 			});
 		}
+	});
+
+	it('gives each arm of an @if its own code path', () => {
+		const code = `export function A({ n }) @{
+	let x = 0;
+	<div>
+		@if (n) { throw new Error('a'); } @else if (n > 1) { <i /> } @else { <u /> }
+		@if (n > 2) { x = 1; <b /> } @else { x = 2; <s /> }
+		@if (n > 3) { throw new Error('c'); const late = 1; <p>{late}</p> }
+		{x}
+	</div>
+}
+export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };`;
+		// Only `x = 0` is overwritten on every path, and only `late` follows a
+		// `throw` in its own arm. (ESLint 9 words the first message differently.)
+		expect(
+			lint(code, {
+				rules: { 'no-unreachable': 'error', 'no-useless-assignment': 'error' },
+			}).map((message) => message.split(': ', 2).join(': ')),
+		).toEqual(['2: no-useless-assignment', '6: no-unreachable']);
+	});
+
+	it('runs the blocks of a @try one after another', () => {
+		// The README's known limitation: code path analysis doesn't know that
+		// `@pending` and `@catch` run only when the body suspends or throws, so it
+		// reports them, and the `@if` after them.
+		const code = `export function A({ n }) @{
+	<div>
+		@try { throw new Error('b'); } @pending { <p /> } @catch (e) { <p>{String(e)}</p> }
+		@if (n) { <i /> }
+	</div>
+}`;
+		expect(
+			lint(code, { rules: { 'no-unreachable': 'error' } }).map((message) =>
+				message.split(': ', 2).join(': '),
+			),
+		).toEqual(['3: no-unreachable', '3: no-unreachable', '4: no-unreachable']);
+	});
+
+	it('visits the blocks of a @try in source order', () => {
+		const names: string[] = [];
+		lint(
+			`export function A() @{
+	@try { <a /> } @pending { <p /> } @catch (e) { <b /> }
+}`,
+			{
+				plugins: {
+					probe: {
+						rules: {
+							order: {
+								create: () => ({
+									'JSXOpeningElement > JSXIdentifier'(node: any) {
+										names.push(node.name);
+									},
+								}),
+							},
+						},
+					},
+				},
+				rules: { 'probe/order': 'error' },
+			},
+		);
+		expect(names).toEqual(['a', 'p', 'b']);
+	});
+
+	it('keeps hooks in a @try body on one path, outside any try', () => {
+		// Test doubles for two checks in eslint-plugin-react-hooks, which isn't a
+		// dependency here: `use()` under a `TryStatement` or `CatchClause`, and a hook
+		// that some path to the end skips.
+		const seen: string[] = [];
+		const code = `export function A({ p }) @{
+	<div>
+		@try {
+			const data = use(p);
+			const b = useB();
+			<p>{data}{b}</p>
+		} @pending {
+			const s = use(p);
+			<s>{s}</s>
+		} @catch (e) {
+			<b>{String(e)}</b>
+		}
+	</div>
+}`;
+		lint(code, {
+			plugins: {
+				probe: {
+					rules: {
+						hooks: {
+							create: () => {
+								const paths: Set<any>[] = [];
+								return {
+									onCodePathStart: () => paths.push(new Set()),
+									onCodePathEnd: () => paths.pop(),
+									onCodePathSegmentStart: (segment: any) => paths.at(-1)!.add(segment),
+									onCodePathSegmentEnd: (segment: any) => paths.at(-1)!.delete(segment),
+									'CallExpression[callee.name=/^use/]'(node: any) {
+										let in_try = false;
+										for (let parent = node.parent; parent; parent = parent.parent) {
+											if (parent.type === 'TryStatement' || parent.type === 'CatchClause')
+												in_try = true;
+										}
+										seen.push(
+											`${node.callee.name} in a try: ${in_try}, segments: ${[...paths.at(-1)!].map((segment) => segment.id)}`,
+										);
+									},
+								};
+							},
+						},
+					},
+				},
+			},
+			rules: { 'probe/hooks': 'error' },
+		});
+		expect(seen).toEqual([
+			'use in a try: false, segments: s2_1',
+			'useB in a try: false, segments: s2_1',
+			'use in a try: false, segments: s2_1',
+		]);
+	});
+
+	it('shows ESLint the if statement of an @if, and the blocks of a @try', () => {
+		const code = `export function A({ n }) @{
+	<div>
+		@if (n) { <i /> } @else { <u /> }
+		@try { <b /> } @pending { <p /> } @catch (e) { <s /> }
+		@try { <b /> } @pending { <p /> }
+	</div>
+}`;
+		const [, tsrx_if, , tsrx_try, , pending_only] = (
+			parseForESLint(code, { filePath: 'App.tsrx' }).ast as any
+		).body[0].declaration.body.render.children;
+		expect(tsrx_if.type).toBe('JSXIfExpression');
+		expect(tsrx_if.statement).toMatchObject({
+			type: 'IfStatement',
+			loc: { start: { line: 3, column: 3 }, end: { line: 3, column: 35 } },
+			test: { name: 'n' },
+			consequent: { type: 'BlockStatement' },
+			alternate: { type: 'BlockStatement' },
+		});
+		for (const tsrx_try_node of [tsrx_try, pending_only]) {
+			expect(tsrx_try_node.type).toBe('JSXTryExpression');
+			expect(tsrx_try_node.statement).toBeUndefined();
+			expect(tsrx_try_node.block.type).toBe('BlockStatement');
+			expect(tsrx_try_node.pending.type).toBe('BlockStatement');
+		}
+		expect(tsrx_try.handler.type).toBe('CatchClause');
 	});
 
 	it('gives TypeScript function types the params ESLint reads', () => {

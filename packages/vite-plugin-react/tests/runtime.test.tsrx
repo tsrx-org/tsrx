@@ -10,6 +10,7 @@ import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
+import { runGeneratedImportBindingsRuntimeTests } from '@tsrx/core/test-harness/runtime/generated-import-bindings';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -514,6 +515,34 @@ function ForKeyedSwitchApp() @{
 	</>
 }
 
+let nested_row_mounts = 0;
+
+function NestedRow({ id }: { id: string }) @{
+	const [mount] = useState(() => ++nested_row_mounts);
+
+	<li className="nested-row">{`${id}:${mount}`}</li>
+}
+
+function ForKeyedNestedForApp() @{
+	const [groups, setGroups] = useState([
+		{ id: 'a', children: ['a1', 'a2'] },
+		{ id: 'b', children: ['b1'] },
+	]);
+
+	<>
+		<ul>
+			@for (const group of groups; key group.id) {
+				@for (const child of group.children; index i) {
+					<NestedRow id={child} />
+				}
+			}
+		</ul>
+		<button className="reverse-keyed-nested-for" onClick={() => setGroups([...groups].reverse())}>
+			{'reverse'}
+		</button>
+	</>
+}
+
 // ── For-of over a Set ──
 
 function ForOverSetApp() @{
@@ -769,6 +798,47 @@ function MultiSpreadExplicitRefApp() @{
 	/>
 }
 
+// ── Refs beside a host spread across renders ──
+
+const spread_ref_render_log: string[] = [];
+
+function log_spread_ref(name: string) {
+	return (node: HTMLInputElement | null) => {
+		spread_ref_render_log.push(`${name}:${node ? 'attach' : 'detach'}`);
+	};
+}
+
+const own_before_ref = log_spread_ref('own-before');
+const own_after_ref = log_spread_ref('own-after');
+const own_beside_ref = log_spread_ref('own-beside');
+const bag_beside_ref = log_spread_ref('bag-beside');
+const swap_first_ref = log_spread_ref('swap-first');
+const swap_second_ref = log_spread_ref('swap-second');
+const plain_bag = { title: 'bag' };
+const ref_bag = { title: 'bag', ref: bag_beside_ref };
+
+function SpreadRefRenderApp() @{
+	const [count, setCount] = useState(0);
+	const [swapped, setSwapped] = useState(false);
+
+	<>
+		<input className="own-before" ref={own_before_ref} {...plain_bag} />
+		<input className="own-after" {...plain_bag} ref={own_after_ref} />
+		<input className="own-beside" ref={own_beside_ref} data-count={count} {...ref_bag} />
+		<input
+			className="swap"
+			ref={swapped ? swap_second_ref : swap_first_ref}
+			{...{ 'data-count': count }}
+		/>
+		<button className="spread-ref-rerender" onClick={() => setCount(count + 1)}>
+			{count}
+		</button>
+		<button className="spread-ref-swap" onClick={() => setSwapped(true)}>
+			{'swap'}
+		</button>
+	</>
+}
+
 // ── Conditional host spreads ──
 
 let conditional_spread_and_node: HTMLInputElement | null = null;
@@ -833,8 +903,8 @@ function ThrowingChild() @{
 function ErrorBoundaryApp() @{
 	@try {
 		<ThrowingChild />
-	} @catch (err: Error) {
-		<p className="caught">{err.message}</p>
+	} @catch (err) {
+		<p className="caught">{(err as Error).message}</p>
 	}
 }
 
@@ -854,9 +924,9 @@ function ErrorToggleApp() @{
 	<>
 		@try {
 			<MaybeThrow shouldThrow={fail} />
-		} @catch (err: Error, reset: () => void) {
+		} @catch (err, reset: () => void) {
 			<>
-				<p className="caught">{err.message}</p>
+				<p className="caught">{(err as Error).message}</p>
 				<button
 					className="reset"
 					onClick={() => {
@@ -904,8 +974,8 @@ function SuspenseErrorApp(props: { promise: Promise<string> }) @{
 		<AsyncChild promise={props.promise} />
 	} @pending {
 		<p className="pending">{'loading...'}</p>
-	} @catch (err: Error) {
-		<p className="caught">{err.message}</p>
+	} @catch (err) {
+		<p className="caught">{(err as Error).message}</p>
 	}
 }
 
@@ -916,9 +986,9 @@ function ErrorResetApp(props: { promise: Promise<string> }) @{
 		<AsyncChild promise={props.promise} />
 	} @pending {
 		<p className="pending">{'loading...'}</p>
-	} @catch (err: Error, reset: () => void) {
+	} @catch (err, reset: () => void) {
 		<>
-			<p className="caught">{err.message}</p>
+			<p className="caught">{(err as Error).message}</p>
 			<button className="retry" onClick={() => reset()}>
 				{'retry'}
 			</button>
@@ -939,12 +1009,12 @@ function NestedTryApp() @{
 		<div className="outer">
 			@try {
 				<InnerThrow />
-			} @catch (err: Error) {
-				<p className="inner-caught">{err.message}</p>
+			} @catch (err) {
+				<p className="inner-caught">{(err as Error).message}</p>
 			}
 		</div>
-	} @catch (err: Error) {
-		<p className="outer-caught">{err.message}</p>
+	} @catch (err) {
+		<p className="outer-caught">{(err as Error).message}</p>
 	}
 }
 
@@ -977,7 +1047,7 @@ function IfInsideTryApp() @{
 			} @else {
 				<p className="branch-b">{'alternate'}</p>
 			}
-		} @catch (err: Error) {
+		} @catch (err) {
 			<p className="caught">{'error'}</p>
 		}
 		<button className="toggle" onClick={() => setShow(!show)}>
@@ -998,7 +1068,7 @@ function ForInsideTryApp() @{
 					{item}
 				</span>
 			}
-		} @catch (err: Error) {
+		} @catch (err) {
 			<p className="caught">{'error'}</p>
 		}
 		<button className="add" onClick={() => setItems([...items, 'z'])}>
@@ -1706,6 +1776,28 @@ describe('tsrx-react runtime', () => {
 		expect(container.querySelector('.multi-spread-explicit-ref')!.hasAttribute('ref')).toBe(false);
 	});
 
+	it('applies refs beside a host spread again only when a ref changes', async () => {
+		spread_ref_render_log.length = 0;
+		await render(SpreadRefRenderApp);
+		expect(spread_ref_render_log).toEqual([
+			'own-before:attach',
+			'own-after:attach',
+			'own-beside:attach',
+			'bag-beside:attach',
+			'swap-first:attach',
+		]);
+
+		spread_ref_render_log.length = 0;
+		await click('.spread-ref-rerender');
+		await click('.spread-ref-rerender');
+		expect(text('.spread-ref-rerender')).toBe('2');
+		expect(container.querySelector('.own-beside')!.getAttribute('data-count')).toBe('2');
+		expect(spread_ref_render_log).toEqual([]);
+
+		await click('.spread-ref-swap');
+		expect(spread_ref_render_log).toEqual(['swap-first:detach', 'swap-second:attach']);
+	});
+
 	for (const enabled of [false, true]) {
 		it(`renders conditional host spreads when the condition is ${enabled}`, async () => {
 			conditional_spread_and_node = null;
@@ -1777,6 +1869,23 @@ describe('tsrx-react runtime', () => {
 		expect(
 			Array.from(container.querySelectorAll('.continue-item'), (item) => item.textContent),
 		).toEqual(['a', 'c']);
+	});
+
+	it('keeps row state with its group when a keyed loop renders a nested @for (#181)', async () => {
+		const rows = () =>
+			Array.from(container.querySelectorAll('.nested-row'), (row) => row.textContent);
+
+		nested_row_mounts = 0;
+		await render(ForKeyedNestedForApp);
+		expect(rows()).toEqual(['a1:1', 'a2:2', 'b1:3']);
+
+		// Each group's rows move with it: their keys only tell rows within a
+		// group apart.
+		await click('.reverse-keyed-nested-for');
+		expect(rows()).toEqual(['b1:3', 'a1:1', 'a2:2']);
+		expect(
+			console_error_spy?.mock.calls.some((args) => String(args[0]).includes('unique "key"')),
+		).toBe(false);
 	});
 
 	for (const [directive, App, reverse] of [
@@ -2326,3 +2435,4 @@ runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();
+runGeneratedImportBindingsRuntimeTests();
