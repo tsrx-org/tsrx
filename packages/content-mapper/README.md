@@ -123,14 +123,25 @@ mapper then sends that error alone, and a stub of the file's exports.
   `Verbatim` spans with the same feature bits whose gap is identical text in both
   files are coalesced into one span, so a statement such as
   `import { a } from './x';` is one edit-safe span and TypeScript can place an
-  auto-import edit inside it. Fragments of identifiers (the transform's
-  one-character file-start anchor) are dropped.
+  auto-import edit inside it. A span from a mapping with no feature at all joins
+  either neighbour. Fragments of identifiers (the transform's one-character
+  file-start anchor) are dropped.
 - Each embedded `<script>` body as a block statement appended to the generated
   TSX, with a verbatim span back to the source (the shared transform does this on
   every path). A block keeps one body's declarations from colliding with another's
   or with the component's, and contributes nothing to declaration output. `import`
   declarations of a `<script type="module">` body are hoisted to module level in
   front of the block, where TypeScript resolves them like any other import.
+- For a module that keeps an `import.meta.env.platform` flag, a
+  `/// <reference path>` directive to the shared file in `platform-globals/` that
+  types the flags for the project's platform, in place of the `declare global`
+  block the compiler appends to each such module. The file is in the program once,
+  so two modules don't repeat the `ImportMeta` index signature (TS2374), and
+  declaration output drops the directive, so `Component.d.tsrx.ts` carries no
+  generated globals. A directive is not an import, so organize imports and
+  auto-import see only the module's own imports. Under `noResolve: true`
+  TypeScript doesn't follow the directive, and every flag read reports TS2339
+  (`Property 'env' does not exist on type 'ImportMeta'`).
 - Every TSRX compile error as a mapper diagnostic in the original file, printed as
   `error TSRX<number>`, in capitals like TypeScript's `TS2322`, so a TSRX error
   shows with its own code (`TSRX2002`). An error with a TypeScript code is `11`

@@ -41,6 +41,10 @@
       "types": "./src/vite/worker.js",
       "default": "./src/vite/worker.js"
     },
+    "./vite/platform": {
+      "types": "./src/vite/platform.js",
+      "default": "./src/vite/platform.js"
+    },
     "./config": {
       "types": "./types/config.d.ts",
       "default": "./src/config.js"
@@ -78,6 +82,7 @@
     "./test-harness/css-references": "./tests/shared/css-references.js",
     "./test-harness/dep-scan": "./tests/shared/dep-scan.js",
     "./test-harness/worker": "./tests/shared/worker.js",
+    "./test-harness/platform": "./tests/shared/platform.js",
     "./test-harness/script-body-server": "./tests/shared/script-body-server.js",
     "./test-harness/runtime/*": "./tests/shared/runtime/*.js",
     "./test-harness/runtime/*.js": "./tests/shared/runtime/*.js",

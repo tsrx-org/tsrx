@@ -84,8 +84,20 @@ export function WithComponent() @{
 	<p>{helperB()}<Button label="x" /></p>
 }
 `;
+const STATEMENT_TSRX = `import { helperA } from './lib';
+
+export function Statement() @{
+	helperA();
+	const value = helperB;
+	<p>{value}</p>
+}
+`;
 const NO_IMPORTS_TSRX = `export function NoImports() @{
 	<p>{helperB()}</p>
+}
+`;
+const FLAGGED_NO_IMPORTS_TSRX = `export function FlaggedNoImports() @{
+	<p>{helperB()}{String(import.meta.env.platform.web)}</p>
 }
 `;
 /** Imports with several names and type names, some of them unused. */
@@ -115,7 +127,9 @@ function workspace_files() {
 	files['mixed.ts'] = MIXED_TS;
 	files['NewLine.tsrx'] = NEW_LINE_TSRX;
 	files['NoImports.tsrx'] = NO_IMPORTS_TSRX;
+	files['FlaggedNoImports.tsrx'] = FLAGGED_NO_IMPORTS_TSRX;
 	files['WithComponent.tsrx'] = WITH_COMPONENT_TSRX;
+	files['Statement.tsrx'] = STATEMENT_TSRX;
 	files['Extend.tsrx'] = EXTEND_TSRX;
 	files['Fresh.tsrx'] = FRESH_TSRX;
 	files['FreshStatic.tsrx'] = FRESH_STATIC_TSRX;
@@ -597,6 +611,31 @@ import def from './mixed';
 	});
 
 	it.each([
+		['source.removeUnusedImports', "import Button from './Button.tsrx';\n"],
+		['source.organizeImports', "import Button from './Button.tsrx';\n"],
+		[
+			'source.sortImports',
+			"import Button from './Button.tsrx';\nimport Panel from './Panel.tsrx';\n",
+		],
+	])('applies %s in a module that keeps a platform flag', async (kind, imports) => {
+		// The shared platform globals are referenced by a directive, not imported, so
+		// the module's last import stays its own and its edits still map. A module
+		// with an import or export also gets no generated `export {};`, which
+		// Organize and Sort Imports would rewrite in generated code (#1207).
+		const source = [
+			"import Panel from './Panel.tsrx';",
+			"import Button from './Button.tsrx';",
+			'',
+			'export default function Flagged() @{',
+			'\t<Button label={String(import.meta.env.platform.web)} />',
+			'}',
+			'',
+		].join('\n');
+		const edits = await source_action_edits('Flagged.tsrx', source, kind);
+		expect(apply_edits(source, edits)).toBe(imports + source.slice(source.indexOf('\nexport')));
+	});
+
+	it.each([
 		[
 			'on a new line, sorted before the other import',
 			'NewLine.tsrx',
@@ -608,6 +647,34 @@ import def from './mixed';
 		[
 			'into a file without imports whose generated code starts like the source',
 			'NoImports.tsrx',
+			{
+				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
+				newText: 'import { helperB } from "./lib";\n\n',
+			},
+		],
+		[
+			// The `<` of the tag maps with other features than `helperB`, which ended the span
+			// of `helperB` at the cursor, and TypeScript 7 offered no auto-import there.
+			'on a new line when the template uses a component tag (#1028)',
+			'WithComponent.tsrx',
+			{
+				range: { start: { line: 1, character: 0 }, end: { line: 1, character: 0 } },
+				newText: "import { helperB } from './lib';\n",
+			},
+		],
+		[
+			// The generated code adds a blank line after the `;`, which ended the span of
+			// `helperB` at the cursor before the next span (#1064).
+			'into an existing import from a statement in a template body',
+			'Statement.tsrx',
+			{
+				range: { start: { line: 0, character: 16 }, end: { line: 0, character: 16 } },
+				newText: ', helperB',
+			},
+		],
+		[
+			'into a file without imports that keeps a platform flag',
+			'FlaggedNoImports.tsrx',
 			{
 				range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
 				newText: 'import { helperB } from "./lib";\n\n',
@@ -629,23 +696,6 @@ import def from './mixed';
 		const resolved = await client.request('completionItem/resolve', item);
 		expect(resolved.additionalTextEdits ?? item.additionalTextEdits).toEqual([edit]);
 		client.close(file);
-	});
-
-	it('offers no auto-import that needs a new line when the template uses a component tag (#1028)', async () => {
-		// A `.tsx` file with the same code gets the candidate, and so does this file
-		// without the `<Button />` tag.
-		client.open('WithComponent.tsrx', files['WithComponent.tsrx']);
-		await client.diagnostics('WithComponent.tsrx').catch(() => undefined);
-		const completion = await client.request('textDocument/completion', {
-			...at(client, files, 'WithComponent.tsrx', 'helperB', 'helperB'.length),
-			context: { triggerKind: 1 },
-		});
-		expect(
-			completion.items.filter(
-				(/** @type {{ label: string }} */ entry) => entry.label === 'helperB',
-			),
-		).toEqual([]);
-		client.close('WithComponent.tsrx');
 	});
 
 	it('reports a compile error at the authored construct and keeps importers resolving', async () => {
@@ -687,6 +737,121 @@ import def from './mixed';
 				range_text(semicolon, d.range),
 			]),
 		).toEqual([['TSRX', Number(code.slice('TSRX'.length)), ';']]);
+
+		client.change('Button.tsrx', files['Button.tsrx']);
+		expect(await client.diagnostics('Button.tsrx')).toEqual([]);
+	});
+
+	// Each tag left open shows on itself. The closing tags that recovery adds
+	// have no mapping, so an error of TypeScript's on one could only show at the
+	// top of the file, as TS18080. The directive has to cover them, and a tag's
+	// own statement can end before them. An unclosed tag also hides TypeScript's
+	// errors around it in its function until it's closed (#1288).
+	it('reports each unclosed tag on itself and nothing on the closing tags added', async () => {
+		const unclosed = TSRX_ERRORS.UNCLOSED_TAG.code;
+		const number = Number(unclosed.slice('TSRX'.length));
+		/** @param {string} body */
+		const component = (body) => `export function C() @{\n\t${body}\n}\n`;
+		/** @param {string} body */
+		const plain = (body) => `export function C(props: { a: number }) {\n\t${body}\n}\n`;
+		for (const [source, tags] of /** @type {Array<[string, string[]]>} */ ([
+			[component('<main><section>'), ['main', 'section']],
+			[component('<ul><li>a'), ['ul', 'li']],
+			[component('<><div>'), ['<>', 'div']],
+			[component('<div><span><b><i>'), ['div', 'span', 'b', 'i']],
+			[component('<Missing>'), ['Missing']],
+			[component('<nope.Missing>'), ['nope.Missing']],
+			[component('const y = <Missing>;\n\t<div>{y}'), ['Missing', 'div']],
+			[plain('return <Missing id={props.a}>;'), ['Missing']],
+			[plain('const y = <Missing>;\n\treturn y;'), ['Missing']],
+			[plain('const n = 1;\n\treturn <Missing>{n};'), ['Missing']],
+			[plain('const n = 1;\n\treturn <div><Missing>{n};'), ['div', 'Missing']],
+			[plain('const f = () => <Missing>;\n\treturn f;'), ['Missing']],
+			[plain("const n: number = 'x';\n\treturn <div>{n};"), ['div']],
+			['export class A {\n\ty = <Missing>;\n}\n', ['Missing']],
+			['export const y = <div>\n', ['div']],
+			['export const y = <style>.a {}\n', ['<style>']],
+			['export const y = <script>const a = 1;\n', ['<script>']],
+			['<><div>;\n', ['<>', 'div']],
+		])) {
+			client.change('Button.tsrx', source);
+			const diagnostics = await client.diagnostics('Button.tsrx');
+			expect(
+				diagnostics
+					.filter((d) => d.severity === 1)
+					.toSorted(
+						(a, b) =>
+							a.range.start.line - b.range.start.line ||
+							a.range.start.character - b.range.start.character,
+					)
+					.map((d) => [d.source, d.code, range_text(source, d.range)]),
+				source,
+			).toEqual(tags.map((tag) => ['TSRX', number, tag]));
+		}
+
+		client.change('Button.tsrx', files['Button.tsrx']);
+		expect(await client.diagnostics('Button.tsrx')).toEqual([]);
+	});
+
+	/** @param {string} source */
+	async function type_errors_in(source) {
+		client.change('Button.tsrx', source);
+		const diagnostics = await client.diagnostics('Button.tsrx');
+		return diagnostics
+			.filter((d) => d.code === 2322)
+			.map((d) => range_text(source, d.range))
+			.sort();
+	}
+
+	// A `@{ … }` after an unclosed tag at module level parses as a block inside
+	// the tag, so the tag's declaration stretches around that component. A
+	// directive on that declaration would hide all of its errors (#1288).
+	it('keeps the errors of the components after an unclosed tag', async () => {
+		const template = `export function B() @{\n\tconst wrong: string = 1;\n\t<span />\n}\n`;
+		const arrow = `export const C = () => @{\n\tconst also: string = 1;\n\t<b />\n};\n`;
+		for (const first of [
+			'export const A = () => <div>\n',
+			'export const A = () => <div>;\n',
+			'export const y = <div>\n',
+			'export const y = <Missing>\n',
+			'export const y = <a.b>\n',
+			'export const A = () => <>\n',
+		]) {
+			expect(await type_errors_in(first + template), first).toEqual(['wrong']);
+			expect(await type_errors_in(first + arrow), first).toEqual(['also']);
+			expect(await type_errors_in(first + template + arrow), first).toEqual(['also', 'wrong']);
+		}
+
+		client.change('Button.tsrx', files['Button.tsrx']);
+		expect(await client.diagnostics('Button.tsrx')).toEqual([]);
+	});
+
+	// A `<>` the output drops has only an anchor, on the line of its siblings.
+	it('keeps the errors beside an unclosed fragment the output drops', async () => {
+		const source = 'export const y = <div>{/*cc*/}<><b /><Undefined1 /><i />\n';
+		client.change('Button.tsrx', source);
+		const diagnostics = await client.diagnostics('Button.tsrx');
+		expect(
+			diagnostics.filter((d) => d.source !== 'TSRX').map((d) => range_text(source, d.range)),
+		).toContain('Undefined1');
+
+		client.change('Button.tsrx', files['Button.tsrx']);
+		expect(await client.diagnostics('Button.tsrx')).toEqual([]);
+	});
+
+	// An error's anchor is its nearest token plus the columns to the error. The
+	// code before a `<>` can be gone from the generated code, and a tag can be
+	// long, so either could carry the anchor, and a directive, into `B` (#1288).
+	it("keeps the next component's errors when an unclosed tag's anchor can't fit", async () => {
+		const next = `export function B() {\n\tconst wrong: string = 1;\n\treturn wrong;\n}\n`;
+		for (const gap of [38, 39, 40, 41, 42, 43, 44]) {
+			const comment = `/*${'x'.repeat(gap - 4)}*/`;
+			const source = `export function A({ x }: any) @{\n\t<div>{x}{${comment}}<>{x}\n}\n${next}`;
+			expect(await type_errors_in(source), source).toEqual(['wrong']);
+		}
+		const tag = `Missing${'x'.repeat(60)}`;
+		const source = `export function A() {\n\tconst f = () => { return <${tag}>; };\n\treturn f;\n}\n${next}`;
+		expect(await type_errors_in(source), source).toEqual(['wrong']);
 
 		client.change('Button.tsrx', files['Button.tsrx']);
 		expect(await client.diagnostics('Button.tsrx')).toEqual([]);
