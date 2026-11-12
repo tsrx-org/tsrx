@@ -2032,7 +2032,10 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('children({');
+			// Vue reads `children` from the default slot first, then the prop.
+			expect(code).toContain(
+				name === 'vue' ? '(_$_Child_slots.default?.() ?? children)({' : 'children({',
+			);
 			expect(code).toContain('Item 3');
 		});
 	});
