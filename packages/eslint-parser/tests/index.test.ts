@@ -19,6 +19,21 @@ describe('eslint-parser', () => {
 		).toThrow(/Expected closing tag to match opening tag/);
 	});
 
+	it('reports an unclosed tag at its name, the innermost one first', () => {
+		let thrown: any;
+		try {
+			parseForESLint('export function App() @{\n\t<main><section>\n}\n', {
+				filePath: 'App.tsrx',
+			});
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toBeInstanceOf(SyntaxError);
+		expect(thrown.message).toContain("Unclosed tag '<section>'");
+		expect([thrown.lineNumber, thrown.column]).toEqual([2, 9]);
+	});
+
 	it('keeps forgotten statement-container hints available to ESLint rules', () => {
 		const result = parseForESLint(
 			`export function UserBadge({ user }: UserBadgeProps): JSX.Element {
@@ -343,6 +358,28 @@ export function A({ items }) @{
 				start: { line: 3, column: 3 },
 				end: { line: 3, column: 48 },
 			});
+		}
+	});
+
+	it('reports a plain try with only a pending block as a parse error', () => {
+		const code = `export function App() @{
+	try { <p>a</p> } pending { <p>loading</p> }
+}`;
+		expect(lint(code)).toEqual(['2: null: Parsing error: Missing catch or finally clause']);
+		const [message] = new Linter().verify(
+			code,
+			{ files: ['**/*.tsrx'], languageOptions: { parser } },
+			'App.tsrx',
+		);
+		expect([message.line, message.column]).toEqual([2, 2]);
+	});
+
+	it('accepts a plain try with a pending block and a catch or finally', () => {
+		for (const clause of ['catch (e) { baz(e); }', 'finally { baz(); }']) {
+			const code = `export function App() {
+	try { foo(); } pending { bar(); } ${clause}
+}`;
+			expect(lint(code)).toEqual([]);
 		}
 	});
 

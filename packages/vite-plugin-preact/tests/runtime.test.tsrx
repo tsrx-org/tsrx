@@ -10,8 +10,11 @@ import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtim
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
+import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
+import { runStaticContainersRuntimeTests } from '@tsrx/core/test-harness/runtime/static-containers';
+import { StaticContainers } from '@tsrx/core/test-harness/runtime/static-containers-components.tsrx';
 import { runGeneratedImportBindingsRuntimeTests } from '@tsrx/core/test-harness/runtime/generated-import-bindings';
 
 function text(selector: string): string | null {
@@ -670,6 +673,24 @@ function ForKeyedSwitchApp() @{
 	</>
 }
 
+// ── Static JSX in expression containers (#81) ──
+
+function StaticContainersHost() @{
+	const [on, setOn] = useState(false);
+	const [count, setCount] = useState(0);
+
+	<>
+		<StaticContainers {on} {count} />
+		<StaticContainers {on} {count} />
+		<button class="static-containers-toggle" onClick={() => setOn(!on)}>
+			{'toggle'}
+		</button>
+		<button class="static-containers-inc" onClick={() => setCount(count + 1)}>
+			{'inc'}
+		</button>
+	</>
+}
+
 describe('@tsrx/vite-plugin-preact runtime', () => {
 	it('renders nothing for an empty pending fallback then resolves', async () => {
 		let resolve_fn: (mod: { default: typeof ResolvedChild }) => void;
@@ -1099,6 +1120,15 @@ runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
+runArraySpreadRefRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();
+runStaticContainersRuntimeTests({
+	Host: StaticContainersHost,
+	click: async (selector) => {
+		await act(async () => {
+			(container.querySelector(selector) as HTMLButtonElement).click();
+		});
+	},
+});
 runGeneratedImportBindingsRuntimeTests();
