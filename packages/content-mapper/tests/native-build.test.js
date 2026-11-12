@@ -225,8 +225,9 @@ export const badList = List<number>({ items: ['a'], render: (n) => String(n) });
 		expect(a).toContain('interface Window');
 		expect(a).not.toContain('ImportMeta');
 		expect(a).not.toContain('import');
+		// A module with an export gets no generated `export {};` either (#1207).
 		const b = fs.readFileSync(path.join(dir, 'dist', 'b.d.tsrx.ts'), 'utf8');
-		expect(b).toBe('export declare function value(): "native" | "web";\nexport {};\n');
+		expect(b).toBe('export declare function value(): "native" | "web";\n');
 	});
 });
 
