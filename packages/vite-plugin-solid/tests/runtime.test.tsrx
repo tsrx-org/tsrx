@@ -1,13 +1,16 @@
 import type { MockInstance } from 'vitest';
 import type { JSX } from '@solidjs/web';
-import { createMemo, createSignal, lazy } from 'solid-js';
+import { createMemo, createSignal, createStore, lazy } from 'solid-js';
+import { create_ref_prop } from '@tsrx/solid/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
+import { runForOfSourcesRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-sources';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
 import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace';
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
 import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/expression-spread-ref';
 import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
+import { runArrayRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-ref';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -568,6 +571,26 @@ function SpreadsRefChurnApp() @{
 	<input ref={spreadsRef('own')} {...first()} {...second()} class="spreads-ref-churn" />
 }
 
+let set_spreads_refs_first: (bag: Record<string, unknown>) => void = () => {};
+let set_spreads_refs_second: (bag: Record<string, unknown>) => void = () => {};
+const spreads_refs_named = create_ref_prop(() => spreadsRef('named'));
+const spreads_refs_list = [spreadsRef('list-a'), spreadsRef('list-b')];
+
+function SpreadsRefsChurnApp() @{
+	const [first, setFirst] = createSignal<Record<string, unknown>>({
+		title: 'a',
+		ref: spreads_churn_first_ref,
+		extra: spreads_refs_named,
+	});
+	const [second, setSecond] = createSignal<Record<string, unknown>>({
+		'data-x': '1',
+		ref: spreads_refs_list,
+	});
+	set_spreads_refs_first = setFirst;
+	set_spreads_refs_second = setSecond;
+	<input ref={spreadsRef('own')} {...first()} {...second()} class="spreads-refs-churn" />
+}
+
 // ── A spread wrapper creates its children once ──
 
 let spread_wrapper_child_runs = 0;
@@ -697,6 +720,190 @@ function ForReactiveApp() @{
 		</button>
 		<button class="remove" onClick={() => setItems(items().slice(1))}>
 			{'remove'}
+		</button>
+	</>
+}
+
+function ForKeyedByIndexApp() @{
+	const [items, setItems] = createSignal(['a', 'b']);
+	<>
+		<ul>
+			@for (const item of items(); index i; key i) {
+				<li class="keyed-index-item">{`${i()}:${item()}`}</li>
+			}
+		</ul>
+		<button class="reverse" onClick={() => setItems(['b', 'a', 'c'])}>
+			{'reverse'}
+		</button>
+	</>
+}
+
+function ForKeyedByItemAndIndexApp() @{
+	const [items, setItems] = createSignal([{ id: 'a' }, { id: 'b' }]);
+	<>
+		<ul>
+			@for (const { id } of items(); index i; key `${id}-${i}`) {
+				<li class="keyed-pair-item">{id}</li>
+			}
+		</ul>
+		<button class="reverse" onClick={() => setItems([{ id: 'b' }, { id: 'a' }])}>
+			{'reverse'}
+		</button>
+	</>
+}
+
+function ForPatternKeyedByIndexApp() @{
+	const [items, setItems] = createSignal([{ name: 'a' }, { name: 'b' }]);
+	<>
+		<ul>
+			@for (const { name } of items(); index i; key i) {
+				<li class="pattern-index-item">{name}</li>
+			}
+		</ul>
+		<button class="reverse" onClick={() => setItems([{ name: 'b' }, { name: 'a' }])}>
+			{'reverse'}
+		</button>
+	</>
+}
+
+function ForPatternReplacedUnderKeyApp() @{
+	const [items, setItems] = createSignal([{ id: 'a', n: 1 }]);
+	<>
+		<ul>
+			@for (const { id, n } of items(); index i; key `${id}-${i}`) {
+				<li class="pattern-replaced-item">{`${id}${n}`}</li>
+			}
+		</ul>
+		<button class="replace" onClick={() => setItems([{ id: 'a', n: 2 }])}>
+			{'replace'}
+		</button>
+	</>
+}
+
+function ForPatternKeyedByItemApp() @{
+	const [items, setItems] = createSignal([
+		{ id: 'a', n: 1 },
+		{ id: 'b', n: 1 },
+	]);
+	<>
+		<ul>
+			@for (const { id, n } of items(); key id) {
+				<li class="pattern-item-key">{`${id}${n}`}</li>
+			}
+		</ul>
+		<button
+			class="replace"
+			onClick={() =>
+				setItems([
+					{ id: 'b', n: 2 },
+					{ id: 'a', n: 1 },
+				])
+			}
+		>
+			{'replace'}
+		</button>
+	</>
+}
+
+function ForPatternIndexOnlyApp() @{
+	const [items, setItems] = createSignal([{ id: 'a' }, { id: 'b' }]);
+	<>
+		<ul>
+			@for (const { id } of items(); index i) {
+				<li class="pattern-index-only">{`${i}${id}`}</li>
+			}
+		</ul>
+		<button class="reverse" onClick={() => setItems([{ id: 'b' }, { id: 'a' }])}>
+			{'reverse'}
+		</button>
+	</>
+}
+
+function ForNestedPatternApp() @{
+	const [groups] = createSignal([{ id: 'p', kids: [{ name: 'x' }, { name: 'y' }] }]);
+	<ul>
+		@for (const { id, kids } of groups(); key id) {
+			@for (const { name } of kids; key name) {
+				<li class="nested-pattern-item">{`${id}-${name}`}</li>
+			}
+		}
+	</ul>
+}
+
+function StarIcon(props: { label: string }) @{
+	<b class="icon">{`star:${props.label}`}</b>
+}
+
+function DotIcon(props: { label: string }) @{
+	<i class="icon">{`dot:${props.label}`}</i>
+}
+
+function ForPatternComponentTagApp() @{
+	const [items, setItems] = createSignal([{ Icon: StarIcon, label: 'a' }]);
+	<>
+		<ul>
+			@for (const { Icon, label } of items(); key label) {
+				<li>
+					<Icon label={label} />
+				</li>
+			}
+		</ul>
+		<button class="swap" onClick={() => setItems([{ Icon: DotIcon, label: 'a' }])}>
+			{'swap'}
+		</button>
+	</>
+}
+
+function ForSparseKeyedByIndexApp() @{
+	const [items, setItems] = createSignal<(string | undefined)[]>(['a', , 'c']);
+	<>
+		<ul>
+			@for (const item of items(); index i; key i) {
+				<li class="sparse-item">{`${i()}:${String(item())}`}</li>
+			}
+		</ul>
+		<button class="reverse" onClick={() => setItems(['c', 'b'])}>
+			{'reverse'}
+		</button>
+	</>
+}
+
+function ForSetSignalApp() @{
+	const [tags, setTags] = createSignal(new Set(['x', 'y']));
+	<>
+		<ul>
+			@for (const tag of tags()) {
+				<li class="tag">{tag.toUpperCase()}</li>
+			} @empty {
+				<li class="tag">{'none'}</li>
+			}
+		</ul>
+		<button class="add" onClick={() => setTags(new Set([...tags(), 'z']))}>
+			{'add'}
+		</button>
+		<button class="clear" onClick={() => setTags(new Set<string>())}>
+			{'clear'}
+		</button>
+	</>
+}
+
+function ForStoreApp() @{
+	const [store, setStore] = createStore({ items: ['a', 'b'] });
+	<>
+		<ul>
+			@for (const item of store.items) {
+				<li class="store-item">{item}</li>
+			}
+		</ul>
+		<button
+			class="add"
+			onClick={() =>
+				setStore((draft) => {
+					draft.items.push('c');
+				})
+			}
+		>
+			{'add'}
 		</button>
 	</>
 }
@@ -1775,6 +1982,29 @@ describe('tsrx-solid runtime', () => {
 		expect(spreads_ref_calls).toEqual(['replaced']);
 	});
 
+	it("applies a spread bag's several refs again only when one of them changes", async () => {
+		spreads_ref_calls.length = 0;
+		await render(SpreadsRefsChurnApp);
+		await flush();
+		const input = container.querySelector('.spreads-refs-churn') as HTMLInputElement;
+		expect(spreads_ref_calls).toEqual(['own', 'first', 'named', 'list-a', 'list-b']);
+
+		spreads_ref_calls.length = 0;
+		set_spreads_refs_first({ title: 'b', ref: spreads_churn_first_ref, extra: spreads_refs_named });
+		await flush();
+		set_spreads_refs_second({ 'data-x': '2', ref: spreads_refs_list });
+		await flush();
+		set_spreads_refs_first({ title: 'c', ref: spreads_churn_first_ref, extra: spreads_refs_named });
+		await flush();
+		expect([input.title, input.getAttribute('data-x')]).toEqual(['c', '2']);
+		expect(spreads_ref_calls).toEqual([]);
+
+		set_spreads_refs_first({ title: 'd', ref: spreadsRef('replaced'), extra: spreads_refs_named });
+		await flush();
+		expect(input.title).toBe('d');
+		expect(spreads_ref_calls).toEqual(['replaced', 'named']);
+	});
+
 	it('creates the children of a spread wrapper once', async () => {
 		spread_wrapper_child_runs = 0;
 		await render(SpreadWrapperApp);
@@ -1866,6 +2096,113 @@ describe('tsrx-solid runtime', () => {
 		const after = container.querySelectorAll('.item');
 		expect(after.length).toBe(3);
 		expect(after[0].textContent).toBe('b');
+	});
+
+	it('updates a for-of loop keyed by its declared index (#933)', async () => {
+		await render(ForKeyedByIndexApp);
+		const rows = () =>
+			Array.from(container.querySelectorAll('.keyed-index-item'), (item) => item.textContent);
+		expect(rows()).toEqual(['0:a', '1:b']);
+
+		await click('.reverse');
+		expect(rows()).toEqual(['0:b', '1:a', '2:c']);
+	});
+
+	it('updates a for-of loop keyed by its item and declared index (#933)', async () => {
+		await render(ForKeyedByItemAndIndexApp);
+		const rows = () =>
+			Array.from(container.querySelectorAll('.keyed-pair-item'), (item) => item.textContent);
+		expect(rows()).toEqual(['a', 'b']);
+
+		await click('.reverse');
+		expect(rows()).toEqual(['b', 'a']);
+	});
+
+	it('keeps destructured names current in a loop keyed by its index (#933)', async () => {
+		await render(ForPatternKeyedByIndexApp);
+		const rows = () =>
+			Array.from(container.querySelectorAll('.pattern-index-item'), (item) => item.textContent);
+		expect(rows()).toEqual(['a', 'b']);
+
+		await click('.reverse');
+		expect(rows()).toEqual(['b', 'a']);
+	});
+
+	it('keeps destructured names current when an item is replaced under its key', async () => {
+		await render(ForPatternReplacedUnderKeyApp);
+		const rows = () =>
+			Array.from(container.querySelectorAll('.pattern-replaced-item'), (item) => item.textContent);
+		expect(rows()).toEqual(['a1']);
+
+		await click('.replace');
+		expect(rows()).toEqual(['a2']);
+	});
+
+	it('destructures the item, not its accessor, in a loop keyed by the item', async () => {
+		await render(ForPatternKeyedByItemApp);
+		const rows = () =>
+			Array.from(container.querySelectorAll('.pattern-item-key'), (item) => item.textContent);
+		expect(rows()).toEqual(['a1', 'b1']);
+
+		await click('.replace');
+		expect(rows()).toEqual(['b2', 'a1']);
+	});
+
+	it('destructures the item, not its accessor, in a loop with only an index', async () => {
+		await render(ForPatternIndexOnlyApp);
+		const rows = () =>
+			Array.from(container.querySelectorAll('.pattern-index-only'), (item) => item.textContent);
+		expect(rows()).toEqual(['0a', '1b']);
+
+		await click('.reverse');
+		expect(rows()).toEqual(['0b', '1a']);
+	});
+
+	it('reads the destructured names of each loop in nested keyed loops', async () => {
+		await render(ForNestedPatternApp);
+		expect(
+			Array.from(container.querySelectorAll('.nested-pattern-item'), (item) => item.textContent),
+		).toEqual(['p-x', 'p-y']);
+	});
+
+	it('renders a destructured component as a tag and follows the row', async () => {
+		await render(ForPatternComponentTagApp);
+		expect(text('.icon')).toBe('star:a');
+
+		await click('.swap');
+		expect(text('.icon')).toBe('dot:a');
+	});
+
+	it('renders the holes of a sparse array in a loop keyed by its index', async () => {
+		await render(ForSparseKeyedByIndexApp);
+		const rows = () =>
+			Array.from(container.querySelectorAll('.sparse-item'), (item) => item.textContent);
+		expect(rows()).toEqual(['0:a', '1:undefined', '2:c']);
+
+		await click('.reverse');
+		expect(rows()).toEqual(['0:c', '1:b']);
+	});
+
+	it('renders and updates a for-of loop over a Set (#1070)', async () => {
+		await render(ForSetSignalApp);
+		const rows = () => Array.from(container.querySelectorAll('.tag'), (item) => item.textContent);
+		expect(rows()).toEqual(['X', 'Y']);
+
+		await click('.add');
+		expect(rows()).toEqual(['X', 'Y', 'Z']);
+
+		await click('.clear');
+		expect(rows()).toEqual(['none']);
+	});
+
+	it('tracks a store array a for-of loop walks', async () => {
+		await render(ForStoreApp);
+		const rows = () =>
+			Array.from(container.querySelectorAll('.store-item'), (item) => item.textContent);
+		expect(rows()).toEqual(['a', 'b']);
+
+		await click('.add');
+		expect(rows()).toEqual(['a', 'b', 'c']);
 	});
 
 	it('renders filtered for-of items', async () => {
@@ -2762,9 +3099,11 @@ describe('tsrx-solid static @if conditions', () => {
 });
 
 runSwitchFallthroughRuntimeTests();
+runForOfSourcesRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();
 runArraySpreadRefRuntimeTests({ refObjects: false, ownRef: false });
+runArrayRefRuntimeTests({ refObjects: false, falsyEntries: false, spreadRef: false });

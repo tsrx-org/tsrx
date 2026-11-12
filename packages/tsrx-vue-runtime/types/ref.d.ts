@@ -1,5 +1,5 @@
 import type { ComponentPublicInstance } from 'vue';
-import type { MergeableRef } from '@tsrx/runtime/ref';
+import type { MergeableRefValue } from '@tsrx/runtime/ref';
 
 export * from '@tsrx/runtime/ref';
 
@@ -18,5 +18,5 @@ export * from '@tsrx/runtime/ref';
  * or when another merged ref replaces it on the same node.
  */
 export function mergeRefs<T = Element>(
-	...refs: Array<MergeableRef<T>>
+	...refs: Array<MergeableRefValue<T>>
 ): (node: T | Element | ComponentPublicInstance | null) => () => void;

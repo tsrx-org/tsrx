@@ -124,6 +124,23 @@ export async function map_iterable_async(iterable, fn, tail, empty) {
 }
 
 /**
+ * The items of an `@for` source as an array, for a target whose loop component
+ * takes one: an array whose iterator is the built-in one as it is, and any
+ * other source walked once, the way `for...of` walks it.
+ *
+ * @template T
+ * @param {Iterable<T> | Iterator<T>} iterable
+ * @returns {T[]}
+ */
+export function iterable_to_array(iterable) {
+	var iterable_prop = /** @type {Iterable<T>} */ (iterable)[Symbol.iterator];
+	if (iterable_prop === ARRAY_ITERATOR && Array.isArray(iterable)) {
+		return iterable;
+	}
+	return Array.from(to_iterable(iterable, iterable_prop));
+}
+
+/**
  * Wraps the iterator to walk in an iterable that hands it out as is, so a
  * `for...of` over the result neither reads `Symbol.iterator` again nor needs
  * the iterator to be iterable itself.

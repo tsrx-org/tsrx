@@ -20,7 +20,7 @@ const pending_cleanups = new WeakMap();
  * on the same node.
  *
  * @template T
- * @param {...import('@tsrx/runtime/ref').MergeableRef<T>} refs
+ * @param {...import('@tsrx/runtime/ref').MergeableRefValue<T>} refs
  * @returns {(node: T | null) => () => void}
  */
 export function mergeRefs(...refs) {

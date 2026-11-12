@@ -271,6 +271,18 @@ export const ERROR_EXAMPLES = [
 `,
 	},
 	{
+		error: TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS,
+		source: `function List<T>(props: { items: T[] }) {
+	return null;
+}
+
+export function C(props: { items: string[] }) @{
+	const Tag = List;
+	<{Tag}<string> items={props.items} />
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.FOR_OF_ONLY,
 		source: `export function C(props: { a: boolean; items: string[]; n: number }) @{
 	<ul>
@@ -310,6 +322,18 @@ export const ERROR_EXAMPLES = [
 	<ul>
 		@for (var item of props.items) {
 			<li>{item}</li>
+		}
+	</ul>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.DIRECTIVE_BODY_VAR,
+		source: `export function C(props: { items: string[] }) @{
+	<ul>
+		@for (const item of props.items) {
+			var label = item.toUpperCase();
+			<li>{label}</li>
 		}
 	</ul>
 }
@@ -1035,7 +1059,5 @@ export const WITHOUT_EXAMPLE = new Map(
 export const KNOWN_PROBLEMS = new Map(
 	/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([
 		[TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED, { problem: 'twice', issue: 980 }],
-		// The statement's keywords have no mapping, so the directive covers only `A`.
-		[TS_ERRORS.NESTED_GLOBAL_EXPORT, { problem: 'typescript', issue: 979 }],
 	]),
 );

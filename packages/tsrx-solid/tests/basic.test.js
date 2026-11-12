@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	runSharedAnonymousComponentTests,
 	runSharedClassFunctionComponentTests,
+	runSharedArrayRefTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -11,6 +12,7 @@ import {
 } from '@tsrx/core/test-harness/compile';
 import { runSharedSourceMappingTests } from '@tsrx/core/test-harness/source-mappings';
 import { compile, compile_to_volar_mappings } from '../src/index.js';
+import { for_items, for_keyed_rows } from '../src/iterable.js';
 
 runSharedSourceMappingTests({
 	compile,
@@ -42,6 +44,7 @@ runSharedTsxExpressionTsrxTests({ compile, name: 'solid', classAttrName: 'class'
 runSharedCompileTests({ compile, name: 'solid', classAttrName: 'class' });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'solid' });
 runSharedCodeBlockChildrenTests({ compile, name: 'solid' });
+runSharedArrayRefTests({ compile, compile_to_volar_mappings, name: 'solid', merge: null });
 runSharedClassFunctionComponentTests({ compile, compile_to_volar_mappings, name: 'solid' });
 runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'solid' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'solid' });
@@ -285,7 +288,7 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<__For each={items}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).toContain('keyed={false}');
 			expect(code).toMatch(/\(item, i\) =>/);
 			expect(code).toContain('<li>{i + item()}</li>');
@@ -301,7 +304,7 @@ describe('@tsrx/solid basic', () => {
 				}`,
 				'App.tsrx',
 			);
-			expect(code).toContain('<__For each={items}>');
+			expect(code).toContain('<__For each={__for_items(items)}>');
 			expect(code).not.toContain('keyed=');
 			expect(code).toContain('(item) => <li>{item}</li>');
 			expect(code).toContain("import { For as __For } from 'solid-js'");
@@ -319,8 +322,149 @@ describe('@tsrx/solid basic', () => {
 			// `key item.id` lifts to `keyed={(item) => item.id}` — Solid 2.0's
 			// <For keyed> switches reconciliation from reference identity to
 			// the derived key.
-			expect(code).toContain('<__For each={items}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).toMatch(/keyed=\{\(item\) =>\s*item\.id\}/);
+		});
+
+		it('for-of over any iterable imports the array helper (#1070)', () => {
+			const source = `function App({ tags }: { tags: Set<string> }) @{
+				@for (const tag of tags) {
+					<li>{tag}</li>
+				}
+			}`;
+
+			const { code } = compile(source, 'App.tsrx');
+			expect(code).toContain("import { for_items as __for_items } from '@tsrx/solid/iterable';");
+			expect(code).toContain('<__For each={__for_items(tags)}>');
+
+			const direct = compile(source, 'App.tsrx', { runtimeImports: 'direct' }).code;
+			expect(direct).toContain(
+				"import { for_items as __for_items } from '@tsrx/solid-runtime/iterable';",
+			);
+		});
+
+		it('for-of keyed by its declared index computes keys with the index (#933)', () => {
+			const { code } = compile(
+				`function App({ items }: { items: string[] }) @{
+					@for (const item of items; index i; key i) {
+						<li>{item()}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain(
+				"import { for_keyed_rows as __for_keyed_rows } from '@tsrx/solid/iterable';",
+			);
+			expect(code).toContain('each={__for_keyed_rows(items, (item, i) => i)}');
+			expect(code).toContain('keyed={(_$_row) => _$_row.key}');
+			expect(code).toMatch(/\(_\$_row, i\) => \{\s*const item = \(\) => _\$_row\(\)\.item;/);
+		});
+
+		it('leaves names a nested function or enum declares again in a destructured keyed loop', () => {
+			const { code } = compile(
+				`function App({ items }: { items: { id: number }[] }) @{
+					@for (const { id } of items; key id) {
+						<li onClick={() => {
+							var id = 1;
+							enum Kind { A = id }
+							return [id, Kind.A];
+						}} title={() => {
+							function id() {}
+							return id;
+						}}>{id}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('var id = 1;');
+			expect(code).toContain('A = id');
+			expect(code).toContain('return [id, Kind.A];');
+			expect(code).toContain('function id() {}');
+			expect(code).toMatch(/\{_\$_bindings_\d+\(\)\.id\}<\/li>/);
+		});
+
+		it("leaves a class expression's own name inside it in a destructured keyed loop", () => {
+			const { code } = compile(
+				`function App({ items }: { items: { Item: string }[] }) @{
+					@for (const { Item } of items; index i) {
+						const Made = class Item {
+							static label() {
+								return Item.name;
+							}
+						};
+						<li title={Item}>{Made.label()}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('return Item.name;');
+			expect(code).toMatch(/title=\{_\$_bindings_\d+\(\)\.Item\}/);
+		});
+
+		it('leaves names the loop body declares again in a destructured keyed loop', () => {
+			const { code } = compile(
+				`function App({ items, other }: { items: { id: number; name: string }[]; other: { name: string } }) @{
+					@for (const { id, name } of items; key id) {
+						const { name } = other;
+						const label = (() => {
+							switch (id) {
+								case 1:
+									const id = 'one';
+									return id;
+								default:
+									return 'other';
+							}
+						})();
+						<li title={name}>{label}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			// A for…of body may declare a loop binding's name again; its own
+			// declaration then wins in the whole body, as in JavaScript.
+			expect(code).toContain('const { name } = other;');
+			expect(code).toContain('title={name}');
+			// Unbraced cases share the switch's block; the discriminant is outside it.
+			expect(code).toMatch(/switch \(_\$_bindings_\d+\(\)\.id\)/);
+			expect(code).toContain("const id = 'one';");
+			expect(code).toContain('return id;');
+			expect(code).toMatch(/keyed=\{\(\{ id, name \}\) => id\}/);
+		});
+
+		it('keeps the authored names in the type view of a destructured keyed loop', () => {
+			const { code, errors } = compile_to_volar_mappings(
+				`function App({ items }: { items: { id: number; Icon: () => any }[] }) @{
+					@for (const { id, Icon } of items; key id) {
+						<li title={String(id satisfies typeof id)}><Icon /></li>
+					}
+				}`,
+				'App.tsrx',
+				{ loose: true },
+			);
+
+			expect(errors).toEqual([]);
+			expect(code).toContain('const { id, Icon } = _$_item();');
+			expect(code).toContain('id satisfies typeof id');
+			expect(code).toContain('<Icon />');
+			expect(code).not.toContain('_$_bindings');
+		});
+
+		it('for-of keyed without its index keeps the item key', () => {
+			const { code } = compile(
+				`function App({ items }: { items: { i: string }[] }) @{
+					@for (const item of items; index i; key item.i) {
+						<li>{item().i}</li>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).not.toContain('__for_keyed_rows');
+			expect(code).toMatch(/keyed=\{\(item\) =>\s*item\.i\}/);
 		});
 
 		it('try/catch → <Errored fallback> binding the thrown value', () => {
@@ -689,7 +833,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<__For each={items}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).not.toContain('keyed=');
 			expect(code).toContain('<__Show when={cond}');
 			expect(code).toContain('setup();');
@@ -863,7 +1007,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<__For each={items}>');
+			expect(code).toContain('<__For each={__for_items(items)}>');
 			expect(code).not.toContain('keyed=');
 			expect(code).toContain('(item) => <div>{item}</div>');
 			expect(code).not.toContain('for (const item of items)');
@@ -879,7 +1023,7 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('<__For each={items}');
+			expect(code).toContain('<__For each={__for_items(items)}');
 			expect(code).toMatch(/keyed=\{\(item\) =>\s*item\.id\}/);
 			expect(code).toContain('(item, i) => <div>{i() + item.name}</div>');
 		});
@@ -1525,5 +1669,43 @@ describe('@tsrx/solid basic', () => {
 
 			expect(code).toContain('ref={[refA, refB, refC]}');
 		});
+	});
+});
+
+describe('@for runtime helpers', () => {
+	it('hands <For> an array for any iterable and keeps a missing source', () => {
+		const items = ['a'];
+		expect(for_items(items)).toBe(items);
+		expect(for_items(new Set(['a', 'b']))).toEqual(['a', 'b']);
+		expect(for_items(undefined)).toBe(undefined);
+		expect(for_items(false)).toBe(false);
+	});
+
+	it('pairs each item with its key, holes included', () => {
+		// prettier-ignore
+		const rows = for_keyed_rows(['a', , 'c'], (item, index) => `${index}:${item}`);
+		expect(rows).toEqual([
+			{ item: 'a', key: '0:a' },
+			{ item: undefined, key: '1:undefined' },
+			{ item: 'c', key: '2:c' },
+		]);
+	});
+
+	it('reuses the row of an object item found again under the same key', () => {
+		const a = { id: 'a' };
+		const b = { id: 'b' };
+		const first = /** @type {Array<{ item: unknown, key: unknown }>} */ (
+			for_keyed_rows([a, b], (_item, index) => index)
+		);
+		const same = /** @type {Array<{ item: unknown, key: unknown }>} */ (
+			for_keyed_rows([a, b], (_item, index) => index)
+		);
+		const swapped = /** @type {Array<{ item: unknown, key: unknown }>} */ (
+			for_keyed_rows([b, a], (_item, index) => index)
+		);
+		expect(same[0]).toBe(first[0]);
+		expect(same[1]).toBe(first[1]);
+		expect(swapped[0]).not.toBe(first[1]);
+		expect(swapped[0]).toEqual({ item: b, key: 0 });
 	});
 });

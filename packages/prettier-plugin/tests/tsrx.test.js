@@ -2280,6 +2280,12 @@ describe('parse errors', () => {
 		]) {
 			await expect_reported(source, TSRX_ERRORS.DYNAMIC_TAG_EXPRESSION, at);
 		}
+		// Type arguments after a dynamic tag (TSRX2033, #1243).
+		await expect_reported(
+			'const a = <{Tag}<T> />;',
+			TSRX_ERRORS.DYNAMIC_TAG_TYPE_ARGUMENTS,
+			'1:17',
+		);
 		await expectFormat(
 			`export function App({ tag, props }) @{
   <>

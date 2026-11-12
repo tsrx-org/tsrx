@@ -2631,6 +2631,121 @@ function App() @{
 			}
 		});
 	});
+
+	describe(`[${name}] keywords and tags where diagnostics start or end`, () => {
+		/**
+		 * The generated text of each verification mapping that starts at `offset`
+		 * and covers `length` source characters.
+		 * @param {{ code: string, mappings: CodeMapping[] }} result
+		 * @param {number} offset
+		 * @param {number} length
+		 */
+		const generated_at = (result, offset, length) =>
+			result.mappings
+				.filter(
+					(mapping) =>
+						mapping.sourceOffsets[0] === offset &&
+						mapping.lengths[0] === length &&
+						mapping.data.verification,
+				)
+				.map((mapping) =>
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					),
+				);
+
+		it('maps an authored yield keyword', () => {
+			// TypeScript reports TS7057 on a yield in a generator without a return type.
+			// A lowered `@if (yield 1)` prints its test in parentheses that start
+			// where the yield does.
+			const source = `export function* plain() {
+	const value = yield 1;
+	yield;
+	yield* plain();
+	return value;
+}
+export function* View() @{
+	@if (yield 1) {
+		<div />
+	}
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const match of source.matchAll(/\byield\b/g)) {
+				expect(generated_at(result, /** @type {number} */ (match.index), 5)).toEqual(['yield']);
+			}
+		});
+
+		it.each([
+			['an authored ;', 'x = <div></div>;'],
+			['an authored ; after a self-closing tag', 'x = <br />;'],
+			['a ; the printer adds', 'x = <span>x</span>'],
+			['a call', 'foo();'],
+		])('maps the ; that ends a statement with %s', (_kind, statement) => {
+			// TypeScript reports unreachable code (TS7027) on the whole statement, up
+			// to its `;`.
+			const source = `let x: unknown;\ndeclare function foo(): void;\nexport function f() {\n\treturn;\n\t${statement}\n}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const start = source.indexOf(statement);
+			const authored = statement.endsWith(';');
+			const end = start + statement.length - (authored ? 1 : 0);
+			expect(generated_at(result, end, authored ? 1 : 0)).toEqual([';']);
+		});
+
+		it.each([
+			'export function bad(...args: number) {}',
+			'export class K { m(...args: number) {} }',
+			'export declare function f(...args: number): void;',
+			'export function List<T>(...items: T) @{ <ul /> }',
+		])('maps the ... of the rest parameter in %j', (source) => {
+			// TypeScript reports TS2370 (a rest parameter that is not an array) on the
+			// whole parameter, from the `...`.
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(generated_at(result, source.indexOf('...'), 3)).toContain('...');
+		});
+
+		it.each(['export as namespace A;', 'export as namespace A'])(
+			'maps the keywords and the whole statement of %j',
+			(statement) => {
+				// TypeScript reports a nested one (TS1316) on the whole statement.
+				const source = `function f() {\n\t${statement}\n}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf('export');
+				for (const keyword of ['export', 'as', 'namespace']) {
+					expect(generated_at(result, source.indexOf(keyword, start), keyword.length)).toContain(
+						keyword,
+					);
+				}
+				expect(generated_at(result, start, statement.length)).toContain('export as namespace A;');
+			},
+		);
+
+		it('maps each closing tag to exactly its generated tag', () => {
+			const source = `export function C() @{
+	<div>
+		<h2>a</h2>
+		<br />
+		<p>b</p>
+	</div>
+}
+export function D() @{
+	<input />
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const tag of ['</h2>', '</p>', '</div>']) {
+				expect(generated_at(result, source.indexOf(tag), tag.length), tag).toEqual([tag]);
+			}
+			for (const element of ['<br />', '<input />']) {
+				const offset = source.indexOf(element) + element.length - 2;
+				expect(generated_at(result, offset, 2), element).toEqual(['/>']);
+			}
+		});
+	});
+
 	describe(`[${name}] input AST immutability`, () => {
 		/**
 		 * Structural snapshot of an AST node graph. `metadata` is the sanctioned
