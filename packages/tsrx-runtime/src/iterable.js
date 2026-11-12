@@ -1,3 +1,5 @@
+var ARRAY_ITERATOR = Array.prototype[Symbol.iterator];
+
 /**
  * @template T
  * @template U
@@ -8,11 +10,11 @@
  * @returns {U[]}
  */
 export function map_iterable(iterable, fn, tail, empty) {
-	if (Array.isArray(iterable)) {
+	var iterable_prop = /** @type {Iterable<T>} */ (iterable)[Symbol.iterator];
+	if (iterable_prop === ARRAY_ITERATOR && Array.isArray(iterable)) {
 		return map_array(iterable, fn, tail, empty);
 	}
 
-	var iterable_prop = /** @type {Iterable<T>} */ (iterable)[Symbol.iterator];
 	var source = to_iterable(iterable, iterable_prop);
 
 	// A real Set or Map preallocates the result from its size. The size is only a
@@ -82,13 +84,14 @@ export async function map_iterable_async(iterable, fn, tail, empty) {
 	var result = [];
 	var count = 0;
 
-	if (Array.isArray(iterable)) {
+	var iterable_prop = /** @type {Iterable<T>} */ (iterable)[Symbol.iterator];
+	if (iterable_prop === ARRAY_ITERATOR && Array.isArray(iterable)) {
 		var length = iterable.length;
 		for (; count < length; count++) {
 			push_mapped(result, await fn(iterable[count], count, count === length - 1));
 		}
 	} else {
-		var source = to_iterable(iterable, /** @type {Iterable<T>} */ (iterable)[Symbol.iterator]);
+		var source = to_iterable(iterable, iterable_prop);
 		var has_previous = false;
 		/** @type {T | undefined} */
 		var previous;
@@ -121,19 +124,30 @@ export async function map_iterable_async(iterable, fn, tail, empty) {
 }
 
 /**
+ * Wraps the iterator to walk in an iterable that hands it out as is, so a
+ * `for...of` over the result neither reads `Symbol.iterator` again nor needs
+ * the iterator to be iterable itself.
+ *
  * @template T
  * @param {Iterable<T> | Iterator<T>} iterable
- * @param {unknown} iterable_prop the value's own `Symbol.iterator`
+ * @param {unknown} iterable_prop the value's `Symbol.iterator`, read once
  * @returns {Iterable<T>}
  */
 function to_iterable(iterable, iterable_prop) {
+	/** @type {Iterator<T>} */
+	var iterator;
 	if (typeof iterable_prop === 'function') {
-		return /** @type {Iterable<T>} */ (iterable);
+		iterator = iterable_prop.call(iterable);
+	} else if (typeof (/** @type {Iterator<T>} */ (iterable).next) === 'function') {
+		iterator = /** @type {Iterator<T>} */ (iterable);
+	} else {
+		throw new TypeError('The loop target has to be an Iterable');
 	}
-	if (typeof (/** @type {Iterator<T>} */ (iterable).next) === 'function') {
-		return Iterator.from(/** @type {Iterator<T>} */ (iterable));
-	}
-	throw new TypeError('The loop target has to be an Iterable');
+	return {
+		[Symbol.iterator]() {
+			return iterator;
+		},
+	};
 }
 
 /**

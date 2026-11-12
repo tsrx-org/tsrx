@@ -62,5 +62,9 @@ diagnostic text shows the authored name.
 - Neighbouring Verbatim spans with equal feature bits whose gap is identical text
   in both files are coalesced, so whole statements such as import declarations
   become one edit-safe span.
+- A Verbatim span extends over the identical whitespace that follows it. The rest
+  of the identical text before the next span gets a Verbatim span with no feature
+  bits: TypeScript 7 offers no auto-import completion at the end of a span that
+  unmapped text separates from the next span.
 - Atom candidates that are fragments of an identifier (the one-character
   file-start anchor) are dropped.

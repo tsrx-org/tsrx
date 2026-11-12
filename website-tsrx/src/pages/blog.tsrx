@@ -41,12 +41,8 @@ export function BlogPage() @{
 								<a href="/blog/removing-lazy-destructuring">Removing lazy destructuring</a>
 							</h2>
 							<p>
-								The
-								{'&{ ... }'}
-								and
-								{'&[ ... ]'}
-								lazy patterns are gone. Destructuring is ordinary destructuring again, and reactive
-								state is read through each framework's own API.
+								The {'&{ ... }'} and {'&[ ... ]'} lazy patterns are gone. Destructuring is ordinary
+								destructuring again, and reactive state is read through each framework's own API.
 							</p>
 							<a class="read-link" href="/blog/removing-lazy-destructuring">
 								Read the post
