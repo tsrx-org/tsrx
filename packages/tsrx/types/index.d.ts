@@ -120,7 +120,8 @@ export interface CompileOptions {
 	collect?: boolean;
 	/**
 	 * Enables editor-oriented parser recovery such as incomplete markup.
-	 * Also collects non-fatal errors as `collect`.
+	 * Also collects non-fatal errors as `collect` does, including the unclosed
+	 * or mismatched tags it recovers (TSRX1001, TSRX1002).
 	 */
 	loose?: boolean;
 }
@@ -159,6 +160,12 @@ export interface BaseNodeMetaData {
 	tsrx_generated_wrapper?: boolean;
 	native_tsrx_template_block?: boolean;
 	dynamicElement?: boolean;
+	/**
+	 * A closing tag the type-only output adds to a tag that loose recovery found
+	 * unclosed. It has no source position, and the closing-tag mappings around it
+	 * leave it out.
+	 */
+	recovered?: boolean;
 	templateMode?: 'script' | 'template';
 	script_only?: boolean;
 	/** A synthetic wrapper for a nested `@{ @{ ... } }` code-block render chain. */
@@ -242,8 +249,12 @@ export interface BaseNodeMetaData {
 	generated_helpers?: AST.Statement[];
 	/** Module-level static JSX hoisted out of a component. */
 	generated_statics?: AST.Statement[];
+	/** Helper components declared beside a component inside another function; read back by `expand_local_component_helpers`. */
+	generated_local_helpers?: AST.Statement[];
 	has_unmappable_value?: boolean;
 	synthetic_ref?: boolean;
+	/** An element's own `ref`, assigned to a binding where it is written; the merged ref goes last. */
+	own_ref_bound?: boolean;
 	tsrx_reactive_block?: boolean;
 	/** Generated dynamic-tag render-block closure, not a user component boundary. */
 	tsrx_dynamic_wrapper?: boolean;
@@ -412,6 +423,14 @@ declare module 'estree' {
 		typeAnnotation?: TSTypeAnnotation | undefined;
 		decorators: TSESTree.Decorator[];
 		optional: boolean;
+	}
+
+	// An optional binding pattern parameter in a signature: `{ a }?: T`, `[a]?: T`.
+	interface ObjectPattern {
+		optional?: boolean;
+	}
+	interface ArrayPattern {
+		optional?: boolean;
 	}
 
 	// Target analysis may mark a whole member expression as tracked metadata.
@@ -2007,6 +2026,8 @@ export interface JsxHelperState {
 	 * components can't reach module level, so they stay in place.
 	 */
 	local?: boolean;
+	/** The component, when `local`: a helper that reads nothing of its scope is declared beside it. */
+	component?: AST.Function;
 }
 
 /** Override zimmerframe types and provide our own */

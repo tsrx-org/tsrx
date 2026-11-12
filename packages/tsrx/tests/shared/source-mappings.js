@@ -151,6 +151,11 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		<p>{i}{value}{await load(item)}</p>
 	}
 }`,
+			'@for head default (#224)': `export async function App({ rows }: { rows: number[][] }) @{
+	@for (const [item = await load(0)] of rows; index i) {
+		<p>{i}{item}</p>
+	}
+}`,
 			'@empty body': `export async function App({ items }: { items: number[] }) @{
 	@for (const item of items) {
 		<p>{item}</p>
@@ -790,7 +795,7 @@ function App({ tag }: { tag: string }) @{
 
 			expect(mapping?.data.completion).toBe(true);
 		});
-		it('keeps a recovered unclosed tag unclosed and mapped from its own `<`', () => {
+		it('closes a recovered unclosed tag with no mapping, and maps it from its own `<`', () => {
 			const source = `export function App() @{
 	<>
 		<span>
@@ -804,9 +809,9 @@ function App({ tag }: { tag: string }) @{
 			const generated_close = result.code.lastIndexOf('</span>');
 
 			expect(generated_open).toBeGreaterThan(-1);
-			// No synthesized `</span>`: TypeScript sees the tag as authored (TS17008,
-			// and its closing-tag completion can offer `</span>`).
-			expect(generated_close).toBe(-1);
+			// A synthesized `</span>`, so the code is valid TSX and TypeScript adds
+			// no TS17008 to the parser's TSRX1001 (#978). Its name has no mapping.
+			expect(generated_close).toBeGreaterThan(generated_open);
 
 			/** @param {CodeMapping | undefined} entry */
 			const mapped_source = function (entry) {
@@ -838,10 +843,7 @@ function App({ tag }: { tag: string }) @{
 			expect(mapped_source(open_lt_mapping)).toBe('<');
 			expect(early_name_mapping, 'close name must not map to `<spa`').toBeUndefined();
 			expect(source.slice(name_offset, name_offset + 'span'.length)).toBe('span');
-			for (const mapping of close_name_mappings) {
-				expect(mapped_source(mapping)).toBe('span');
-				expect(mapping.sourceOffsets[0]).toBe(name_offset);
-			}
+			expect(close_name_mappings).toEqual([]);
 		});
 		it('keeps DOM attribute completions when scoped styles are present', () => {
 			const source = `function C() @{
