@@ -188,6 +188,7 @@ export {
 	source_mentions_identifier as sourceMentionsIdentifier,
 	SPREAD_REF_BAGS_INTERNAL_NAME,
 	validate_at_most_one_ref_attribute as validateAtMostOneRefAttribute,
+	validate_for_of_head as validateForOfHead,
 	wrap_edge_whitespace as wrapEdgeWhitespace,
 } from './transform/jsx/index.js';
 export {
