@@ -765,6 +765,47 @@ it('applies block TypeScript directives and optional binding patterns as TypeScr
 	expect(result.status).toBe(2);
 });
 
+it('applies a TypeScript directive to the first line of a statement over several lines in .tsrx files', () => {
+	const lines = [
+		'declare function foo(a: number, b: number): void;',
+		'// @ts-expect-error',
+		'foo(',
+		'\t1,',
+		'\tmissingA',
+		');',
+		'/* @ts-expect-error */',
+		'foo(1,',
+		'\tmissingB);',
+		'// @ts-expect-error',
+		"export const o = { a: missingC, b: 'a long string to make the printer wrap', c: 'and another long string' };",
+		'export function Setup() @{',
+		'\t// @ts-expect-error',
+		'\tfoo(',
+		'\t\t1,',
+		'\t\tmissingD',
+		'\t);',
+		'\t<div />',
+		'}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	const ts2578 = "error TS2578: Unused '@ts-expect-error' directive.";
+	const ts2304 = (/** @type {string} */ name) => `error TS2304: Cannot find name '${name}'.`;
+	// The diagnostics tsc reports for the same code: a directive covers only
+	// the line after it (#1144).
+	expect(result.output.trim().split('\n')).toEqual([
+		`${at(1, '//')}: ${ts2578}`,
+		`${at(4, 'missingA')}: ${ts2304('missingA')}`,
+		`${at(6, '/*')}: ${ts2578}`,
+		`${at(8, 'missingB')}: ${ts2304('missingB')}`,
+		`${at(12, '//')}: ${ts2578}`,
+		`${at(15, 'missingD')}: ${ts2304('missingD')}`,
+	]);
+	expect(result.status).toBe(2);
+});
+
 it('reports a superclass expression that is not a constructor in .tsrx files', () => {
 	const line =
 		'function createBase() { return {}; } export class Model extends createBase() {} export class Cast extends (Model as unknown as {}) {}';
