@@ -1022,3 +1022,67 @@ it('gives .tsrx files the module format of their own project in a solution build
 	expect(result.output).toBe('');
 	expect(result.status).toBe(0);
 });
+
+it('reports errors that start at a yield, a rest parameter or a nested export as namespace in .tsrx files', () => {
+	const lines = [
+		'export function* plain() { const value = yield 1; return value; }',
+		'export function bad(...args: number) {} export class K { m(...args: number) {} }',
+		'export function List<T>(...items: T) @{ <ul /> }',
+		'function nested() { export as namespace A; }',
+		'export function* View() @{ @if (yield 1) { <div /> } }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {number} */ offset) =>
+		`layout.tsrx(${index + 4},${offset + 1})`;
+	for (const index of [0, 4]) {
+		expect(result.output).toContain(
+			`${at(index, lines[index].indexOf('yield'))}: error TS7057: 'yield' expression implicitly results in an 'any' type because its containing generator lacks a return-type annotation.`,
+		);
+	}
+	for (const [index, offset] of [
+		[1, lines[1].indexOf('...')],
+		[1, lines[1].lastIndexOf('...')],
+		[2, lines[2].indexOf('...')],
+	]) {
+		expect(result.output).toContain(
+			`${at(index, offset)}: error TS2370: A rest parameter must be of an array type.`,
+		);
+	}
+	expect(result.output).toContain(
+		`${at(3, lines[3].indexOf('export'))}: error TS1316: Global module exports may only appear at top level.`,
+	);
+});
+
+it('reports unreachable code on a statement that ends with an element in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	const lines = [
+		'let x: unknown; declare function foo(): void;',
+		'export function a() { return; x = <div></div>; }',
+		'export function b() { return; x = <br />; }',
+		'export function c() { return; true ? <div /> : <span />; }',
+		'export function d() { return; foo(); }',
+		'export function e() {',
+		'\treturn;',
+		'\tx = <span>x</span>',
+		'}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	for (const [index, text] of /** @type {const} */ ([
+		[1, 'x ='],
+		[2, 'x ='],
+		[3, 'true'],
+		[4, 'foo'],
+		[7, 'x ='],
+	])) {
+		expect(result.output).toContain(
+			`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1}): error TS7027: Unreachable code detected.`,
+		);
+	}
+});

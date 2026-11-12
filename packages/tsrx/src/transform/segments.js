@@ -791,6 +791,33 @@ export function convert_source_map_to_mappings(
 		}
 	}
 
+	/**
+	 * TypeScript reports some errors on a whole statement, up to its `;` (TS7027
+	 * on unreachable code), and Volar drops a diagnostic whose end no mapping
+	 * covers. Map the `;` the printer writes after a statement: an authored one
+	 * to itself, and one the printer adds to the end of the statement.
+	 * @param {AST.Node} node
+	 * @returns {void}
+	 */
+	function push_statement_end_mapping(node) {
+		if (!has_location(node)) return;
+		const authored = source[node.end - 1] === ';';
+		const { line, column } = node.loc.end;
+		for (const generated of src_to_gen_map.get(`${line}:${column}`) ?? []) {
+			const end = loc_to_offset(generated.line, generated.column, gen_line_offsets);
+			const semicolon = authored ? end - 1 : end;
+			if (generated_code[semicolon] !== ';') continue;
+			mappings.push({
+				sourceOffsets: [authored ? node.end - 1 : node.end],
+				lengths: [authored ? 1 : 0],
+				generatedOffsets: [semicolon],
+				generatedLengths: [1],
+				data: { ...mapping_data_verify_only, customData: {} },
+			});
+			return;
+		}
+	}
+
 	/** @type {Set<string>} */
 	const mapped_comments = new Set();
 
@@ -963,7 +990,7 @@ export function convert_source_map_to_mappings(
 	// We have to visit everything in generated order to maintain correct indices
 
 	walk(ast, null, {
-		_(node, { visit }) {
+		_(node, { visit, path }) {
 			add_line_comments_mapping(node);
 			add_preserved_comment_mappings(node);
 
@@ -1349,22 +1376,14 @@ export function convert_source_map_to_mappings(
 						gen_line_offsets,
 						closing ? mapping_data_verify_only : mapping_data_verify_complete,
 					);
-					// The generated code includes a semicolon after the closing or self-closed tag
-					// We're extending the mapping to include the semicolon
-					// because the diagnostics errors can include the whole element
-					// and we need to account for the semicolon as it's a part of the diagnostic
-					// At the same time, we could've instead applied this logic to the whole `node` element
-					// but since we already map the opening - start, we just need the proper end
-					// and it was causing some issues with mappings
-					mapping.generatedLengths = [mapping.generatedLengths[0] + 1];
 					if (!closing && opening.selfClosing) {
-						const generated_close_length = '/>;'.length;
-						mapping.sourceOffsets = [target_node.end - 2];
-						mapping.lengths = ['/>'.length];
+						const close_length = '/>'.length;
+						mapping.sourceOffsets = [target_node.end - close_length];
+						mapping.lengths = [close_length];
 						mapping.generatedOffsets = [
-							mapping.generatedOffsets[0] + mapping.generatedLengths[0] - generated_close_length,
+							mapping.generatedOffsets[0] + mapping.generatedLengths[0] - close_length,
 						];
-						mapping.generatedLengths = [generated_close_length];
+						mapping.generatedLengths = [close_length];
 					}
 					// Loose recovery adds a closing tag, with no source position, to a tag
 					// left unclosed (#978), and the closing tags around it can then be
@@ -1548,6 +1567,10 @@ export function convert_source_map_to_mappings(
 					for (const declarator of node.declarations) {
 						visit(declarator);
 					}
+				}
+				// The head of a `for` loop has no `;` of its own.
+				if (!/^For(?:In|Of)?Statement$/.test(path.at(-1)?.type ?? '')) {
+					push_statement_end_mapping(node);
 				}
 				return;
 			} else if (node.type === 'VariableDeclarator') {
@@ -1981,6 +2004,7 @@ export function convert_source_map_to_mappings(
 				if (node.expression) {
 					visit(node.expression);
 				}
+				push_statement_end_mapping(node);
 				return;
 			} else if (node.type === 'BlockStatement' || node.type === 'Program') {
 				// Visit body statements in order
@@ -2109,6 +2133,11 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'SpreadElement' || node.type === 'RestElement') {
+				// TypeScript reports some errors on a whole rest parameter (TS2370 on a
+				// type that is not an array), which starts at the `...`.
+				if (node.type === 'RestElement' && has_location(node)) {
+					push_source_keyword_token('...', node.start, node);
+				}
 				// TypeScript reports some errors on a whole spread (TS2698 on
 				// `{ ...value }` when the value is not an object), so it maps like a
 				// literal: its ends as points, and its `...` for TypeScript 7.
@@ -2141,21 +2170,23 @@ export function convert_source_map_to_mappings(
 					visit(node.argument);
 				}
 
-				// An `await` the compiler added around a generated closure has no
-				// authored keyword to map.
-				if (node.type === 'AwaitExpression' && node.loc) {
-					const max_len = 'await'.length;
-					// We need a mapping for diagnostics but only on the 'await' keyword
-					const mapping = get_mapping_from_node(
-						node,
-						src_to_gen_map,
-						gen_line_offsets,
-						mapping_data_verify_only,
-						max_len,
-						max_len,
-					);
-
-					mappings.push(mapping);
+				// An `await` the compiler added around a generated closure, or a
+				// `yield*` that delegates to a generated generator, has no authored
+				// keyword to map. The keyword maps for diagnostics only, from where
+				// its own text is printed: a lowered `@if (yield 1)` prints the
+				// expression in parentheses that share its start.
+				if (has_location(node)) {
+					const text = node.type === 'AwaitExpression' ? 'await' : 'yield';
+					const keyword = find_source_token(source_tokens, text, node.start, 'after');
+					if (keyword?.loc && keyword.start < node.end) {
+						tokens.push({
+							source: text,
+							generated: text,
+							loc: keyword.loc,
+							metadata: {},
+							mappingData: mapping_data_verify_only,
+						});
+					}
 				}
 				return;
 			} else if (node.type === 'ChainExpression') {
@@ -2802,6 +2833,19 @@ export function convert_source_map_to_mappings(
 				return;
 			} else if (node.type === 'TSNamespaceExportDeclaration') {
 				// TypeScript namespace export: export as namespace foo;
+				if (has_location(node)) {
+					// TypeScript reports a nested one (TS1316) on the whole statement,
+					// up to the `;` the printer writes whether or not the source has one.
+					const mapping = declaration_mapping(node, EXPORT_KEYWORD);
+					if (mapping) {
+						const end = mapping.generatedOffsets[0] + mapping.generatedLengths[0];
+						if (generated_code[end] === ';') mapping.generatedLengths[0]++;
+						mappings.push(mapping);
+					}
+					push_source_keyword_token('export', node.start, node);
+					push_source_keyword_token('as', node.start, node);
+					push_source_keyword_token('namespace', node.start, node);
+				}
 				if (node.id) {
 					visit(node.id);
 				}
