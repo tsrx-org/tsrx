@@ -2672,7 +2672,7 @@ export function Card(${params}: any) @{
 					}`,
 				'App.tsrx',
 			),
-		).toThrow(/`await` is not yet supported in Vue TSRX components\./);
+		).toThrow(expect.objectContaining(TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED('Vue')));
 	});
 
 	it('allows await in nested async functions inside component bodies', () => {

@@ -348,6 +348,17 @@ export function C(props: { items: string[] }) @{
 	},
 	{
 		error: TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED,
+		source: `export async function C(props: { load: (error: unknown) => Promise<string> }) @{
+	@try {
+		<p>ok</p>
+	} @catch (error) {
+		<p>{await props.load(error)}</p>
+	}
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED,
 		source: `export async function C(props: { items: Promise<string>[] }) @{
 	<ul>
 		@for (const item of props.items) {
@@ -1019,6 +1030,10 @@ export const WITHOUT_EXAMPLE = new Map(
 			'Only for a target that sets `requireUseServerForAwait` without an `await` validator of its own; Solid, Vue and Hono DOM report their own error first (#887).',
 		],
 		[
+			TSRX_ERRORS.HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED,
+			"Only the Hono DOM compiler reports it, and this package doesn't depend on `@tsrx/hono`; its tests check it.",
+		],
+		[
 			TSRX_ERRORS.RESERVED_IDENTIFIER_PREFIX,
 			"Raised only through core helpers that targets outside this repository call (Ripple, Octane); none of this repository's targets reaches it.",
 		],
@@ -1056,8 +1071,4 @@ export const WITHOUT_EXAMPLE = new Map(
  * fix fails the test until the record here is removed.
  * @type {Map<ErrorEntry, KnownProblem>}
  */
-export const KNOWN_PROBLEMS = new Map(
-	/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([
-		[TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED, { problem: 'twice', issue: 980 }],
-	]),
-);
+export const KNOWN_PROBLEMS = new Map(/** @type {Array<[ErrorEntry, KnownProblem]>} */ ([]));
