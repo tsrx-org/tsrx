@@ -543,6 +543,7 @@ export function createJsxTransform(platform) {
 	 * @returns {JsxTransformResult}
 	 */
 	function transform(ast, source, filename, options) {
+		const parsed = ast;
 		/** @type {Map<number, boolean> | undefined} */
 		let hoistable_tags;
 		const effective_platform =
@@ -594,7 +595,7 @@ export function createJsxTransform(platform) {
 			type_only_style_anchors,
 			helper_state: null,
 			available_bindings: new Map(),
-			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast)),
+			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast, parsed)),
 			filename: filename ?? null,
 			source,
 			collect,
@@ -2874,15 +2875,17 @@ function reads_tag_binding(node) {
  * assign after it loads (`Menu.Item = …`), so only one that starts with an
  * import is hoisted. A tag that starts with `this`, `super`, a local binding,
  * a binding that can be reassigned (`let`, `var`, an enum, a namespace, an
- * import alias), or a name the module does not bind stays at render time.
- * Known limitation: a function declaration can still be reassigned
- * (`Tag = Replacement`), and a static keeps the function it read when the
- * module loaded.
+ * import alias), a binding the module assigns anywhere (`Tag = Replacement`
+ * after `function Tag() {}`, or any binding once it calls `eval` directly),
+ * or a name the module does not bind stays at render time, since a static
+ * would keep the value it read when the module loaded.
  *
  * @param {AST.Program} program
+ * @param {AST.Program} [parsed] the program before the passes that can move
+ * authored code out of the tree, which the assignments are read from
  * @returns {Map<number, boolean>}
  */
-function collect_hoistable_tags(program) {
+function collect_hoistable_tags(program, parsed = program) {
 	/** @type {Map<string, { kind: string, end: number }>} */
 	const module_bindings = new Map();
 	/**
@@ -2905,10 +2908,11 @@ function collect_hoistable_tags(program) {
 	// A `var` in a block outside any function is module-level too
 	for (const name of var_names(program)) declare(name, 'mutable', Infinity);
 
-	/** @type {Map<number, boolean>} */
-	const hoistable = new Map();
 	/** @type {Set<string>[]} */
 	const scopes = [];
+	// A name a local binding shadows counts too: that only keeps a static at
+	// render time
+	const assigned = collect_assigned_names(parsed);
 	/**
 	 * @param {string} name
 	 * @param {boolean} member
@@ -2918,6 +2922,7 @@ function collect_hoistable_tags(program) {
 	const is_hoistable = (name, member, position) => {
 		if (name === 'this' || name === 'super') return false;
 		if (scopes.some((names) => names.has(name))) return false;
+		if (!assigned || assigned.has(name)) return false;
 		const binding = module_bindings.get(name);
 		switch (binding?.kind) {
 			case 'import':
@@ -2931,6 +2936,8 @@ function collect_hoistable_tags(program) {
 				return false;
 		}
 	};
+	/** @type {Map<number, boolean>} */
+	const hoistable = new Map();
 	/** @param {AST.Node} node */
 	const visit = (node) => {
 		const names = node === program ? null : scope_names(node);
@@ -2949,6 +2956,92 @@ function collect_hoistable_tags(program) {
 	};
 	visit(program);
 	return hoistable;
+}
+
+/**
+ * The names `program` assigns anywhere: the targets of an assignment, an
+ * update, or a `for … in`/`for … of` head without a declaration, through
+ * destructuring and type assertions. `null` when the program calls `eval`
+ * directly, which can assign any name it can see. Read from the program as
+ * parsed: the style pass moves the `ref` of a `<style>` in a nested root to
+ * the root's metadata, which `child_nodes` skips.
+ *
+ * @param {AST.Program} program
+ * @returns {Set<string> | null}
+ */
+function collect_assigned_names(program) {
+	/** @type {Set<string>} */
+	const names = new Set();
+	let calls_eval = false;
+	/** @param {AST.Node} node */
+	const visit = (node) => {
+		if (node.type === 'AssignmentExpression') add_target_names(node.left, names);
+		else if (node.type === 'UpdateExpression') add_target_names(node.argument, names);
+		else if (
+			(node.type === 'ForInStatement' || node.type === 'ForOfStatement') &&
+			node.left.type !== 'VariableDeclaration'
+		) {
+			add_target_names(node.left, names);
+		} else if (node.type === 'CallExpression') {
+			const callee = unwrap_expression(node.callee);
+			if (callee.type === 'Identifier' && callee.name === 'eval') calls_eval = true;
+		}
+		for (const child of child_nodes(node)) visit(child);
+	};
+	visit(program);
+	return calls_eval ? null : names;
+}
+
+/**
+ * `node` without the parentheses and type assertions around it.
+ *
+ * @param {AST.Node} node
+ * @returns {AST.Node}
+ */
+function unwrap_expression(node) {
+	/** @type {any} */
+	let current = node;
+	while (
+		current.type === 'ParenthesizedExpression' ||
+		current.type === 'TSAsExpression' ||
+		current.type === 'TSSatisfiesExpression' ||
+		current.type === 'TSNonNullExpression' ||
+		current.type === 'TSTypeAssertion'
+	) {
+		current = current.expression;
+	}
+	return current;
+}
+
+/**
+ * @param {AST.Node | null} target
+ * @param {Set<string>} names
+ */
+function add_target_names(target, names) {
+	/** @type {any} */
+	const node = target && unwrap_expression(target);
+	switch (node?.type) {
+		case 'Identifier':
+			names.add(node.name);
+			break;
+		case 'ObjectPattern':
+			for (const property of node.properties) {
+				add_target_names(
+					property.type === 'RestElement' ? property.argument : property.value,
+					names,
+				);
+			}
+			break;
+		case 'ArrayPattern':
+			for (const element of node.elements) add_target_names(element, names);
+			break;
+		case 'RestElement':
+			add_target_names(node.argument, names);
+			break;
+		case 'AssignmentPattern':
+			add_target_names(node.left, names);
+			break;
+	}
 }
 
 /**
@@ -5327,8 +5420,9 @@ function validate_if_body_control_flow(node, transform_context) {
 /**
  * Every target hands an `@for` item to a callback, so the head has to declare
  * its loop variable the way a parameter can: assigning to an existing variable
- * or property would only shadow it, and a `using` item would never be disposed.
- * A target that lowers `@for` itself calls this from its own lowering.
+ * or property would only shadow it, a `var` would not reach the enclosing
+ * function, and a `using` item would never be disposed. A target that lowers
+ * `@for` itself calls this from its own lowering.
  *
  * @param {AST.ForOfStatement['left']} left
  * @param {TransformContext} transform_context
@@ -5338,6 +5432,14 @@ export function validate_for_of_head(left, transform_context) {
 	if (left.type !== 'VariableDeclaration') {
 		error(
 			TSRX_ERRORS.FOR_HEAD_ASSIGNMENT,
+			transform_context.filename,
+			left,
+			transform_context.errors,
+			transform_context.comments,
+		);
+	} else if (left.kind === 'var') {
+		error(
+			TSRX_ERRORS.FOR_HEAD_VAR,
 			transform_context.filename,
 			left,
 			transform_context.errors,
