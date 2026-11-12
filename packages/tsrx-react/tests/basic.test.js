@@ -4,6 +4,7 @@ import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedAnonymousComponentTests,
+	runSharedCatchErrorTypeTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -58,6 +59,12 @@ runSharedCompileTests({
 	generatedClassAttrName: 'className',
 });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'react' });
+runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings,
+	name: 'react',
+	package_dir: fileURLToPath(new URL('..', import.meta.url)),
+	jsx_import_source: 'react',
+});
 runSharedCodeBlockChildrenTests({ compile, name: 'react' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'react' });
 runSharedAnonymousComponentTests({ compile, name: 'react' });
@@ -1362,7 +1369,7 @@ describe('@tsrx/react basic', () => {
 			body: `<Fragment><b>native</b></Fragment>
 					<ul>@for (const item of [1, 2]; key item) { <><li>{item}</li><li>end</li></> }</ul>`,
 		},
-	])('reuses an authored $name import from react', ({ name, body }) => {
+	])('keeps an authored $name import from react beside the generated one', ({ name, body }) => {
 		const { code } = compile(
 			`import { ${name} } from 'react';
 
@@ -1375,9 +1382,11 @@ describe('@tsrx/react basic', () => {
 		);
 
 		expect(code.match(new RegExp(`import \\{[^}]*\\b${name}\\b[^}]*\\} from`, 'g'))).toEqual([
+			`import { ${name} as __${name} } from`,
 			`import { ${name} } from`,
 		]);
-		expect(code).toContain(`<${name}`);
+		expect(code).toMatch(new RegExp(`<${name}[\\s>]`));
+		expect(code).toContain(`<__${name} `);
 	});
 
 	it('transforms try/pending/catch into ErrorBoundary wrapping Suspense', () => {
@@ -1397,8 +1406,8 @@ describe('@tsrx/react basic', () => {
 		expect(code).toContain('TsrxErrorBoundary');
 		expect(code).toContain('Suspense');
 		// ErrorBoundary should wrap Suspense (outer first)
-		const errorBoundaryIndex = code.indexOf('<TsrxErrorBoundary');
-		const suspenseIndex = code.indexOf('<Suspense');
+		const errorBoundaryIndex = code.indexOf('<__TsrxErrorBoundary');
+		const suspenseIndex = code.indexOf('<__Suspense');
 		expect(errorBoundaryIndex).toBeLessThan(suspenseIndex);
 	});
 
@@ -1456,7 +1465,7 @@ describe('@tsrx/react basic', () => {
 		expect(code).toContain("import { TsrxTryBody } from '@tsrx/react/try-body';");
 		// The body renders as a child of <Suspense>, so `use()` suspends to it.
 		expect(code).toMatch(
-			/<Suspense fallback=[\s\S]*><TsrxTryBody render=\{\(\) => \{\s*const data = use\(fetchData\(\)\);/,
+			/<__Suspense fallback=[\s\S]*><TsrxTryBody render=\{\(\) => \{\s*const data = use\(fetchData\(\)\);/,
 		);
 	});
 
@@ -1508,7 +1517,8 @@ describe('@tsrx/react basic', () => {
 		/** @type {Array<[string, string[]]>} */
 		const imports = [...code.matchAll(/^import \{([^}]*)\} from '([^']+)';$/gm)].map((match) => [
 			match[2],
-			match[1].split(',').map((name) => name.trim()),
+			// The imported name: the generated import binds a private local.
+			match[1].split(',').map((name) => name.trim().split(/\s+as\s+/)[0]),
 		]);
 		expect(imports).toEqual([
 			['react', ['Suspense']],
@@ -1562,8 +1572,8 @@ describe('@tsrx/react basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toMatch(/<TsrxErrorBoundary fallback=[\s\S]*? key='try1'>/);
-		expect(code).toMatch(/<TsrxErrorBoundary fallback=[\s\S]*? key='try2'>/);
+		expect(code).toMatch(/<__TsrxErrorBoundary fallback=[\s\S]*? key='try1'>/);
+		expect(code).toMatch(/<__TsrxErrorBoundary fallback=[\s\S]*? key='try2'>/);
 		// A loop key is combined with the site name rather than dropped.
 		expect(code).toContain("key={'try3:' + item.id}");
 	});
@@ -1583,7 +1593,7 @@ describe('@tsrx/react basic', () => {
 		);
 
 		// Every row would repeat the same site key.
-		expect(code).toContain('<TsrxErrorBoundary');
+		expect(code).toContain('<__TsrxErrorBoundary');
 		expect(code).not.toContain('key=');
 	});
 
@@ -1605,7 +1615,7 @@ describe('@tsrx/react basic', () => {
 		// As a component inside both boundaries, the fallback runs only while
 		// the body suspends, and its throw reaches `@catch`.
 		expect(code).toMatch(
-			/<Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
+			/<__Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
 		);
 	});
 
@@ -1623,7 +1633,7 @@ describe('@tsrx/react basic', () => {
 		);
 
 		expect(code).not.toContain('TsrxTryBody');
-		expect(code).toMatch(/<Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
+		expect(code).toMatch(/<__Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
 	});
 
 	it('keeps a @pending body that awaits inline', () => {
@@ -1639,7 +1649,7 @@ describe('@tsrx/react basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toMatch(/<Suspense fallback=\{await \(async \(\) => \{/);
+		expect(code).toMatch(/<__Suspense fallback=\{await \(async \(\) => \{/);
 	});
 
 	it.each([
@@ -2147,20 +2157,31 @@ describe('destructuring', () => {
 			expect(type_only).toContain('{...App__spread_props1}');
 		});
 
-		it('keeps a ref written before a host spread in its authored position', () => {
+		it('evaluates a ref written before a host spread in its authored position', () => {
 			const source = `export function App() @{
 					function init() {
 						return () => {};
 					}
-					<div ref={init()} data-first="1" {...bag} />
+					<>
+						<div ref={init()} data-first="1" {...bag} />
+						<div ref={init()} {...bag} data-first="1" />
+					</>
 				}`;
 			const { code } = compile(source, 'App.tsrx');
 
+			// The merged ref follows the spread whose ref it reads, so it gets plain
+			// values, which `merge_element_refs` maps to the same ref on every render.
+			expect(code).toContain('merge_element_refs as __mergeRefs');
 			expect(code).toContain(
-				'<div ref={__mergeRefs(init(), (node) => __mergeRefs(App__spread_props1?.ref)(node))} data-first="1" {...(App__spread_props1 = __normalize_spread_props_for_ref_attr(bag))} />',
+				'<div {...(App__ref1 = init(), null)} data-first="1" {...(App__spread_props2 = __normalize_spread_props_for_ref_attr(bag))} ref={__mergeRefs(App__ref1, App__spread_props2?.ref)} />',
+			);
+			expect(code.replace(/\s+/g, ' ')).toContain(
+				'<div {...( App__ref3 = init(), App__spread_props4 = __normalize_spread_props_for_ref_attr(bag) )} data-first="1" ref={__mergeRefs(App__ref3, App__spread_props4?.ref)} />',
 			);
 
 			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain('mergeRefs as __mergeRefs');
+			expect(type_only).not.toContain('merge_element_refs');
 			expect(type_only).toContain(
 				'<div data-first="1" {...App__spread_props1} ref={__mergeRefs(init(), App__spread_props1?.ref)} />',
 			);

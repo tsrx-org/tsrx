@@ -137,7 +137,7 @@ const TRY_RESET_HTML = highlight_tsrx(
     <ComponentThatMightFail />
   } @catch (e, reset) {
     <div>
-      <p>Error: {e.message}</p>
+      <p>Error: {e instanceof Error ? e.message : String(e)}</p>
       <button onClick={() => reset()}>Try again</button>
     </div>
   }
@@ -816,6 +816,14 @@ export const FeaturesPage = () => @{
 								<code class="inline-code">break</code>, and <code class="inline-code">return</code>{' '}
 								statements are not allowed in <code class="inline-code">@for</code> template loop
 								bodies; nested functions keep ordinary JavaScript control flow.
+							</p>
+							<p class="section-body">
+								The loop head declares its loop variable, as in{' '}
+								<code class="inline-code">{'@for (const item of items)'}</code>. A head that assigns
+								to an existing variable or property, such as{' '}
+								<code class="inline-code">{'@for (state.item of items)'}</code>, and a{' '}
+								<code class="inline-code">using</code> loop variable are errors; declare a resource
+								in the loop body instead.
 							</p>
 							<p class="section-body">
 								Other JavaScript loops are not template rendering constructs: regular{' '}
