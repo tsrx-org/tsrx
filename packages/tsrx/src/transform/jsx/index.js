@@ -3477,6 +3477,11 @@ function is_statement_list_owner(node, key) {
 function collect_local_component_helpers(statement) {
 	/** @type {AST.Statement[]} */
 	const helpers = [];
+	// A block used as a statement (`{ … }`, a `case` body) is a statement list
+	// of its own, which `expand_local_component_helpers` fills when it visits
+	// the block. Collecting its helpers here too would declare them again
+	// outside it, where the block's own bindings are out of scope.
+	if (is_statement_list_owner(statement, 'body')) return helpers;
 	/** @param {AST.Node} node */
 	const visit = (node) => {
 		const local_helpers = node.metadata?.generated_local_helpers;
@@ -7008,6 +7013,21 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 
 	if (own_ref_id !== null) {
 		const own_ref = /** @type {ESTreeJSX.JSXRefAttribute} */ (attrs[own_ref_index]);
+		// A spread before `key` makes a JSX compiler pass `key` in the props
+		// (`createElement`) rather than as `jsx()`'s own argument, and a later
+		// bag's `key` then replaces it (Preact and Hono read `jsx()`'s argument
+		// first). So a `key` that no authored spread precedes moves ahead of the
+		// binding spread added below; `jsx()` reads it after the props wherever it
+		// is written.
+		const first_spread_index = attrs.findIndex((attr) => attr.type === 'JSXSpreadAttribute');
+		const keys = attrs.filter(
+			(attr, index) =>
+				index > own_ref_index && index < first_spread_index && is_key_attribute(attr),
+		);
+		for (const key of keys) {
+			lowered.splice(lowered.indexOf(key), 1);
+		}
+		lowered.splice(lowered.indexOf(own_ref), 0, ...keys);
 		const binding = b.assignment('=', clone_identifier(own_ref_id), own_ref.value.expression);
 		const position = lowered.indexOf(own_ref);
 		lowered[position] = {
@@ -7041,12 +7061,18 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
  * @returns {string}
  */
 function create_own_ref_name(transform_context) {
-	if (transform_context.helper_state) {
-		return create_helper_name(transform_context.helper_state, 'ref');
-	}
-
-	transform_context.local_statement_component_index += 1;
-	return `_tsrx_ref_${transform_context.local_statement_component_index}`;
+	/** @type {string} */
+	let name;
+	do {
+		if (transform_context.helper_state) {
+			name = create_helper_name(transform_context.helper_state, 'ref');
+		} else {
+			transform_context.local_statement_component_index += 1;
+			name = `_tsrx_ref_${transform_context.local_statement_component_index}`;
+		}
+		// Like a spread temporary, it skips any name the author wrote.
+	} while (source_mentions_identifier(transform_context.source, name));
+	return name;
 }
 
 /**

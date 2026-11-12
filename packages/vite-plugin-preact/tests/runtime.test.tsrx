@@ -1,6 +1,6 @@
 import { lazy } from 'preact/compat';
 import { act } from 'preact/test-utils';
-import { createContext } from 'preact';
+import { createContext, options } from 'preact';
 import { useContext, useState } from 'preact/hooks';
 import { mergeRefs } from '@tsrx/preact/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
@@ -714,7 +714,28 @@ function StaticContainersHost() @{
 	</>
 }
 
+function OwnRefKeyedInput(props: { bag: Record<string, unknown> }) @{
+	<input ref={() => {}} key="authored" {...props.bag} />
+}
+
 describe('@tsrx/vite-plugin-preact runtime', () => {
+	it('keys an element by its written key when its own ref comes before a spread with a key', async () => {
+		const keys: unknown[] = [];
+		const previous = options.vnode;
+		options.vnode = (vnode) => {
+			if (vnode.type === 'input') keys.push(vnode.key);
+			previous?.(vnode);
+		};
+		try {
+			await render(OwnRefKeyedInput, { bag: { key: 'from-bag', id: 'keyed' } });
+		} finally {
+			options.vnode = previous;
+		}
+		// As in plain TSX, where `jsx()` takes the written `key` as its argument.
+		expect(keys).toEqual(['authored']);
+		expect(container.querySelector('#keyed')).not.toBeNull();
+	});
+
 	it('renders nothing for an empty pending fallback then resolves', async () => {
 		let resolve_fn: (mod: { default: typeof ResolvedChild }) => void;
 		const loader = () =>

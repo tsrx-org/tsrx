@@ -1045,35 +1045,21 @@ function if_statement_to_jsx_child(node, transform_context) {
 		}
 	}
 
-	const static_conditional = !transform_context.typeOnly
-		? build_static_conditional(branches, transform_context)
-		: null;
-	if (static_conditional) {
-		return static_conditional;
-	}
-
-	if (branches.length === 1) {
-		// Single `if` with no else → <Show when>
-		transform_context.needs_show = true;
-		const [{ test, body }] = branches;
-		return build_show_element(
-			test,
-			body_to_jsx_child(body, transform_context),
-			null,
-			transform_context,
-		);
-	}
-
-	if (branches.length === 2 && branches[1].test === null) {
-		// Plain if/else → <Show when fallback>
-		transform_context.needs_show = true;
+	if (branches.length === 1 || (branches.length === 2 && branches[1].test === null)) {
+		// `if` with an optional plain `else` → <Show when fallback>. Each body is
+		// lowered once, whether it ends up in `<Show>` or in a static conditional.
 		const [if_branch, else_branch] = branches;
-		return build_show_element(
-			if_branch.test,
-			body_to_jsx_child(if_branch.body, transform_context),
-			body_to_jsx_child(else_branch.body, transform_context),
-			transform_context,
-		);
+		const children = body_to_jsx_child(if_branch.body, transform_context);
+		const fallback = else_branch ? body_to_jsx_child(else_branch.body, transform_context) : null;
+		const static_conditional = !transform_context.typeOnly
+			? build_static_conditional(if_branch.test, children, fallback)
+			: null;
+		if (static_conditional) {
+			return static_conditional;
+		}
+
+		transform_context.needs_show = true;
+		return build_show_element(if_branch.test, children, fallback, transform_context);
 	}
 
 	// 3+ branches → <Switch fallback>{<Match when>...</Match>}...</Switch>
@@ -1116,31 +1102,22 @@ function if_statement_to_jsx_child(node, transform_context) {
 /**
  * A condition that cannot change at runtime needs no `<Show>`: render
  * `test ? a : b` instead. Only branches whose bodies are plain output qualify;
- * a body with setup statements keeps `<Show>`, which runs it untracked.
+ * a body with setup statements keeps `<Show>`, which runs it untracked. Takes
+ * the bodies already lowered, so a `<Show>` built after a `null` here reuses
+ * them instead of lowering them again.
  *
- * @param {[SolidIfTestBranch, ...SolidIfBranch[]]} branches
- * @param {TransformContext} transform_context
+ * @param {AST.Expression} test
+ * @param {AST.Expression} consequent the lowered `if` body
+ * @param {AST.Expression | null} alternate the lowered `else` body, if any
  * @returns {ESTreeJSX.JSXExpressionContainer | null}
  */
-function build_static_conditional(branches, transform_context) {
-	const [if_branch, else_branch] = branches;
-	if (
-		branches.length > 2 ||
-		(else_branch && else_branch.test !== null) ||
-		!is_static_condition(if_branch.test)
-	) {
+function build_static_conditional(test, consequent, alternate) {
+	const otherwise = alternate ?? create_null_literal();
+	if (!is_static_condition(test) || !is_plain_output(consequent) || !is_plain_output(otherwise)) {
 		return null;
 	}
 
-	const consequent = body_to_jsx_child(if_branch.body, transform_context);
-	const alternate = else_branch
-		? body_to_jsx_child(else_branch.body, transform_context)
-		: create_null_literal();
-	if (!is_plain_output(consequent) || !is_plain_output(alternate)) {
-		return null;
-	}
-
-	return to_jsx_expression_container(b.conditional(if_branch.test, consequent, alternate));
+	return to_jsx_expression_container(b.conditional(test, consequent, otherwise));
 }
 
 /**

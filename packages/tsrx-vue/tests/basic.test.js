@@ -2401,6 +2401,42 @@ export function Card(${params}: any) @{
 
 		it.each([
 			[
+				'a nested block',
+				`export function makeApp(label: string) {
+					{
+						const tag = label + '!';
+						function App() @{
+							${try_block('tag')}
+						}
+						return App;
+					}
+				}`,
+			],
+			[
+				'a switch case block',
+				`export function makeApp(kind: string) {
+					switch (kind) {
+						case 'a': {
+							const tag = kind + '!';
+							function App() @{
+								${try_block('tag')}
+							}
+							return App;
+						}
+					}
+					return null;
+				}`,
+			],
+		])('once, inside the block, for a component in %s', (_label, source) => {
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code.split(helper)).toHaveLength(2);
+			// After the block's own bindings, which the helper can read.
+			expect(code.indexOf('const tag')).toBeLessThan(code.indexOf(helper));
+		});
+
+		it.each([
+			[
 				'a setup local',
 				`export function makeApp() {
 					function App() @{
