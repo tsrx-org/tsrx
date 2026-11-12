@@ -370,24 +370,29 @@ function merge_ref_list(refs) {
  */
 
 /**
- * `merge_shared_ref_list` callbacks by their refs, one level per ref.
+ * `merge_element_refs` callbacks by their refs, one level per ref.
  * @type {MergedRefEntry}
  */
-const shared_merged_refs = { next: undefined, ref: undefined };
+const merged_element_refs = { next: undefined, ref: undefined };
 
 /**
- * Merge a ref list into one ref, as `merge_ref_list` does, except that a single
- * ref comes back as itself and the same refs give back the same callback.
- * Every caller given the same refs shares the callback, so only a runtime that
- * keeps no per-element state on a ref function can apply it (Solid ignores what
- * a ref returns).
+ * Merge the refs of one compiled element into its `ref`. A single ref comes back
+ * as itself, and the same refs give back the same callback, so a JSX runtime
+ * that applies a `ref` again whenever its identity changes applies them once
+ * rather than on every render.
+ *
+ * Every element given the same refs shares the callback, so only a runtime
+ * that keeps a ref's cleanup per element can use it (React, Hono): Preact
+ * stores the cleanup on the function, where another element's would replace
+ * it. Solid ignores what a ref returns, so its spread bags share it too, through
+ * `normalize_spread_props_sharing_refs`.
  *
  * @template [T=Element]
- * @param {RefValue<T>[]} refs
+ * @param {...RefValue<T>} refs
  * @returns {RefValue<T>}
  */
-function merge_shared_ref_list(refs) {
-	// Only a function or an object is a ref; `ref: cond && cb` may be `false`.
+export function merge_element_refs(...refs) {
+	// Only a function or an object is a ref; `ref={cond && cb}` may be `false`.
 	const live = refs.filter(
 		(ref) => typeof ref === 'function' || (typeof ref === 'object' && ref !== null),
 	);
@@ -395,7 +400,7 @@ function merge_shared_ref_list(refs) {
 		return live[0];
 	}
 
-	let entry = shared_merged_refs;
+	let entry = merged_element_refs;
 	for (const ref of live) {
 		const next = (entry.next ??= new WeakMap());
 		let child = next.get(/** @type {object} */ (ref));
@@ -469,7 +474,7 @@ export function normalize_spread_props(props, ...outer_refs) {
 
 /**
  * `normalize_spread_props` that merges a bag's refs with
- * `merge_shared_ref_list`, so a new bag carrying the same refs gets the same
+ * `merge_element_refs`, so a new bag carrying the same refs gets the same
  * `ref`. Solid's `spread_ref_bags` compares each bag's `ref` with the one it
  * applied last.
  *
@@ -478,7 +483,7 @@ export function normalize_spread_props(props, ...outer_refs) {
  * @returns {SpreadProps | SpreadFalsy}
  */
 export function normalize_spread_props_sharing_refs(props, ...outer_refs) {
-	return normalize_spread(props, outer_refs, false, merge_shared_ref_list);
+	return normalize_spread(props, outer_refs, false, (refs) => merge_element_refs(...refs));
 }
 
 /**
