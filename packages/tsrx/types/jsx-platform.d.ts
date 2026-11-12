@@ -73,6 +73,12 @@ export interface JsxTransformContext {
 	has_local_helpers?: boolean;
 	available_bindings: Map<string, AST.Identifier>;
 	/**
+	 * Start offsets of the `await`s that `hooks.validateComponentAwait`
+	 * reported. The shared checks for an `await` the output can't hold skip
+	 * these, so each `await` is reported once.
+	 */
+	rejected_awaits: Set<number>;
+	/**
 	 * Whether each tag in the module can be read where a static hoisted out of
 	 * it runs, keyed by the start of the identifier the tag starts with.
 	 * Computed on first use.
@@ -329,9 +335,11 @@ export interface JsxPlatformHooks {
 	 */
 	canHoistStaticNode?: (node: AST.TSRXJSXElement, ctx: JsxTransformContext) => boolean;
 	/**
-	 * Custom validation for a component body that uses top-level `await`.
-	 * Default: enforce `validation.requireUseServerForAwait`. Solid rejects
-	 * component-level await outright with a keyword-precise location.
+	 * Custom validation for a component body that uses top-level `await`,
+	 * called once for each such `await`, in source order.
+	 * Default: enforce `validation.requireUseServerForAwait` at the first one.
+	 * Solid rejects component-level await outright with a keyword-precise
+	 * location.
 	 */
 	validateComponentAwait?: (
 		awaitNode: AST.TSRXAwaitNode,
@@ -340,6 +348,18 @@ export interface JsxPlatformHooks {
 		moduleUsesServerDirective: boolean,
 		source: string,
 	) => void;
+	/**
+	 * The `yield`s in the final output that the target's own JSX compiler moves
+	 * out of their generator, into an effect, getter or callback, where they no
+	 * longer parse. Each is reported as TSRX2034. Only a `yield` whose nearest
+	 * enclosing function is a generator belongs here. A returned `yield*` that
+	 * delegates to a generator made from a generated closure stands for the
+	 * authored `yield`s inside it.
+	 */
+	findDeferredTemplateYields?: (
+		program: AST.Program,
+		ctx: JsxTransformContext,
+	) => AST.YieldExpression[];
 	/**
 	 * Factory-managed state extra fields. Returns a record merged into the
 	 * initial `transform_context`. Lets solid seed its `needs_show` /

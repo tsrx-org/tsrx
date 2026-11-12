@@ -1164,3 +1164,58 @@ it('reports unreachable code on a statement that ends with an element in .tsrx f
 		);
 	}
 });
+
+it('reports errors that start at a statement keyword or a binding pattern in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	config.compilerOptions.noUnusedLocals = true;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	const lines = [
+		'let x: unknown; declare function foo(): void;',
+		'export function a() @{ const { p, q } = { p: 1, q: 2 }; <p /> }',
+		'export function b() { const p = 1, q = 2; }',
+		'export function c() { if (typeof x === "strng") {} }',
+		'export function d() { return; const y = 1; }',
+		'export function e() { return; let y = 1, z = 2; }',
+		'export function f() { return; if (x) {} }',
+		'export function g() { return; while (x) {} }',
+		'export function h() { return; throw 1; }',
+		'export function i() { return; try {} finally {} }',
+		'export function j() { return; do {} while (x); }',
+		'export function k() { return; debugger; }',
+		'export function l() { return; typeof x; }',
+		'export function m() { return; return 1; }',
+		'export function n() { return; new Date(); }',
+		'export function o() { return; switch (x) {} }',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	expect(result.output).toContain(
+		`${at(1, '{ p')}: error TS6198: All destructured elements are unused.`,
+	);
+	expect(result.output).toContain(`${at(2, 'const')}: error TS6199: All variables are unused.`);
+	expect(result.output).toContain(`${at(5, 'let')}: error TS6199: All variables are unused.`);
+	expect(result.output).toContain(
+		`${at(3, 'typeof')}: error TS2367: This comparison appears to be unintentional`,
+	);
+	for (const [index, text] of /** @type {const} */ ([
+		[4, 'const'],
+		[5, 'let'],
+		[6, 'if'],
+		[7, 'while'],
+		[8, 'throw'],
+		[9, 'try'],
+		[10, 'do'],
+		[11, 'debugger'],
+		[12, 'typeof'],
+		[13, 'return 1'],
+		[14, 'new'],
+		[15, 'switch'],
+	])) {
+		expect(result.output).toContain(`${at(index, text)}: error TS7027: Unreachable code detected.`);
+	}
+});
