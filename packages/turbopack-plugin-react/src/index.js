@@ -70,7 +70,7 @@ export function create_tsrx_react_turbopack_rule(options = {}) {
 
 /**
  * @param {TsrxReactTurbopackOptions} [options]
- * @returns {{ condition: { all: any[] }, loaders: Array<string | { loader: string, options: TsrxReactTurbopackOptions }>, type: string }}
+ * @returns {{ condition: { all: any[] }, loaders: Array<string | { loader: string, options: TsrxReactTurbopackOptions }>, as: string }}
  */
 export function create_tsrx_react_turbopack_css_rule(options = {}) {
 	options = normalize_options(options);
@@ -79,7 +79,10 @@ export function create_tsrx_react_turbopack_css_rule(options = {}) {
 			all: [{ not: 'foreign' }, { query: CSS_QUERY }],
 		},
 		loaders: [with_loader_options(TURBOPACK_CSS_LOADER, options)],
-		type: 'css',
+		// Renaming the module to `*.css` (instead of setting `type: 'css'`) routes
+		// it through Next's own CSS rule, which links the stylesheet into the page
+		// when a server component imports it.
+		as: '*.css',
 	};
 }
 

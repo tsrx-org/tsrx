@@ -133,6 +133,7 @@ function create_hono_platform(mode) {
 			dynamic: '@tsrx/hono/dynamic',
 			dynamicFactory: {},
 			errorBoundary: is_dom ? '@tsrx/hono/dom/error-boundary' : '@tsrx/hono/error-boundary',
+			tryBody: '@tsrx/hono/try-body',
 			mergeRefs: '@tsrx/hono/ref',
 			refProp: '@tsrx/hono/ref',
 			forOfIterableHelper: '@tsrx/hono/runtime/iterable',
@@ -146,6 +147,8 @@ function create_hono_platform(mode) {
 		},
 		jsx: {
 			rewriteClassAttr: false,
+			// Hono renders `className` as `class`.
+			hostSpreadClassProps: ['class', 'className'],
 			multiRefStrategy: 'merge-refs',
 			hostSpreadRefBinding: 'in-place',
 			// Hono's server renderer escapes a string child of `<script>` like
