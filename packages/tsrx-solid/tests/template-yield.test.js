@@ -79,6 +79,10 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 			'a className, which TSRX compiles to class, which is always in an effect',
 			returning('<div className={yield t} />'),
 		],
+		[
+			"a static @for iterable, which TSRX passes to for_items, so the compiler reads <For>'s each in a getter",
+			template('<ul>\n\t\t@for (const x of yield t) { <li>{x}</li> }\n\t</ul>'),
+		],
 	])('reports each yield in %s', (_label, source) => {
 		const yields = [...source.matchAll(/\byield\b/g)].map((match) => match.index);
 		expect(() => compile(source, 'App.tsrx')).toThrow(
@@ -143,10 +147,6 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 		['a lone static component child', returning('<Comp>{yield t}</Comp>')],
 		['a component in a ternary arm', returning('t ? <Comp title={yield t} /> : null')],
 		['a static @if test', template('<div>\n\t\t@if (yield t) { <p>a</p> }\n\t</div>')],
-		[
-			'a static @for iterable',
-			template('<ul>\n\t\t@for (const x of yield t) { <li>{x}</li> }\n\t</ul>'),
-		],
 		[
 			'a class value beside a spread, which is a prop of the spread',
 			returning('<div {...bag} class={yield t} />'),
