@@ -70,6 +70,8 @@ import { builders as b } from '@tsrx/core';
  */
 const SWITCH_MEMO_INTERNAL_NAME = `${IDENTIFIER_OBFUSCATION_PREFIX}createMemo`;
 const SWITCH_VALUE_NAME = `${IDENTIFIER_OBFUSCATION_PREFIX}switch_value`;
+/** Local name of the `untrack` import that runs a fallback body. */
+const UNTRACK_INTERNAL_NAME = `${IDENTIFIER_OBFUSCATION_PREFIX}untrack`;
 
 /**
  * Solid platform descriptor consumed by `createJsxTransform`. Everything
@@ -138,6 +140,7 @@ const solid_platform = {
 			needs_errored: false,
 			needs_loading: false,
 			needs_switch_memo: false,
+			needs_untrack: false,
 			needs_normalize_spread_props: false,
 		}),
 		canHoistStaticNode(node) {
@@ -381,11 +384,12 @@ function tsrx_node_to_jsx_expression(node, transform_context, in_jsx_child = fal
  *   - `<Show>` / `<Match>` children: invoked as function children via
  *     {@link to_function_child} which ensures `length > 0` so Solid's
  *     runtime calls them with a condition accessor.
- *   - `<For>` / `<Errored fallback>`: the outer iteration/fallback arrow's
- *     body is merged with the branch arrow's body via
- *     {@link merge_branch_body_into_arrow}.
+ *   - `<For>`: the iteration arrow's body is merged with the branch arrow's
+ *     body via {@link merge_branch_body_into_arrow}.
  *   - Fallback props (`<Show fallback>`, `<Switch fallback>`,
- *     `<Loading fallback>`): IIFE-wrapped via {@link iife_if_arrow}.
+ *     `<For fallback>`, `<Loading fallback>`), the `<Errored fallback>`
+ *     arrow's body, and `@try` children: run untracked via
+ *     {@link untrack_if_arrow}.
  *
  * @param {AST.Node[]} body_nodes
  * @param {TransformContext} transform_context
@@ -975,6 +979,26 @@ function iife_if_arrow(node) {
 }
 
 /**
+ * Run a branch arrow untracked as the `fallback` of `<Show>`, `<Switch>`,
+ * `<For>`, `<Loading>`, or `<Errored>`, or as the children of `<Errored>` or
+ * `<Loading>`. Solid reads these inside the component's memo, so a body called
+ * there would make each signal its setup reads a dependency of that memo, and
+ * run again whenever one changes; setup in `<Show>` and `<Match>` function
+ * children runs once.
+ * Returns non-arrow inputs unchanged.
+ *
+ * @template {AST.Expression} T
+ * @param {T} node
+ * @param {TransformContext} transform_context
+ * @returns {T | AST.CallExpression}
+ */
+function untrack_if_arrow(node, transform_context) {
+	if (!is_branch_arrow(node)) return node;
+	transform_context.needs_untrack = true;
+	return b.call(UNTRACK_INTERNAL_NAME, node);
+}
+
+/**
  * `if (test) { ... }` → `<Show when={test}>...</Show>`
  * `if (test) { a } else { b }` → `<Show when={test} fallback={b}>a</Show>`
  * `if (a) { } else if (b) { } else { }` → `<Switch fallback={...}><Match when={a}>...</Match>...</Switch>`
@@ -1002,7 +1026,12 @@ function if_statement_to_jsx_child(node, transform_context) {
 		// Single `if` with no else → <Show when>
 		transform_context.needs_show = true;
 		const [{ test, body }] = branches;
-		return build_show_element(test, body_to_jsx_child(body, transform_context), null);
+		return build_show_element(
+			test,
+			body_to_jsx_child(body, transform_context),
+			null,
+			transform_context,
+		);
 	}
 
 	if (branches.length === 2 && branches[1].test === null) {
@@ -1013,6 +1042,7 @@ function if_statement_to_jsx_child(node, transform_context) {
 			if_branch.test,
 			body_to_jsx_child(if_branch.body, transform_context),
 			body_to_jsx_child(else_branch.body, transform_context),
+			transform_context,
 		);
 	}
 
@@ -1037,7 +1067,7 @@ function if_statement_to_jsx_child(node, transform_context) {
 			? [
 					b.jsx_attribute(
 						b.jsx_id('fallback'),
-						to_jsx_expression_container(iife_if_arrow(fallback)),
+						to_jsx_expression_container(untrack_if_arrow(fallback, transform_context)),
 					),
 				]
 			: [];
@@ -1159,13 +1189,17 @@ function flatten_if_chain(node) {
  * @param {AST.Expression} test
  * @param {AST.Expression} children
  * @param {AST.Expression | null | undefined} fallback
+ * @param {TransformContext} transform_context
  * @returns {AST.TSRXJSXElement}
  */
-function build_show_element(test, children, fallback) {
+function build_show_element(test, children, fallback, transform_context) {
 	const attributes = [b.jsx_attribute(b.jsx_id('when'), to_jsx_expression_container(test))];
 	if (fallback !== null && fallback !== undefined) {
 		attributes.push(
-			b.jsx_attribute(b.jsx_id('fallback'), to_jsx_expression_container(iife_if_arrow(fallback))),
+			b.jsx_attribute(
+				b.jsx_id('fallback'),
+				to_jsx_expression_container(untrack_if_arrow(fallback, transform_context)),
+			),
 		);
 	}
 	return create_jsx_element('Show', attributes, [jsx_child_wrap(to_function_child(children))]);
@@ -1215,7 +1249,10 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		attributes.push(
 			b.jsx_attribute(
 				b.jsx_id('fallback'),
-				to_jsx_expression_container(body_to_jsx_child(empty_body, transform_context), node.empty),
+				to_jsx_expression_container(
+					untrack_if_arrow(body_to_jsx_child(empty_body, transform_context), transform_context),
+					node.empty,
+				),
 			),
 		);
 	}
@@ -1305,7 +1342,7 @@ function switch_statement_to_jsx_child(node, transform_context) {
 			? [
 					b.jsx_attribute(
 						b.jsx_id('fallback'),
-						to_jsx_expression_container(iife_if_arrow(fallback)),
+						to_jsx_expression_container(untrack_if_arrow(fallback, transform_context)),
 					),
 				]
 			: [];
@@ -1392,8 +1429,13 @@ function try_statement_to_jsx_child(node, transform_context) {
 	}
 
 	const try_body_nodes = node.block.body || [];
+	// `<Errored>` and `<Loading>` read their children inside a memo and call
+	// only a function child that takes no arguments, so the body runs untracked
+	// there instead of as a `<Show>`-style function child.
 	/** @type {ESTreeJSX.JSXRenderChild} */
-	let result = jsx_child_wrap(iife_if_arrow(body_to_jsx_child(try_body_nodes, transform_context)));
+	let result = jsx_child_wrap(
+		untrack_if_arrow(body_to_jsx_child(try_body_nodes, transform_context), transform_context),
+	);
 
 	if (pending) {
 		transform_context.needs_loading = true;
@@ -1405,7 +1447,7 @@ function try_statement_to_jsx_child(node, transform_context) {
 			[
 				b.jsx_attribute(
 					b.jsx_id('fallback'),
-					to_jsx_expression_container(iife_if_arrow(fallback_content)),
+					to_jsx_expression_container(untrack_if_arrow(fallback_content, transform_context)),
 				),
 			],
 			[result],
@@ -1425,17 +1467,21 @@ function try_statement_to_jsx_child(node, transform_context) {
 		if (handler.resetParam) catch_params.push(handler.resetParam);
 		else catch_params.push(create_generated_identifier('_reset'));
 
-		const catch_body_nodes = handler.param
-			? [
-					b.let(handler.param, b.call(clone_identifier(error_accessor))),
-					...(handler.body.body || []),
-				]
-			: handler.body.body || [];
-		const catch_jsx = body_to_jsx_child(catch_body_nodes, transform_context);
-
-		const fallback_fn = merge_branch_body_into_arrow(
-			b.arrow(catch_params, b.literal(null)),
-			catch_jsx,
+		// `<Errored>` calls its fallback inside a memo, so the body runs untracked
+		// within it. The binding reads the accessor before that, tracked, so a
+		// new error runs the body again with its value.
+		const catch_jsx = untrack_if_arrow(
+			body_to_jsx_child(handler.body.body || [], transform_context),
+			transform_context,
+		);
+		const fallback_fn = b.arrow(
+			catch_params,
+			handler.param
+				? b.block([
+						b.let(handler.param, b.call(clone_identifier(error_accessor))),
+						b.return(catch_jsx),
+					])
+				: catch_jsx,
 		);
 
 		result = create_jsx_element(
@@ -2209,6 +2255,9 @@ function inject_solid_imports(program, transform_context) {
 	const specifiers = needed.map((name) => [name, name]);
 	if (transform_context.needs_switch_memo) {
 		specifiers.push(['createMemo', SWITCH_MEMO_INTERNAL_NAME]);
+	}
+	if (transform_context.needs_untrack) {
+		specifiers.push(['untrack', UNTRACK_INTERNAL_NAME]);
 	}
 
 	if (specifiers.length === 0) return;

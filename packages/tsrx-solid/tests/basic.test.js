@@ -517,9 +517,82 @@ describe('@tsrx/solid basic', () => {
 				/<Match when=\{kind === 'a'\}>\{\(_\) => \{\s*const v = 1;\s*return <b>\{v\}<\/b>;\s*\}\}<\/Match>/,
 			);
 			expect(code).toMatch(
-				/fallback=\{\(\(\) => \{\s*const w = 2;\s*return <i>\{w\}<\/i>;\s*\}\)\(\)\}/,
+				/fallback=\{_\$_untrack\(\(\) => \{\s*const w = 2;\s*return <i>\{w\}<\/i>;\s*\}\)\}/,
 			);
 			expect(code).not.toContain('return null');
+		});
+
+		it('runs the setup of a fallback body untracked', () => {
+			const { code } = compile(
+				`function App(props: { show: boolean; mode: string; items: string[] }) @{
+					<div>
+						@if (props.show) {
+							<b />
+						} @else {
+							const a = 1;
+							<i>{a}</i>
+						}
+						@switch (props.mode) {
+							@case 'a': {
+								<b />
+							}
+							@default: {
+								const b = 2;
+								<i>{b}</i>
+							}
+						}
+						@for (const item of props.items) {
+							<b>{item}</b>
+						} @empty {
+							const c = 3;
+							<i>{c}</i>
+						}
+						@try {
+							<b />
+						} @pending {
+							const d = 4;
+							<i>{d}</i>
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('untrack as _$_untrack');
+			for (const [name, value] of [
+				['a', 1],
+				['b', 2],
+				['c', 3],
+				['d', 4],
+			]) {
+				expect(code).toMatch(
+					new RegExp(
+						`fallback=\\{_\\$_untrack\\(\\(\\) => \\{\\s*const ${name} = ${value};\\s*return <i>\\{${name}\\}</i>;\\s*\\}\\)\\}`,
+					),
+				);
+			}
+		});
+
+		it('runs the setup of a @try or @catch body untracked', () => {
+			const { code } = compile(
+				`function App() @{
+					@try {
+						const e = 5;
+						<i>{e}</i>
+					} @catch (err, reset) {
+						const f = 6;
+						<i>{f}</i>
+					}
+				}`,
+				'App.tsrx',
+			);
+			expect(code).toContain('untrack as _$_untrack');
+			// The fallback binds the thrown value (`err`) before the untracked body.
+			expect(code).toMatch(
+				/fallback=\{\(_tsrx_error, reset\) => \{\s*let err = _tsrx_error\(\);\s*return _\$_untrack\(\(\) => \{\s*const f = 6;\s*return <i>\{f\}<\/i>;\s*\}\);\s*\}\}/,
+			);
+			expect(code).toMatch(
+				/>\{_\$_untrack\(\(\) => \{\s*const e = 5;\s*return <i>\{e\}<\/i>;\s*\}\)\}<\/Errored>/,
+			);
 		});
 
 		it('element children mixing JSX and statements wrap in an IIFE', () => {

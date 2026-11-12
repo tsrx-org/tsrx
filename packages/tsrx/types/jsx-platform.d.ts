@@ -53,6 +53,8 @@ export interface JsxTransformContext {
 	needs_switch: boolean;
 	/** Solid: a `@switch` reads its discriminant through `createMemo`. */
 	needs_switch_memo?: boolean;
+	/** Solid: a fallback body with setup runs through `untrack`. */
+	needs_untrack?: boolean;
 	needs_match: boolean;
 	needs_errored: boolean;
 	needs_loading: boolean;
