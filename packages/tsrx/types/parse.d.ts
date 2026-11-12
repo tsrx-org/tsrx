@@ -1567,6 +1567,12 @@ export namespace Parse {
 		tsParseModuleOrNamespaceDeclaration(node: AST.Node, nested?: boolean): AST.TSModuleDeclaration;
 
 		/**
+		 * Parse the `{ … }` body of a namespace or module, in a scope of its own
+		 * (@sveltejs/acorn-typescript).
+		 */
+		tsParseModuleBlock(): AST.TSModuleBlock;
+
+		/**
 		 * Parse a global augmentation from `global`, or a module named by the
 		 * string after `module`, which has been read (@sveltejs/acorn-typescript).
 		 */
