@@ -179,6 +179,55 @@ export const badList = List<number>({ items: ['a'], render: (n) => String(n) });
 			expect(result.status).toBe(2);
 		}
 	});
+
+	it('checks modules with platform flags and keeps the editor-only platform globals out of declarations', () => {
+		const source =
+			"export function value() {\n\tif (import.meta.env.platform.web) {\n\t\treturn 'web';\n\t}\n\treturn 'native';\n}\n";
+		const dir = workspace({
+			// An authored global augmentation stays in the declaration output.
+			'a.tsrx': `${source}declare global {\n\tinterface Window {\n\t\tapp: string;\n\t}\n}\n`,
+			'b.tsrx': source,
+			// Exactly the flags' types: without the platform globals the reads fail.
+			'main.ts':
+				"import { value as a } from './a.tsrx';\nimport { value as b } from './b.tsrx';\nexport const web: true = import.meta.env.platform.web;\nexport const ios: false = import.meta.env.platform.ios;\nexport const result = [a(), b()];\n",
+			'tsconfig.json': JSON.stringify({
+				tsrx: { compiler: '@tsrx/react', platform: 'web' },
+				contentMappers: [{ package: '@tsrx/content-mapper', extensions: ['.tsrx'] }],
+				compilerOptions: {
+					module: 'ESNext',
+					moduleResolution: 'Bundler',
+					jsx: 'react-jsx',
+					allowImportingTsExtensions: true,
+					target: 'ES2022',
+					strict: true,
+					skipLibCheck: false,
+					types: [],
+					noEmit: true,
+				},
+				include: ['main.ts'],
+			}),
+			'tsconfig.emit.json': JSON.stringify({
+				extends: './tsconfig.json',
+				compilerOptions: { ...emit_options, declarationMap: false },
+			}),
+		});
+		// Each module used to append its own copy of the globals, which TypeScript
+		// merged into one `ImportMeta` with a repeated index signature (TS2374).
+		const checked = run_native_tsc(dir, ['--noEmit', '-p', 'tsconfig.json', '--pretty', 'false']);
+		expect(checked.output).toBe('');
+		expect(checked.status).toBe(0);
+
+		const emitted = run_native_tsc(dir, ['-p', 'tsconfig.emit.json', '--pretty', 'false']);
+		expect(emitted.output).toBe('');
+		expect(emitted.status).toBe(0);
+		const a = fs.readFileSync(path.join(dir, 'dist', 'a.d.tsrx.ts'), 'utf8');
+		expect(a).toContain('export declare function value(): "native" | "web";');
+		expect(a).toContain('interface Window');
+		expect(a).not.toContain('ImportMeta');
+		expect(a).not.toContain('import');
+		const b = fs.readFileSync(path.join(dir, 'dist', 'b.d.tsrx.ts'), 'utf8');
+		expect(b).toBe('export declare function value(): "native" | "web";\nexport {};\n');
+	});
 });
 
 describe('native tsc incremental builds', () => {
