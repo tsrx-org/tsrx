@@ -6,7 +6,7 @@ import {
 	format_comment,
 	get_line_comments_after,
 	is_file_level_pragma,
-	is_jsx_child_tooling_comment,
+	is_ts_suppression_directive,
 	should_preserve_comment,
 	should_preserve_jsx_tooling_comment,
 } from '../../comment-utils.js';
@@ -118,14 +118,19 @@ export function tsx_with_ts_locations(
 	/**
 	 * @param {AST.CommentWithLocation} comment
 	 * @param {ESRap.Context} context
+	 * @param {boolean} [inline] Follow the comment with a space, not a line break.
+	 * @param {boolean} [kept] The caller keeps a comment the policy would drop.
 	 */
-	const write_preserved_comment = (comment, context) => {
+	const write_preserved_comment = (comment, context, inline = false, kept = false) => {
 		if (
 			!emitted_comments ||
 			(hashbang !== null && comment.start === 0) ||
-			!(preserve_owner_comments
-				? should_preserve_jsx_tooling_comment(comment)
-				: should_preserve_comment(comment))
+			!(
+				kept ||
+				(preserve_owner_comments
+					? should_preserve_jsx_tooling_comment(comment)
+					: should_preserve_comment(comment))
+			)
 		) {
 			return;
 		}
@@ -135,7 +140,11 @@ export function tsx_with_ts_locations(
 		if (comment.loc) context.location(comment.loc.start.line, comment.loc.start.column);
 		context.write(format_comment(comment));
 		if (comment.loc) context.location(comment.loc.end.line, comment.loc.end.column);
-		context.newline();
+		if (inline) {
+			context.write(' ');
+		} else {
+			context.newline();
+		}
 	};
 
 	/**
@@ -170,13 +179,34 @@ export function tsx_with_ts_locations(
 	};
 
 	/**
+	 * Write the leading comments the type view keeps so that each TypeScript
+	 * directive covers the same code as in the source. TypeScript applies a
+	 * directive to the first line after the one where it ends that is neither
+	 * blank nor a line comment. So comments that share a line stay on one line,
+	 * a block comment after a directive stays, since it ends the directive's
+	 * reach, and a directive on the line where the node starts is left out: it
+	 * covers the source line after it, which the printer may split or join.
 	 * @param {AST.Node} node
 	 * @param {ESRap.Context} context
 	 */
 	const write_leading_comments = (node, context) => {
-		if (!node.leadingComments || !is_comment_owner(node)) return;
+		if (!node.leadingComments || !is_comment_owner(node) || !node.loc) return;
+		const start_line = node.loc.start.line;
+		/** @type {Array<{ comment: AST.CommentWithLocation, kept: boolean }>} */
+		const written = [];
+		let after_directive = false;
 		for (const comment of node.leadingComments) {
-			if (has_location(comment)) write_preserved_comment(comment, context);
+			if (!has_location(comment)) continue;
+			const directive = is_ts_suppression_directive(comment);
+			if (directive && comment.loc.end.line === start_line) continue;
+			const kept = after_directive && comment.type === 'Block';
+			if (kept || should_preserve_jsx_tooling_comment(comment)) written.push({ comment, kept });
+			after_directive ||= directive;
+		}
+		for (let i = 0; i < written.length; i++) {
+			const { comment, kept } = written[i];
+			const next_line = written[i + 1]?.comment.loc.start.line ?? start_line;
+			write_preserved_comment(comment, context, comment.loc.end.line === next_line, kept);
 		}
 	};
 
@@ -256,6 +286,40 @@ export function tsx_with_ts_locations(
 				write_preserved_comment(comment, context);
 			}
 			/** @type {NonNullable<typeof base.Program>} */ (base.Program)(node, context);
+		},
+		ArrayPattern: (node, context) => {
+			print_binding_pattern(
+				/** @type {NonNullable<typeof base.ArrayPattern>} */ (base.ArrayPattern),
+				node,
+				context,
+			);
+		},
+		ObjectPattern: (node, context) => {
+			print_binding_pattern(
+				/** @type {NonNullable<typeof base.ObjectPattern>} */ (base.ObjectPattern),
+				node,
+				context,
+			);
+		},
+		// esrap prints a string statement that is not a directive without its
+		// parentheses, so `('use strict');` became a directive.
+		// UPSTREAM(sveltejs/esrap#246): remove once a release includes the fix
+		ExpressionStatement: (node, context) => {
+			const expression = node.expression;
+			if (
+				!('directive' in node && typeof node.directive === 'string') &&
+				expression.type === 'Literal' &&
+				typeof expression.value === 'string'
+			) {
+				context.write('(');
+				context.visit(expression);
+				context.write(');');
+				return;
+			}
+			/** @type {NonNullable<typeof base.ExpressionStatement>} */ (base.ExpressionStatement)(
+				node,
+				context,
+			);
 		},
 		// esrap's tsx printer writes `<T,>` for every one-parameter list, but
 		// only an arrow needs it: TSX reads `<T>(…) => …` as a JSX tag. Other
@@ -337,7 +401,7 @@ export function tsx_with_ts_locations(
 		JSXEmptyExpression: (node, context) => {
 			if (!emitted_comments || !preserve_owner_comments) return;
 			for (const comment of /** @type {AST.CommentWithLocation[]} */ (node.innerComments ?? [])) {
-				if (!is_jsx_child_tooling_comment(comment) || comment.value.includes('*/')) continue;
+				if (!should_preserve_jsx_tooling_comment(comment) || comment.value.includes('*/')) continue;
 				const key = `${comment.start}:${comment.end}:${comment.type}:${comment.value}`;
 				if (emitted_comments.has(key)) continue;
 				emitted_comments.add(key);
@@ -533,6 +597,26 @@ const COMMENT_OWNER_NODE_TYPES = new Set([
 
 /** @type {WeakSet<AST.Node>} */
 const arrow_type_parameters = new WeakSet();
+
+/**
+ * esrap prints a binding pattern's type annotation but not the `?` of an
+ * optional one, `{ a }?: T` in a declared function or a signature, which then
+ * became a required parameter.
+ * UPSTREAM(sveltejs/esrap#245): remove once a release includes the fix
+ * @template {AST.ArrayPattern | AST.ObjectPattern} T
+ * @param {(node: T, context: ESRap.Context) => void} print
+ * @param {T} node
+ * @param {ESRap.Context} context
+ */
+function print_binding_pattern(print, node, context) {
+	if (!node.optional) {
+		print(node, context);
+		return;
+	}
+	print({ ...node, typeAnnotation: undefined }, context);
+	context.write('?');
+	if (node.typeAnnotation) context.visit(node.typeAnnotation);
+}
 
 /**
  * The precedence esrap gives each binary operator that binds at least as

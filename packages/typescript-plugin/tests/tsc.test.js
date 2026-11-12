@@ -698,6 +698,49 @@ it('reports a missing return on a primitive return type in .tsrx files', () => {
 	);
 });
 
+it('applies block TypeScript directives and optional binding patterns as TypeScript does in .tsrx files', () => {
+	const lines = [
+		'declare const bad: string;',
+		'/* @ts-expect-error */',
+		'export const a: number = bad;',
+		'/* @ts-ignore */',
+		'export const b: number = bad;',
+		'/* @ts-expect-error */ /** docs */',
+		'export const c: number = bad;',
+		'/* explanation',
+		'@ts-expect-error */',
+		'export const d: number = bad;',
+		'/* @ts-expect-error */',
+		'/* plain */',
+		'export const e: number = bad;',
+		'// @ts-expect-error',
+		'/* plain */',
+		'export const f: number = bad;',
+		'export function g(x: number) {',
+		"\t/* @ts-ignore */ if (x) { const y: number = 'bad'; return y; }",
+		'\treturn 0;',
+		'}',
+		'declare function optional({ a }?: { a: number }): void; optional();',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	const at = (/** @type {number} */ index, /** @type {string} */ text) =>
+		`layout.tsrx(${index + 4},${lines[index].indexOf(text) + 1})`;
+	const ts2322 = "error TS2322: Type 'string' is not assignable to type 'number'.";
+	const ts2578 = "error TS2578: Unused '@ts-expect-error' directive.";
+	// The diagnostics tsc reports for the same code. A block comment after a
+	// directive ends its reach, and a directive on the line of the error covers
+	// the line after it.
+	expect(result.output.trim().split('\n')).toEqual([
+		`${at(10, '/*')}: ${ts2578}`,
+		`${at(12, 'e:')}: ${ts2322}`,
+		`${at(13, '//')}: ${ts2578}`,
+		`${at(15, 'f:')}: ${ts2322}`,
+		`${at(17, 'y:')}: ${ts2322}`,
+	]);
+	expect(result.status).toBe(2);
+});
+
 it('reports a superclass expression that is not a constructor in .tsrx files', () => {
 	const line =
 		'function createBase() { return {}; } export class Model extends createBase() {} export class Cast extends (Model as unknown as {}) {}';

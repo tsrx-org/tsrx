@@ -420,6 +420,14 @@ declare module 'estree' {
 		optional: boolean;
 	}
 
+	// An optional binding pattern parameter in a signature: `{ a }?: T`, `[a]?: T`.
+	interface ObjectPattern {
+		optional?: boolean;
+	}
+	interface ArrayPattern {
+		optional?: boolean;
+	}
+
 	// Target analysis may mark a whole member expression as tracked metadata.
 	interface MemberExpression {
 		tracked?: boolean;
