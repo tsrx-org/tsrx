@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import node_module, { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
+import { strip_platform_globals_from_declaration_output } from './declaration-output.js';
 import { getTsrxLanguagePlugin } from './language.js';
 import { run_native_tsc } from './native-tsc.js';
 import {
@@ -77,6 +78,7 @@ try {
 				 *  configFile?: import('typescript').TsConfigSourceFile,
 				 *  configFilePath?: string,
 				 * }} */ (create_program_options.options);
+			strip_platform_globals_from_declaration_output(ts);
 			return [
 				getTsrxLanguagePlugin({
 					ts,

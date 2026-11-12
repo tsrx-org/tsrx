@@ -62,6 +62,10 @@ diagnostic text shows the authored name.
 - Neighbouring Verbatim spans with equal feature bits whose gap is identical text
   in both files are coalesced, so whole statements such as import declarations
   become one edit-safe span.
+- A Verbatim span extends over the identical whitespace that follows it. The rest
+  of the identical text before the next span gets a Verbatim span with no feature
+  bits: TypeScript 7 offers no auto-import completion at the end of a span that
+  unmapped text separates from the next span.
 - Atom candidates that are fragments of an identifier (the one-character
   file-start anchor) are dropped.
 - A container that lost keeps its uncovered edges, from its start to its first
@@ -72,4 +76,4 @@ diagnostic text shows the authored name.
   source, matched from the container's boundary across whitespace that only one
   side has, and one Atom for the rest, so a node inside it without a span of its
   own (the `{}` of `Record< {}, 1 >`) keeps its position. Gaps between a
-  container's spans stay unmapped.
+  container's spans get no edge; identical text there maps as described above.

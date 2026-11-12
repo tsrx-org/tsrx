@@ -23,5 +23,6 @@ declaring this package in `dependencies`.
 Available subpaths:
 
 - `@tsrx/react-runtime/error-boundary`
+- `@tsrx/react-runtime/try-body`
 - `@tsrx/react-runtime/ref`
 - `@tsrx/react-runtime/iterable`
