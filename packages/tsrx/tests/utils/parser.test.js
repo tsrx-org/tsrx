@@ -10936,42 +10936,42 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: '@dec function f() {}',
 			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
-			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:5'],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:0'],
 			valid: 'function f() {}',
 			pick: first,
 		},
 		{
 			source: '@a @b(1) const x = 1;',
 			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@a']],
-			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:9'],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:0'],
 			valid: 'const x = 1;',
 			pick: first,
 		},
 		{
 			source: '@dec interface I {}',
 			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
-			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:5'],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:0'],
 			valid: 'interface I {}',
 			pick: first,
 		},
 		{
 			source: "@dec import a from 'a';",
 			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
-			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:5'],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:0'],
 			valid: "import a from 'a';",
 			pick: first,
 		},
 		{
 			source: 'export @dec function f() {}',
 			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
-			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:12'],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:7'],
 			valid: 'export function f() {}',
 			pick: first,
 		},
 		{
 			source: 'export default @dec async function f() {}',
 			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
-			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:20'],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:15'],
 			valid: 'export default async function f() {}',
 			pick: first,
 		},
@@ -10979,14 +10979,14 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// No other class takes the decorators written before `export`.
 			source: '@dec export const A = class {};',
 			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
-			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:12'],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:0'],
 			valid: 'export const A = class {};',
 			pick: first,
 		},
 		{
 			source: 'function f() {\n\t@dec const x = 1;\n}',
 			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
-			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '2:6'],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '2:1'],
 			valid: 'function f() {\n\tconst x = 1;\n}',
 			pick: first,
 		},
@@ -10994,14 +10994,14 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// No other class takes the decorators.
 			source: '@dec function f() {}\nclass A {}',
 			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
-			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:5'],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '1:0'],
 			valid: 'function f() {}\nclass A {}',
 			pick: (program) => program.body,
 		},
 		{
 			source: 'export function App() @{\n\t@dec const x = 1;\n\t<div>{x}</div>\n}',
 			errors: [[TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec']],
-			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '2:6'],
+			throws: [TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '2:1'],
 		},
 		{
 			source: 'class A { @dec constructor() {} }',
@@ -12015,8 +12015,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'type F = (public x: number) => void;',
 			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public x']],
-			// acorn-typescript reads `(public x` as a parenthesized type.
-			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:17'],
+			throws: [TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '1:10'],
 			valid: 'class A { constructor(public x: number) {} }',
 			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
 			pickValid: constructor_parameters,
@@ -12096,7 +12095,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'const k = (public x: number) => x;',
 			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public x']],
-			throws: [TS_ERRORS.STRICT_MODE_RESERVED_WORD, '1:11'],
+			throws: [TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '1:11'],
 			valid: 'class A { constructor(public x: number) {} }',
 			pick: arrow_parameters,
 			pickValid: constructor_parameters,
@@ -12104,7 +12103,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'const m = async (readonly x: number) => x;',
 			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'readonly x']],
-			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:26'],
+			throws: [TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '1:17'],
 			valid: 'class A { constructor(readonly x: number) {} }',
 			pick: arrow_parameters,
 			pickValid: constructor_parameters,
@@ -12117,8 +12116,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'protected'],
 				[TS_ERRORS.PATTERN_PARAMETER_PROPERTY, 'protected'],
 			],
-			// acorn-typescript throws the error of reading `<T,>` as an element.
-			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:10'],
+			throws: [TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '1:21'],
 			pick: arrow_parameters,
 			match: [
 				{ type: 'Identifier', name: 'a' },
@@ -12142,7 +12140,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			source: 'const o = async <T,>(override x: T) => x;',
 			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'override']],
-			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:19'],
+			throws: [TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '1:21'],
 			valid: 'class A { constructor(override x: T) {} }',
 			pick: arrow_parameters,
 			pickValid: constructor_parameters,
@@ -12155,7 +12153,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public {'],
 				[TS_ERRORS.PATTERN_PARAMETER_PROPERTY, 'public {'],
 			],
-			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '3:10'],
+			throws: [TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '3:1'],
 			pick: declarator_init,
 			match: {
 				type: 'ArrowFunctionExpression',
@@ -12182,7 +12180,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				[TS_ERRORS.REST_PARAMETER_PROPERTY, 'public'],
 				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
 			],
-			throws: [TS_ERRORS.STRICT_MODE_RESERVED_WORD, '1:22'],
+			throws: [TS_ERRORS.REST_PARAMETER_PROPERTY, '1:22'],
 			valid: 'const f = (a: number, ...rest: number[]) => a;',
 			pick: arrow_parameters,
 		},
@@ -12193,14 +12191,14 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
 				[TS_ERRORS.REST_ELEMENT_TRAILING_COMMA, ',)'],
 			],
-			throws: [TS_ERRORS.STRICT_MODE_RESERVED_WORD, '1:14'],
+			throws: [TS_ERRORS.REST_PARAMETER_PROPERTY, '1:14'],
 			valid: 'const f = (a, ...r) => a;',
 			pick: arrow_parameters,
 		},
 		{
 			source: 'export const App = (public x: number) => @{\n\t<div>{x}</div>\n};',
 			errors: [[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public x']],
-			throws: [TS_ERRORS.STRICT_MODE_RESERVED_WORD, '1:20'],
+			throws: [TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '1:20'],
 		},
 		// An arrow function's optional rest or pattern parameter (#663), as other
 		// functions' (#616, #557).
@@ -12323,8 +12321,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
 				[TS_ERRORS.SIGNATURE_PARAMETER_INITIALIZER, 'public x = 1'],
 			],
-			// acorn-typescript reads `(public x` as a parenthesized type.
-			throws: [TS_ERRORS.UNEXPECTED_TOKEN, '1:17'],
+			throws: [TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, '1:10'],
 			pick: (program) => as_type(type_alias_type(program), 'TSFunctionType').parameters,
 			match: [
 				{
@@ -12677,7 +12674,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
 				[TS_ERRORS.REST_PARAMETER_NOT_LAST, '...a'],
 			],
-			throws: [TS_ERRORS.STRICT_MODE_RESERVED_WORD, '1:14'],
+			throws: [TS_ERRORS.REST_PARAMETER_PROPERTY, '1:14'],
 			pick: arrow_parameters,
 			match: [{ name: 'x' }, { type: 'RestElement' }, { name: 'b' }],
 		},
@@ -12688,7 +12685,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				[TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR, 'public'],
 				[TS_ERRORS.REST_PARAMETER_NOT_LAST, '...a'],
 			],
-			throws: [TS_ERRORS.STRICT_MODE_RESERVED_WORD, '1:20'],
+			throws: [TS_ERRORS.REST_PARAMETER_PROPERTY, '1:20'],
 			pick: arrow_parameters,
 			match: [{ name: 'x' }, { type: 'RestElement' }, { name: 'b' }],
 		},
@@ -12849,6 +12846,57 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		).toEqual(cases.map(({ throws: [error, at] }) => [code_of(error), at]));
 	});
 
+	it('throws in a strict parse the first error that a collecting parse records (#1162)', async () => {
+		// TypeScript reports a duplicate parameter name at its first binding too,
+		// decorators before something other than a class at the first one, and a
+		// parameter property modifier on an arrow function or a function type at
+		// the first modifier.
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
+		const cases = [
+			['function f(a, a) {}', TS_ERRORS.ARGUMENT_NAME_CLASH, 'a, a'],
+			['const f = async (a, b, a) => a;', TS_ERRORS.ARGUMENT_NAME_CLASH, 'a, b'],
+			['class A {\n\tm(...[b, b]: any[]) {}\n}', TS_ERRORS.ARGUMENT_NAME_CLASH, 'b, b'],
+			[
+				'function App({ a: b, b }: { a: string, b: string }) @{\n\t<>{b}</>\n}',
+				TS_ERRORS.ARGUMENT_NAME_CLASH,
+				'b, b }',
+			],
+			['@dec export { a };', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec'],
+			['@dec function f() {\n\t@inner x;\n}', TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, '@dec'],
+			[
+				'let f: (override { a }: { a: number }, b: string) => void;',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'override',
+			],
+			[
+				'const f = async (a, readonly [b]: number[]) => a;',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'readonly',
+			],
+			[
+				'const h = async <T,>(a, public x: T): Promise<T> => x;',
+				TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR,
+				'public',
+			],
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
+		);
+
+		for (const [index, [source, error, at]] of cases.entries()) {
+			const strict = outcomes[2 * index];
+			const collected = outcomes[2 * index + 1];
+			expect(strict, source).toEqual(thrown(error, source.indexOf(at)));
+			// A collecting parse goes on past the decorators before `@inner x;`,
+			// which it throws at.
+			const first = collected.ok
+				? [...(collected.errors ?? [])].sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0))[0]
+				: undefined;
+			if (first)
+				expect([first.code, first.pos], source).toEqual([code_of(error), source.indexOf(at)]);
+		}
+	});
+
 	it('compares them with valid code', async () => {
 		const sources = cases.flatMap(({ valid }) => (valid ? [valid] : []));
 		const outcomes = await parse_in_worker(sources.map((source) => ({ source })));
@@ -12910,12 +12958,14 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	it('still throws decorators before anything but a declaration', async () => {
 		// TypeScript's parser expects a declaration after decorators (TS1146), or
 		// an expression after `=` (TS1109). Each throws where acorn-typescript
-		// raises it: after the decorators.
-		/** @type {Array<[source: string, at: string]>} */
+		// raises it: after the decorators. A word that can start a declaration
+		// (`type`) has a collecting parse record the decorators' error first,
+		// which a strict parse throws (#1162).
+		/** @type {Array<[source: string, at: string, strict_at?: string]>} */
 		const sources = [
 			['@dec x;', 'x;'],
 			['@dec if (a) {}', 'if'],
-			['@dec type;', 'type'],
+			['@dec type;', 'type', '@dec'],
 			['export @dec x;', 'x;'],
 			['const y = @dec 1;', '1'],
 			['const y = @dec function () {};', 'function'],
@@ -12926,8 +12976,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		const outcomes = await parse_in_worker(inputs);
 
 		expect(outcomes).toEqual(
-			sources.flatMap(([source, at]) =>
-				modes.map(() => thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, source.indexOf(at))),
+			sources.flatMap(([source, at, strict_at = at]) =>
+				modes.map((options) =>
+					thrown(TS_ERRORS.UNEXPECTED_LEADING_DECORATOR, source.indexOf(options ? at : strict_at)),
+				),
 			),
 		);
 	});
