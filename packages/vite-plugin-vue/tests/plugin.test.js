@@ -146,6 +146,46 @@ it('refreshes scoped CSS before updated virtual JS loads and clears removed styl
 	}
 });
 
+it('keeps the last good CSS and still reloads the module when an update does not compile', async () => {
+	const plugin = get_main_plugin();
+	const directory = mkdtempSync(join(tmpdir(), 'tsrx-vue-hmr-'));
+	const file = join(directory, 'App.tsrx');
+	const virtual_id = file + '.tsx';
+	const css_module = { id: file + '?tsrx-vue-css&lang.css' };
+	const js_module = { id: virtual_id };
+	const source = `export function App() @{
+		<>
+			<style>.content { color: red; }</style>
+			<div class="content">Before</div>
+		</>
+	}`;
+	// The `<div>` is left open, which the compiler rejects.
+	const broken = source.replace('</div>', '');
+	const handle_hot_update = /** @type {(ctx: any) => Promise<any[]>} */ (plugin.handleHotUpdate);
+	try {
+		writeFileSync(file, source);
+		await call_load(plugin, virtual_id);
+
+		writeFileSync(file, broken);
+		const modules = await handle_hot_update({
+			file,
+			modules: [],
+			read: async () => broken,
+			server: {
+				moduleGraph: {
+					getModulesByFile: () => new Set([js_module]),
+					getModuleById: () => css_module,
+				},
+			},
+		});
+		// The virtual module still reloads, so its `load` reports the error.
+		expect(modules).toEqual([js_module, css_module]);
+		expect(await call_load(plugin, css_module.id)).toContain('color: red');
+	} finally {
+		rmSync(directory, { recursive: true, force: true });
+	}
+});
+
 describe('@tsrx/vite-plugin-vue module ids', () => {
 	it('anchors a root-relative virtual id to the file under the root', async () => {
 		// Vitest asks for a test module by its URL. Imports from the module

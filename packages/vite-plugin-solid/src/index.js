@@ -270,11 +270,17 @@ export function tsrxSolid(options = {}) {
 		async handleHotUpdate(ctx) {
 			if (!is_tsrx_source(ctx.file)) return;
 			// CSS can reload before the virtual JS, so refresh its selector hash first.
-			const { css } = compile(await ctx.read(), ctx.file, compile_options);
-			if (css) {
-				css_cache.set(ctx.file, css);
-			} else {
-				css_cache.delete(ctx.file);
+			// A file that doesn't compile keeps its last good CSS, and the reloaded
+			// module's `load` reports the error, as before this refresh.
+			try {
+				const { css } = compile(await ctx.read(), ctx.file, compile_options);
+				if (css) {
+					css_cache.set(ctx.file, css);
+				} else {
+					css_cache.delete(ctx.file);
+				}
+			} catch {
+				// Keep the last good CSS.
 			}
 			// Invalidate the virtual `<path>.tsx` modules so Vite re-runs `load`,
 			// looked up by file to include a worker entry's query-suffixed id.

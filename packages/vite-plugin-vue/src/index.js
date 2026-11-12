@@ -291,11 +291,17 @@ function create_tsrx_vue_plugin(options) {
 		async handleHotUpdate(ctx) {
 			if (!isTsrxSource(ctx.file)) return;
 			// CSS can reload before the virtual JS, so refresh its selector hash first.
-			const { css } = compile(await ctx.read(), ctx.file, compile_options);
-			if (css) {
-				cssCache.set(ctx.file, css);
-			} else {
-				cssCache.delete(ctx.file);
+			// A file that doesn't compile keeps its last good CSS, and the reloaded
+			// module's `load` reports the error, as before this refresh.
+			try {
+				const { css } = compile(await ctx.read(), ctx.file, compile_options);
+				if (css) {
+					cssCache.set(ctx.file, css);
+				} else {
+					cssCache.delete(ctx.file);
+				}
+			} catch {
+				// Keep the last good CSS.
 			}
 
 			// Look the virtual modules up by file to include a worker entry's

@@ -9,4 +9,4 @@
 
 Compose TSRX platform flags into compatible JSON `import.meta.env` defaults so Storybook Vite builds and development canvases work with an explicit platform. Keep rejecting conflicting or incomplete platform definitions.
 
-Refresh extracted Solid and Vue CSS before hot-update requests so simultaneous template and style edits use matching scope hashes, and removing styles clears the cached sheet.
+Refresh extracted Solid and Vue CSS before hot-update requests so simultaneous template and style edits use matching scope hashes, and removing styles clears the cached sheet. An update that doesn't compile keeps the last good CSS and still reloads the module, which reports the error.
