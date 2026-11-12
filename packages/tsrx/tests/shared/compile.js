@@ -84,6 +84,40 @@ function virtual_semantic_diagnostics(code, extra_options = {}) {
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] control flow followed by another output node`, () => {
+		// A code block renders one node. The parser reports the second output node and
+		// keeps the control flow before it among the setup statements, which the loose
+		// compile used to print unlowered: it threw instead of reporting the error (#197).
+		it.each([
+			['@for', '@for (const item of items) {\n\t\t<li>{item}</li>\n\t}'],
+			['@if', '@if (items.length) {\n\t\t<li>{items[0]}</li>\n\t}'],
+			[
+				'@switch',
+				'@switch (items.length) {\n\t\t@case 1: {\n\t\t\t<li>{items[0]}</li>\n\t\t}\n\t}',
+			],
+			['@try', '@try {\n\t\t<li>{items[0]}</li>\n\t} @catch (error) {\n\t\t<b />\n\t}'],
+		])('reports the fragment error after %s and keeps its body', (_directive, control_flow) => {
+			for (const source of [
+				`export function List({ items }: { items: string[] }) @{\n\t${control_flow}\n\t<p>done</p>\n}\n`,
+				`export const List = ({ items }: { items: string[] }) => @{\n\t${control_flow}\n\t<p>done</p>\n};\n`,
+				`export function List({ items }: { items: string[] }) @{\n\t<ul>@{\n\t${control_flow}\n\t<p>done</p>\n\t}</ul>\n}\n`,
+			]) {
+				const { code, errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx', {
+					loose: true,
+				});
+
+				expect(
+					errors.map((error) => [error.code, error.pos]),
+					source,
+				).toContainEqual([TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT.code, source.indexOf('<p>done')]);
+				expect(errors.filter((error) => error.type === 'fatal')).toEqual([]);
+				expect(virtual_parse_diagnostics(code), code).toEqual([]);
+				const li = source.indexOf('li>');
+				expect(mappings.some((mapping) => mapping.sourceOffsets[0] === li)).toBe(true);
+			}
+		});
+	});
+
 	describe(`[${name}] virtual code for syntax newer than ES2022`, () => {
 		it('keeps a hashbang as the first line and maps the code after it', () => {
 			const source = `#!/usr/bin/env node
@@ -253,6 +287,21 @@ export function App() @{
 			expect(virtual_parse_diagnostics(code)).toEqual([]);
 			expect(code).toContain('void <style data-tsrx-apply={theme.$class} />');
 			expect(code).toContain('void <style></style>');
+		});
+
+		it('reports a theme that applies itself instead of overflowing the stack', () => {
+			for (const options of [undefined, { loose: true }]) {
+				const { code, errors } = compile_to_volar_mappings(
+					'export const theme = <style apply={theme} />;',
+					'App.tsrx',
+					options,
+				);
+
+				expect(errors.map((error) => error.code)).toEqual([
+					DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
+				]);
+				expect(virtual_parse_diagnostics(code)).toEqual([]);
+			}
 		});
 
 		it('recovers an unclosed <style> in loose type-only compile without losing mappings', function () {
@@ -1764,7 +1813,11 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('const Inline = (props: { x: string }) => <div>{props.x}</div>;');
+			expect(code).toContain(
+				name === 'vue'
+					? 'const Inline = defineVaporComponent((props: { x: string }) => <div>{props.x}</div>);'
+					: 'const Inline = (props: { x: string }) => <div>{props.x}</div>;',
+			);
 			expect(code).not.toContain('function Inline');
 		});
 
@@ -1776,7 +1829,11 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('const Inline = function (props: { x: string })');
+			expect(code).toContain(
+				name === 'vue'
+					? 'const Inline = defineVaporComponent(function (props: { x: string })'
+					: 'const Inline = function (props: { x: string })',
+			);
 			expect(code).toContain('<div>{props.x}</div>');
 			expect(code).not.toContain('function Inline');
 		});
@@ -1803,7 +1860,7 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 
 			expect(code).toContain('menuAlt2');
 			expect(code).toContain('items.push');
-			expect(code).toContain('return children(items);');
+			expect(code).toContain('return <>{children(items)}</>;');
 		});
 
 		it('lowers expression-bodied function component props', () => {
@@ -1823,7 +1880,7 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 			expect(code).toContain('children={({ items }: { items: JSX.Element[] }) => <ul>');
 			expect(code).toContain(
 				name === 'solid'
-					? '<For each={items}>'
+					? '<For each={items} keyed={false}>'
 					: name === 'vue'
 						? '<VaporFor in={items}'
 						: '__map_iterable(items, (item, i)',
@@ -2766,7 +2823,9 @@ export function App() @{
 				'App.tsrx',
 			);
 
-			expect(code).toContain('export default defineVaporComponent(function App()');
+			// `export default function App` also binds `App` in the module.
+			expect(code).toContain('const App = defineVaporComponent(function App()');
+			expect(code).toContain('export default App;');
 			expect(code).toContain("{'Hello world'}");
 		});
 
@@ -3139,6 +3198,45 @@ break"}</p>
 			);
 
 			expect(code).toContain('export function getItems<Item>(props: Props<Item>)');
+		});
+
+		it('keeps a generic arrow with one type parameter from reading as a JSX tag', () => {
+			const { code } = compile(
+				`export const first = <T>(items: T[]) => items[0];
+				export const pair = <A, B>(a: A, b: B) => [a, b];`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('export const first = <T,>(items: T[]) => items[0];');
+			expect(code).toContain('export const pair = <A, B>(a: A, b: B) => [a, b];');
+		});
+
+		it('keeps parameter decorators before parameter property modifiers', () => {
+			const { code } = compile(
+				`class Service {
+					constructor(@Inject() private readonly dep: Dep) {}
+					find(@Param() id: string) {}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('constructor(@Inject() private readonly dep: Dep) {}');
+			expect(code).toContain('find(@Param() id: string) {}');
+		});
+
+		it('keeps the type arguments of a tagged template', () => {
+			const { code } = compile('export const query = sql<Row>`select 1`;', 'App.tsrx');
+
+			expect(code).toContain('export const query = sql<Row>`select 1`;');
+		});
+
+		it('prints the type annotation of a binding pattern parameter once', () => {
+			const { code } = compile(
+				'function f([a]: A, { b }: B, [c]: C = [], ...[d]: D) {}',
+				'App.tsrx',
+			);
+
+			expect(code).toContain('function f([a]: A, { b }: B, [c]: C = [], ...[d]: D) {}');
 		});
 
 		it('preserves optional markers in tuple members and function parameters', () => {

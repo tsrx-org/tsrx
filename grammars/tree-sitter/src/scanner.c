@@ -347,12 +347,20 @@ static bool scan_jsx_text(TSLexer *lexer) {
   }
 }
 
+static bool is_html_whitespace(int32_t c) {
+  return c == ' ' || c == '\t' || c == '\n' || c == '\f' || c == '\r';
+}
+
 // Raw `<script>` or `<style>` body: consume everything verbatim (including `<`,
-// `{`, quotes and comments) up to, but not including, the literal closing tag
-// (`</script>` or `</style>`). Mirrors how tree-sitter-html scans raw text, so
-// JS/TS and CSS bodies never parse as template markup. Returns false for an
-// empty body (the grammar's `optional` handles that) or an unterminated element.
-static bool scan_raw_text(TSLexer *lexer, enum TokenType symbol, const char *end_tag) {
+// `{`, quotes and comments) up to, but not including, the closing tag. Mirrors
+// how tree-sitter-html scans raw text, so JS/TS and CSS bodies never parse as
+// template markup. The body ends where the compiler ends it: `end_tag` (`</style`
+// or `</script`), then `>`, with whitespace allowed before the `>` when
+// `space_before_gt` is set (`</script >`, as HTML ends a script). Returns false
+// for an empty body (the grammar's `optional` handles that) or an unterminated
+// element.
+static bool scan_raw_text(TSLexer *lexer, enum TokenType symbol, const char *end_tag,
+                          bool space_before_gt) {
   lexer->result_symbol = symbol;
   bool has_content = false;
 
@@ -368,8 +376,13 @@ static bool scan_raw_text(TSLexer *lexer, enum TokenType symbol, const char *end
         matched++;
       }
       if (end_tag[matched] == '\0') {
-        // Full closing tag seen; mark_end above already excluded it.
-        return has_content;
+        while (space_before_gt && is_html_whitespace(lexer->lookahead)) {
+          advance(lexer);
+        }
+        if (lexer->lookahead == '>') {
+          // Full closing tag seen; mark_end above already excluded it.
+          return has_content;
+        }
       }
       has_content = true;
     } else {
@@ -390,11 +403,11 @@ bool tree_sitter_tsrx_external_scanner_scan(void *payload, TSLexer *lexer,
   }
 
   if (valid_symbols[SCRIPT_CONTENT]) {
-    return scan_raw_text(lexer, SCRIPT_CONTENT, "</script>");
+    return scan_raw_text(lexer, SCRIPT_CONTENT, "</script", true);
   }
 
   if (valid_symbols[STYLE_CONTENT]) {
-    return scan_raw_text(lexer, STYLE_CONTENT, "</style>");
+    return scan_raw_text(lexer, STYLE_CONTENT, "</style", false);
   }
 
   if (valid_symbols[TEMPLATE_CHARS]) {

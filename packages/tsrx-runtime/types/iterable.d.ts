@@ -8,16 +8,18 @@ export type IterationValue<T> = T extends readonly unknown[]
 			? U
 			: never;
 
-export function map_iterable<T, U>(
-	value: Iterable<T> | Iterator<T>,
-	fn: (item: T, index: number, is_last: boolean) => U,
+// The source type is inferred whole so a union such as `string[] | number[]`
+// yields `string | number` items, as `for...of` does.
+export function map_iterable<I extends Iterable<unknown> | Iterator<unknown>, U>(
+	value: I,
+	fn: (item: IterationValue<I>, index: number, is_last: boolean) => U,
 	tail?: (() => U | U[]) | null,
 	empty?: () => U | U[],
 ): U[];
 
-export function map_iterable_async<T, U>(
-	value: Iterable<T> | Iterator<T>,
-	fn: (item: T, index: number, is_last: boolean) => U | Promise<U>,
+export function map_iterable_async<I extends Iterable<unknown> | Iterator<unknown>, U>(
+	value: I,
+	fn: (item: IterationValue<I>, index: number, is_last: boolean) => U | Promise<U>,
 	tail?: (() => U | U[] | Promise<U | U[]>) | null,
 	empty?: () => U | U[] | Promise<U | U[]>,
 ): Promise<U[]>;
