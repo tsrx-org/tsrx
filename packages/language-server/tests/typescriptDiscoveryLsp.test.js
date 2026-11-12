@@ -23,7 +23,8 @@ import {
 } from '../../content-mapper/tests/fixture-utils.js';
 import { NativeLspClient } from '../../content-mapper/tests/lsp-client.js';
 
-vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
+const test_timeout = 60_000;
+vi.setConfig({ testTimeout: test_timeout, hookTimeout: test_timeout });
 
 // CI builds before testing; locally: `pnpm --filter @tsrx/language-server build`.
 const server_path = fileURLToPath(new URL('../dist/language-server.js', import.meta.url));
@@ -76,30 +77,36 @@ async function session({ extra_files = {}, dependencies = [], initializationOpti
 		await Promise.race([client.exited, client.shutdown()]);
 		workspace.cleanup();
 	});
-	// Listen before initializing: the warnings come right after `initialized`.
-	// Every waiter sees every notification, so each one takes the warning at its
-	// own place in the order they arrive.
-	/** @type {unknown[]} */
-	const shown = [];
-	const [warning, second_warning] = [0, 1].map((place) => {
-		const wait = client.wait_for_notification(
+	// Listen before initializing: the warnings come right after `initialized`. The
+	// predicate records every warning and never matches, so the waiter stays registered
+	// until its timeout, which starts after the test's and is as long.
+	/** @type {Array<{ type: number, message: string }>} */
+	const warnings = [];
+	let recording = true;
+	client
+		.wait_for_notification(
 			'window/showMessage',
 			(params) => {
-				if (!shown.includes(params)) shown.push(params);
-				return shown.indexOf(params) === place;
+				warnings.push(params);
+				return false;
 			},
-			5000,
-		);
-		wait.catch(() => {});
-		return wait;
-	});
+			test_timeout,
+		)
+		.catch(() => {
+			recording = false;
+		});
 	const { capabilities } = await client.initialize({ initializationOptions });
 	client.open('Panel.tsrx', files['app/Panel.tsrx']);
+	// The server sends its warnings while it handles `initialized`, so all of them
+	// have arrived once it answers a request sent after that. This needs no TypeScript.
+	const symbols = await client.request('textDocument/documentSymbol', {
+		textDocument: { uri: client.uri('Panel.tsrx') },
+	});
+	expect(recording, 'stopped recording warnings before the server answered').toBe(true);
 	return {
-		client,
 		capabilities,
-		warning,
-		second_warning,
+		warnings,
+		symbols,
 		workspace_dir: fs.realpathSync(workspace.dir),
 	};
 }
@@ -113,52 +120,48 @@ const serves_typescript = (capabilities) => 'signatureHelpProvider' in capabilit
 
 describe('TSRX language server: which typescript other editors get', () => {
 	it('starts without TypeScript features and warns once when the project has TypeScript 7', async () => {
-		const { client, capabilities, warning, workspace_dir } = await session({
+		const { capabilities, warnings, symbols, workspace_dir } = await session({
 			extra_files: { 'node_modules/typescript/package.json': TYPESCRIPT_7 },
 		});
 		expect(serves_typescript(capabilities)).toBe(false);
-		const message = await warning;
+		expect(warnings).toHaveLength(1);
+		const [message] = warnings;
 		expect(message.type).toBe(2);
 		expect(message.message).toContain(
 			`The TSRX language server found TypeScript 7.1.0-dev.20261002.1 in ${path.join(workspace_dir, 'node_modules', 'typescript')}.`,
 		);
 
-		// No second warning, and what needs no TypeScript still works.
-		await expect(
-			client.wait_for_notification('window/showMessage', undefined, 1000),
-		).rejects.toThrow(/Timed out/);
-		const symbols = await client.request('textDocument/documentSymbol', {
-			textDocument: { uri: client.uri('Panel.tsrx') },
-		});
+		// What needs no TypeScript still works.
 		expect(symbols.length).toBeGreaterThan(0);
 	});
 
 	it('runs the typescript.tsdk TypeScript over the project one', async () => {
-		const { capabilities, warning } = await session({
+		const { capabilities, warnings } = await session({
 			extra_files: { 'node_modules/typescript/package.json': TYPESCRIPT_7 },
 			initializationOptions: { typescript: { tsdk: path.join(typescript_dir, 'lib') } },
 		});
 		expect(serves_typescript(capabilities)).toBe(true);
-		await expect(warning).rejects.toThrow(/Timed out/);
+		expect(warnings).toEqual([]);
 	});
 
 	it('runs the typescript.tsdk TypeScript when the option names the package folder', async () => {
-		const { capabilities, warning } = await session({
+		const { capabilities, warnings } = await session({
 			extra_files: { 'node_modules/typescript/package.json': TYPESCRIPT_7 },
 			initializationOptions: { typescript: { tsdk: typescript_dir } },
 		});
 		expect(serves_typescript(capabilities)).toBe(true);
-		await expect(warning).rejects.toThrow(/Timed out/);
+		expect(warnings).toEqual([]);
 	});
 
 	it("warns when the typescript.tsdk folder does not contain TypeScript, and runs the project's TypeScript", async () => {
 		const tsdk = path.join(repo_root, 'no-such-folder/lib');
-		const { capabilities, warning, second_warning } = await session({
+		const { capabilities, warnings } = await session({
 			dependencies: [['typescript', path.join(repo_root, 'packages/language-server')]],
 			initializationOptions: { typescript: { tsdk } },
 		});
 		expect(serves_typescript(capabilities)).toBe(true);
-		const message = await warning;
+		expect(warnings).toHaveLength(1);
+		const [message] = warnings;
 		expect(message.type).toBe(2);
 		expect(message.message).toBe(
 			`The TSRX language server does not use the typescript.tsdk startup option. ` +
@@ -166,32 +169,31 @@ describe('TSRX language server: which typescript other editors get', () => {
 				`The server uses TypeScript ${typescript_version} from the project instead: ${typescript_dir}. ` +
 				`Set this option to the lib folder of a TypeScript installation, for example /path/to/node_modules/typescript/lib.`,
 		);
-		await expect(second_warning).rejects.toThrow(/Timed out/);
 	});
 
 	it('warns about a typescript.tsdk folder that does not contain TypeScript, then about TypeScript 7', async () => {
 		const tsdk = path.join(repo_root, 'no-such-folder/lib');
-		const { capabilities, warning, second_warning } = await session({
+		const { capabilities, warnings } = await session({
 			extra_files: { 'node_modules/typescript/package.json': TYPESCRIPT_7 },
 			initializationOptions: { typescript: { tsdk } },
 		});
 		expect(serves_typescript(capabilities)).toBe(false);
-		const first = await warning;
+		expect(warnings).toHaveLength(2);
+		const [first, second] = warnings;
 		expect(first.message).toContain(
 			`The folder in this option does not contain TypeScript: ${tsdk}.`,
 		);
 		expect(first.message).not.toContain('The server uses');
-		const second = await second_warning;
 		expect(second.message).toContain(
 			'The TSRX language server found TypeScript 7.1.0-dev.20261002.1 in ',
 		);
 	});
 
 	it("runs the project's TypeScript 5.9 from the parent folder", async () => {
-		const { capabilities, warning } = await session({
+		const { capabilities, warnings } = await session({
 			dependencies: [['typescript', path.join(repo_root, 'packages/language-server')]],
 		});
 		expect(serves_typescript(capabilities)).toBe(true);
-		await expect(warning).rejects.toThrow(/Timed out/);
+		expect(warnings).toEqual([]);
 	});
 });

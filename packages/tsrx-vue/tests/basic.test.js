@@ -1,6 +1,7 @@
 import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedClassFunctionComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
@@ -49,6 +50,7 @@ runSharedCodeBlockChildrenTests({ compile, name: 'vue' });
 runSharedClassFunctionComponentTests({ compile, compile_to_volar_mappings, name: 'vue' });
 runSharedComponentParamsTests({ compile, compile_to_volar_mappings, name: 'vue' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'vue' });
+runSharedAnonymousComponentTests({ compile, name: 'vue' });
 
 describe('@tsrx/vue basic', () => {
 	it('merges defineVaporComponent into existing vue imports', () => {
@@ -65,6 +67,473 @@ describe('@tsrx/vue basic', () => {
 		expect(code).toContain("import { ref } from 'vue';");
 		expect(code).toContain("import { defineVaporComponent } from 'vue-jsx-vapor';");
 		expect(code.match(/defineVaporComponent/g)).toHaveLength(2);
+	});
+
+	it('wraps arrow components that contain nested functions', () => {
+		const { code } = compile(
+			`const Handler = ({ label, onPick }) => <button onClick={() => onPick(label)}>{label}</button>;
+			const List = ({ items }) => {
+				return <ul>{items.map((item) => <li>{item}</li>)}</ul>;
+			};
+			const parts = { Item: ({ label }) => <b onClick={() => label}>{label}</b> };`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('const Handler = defineVaporComponent(({ label, onPick }) =>');
+		expect(code).toContain('const List = defineVaporComponent(({ items }) =>');
+		expect(code).toContain('Item: defineVaporComponent(({ label }) =>');
+	});
+
+	it('wraps a default-exported component that contains a nested function', () => {
+		const { code } = compile(
+			`export default function App() @{
+				const pick = () => 1;
+				<button onClick={pick}>x</button>
+			}`,
+			'App.tsrx',
+		);
+
+		// The declaration also binds `App` in the module, so keep that binding.
+		expect(code).toContain('const App = defineVaporComponent(function App()');
+		expect(code).toContain('export default App;');
+		expect(code).not.toContain('export default const');
+	});
+
+	it('wraps components that return JSX through a local variable', () => {
+		const { code } = compile(
+			`function Card({ title }: { title: string }) {
+				const element = <div class="card" title={title} />;
+				return element;
+			}
+
+			function Badge({ on }: { on: boolean }) {
+				let element;
+				if (on) element = <b />;
+				else element = <i />;
+				return element;
+			}
+
+			function Factory() {
+				const value = { a: 1 };
+				return value;
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('const Card = defineVaporComponent(function Card(');
+		expect(code).toContain('const Badge = defineVaporComponent(function Badge(');
+		expect(code).toContain('function Factory() {');
+		expect(code).not.toContain('defineVaporComponent(function Factory');
+	});
+
+	it('wraps a returned local binding that holds JSX anywhere, like a returned expression', () => {
+		const { code } = compile(
+			`function Columns() {
+				return [{ header: <b>Name</b> }];
+			}
+
+			function Config() {
+				const config = { icon: <i />, label: 'x' };
+				return config;
+			}`,
+			'App.tsrx',
+		);
+
+		// The direct return was already wrapped; the local binding follows the same rule.
+		expect(code).toContain('const Columns = defineVaporComponent(function Columns(');
+		expect(code).toContain('const Config = defineVaporComponent(function Config(');
+	});
+
+	it('moves a wrapped component above the first statement that reads it', () => {
+		const { code } = compile(
+			`export { Inner };
+			type InnerType = typeof Inner;
+
+			export function App() @{
+				<Inner label="app" />
+			}
+
+			export const registry = { inner: Inner };
+			const LABEL = 'label';
+
+			export function Inner({ label = 'fixed' }: { label?: string }) @{
+				<span>{label}{LABEL}</span>
+			}
+
+			function make() {
+				return <Nested />;
+				function Nested() {
+					return <i />;
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		const inner = code.indexOf('export const Inner = defineVaporComponent');
+		expect(inner).toBeGreaterThan(-1);
+		expect(inner).toBeLessThan(code.indexOf('export const registry'));
+		// Reads that run later (exports, types, function bodies) keep the source order.
+		expect(code.indexOf('export { Inner }')).toBeLessThan(inner);
+		expect(code.indexOf('type InnerType')).toBeLessThan(inner);
+		expect(code.indexOf('export const App')).toBeLessThan(inner);
+		expect(code.indexOf('const Nested = defineVaporComponent')).toBeLessThan(
+			code.indexOf('return <Nested />'),
+		);
+	});
+
+	it('does not move a component for reads that do not run while the module loads', () => {
+		const { code } = compile(
+			`class Holder {
+				comp = Inner;
+				method() {
+					return Inner;
+				}
+			}
+			const DEBUG = false;
+			if (DEBUG) console.log(Inner);
+			const ready = DEBUG && Inner;
+			{
+				const Inner = 'shadow';
+				console.log(Inner);
+			}
+			try {
+				run();
+			} catch (Inner) {
+				console.log(Inner);
+			}
+			const PREFIX = 'p';
+			export function Inner({ label = PREFIX }: { label?: string }) @{
+				<span>{label}</span>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeGreaterThan(
+			code.indexOf("const PREFIX = 'p'"),
+		);
+	});
+
+	it('counts a read in a branch whose condition a nested scope redeclares', () => {
+		const { code } = compile(
+			`const DEBUG = false;
+			{
+				const DEBUG = true;
+				if (DEBUG) console.log(Inner);
+			}
+			export function Inner() @{
+				<i />
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('const DEBUG = true'),
+		);
+	});
+
+	it('moves a component past a read in a static class field or a reachable branch', () => {
+		const { code } = compile(
+			`class Holder {
+				static comp = Inner;
+			}
+			if (window.debug) console.log(Inner);
+			export function Inner({ label = 'x' }: { label?: string }) @{
+				<span>{label}</span>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('class Holder'),
+		);
+	});
+
+	it('reports a mutation through a parenthesized TypeScript wrapper in the editor too', () => {
+		const { errors } = compile_to_volar_mappings(
+			`const cfg = { size: 1 };
+const registry = { card: Card };
+(cfg as any).size = 2;
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.code)).toEqual(['TSRX2028']);
+	});
+
+	it("moves a component past a namespace's own var", () => {
+		const { code } = compile(
+			`const X = 'outer';
+export const registry = { inner: Inner };
+namespace Types { var X = 1; }
+export function Inner({ x = X }: { x?: string }) @{
+	<span>{x}</span>
+}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('export const registry'),
+		);
+	});
+
+	it('moves a component past an ambient enum or namespace its prop default reads', () => {
+		const { code } = compile(
+			`export const registry = { inner: Inner };
+declare enum Size { S }
+declare namespace Defaults { const label: string; }
+export function Inner({ size = Size, ns = Defaults }: { size?: unknown; ns?: unknown }) @{
+	<span>{String(size)}{String(ns)}</span>
+}`,
+			'App.tsrx',
+		);
+
+		expect(code.indexOf('export const Inner = defineVaporComponent')).toBeLessThan(
+			code.indexOf('export const registry'),
+		);
+	});
+
+	it('reports a read above a component whose prop default reads a binding it would move past', () => {
+		for (const [source, read_line] of [
+			[
+				`export const registry = { inner: Inner };
+const PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}`,
+				1,
+			],
+			[
+				`class Holder {
+	static comp = Inner;
+}
+var PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}`,
+				2,
+			],
+			[
+				`const registry = { card: Card };
+const DEFAULT = 'x';
+function Card({ title = DEFAULT }: { title?: string }) {
+	const el = <div>{title}</div>;
+	return el;
+}`,
+				1,
+			],
+			// Assigned, updated or mutated in the statements it would move past.
+			[
+				`let size = 1;
+const registry = { card: Card };
+size = 2;
+function Card({ s = size }: { s?: number }) {
+	const el = <div>{s}</div>;
+	return el;
+}`,
+				2,
+			],
+			[
+				`let size = 1;
+const registry = { card: Card };
+size++;
+export function Card({ s = size }: { s?: number }) @{
+	<div>{s}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+cfg.size = 2;
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			// Mutated through a TypeScript wrapper.
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+(cfg as any).size = 2;
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`let cfg: { size: number } | null = { size: 1 };
+const registry = { card: Card };
+cfg!.size = 2;
+export function Card({ s = cfg }: { s?: { size: number } | null }) @{
+	<div>{s?.size}</div>
+}`,
+				2,
+			],
+			// Mutated through a pattern, `delete` or a parenthesized chain.
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+[cfg.size] = [2];
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg = { size: 1 };
+const registry = { card: Card };
+({ size: (cfg as any).size } = { size: 2 });
+export function Card({ s = cfg }: { s?: { size: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg: { size?: number } = { size: 1 };
+const registry = { card: Card };
+delete cfg.size;
+export function Card({ s = cfg }: { s?: { size?: number } }) @{
+	<div>{s.size}</div>
+}`,
+				2,
+			],
+			[
+				`const cfg = { nested: { size: 1 } };
+const registry = { card: Card };
+(cfg?.nested).size = 2;
+export function Card({ s = cfg }: { s?: { nested: { size: number } } }) @{
+	<div>{s.nested.size}</div>
+}`,
+				2,
+			],
+			// An enum, a namespace or an `import x = …` alias compiles to a
+			// binding set when it runs.
+			[
+				`export const registry = { inner: Inner };
+enum Size { S = 1 }
+export function Inner({ size = Size }: { size?: unknown }) @{
+	<span>{String(size)}</span>
+}`,
+				1,
+			],
+			[
+				`export const registry = { inner: Inner };
+namespace Defaults { export const label = 'p'; }
+export function Inner({ ns = Defaults }: { ns?: unknown }) @{
+	<span>{String(ns)}</span>
+}`,
+				1,
+			],
+			[
+				`namespace Defaults { export const label = 'p'; }
+export const registry = { inner: Inner };
+import Label = Defaults.label;
+export function Inner({ label = Label }: { label?: string }) @{
+	<span>{label}</span>
+}`,
+				2,
+			],
+		]) {
+			/** @type {any} */
+			let thrown = null;
+			try {
+				compile(source, 'App.tsrx');
+			} catch (error) {
+				thrown = error;
+			}
+			const name = source.includes('Card') ? 'Card' : 'Inner';
+			expect(thrown, source).toBeInstanceOf(Error);
+			expect(thrown.code).toBe('TSRX2028');
+			expect(thrown.message).toContain(`'${name}' is read here before its declaration.`);
+			expect(thrown.message).toContain(`Move the declaration of '${name}' above this read.`);
+			expect(thrown.loc.start.line).toBe(read_line);
+		}
+
+		const { errors } = compile_to_volar_mappings(
+			`export const registry = { inner: Inner };
+const PREFIX = 'p';
+export function Inner({ label = PREFIX }: { label?: string }) @{
+	<span>{label}</span>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.code)).toEqual(['TSRX2028']);
+	});
+
+	it('accepts the destructured prop defaults vue-jsx-vapor keeps', () => {
+		for (const fallback of [
+			"'x'",
+			'1',
+			'true',
+			'null',
+			'undefined',
+			'SIZE',
+			'[]',
+			'{ a: 1 }',
+			'() => 1',
+			'function () { return 1; }',
+			'(2 as number)',
+			'SIZE!',
+		]) {
+			const source = `const SIZE = 2;
+export function Card({ s = ${fallback} }: { s?: unknown }) @{
+	<div>{String(s)}</div>
+}`;
+			expect(() => compile(source, 'App.tsrx'), fallback).not.toThrow();
+		}
+	});
+
+	it('reports a destructured prop default vue-jsx-vapor drops', () => {
+		for (const fallback of [
+			'cfg.size',
+			'Math.max(3, 4)',
+			'`t`',
+			'-1',
+			'SIZE + 1',
+			'/x/',
+			'10n',
+			'SIZE ? 1 : 2',
+			'(SIZE satisfies number)',
+		]) {
+			for (const source of [
+				`const cfg = { size: 1 };
+const SIZE = 2;
+export function Card({ s = ${fallback} }: { s?: unknown }) @{
+	<div>{String(s)}</div>
+}`,
+				// A component main left unwrapped, newly wrapped here.
+				`const cfg = { size: 1 };
+const SIZE = 2;
+function Card({ s = ${fallback} }: { s?: unknown }) {
+	const el = <div>{String(s)}</div>;
+	return el;
+}`,
+			]) {
+				/** @type {any} */
+				let thrown = null;
+				try {
+					compile(source, 'App.tsrx');
+				} catch (error) {
+					thrown = error;
+				}
+				expect(thrown, `${fallback}\n${source}`).toBeInstanceOf(Error);
+				expect(thrown.code).toBe('TSRX2029');
+				expect(thrown.message).toContain("Vue TSRX cannot keep this default for 's'");
+				expect(thrown.message).toContain('Read the prop in the body instead');
+				expect(thrown.loc.start.line).toBe(3);
+			}
+		}
+
+		const { errors } = compile_to_volar_mappings(
+			`const cfg = { size: 1 };
+export function Card({ s = cfg.size }: { s?: number }) @{
+	<div>{s}</div>
+}`,
+			'App.tsrx',
+		);
+		expect(errors.map((error) => error.code)).toEqual(['TSRX2029']);
+		expect(errors[0].message).toContain('for example `const s = props.s ?? cfg.size`');
 	});
 
 	it('rejects the removed `&{ ... }` lazy destructuring syntax', () => {
@@ -787,6 +1256,164 @@ describe('@tsrx/vue basic', () => {
 		expect(code).not.toContain('<Fragment');
 	});
 
+	it('destructures a keyed array pattern from the item, not by index (#938)', () => {
+		const { code, errors } = compile(
+			`function App({ rows }: { rows: Iterable<string>[] }) @{
+				@for (const [first, second = 'none'] of rows; key first) {
+					<p>{first}|{second}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain("<VaporFor in={rows} getKey={([first, second = 'none']) => first}>");
+		expect(code).toMatch(
+			/const _\$_vapor_bindings_1 = _\$_vapor_computed\(\(\) => \{\s*const \[first, second = 'none'\] = __vapor_item\.value;\s*return \{ first, second \};/,
+		);
+		expect(code).toContain('{_$_vapor_bindings_1.value.first}|{_$_vapor_bindings_1.value.second}');
+		expect(code).not.toContain('__vapor_item.value[0]');
+		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
+	});
+
+	it('imports computed for a keyed array pattern beside type and namespace imports of vue', () => {
+		for (const authored of [
+			"import type { Ref } from 'vue';",
+			"import * as Vue from 'vue';",
+			"import { type Ref, ref } from 'vue';",
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function App({ rows }: { rows: string[][] }) @{
+					@for (const [first] of rows; key first) {
+						<p>{first}</p>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code, authored).toContain("import { computed as _$_vapor_computed } from 'vue';");
+		}
+	});
+
+	it('imports Suspense once, as a value, beside the computed import and authored vue imports', () => {
+		for (const [authored, suspense_import] of [
+			["import { Suspense } from 'vue';", "import { Suspense } from 'vue';"],
+			[
+				"import type { Ref } from 'vue';",
+				"import { computed as _$_vapor_computed, Suspense } from 'vue';",
+			],
+			[
+				"import * as Vue from 'vue';",
+				"import { computed as _$_vapor_computed, Suspense } from 'vue';",
+			],
+			[
+				"import { ref } from 'vue';\nimport { Suspense } from 'vue';",
+				"import { Suspense } from 'vue';",
+			],
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function Data() @{
+					<i />
+				}
+				function App({ rows }: { rows: string[][] }) @{
+					<div>
+						@for (const [first] of rows; key first) {
+							<p>{first}</p>
+						}
+						@try {
+							<Data />
+						} @pending {
+							<p>{'loading'}</p>
+						}
+					</div>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual([suspense_import]);
+			expect(code, authored).toMatch(/^import \{ computed as _\$_vapor_computed\b/);
+		}
+	});
+
+	it('imports Suspense on its own beside a type-only or namespace import of vue', () => {
+		for (const authored of [
+			"import type { Ref } from 'vue';",
+			"import * as Vue from 'vue';",
+			"import type { Ref } from 'vue';\nimport * as Vue from 'vue';",
+		]) {
+			const { code, errors } = compile(
+				`${authored}
+				function Data() @{
+					<i />
+				}
+				function App() @{
+					@try {
+						<Data />
+					} @pending {
+						<p>{'loading'}</p>
+					}
+				}`,
+				'App.tsrx',
+			);
+
+			expect(errors, authored).toEqual([]);
+			expect(code, authored).toContain(authored);
+			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual([
+				"import { Suspense } from 'vue';",
+			]);
+		}
+	});
+
+	it('leaves type parameters and type references in a keyed slot alone (#922)', () => {
+		const { code, errors } = compile(
+			`function List({ items }: { items: { id: string; label: string }[] }) @{
+				<ul>
+					@for (const item of items; key item.id) {
+						<button onClick={function <item>(x: item, y: typeof item): item[] { return [x as item]; }}>{item.label}</button>
+					}
+				</ul>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain('function <item>(x: item, y: typeof item.value): item[] {');
+		expect(code).toContain('return [x as item];');
+		expect(code).toContain('{item.value.label}');
+		expect(code).not.toContain('<item.value>');
+	});
+
+	it('leaves type declarations and qualified type queries in a keyed slot alone (#922)', () => {
+		const { code, errors } = compile(
+			`function List({ items, Types }: { items: { id: string; label: string }[]; Types: { item: string } }) @{
+				<ul>
+					@for (const item of items; key item.id) {
+						<button onClick={() => {
+							type item = string;
+							interface Row { label: item }
+							const typed: typeof Types.item = item.label;
+							return typed satisfies item;
+						}}>{item.label}</button>
+					}
+				</ul>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain('type item = string;');
+		expect(code).toContain('interface Row {');
+		expect(code).toContain('label: item');
+		expect(code).toContain('const typed: typeof Types.item = item.value.label;');
+		expect(code).toContain('return typed satisfies item;');
+	});
+
 	it('falls back without injecting VaporFor for keyed destructuring patterns it cannot rewrite', () => {
 		const { code } = compile(
 			`function App({ items, keyName }: { items: Array<Record<string, string>>, keyName: string }) @{
@@ -870,6 +1497,26 @@ describe('@tsrx/vue basic', () => {
 		expect(code).not.toContain('Suspense');
 	});
 
+	it('renders a @try inside element children as a boundary component', () => {
+		const { code } = compile(
+			`function App() @{
+				<div class="wrap">
+					@try {
+						<Child />
+					} @catch (error) {
+						<p>{'Failed'}</p>
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		// A component instance registers the boundary's error hook; a plain call
+		// has none.
+		expect(code).toContain('{<TsrxErrorBoundary fallback=');
+		expect(code).not.toContain('TsrxErrorBoundary({');
+	});
+
 	it('does not generate a catch fallback component without @pending', () => {
 		const { code } = compile(
 			`export function App() @{
@@ -937,6 +1584,10 @@ describe('@tsrx/vue basic', () => {
 		expect(code.match(/error\.message/g)).toHaveLength(1);
 		expect(code).toContain('StatementBodyHook');
 		expect(code).toContain('suffix={suffix}');
+		// The Suspense default slot renders the body through its own boundary,
+		// so `reset` works for errors thrown there.
+		expect(code).toMatch(/default: \(\) => <TsrxErrorBoundary fallback=\{\(error, reset\) => \{/);
+		expect(code).not.toContain('reset={() => {}}');
 
 		const error_boundary_index = code.indexOf('<TsrxErrorBoundary');
 		const suspense_index = code.indexOf('<Suspense');

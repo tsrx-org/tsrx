@@ -3391,7 +3391,7 @@
 						</dict>
 					</dict>
 					<key>match</key>
-					<string>\(\s*(?:(let|const|var)\s+)?([_$[:alpha:]][_$[:alnum:]]*)\s+(of)\s+([^;]+?)\s*;\s*(?:(index)\s+([_$[:alpha:]][_$[:alnum:]]*)(?:\s*;\s*(key)\s+([^)]+?))?|(key)\s+([^)]+?))\s*\)</string>
+					<string>\(\s*(?:(let|const|var|using|await\s+using)\s+)?([_$[:alpha:]][_$[:alnum:]]*)\s+(of)\s+([^;]+?)\s*;\s*(?:(index)\s+([_$[:alpha:]][_$[:alnum:]]*)(?:\s*;\s*(key)\s+([^)]+?))?|(key)\s+([^)]+?))\s*\)</string>
 					<key>name</key>
 					<string>meta.for-of-tsrx</string>
 				</dict>
@@ -5725,7 +5725,7 @@
 				</dict>
 			</dict>
 			<key>end</key>
-			<string>(&lt;/)(script)(&gt;)</string>
+			<string>(&lt;/)(script)\s*(&gt;)|(&lt;/)(script)\s*$</string>
 			<key>endCaptures</key>
 			<dict>
 				<key>1</key>
@@ -5742,6 +5742,16 @@
 				<dict>
 					<key>name</key>
 					<string>punctuation.definition.tag.end.js</string>
+				</dict>
+				<key>4</key>
+				<dict>
+					<key>name</key>
+					<string>punctuation.definition.tag.begin.js</string>
+				</dict>
+				<key>5</key>
+				<dict>
+					<key>name</key>
+					<string>entity.name.tag.js</string>
 				</dict>
 			</dict>
 			<key>name</key>
@@ -5762,7 +5772,7 @@
 					<key>contentName</key>
 					<string>source.ts</string>
 					<key>end</key>
-					<string>(?=&lt;/script&gt;)</string>
+					<string>(?=&lt;/script\s*(?:&gt;|$))</string>
 					<key>patterns</key>
 					<array>
 						<dict>
@@ -9557,6 +9567,20 @@
 					<string>(?&lt;![_$[:alnum:]])(const|let|var)(?![_$[:alnum:]])</string>
 					<key>name</key>
 					<string>storage.type.js</string>
+				</dict>
+				<dict>
+					<key>captures</key>
+					<dict>
+						<key>2</key>
+						<dict>
+							<key>name</key>
+							<string>storage.type.js</string>
+						</dict>
+					</dict>
+					<key>comment</key>
+					<string>A using declaration heads only a for...of loop: `@for (using item of items)`.</string>
+					<key>match</key>
+					<string>(?&lt;=\()(\s*)((?:await\s+)?using)(?=\s+[_$[:alpha:]][_$[:alnum:]]*\s+of(?![_$[:alnum:]]))</string>
 				</dict>
 				<dict>
 					<key>match</key>

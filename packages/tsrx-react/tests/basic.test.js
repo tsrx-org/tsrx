@@ -1,6 +1,9 @@
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { TS_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -40,6 +43,7 @@ describe('@tsrx/react direct runtime imports', () => {
 		);
 
 		expect(code).toContain("from '@tsrx/react-runtime/error-boundary'");
+		expect(code).toContain("from '@tsrx/react-runtime/try-body'");
 		expect(code).toContain("from '@tsrx/react-runtime/ref'");
 		expect(code).toContain("from '@tsrx/react-runtime/iterable'");
 		expect(code).not.toMatch(/from '@tsrx\/react\//);
@@ -56,6 +60,7 @@ runSharedCompileTests({
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'react' });
 runSharedCodeBlockChildrenTests({ compile, name: 'react' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'react' });
+runSharedAnonymousComponentTests({ compile, name: 'react' });
 
 /**
  * @import { CodeMapping } from '@tsrx/core/types';
@@ -1338,6 +1343,35 @@ describe('@tsrx/react basic', () => {
 		expect(code).not.toContain('TsrxErrorBoundary');
 	});
 
+	it.each([
+		{
+			name: 'Suspense',
+			body: `<Suspense fallback={<i>loading</i>}><b>native</b></Suspense>
+					@try { <p>ready</p> } @pending { <i>loading</i> }`,
+		},
+		{
+			name: 'Fragment',
+			body: `<Fragment><b>native</b></Fragment>
+					<ul>@for (const item of [1, 2]; key item) { <><li>{item}</li><li>end</li></> }</ul>`,
+		},
+	])('reuses an authored $name import from react', ({ name, body }) => {
+		const { code } = compile(
+			`import { ${name} } from 'react';
+
+			export function App() @{
+				<>
+					${body}
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.match(new RegExp(`import \\{[^}]*\\b${name}\\b[^}]*\\} from`, 'g'))).toEqual([
+			`import { ${name} } from`,
+		]);
+		expect(code).toContain(`<${name}`);
+	});
+
 	it('transforms try/pending/catch into ErrorBoundary wrapping Suspense', () => {
 		const { code } = compile(
 			`export function App() @{
@@ -1411,8 +1445,138 @@ describe('@tsrx/react basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toContain('Suspense');
-		expect(code).toContain('use(fetchData())');
+		expect(code).toContain("import { TsrxTryBody } from '@tsrx/react/try-body';");
+		// The body renders as a child of <Suspense>, so `use()` suspends to it.
+		expect(code).toMatch(
+			/<Suspense fallback=[\s\S]*><TsrxTryBody render=\{\(\) => \{\s*const data = use\(fetchData\(\)\);/,
+		);
+	});
+
+	it('keeps the try body inline in type-only output', () => {
+		const { code } = compile_to_volar_mappings(
+			`export function App() @{
+				@try {
+					const data = load();
+					<div>{data}</div>
+				} @catch (err) {
+					<p>{'error'}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('TsrxTryBody');
+	});
+
+	it('keeps a try body that awaits inline', () => {
+		const { code } = compile(
+			`export async function App() @{
+				@try {
+					const data = await fetchData();
+					<div>{data}</div>
+				} @catch (err) {
+					<p>{'error'}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('TsrxTryBody');
+		expect(code).toContain('await (async () => {');
+	});
+
+	it('imports only modules that load under react-server for a @pending-only try', () => {
+		const { code } = compile(
+			`export async function Page() @{
+				@try {
+					<Posts />
+				} @pending {
+					<p>{'Loading'}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		/** @type {Array<[string, string[]]>} */
+		const imports = [...code.matchAll(/^import \{([^}]*)\} from '([^']+)';$/gm)].map((match) => [
+			match[2],
+			match[1].split(',').map((name) => name.trim()),
+		]);
+		expect(imports).toEqual([
+			['react', ['Suspense']],
+			['@tsrx/react/try-body', ['TsrxTryBody']],
+		]);
+
+		// A Server Component module graph resolves `react` under the
+		// `react-server` condition, which has no `Component` export, so the
+		// class error boundary must stay out of this graph.
+		const script = `for (const [source, names] of ${JSON.stringify(imports)}) {
+			const module = await import(source);
+			for (const name of names) {
+				if (!(name in module)) throw new Error(source + ' has no export ' + name);
+			}
+		}`;
+		expect(() =>
+			execFileSync(
+				process.execPath,
+				['--conditions=react-server', '--input-type=module', '--eval', script],
+				{ cwd: fileURLToPath(new URL('..', import.meta.url)), stdio: 'pipe' },
+			),
+		).not.toThrow();
+	}, 60_000);
+
+	it('keys each @try site so different sites in one slot do not share state', () => {
+		const { code } = compile(
+			`export function App({ a, items }) @{
+				<>
+					@if (a) {
+						@try {
+							<A />
+						} @catch (e) {
+							<p>{'a'}</p>
+						}
+					} @else {
+						@try {
+							<B />
+						} @catch (e) {
+							<p>{'b'}</p>
+						}
+					}
+					@for (const item of items; key item.id) {
+						@try {
+							<Row item={item} />
+						} @pending {
+							<p>{'loading'}</p>
+						}
+					}
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(/<TsrxErrorBoundary fallback=[\s\S]*? key='try1'>/);
+		expect(code).toMatch(/<TsrxErrorBoundary fallback=[\s\S]*? key='try2'>/);
+		// A loop key is combined with the site name rather than dropped.
+		expect(code).toContain("key={'try3:' + item.id}");
+	});
+
+	it('leaves @try site keys off the rows of a loop without a key', () => {
+		const { code } = compile(
+			`export function App({ items }) @{
+				@for (const item of items) {
+					@try {
+						<Row item={item} />
+					} @catch (e) {
+						<p>{'x'}</p>
+					}
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		// Every row would repeat the same site key.
+		expect(code).toContain('<TsrxErrorBoundary');
+		expect(code).not.toContain('key=');
 	});
 
 	it('applies scoped CSS hashes inside try blocks', () => {
@@ -1891,6 +2055,43 @@ describe('destructuring', () => {
 				"let App__spread_props1 = __normalize_spread_props_for_ref_attr({ 'data-second': next() });",
 			);
 			expect(type_only).toContain('{...App__spread_props1}');
+		});
+
+		it('keeps a ref written before a host spread in its authored position', () => {
+			const source = `export function App() @{
+					function init() {
+						return () => {};
+					}
+					<div ref={init()} data-first="1" {...bag} />
+				}`;
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code).toContain(
+				'<div ref={__mergeRefs(init(), (node) => __mergeRefs(App__spread_props1?.ref)(node))} data-first="1" {...(App__spread_props1 = __normalize_spread_props_for_ref_attr(bag))} />',
+			);
+
+			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain(
+				'<div data-first="1" {...App__spread_props1} ref={__mergeRefs(init(), App__spread_props1?.ref)} />',
+			);
+		});
+
+		it('imports the spread normalizers that return their copy', () => {
+			const { code } = compile(
+				`export function App() @{
+					<>
+						<input {...props.first} />
+						<input {...props.second} ref={props.cb} />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('copy_spread_props as __normalize_spread_props');
+			expect(code).toContain(
+				'copy_spread_props_for_ref_attr as __normalize_spread_props_for_ref_attr',
+			);
+			expect(code).toContain('{...__normalize_spread_props(props.first)}');
 		});
 
 		it('rejects multiple ref={expr} attributes on the same element', () => {
