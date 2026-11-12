@@ -547,6 +547,36 @@ describe('@tsrx/solid basic', () => {
 			expect(code).toContain('<__Show when={import.meta.url}>');
 		});
 
+		it('lowers the body of a static @if that keeps <Show> once', () => {
+			/**
+			 * @param {string} test
+			 * @param {string} refs
+			 */
+			const source = (test, refs) => `export function App(props: any) @{
+				<div>
+					@if (${test}) {
+						const x = 1;
+						<p ${refs} {...props.a} {...props.b}>{x}</p>
+					}
+				</div>
+			}`;
+			const { code } = compile(source('true', 'ref={props.r}'), 'App.tsrx');
+			expect(code).toContain('<__Show when={true}>');
+			// A second lowering would have taken the first spread temporary.
+			expect(code).toContain(
+				'let App__spread_props1 = __spread_ref_bags(() => props.a, () => props.b);',
+			);
+			expect(code).not.toContain('App__spread_props2');
+
+			// The body's diagnostics are reported once, as for a dynamic condition.
+			/** @param {string} test */
+			const codes = (test) =>
+				compile(source(test, 'ref={props.r} ref={props.s}'), 'App.tsrx', {
+					collect: true,
+				}).errors.map((error) => error.code);
+			expect(codes('true')).toEqual(codes('props.on'));
+		});
+
 		it('switch statement → <Switch>/<Match> using ===', () => {
 			const { code } = compile(
 				`function App({ kind }: { kind: string }) @{
