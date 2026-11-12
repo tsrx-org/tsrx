@@ -727,3 +727,120 @@ describe('the token after a directive in expression position (#1217)', () => {
 		expect(depth(40)).toBe(depth(2));
 	});
 });
+
+describe('an operator right after a directive in brackets (#1241)', () => {
+	const directives = [
+		'@if (c) {}',
+		'@if (c) {} @else {}',
+		'@if (c) {} @else if (d) {} @else {}',
+		'@for (const a of b) { <b>{a}</b> }',
+		'@for (const a of b) {} @empty {}',
+		'@switch (k) { @default: {} }',
+		'@try {} @catch (e) {}',
+		'@try {} @pending {} @catch (e) {}',
+	];
+
+	/**
+	 * The node types in `value`, depth first, with an `<i />` element or a
+	 * directive as `Value`.
+	 * @param {unknown} value
+	 * @returns {string[]}
+	 */
+	function outline(value) {
+		if (!value || typeof value !== 'object') return [];
+		if (Array.isArray(value)) return value.flatMap(outline);
+		const node = /** @type {AST.Node & Record<string, any>} */ (value);
+		if (
+			is_directive(node.type) ||
+			(node.type === 'JSXElement' &&
+				node.openingElement.name.type === 'JSXIdentifier' &&
+				node.openingElement.name.name === 'i')
+		) {
+			return ['Value'];
+		}
+		return [
+			...(typeof node.type === 'string' ? [node.type] : []),
+			...(typeof node.operator === 'string' ? [node.operator] : []),
+			...Object.keys(node)
+				.filter((key) => key !== 'loc' && key !== 'metadata')
+				.flatMap((key) => outline(node[key])),
+		];
+	}
+
+	it('reads `/`, `<`, `<=` and `<<` after it as operators, as after an element', async () => {
+		const shapes = [
+			'const x = (%s / 2);',
+			'const x = (%s\n\t/ 2);',
+			'const f = (a = %s / 2) => a;',
+			'function f(a = %s < y) {}',
+			'foo(%s < y);',
+			'foo(a, %s <= y);',
+			'new Foo(%s << y);',
+			'foo(() => %s / 2);',
+			'const x = [%s / 2];',
+			'const x = [1, %s < y];',
+			'const [a = %s / 2] = b;',
+			'const x = a[%s / 2];',
+			'const x = a?.[%s <= y];',
+			'const o = { a: %s / 2 };',
+			'const o = { [%s / 2]: 1 };',
+			'class A { x = %s / 2; }',
+			'const s = `${%s / 2}x`;',
+			'const x = (y + %s / 2);',
+			'const x = c ? (%s / 2) : 1;',
+			'if (%s < y) {}',
+			'export function App() @{\n\t<div title={%s / 2} />\n}',
+			'export function App() @{\n\t<div>{%s < y}</div>\n}',
+			'export function App() @{\n\tconst v = [%s / 2];\n\t<b>{v}</b>\n}',
+			'const e = <div>{%s / 2}</div>;',
+		];
+		const values = ['<i />', ...directives];
+		const sources = shapes.flatMap((shape) => values.map((value) => shape.replace('%s', value)));
+		const programs = await parse_all(sources);
+		expect(programs.map(outline)).toEqual(
+			sources.map((_, index) => outline(programs[index - (index % values.length)])),
+		);
+	});
+
+	it('reads a directive nested in one in brackets by its own position', async () => {
+		const [program] = await parse_all([
+			'const x = foo(@if (c) {\n\tconst a = [@for (const b of c) {} / 2];\n\tconst r = @if (d) { <b /> }\n\t/re/.test(s);\n\t<i />\n} / 3);',
+		]);
+		const consequent = find(program, (type) => type === 'JSXIfExpression')?.consequent.body;
+		expect(consequent.map((/** @type {AST.Node} */ statement) => value_of(statement).type)).toEqual(
+			['ArrayExpression', 'JSXIfExpression', 'CallExpression', 'JSXElement'],
+		);
+		expect(value_of(consequent[0]).elements[0].operator).toBe('/');
+		expect(value_of(statements(program)[0]).arguments[0].operator).toBe('/');
+	});
+
+	// A semicolon can be inserted after a directive that ends a statement, so a
+	// `/` or `<` on the next line still starts the next statement there.
+	it('keeps a regular expression or an element on the next line a new statement outside brackets', async () => {
+		const sources = directives.flatMap((directive) => [
+			`const x = ${directive}\n/re/.test(s);`,
+			`const x = y + ${directive}\n/re/.test(s);`,
+			`namespace N {\n\tconst x = ${directive}\n\t/re/.test(s);\n}`,
+			`foo(() => {\n\tconst x = ${directive}\n\t/re/.test(s);\n});`,
+			`const a = [function () {\n\tconst x = ${directive}\n\t/re/.test(s);\n}];`,
+		]);
+		const programs = await parse_all(sources);
+		expect(
+			programs.map((program) => find(program, (type) => type === 'Literal')?.regex?.pattern),
+		).toEqual(sources.map(() => 're'));
+		const elements = await parse_all(
+			directives.map((directive) => `const x = ${directive}\n<u />;`),
+		);
+		expect(elements.map((program) => program.body.map((statement) => statement.type))).toEqual(
+			directives.map(() => ['VariableDeclaration', 'JSXElement', 'EmptyStatement']),
+		);
+	});
+
+	// `@catch (e)` read its `(` twice and left a context behind each time.
+	it.each(directives)('leaves the context stack as it found it after `[%s];`', (directive) => {
+		/** @param {number} count */
+		const depth = (count) => max_context_depth(Array(count).fill(`[${directive}];`).join('\n'));
+
+		expect(depth(40)).toBe(depth(2));
+	});
+});

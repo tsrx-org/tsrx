@@ -1,6 +1,8 @@
+import path from 'node:path';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { DIAGNOSTIC_CODES, TS_ERRORS, TSRX_ERRORS } from '../../src/diagnostics.js';
+import { parseModule } from '../../src/index.js';
 import { error_with } from './errors.js';
 import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
@@ -37,6 +39,27 @@ function count_substring(haystack, needle) {
 function diagnostic_codes(result) {
 	return result.errors.map((error) => error.code);
 }
+
+/**
+ * Markup a loose compile recovers and reports (#978): its label, the source,
+ * the error, and the closing tag the editor's code adds.
+ * @type {Array<[label: string, source: string, error: { code: string }, closing: string]>}
+ */
+const BROKEN_MARKUP = [
+	['an unclosed tag', 'function App() @{\n\t<div>hi\n}', TSRX_ERRORS.UNCLOSED_TAG, '</div>'],
+	[
+		'a mismatched closing tag',
+		'function App() @{\n\t<div><span></div>\n}',
+		TSRX_ERRORS.MISMATCHED_CLOSING_TAG,
+		'</span>',
+	],
+	[
+		'an unclosed returned tag',
+		'function App() {\n\treturn <div>;\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</div>',
+	],
+];
 
 /**
  * Parse generated target output as TSX and return syntax diagnostics. Target
@@ -359,6 +382,52 @@ export function App() @{
 				);
 			expect(names).toContain('TsrxDynamic');
 		});
+	});
+
+	describe(`[${name}] unclosed and mismatched tags in the editor (#978)`, () => {
+		// The editor's compile is loose: it recovers the markup, so the editor
+		// keeps working, and reports the mistake where a collecting parse does.
+		it.each(BROKEN_MARKUP)('reports %s', (_label, source, error) => {
+			const { errors } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			/** @type {Array<{ code?: string, pos?: number, end?: number }>} */
+			const collected = [];
+			parseModule(source, 'App.tsrx', { collect: true, errors: /** @type {any} */ (collected) });
+
+			expect(errors.map((reported) => [reported.code, reported.pos, reported.end])).toEqual(
+				collected.map((reported) => [reported.code, reported.pos, reported.end]),
+			);
+			expect(errors.map((reported) => reported.code)).toEqual([error.code]);
+		});
+
+		// The missing closing tag is added with no mapping of its own, so the code
+		// is valid TSX and TypeScript reports nothing more. A verification span of
+		// the parent's closing tag can cover it.
+		it.each(BROKEN_MARKUP)(
+			'adds the closing tag of %s with no mapping',
+			(_label, source, _error, closing) => {
+				const { code, mappings } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(virtual_parse_diagnostics(code), code).toEqual([]);
+				const start = code.indexOf(closing);
+				expect(start, code).toBeGreaterThan(-1);
+				expect(code.indexOf(closing, start + 1), code).toBe(-1);
+				const end = start + closing.length;
+				expect(
+					mappings.filter(
+						(mapping) =>
+							mapping.generatedOffsets.some(
+								(offset, index) =>
+									offset < end &&
+									offset + (mapping.generatedLengths?.[index] ?? mapping.lengths[index]) > start,
+							) &&
+							(mapping.data.completion ||
+								mapping.data.semantic ||
+								mapping.data.navigation ||
+								mapping.data.structure),
+					),
+				).toEqual([]);
+			},
+		);
 	});
 
 	describe(`[${name}] platform flag virtual types`, () => {
@@ -1857,6 +1926,36 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			expect(code).toContain("<span key={item.id}>{'nested'}</span>");
 		});
 
+		it.runIf(keys_rows_by_prop)('keys a nested @for a keyed loop renders (#181)', () => {
+			const { code } = compile(
+				`export function App({ groups }: { groups: { id: string; open: boolean; children: string[] }[] }) @{
+					<ul>
+						@for (const group of groups; key group.id) {
+							@for (const child of group.children; index i) {
+								<li>{child}</li>
+							}
+						}
+						@for (const group of groups; key group.id) {
+							@if (group.open) {
+								@for (const child of group.children) {
+									<li>{child}</li>
+								}
+							}
+						}
+					</ul>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toMatch(
+				/return <Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child, i\) =>/,
+			);
+			expect(code).toMatch(
+				/group\.open\s*\? <Fragment key=\{group\.id\}>\{__map_iterable\(group\.children, \(child\) =>/,
+			);
+			expect(code).toContain('<li key={i}>{child}</li>');
+		});
+
 		it.runIf(keys_rows_by_prop)(
 			'keeps a key written inside a loop branch and keys the other branches',
 			() => {
@@ -2032,7 +2131,10 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				'App.tsrx',
 			);
 
-			expect(code).toContain('children({');
+			// Vue reads `children` from the default slot first, then the prop.
+			expect(code).toContain(
+				name === 'vue' ? '(_$_Child_slots.default?.() ?? children)({' : 'children({',
+			);
 			expect(code).toContain('Item 3');
 		});
 	});
@@ -2415,6 +2517,10 @@ export function runSharedCompileTests({
 		componentClassAttrName === 'className'
 			? '{ className }: { className?: string }'
 			: '{ class: className }: { class?: string }';
+	// Solid and Vue Vapor JSX evaluates to a DOM node, so these targets leave
+	// static JSX in place rather than hoist one node that every use would
+	// share (#1236, #1240).
+	const hoistsStaticJsx = !['solid', 'vue'].includes(name);
 
 	runSharedPlatformTests({ compile, name });
 
@@ -3143,17 +3249,22 @@ export function App() @{
 			expect(diagnostic_codes(result)).toContain(TSRX_ERRORS.UNCLOSED_TAG.code);
 		});
 
-		it('keeps loose unclosed tag recovery silent', () => {
-			const result = compile(
-				`function App() @{
-					<div>hi
-				}`,
-				'App.tsrx',
-				{ loose: true },
-			);
+		// A loose compile, the editor's, recovers the markup and reports the
+		// mistake, as a collecting compile does (#978).
+		it.each(BROKEN_MARKUP)(
+			'reports %s in a loose compile, as when collecting',
+			(_label, source, error) => {
+				const loose = compile(source, 'App.tsrx', { loose: true });
+				const collected = compile(source, 'App.tsrx', { collect: true });
 
-			expect(result.errors).toEqual([]);
-		});
+				/** @param {{ errors: Array<{ code?: string, pos?: number, end?: number }> }} result */
+				const reported = (result) =>
+					result.errors.map((error) => [error.code, error.pos, error.end]);
+				expect(diagnostic_codes(loose)).toEqual([error.code]);
+				expect(reported(loose)).toEqual(reported(collected));
+				expect(virtual_parse_diagnostics(loose.code), loose.code).toEqual([]);
+			},
+		);
 
 		it('accepts adjacent JSX text and expression children', () => {
 			const { code } = compile(
@@ -3954,10 +4065,17 @@ export function App() @{
 			);
 
 			expect(code).not.toContain('return;');
-			expect(code).toMatch(/function FragmentReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/function TsxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
-			expect(code).toMatch(/function TsrxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+			if (hoistsStaticJsx) {
+				expect(code).toMatch(/function FragmentReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/function TsxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
+				expect(code).toMatch(/function TsrxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+			} else {
+				expect(code).not.toContain('__static');
+				expect(code).toMatch(/function FragmentReturn\(\) {\s+return <><div>fragment<\/div><\/>;/);
+				expect(code).toMatch(/function TsxReturn\(\) {\s+return <><div>tsx<\/div><\/>;/);
+				expect(code).toMatch(/function TsrxReturn\(\) {\s+return <><div>tsrx<\/div><\/>;/);
+			}
 		});
 
 		it('keeps special fragment returns inside component prop arrow functions', () => {
@@ -3981,12 +4099,19 @@ export function App() @{
 			);
 
 			expect(code).not.toContain('return;');
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>fragment<\/div>;/);
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsx<\/div>;/);
-			expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
-			expect(code).toMatch(/fragment={\(\) => {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/tsx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
-			expect(code).toMatch(/tsrx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+			if (hoistsStaticJsx) {
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>fragment<\/div>;/);
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsx<\/div>;/);
+				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
+				expect(code).toMatch(/fragment={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/tsx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/tsrx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+			} else {
+				expect(code).not.toContain('__static');
+				expect(code).toMatch(/fragment={\(\) => {\s+return <><div>fragment<\/div><\/>;/);
+				expect(code).toMatch(/tsx={\(\) => {\s+return <><div>tsx<\/div><\/>;/);
+				expect(code).toMatch(/tsrx={\(\) => {\s+return <><div>tsrx<\/div><\/>;/);
+			}
 		});
 
 		it('parses semicolon-less JSX returns in component prop arrow functions', () => {
@@ -4622,10 +4747,10 @@ export function App() @{
 			).toThrow();
 		});
 
-		it.runIf(['react', 'preact', 'solid'].includes(name))(
+		it.runIf(['react', 'preact'].includes(name))(
 			`[${name}] hoists direct JSX text and static expression sibling combo to a static`,
 			() => {
-				// React/Preact/Solid hoist child-free static JSX to a module-level
+				// React/Preact hoist child-free static JSX to a module-level
 				// constant so the element identity is stable across renders.
 				const { code } = compile(
 					`export function App() @{
@@ -4637,6 +4762,21 @@ export function App() @{
 				expect(code).toContain('hello');
 				expect(code).toContain("{'hello'}");
 				expect(code).toContain('return App__static1');
+				expect(code).not.toContain('== null');
+			},
+		);
+
+		it.runIf(name === 'solid')(
+			`[${name}] leaves direct JSX text and static expression sibling combo in place`,
+			() => {
+				const { code } = compile(
+					`export function App() @{
+						<b>hello {'hello'}</b>
+					}`,
+					'App.tsrx',
+				);
+				expect(code).toContain("return <b>hello {'hello'}</b>;");
+				expect(code).not.toContain('__static');
 				expect(code).not.toContain('== null');
 			},
 		);
@@ -4869,8 +5009,8 @@ export function App() @{
 			],
 		])('hoists JSX whose tag reads %s', (_case, source, expected) => {
 			const { code } = compile(source, 'App.tsrx');
-			// Solid and Vue never hoist JSX with a component in it
-			if (['react', 'preact', 'hono'].includes(name)) {
+			// Solid and Vue never hoist
+			if (hoistsStaticJsx) {
 				expect(code).toContain('const App__static1 = <div>');
 			}
 			expect(run_result(code)).toBe(expected);
@@ -4881,7 +5021,9 @@ export function App() @{
 				'function App() {\n\treturn <div>hello</div>;\n}\nconst div = 1;\nexport const result = () => App().type;',
 				'App.tsrx',
 			);
-			expect(code).toContain('const App__static1 = <div>hello</div>;');
+			if (hoistsStaticJsx) {
+				expect(code).toContain('const App__static1 = <div>hello</div>;');
+			}
 			expect(run_result(code)).toBe('div');
 		});
 
@@ -5645,5 +5787,91 @@ export function runSharedCodeBlockChildrenTests({ compile, name }) {
 			expect(code).toContain('<span class="sum">{x + y}</span>');
 			expect(count_substring(code, '(() => {')).toBe(1);
 		});
+	});
+}
+
+/**
+ * The `@catch` binding is the thrown value, which need not be an `Error`, so the
+ * type-only output must type it `unknown`, as a `catch (error)` clause is under
+ * `strict`. Checks the output against the real declarations the target package
+ * resolves.
+ *
+ * @param {CompileDiagnosticsHarness & {
+ *   package_dir: string,
+ *   jsx_import_source: string,
+ * }} harness
+ */
+export function runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings,
+	name,
+	package_dir,
+	jsx_import_source,
+}) {
+	/** @type {ts.CompilerOptions} */
+	const options = {
+		strict: true,
+		target: ts.ScriptTarget.ESNext,
+		module: ts.ModuleKind.ESNext,
+		moduleResolution: ts.ModuleResolutionKind.Bundler,
+		jsx: ts.JsxEmit.Preserve,
+		jsxImportSource: jsx_import_source,
+		lib: ['lib.esnext.d.ts', 'lib.dom.d.ts'],
+		types: [],
+		skipLibCheck: true,
+		noEmit: true,
+	};
+	// Not on disk, but inside the package, so its dependencies and its own
+	// `exports` resolve as they do for an app.
+	const file_name = path.join(package_dir, '__catch-type-probe__', 'App.tsx');
+
+	/**
+	 * @param {string} source
+	 * @returns {string[]}
+	 */
+	function diagnostics(source) {
+		const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx');
+		expect(errors).toEqual([]);
+
+		const host = ts.createCompilerHost(options);
+		const read_file = host.readFile.bind(host);
+		const file_exists = host.fileExists.bind(host);
+		const get_source_file = host.getSourceFile.bind(host);
+		host.readFile = (name) => (name === file_name ? code : read_file(name));
+		host.fileExists = (name) => name === file_name || file_exists(name);
+		host.getSourceFile = (name, language_version, on_error, should_create_new) =>
+			name === file_name
+				? ts.createSourceFile(name, code, language_version, true)
+				: get_source_file(name, language_version, on_error, should_create_new);
+
+		return ts
+			.getPreEmitDiagnostics(ts.createProgram([file_name], options, host))
+			.filter((diagnostic) => diagnostic.file?.fileName === file_name)
+			.map(
+				(diagnostic) =>
+					`TS${diagnostic.code}: ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`,
+			);
+	}
+
+	describe(`${name} @catch error type`, () => {
+		// Building a program with the DOM lib takes seconds, so one program
+		// checks both forms.
+		it('types the error as unknown until it is narrowed', () => {
+			const source = `export function Unchecked() @{
+				@try {
+					<p>{'ok'}</p>
+				} @catch (error) {
+					<p>{error.message}</p>
+				}
+			}
+
+			export function Narrowed() @{
+				@try {
+					<p>{'ok'}</p>
+				} @catch (error) {
+					<p>{error instanceof Error ? error.message : String(error)}</p>
+				}
+			}`;
+			expect(diagnostics(source)).toEqual(["TS18046: 'error' is of type 'unknown'."]);
+		}, 60_000);
 	});
 }
