@@ -1124,6 +1124,11 @@ export function TSRXPlugin(config) {
 			// Where a `<` must not start a type assertion, while
 			// `#parseArrowOrTypeAssertion` reads it as a generic arrow function's.
 			#arrowFirstAt = -1;
+			// The TS7059 and TS7060 that a strict parse reads while
+			// `#parseArrowOrTypeAssertion` tries a `<` as a generic arrow function's,
+			// each where it starts and how it's thrown, or null (see `#holdArrowError`).
+			/** @type {Array<{ start: number, raise: () => void }> | null} */
+			#heldArrowErrors = null;
 			/** @type {WeakMap<object, { names: Set<string>, lengths: number[] }>} */
 			#localExportNamesByScope = new WeakMap();
 			/** @type {ModuleBodyExports[]} */
@@ -5465,12 +5470,20 @@ export function TSRXPlugin(config) {
 					(reserved || !parameter.default)
 				) {
 					// At the type parameter, as TypeScript reports it.
-					error(
-						TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER,
-						this.#filename,
-						parameter,
-						this.#collect ? this.#errors : undefined,
-					);
+					const report = () =>
+						error(
+							TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER,
+							this.#filename,
+							parameter,
+							this.#collect ? this.#errors : undefined,
+						);
+					if (this.#collect) {
+						// Dropped with an attempt that fails (see `#holdArrowError`).
+						if (this.#errors) this.parseEffects?.willAppend(this.#errors);
+						report();
+					} else if (!this.#holdArrowError(/** @type {number} */ (parameter.start), report)) {
+						report();
+					}
 				}
 			}
 
@@ -9269,7 +9282,11 @@ export function TSRXPlugin(config) {
 			 */
 			#parseArrowOrTypeAssertion(forInit, refDestructuringErrors, afterLeftParse) {
 				const outer = this.#arrowFirstAt;
+				const outer_held = this.#heldArrowErrors;
+				/** @type {NonNullable<typeof outer_held>} */
+				const held = [];
 				this.#arrowFirstAt = this.start;
+				if (!this.#collect) this.#heldArrowErrors = held;
 				const generic_arrow = this.#genericArrowFunction;
 				let arrow;
 				try {
@@ -9290,15 +9307,48 @@ export function TSRXPlugin(config) {
 					});
 				} finally {
 					this.#arrowFirstAt = outer;
+					this.#heldArrowErrors = outer_held;
 				}
-				if (!arrow.error) return /** @type {AST.Expression} */ (arrow.node);
-				return this.parseMaybeAssignOrigin(forInit, refDestructuringErrors, afterLeftParse);
+				if (arrow.error) {
+					return this.parseMaybeAssignOrigin(forInit, refDestructuringErrors, afterLeftParse);
+				}
+				// It is a generic arrow function, so what it held is reported: the first
+				// by position, or in an enclosing attempt once that one is read too.
+				if (held.length > 0) {
+					if (outer_held) {
+						this.parseEffects?.willAppend(outer_held);
+						outer_held.push(...held);
+					} else {
+						held.reduce((first, entry) => (entry.start < first.start ? entry : first)).raise();
+					}
+				}
+				return /** @type {AST.Expression} */ (arrow.node);
+			}
+
+			/**
+			 * Whether a strict parse holds a TS7059 or TS7060 that starts at `start`,
+			 * which `raise` throws, while `#parseArrowOrTypeAssertion` tries a `<` as
+			 * a generic arrow function's. Thrown there, either ended the attempt: a
+			 * TS7059 in its parameters (`<T,>(x = <number>y) => x`) left the `<` read
+			 * as a type assertion's, which failed at its `,`. An attempt that fails
+			 * drops what it held, as a collecting parse drops what it recorded: the
+			 * TS7060 of `<Handler>((e) => e.x)`, a type assertion.
+			 * @param {number} start
+			 * @param {() => void} raise
+			 * @returns {boolean}
+			 */
+			#holdArrowError(start, raise) {
+				const held = this.#heldArrowErrors;
+				if (!held) return false;
+				this.parseEffects?.willAppend(held);
+				held.push({ start, raise });
+				return true;
 			}
 
 			/**
 			 * A type assertion, `<T>x`, which only a file without JSX has. TypeScript
 			 * reserves it in a `.mts` or `.cts` file (TS7059), where a strict parse
-			 * throws that and a collecting one records it.
+			 * throws that (see `#holdArrowError`) and a collecting one records it.
 			 * @returns {AST.TSTypeAssertion}
 			 */
 			#parseTypeAssertion() {
@@ -9321,7 +9371,8 @@ export function TSRXPlugin(config) {
 							TS_ERRORS.RESERVED_TYPE_ASSERTION,
 						);
 					} else {
-						this.raise(start, TS_ERRORS.RESERVED_TYPE_ASSERTION);
+						const raise = () => this.raise(start, TS_ERRORS.RESERVED_TYPE_ASSERTION);
+						if (!this.#holdArrowError(start, raise)) raise();
 					}
 				}
 				return assertion;

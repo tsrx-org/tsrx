@@ -10629,6 +10629,40 @@ describe('a `<` in a file without JSX', () => {
 		}
 	});
 
+	// While a `<` is tried as a generic arrow function's, a strict parse holds
+	// its TS7059 and TS7060. Thrown there, a type assertion in the parameters
+	// ended the attempt, and the `<` was read as a type assertion's, which
+	// failed at its `,`; and a type assertion on a parenthesized function kept
+	// the TS7060 of the generic arrow function it was tried as.
+	it('reports TS7059 and TS7060 in a .mts or .cts file where the `<` is read', () => {
+		for (const filename of ['a.mts', 'a.cts']) {
+			for (const [source, code, pos] of /** @type {Array<[string, string, number]>} */ ([
+				['const f = <T,>(x = <number>y) => x;', 'TS7059', 19],
+				['const f = <T,>(x = () => <number>y) => x;', 'TS7059', 25],
+				['const f = <T,>(x = <U,>(z = <string>w) => z) => x;', 'TS7059', 28],
+				['const f = <T,>(f = async <U>(x: U) => x) => f;', 'TS7060', 26],
+				['const h = <Handler>((e) => e.x);', 'TS7059', 10],
+			])) {
+				const label = `${filename}: ${source}`;
+				/** @type {unknown} */
+				let thrown_error = null;
+				try {
+					parseModule(source, filename);
+				} catch (error) {
+					thrown_error = error;
+				}
+				expect(thrown_error, label).toEqual(expect.objectContaining({ code, pos }));
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, filename, { collect: true, errors, comments: [] });
+				expect(
+					errors.map((error) => [error.code, error.pos]),
+					label,
+				).toEqual([[code, pos]]);
+			}
+		}
+	});
+
 	// A declaration file's `export const x: T;`, which only a `declare` context
 	// reads yet, keeps `.d.ts` files out.
 	it("parses this repository's own .ts, .mts, and .cts sources", () => {
