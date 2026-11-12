@@ -2255,7 +2255,7 @@ function TrySetupApp() @{
 			const label = `caught ${k()}`;
 			<>
 				<p class="try-caught">{label}</p>
-				<p class="try-caught-live">{`${(err() as Error).message} / ${k()}`}</p>
+				<p class="try-caught-live">{`${(err as Error).message} / ${k()}`}</p>
 				<button
 					class="try-reset"
 					onClick={() => {

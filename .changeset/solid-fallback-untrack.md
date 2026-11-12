@@ -9,5 +9,6 @@ On Solid, the setup statements of an `@else`, `@default`, `@empty`, `@try`,
 became a dependency there: the setup ran again and the body's output was
 recreated whenever one changed. The body now runs through `untrack`, as
 `fallback={untrack(() => { … })}`, `<Errored>{untrack(() => { … })}</Errored>`,
-or `fallback={(err, reset) => untrack(() => { … })}`. Reads in the rendered
-output stay reactive, and `reset()` still runs the `@try` body again.
+or, in the `<Errored>` fallback, `return untrack(() => { … })` once the
+`@catch` binding holds the thrown value. Reads in the rendered output stay
+reactive, and `reset()` still runs the `@try` body again.

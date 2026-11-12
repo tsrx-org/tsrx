@@ -1467,17 +1467,22 @@ function try_statement_to_jsx_child(node, transform_context) {
 		if (handler.resetParam) catch_params.push(handler.resetParam);
 		else catch_params.push(create_generated_identifier('_reset'));
 
-		const catch_body_nodes = handler.param
-			? [
-					b.let(handler.param, b.call(clone_identifier(error_accessor))),
-					...(handler.body.body || []),
-				]
-			: handler.body.body || [];
-		const catch_jsx = body_to_jsx_child(catch_body_nodes, transform_context);
-
 		// `<Errored>` calls its fallback inside a memo, so the body runs untracked
-		// within it; the error accessor and `reset` stay the arrow's parameters.
-		const fallback_fn = b.arrow(catch_params, untrack_if_arrow(catch_jsx, transform_context));
+		// within it. The binding reads the accessor before that, tracked, so a
+		// new error runs the body again with its value.
+		const catch_jsx = untrack_if_arrow(
+			body_to_jsx_child(handler.body.body || [], transform_context),
+			transform_context,
+		);
+		const fallback_fn = b.arrow(
+			catch_params,
+			handler.param
+				? b.block([
+						b.let(handler.param, b.call(clone_identifier(error_accessor))),
+						b.return(catch_jsx),
+					])
+				: catch_jsx,
+		);
 
 		result = create_jsx_element(
 			'Errored',

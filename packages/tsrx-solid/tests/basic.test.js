@@ -586,8 +586,9 @@ describe('@tsrx/solid basic', () => {
 				'App.tsrx',
 			);
 			expect(code).toContain('untrack as _$_untrack');
+			// The fallback binds the thrown value (`err`) before the untracked body.
 			expect(code).toMatch(
-				/fallback=\{\(err, reset\) => _\$_untrack\(\(\) => \{\s*const f = 6;\s*return <i>\{f\}<\/i>;\s*\}\)\}/,
+				/fallback=\{\(_tsrx_error, reset\) => \{\s*let err = _tsrx_error\(\);\s*return _\$_untrack\(\(\) => \{\s*const f = 6;\s*return <i>\{f\}<\/i>;\s*\}\);\s*\}\}/,
 			);
 			expect(code).toMatch(
 				/>\{_\$_untrack\(\(\) => \{\s*const e = 5;\s*return <i>\{e\}<\/i>;\s*\}\)\}<\/Errored>/,
