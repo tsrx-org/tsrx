@@ -1,5 +1,8 @@
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+	runSharedAnonymousComponentTests,
+	runSharedCatchErrorTypeTests,
 	runSharedCodeBlockChildrenTests,
 	runSharedCompileDiagnosticsTests,
 	runSharedCompileTests,
@@ -37,6 +40,7 @@ describe('@tsrx/preact direct runtime imports', () => {
 		);
 
 		expect(code).toContain("from '@tsrx/preact-runtime/error-boundary'");
+		expect(code).toContain("from '@tsrx/preact-runtime/try-body'");
 		expect(code).toContain("from '@tsrx/preact-runtime/ref'");
 		expect(code).toContain("from '@tsrx/preact-runtime/iterable'");
 		expect(code).not.toMatch(/from '@tsrx\/preact\//);
@@ -46,8 +50,15 @@ describe('@tsrx/preact direct runtime imports', () => {
 runSharedTsxExpressionTsrxTests({ compile, name: 'preact', classAttrName: 'class' });
 runSharedCompileTests({ compile, name: 'preact', classAttrName: 'class' });
 runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name: 'preact' });
+runSharedCatchErrorTypeTests({
+	compile_to_volar_mappings,
+	name: 'preact',
+	package_dir: fileURLToPath(new URL('..', import.meta.url)),
+	jsx_import_source: 'preact',
+});
 runSharedCodeBlockChildrenTests({ compile, name: 'preact' });
 runSharedHookBodyTests({ compile, compile_to_volar_mappings, name: 'preact' });
+runSharedAnonymousComponentTests({ compile, name: 'preact' });
 
 describe('@tsrx/preact basic', () => {
 	it('rejects the removed `&{ ... }` lazy destructuring syntax', () => {
@@ -94,6 +105,59 @@ describe('@tsrx/preact basic', () => {
 		expect(code).toContain('Suspense');
 		expect(code).toContain("from 'preact-suspense'");
 		expect(code).not.toContain("from 'preact/compat'");
+	});
+
+	it('renders the @pending body as a TsrxTryBody fallback', () => {
+		const { code } = compile(
+			`export function App() @{
+				@try {
+					<Posts />
+				} @pending {
+					const label = loadLabel();
+					<p>{label}</p>
+				} @catch (err) {
+					<p>{'error'}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(
+			/<Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
+		);
+	});
+
+	it('keeps the @pending body inline in type-only output', () => {
+		const { code } = compile_to_volar_mappings(
+			`export function App() @{
+				@try {
+					<Posts />
+				} @pending {
+					const label = loadLabel();
+					<p>{label}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('TsrxTryBody');
+		expect(code).toMatch(/<Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
+	});
+
+	it('keeps a @pending body that awaits inline', () => {
+		const { code } = compile(
+			`export async function App() @{
+				@try {
+					<Posts />
+				} @pending {
+					const label = await loadLabel();
+					<p>{label}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(/<Suspense fallback=\{await \(async \(\) => \{/);
 	});
 
 	it('imports TsrxErrorBoundary from @tsrx/preact/error-boundary when try/catch is used', () => {
@@ -252,6 +316,42 @@ describe('@tsrx/preact basic', () => {
 
 		expect(code).not.toContain('const Test__static1');
 		expect(code).toContain('return <div>{Date.now()}</div>;');
+	});
+
+	// Preact reads a class from `class` or `className`, so a spread's class
+	// moves to the name of the element's class attribute.
+	it('keeps the class a host spread passes beside the scope classes', () => {
+		const { code, cssHash } = compile(
+			`export function App(props) @{
+				<>
+					<span {...props} />
+					<span className="base" {...props} />
+					<span {...props} class="last" />
+
+					<style>
+						span {
+							color: red;
+						}
+					</style>
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toMatch(
+			/import \{\s*merge_spread_class as __merge_spread_class,[^}]*\} from '@tsrx\/preact\/ref'/,
+		);
+		expect(code).toContain(
+			`<span class="${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "class", "className", "text-true"))} />`,
+		);
+		expect(code).toContain(
+			`<span className="base ${cssHash}" {...__normalize_spread_props(__merge_spread_class(props, "${cssHash}", "className", "class", "text-true"))} />`,
+		);
+		// A spread before the class attribute drops its class, so its
+		// `className` can't override the attribute.
+		expect(code).toContain(
+			`<span {...__normalize_spread_props(__merge_spread_class(props, null, "class", "className"))} class="last ${cssHash}" />`,
+		);
 	});
 
 	it('applies scoped css hashes and keeps type selectors for dynamic tags', () => {
@@ -456,6 +556,43 @@ describe('@tsrx/preact basic', () => {
 				"let App__spread_props1 = __normalize_spread_props_for_ref_attr({ 'data-second': next() });",
 			);
 			expect(type_only).toContain('{...App__spread_props1}');
+		});
+
+		it('keeps a ref written before a host spread in its authored position', () => {
+			const source = `export function App() @{
+					function init() {
+						return () => {};
+					}
+					<div ref={init()} data-first="1" {...bag} />
+				}`;
+			const { code } = compile(source, 'App.tsrx');
+
+			expect(code).toContain(
+				'<div ref={__mergeRefs(init(), (node) => __mergeRefs(App__spread_props1?.ref)(node))} data-first="1" {...(App__spread_props1 = __normalize_spread_props_for_ref_attr(bag))} />',
+			);
+
+			const { code: type_only } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(type_only).toContain(
+				'<div data-first="1" {...App__spread_props1} ref={__mergeRefs(init(), App__spread_props1?.ref)} />',
+			);
+		});
+
+		it('imports the spread normalizers that return their copy', () => {
+			const { code } = compile(
+				`export function App() @{
+					<>
+						<input {...props.first} />
+						<input {...props.second} ref={props.cb} />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(code).toContain('copy_spread_props as __normalize_spread_props');
+			expect(code).toContain(
+				'copy_spread_props_for_ref_attr as __normalize_spread_props_for_ref_attr',
+			);
+			expect(code).toContain('{...__normalize_spread_props(props.first)}');
 		});
 
 		it('rejects multiple ref={expr} attributes on the same element', () => {
