@@ -100,10 +100,14 @@ export const DIAGNOSTIC_CODES = {
 	TARGET_COMPONENT_READ_BEFORE_DECLARATION: 'TSRX2028',
 	/** A destructured prop default the target's component compiler drops. */
 	TARGET_PROP_DEFAULT_UNSUPPORTED: 'TSRX2029',
+	/** A `var` declared in a nested `@{ … }` block or an `@if`, `@for`, `@switch` or `@try` body, outside any function or class in it. */
+	DIRECTIVE_BODY_VAR: 'TSRX2030',
 	/** A destructured prop key the target's component compiler reads as another prop, or leaves out. */
 	TARGET_PROP_KEY_UNSUPPORTED: 'TSRX2031',
 	/** A binding of a name the target's toolchain finds by name: Vue's `defineVaporComponent`. */
 	TARGET_RESERVED_NAME: 'TSRX2032',
+	/** Type arguments after a dynamic tag (`<{Tag}<T> />`). */
+	DYNAMIC_TAG_TYPE_ARGUMENTS: 'TSRX2033',
 	/** A `yield` in a template value the target's JSX compiler moves into an effect, getter or callback. */
 	TARGET_TEMPLATE_YIELD_UNSUPPORTED: 'TSRX2034',
 
@@ -367,6 +371,10 @@ export const TSRX_ERRORS = {
 		'DYNAMIC_TAG_EXPRESSION',
 		'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
 	),
+	DYNAMIC_TAG_TYPE_ARGUMENTS: tsrx(
+		'DYNAMIC_TAG_TYPE_ARGUMENTS',
+		'A dynamic tag takes no type arguments. Declare a typed alias before the element: `const Typed = Tag<T>;`, then `<{Typed} />`.',
+	),
 	FOR_OF_ONLY: tsrx(
 		'FOR_OF_ONLY',
 		'TSRX `@for` currently supports `for...of` loops in template output.',
@@ -401,9 +409,13 @@ export const TSRX_ERRORS = {
 		(kind) =>
 			`TSRX \`@for\` does not support \`${kind}\` loop variables. Declare the resource in the loop body instead: \`@for (const item of items) { ${kind} resource = item; ... }\`.`,
 	),
+	DIRECTIVE_BODY_VAR: tsrx(
+		'DIRECTIVE_BODY_VAR',
+		"TSRX does not support `var` declarations in a nested `@{ … }` block or an `@if`, `@for`, `@switch` or `@try` body, since the variable can't be read outside it. Declare it with `const` or `let`.",
+	),
 	MULTIPLE_REFS: tsrx(
 		'MULTIPLE_REFS',
-		'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single array-valued ref such as `ref={[a, b]}` where the target framework supports multiple refs.',
+		'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single ref list such as `ref={[a, b]}`, which applies every ref in it.',
 	),
 	INVALID_HTML_NESTING: tsrx_with_values(
 		'INVALID_HTML_NESTING',

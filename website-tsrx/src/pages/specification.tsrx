@@ -613,10 +613,15 @@ const TSRX_ERROR_CODES = [
 	"          const r = { Card }; const D = 'x'; function Card({ t = D }) @{ <p /> }  (Vue)",
 	"TSRX2029  <target> TSRX cannot keep this default for 's'.",
 	'          function Card({ s = cfg.size }) @{ <p>{s}</p> }  (Vue)',
+	"TSRX2030  TSRX does not support `var` declarations in a nested `@{ … }` block or an `@if`, `@for`, `@switch` or `@try` body, since the variable can't be read outside it.",
+	'          @for (const x of xs) { var y = x; <p>{y}</p> }',
+	'          or  <div>@{ var y = 1; <p>{y}</p> }</div>',
 	'TSRX2031  <target> TSRX cannot read this computed prop key.',
 	'          function Card({ [k]: v }) @{ <p>{v}</p> }  (Vue)',
 	'TSRX2032  Vue TSRX does not allow a binding named `defineVaporComponent`.',
 	"          import { defineVaporComponent } from './helpers';  (Vue)",
+	'TSRX2033  A dynamic tag takes no type arguments.',
+	'          <{Tag}<T> />',
 	'TSRX2034  <target> TSRX does not support `yield` in this part of the template.',
 	'          function* f(b) { return <input title={yield b.title} />; }  (Solid, Vue)',
 	"TSRX3001  The 'apply' attribute of a <style> block requires an expression value.",
@@ -1076,10 +1081,11 @@ export function SpecificationPage() @{
 								<code class="inline-code">{'//'}</code> starts a line comment where whitespace comes
 								right before it, at the start of a line, or right after a tag, an expression
 								container, or a block, and the comment runs to the end of the line, a closing tag on
-								it included. A <code class="inline-code">{'//'}</code> that touches other text, as
-								in <code class="inline-code">{'https://example.com'}</code> or{' '}
-								<code class="inline-code">{'a//b'}</code>, is text. So is a character reference or a
-								string expression: only <code class="inline-code">{'/*'}</code> and{' '}
+								it included. A <code class="inline-code">{'//'}</code> that touches other text or a
+								block comment, as in <code class="inline-code">{'https://example.com'}</code>,{' '}
+								<code class="inline-code">{'a//b'}</code> or{' '}
+								<code class="inline-code">{'/* c */// c'}</code>, is text. So is a character
+								reference or a string expression: only <code class="inline-code">{'/*'}</code> and{' '}
 								<code class="inline-code">{'//'}</code> start a comment, so{' '}
 								<code class="inline-code">{'&#47;*'}</code>,{' '}
 								<code class="inline-code">{'&#47;/'}</code> and{' '}
@@ -1168,7 +1174,11 @@ export function SpecificationPage() @{
 								the expression in its closing tag, so anything more is computed above the element
 								and the result used as the tag:{' '}
 								<code class="inline-code">{'const Tag = c ? Child : Fallback;'}</code> followed by{' '}
-								<code class="inline-code">{'<{Tag} />'}</code>. Forms such as{' '}
+								<code class="inline-code">{'<{Tag} />'}</code>. Type arguments after the tag
+								expression, which TSX allows after a tag name, parse and are reported too:{' '}
+								<code class="inline-code">{'<{Tag}<T> />'}</code> needs a typed alias above the
+								element, <code class="inline-code">{'const Typed = Tag<T>;'}</code> followed by{' '}
+								<code class="inline-code">{'<{Typed} />'}</code>. Forms such as{' '}
 								<code class="inline-code">{'<@tag />'}</code> and{' '}
 								<code class="inline-code">{'<@Component />'}</code> are not dynamic tag syntax in
 								current TSRX.
@@ -1598,6 +1608,12 @@ export function SpecificationPage() @{
 									expression is <code class="inline-code">TSRX2014</code>, reported once for each
 									element at the part of the expression that isn't one of them. The check doesn't
 									change the parse.
+								</li>
+								<li>
+									Type arguments after a dynamic tag expression, as in{' '}
+									<code class="inline-code">{'<{Tag}<T> />'}</code>, are{' '}
+									<code class="inline-code">TSRX2033</code>, reported at the type arguments. The
+									check doesn't change the parse.
 								</li>
 								<li>
 									A JSXCodeBlock or template control-flow block that contains TypeScript setup

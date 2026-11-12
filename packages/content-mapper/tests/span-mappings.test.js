@@ -132,6 +132,46 @@ describe('to_span_mappings', () => {
 		]);
 	});
 
+	it('joins a span from a mapping without features to its neighbours, which give it theirs', () => {
+		// The transform maps the brackets of a respaced literal with no feature at
+		// all, only to place TypeScript 7 diagnostics. Such a span must not split
+		// the exact span over code printed as written.
+		const text = 'f([1]);';
+		const position_only = { customData: {} };
+		const spans = to_span_mappings(
+			[
+				m(0, 0, 1),
+				m(2, 2, 1, { data: position_only }),
+				m(3, 3, 1),
+				m(4, 4, 1, { data: position_only }),
+			],
+			text,
+			text,
+		);
+		// `f([1]` is one span: the `(` between `f` and `[` is the same in both
+		// files, and `);` has no span to join.
+		expect(spans).toEqual([
+			[0, 5, 0, 5, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+		]);
+		// One on its own stays a span without features, and a verify-only span still
+		// keeps apart from its neighbours: the identical `(` between them maps on its
+		// own, without features.
+		expect(to_span_mappings([m(2, 2, 1, { data: position_only })], text, text)).toEqual([
+			[2, 1, 2, 1, SpanMapKind.Verbatim, SpanMapFeature.None],
+		]);
+		expect(
+			to_span_mappings([m(0, 0, 1), m(2, 2, 1, { data: verify_only })], text, text).map((span) => [
+				span[0],
+				span[1],
+				span[5],
+			]),
+		).toEqual([
+			[0, 1, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+			[1, 1, SpanMapFeature.None],
+			[2, 1, SpanMapFeature.None],
+		]);
+	});
+
 	it('extends a Verbatim span over the identical whitespace that follows it', () => {
 		// TypeScript's organize-imports edit ends after the last import's newline;
 		// TypeScript 7 drops the whole edit when that position does not map.
