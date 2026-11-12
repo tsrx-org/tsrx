@@ -21,7 +21,7 @@
     "js/destructuring-private-fields/for-lhs.js format 1": "Unexpected token (5:11)",
     "js/destructuring-private-fields/nested-bindings.js format 1": "Unexpected token (4:17)",
     "js/destructuring-private-fields/valid-multiple-bindings.js format 1": "Unexpected token (4:12)",
-    "typescript/call/callee-comments.ts format 1": "Unclosed tag '<string>'. Expected '</string>' before end of template. (48:1)",
+    "typescript/call/callee-comments.ts format 1": "Unclosed tag '<string>'. Expected '</string>' before end of template. (45:5)",
     "typescript/error-recovery/index-signature.ts - {\"trailingComma\":\"all\"} format 1": "Unexpected token (4:13)",
     "typescript/error-recovery/index-signature.ts - {\"trailingComma\":\"es5\"} format 1": "Unexpected token (4:13)",
     "typescript/error-recovery/index-signature.ts format 1": "Unexpected token (4:13)",

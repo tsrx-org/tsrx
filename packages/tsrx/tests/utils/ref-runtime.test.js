@@ -3,11 +3,19 @@
 import { describe, expect, it } from 'vitest';
 import {
 	apply_ref_value,
+	copy_spread_props,
+	copy_spread_props_for_ref_attr,
+	copy_spread_props_for_ref_attr_sharing_refs,
+	copy_spread_props_sharing_refs,
 	create_ref_prop,
+	join_scope_class,
+	merge_element_refs,
 	merge_ref_props,
+	merge_spread_class,
 	mergeRefs,
 	normalize_spread_props,
 	normalize_spread_props_for_ref_attr,
+	normalize_spread_props_sharing_refs,
 } from '../../src/runtime/ref.js';
 
 describe('ref runtime helpers', () => {
@@ -994,6 +1002,90 @@ describe('ref runtime helpers', () => {
 	});
 });
 
+describe('merge_element_refs', () => {
+	it('returns a single ref as itself', () => {
+		const callback = () => {};
+		const object = { current: null };
+
+		expect(merge_element_refs(null, undefined)).toBeUndefined();
+		expect(merge_element_refs(callback, undefined)).toBe(callback);
+		expect(merge_element_refs(undefined, object, null)).toBe(object);
+	});
+
+	it('returns the same callback for the same refs', () => {
+		const first = () => {};
+		const second = { current: null };
+		const third = () => {};
+
+		const merged = merge_element_refs(first, second);
+		expect(typeof merged).toBe('function');
+		expect(merge_element_refs(first, second)).toBe(merged);
+		expect(merge_element_refs(first, undefined, second)).toBe(merged);
+		expect(merge_element_refs(second, first)).not.toBe(merged);
+		expect(merge_element_refs(first, second, third)).not.toBe(merged);
+		expect(merge_element_refs(first, second, third)).toBe(merge_element_refs(first, second, third));
+	});
+
+	it('keys a ref list by the refs in it', () => {
+		const a = () => {};
+		const b = () => {};
+		const c = () => {};
+
+		const merged = merge_element_refs([a, b], c);
+		expect(merge_element_refs([a, b], c)).toBe(merged);
+		expect(merge_element_refs(a, [b, [c]])).toBe(merged);
+		expect(merge_element_refs([a], undefined)).toBe(a);
+
+		// A list whose refs change gets a new callback.
+		const list = [a];
+		const first = merge_element_refs(list, c);
+		list[0] = b;
+		expect(merge_element_refs(list, c)).not.toBe(first);
+	});
+
+	it('leaves out a value that is not a ref, such as the false of `cond && cb`', () => {
+		const callback = () => {};
+		const object = { current: null };
+
+		expect(merge_element_refs(/** @type {any} */ (false), callback)).toBe(callback);
+		expect(merge_element_refs(/** @type {any} */ (0), /** @type {any} */ (''))).toBeUndefined();
+		expect(merge_element_refs(callback, /** @type {any} */ (false), object)).toBe(
+			merge_element_refs(callback, object),
+		);
+	});
+
+	it('applies every ref and returns a cleanup that clears them', () => {
+		/** @type {Array<unknown>} */
+		const events = [];
+		const node = {};
+		/** @type {{ current: object | null }} */
+		const object = { current: null };
+		/** @param {object | null} value */
+		const legacy = (value) => {
+			events.push(['legacy', value]);
+		};
+		/** @param {object | null} value */
+		const modern = (value) => {
+			events.push(['modern', value]);
+			return () => events.push(['modern cleanup']);
+		};
+		const merged = /** @type {(node: object | null) => void | (() => void)} */ (
+			merge_element_refs(legacy, object, modern)
+		);
+
+		const cleanup = merged(node);
+		expect(object.current).toBe(node);
+		cleanup?.();
+		expect(events).toEqual([
+			['legacy', node],
+			['modern', node],
+			['legacy', null],
+			['modern cleanup'],
+		]);
+		expect(object.current).toBeNull();
+	});
+});
+
 describe('spread ref normalization', () => {
 	/**
 	 * @param {PropertyKey} key
@@ -1098,6 +1190,33 @@ describe('spread ref normalization', () => {
 		events.length = 0;
 		expect(/** @type {Record<PropertyKey, unknown>} */ (normalized)[symbol]).toBe(3);
 		expect(events).toEqual(['get:Symbol(spread)', 'getter:Symbol(spread)']);
+	});
+
+	it('leaves a children getter unread, in the bag and in its copy', () => {
+		let reads = 0;
+		/** @param {object} [extra] */
+		function bag(extra) {
+			return Object.defineProperty({ title: 'bag', ...extra }, 'children', {
+				enumerable: true,
+				get() {
+					reads += 1;
+					return 'child';
+				},
+			});
+		}
+
+		const plain = bag();
+		expect(normalize_spread_props(plain)).toBe(plain);
+		expect(reads).toBe(0);
+
+		const ref = create_ref_prop(() => null);
+		const copy = /** @type {Record<string, unknown>} */ (
+			normalize_spread_props(bag({ input_ref: ref }))
+		);
+		expect(reads).toBe(0);
+		expect([copy.title, copy.ref]).toEqual(['bag', ref]);
+		expect(copy.children).toBe('child');
+		expect(reads).toBe(1);
 	});
 
 	it('preserves inherited assignment side effects before returning an ordinary spread unchanged', () => {
@@ -1250,6 +1369,198 @@ describe('spread ref normalization', () => {
 			'descriptor:ref',
 		]);
 		expect(Reflect.ownKeys(target)).toEqual(['id', 'hidden']);
+	});
+
+	it('copies a no-ref spread for a runtime that copies it, reading each prop once', () => {
+		/** @type {string[]} */
+		const events = [];
+		const target = {
+			id: 'plain',
+			get title() {
+				events.push('getter:title');
+				return 'Title';
+			},
+		};
+		const props = observe_props(target, events);
+
+		const normalized = copy_spread_props(props);
+
+		expect(normalized === props).toBe(false);
+		expect(events).toEqual([
+			'ownKeys',
+			'descriptor:id',
+			'get:id',
+			'descriptor:title',
+			'get:title',
+			'getter:title',
+		]);
+		expect(normalized).toEqual({ id: 'plain', title: 'Title' });
+	});
+
+	it('copies an ordinary-ref spread for a runtime that copies it', () => {
+		/** @type {string[]} */
+		const events = [];
+		/** @param {object | null} _node */
+		const plain_ref = (_node) => {};
+		const target = {
+			get title() {
+				events.push('getter:title');
+				return 'Title';
+			},
+			ref: plain_ref,
+		};
+
+		const copied = /** @type {Record<string, unknown>} */ (copy_spread_props(target));
+		const for_ref_attr = /** @type {Record<string, unknown>} */ (
+			copy_spread_props_for_ref_attr(target)
+		);
+		expect(events).toEqual(['getter:title', 'getter:title']);
+		expect(copied === target).toBe(false);
+		expect(copied).toEqual({ title: 'Title', ref: plain_ref });
+		expect(for_ref_attr.ref).toBe(plain_ref);
+		expect(Object.keys(for_ref_attr)).toEqual(['title']);
+		expect(copy_spread_props_for_ref_attr(null)).toEqual({});
+		expect(copy_spread_props(false)).toBe(false);
+	});
+
+	it('keeps an explicit `ref: undefined` in a copied spread', () => {
+		const copied = /** @type {Record<string, unknown>} */ (
+			copy_spread_props({ title: 'Title', ref: undefined })
+		);
+		expect(Object.keys(copied)).toEqual(['title', 'ref']);
+		expect(copied.ref).toBeUndefined();
+	});
+
+	it('gives a new bag with the same refs the same merged ref when sharing refs', () => {
+		/** @param {object | null} _node */
+		const own = (_node) => {};
+		const object = { current: null };
+		const named = create_ref_prop(() => own);
+		/** @param {Record<string, unknown>} bag */
+		const ref_of = (bag) =>
+			/** @type {Record<string, unknown>} */ (copy_spread_props_sharing_refs(bag)).ref;
+		/** @param {Record<string, unknown>} bag */
+		const attr_ref_of = (bag) =>
+			/** @type {Record<string, unknown>} */ (copy_spread_props_for_ref_attr_sharing_refs(bag)).ref;
+
+		const merged = ref_of({ title: '1', ref: own, extra: named });
+		expect(typeof merged).toBe('function');
+		expect(ref_of({ title: '2', ref: own, extra: named })).toBe(merged);
+		// An inline list is keyed by its refs, not by the new array.
+		expect(ref_of({ ref: [own, object], extra: named })).toBe(
+			ref_of({ ref: [own, object], extra: named }),
+		);
+		expect(attr_ref_of({ title: '3', ref: own, extra: named })).toBe(merged);
+		expect(ref_of({ ref: object, extra: named })).not.toBe(merged);
+		expect(ref_of({ ref: false, extra: named })).toBe(named);
+		expect(ref_of({ ref: object })).toBe(object);
+
+		const attr_bag = copy_spread_props_for_ref_attr_sharing_refs({ title: '4', extra: named });
+		expect(Object.keys(attr_bag)).toEqual(['title']);
+		expect(/** @type {Record<string, unknown>} */ (attr_bag).ref).toBe(named);
+
+		// Without sharing, each bag's refs merge into a new callback.
+		const own_ref = /** @type {Record<string, unknown>} */ (
+			copy_spread_props({ ref: own, extra: named })
+		).ref;
+		expect(
+			/** @type {Record<string, unknown>} */ (copy_spread_props({ ref: own, extra: named })).ref,
+		).not.toBe(own_ref);
+	});
+
+	it("merges a ref list that is a bag's only ref", () => {
+		/** @type {Array<[string, unknown]>} */
+		const calls = [];
+		/** @param {string} name */
+		const log_ref = (name) => /** @param {object | null} node */ (node) => {
+			calls.push([name, node]);
+		};
+		const first = log_ref('first');
+		const second = log_ref('second');
+		/** @type {{ current: object | null }} */
+		const object = { current: null };
+		const node = {};
+		/** @param {unknown} bag */
+		const ref_of = (bag) => /** @type {Record<string, unknown>} */ (bag).ref;
+
+		for (const normalize of [
+			copy_spread_props,
+			copy_spread_props_sharing_refs,
+			copy_spread_props_for_ref_attr,
+			copy_spread_props_for_ref_attr_sharing_refs,
+			normalize_spread_props_for_ref_attr,
+		]) {
+			calls.length = 0;
+			const bag = /** @type {Record<string, unknown>} */ (
+				normalize({ title: 't', ref: [first, [second, object]] })
+			);
+			expect(bag.title).toBe('t');
+			const ref = /** @type {(node: object | null) => () => void} */ (bag.ref);
+			expect(typeof ref).toBe('function');
+			const cleanup = ref(node);
+			expect(calls).toEqual([
+				['first', node],
+				['second', node],
+			]);
+			expect(object.current).toBe(node);
+			cleanup();
+			expect(calls.slice(2)).toEqual([
+				['first', null],
+				['second', null],
+			]);
+			expect(object.current).toBe(null);
+
+			// A list of one callback gives back that callback. An empty list still
+			// replaces an earlier spread's ref, as its `ref` key would in native JSX.
+			expect(ref_of(normalize({ ref: [first, false] }))).toBe(first);
+			const empty = /** @type {object} */ (normalize({ ref: [] }));
+			expect('ref' in empty).toBe(true);
+			expect(ref_of(empty)).toBeUndefined();
+		}
+
+		// Sharing refs, a new list with the same refs gives back the same callback.
+		expect(ref_of(copy_spread_props_sharing_refs({ ref: [first, second] }))).toBe(
+			ref_of(copy_spread_props_for_ref_attr_sharing_refs({ ref: [first, second] })),
+		);
+
+		// Solid's spread takes a ref list and reads the bag lazily, so the bag
+		// comes back as itself.
+		const solid_bag = { title: 't', ref: [first, second] };
+		expect(normalize_spread_props(solid_bag)).toBe(solid_bag);
+	});
+
+	it("merges a ref list's lone ref object into a callback", () => {
+		const node = {};
+		/** @param {unknown} bag */
+		const ref_of = (bag) => /** @type {Record<string, unknown>} */ (bag).ref;
+
+		for (const normalize of [
+			copy_spread_props,
+			copy_spread_props_sharing_refs,
+			copy_spread_props_for_ref_attr,
+			copy_spread_props_for_ref_attr_sharing_refs,
+			normalize_spread_props_for_ref_attr,
+		]) {
+			for (const object of [{ current: null }, { value: null }]) {
+				const ref = /** @type {(node: object | null) => () => void} */ (
+					ref_of(normalize({ ref: [object, null] }))
+				);
+				expect(typeof ref).toBe('function');
+				const cleanup = ref(node);
+				expect(Object.values(object)).toEqual([node]);
+				cleanup();
+				expect(Object.values(object)).toEqual([null]);
+			}
+		}
+
+		// Sharing refs, a new list with the same ref object gives back the same
+		// callback, and a bag whose `ref` is the object itself still passes it on.
+		const object = { value: null };
+		expect(ref_of(copy_spread_props_sharing_refs({ ref: [object] }))).toBe(
+			ref_of(copy_spread_props_for_ref_attr_sharing_refs({ ref: [[object]] })),
+		);
+		expect(ref_of(copy_spread_props_sharing_refs({ ref: object }))).toBe(object);
+		expect(ref_of(copy_spread_props({ ref: object }))).toBe(object);
 	});
 
 	it('preserves explicit ordinary-ref reads, source state, and the selected ref value', () => {
@@ -1561,6 +1872,35 @@ describe('spread ref normalization', () => {
 			expect(normalized.ref).toBeUndefined();
 			expect({ ...normalized }).toEqual({});
 		}
+	});
+
+	it('gives a new bag with the same refs the same merged ref when sharing refs', () => {
+		/** @param {object | null} _node */
+		const own = (_node) => {};
+		const object = { current: null };
+		const named = create_ref_prop(() => own);
+		/** @param {Record<string, unknown>} bag */
+		const ref_of = (bag) =>
+			/** @type {Record<string, unknown>} */ (normalize_spread_props_sharing_refs(bag)).ref;
+
+		const merged = ref_of({ title: '1', ref: own, extra: named });
+		expect(typeof merged).toBe('function');
+		expect(ref_of({ title: '2', ref: own, extra: named })).toBe(merged);
+		expect(ref_of({ ref: object, extra: named })).not.toBe(merged);
+		expect(ref_of({ ref: false, extra: named })).toBe(named);
+		expect(ref_of({ extra: named, other: named })).toBe(ref_of({ extra: named, other: named }));
+
+		const plain = { title: 'plain', ref: own };
+		expect(normalize_spread_props_sharing_refs(plain)).toBe(plain);
+
+		// Without sharing, each bag's refs merge into a new callback.
+		const own_ref = /** @type {Record<string, unknown>} */ (
+			normalize_spread_props({ ref: own, extra: named })
+		).ref;
+		expect(
+			/** @type {Record<string, unknown>} */ (normalize_spread_props({ ref: own, extra: named }))
+				.ref,
+		).not.toBe(own_ref);
 	});
 
 	it('passes a single collected ref through unwrapped', () => {
@@ -1911,5 +2251,212 @@ describe('spread ref normalization', () => {
 			['second', node],
 			['outer', node],
 		]);
+	});
+});
+
+describe('join_scope_class', () => {
+	it('leaves out a class the runtime would not render and joins any other as text', () => {
+		for (const value of [undefined, null, false, true, '']) {
+			expect(join_scope_class(value, 'tsrx-a')).toBe('tsrx-a');
+		}
+		expect(join_scope_class('x y', 'tsrx-a tsrx-b')).toBe('x y tsrx-a tsrx-b');
+		expect(join_scope_class(0, 'tsrx-a')).toBe('0 tsrx-a');
+		expect(join_scope_class(['a', 'b'], 'tsrx-a')).toBe('a,b tsrx-a');
+		expect(join_scope_class({ toString: () => 'css-1' }, 'tsrx-a')).toBe('css-1 tsrx-a');
+	});
+
+	it("joins a promise class once it settles on Hono's server, keeping an escaped value and its callbacks", async () => {
+		const callbacks = [() => {}];
+		const escaped = Object.assign(new String('css-1'), { isEscaped: true, callbacks });
+
+		const joined = /** @type {any} */ (
+			await join_scope_class(Promise.resolve(escaped), 'tsrx-a', 'text-both')
+		);
+		expect(String(joined)).toBe('css-1 tsrx-a');
+		expect(joined.isEscaped).toBe(true);
+		expect(joined.callbacks).toBe(callbacks);
+
+		expect(join_scope_class(Promise.resolve('css-2'), 'tsrx-a', 'text-both')).toBeInstanceOf(
+			Promise,
+		);
+		expect(await join_scope_class(Promise.resolve('css-2'), 'tsrx-a', 'text-both')).toBe(
+			'css-2 tsrx-a',
+		);
+		expect(await join_scope_class(Promise.resolve(undefined), 'tsrx-a', 'text-both')).toBe(
+			'tsrx-a',
+		);
+	});
+
+	it('joins any other thenable class as text, through its own toString', () => {
+		// Like Hono DOM's `css` promise, whose toString inserts its rule.
+		const css_promise = Object.assign(Promise.resolve('ignored'), { toString: () => 'css-1' });
+		expect(join_scope_class(css_promise, 'tsrx-a')).toBe('css-1 tsrx-a');
+		expect(join_scope_class(css_promise, 'tsrx-a', 'text-true')).toBe('css-1 tsrx-a');
+		// Hono's server prints a thenable that is not a Promise as text.
+		const thenable = { then: () => {}, toString: () => 'css-2' };
+		expect(join_scope_class(thenable, 'tsrx-a', 'text-both')).toBe('css-2 tsrx-a');
+	});
+
+	it('joins a boolean class as text where the runtime renders it', () => {
+		expect(join_scope_class(true, 'tsrx-a', 'text-true')).toBe('true tsrx-a');
+		expect(join_scope_class(false, 'tsrx-a', 'text-true')).toBe('tsrx-a');
+		expect(join_scope_class(true, 'tsrx-a', 'text-both')).toBe('true tsrx-a');
+		expect(join_scope_class(false, 'tsrx-a', 'text-both')).toBe('false tsrx-a');
+		expect(join_scope_class(null, 'tsrx-a', 'text-both')).toBe('tsrx-a');
+	});
+
+	it('joins an object or a list class as a list and leaves out other values', () => {
+		const object = { active: true };
+		const list = ['a', false];
+		expect(join_scope_class(object, 'tsrx-a', 'list')).toEqual([object, 'tsrx-a']);
+		expect(join_scope_class(list, 'tsrx-a', 'list')).toEqual([list, 'tsrx-a']);
+		expect(join_scope_class('x', 'tsrx-a', 'list')).toBe('x tsrx-a');
+		for (const value of [undefined, null, false, true, '', 0, 1, () => 'x']) {
+			expect(join_scope_class(value, 'tsrx-a', 'list')).toBe('tsrx-a');
+		}
+	});
+});
+
+describe('merge_spread_class', () => {
+	it('returns a bag without a class, or no bag, as it is', () => {
+		const bag = { id: 'a', class: 'ignored by React' };
+
+		expect(merge_spread_class(bag, 'tsrx-a', 'className')).toBe(bag);
+		for (const falsy of /** @type {const} */ ([null, undefined, false, 0, ''])) {
+			expect(merge_spread_class(falsy, 'tsrx-a', 'className')).toBe(falsy);
+		}
+	});
+
+	it("joins the bag's class with the scope classes without writing to the bag", () => {
+		const bag = Object.freeze({ className: 'x', id: 'a' });
+		const merged = merge_spread_class(bag, 'tsrx-a tsrx-b', 'className');
+
+		expect({ ...merged }).toEqual({ id: 'a', className: 'x tsrx-a tsrx-b' });
+		expect(bag).toEqual({ className: 'x', id: 'a' });
+	});
+
+	for (const empty of [undefined, null, false, '']) {
+		it(`keeps only the scope classes for a ${JSON.stringify(empty) ?? 'undefined'} class`, () => {
+			expect({ ...merge_spread_class({ class: empty }, 'tsrx-a', 'class') }).toEqual({
+				class: 'tsrx-a',
+			});
+		});
+	}
+
+	it('moves the class of the other prop a target reads to the key', () => {
+		expect({
+			...merge_spread_class({ className: 'x', id: 'a' }, 'tsrx-a', 'class', 'className'),
+		}).toEqual({
+			id: 'a',
+			class: 'x tsrx-a',
+		});
+		// Of both, the later prop wins, as it would in plain JSX.
+		expect({
+			...merge_spread_class({ class: 'x', className: 'y' }, 'tsrx-a', 'class', 'className'),
+		}).toEqual({
+			class: 'y tsrx-a',
+		});
+	});
+
+	for (const bag of [
+		{ class: 'x', className: undefined },
+		{ className: 'x', class: undefined },
+		{ className: null, class: 'x' },
+	]) {
+		it(`reads the class prop with a value from ${Object.keys(bag).join(' then ')}`, () => {
+			expect({ ...merge_spread_class(bag, 'tsrx-a', 'class', 'className') }).toEqual({
+				class: 'x tsrx-a',
+			});
+		});
+	}
+
+	it('leaves out both class props for a spread written before the class attribute', () => {
+		const bag = { className: 'x', class: 'y', id: 'a' };
+
+		const plain = { id: 'a' };
+
+		expect({ ...merge_spread_class(bag, null, 'class', 'className') }).toEqual({ id: 'a' });
+		expect(merge_spread_class(plain, null, 'class', 'className')).toBe(plain);
+	});
+
+	it('joins a class of another type as text, as the class attribute does', () => {
+		const css = { toString: () => 'css-class' };
+
+		expect(merge_spread_class({ className: ['a', 'b'] }, 'tsrx-a', 'className').className).toBe(
+			'a,b tsrx-a',
+		);
+		expect(merge_spread_class({ class: css }, 'tsrx-a', 'class', 'className').class).toBe(
+			'css-class tsrx-a',
+		);
+	});
+
+	it("joins a promise class as text, or once it settles on Hono's server", async () => {
+		const promise = Object.assign(Promise.resolve('css-class'), { toString: () => 'css-text' });
+
+		expect(merge_spread_class({ class: promise }, 'tsrx-a', 'class', 'className').class).toBe(
+			'css-text tsrx-a',
+		);
+		expect(
+			await merge_spread_class({ class: promise }, 'tsrx-a', 'class', 'className', 'text-both')
+				.class,
+		).toBe('css-class tsrx-a');
+	});
+
+	it('joins a boolean class as the target renders it', () => {
+		/** @param {unknown} value @param {any} [kind] */
+		const joined = (value, kind) =>
+			merge_spread_class({ class: value }, 'tsrx-a', 'class', undefined, kind).class;
+
+		expect(joined(true)).toBe('tsrx-a');
+		expect(joined(false)).toBe('tsrx-a');
+		expect(joined(true, 'text-true')).toBe('true tsrx-a');
+		expect(joined(false, 'text-true')).toBe('tsrx-a');
+		expect(joined(false, 'text-both')).toBe('false tsrx-a');
+	});
+
+	it('keeps a class object or list as a list for a target whose class takes one', () => {
+		const object = { active: true };
+		const list = ['a', { b: true }];
+
+		expect(
+			merge_spread_class({ class: object }, 'tsrx-a', 'class', undefined, 'list').class,
+		).toEqual([object, 'tsrx-a']);
+		expect(merge_spread_class({ class: list }, 'tsrx-a', 'class', undefined, 'list').class).toEqual(
+			[list, 'tsrx-a'],
+		);
+		expect(merge_spread_class({ class: 'x' }, 'tsrx-a', 'class', undefined, 'list').class).toBe(
+			'x tsrx-a',
+		);
+		// Solid renders no class for these, so only the scope classes apply.
+		for (const value of [0, 1, true, () => 'x']) {
+			expect(merge_spread_class({ class: value }, 'tsrx-a', 'class', undefined, 'list').class).toBe(
+				'tsrx-a',
+			);
+		}
+	});
+
+	it('reads each prop from the bag only when the copy is read', () => {
+		/** @type {string[]} */
+		const reads = [];
+		let current = 'one';
+		const bag = {
+			get class() {
+				reads.push('class');
+				return current;
+			},
+			get children() {
+				reads.push('children');
+				return 'child';
+			},
+		};
+
+		const merged = merge_spread_class(bag, 'tsrx-a', 'class');
+		expect(reads).toEqual([]);
+
+		expect(merged.class).toBe('one tsrx-a');
+		current = 'two';
+		expect(merged.class).toBe('two tsrx-a');
+		expect(merged.children).toBe('child');
+		expect(reads).toEqual(['class', 'class', 'children']);
 	});
 });

@@ -433,6 +433,35 @@ export function List({ items =${whitespace}EMPTY_ARRAY as string[] }: { items?: 
 		});
 	});
 
+	describe(`[${name}] computed key brackets`, () => {
+		it.each([
+			['class A { [k]() {} }', '[k]'],
+			['class A { [ k ]() {} }', '[ k ]'],
+			['class A { [/* c */ k]() {} }', '[/* c */ k]'],
+			['const o = { [\n\tk\n]: 1 };', '[\n\tk\n]'],
+			// The decorator's argument holds the first `[` inside the member.
+			[
+				'function dec(...args: unknown[]) { return () => {}; }\nclass A { @dec([1]) [k]() {} }',
+				'[k]',
+			],
+		])('maps the brackets of %j', (code, key) => {
+			const source = `declare const k: string;\n${code}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const source_offset = source.lastIndexOf(key);
+			const mapping = result.mappings.find(
+				(candidate) =>
+					candidate.sourceOffsets[0] === source_offset && candidate.lengths[0] === key.length,
+			);
+			assert(mapping, `no mapping covers ${JSON.stringify(key)}`);
+			const generated_start = mapping.generatedOffsets[0];
+			const generated = result.code.slice(
+				generated_start,
+				generated_start + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+			);
+			expect(generated.startsWith('[') && generated.endsWith(']')).toBe(true);
+		});
+	});
+
 	describe(`[${name}] source mappings do not crash for`, () => {
 		/**
 		 * @param {string} source
@@ -673,7 +702,7 @@ function App({ tag }: { tag: string }) @{
 
 			expect(mapping?.data.completion).toBe(true);
 		});
-		it('keeps a recovered unclosed tag unclosed and mapped from its own `<`', () => {
+		it('closes a recovered unclosed tag with no mapping, and maps it from its own `<`', () => {
 			const source = `export function App() @{
 	<>
 		<span>
@@ -687,9 +716,9 @@ function App({ tag }: { tag: string }) @{
 			const generated_close = result.code.lastIndexOf('</span>');
 
 			expect(generated_open).toBeGreaterThan(-1);
-			// No synthesized `</span>`: TypeScript sees the tag as authored (TS17008,
-			// and its closing-tag completion can offer `</span>`).
-			expect(generated_close).toBe(-1);
+			// A synthesized `</span>`, so the code is valid TSX and TypeScript adds
+			// no TS17008 to the parser's TSRX1001 (#978). Its name has no mapping.
+			expect(generated_close).toBeGreaterThan(generated_open);
 
 			/** @param {CodeMapping | undefined} entry */
 			const mapped_source = function (entry) {
@@ -721,10 +750,7 @@ function App({ tag }: { tag: string }) @{
 			expect(mapped_source(open_lt_mapping)).toBe('<');
 			expect(early_name_mapping, 'close name must not map to `<spa`').toBeUndefined();
 			expect(source.slice(name_offset, name_offset + 'span'.length)).toBe('span');
-			for (const mapping of close_name_mappings) {
-				expect(mapped_source(mapping)).toBe('span');
-				expect(mapping.sourceOffsets[0]).toBe(name_offset);
-			}
+			expect(close_name_mappings).toEqual([]);
 		});
 		it('keeps DOM attribute completions when scoped styles are present', () => {
 			const source = `function C() @{
@@ -1337,6 +1363,28 @@ function C() @{
 }`);
 		});
 
+		it.each([
+			['decorated', 'declare function dec(...args: unknown[]): any;\n@dec class Store {}'],
+			[
+				'exported decorated',
+				'declare function dec(...args: unknown[]): any;\nexport @dec class Store {}',
+			],
+			['abstract', 'abstract class Store {}'],
+			['declared', 'declare class Store {}'],
+			['expression', 'const Store = class {};'],
+		])('maps the class keyword of a %s class', (_kind, source) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const source_class_offset = source.search(/\bclass\b/);
+			const generated_class_offset = result.code.search(/\bclass\b/);
+			const mapping = find_exact_mapping(
+				result.mappings,
+				source_class_offset,
+				generated_class_offset,
+				'class'.length,
+			);
+			expect(mapping).toBeDefined();
+		});
+
 		it('maps anonymous default class keywords', () => {
 			expect_class_keyword_mapping(`export default class {
 	value = 1;
@@ -1735,6 +1783,90 @@ export function App() @{
 			);
 			expect(unmapped.map((match) => `${match[0]}@${match.index}`)).toEqual([]);
 		});
+	});
+
+	describe(`[${name}] nested type and option children keep mappings`, () => {
+		/**
+		 * Whether a verification mapping covers exactly the `text` that starts at
+		 * `offset` in `source` and maps to the same text in the generated code.
+		 * @param {{ code: string, mappings: CodeMapping[] }} result
+		 * @param {number} offset
+		 * @param {string} text
+		 */
+		const is_mapped = (result, offset, text) =>
+			result.mappings.some(
+				(mapping) =>
+					mapping.sourceOffsets[0] === offset &&
+					mapping.lengths[0] === text.length &&
+					mapping.data.verification &&
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					) === text,
+			);
+
+		it.each([
+			['import type arguments', "export type A = import('./store').Store<Missing>;"],
+			['typeof import type arguments', "export type B = typeof import('./store').create<Missing>;"],
+			['import() options', "export const a = import('./data', { with: { type: Missing } });"],
+			[
+				'import.defer() options',
+				"export const b = import.defer('./data', { with: { type: Missing } });",
+			],
+			['declare function parameter types', 'export declare function f(options: Missing): void;'],
+			[
+				'overload signature parameter types',
+				'export function f(options: Missing): void;\nexport function f(options: unknown) {}',
+			],
+			['mapped type key remapping', 'export type M<T> = { [K in keyof T as Missing]: T[K] };'],
+		])('maps a name in the %s', (_kind, source) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(is_mapped(result, source.indexOf('Missing'), 'Missing')).toBe(true);
+		});
+
+		it.each([
+			"export type M = import('./store');",
+			"export type M = import('./store').Store<string>;",
+			"export type M = import('./store', { with: { 'resolution-mode': 'import' } }).Store;",
+			"export type M = typeof import('./store').create<string>;",
+		])('maps the whole import type in %j', (source) => {
+			// TypeScript reports TS1340 (a module used as a type without `typeof`)
+			// on the whole import type.
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const start = source.indexOf('import(');
+			expect(is_mapped(result, start, source.slice(start, -1))).toBe(true);
+		});
+
+		it.each(['T[K]', '{}', '[K]', '() => void'])(
+			'maps the whole key remapping type `as %s`',
+			(type) => {
+				// TypeScript reports a key type that is not a property key (TS2322) on
+				// the whole remapping type.
+				const source = `export type M<T> = { [K in keyof T as ${type}]: 1 };`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				expect(result.errors).toEqual([]);
+				const start = source.indexOf(`as ${type}`) + 'as '.length;
+				// The printer writes an empty type literal as `{  }`.
+				const generated = result.mappings
+					.filter(
+						(mapping) =>
+							mapping.sourceOffsets[0] === start &&
+							mapping.lengths[0] === type.length &&
+							mapping.data.verification,
+					)
+					.map((mapping) =>
+						result.code
+							.slice(
+								mapping.generatedOffsets[0],
+								mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+							)
+							.replace(/\s+/g, ''),
+					);
+				expect(generated).toContain(type.replace(/\s+/g, ''));
+			},
+		);
 	});
 
 	describe(`[${name}] submodule import mappings`, () => {
@@ -2554,6 +2686,28 @@ function App() @{
 		};
 
 		const SOURCES = {
+			'static JSX in expression containers': `function Card(props: { header: unknown; children?: unknown }) {
+	return null;
+}
+export function Plain(props: { on: boolean; n: number }) {
+	return <>
+		{<b>child</b>}
+		<div title={String(props.n)}>
+			{<i>in a dynamic element</i>}
+			<Card header={<h1>header</h1>}>{<span>card child</span>}</Card>
+			{props.on ? <em>on</em> : <s>off</s>}
+			{props.on && <u>and</u>}
+			{<p title={String(props.n)}>{<small>nested</small>}</p>}
+			{<><a>one</a><a>two</a></>}
+		</div>
+	</>;
+}
+export function Template(props: { on: boolean }) @{
+	<div title={String(props.on)}>
+		{<b>child</b>}
+		{props.on ? <em>on</em> : <s>off</s>}
+	</div>
+}`,
 			'component with template control flow': `function App(props: { items: string[] }) @{
 	<div>
 		@if (props.items.length) {
