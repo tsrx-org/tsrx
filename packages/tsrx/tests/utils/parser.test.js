@@ -10718,6 +10718,52 @@ describe('a `<` in a file without JSX', () => {
 		}
 	});
 
+	// TypeScript's checker reports an assertion's TS7059 before it checks the
+	// operand (#1326).
+	it('reports an outer type assertion before the errors in its operand, as tsc does', () => {
+		for (const filename of ['a.mts', 'a.cts']) {
+			for (const source of [
+				'const v = <A>(<B>x);',
+				'const v = <A><B>x;',
+				'const v = <A>(<B>(<C>x));',
+				'const h = <Handler>((e) => <number>e.x);',
+				'const v = <A>((a, a) => <B>a);',
+				'const v = <A>{ m() { return <B>x; } };',
+				'const v = <A>(<B>x); const w = <C>y;',
+			]) {
+				const label = `${filename}: ${source}`;
+				const path = `/${filename}`;
+				const host = ts.createCompilerHost({});
+				const get_source_file = host.getSourceFile;
+				host.getSourceFile = (name, version) =>
+					name === path
+						? ts.createSourceFile(name, source, version)
+						: get_source_file(name, version);
+				const program = ts.createProgram(
+					[path],
+					{ noLib: true, types: [], module: ts.ModuleKind.NodeNext },
+					host,
+				);
+				const file = /** @type {ts.SourceFile} */ (program.getSourceFile(path));
+				const expected = ts
+					.sortAndDeduplicateDiagnostics([...program.getSemanticDiagnostics(file)])
+					.filter((diagnostic) => [7059, 2300].includes(diagnostic.code))
+					.map((diagnostic) => [`TS${diagnostic.code}`, diagnostic.start]);
+				expect(expected.length, label).toBeGreaterThan(1);
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, filename, { collect: true, errors, comments: [] });
+				expect(
+					errors.map((error) => [error.code, error.pos]),
+					label,
+				).toEqual(expected);
+				expect(() => parseModule(source, filename), label).toThrow(
+					expect.objectContaining({ code: expected[0][0], pos: expected[0][1] }),
+				);
+			}
+		}
+	});
+
 	// While a `<` is tried as a generic arrow function's, a strict parse holds
 	// its TS7059 and TS7060. Thrown there, a type assertion in the parameters
 	// ended the attempt, and the `<` was read as a type assertion's, which
