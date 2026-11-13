@@ -3,7 +3,12 @@
 /** @import { CssPruneDirection, Visitors, TopScopedClasses, StyleClasses } from '../../types/index' */
 
 import { walk } from 'zimmerframe';
-import { child_nodes, is_function_node, node_children } from '../utils/ast.js';
+import {
+	child_nodes,
+	get_control_flow_branches,
+	is_function_node,
+	node_children,
+} from '../utils/ast.js';
 import { unescape_css } from '../parse/style.js';
 import { regex_whitespaces_strict } from '../utils/patterns.js';
 
@@ -475,29 +480,6 @@ function get_rendered_list(node) {
 			return node.body;
 		case 'SwitchCase':
 			return node.consequent;
-		default:
-			return null;
-	}
-}
-
-/**
- * The branches a control-flow directive may render, or `null` for other nodes.
- * An `@else if` is an `IfStatement` in the alternate of its `@if`.
- *
- * @param {AST.Node} node
- * @returns {Array<AST.Node | null | undefined> | null}
- */
-function get_control_flow_branches(node) {
-	switch (node.type) {
-		case 'JSXIfExpression':
-		case 'IfStatement':
-			return [node.consequent, node.alternate];
-		case 'JSXForExpression':
-			return [node.body, node.empty];
-		case 'JSXSwitchExpression':
-			return node.cases;
-		case 'JSXTryExpression':
-			return [node.block, node.pending, node.handler?.body, node.finalizer];
 		default:
 			return null;
 	}

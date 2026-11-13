@@ -1,0 +1,5 @@
+---
+'@tsrx/core': patch
+---
+
+`TSRX2035` now also warns when the only statement of a `@{ … }` puts a `<style>` block, a `@{ … }` block or a directive behind `&&`, `||`, `??` or `?:`, such as `@{ok && @if (c) { <b /> }}`, as it already did for an element or a fragment. The statement throws that output away, so the block renders nothing. Output that runs statements of its own, such as `@{ok && @{ log(user) }}` or a directive with a statement in one of its bodies, doesn't warn, as a call doesn't. Compiled output doesn't change.

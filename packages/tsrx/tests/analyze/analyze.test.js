@@ -494,6 +494,12 @@ function Directives({ c, items, k }) @{
 				'ok ? a : b',
 				'ok && name',
 				'ok ?? <b />',
+				'ok && <style>.x { color: red; }</style>',
+				'ok ? @{ <b /> } : null',
+				'ok && @if (c) { <b /> }',
+				'ok || @for (const item of items) { <b /> }',
+				'ok ?? @switch (k) { @case 1: { <b /> } }',
+				'ok && @try { <b /> } @catch (e) { <i /> }',
 				'(name)',
 				'name as string',
 				'name!',
@@ -529,6 +535,14 @@ function Directives({ c, items, k }) @{
 				'tag`text`',
 				'import("./a.js")',
 				'log(), name',
+				'ok && @{ log(user) }',
+				'ok ? @{ log(user); <b /> } : null',
+				'ok && @if (c) { log(user) }',
+				'ok && @if (c) { <b /> } @else { @{ log(user) } }',
+				'ok || @for (const item of items) { log(item); <b /> }',
+				'ok && @for (const item of items) { <b /> } @empty { log(user) }',
+				'ok ?? @switch (k) { @case 1: { log(user); <b /> } }',
+				'ok && @try { <b /> } @catch (e) { log(e); <i /> }',
 			];
 			for (const expression of expressions) {
 				expect(warnings(`async function* A() @{ <p>@{${expression}}</p> }`), expression).toEqual(
