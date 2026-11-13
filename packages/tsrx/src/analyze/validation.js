@@ -291,11 +291,13 @@ function is_value_wrapper(node) {
  * or a call, but the statement adds nothing to what it computes. A call, `new`,
  * an assignment, `++`, `--`, `delete`, `void`, `await`, `yield` or `import()`
  * may be there for its effect, and so may an `&&`, `||`, `??` or `?:` that can
- * end in one.
+ * end in one. Render output (an element, a fragment, a `<style>` block, a
+ * `@{ … }` block or a directive) is a value too: a statement throws it away.
  * @param {AST.Node} node
  * @returns {boolean}
  */
 function is_value_only(node) {
+	if (is_tsrx_render_output_node(node)) return true;
 	switch (node.type) {
 		case 'Identifier':
 		case 'Literal':
@@ -309,8 +311,6 @@ function is_value_only(node) {
 		case 'FunctionExpression':
 		case 'ArrowFunctionExpression':
 		case 'ClassExpression':
-		case 'JSXElement':
-		case 'JSXFragment':
 			return true;
 		case 'UnaryExpression':
 			return node.operator !== 'void' && node.operator !== 'delete';
