@@ -10730,6 +10730,9 @@ describe('a `<` in a file without JSX', () => {
 				'const v = <A>((a, a) => <B>a);',
 				'const v = <A>{ m() { return <B>x; } };',
 				'const v = <A>(<B>x); const w = <C>y;',
+				// The parenthesized operand is tried as an arrow function's parameters
+				// first, which threw TS1012 in a strict parse.
+				'const v = <A>((x ? <B>y : z));',
 			]) {
 				const label = `${filename}: ${source}`;
 				const path = `/${filename}`;
