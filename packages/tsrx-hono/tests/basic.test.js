@@ -294,6 +294,21 @@ describe('@tsrx/hono DOM compiler', () => {
 		expect(result.code).toContain('readonly android: false');
 	});
 
+	// The shared tests compile Hono for its server renderer (#1304).
+	it.each([
+		['an unclosed tag', 'function App() {\n\treturn <div>{<b>}</div>;\n}', '<b></b>'],
+		['an unclosed fragment', 'function App() {\n\treturn <div>{<>}</div>;\n}', '<></>'],
+	])('closes %s in braces in a loose compile, as when collecting', (_label, source, closed) => {
+		const loose = compileDom(source, 'App.tsrx', { loose: true });
+		const collected = compileDom(source, 'App.tsrx', { collect: true });
+
+		expect(loose.errors.map((error) => [error.code, error.pos, error.end])).toEqual(
+			collected.errors.map((error) => [error.code, error.pos, error.end]),
+		);
+		expect(loose.errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG.code]);
+		expect(loose.code).toContain(closed);
+	});
+
 	it.each([
 		'const UI = { App: async () => <div /> }; const view = <UI.App />;',
 		'const UI = { nested: { App: async () => <div /> } }; const view = <UI.nested.App />;',

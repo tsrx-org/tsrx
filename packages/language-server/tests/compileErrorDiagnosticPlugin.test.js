@@ -368,6 +368,20 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		['UnclosedTag', 'export function C() @{\n\t<div>\n}\n', 'TSRX1001', '<div>'],
 		['MismatchedTag', 'export function C() @{\n\t<div><span></div>\n}\n', 'TSRX1002', '</div>'],
 		['UnclosedReturnedTag', 'export function C() {\n\treturn <div>;\n}\n', 'TSRX1001', '<div>'],
+		// In braces, where a static element is hoisted out of the walk that
+		// closes the tag (#1307).
+		[
+			'UnclosedTagInBraces',
+			'export function C() {\n\treturn <div>{<b>}</div>;\n}\n',
+			'TSRX1001',
+			'<b>',
+		],
+		[
+			'UnclosedTagInBracesInTemplate',
+			'export function C() @{\n\t<div>{<b>}</div>\n}\n',
+			'TSRX1001',
+			'<b>',
+		],
 	])('reports %s once, near the tag', async (name, source, code, near) => {
 		const { document, diagnostics } = await editor_diagnostics_for(name, source);
 
@@ -381,7 +395,7 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 			diagnostics
 				.filter((diagnostic) => diagnostic.source === 'ts')
 				.map((diagnostic) => diagnostic.code)
-				.filter((ts_code) => ts_code === 17008 || ts_code === 1005 || ts_code === 17002),
+				.filter((ts_code) => [17008, 1005, 17002, 1381].includes(Number(ts_code))),
 		).toEqual([]);
 	});
 
@@ -502,6 +516,30 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		expect(reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([
 			{ source: DIAGNOSTIC_SOURCE, text: 'A', offset: source.indexOf('A') },
 		]);
+	});
+
+	// A `<>` in braces was printed unclosed and threw a TypeError, which the
+	// editor showed at the start of the file (#1304).
+	it.each([
+		['FragmentInBraces', 'export function C() {\n\treturn <div>{<>}</div>;\n}\n'],
+		['FragmentInBracesInTemplate', 'export function C() @{\n\t<div>{<>}</div>\n}\n'],
+	])('reports the unclosed fragment of %s on the `<>`', async (name, source) => {
+		const { document, diagnostics } = await editor_diagnostics_for(name, source);
+
+		expect(
+			diagnostics
+				.filter((diagnostic) => diagnostic.source === DIAGNOSTIC_SOURCE)
+				.map((diagnostic) => [diagnostic.code, document.getText(diagnostic.range)]),
+		).toEqual([[TSRX_ERRORS.UNCLOSED_TAG.code, '<>']]);
+		expect(reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([
+			{ source: DIAGNOSTIC_SOURCE, text: '<>', offset: source.indexOf('<>') },
+		]);
+		// The harness has no JSX types (TS7026).
+		expect(
+			diagnostics
+				.filter((diagnostic) => diagnostic.source === 'ts' && diagnostic.code !== 7026)
+				.map((diagnostic) => diagnostic.code),
+		).toEqual([]);
 	});
 
 	// The editor's code leaves a repeated modifier out, but the compile anchors

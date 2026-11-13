@@ -81,6 +81,32 @@ const BROKEN_MARKUP = [
 		TSRX_ERRORS.UNCLOSED_TAG,
 		'</div>',
 	],
+	// In an expression container, where a static element is hoisted out of the
+	// walk that closes the tag (#1304, #1307).
+	[
+		'an unclosed tag in braces',
+		'function App() {\n\treturn <div>{<b>}</div>;\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</b>',
+	],
+	[
+		'an unclosed tag in braces in a template',
+		'function App() @{\n\t<div>{<b>}</div>\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</b>',
+	],
+	[
+		'an unclosed fragment in braces',
+		'function App() {\n\treturn <div>{<>}</div>;\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</>',
+	],
+	[
+		'an unclosed fragment in braces in a template',
+		'function App() @{\n\t<div>{<>}</div>\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</>',
+	],
 ];
 
 /**
