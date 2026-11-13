@@ -986,6 +986,9 @@ function lower_dynamic_jsx_element(node, transform_context) {
 			has_location(node) ? node : undefined,
 		);
 		element.metadata = { ...(node.metadata || {}), path: [] };
+		// A tag recovered as unclosed gets the closing tag the type-only output
+		// adds for one (#978).
+		if (node.unclosed) element.unclosed = true;
 		return element;
 	};
 

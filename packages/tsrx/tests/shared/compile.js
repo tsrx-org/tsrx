@@ -107,6 +107,24 @@ const BROKEN_MARKUP = [
 		TSRX_ERRORS.UNCLOSED_TAG,
 		'</>',
 	],
+	[
+		'an unclosed tag in an attribute value',
+		'function App() {\n\treturn <div title={<b>}></div>;\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</b>',
+	],
+	[
+		'an unclosed fragment in an attribute value',
+		'function App() {\n\treturn <div title={<>}></div>;\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</>',
+	],
+	[
+		'an unclosed dynamic tag in braces',
+		'function App({ Tag }) @{\n\t<div>{<{Tag}>}</div>\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</TsrxDynamic>',
+	],
 ];
 
 /**
