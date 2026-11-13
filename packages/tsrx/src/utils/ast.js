@@ -230,6 +230,29 @@ export function is_template_directive(node) {
 }
 
 /**
+ * The branches a control-flow directive may render, or `null` for other nodes.
+ * An `@else if` is an `IfStatement` in the alternate of its `@if`.
+ *
+ * @param {AST.Node} node
+ * @returns {Array<AST.Node | null | undefined> | null}
+ */
+export function get_control_flow_branches(node) {
+	switch (node.type) {
+		case 'JSXIfExpression':
+		case 'IfStatement':
+			return [node.consequent, node.alternate];
+		case 'JSXForExpression':
+			return [node.body, node.empty];
+		case 'JSXSwitchExpression':
+			return node.cases;
+		case 'JSXTryExpression':
+			return [node.block, node.pending, node.handler?.body, node.finalizer];
+		default:
+			return null;
+	}
+}
+
+/**
  * Any source AST node that can be the rendered output of a TSRX template or
  * statement container.
  *

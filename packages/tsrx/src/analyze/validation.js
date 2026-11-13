@@ -7,7 +7,7 @@
 
 import { error } from '../errors.js';
 import { TSRX_ERRORS } from '../diagnostics.js';
-import { is_tsrx_render_output_node } from '../utils/ast.js';
+import { get_control_flow_branches, is_tsrx_render_output_node } from '../utils/ast.js';
 
 // The messages of `TSRX_ERRORS` entries, under the names `@tsrx/core` exports
 // them by, for matching an error that has no code, such as one from an older
@@ -293,11 +293,12 @@ function is_value_wrapper(node) {
  * may be there for its effect, and so may an `&&`, `||`, `??` or `?:` that can
  * end in one. Render output (an element, a fragment, a `<style>` block, a
  * `@{ … }` block or a directive) is a value too: a statement throws it away.
+ * Output that runs statements of its own may be there for them, as a call may.
  * @param {AST.Node} node
  * @returns {boolean}
  */
 function is_value_only(node) {
-	if (is_tsrx_render_output_node(node)) return true;
+	if (is_tsrx_render_output_node(node)) return !runs_statements(node);
 	switch (node.type) {
 		case 'Identifier':
 		case 'Literal':
@@ -323,6 +324,41 @@ function is_value_only(node) {
 		default:
 			return is_value_wrapper(node) && is_value_only(node.expression);
 	}
+}
+
+/**
+ * Whether evaluating render output `node` runs statements of its own: the setup
+ * code of a `@{ … }` block, or statements in a body of a directive, nested
+ * output included. An element's children are left out, as `is_value_only`
+ * judges only the outermost operation.
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function runs_statements(node) {
+	switch (node.type) {
+		case 'JSXCodeBlock':
+			return node.body.length > 0 || (!!node.render && runs_statements(node.render));
+		case 'BlockStatement':
+			return node.body.some(statement_runs);
+		case 'SwitchCase':
+			return node.consequent.some(statement_runs);
+		default:
+			return !!get_control_flow_branches(node)?.some(
+				(branch) => !!branch && runs_statements(branch),
+			);
+	}
+}
+
+/**
+ * Whether `statement`, in a body of a directive, runs code: any statement that
+ * isn't render output, or output that runs statements.
+ * @param {AST.Node} statement
+ * @returns {boolean}
+ */
+function statement_runs(statement) {
+	return statement.type === 'BlockStatement' || is_tsrx_render_output_node(statement)
+		? runs_statements(statement)
+		: true;
 }
 
 /**
