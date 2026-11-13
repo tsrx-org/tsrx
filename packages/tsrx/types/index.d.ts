@@ -720,7 +720,10 @@ declare module 'estree' {
 	interface TryStatement {
 		statementType?: 'TryStatement';
 		pending?: AST.BlockStatement | null;
-		/** Span of the `@pending` keyword; only present when `pending` is. */
+		/**
+		 * Span of the `@pending` keyword, or of `pending` after a plain `try`; only
+		 * present when `pending` is.
+		 */
 		pendingKeyword?: AST.NodeWithLocation | null;
 		/** Span of the `@catch` keyword; only present when `handler` is. */
 		handlerKeyword?: AST.NodeWithLocation | null;

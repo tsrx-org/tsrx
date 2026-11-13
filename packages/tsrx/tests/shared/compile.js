@@ -887,6 +887,32 @@ export const p = 1
 	});
 
 	describe(`[${name}] compile diagnostics`, () => {
+		it('reports a pending block on a plain try, and keeps and maps its code (#1303)', () => {
+			for (const source of [
+				'export function f() {\n\ttry {\n\t\ta();\n\t} pending {\n\t\tb();\n\t}\n}\n',
+				'export function f() {\n\ttry { a(); } pending { b(); } catch (e) { c(); } finally { d(); }\n}\n',
+				'export function App() @{\n\ttry { a(); } pending { b(); }\n\t<div />\n}\n',
+			]) {
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(
+					result.errors.map((error) => [error.code, error.pos]),
+					source,
+				).toEqual([[TS_ERRORS.CATCH_OR_FINALLY_EXPECTED.code, source.indexOf('pending')]]);
+				const b = source.indexOf('b()');
+				const generated_b = result.code.indexOf('b()');
+				expect(generated_b, result.code).toBeGreaterThan(-1);
+				expect(
+					result.mappings.some(
+						(mapping) =>
+							mapping.sourceOffsets[0] === b && mapping.generatedOffsets[0] === generated_b,
+					),
+					result.code,
+				).toBe(true);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
 		it('keeps nested loop-target defaults in type-only output', () => {
 			const result = compile_to_volar_mappings(
 				`export function read(items, fallback) {
@@ -4055,6 +4081,69 @@ export function App() @{
 			} else {
 				expect(code).toContain('fallback={null}');
 			}
+		});
+	});
+
+	// The parser reads a `pending` block, and a reset parameter after a `catch`
+	// parameter, on a plain `try` (not `@try`) for `@tsrx/ripple`. These targets
+	// report each where TypeScript does (#1303).
+	describe(`[${name}] a plain try with a pending block or a reset parameter (#1303)`, () => {
+		/** @type {Array<[source: string, code: string, at: string]>} */
+		const cases = [
+			[
+				'export function f() {\n\ttry {\n\t\ta();\n\t} pending {\n\t\tb();\n\t}\n}\n',
+				TS_ERRORS.CATCH_OR_FINALLY_EXPECTED.code,
+				'pending',
+			],
+			[
+				'export function f() {\n\ttry {\n\t\ta();\n\t} pending {\n\t\tb();\n\t} catch (e) {\n\t\tc();\n\t}\n}\n',
+				TS_ERRORS.CATCH_OR_FINALLY_EXPECTED.code,
+				'pending',
+			],
+			[
+				'export function App() @{\n\ttry { a(); } /* p */ pending { b(); } finally { d(); }\n\t<div />\n}\n',
+				TS_ERRORS.CATCH_OR_FINALLY_EXPECTED.code,
+				'pending',
+			],
+			[
+				'export function f() {\n\ttry { a(); } catch (e /* x, y */, reset) { reset(); }\n}\n',
+				TS_ERRORS.TOKEN_EXPECTED.code,
+				', reset',
+			],
+		];
+
+		it('throws the error at `pending` or at the comma', () => {
+			for (const [source, code, at] of cases) {
+				expect(() => compile(source, 'App.tsrx'), source).toThrow(
+					expect.objectContaining({ code, pos: source.indexOf(at) }),
+				);
+			}
+		});
+
+		it.each([{ collect: true }, { loose: true }])(
+			'records it and keeps the pending block in the output (%o)',
+			(options) => {
+				for (const [source, code, at] of cases) {
+					const result = compile(source, 'App.tsrx', options);
+					expect(
+						result.errors.map((error) => [error.code, error.pos]),
+						source,
+					).toEqual([[code, source.indexOf(at)]]);
+					if (source.includes('pending')) {
+						expect(result.code, source).toMatch(/finally \{\s*(\{\s*)?b\(\);/);
+						expect(result.code, source).not.toContain('pending');
+					}
+				}
+			},
+		);
+
+		it('leaves `@try … @pending` alone', () => {
+			const { code } = compile(
+				`export function App() @{\n\t@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }\n}`,
+				'App.tsrx',
+			);
+			expect(code).toContain("{'loading'}");
+			expect(code).not.toContain('finally');
 		});
 	});
 

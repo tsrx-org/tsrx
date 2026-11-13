@@ -729,6 +729,8 @@ export const TS_ERRORS = {
 		code: 'TS1478',
 		message: 'Identifier or string literal expected.',
 	},
+	// After a plain `try` block, a `pending` block, which only `@try` has
+	CATCH_OR_FINALLY_EXPECTED: { code: 'TS1472', message: "'catch' or 'finally' expected." },
 	// A word reserved only in strict mode (`let`, `static`, `yield`, …) used as a
 	// name, which TypeScript's parser reads and its binder reports: TSRX's input
 	// is a module, and inside a class TypeScript says so instead

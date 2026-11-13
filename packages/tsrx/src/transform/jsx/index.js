@@ -5,7 +5,7 @@
 import { walk } from 'zimmerframe';
 import { print } from 'esrap';
 import { error } from '../../errors.js';
-import { DIAGNOSTIC_CODES, TSRX_ERRORS } from '../../diagnostics.js';
+import { DIAGNOSTIC_CODES, TS_ERRORS, TSRX_ERRORS } from '../../diagnostics.js';
 import {
 	get_statement_keyword_node,
 	is_template_value_position,
@@ -819,6 +819,7 @@ export function createJsxTransform(platform) {
 
 			BlockStatement: transform_block_statement,
 			ReturnStatement: transform_return_statement,
+			TryStatement: transform_plain_try_statement,
 
 			FunctionDeclaration: transform_function,
 			FunctionExpression: transform_function,
@@ -1523,6 +1524,78 @@ function create_generated_helper_metadata(helper_state) {
 function strip_function_transform_metadata(metadata) {
 	const { native_tsrx, ...next_metadata } = metadata ?? { path: [] };
 	return next_metadata;
+}
+
+/**
+ * A plain `try` (not `@try`) with a `pending` block, or a reset parameter after
+ * its `catch` parameter. The parser reads both for `@tsrx/ripple`, which
+ * compiles them; these targets have no meaning for them, and the printed `try`
+ * would leave them out (#1303). Each is TypeScript's error for it: at `pending`,
+ * TS1472, and at the `,` before the reset parameter, TS1005. A collecting
+ * compile goes on with the `pending` block's code first in the `finally`
+ * block, so it is still in the output, where the editor checks and maps it.
+ * @param {AST.TryStatement} node
+ * @param {JsxVisitorContext} context
+ * @returns {AST.Node}
+ */
+function transform_plain_try_statement(node, { next, state }) {
+	const reset_param = node.handler?.resetParam;
+	if (is_template_try_node(node) || (!node.pending && !reset_param)) return next() ?? node;
+	if (node.pending) {
+		error(
+			TS_ERRORS.CATCH_OR_FINALLY_EXPECTED,
+			state.filename,
+			node.pendingKeyword ?? node.pending,
+			state.errors,
+			state.comments,
+		);
+	}
+	if (reset_param && node.handler?.param) {
+		error(
+			TS_ERRORS.TOKEN_EXPECTED(')'),
+			state.filename,
+			comma_after(state.source, /** @type {number} */ (node.handler.param.end)),
+			state.errors,
+			state.comments,
+		);
+	}
+	const visited = /** @type {AST.TryStatement} */ (next() ?? node);
+	const pending = visited.pending;
+	if (!pending) return visited;
+	return {
+		...visited,
+		pending: null,
+		pendingKeyword: null,
+		finalizer: visited.finalizer
+			? { ...visited.finalizer, body: [pending, ...visited.finalizer.body] }
+			: pending,
+	};
+}
+
+/**
+ * The span of the first `,` in `source` from `start`, past any comments.
+ * @param {string} source
+ * @param {number} start
+ * @returns {AST.NodeWithLocation}
+ */
+function comma_after(source, start) {
+	let comma = start;
+	while (comma < source.length && source[comma] !== ',') {
+		if (source.startsWith('/*', comma)) comma = source.indexOf('*/', comma + 2) + 1;
+		else if (source.startsWith('//', comma)) comma = source.indexOf('\n', comma);
+		if (comma <= 0) break;
+		comma++;
+	}
+	/** @param {number} offset */
+	const position = (offset) => {
+		const lines = source.slice(0, offset).split(/\r\n?|\n|\u2028|\u2029/);
+		return { line: lines.length, column: /** @type {string} */ (lines.at(-1)).length };
+	};
+	return {
+		start: comma,
+		end: comma + 1,
+		loc: { start: position(comma), end: position(comma + 1) },
+	};
 }
 
 /**

@@ -3222,3 +3222,52 @@ const lazy = import.defer("./lazy.js");
 		);
 	});
 });
+
+// The parser reads a `pending` block on a plain `try` for `@tsrx/ripple`
+// (#1303). The JSX targets report it, but formatting keeps it.
+describe('a pending block on a plain try', () => {
+	test('prints after the try block, as Prettier prints a try', async () => {
+		await expectFormat(
+			`export function f() { try { a() } pending { b() } }`,
+			`export function f() {
+  try {
+    a();
+  } pending {
+    b();
+  }
+}
+`,
+		);
+		await expectFormat(
+			`export function f() { try { a() } /* c */ pending /* d */ { b() } catch (e, reset) { c() } finally { d() } }`,
+			`export function f() {
+  try {
+    a();
+  } /* c */ pending /* d */ {
+    b();
+  } catch (e, reset) {
+    c();
+  } finally {
+    d();
+  }
+}
+`,
+		);
+	});
+
+	test('in a template body', async () => {
+		await expectFormat(
+			`export function App() @{ try { a() } pending { b() }
+<div /> }`,
+			`export function App() @{
+  try {
+    a();
+  } pending {
+    b();
+  }
+  <div />
+}
+`,
+		);
+	});
+});

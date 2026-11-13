@@ -896,6 +896,20 @@ let E;`,
 	{ error: TS_ERRORS.FOR_IN_INITIALIZER, source: `for (var a = 1 in b) {}` },
 	{ error: TS_ERRORS.FOR_OF_INITIALIZER, source: `for (let a = 1 of b) {}` },
 	{ error: TS_ERRORS.MISSING_CATCH_OR_FINALLY, source: `try {}` },
+	// A plain `try`'s `pending` block, which only `@tsrx/ripple` compiles
+	{
+		error: TS_ERRORS.CATCH_OR_FINALLY_EXPECTED,
+		source: `export function f() {
+	try {
+		a();
+	} pending {
+		b();
+	}
+}
+declare function a(): void;
+declare function b(): void;
+`,
+	},
 	{
 		error: TS_ERRORS.MULTIPLE_DEFAULT_CLAUSES,
 		source: `switch (a) {
