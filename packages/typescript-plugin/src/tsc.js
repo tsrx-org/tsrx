@@ -4,9 +4,10 @@ import fs from 'node:fs';
 import node_module, { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { strip_platform_globals_from_declaration_output } from './declaration-output.js';
-import { getTsrxLanguagePlugin } from './language.js';
+import { TSRX_EXTENSIONS, getTsrxLanguagePlugin } from './language.js';
 import { with_tsrx_module_format_on_host } from './module-format.js';
 import { run_native_tsc } from './native-tsc.js';
+import { report_tsrx_diagnostics } from './tsc-diagnostics.js';
 import {
 	is_native_typescript_package,
 	unsupported_typescript_message,
@@ -48,6 +49,21 @@ const { runTsc } = /** @type {typeof import('@volar/typescript/lib/quickstart/ru
 const tscPath = require.resolve('typescript/lib/tsc.js');
 
 process.env.TSRX_TSC = 'true';
+
+// Volar decorates each program tsc creates so that its diagnostics point at the
+// `.tsrx` source. Print the TSRX compile errors and warnings of the program's
+// `.tsrx` files then, before tsc reports its own diagnostics.
+const decorate_program_module =
+	/** @type {typeof import('@volar/typescript/lib/node/decorateProgram.js')} */ (
+		require('@volar/typescript/lib/node/decorateProgram.js')
+	);
+const decorate_program = decorate_program_module.decorateProgram;
+decorate_program_module.decorateProgram = (language, program) => {
+	decorate_program(language, program);
+	report_tsrx_diagnostics(language, program, TSRX_EXTENSIONS, (line) =>
+		process.stdout.write(`${line}\n`),
+	);
+};
 
 // Deno's CommonJS loader bypasses Volar's fs.readFileSync patch. Read the CLI
 // through that patch explicitly, keeping Volar responsible for transforming it.

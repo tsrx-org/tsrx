@@ -186,19 +186,56 @@ describe('tsrx-tsc with a warning', () => {
 		);
 		const result = run_cli('native');
 		const { code, message } = TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD;
-		expect(result.output).toMatch(
-			new RegExp(
-				`^\\[tsrx-tsc\\] \\S*layout\\.tsrx\\(2,7\\): warning ${code}: ${escape_regexp(message)}\n$`,
-			),
-		);
+		expect(result.output).toBe(`layout.tsrx(2,7): warning ${code}: ${message}\n`);
 		expect(result.status).toBe(0);
 	});
 });
 
-/** @param {string} text */
-function escape_regexp(text) {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+// TSRX's own errors print as tsc prints a diagnostic, with the path relative to
+// the current directory (#957).
+describe('tsrx-tsc with a TSRX compile error', () => {
+	it('prints it in tsc format', () => {
+		fs.writeFileSync(
+			path.join(workspace, 'layout.tsrx'),
+			'export default function MainLayout({ title }: { title: string }) @{\n\tconst x = 1;\n\t<div>{title}</div>\n\t<span />\n}\n',
+		);
+		const result = run_cli('native');
+		const { code, message } = TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT;
+		expect(result.output).toBe(`layout.tsrx(4,2): error ${code}: ${message}\n`);
+	});
+
+	it('prints a mistake once when TypeScript reports it too', () => {
+		fs.writeFileSync(
+			path.join(workspace, 'rest.tsrx'),
+			'const b = [1];\nconst [...a = [1]] = b;\nconst [...c = [2]] = b;\nexport { a, c };\n',
+		);
+		const config_path = path.join(workspace, 'tsconfig.json');
+		const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+		config.include = ['main.ts', 'rest.tsrx'];
+		fs.writeFileSync(config_path, JSON.stringify(config));
+		const result = run_cli('native');
+		const ts1186 = 'error TS1186: A rest element cannot have an initializer.';
+		expect(result.output).toBe(`rest.tsrx(2,13): ${ts1186}\nrest.tsrx(3,13): ${ts1186}\n`);
+		expect(result.status).toBe(2);
+	});
+
+	it('prints a mistake TypeScript does not report, and the ones it does once', () => {
+		fs.writeFileSync(
+			path.join(workspace, 'rest.tsrx'),
+			'export function f(...a: number[], b: number) {\n\treturn [a, b];\n}\nexport const [...c,] = [1];\n',
+		);
+		const config_path = path.join(workspace, 'tsconfig.json');
+		const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+		config.include = ['main.ts', 'rest.tsrx'];
+		fs.writeFileSync(config_path, JSON.stringify(config));
+		const result = run_cli('native');
+		expect(result.output).toBe(
+			'rest.tsrx(4,19): error TS1013: Comma is not permitted after the rest element\n' +
+				'rest.tsrx(1,19): error TS1014: A rest parameter must be last in a parameter list.\n',
+		);
+		expect(result.status).toBe(2);
+	});
+});
 
 /**
  * Stand in for what `typescript@7` resolves to: a launcher with an export map
@@ -510,9 +547,7 @@ it.each([
 		`export default function MainLayout({ title }: { title: string }) @{\n${body}}\n`,
 	);
 	const result = run_cli('native');
-	expect(result.output).toContain(
-		`[tsrx-tsc] ${path.join(fs.realpathSync(workspace), 'layout.tsrx')}${diagnostic}`,
-	);
+	expect(result.output.split('\n')).toContain(`layout.tsrx${diagnostic}`);
 });
 
 it('reports unresolved class field and heritage types in .tsrx files', () => {
