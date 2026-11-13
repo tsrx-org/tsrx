@@ -345,6 +345,28 @@ export function is_bare_render_expression(node) {
 export const FOR_OF_ITEM_PARAM_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'item';
 
 /**
+ * The name a loop callback reads its head's key into before a body that
+ * declares a name the key reads. Authored code can't use the prefix.
+ */
+export const FOR_OF_KEY_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'key';
+
+/**
+ * The parameters of a loop callback that takes its item whole, under a
+ * generated name, and the declaration that destructures the head's pattern
+ * from it as the callback's first statement.
+ *
+ * @param {AST.Pattern[]} loop_params The head's pattern, then the index if any.
+ * @param {'const' | 'let' | 'var'} [kind]
+ * @returns {{ params: AST.Pattern[], declaration: AST.VariableDeclaration }}
+ */
+export function destructure_for_of_item(loop_params, kind = 'const') {
+	return {
+		params: [b.id(FOR_OF_ITEM_PARAM_NAME), ...loop_params.slice(1)],
+		declaration: b.declaration(kind, [b.declarator(loop_params[0], b.id(FOR_OF_ITEM_PARAM_NAME))]),
+	};
+}
+
+/**
  * Gather the params a `for (x of y; index i)` loop should expose to its body
  * JSX (value first, optional index second).
  *

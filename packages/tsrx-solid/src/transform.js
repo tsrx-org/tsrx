@@ -36,6 +36,8 @@ import {
 	collectParamBindings as collect_param_bindings,
 	collectStatementBindings as collect_statement_bindings,
 	extractJsxSetupDeclarations as extract_jsx_setup_declarations,
+	forOfPatternReadsIndex as for_of_pattern_reads_index,
+	getForOfShadowedNames as get_for_of_shadowed_names,
 	insertAfterDirectives as insert_after_directives,
 	isInterleavedBody as is_interleaved_body_core,
 	isCapturableJsxChild as is_capturable_jsx_child,
@@ -51,6 +53,7 @@ import {
 	clone_jsx_name,
 	create_generated_identifier,
 	create_null_literal,
+	destructure_for_of_item,
 	get_for_of_iteration_params,
 	has_location,
 	is_component_like_element,
@@ -1264,7 +1267,11 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 	const loop_params = get_for_of_iteration_params(node.left, node.index, node.key);
 	const loop_body = node.body.type === 'BlockStatement' ? node.body.body : [node.body];
 	const uses_index_only_mode = !node.key && node.index;
-	const key_reads_index = !!node.key && !!node.index && reads_identifier(node.key, node.index);
+	// A default in the item's pattern reads the index as the key does: the
+	// number, which only `__for_keyed_rows` hands a keyed loop's key.
+	const pattern_reads_index = for_of_pattern_reads_index(loop_params[0], node.index);
+	const key_reads_index =
+		!!node.key && !!node.index && (pattern_reads_index || reads_identifier(node.key, node.index));
 	validate_for_body_control_flow(loop_body, transform_context);
 
 	let arrow;
@@ -1280,22 +1287,49 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		arrow = merge_branch_body_into_arrow(arrow, body_to_jsx_child(loop_body, transform_context));
 	}
 
+	// A `for…of` body is a scope of its own, so it can declare the item's or
+	// the index's name again; a callback's body shares one scope with its
+	// parameters.
+	if (
+		arrow.body.type === 'BlockStatement' &&
+		get_for_of_shadowed_names(loop_params, arrow.body.body).size > 0
+	) {
+		arrow = { ...arrow, body: b.block([arrow.body]) };
+	}
+
 	/** @type {AST.Expression} */
 	let each;
 	if (key_reads_index) {
 		transform_context.needs_for_keyed_rows = true;
+		const key_params = [clone_ast_node(loop_params[0]), clone_ast_node(loop_params[1])];
+		let key_callback;
+		if (pattern_reads_index) {
+			const item = destructure_for_of_item(key_params);
+			key_callback = b.arrow(
+				item.params,
+				b.block([item.declaration, b.return(/** @type {AST.Expression} */ (node.key))]),
+			);
+		} else {
+			key_callback = b.arrow(key_params, /** @type {AST.Expression} */ (node.key));
+		}
 		each = b.call(
 			create_generated_identifier(FOR_KEYED_ROWS_INTERNAL_NAME),
 			node.right,
-			b.arrow(
-				[clone_ast_node(loop_params[0]), clone_ast_node(loop_params[1])],
-				/** @type {AST.Expression} */ (node.key),
-			),
+			key_callback,
 		);
 		const row = create_generated_identifier(FOR_ROW_PARAM_NAME);
+		const index = /** @type {AST.Identifier} */ (node.index);
 		arrow = bind_loop_item(
 			arrow,
-			loop_params[0],
+			// The child callback gets the index as an accessor.
+			pattern_reads_index
+				? rewrite_binding_refs(
+						clone_ast_node(loop_params[0]),
+						new Map([[index.name, b.call(clone_identifier(index))]]),
+						[],
+						transform_context,
+					)
+				: loop_params[0],
 			row,
 			b.member(b.call(clone_ast_node(row)), create_generated_identifier('item')),
 			transform_context,

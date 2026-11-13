@@ -14,6 +14,7 @@ import {
 import { mergeRefs } from '@tsrx/vue/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
+import { runForOfHeadScopeRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-head-scope';
 import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace';
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
 import { runNullishSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/nullish-spread-ref';
@@ -2539,6 +2540,7 @@ describe('tsrx-vue merged refs', () => {
 
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
+runForOfHeadScopeRuntimeTests();
 // Vapor leaves an empty comment where a constant `@if` with a following sibling
 // was inserted.
 runJsxTextWhitespaceRuntimeTests({ nbsp: 'kept', anchors: 'empty comments' });

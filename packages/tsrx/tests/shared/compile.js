@@ -1052,6 +1052,63 @@ export const p = 1
 			}
 		});
 
+		it('lets an `@for` body declare the head’s names again in virtual code (#1325)', () => {
+			for (const [head, body] of [
+				['const { id } of rows', 'const { id } = other; <li>{id}</li>'],
+				['const row of rows', "const row = 'body'; <li>{row}</li>"],
+				['const { id } of rows; index i', "const i = '!'; <li>{id + i}</li>"],
+				['const { id, name } of rows; key id', 'const { id } = other; <li>{name + id}</li>'],
+				['const { id } of rows; index i; key id', 'const { id } = other; <li>{id + i}</li>'],
+				['const row of rows; index i', 'function i() { return 1; } <li>{row.id + i()}</li>'],
+				['const row of rows; key row.id', 'class row {} <li>{String(row)}</li>'],
+			]) {
+				const source = `export function App({ rows, other }: { rows: { id: string; name: string }[]; other: { id: string } }) @{
+					<ul>
+						@for (${head}) {
+							${body}
+						}
+					</ul>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(result.errors, head).toEqual([]);
+				expect(
+					virtual_semantic_diagnostics(result.code)
+						.filter((diagnostic) => [2300, 2451].includes(diagnostic.code))
+						.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+					result.code,
+				).toEqual([]);
+			}
+		});
+
+		it('lets a default in an `@for` item pattern read the index in virtual code (#1312)', () => {
+			for (const [head, body] of [
+				["const [a = 'r' + i, b] of rows; index i", '<li>{a + b}</li>'],
+				["const [a = 'r' + i, b] of rows; index i; key b", '<li>{a + b}</li>'],
+				["const { 0: a = 'r' + i, 1: b } of rows; index i", '<li>{a + b}</li>'],
+				["const { [i]: a = 'r', 1: b } of rows; index i; key b", '<li>{a + b}</li>'],
+				["const [a = 'r' + i, b] of rows; index i; key b", '@if (b) { <li>{a + b}</li> }'],
+				["const [a = 'r' + i, b] of rows; index i; key b", "const b = 'body'; <li>{a + b}</li>"],
+			]) {
+				const source = `export function App({ rows }: { rows: [string | undefined, string][] }) @{
+					<ul>
+						@for (${head}) {
+							${body}
+						}
+					</ul>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(result.errors, head).toEqual([]);
+				expect(
+					virtual_semantic_diagnostics(result.code)
+						.filter((diagnostic) => [2300, 2373, 2448, 2451].includes(diagnostic.code))
+						.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+					result.code,
+				).toEqual([]);
+			}
+		});
+
 		it('reports a `var` declared in a directive body, at its keyword (#1208)', () => {
 			/** @type {Record<string, (body: string) => string>} */
 			const bodies = {

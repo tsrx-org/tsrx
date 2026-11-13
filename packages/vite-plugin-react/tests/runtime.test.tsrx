@@ -3,6 +3,7 @@ import { useState, use } from 'react';
 import { create_ref_prop, mergeRefs } from '@tsrx/react/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runForOfSourcesRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-sources';
+import { runForOfHeadScopeRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-head-scope';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
 import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace';
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
@@ -2717,6 +2718,7 @@ describe('tsrx-react runtime', () => {
 
 runSwitchFallthroughRuntimeTests();
 runForOfSourcesRuntimeTests();
+runForOfHeadScopeRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
 runScriptBodyRuntimeTests();
