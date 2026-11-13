@@ -192,9 +192,9 @@ describe('tsrx-tsc with a warning', () => {
 });
 
 // TSRX's own errors print as tsc prints a diagnostic, with the path relative to
-// the current directory (#957).
+// the current directory, and fail the run like TypeScript's errors (#196, #957).
 describe('tsrx-tsc with a TSRX compile error', () => {
-	it('prints it in tsc format', () => {
+	it('prints it in tsc format and exits 2 when TypeScript reports nothing', () => {
 		fs.writeFileSync(
 			path.join(workspace, 'layout.tsrx'),
 			'export default function MainLayout({ title }: { title: string }) @{\n\tconst x = 1;\n\t<div>{title}</div>\n\t<span />\n}\n',
@@ -202,6 +202,32 @@ describe('tsrx-tsc with a TSRX compile error', () => {
 		const result = run_cli('native');
 		const { code, message } = TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT;
 		expect(result.output).toBe(`layout.tsrx(4,2): error ${code}: ${message}\n`);
+		expect(result.status).toBe(2);
+	});
+
+	it('exits 2 on a fatal compile error whose raw text TypeScript accepts', () => {
+		// After a fatal error the file falls back to its raw text, which is valid
+		// TypeScript here, and nothing else is checked, so only the TSRX error can
+		// fail the run (#196).
+		const compiler_dir = path.join(workspace, 'node_modules', 'throwing-tsrx-compiler');
+		fs.mkdirSync(compiler_dir);
+		fs.writeFileSync(
+			path.join(compiler_dir, 'package.json'),
+			'{"name":"throwing-tsrx-compiler","main":"index.cjs"}',
+		);
+		fs.writeFileSync(
+			path.join(compiler_dir, 'index.cjs'),
+			"exports.compile_to_volar_mappings = () => { throw Object.assign(new Error('the compiler gave up'), { code: 'stub-fatal' }); };\n",
+		);
+		fs.writeFileSync(path.join(workspace, 'fatal.tsrx'), 'export const value = 1;\n');
+		const config_path = path.join(workspace, 'tsconfig.json');
+		const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+		config.tsrx = { compiler: 'throwing-tsrx-compiler' };
+		config.include = ['fatal.tsrx'];
+		fs.writeFileSync(config_path, JSON.stringify(config));
+		const result = run_cli('native');
+		expect(result.output).toBe('fatal.tsrx: error stub-fatal: the compiler gave up\n');
+		expect(result.status).toBe(2);
 	});
 
 	it('prints a mistake once when TypeScript reports it too', () => {
@@ -548,6 +574,7 @@ it.each([
 	);
 	const result = run_cli('native');
 	expect(result.output.split('\n')).toContain(`layout.tsrx${diagnostic}`);
+	expect(result.status).toBe(2);
 });
 
 it('reports unresolved class field and heritage types in .tsrx files', () => {

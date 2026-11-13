@@ -58,12 +58,22 @@ const decorate_program_module =
 		require('@volar/typescript/lib/node/decorateProgram.js')
 	);
 const decorate_program = decorate_program_module.decorateProgram;
+let printed_tsrx_error = false;
 decorate_program_module.decorateProgram = (language, program) => {
 	decorate_program(language, program);
-	report_tsrx_diagnostics(language, program, TSRX_EXTENSIONS, (line) =>
+	const printed_error = report_tsrx_diagnostics(language, program, TSRX_EXTENSIONS, (line) =>
 		process.stdout.write(`${line}\n`),
 	);
+	printed_tsrx_error ||= printed_error;
 };
+
+// TypeScript knows nothing of the TSRX errors, so a run where they are the only
+// errors would exit 0. Exit as tsc does when it reports an error: 2. A warning
+// doesn't change the exit code. tsc exits through `sys.exit`, which calls
+// `process.exit`; in watch mode it doesn't exit.
+const exit = process.exit;
+process.exit = (code) =>
+	exit.call(process, printed_tsrx_error && (code === undefined || code === 0) ? 2 : code);
 
 // Deno's CommonJS loader bypasses Volar's fs.readFileSync patch. Read the CLI
 // through that patch explicitly, keeping Volar responsible for transforming it.
