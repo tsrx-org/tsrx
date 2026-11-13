@@ -9845,6 +9845,48 @@ describe('JSX spread children', () => {
 	});
 });
 
+// TypeScript's checker reports an attribute's empty value (`a={}`) as TS17000
+// at its braces (#1311).
+describe('an empty attribute value', () => {
+	/** @type {Array<[source: string, braces: string, at: string]>} */
+	const cases = [
+		['export function App(bag: any) @{\n\t<div {...bag} title={} />\n}', '{}', '2:21'],
+		['export function App() @{\n\t<div title={/* c */} />\n}', '{/* c */}', '2:12'],
+		['export function App() {\n\treturn <div title={} />;\n}', '{}', '2:19'],
+		['export function App({ C }: any) @{\n\t<C value={\n\t} />\n}', '{\n\t}', '2:10'],
+	];
+
+	it('throws it in a strict parse', () => {
+		for (const [source, , at] of cases) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				error_with(TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION, at),
+			);
+		}
+	});
+
+	it.each([{ collect: true }, { loose: true }])(
+		'records it at the braces and keeps the attribute (%o)',
+		(options) => {
+			for (const [source, braces] of cases) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				const ast = parseModule(source, 'App.tsrx', { ...options, errors, comments: [] });
+				expect(
+					errors.map((error) => [error.code, source.slice(error.pos, error.end)]),
+					source,
+				).toEqual([['TS17000', braces]]);
+				const attribute = find_first(
+					ast,
+					(node) => node.type === 'JSXAttribute' && node.value?.type === 'JSXExpressionContainer',
+				);
+				expect(attribute, source).toMatchObject({
+					value: { expression: { type: 'JSXEmptyExpression' } },
+				});
+			}
+		},
+	);
+});
+
 // A `<` in markup child position only opens a tag when the next character can
 // begin one. Anything else — a digit, an operator, an emoji, whitespace — is a
 // literal `<` in the text, the same rule the HTML tokenizer uses. Every case

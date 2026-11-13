@@ -912,6 +912,13 @@ let E;`,
 `,
 	},
 	{ error: TS_ERRORS.JSX_ATTRIBUTE_VALUE, source: `const a = <div a=1 />;` },
+	{
+		error: TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION,
+		source: `export function C() @{
+	<div title={} />
+}
+`,
+	},
 	// In the JSX of a dynamic tag's expression; in a template, a `}` in an open
 	// element ends the text, and the element is TSRX1001.
 	{
