@@ -12,12 +12,24 @@ export * from '@tsrx/runtime/ref';
 const pending_cleanups = new WeakMap();
 
 /**
+ * The nodes a merged ref is setting its refs on. A merged ref that another
+ * merged ref calls for the same node, as in
+ * `mergeRefs(mergeRefs(a), mergeRefs(b))`, is set beside its siblings rather
+ * than in place of one of them, so it leaves `pending_cleanups` to the
+ * outermost merged ref, whose cleanup runs its own.
+ *
+ * @type {WeakSet<object>}
+ */
+const setting_nodes = new WeakSet();
+
+/**
  * The shared `mergeRefs`, adapted to how Vue calls a function ref: with the
  * node when it sets the ref and with `null` when it unsets it, ignoring what
  * the callback returns. The cleanup a merged ref returns when it is set (which
  * runs each callback's own cleanup, or calls it with `null`, and clears ref
  * objects) runs on that `null` call instead, or when another merged ref is set
- * on the same node.
+ * on the same node. A merged ref that this one sets the node on is not another
+ * merged ref replacing it (see `setting_nodes`).
  *
  * @template T
  * @param {...import('@tsrx/runtime/ref').MergeableRefValue<T>} refs
@@ -39,16 +51,24 @@ export function mergeRefs(...refs) {
 	return (node) => {
 		unset();
 		if (node == null) return () => {};
-		if (is_object(node)) {
+		const outermost = is_object(node) && !setting_nodes.has(node);
+		if (outermost) {
 			const replaced = pending_cleanups.get(node);
 			if (replaced) {
 				pending_cleanups.delete(node);
 				replaced();
 			}
+			setting_nodes.add(node);
 		}
-		const cleanup = once(merged(node));
+		/** @type {() => void} */
+		let cleanup;
+		try {
+			cleanup = once(merged(node));
+		} finally {
+			if (outermost) setting_nodes.delete(node);
+		}
 		mounted = { node, cleanup };
-		if (is_object(node)) pending_cleanups.set(node, cleanup);
+		if (outermost) pending_cleanups.set(node, cleanup);
 		return unset;
 	};
 }

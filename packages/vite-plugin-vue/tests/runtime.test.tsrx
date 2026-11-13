@@ -2496,7 +2496,138 @@ function SwappedMergedRefApp() @{
 	</>
 }
 
+const forwarded_own_ref = ref<HTMLInputElement | null>(null);
+const forwarded_ref = ref<HTMLInputElement | null>(null);
+
+function ForwardedMergedRefField(props: { inputProps: Record<string, unknown> }) @{
+	<input class="forwarded-merged" ref={mergeRefs(forwarded_own_ref)} {...props.inputProps} />
+}
+
+function ForwardedMergedRefApp() @{
+	const shown = ref(true);
+	<>
+		@if (shown.value) {
+			<ForwardedMergedRefField inputProps={{ ref: mergeRefs(forwarded_ref) }} />
+		}
+		<button class="hide-forwarded-merged" onClick={() => (shown.value = false)}>
+			{'hide'}
+		</button>
+	</>
+}
+
+const nested_swapped_log: string[] = [];
+const nested_swapped_which = ref(0);
+
+function NestedSwappedMergedRefApp() @{
+	const shown = ref(true);
+	const logger = (name: string) => (node: HTMLInputElement | null) => {
+		nested_swapped_log.push(`${name}:${node ? 'set' : 'null'}`);
+	};
+	<>
+		@if (shown.value) {
+			<input
+				class="nested-swapped"
+				ref={mergeRefs(
+					mergeRefs(logger('A')),
+					nested_swapped_which.value ? mergeRefs(logger('C')) : mergeRefs(logger('B')),
+				)}
+			/>
+		}
+		<button class="hide-nested-swapped" onClick={() => (shown.value = false)}>
+			{'hide'}
+		</button>
+	</>
+}
+
+/**
+ * Calls a merged ref the way Vue calls a function ref, with the node and then
+ * with `null`, and returns what each ref it holds was called with.
+ */
+function set_and_unset(make: (log: (name: string) => (node: unknown) => void) => any) {
+	const calls: string[] = [];
+	const log = (name: string) => (node: unknown) => {
+		calls.push(`${name}(${node ? 'node' : 'null'})`);
+	};
+	const merged = make(log);
+	merged(document.createElement('input'));
+	const set = [...calls];
+	calls.length = 0;
+	merged(null);
+	return { set, unset: calls };
+}
+
 describe('tsrx-vue merged refs', () => {
+	it('keeps every ref of merged refs that another merged ref sets on one element (#1329)', async () => {
+		await render(ForwardedMergedRefApp);
+		const input = container.querySelector('.forwarded-merged');
+		expect(input).toBeInstanceOf(HTMLInputElement);
+		expect(forwarded_own_ref.value).toBe(input);
+		expect(forwarded_ref.value).toBe(input);
+
+		await click('.hide-forwarded-merged');
+		expect(forwarded_own_ref.value).toBeNull();
+		expect(forwarded_ref.value).toBeNull();
+	});
+
+	it('cleans up nested merged refs once when Vue replaces or unsets the outer one (#1329)', async () => {
+		nested_swapped_log.length = 0;
+		nested_swapped_which.value = 0;
+		await render(NestedSwappedMergedRefApp);
+		expect(nested_swapped_log).toEqual(['A:set', 'B:set']);
+
+		nested_swapped_which.value = 1;
+		await flush();
+		expect(nested_swapped_log.slice(2)).toEqual(['A:null', 'B:null', 'A:set', 'C:set']);
+
+		await click('.hide-nested-swapped');
+		expect(nested_swapped_log.slice(6)).toEqual(['A:null', 'C:null']);
+	});
+
+	it('sets and unsets each ref of nested merged refs once (#1329)', () => {
+		const both = { set: ['a(node)', 'b(node)'], unset: ['a(null)', 'b(null)'] };
+		expect(set_and_unset((log) => mergeRefs(log('a'), log('b')))).toEqual(both);
+		expect(set_and_unset((log) => mergeRefs(mergeRefs(log('a')), mergeRefs(log('b'))))).toEqual(
+			both,
+		);
+		expect(
+			set_and_unset((log) => mergeRefs(mergeRefs(log('a')), (node) => mergeRefs(log('b'))(node))),
+		).toEqual(both);
+		expect(set_and_unset((log) => mergeRefs(mergeRefs(log('a'), log('b')), log('c')))).toEqual({
+			set: ['a(node)', 'b(node)', 'c(node)'],
+			unset: ['a(null)', 'b(null)', 'c(null)'],
+		});
+
+		const first = ref<HTMLInputElement | null>(null);
+		const second = ref<HTMLInputElement | null>(null);
+		const node = document.createElement('input');
+		const merged = mergeRefs(mergeRefs(first), mergeRefs(second));
+		merged(node);
+		expect(first.value).toBe(node);
+		expect(second.value).toBe(node);
+		merged(null);
+		expect(first.value).toBeNull();
+		expect(second.value).toBeNull();
+	});
+
+	it('replaces the merged ref on an element after a nested ref throws (#1329)', () => {
+		const node = document.createElement('input');
+		const throwing = mergeRefs(
+			mergeRefs((value: HTMLInputElement | null) => {
+				if (value) throw new Error('ref boom');
+			}),
+		);
+		expect(() => throwing(node)).toThrow('ref boom');
+
+		const calls: string[] = [];
+		mergeRefs((value: HTMLInputElement | null) => {
+			calls.push(`first(${value ? 'node' : 'null'})`);
+		})(node);
+		mergeRefs((value: HTMLInputElement | null) => {
+			calls.push(`second(${value ? 'node' : 'null'})`);
+		})(node);
+		expect(calls).toEqual(['first(node)', 'first(null)', 'second(node)']);
+	});
+
 	it('runs the replaced merged ref cleanup when a new one is set on the element', async () => {
 		swapped_ref_log.length = 0;
 		swapped_ref_which.value = 0;
