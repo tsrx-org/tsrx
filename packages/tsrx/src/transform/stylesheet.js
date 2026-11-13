@@ -332,6 +332,12 @@ function has_global_in_middle(rule) {
 }
 
 /**
+ * Drop the `:global` or `:global(` and `)` text. This empties the text with
+ * `update` instead of calling `remove`, which would also drop what the
+ * `SelectorList` visitor inserted at these edges: the comment that opens before
+ * a pruned selector starting with `:global(`, or the end of the comment over
+ * the pruned selectors right before one.
+ *
  * @param {AST.CSS.PseudoClassSelector} selector
  * @param {AST.CSS.Combinator | null} combinator
  * @param {StylesheetRenderState} state
@@ -343,11 +349,11 @@ function remove_global_pseudo_class(selector, combinator, state) {
 			// div :global.x becomes div.x
 			while (/\s/.test(state.code.original[start - 1])) start--;
 		}
-		state.code.remove(start, selector.start + ':global'.length);
+		state.code.update(start, selector.start + ':global'.length, '');
 	} else {
 		state.code
-			.remove(selector.start, selector.start + ':global('.length)
-			.remove(selector.end - 1, selector.end);
+			.update(selector.start, selector.start + ':global('.length, '')
+			.update(selector.end - 1, selector.end, '');
 	}
 }
 
