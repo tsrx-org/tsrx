@@ -1,5 +1,565 @@
 # @tsrx/solid
 
+## 0.4.0
+
+### Minor Changes
+
+- [#1124](https://github.com/tsrx-org/tsrx/pull/1124)
+  [`d18720d`](https://github.com/tsrx-org/tsrx/commit/d18720d75e143c26d015d9837fb5d1c860cc0cb9)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - In a `.tsrx` file, and
+  any other file with JSX, a `<` where an expression starts begins a generic arrow
+  function only where TypeScript's rule for `.tsx` files says it does
+  ([#183](https://github.com/tsrx-org/tsrx/issues/183)): a type parameter followed
+  by a comma, a default, or a constraint. A lone type parameter without one is now
+  a tag, as in TSX, so `<T>(x) => x` no longer compiles or formats, and neither
+  does `async <T>(x) => x`, which TypeScript reads as a call. To migrate, add the
+  trailing comma: `<T>(x) => x` becomes `<T,>(x) => x`, `async <T>(x) => x`
+  becomes `async <T,>(x) => x`, and `<const T>` becomes `<const T,>`. The errors
+  for the old forms, an unclosed `<T>` tag and TS7060, now say to add it.
+
+  The rule reads no further than the type parameter, so a generic arrow with a
+  constraint compiles whatever its parameters hold (comments, regular expressions,
+  template literals), and an element whose text starts like an arrow function,
+  such as `<b>(i) => i</b>` or `<script>(i) => i</script>`, is read as an element
+  ([#734](https://github.com/tsrx-org/tsrx/issues/734)). A template's render node
+  or child is a tag wherever it starts, as before.
+
+  A `.ts`, `.mts`, or `.cts` file has no JSX, as in TypeScript: `<T>(x) => x`
+  stays a generic arrow function there, and `<T>x` is now read as a type assertion
+  instead of a tag (TS7059 in a `.mts` or `.cts` file).
+
+- [#1117](https://github.com/tsrx-org/tsrx/pull/1117)
+  [`5d4482f`](https://github.com/tsrx-org/tsrx/commit/5d4482fd0a1f80532780fcc6ac5f1ab712229d0d)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - **Breaking (Solid
+  target):** the `@catch` binding is now the thrown value, as on every other
+  target, instead of Solid's error accessor. Code written for the old shape must
+  drop the call: `@catch (err) { <p>{err().message}</p> }` becomes
+  `@catch (err) { <p>{err.message}</p> }`. Because the binding is the value
+  itself, `err()` now calls the thrown value instead of reading it. Destructuring
+  patterns such as `@catch ({ message })` now bind the thrown value's properties,
+  and the `@catch` body can reassign its binding. The binding is typed `unknown`,
+  so check it before reading `message`.
+
+### Patch Changes
+
+- [#1085](https://github.com/tsrx-org/tsrx/pull/1085)
+  [`4d1def9`](https://github.com/tsrx-org/tsrx/commit/4d1def98977820da6206df0c189a7f525203298e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Require esrap 2.4 and
+  pass it the parser's tokens for editor output. esrap 2.4 removed the
+  `boundaryTokens` option that kept the keywords and punctuation of the generated
+  TypeScript mapped. A fresh install of `@tsrx/core` already got esrap 2.4, so
+  `async` and `function` keywords, Vue's imports, interface declarations, and
+  lowered dynamic tags lost their editor mappings. Single type parameters also
+  printed as `<T,>` everywhere.
+
+  A generic arrow function with one type parameter now compiles to `<T,>(…) => …`,
+  which TypeScript reads as an arrow function in TSX instead of a JSX tag
+  ([#707](https://github.com/tsrx-org/tsrx/issues/707)). Other type parameter
+  lists print as written. Parameter decorators
+  ([#606](https://github.com/tsrx-org/tsrx/issues/606)) and the type arguments of
+  a tagged template ([#272](https://github.com/tsrx-org/tsrx/issues/272)) are no
+  longer dropped from the compiled output. An array pattern parameter with a type
+  annotation no longer prints the annotation twice: on esrap 2.4,
+  `function f([a]: number[]) {}` compiled to
+  `function f([a]: number[]: number[]) {}`, which does not parse.
+
+- [#1134](https://github.com/tsrx-org/tsrx/pull/1134)
+  [`2b465b4`](https://github.com/tsrx-org/tsrx/commit/2b465b432b515c07047e3eadeb66ff34df95de2d)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `@for` on Solid now
+  accepts any iterable, as on React, Preact, and Hono. A `Set`, a `Map` iterator,
+  a generator, or an array with its own iterator no longer throws
+  `newItems.slice is not a function` and halts Solid's reactivity; the loop reads
+  the source the way `for...of` does and hands `<For>` the resulting array. Arrays
+  with the built-in iterator, including store arrays, reach `<For>` as they are.
+  The helpers `for_items` and `for_keyed_rows` come from the new
+  `@tsrx/solid/iterable` and `@tsrx/solid-runtime/iterable` subpaths, and
+  `@tsrx/runtime/iterable` gains `iterable_to_array`.
+
+  A Solid `@for` whose key reads its declared index, as in
+  `@for (const item of items(); index i; key i)`, no longer throws
+  `ReferenceError: i is not defined` when the list updates. Solid's `keyed`
+  callback receives the item alone, so such a loop now computes each key from the
+  item and its index up front and renders those rows. A sparse array renders its
+  holes as `undefined` items instead of halting Solid's reactivity.
+
+  A Solid `@for` that destructures its item in a loop with a key or an index, as
+  in `@for (const { id } of items(); key id)`, now renders the item's values
+  instead of `undefined`, and the destructured names follow the row when Solid
+  reuses it for another item or an item replaced under the same key. A
+  destructured component used as a tag (`<Icon />`) renders through Solid's
+  `dynamic`, so it follows the row too.
+
+- [#1259](https://github.com/tsrx-org/tsrx/pull/1259)
+  [`a09bc3d`](https://github.com/tsrx-org/tsrx/commit/a09bc3dffac142c0a8adc347b0683f333b78a705)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Vue, the helper
+  component that renders a `@catch` body under `@pending` is declared once beside
+  its component, in the enclosing function or namespace body, when the component
+  is inside another function or a namespace and the helper reads nothing from the
+  component's scope (only its own `@catch` parameter, its own locals and bindings
+  outside the component). Before, it was declared in the component's setup, so
+  every instance defined a new helper component. A helper that reads a binding of
+  the component's scope stays in the setup.
+
+  On Solid, the temporary that holds a host element's spread props beside a `ref`
+  in an `@if`, `@for` or other branch skips a name the module already uses even
+  when the component's name contains `$` (`App$__spread_props1`). Before, the
+  check missed it, and the temporary shadowed the authored binding of that name.
+
+- [#1230](https://github.com/tsrx-org/tsrx/pull/1230)
+  [`644583f`](https://github.com/tsrx-org/tsrx/commit/644583f0abf521bf04b615e1394d96a3fd1f0d35)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Organize Imports and
+  Sort Imports now work in a `.tsrx` module that reads an
+  `import.meta.env.platform` flag, with TypeScript 7 and with the TypeScript 5.9
+  plugin. They returned no edits there, while Remove Unused Imports worked. The
+  compiler appended `export {};` to such a module to keep it a module. Both
+  actions also rewrite export declarations, and an edit to code that exists only
+  in the generated output made the editor drop the whole action. The marker is now
+  added only when the generated code has no import or export of its own
+  ([#1207](https://github.com/tsrx-org/tsrx/issues/1207)). `withPlatformTypes`
+  takes the generated program as an optional third argument to decide this, and
+  keeps adding the marker when it is not passed.
+
+- [#1175](https://github.com/tsrx-org/tsrx/pull/1175)
+  [`91d958d`](https://github.com/tsrx-org/tsrx/commit/91d958de44c9e582cd66a5b66aff6bb37ff0ece2)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The compiler now
+  imports the components it generates for `@try … @pending`, `@try … @catch` and
+  keyed fragment rows under private names (`__Suspense`, `__TsrxErrorBoundary`,
+  `__Fragment`). A module can declare its own `Suspense`, `TsrxErrorBoundary` or
+  `Fragment` (a type-only import, an import from another module, a local, or a
+  `@for` loop variable) without the build failing with "Identifier `Suspense` has
+  already been declared", and the generated element no longer renders the authored
+  binding in its place. Vue's generated `Suspense` uses the private name too, so
+  an authored `import { type Suspense } from 'vue'` no longer leaves it unbound.
+
+  Imports the compiler adds now go after the module's directive prologue, so a
+  `'use client'` or `'use server'` directive stays first in a module that uses
+  `@pending`, `@catch`, a keyed fragment row or any other construct that needs a
+  generated import. Before, the generated imports went above it and turned it into
+  a plain string, which Next.js treated as a server component.
+
+- [#1222](https://github.com/tsrx-org/tsrx/pull/1222)
+  [`e0c07b5`](https://github.com/tsrx-org/tsrx/commit/e0c07b55b199acc4fe05b705255e79020b500376)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Solid now imports the
+  components it generates for `@if`, `@for`, `@switch` and `@try` under private
+  names (`__Show`, `__For`, `__Switch`, `__Match`, `__Errored`, `__Loading`), and
+  Vue imports the `VaporFor` it generates for `@for` as `__VaporFor`. A module can
+  declare its own binding with one of those names (an import from another module,
+  a type-only import, a module or setup local, or a `@for (const Match of rows)`
+  loop variable) without the build failing with "Identifier `Show` has already
+  been declared", and the generated element no longer renders the authored binding
+  in its place. An authored `import type { VaporFor } from 'vue-jsx-vapor'` now
+  stays type-only beside the generated value imports. The compiler now counts a
+  tag as a component whenever its name doesn't start with a lowercase letter, as
+  JSX does, so a tag like `<_Card>` is treated as a component rather than a host
+  element, and Solid doesn't hoist a static `@if`, `@switch` or `@pending` subtree
+  that renders one of its private components.
+
+  Vue's `defineVaporComponent` keeps its public name, because vue-jsx-vapor finds
+  components by calls to that name. A Vue module that declares its own binding
+  named `defineVaporComponent` (an import from another module, a module function
+  or `const`, or a local in a component) now gets a compile error, `TSRX2032`,
+  instead of a duplicate declaration or every component wrapped in the authored
+  function. A type-only import of `defineVaporComponent` from `vue-jsx-vapor`
+  becomes the value import the compiler needs.
+
+- [#1168](https://github.com/tsrx-org/tsrx/pull/1168)
+  [`6b207b6`](https://github.com/tsrx-org/tsrx/commit/6b207b65e8a339d5fe301c60e72db271ffb9a572)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A host element with
+  scoped styles keeps the class a props spread passes it. Beside a `<style>`
+  block, `<span {...props} />` used to render only the scope hash and drop
+  `props.className`, and `<span className="base" {...props} />` dropped the scope
+  hash. Both now render the spread's class followed by the scope classes, which is
+  what plain JSX renders plus the scope hash, on React, Preact, Solid, and Hono.
+  Vue already joined them. On Preact and Hono, a spread's `className` written
+  before a scoped `class` attribute no longer replaces that attribute
+  ([#722](https://github.com/tsrx-org/tsrx/issues/722)).
+
+- [#1232](https://github.com/tsrx-org/tsrx/pull/1232)
+  [`2473538`](https://github.com/tsrx-org/tsrx/commit/247353854e918f119dafe88f6474a2738cb82ed8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Scoped style classes
+  now join an element's class the way its target renders that class. Beside a
+  `<style>` block, `<div className={props.c} />` rendered
+  `class="undefined tsrx-…"` when `c` was unset, and on Solid and Vue
+  `class={{ active: on }}` rendered `[object Object] tsrx-…` and
+  `class={['a', on && 'b']}` rendered `a,false tsrx-…`. A class that may not be a
+  string now joins through the runtime's new `join_scope_class`, which follows the
+  target's rendering, set by the new `jsx.classValue` platform option:
+
+  - React and Hono DOM leave out `null`, `undefined`, `true` and `false`, Preact
+    renders `true` as text, and Hono's server renders `true` and `false` as text.
+    Any other value joins as text.
+  - Solid and Vue keep an object or a list class, and leave out other values that
+    are not strings, such as numbers and functions.
+  - A props spread's class joins the same way on each target.
+  - A class that is always a string (a template literal, a choice between string
+    literals, a `$class` read) still joins as text, and the editor's type-only
+    output is unchanged.
+
+  On Solid and Vue, an authored `className` attribute on an intrinsic element now
+  compiles to `class`, joined with a `class` attribute (or, with a spread between
+  them, kept in its place, so the target handles them as two `class` attributes:
+  Solid keeps the last, Vue joins them), so React-style source keeps its class
+  with or without scoped styles. Solid ignored `className`, and Vue rendered a
+  static one as a `classname` attribute. The editor checks it as `class` too, so
+  it no longer reports that `className` doesn't exist on these targets' elements,
+  and hover, rename and go-to-definition still point at the authored `className`.
+  Components, member and dynamic tags (which may be components) and spread bags
+  keep `className` as written.
+
+- [#1128](https://github.com/tsrx-org/tsrx/pull/1128)
+  [`e151432`](https://github.com/tsrx-org/tsrx/commit/e15143265338cb25e13a743d095d328e95f6dddd)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Two Solid control-flow
+  fixes:
+
+  - A `@{ }` block inside an `@if`, `@else if`, `@for`, `@switch` (`@case` or
+    `@default`) or `@try` body now renders its output, whether it is an element's
+    child (`<p>@{ const v = 1; <b>{v}</b> }</p>`) or the whole body. Before, the
+    block's setup ran but its output was dropped, so `<p>` rendered empty. A block
+    that is the whole body now lowers like a body without the `@{ }`: in an `@if`,
+    `@else if` or `@case` its setup runs untracked, once, instead of re-running
+    whenever a signal it reads changes.
+  - `@switch` now reads its discriminant once and compares every case with that
+    value. Before, each case read it again, so a discriminant with a side effect,
+    such as `@switch (queue.shift())`, consumed one value per case and could
+    render the wrong branch, on the server and in the browser. A discriminant that
+    is not a plain name or property read is now held in a `createMemo`, boxed so
+    that a promise is compared as a value, as a JavaScript `switch` compares it,
+    rather than awaited.
+
+- [#1190](https://github.com/tsrx-org/tsrx/pull/1190)
+  [`18654c4`](https://github.com/tsrx-org/tsrx/commit/18654c46052d516c70b5a71c4775816574c0e452)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, the setup
+  statements of an `@else`, `@default`, `@empty`, `@try`, `@pending`, or `@catch`
+  body now run once, as setup does in an `@if` or `@case` body. Before, the body
+  ran inside the `<Show>`, `<Switch>`, `<For>`, `<Loading>`, or `<Errored>` memo
+  that reads it, so each signal its setup read became a dependency there: the
+  setup ran again and the body's output was recreated whenever one changed. The
+  body now runs through `untrack`, as `fallback={untrack(() => { … })}`,
+  `<Errored>{untrack(() => { … })}</Errored>`, or, in the `<Errored>` fallback,
+  `return untrack(() => { … })` once the `@catch` binding holds the thrown value.
+  Reads in the rendered output stay reactive, and `reset()` still runs the `@try`
+  body again.
+
+- [#1227](https://github.com/tsrx-org/tsrx/pull/1227)
+  [`0ca1023`](https://github.com/tsrx-org/tsrx/commit/0ca10232569e9beaad7d1d0d53d209e6520385fa)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, an element
+  with several spreads and its own `ref` no longer applies a bag's refs again when
+  the bag carries more than one ref and they stay the same. In
+  `<input ref={own} {...first()} {...second()} />`, a `first` of
+  `{ title, ref: a, extra: named }`, with `named` made by `create_ref_prop`,
+  called `a` and `named` again on every update to `first`, because the bag's refs
+  merged into a new callback each time. `spread_ref_bags` now merges them with the
+  runtime's new `normalize_spread_props_sharing_refs`, which gives a new bag
+  carrying the same refs the same `ref`, so they are applied again only when one
+  of them changes.
+
+- [#1107](https://github.com/tsrx-org/tsrx/pull/1107)
+  [`e9330ea`](https://github.com/tsrx-org/tsrx/commit/e9330ea841e6113e10be39980aae7c0ebfd4b63a)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, a host
+  element with spreads and its own `ref` now behaves as it does in plain Solid
+  TSX:
+
+  - `ref={el}` assigns the element to `el`. Before, the compiler put the ref in an
+    array with the spreads' refs, and Solid only calls the functions in an array,
+    so `el` stayed `undefined`.
+  - A `ref` inside a spread is called once. Before, it was called twice (`bag`,
+    `own`, `bag`): once through the element's ref array and again by Solid's
+    `spread()`.
+  - The spread updates when its expression changes, as in
+    `<button {...bag()} ref={cb} />`. Before, the bag was read once in a setup
+    declaration, so its attributes kept their first values.
+
+  The element now keeps its `ref` as written, and Solid's `spread()` applies the
+  spreads' refs. One spread is normalized in place. Solid keeps only the last of
+  several spreads' refs, so an element with more than one spread goes through the
+  Solid runtime's new `spread_ref_bags`: each bag is normalized lazily in a memo,
+  its spread gets it without its `ref`, and one more spread carries every bag's
+  ref, so each of them still applies, in order, after the element's own. A bag
+  that gains or loses a ref while mounted updates, and the bags stay reactive
+  without rebuilding the element's children. The new
+  `jsx.hostSpreadRefStrategy: 'spread'` platform option selects this lowering.
+
+- [#1185](https://github.com/tsrx-org/tsrx/pull/1185)
+  [`153b526`](https://github.com/tsrx-org/tsrx/commit/153b5267ad6445abdb81f85d5ad32409d6101d7e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, host spreads
+  no longer redo ref and child work on unrelated updates:
+
+  - A component that spreads its props onto an element creates its children once.
+    With `function W(props) @{ <div {...props} /> }`,
+    `<W title={title()}><Child /></W>` ran `Child` twice on mount and once more on
+    every title change. The spread normalizer read every prop to look for refs,
+    and Solid's `children` getter creates the children each time it is read. The
+    normalizer now leaves `children` unread, and a copy it makes reads it through
+    the original props only when the JSX runtime does.
+  - An element with several spreads and its own `ref` applies a bag's ref again
+    only when that ref changes. In
+    `<input ref={own} {...first()} {...second()} />`, an update to `second` called
+    the refs of both bags again. `spread_ref_bags` now hands Solid's `spread()`
+    only the refs that changed, and nothing when a bag update keeps its ref.
+
+- [#1302](https://github.com/tsrx-org/tsrx/pull/1302)
+  [`120b9b9`](https://github.com/tsrx-org/tsrx/commit/120b9b9fce954685257ba5cfee6a115c0e21347c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - TSRX2034 (a `yield` in
+  a template value that Solid's JSX compiler moves out of its generator) can now
+  follow babel-preset-solid's SSR output in a server build. `@tsrx/solid`'s
+  `compile` takes a new `ssr` option for that. `@tsrx/vite-plugin-solid` takes
+  `ssr` too: set it as you set `vite-plugin-solid`'s own `ssr` option, and a
+  server build is then compiled with `ssr: true`. `@tsrx/bun-plugin-solid` sets it
+  when its `solid` options have `generate: 'ssr'` and `hydratable: true`. So
+  `<input {...bag} title={yield 1} />` is reported at the `yield` in such a server
+  build, instead of the build failing later with
+  `A 'yield' expression is only allowed in a generator body.` in compiled code.
+
+  The hydratable SSR output moves every attribute beside a host spread except
+  refs, event handlers and `prop:` values, the children of a host element with a
+  spread, an attribute value with an element in it, and a `textContent` value
+  grouped with a neighbouring dynamic value. Every `yield` a client build reports
+  is reported in a server build too, since the app's client build fails on it. The
+  SSR check counts a value that may fold into a constant as folded and drops the
+  `yield`s only it finds there, so such a `yield` goes unreported rather than
+  reported though the compiler drops it.
+
+  Client builds, server builds with the option off (such as a plain `solid()`
+  server build or a Vitest `node` environment), the editor and the Rspack plugin
+  keep the DOM output's rules, and the compiled code is the same either way.
+
+- [#1317](https://github.com/tsrx-org/tsrx/pull/1317)
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A Solid `@if` with a
+  condition that can't change, such as `@if (true)` or
+  `@if (import.meta.env.DEV)`, whose body keeps `<Show>` (for example because it
+  has setup statements) now lowers that body once. Before, the body was lowered
+  twice: its diagnostics were reported twice, and generated names in it skipped a
+  number.
+
+- [#1129](https://github.com/tsrx-org/tsrx/pull/1129)
+  [`6f1e46b`](https://github.com/tsrx-org/tsrx/commit/6f1e46b54d10b33d656f02bf91aa69132bd187d6)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, an `@if`
+  whose condition cannot change at runtime, a literal or an `import.meta.env.*`
+  read (or the negation of either), now compiles to a plain `condition ? a : b`
+  instead of a `<Show>`, when it has at most an `@else` and its branches hold only
+  output. A branch with setup statements, or an `@else if` chain, still uses
+  `<Show>` or `<Switch>`.
+
+- [#1280](https://github.com/tsrx-org/tsrx/pull/1280)
+  [`190f797`](https://github.com/tsrx-org/tsrx/commit/190f7970cf968c978b3e5df37b4e3a97c4e7efa5)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid and Vue, a
+  `yield` in a template value that the target's JSX compiler moves into an effect,
+  a getter or a callback is now a TSRX compile error, TSRX2034, at the authored
+  `yield`:
+  ``Solid TSRX does not support `yield` in this part of the template: Solid's JSX compiler evaluates it in an effect, a getter or a callback, which cannot yield from the enclosing generator. …``
+  (and the same for Vue). Before, the build failed later in `babel-preset-solid`
+  or `vue-jsx-vapor` output, with
+  `A 'yield' expression is only allowed in a generator body.` or
+  `The keyword 'yield' is reserved` pointing at compiled code. Yield the value
+  first instead: `const title = yield bag.title;`.
+
+  A `yield` those compilers leave in place still compiles, so code that builds
+  today is unchanged. On Solid that is a static value (no member access, call,
+  spread or `in`) in an attribute, a component prop or a lone component child, any
+  event handler or non-array `ref` on an element without a spread (except a
+  `[handler, data]` array on an event the compiler doesn't delegate, such as
+  `onScroll`, which it wraps in a new listener), any attribute but `ref` beside a
+  host spread unless it's dynamic, and an element nested in the returned one. A
+  `class` or `style` object is split into one setting per key, as the compiler
+  does, so only a dynamic key's value is reported, unless a method or accessor
+  keeps the whole object. The check follows the compiler's folding of literal
+  values and its dropping of an attribute that a later one of the same name
+  replaces, of the children of a void element or a `<noscript>`, of a
+  `<textarea>`'s children when a literal `value` or `defaultValue` (or a bare
+  `value`) replaces them, of a `children` attribute on an element or component
+  that has children (or an element that writes none), of an element's `$key`, and
+  of an event array's elements after the first two, wherever the element is
+  created, so a `yield` in a branch it drops, as in `false && (yield x)`,
+  compiles. A `<select>`'s value is reported, since the compiler also assigns it
+  in a microtask. On Vue, which wraps every element, it is a host spread, which
+  TSRX evaluates before the element. A `yield` in a nested generator function or
+  before the template is allowed on both. React, Preact and Hono evaluate
+  templates eagerly and are unchanged.
+
+- [#1121](https://github.com/tsrx-org/tsrx/pull/1121)
+  [`1589310`](https://github.com/tsrx-org/tsrx/commit/1589310147fa30e065a10199e75092813ed4bb53)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Fixes bugs in hoisting
+  static JSX to module-level constants:
+
+  - Static JSX is hoisted only when every tag it reads is ready when the module
+    loads and cannot change later: an import, a function declaration, or a `const`
+    or class declared earlier. A member tag like `<Menu.Item>` is hoisted only
+    when it starts with an import, since the module can assign `Menu.Item` after
+    it loads. A tag that reads `this`, `super`, a local binding, a `let` or `var`,
+    an enum, a namespace, an import alias, or a name the module does not declare
+    is read at render time. Before, `<Screen.Tag>` in a method of `class Screen`
+    threw `Cannot access 'Screen' before initialization` on import, and
+    `<Menu.Item>` rendered an undefined type when `Menu.Item` was assigned later
+    ([#204](https://github.com/tsrx-org/tsrx/issues/204)). Intrinsic tags like
+    `<div>` read no binding and are still hoisted.
+  - A component declared inside another function keeps its static JSX in place.
+    Before, it referenced a static that was never declared and threw a
+    `ReferenceError` when it rendered.
+  - The temporary that holds a host element's spread props beside a `ref` is named
+    apart from every identifier in the module, so it can't shadow or redeclare a
+    binding the author wrote.
+  - A raw `<script>` in an expression container or prop of static JSX keeps its
+    body, as in `<div>{<script type="application/json">{"a":1}</script>}</div>`.
+    The script rendered empty
+    ([#845](https://github.com/tsrx-org/tsrx/issues/845)).
+
+- [#1238](https://github.com/tsrx-org/tsrx/pull/1238)
+  [`07e262a`](https://github.com/tsrx-org/tsrx/commit/07e262afedaf6cf614ae78dc9649437ce34d66ef)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A static component used
+  more than once now renders each time on Solid and Vue. These targets no longer
+  hoist static JSX such as `<p class="b">plain</p>` to a module-level constant:
+  Solid and Vue Vapor JSX evaluates to a DOM node, so the constant held one node
+  that every use moved into place. `<Static />` twice rendered one `<p>`, and a
+  static component in a three-row `@for` showed only in the last row. On Vue,
+  which also hoisted inside `@for` and `@if` bodies, a static `@for` row rendered
+  once for the whole list, and a static `@if` branch showed in only one instance
+  of its component. Static JSX now stays in place, and each framework's compiler
+  still parses each template once and clones it per use
+  ([#1236](https://github.com/tsrx-org/tsrx/issues/1236),
+  [#1240](https://github.com/tsrx-org/tsrx/issues/1240)).
+
+- [#1198](https://github.com/tsrx-org/tsrx/pull/1198)
+  [`14a664d`](https://github.com/tsrx-org/tsrx/commit/14a664d8485a89c9cece8cc2080266cd89cc1329)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, Vue and Hono
+  DOM, whose components can't be async, each `await` in a component is now
+  reported once, as TSRX2021 with the target's own message. Before, an `await` in
+  a part of the template that renders through a callback (an `@for` body on Solid
+  and Vue, an `@try` or `@pending` body on Vue, an `@catch` body on all three, an
+  `@if` or `@switch` body with setup statements on Solid) was reported twice: once
+  by the target and once by the shared check, whose advice to await the value in
+  the component body doesn't apply on these targets. An `@for await` on Vue and
+  Hono DOM is no longer also reported as TSRX2024. In collecting mode and in the
+  editor, every `await` of a component is now reported, not only the first. An
+  `await` in a nested function is still allowed.
+
+  The three messages now live in the error tables in `@tsrx/core/diagnostics`:
+  `TARGET_COMPONENT_AWAIT_UNSUPPORTED`
+  (`Solid TSRX components do not support \`await\`.`, and the same for Vue) and `HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED`, which keeps Hono DOM's advice to use `use(promise)`with`<Suspense>`. Solid's message was `` `await` is not allowed inside Solid components. `` and Vue's was `` `await`
+  is not yet supported in Vue TSRX components. ``.
+
+- [#1228](https://github.com/tsrx-org/tsrx/pull/1228)
+  [`f762c09`](https://github.com/tsrx-org/tsrx/commit/f762c09eea9f1071663bdc9d90524f21250132ff)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The last target error
+  messages written outside the error tables now come from
+  `@tsrx/core/diagnostics`, with their codes unchanged. Hono DOM's error for an
+  async component it renders is the new `HONO_DOM_ASYNC_COMPONENT_UNSUPPORTED`
+  entry, and now formats `use(promise)` and `<Suspense>` as code. Hono's error for
+  `@catch (error, reset)` is the new `TARGET_CATCH_RESET_UNSUPPORTED` entry
+  (TSRX2026). Solid's error for the `finally` of a JavaScript `try` that throws in
+  a component body raises core's `TEMPLATE_TRY_FINALLY`, so its wording follows
+  core's:
+  ``Solid TSRX does not support JavaScript `try/finally` in TSRX templates. …``
+  (was "in component templates"). When such a `try` has no `catch`, that is now
+  its only error. Before, Solid also reported
+  ``Solid try statements must have a `pending` or `catch` block.`` over the whole
+  statement. Solid's missing-handler check now raises core's
+  `TEMPLATE_TRY_HANDLER`.
+- Updated dependencies
+  [[`2bc4f1f`](https://github.com/tsrx-org/tsrx/commit/2bc4f1fc5fcb9863c926ab3d01b0407e89bbf639),
+  [`fb35a0b`](https://github.com/tsrx-org/tsrx/commit/fb35a0bf5bbea972889e2024b535d0fee3227856),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`2646239`](https://github.com/tsrx-org/tsrx/commit/26462399753081501e78478de7495d15775e411e),
+  [`6eaee99`](https://github.com/tsrx-org/tsrx/commit/6eaee992105984b13c38f9de4edfd6ca99eae399),
+  [`972010b`](https://github.com/tsrx-org/tsrx/commit/972010b3654c907baa25cf2f03e3cad9b3d6c6fd),
+  [`dac81a4`](https://github.com/tsrx-org/tsrx/commit/dac81a418448476aa4ab60999096dc629627c9b4),
+  [`677d574`](https://github.com/tsrx-org/tsrx/commit/677d5743b8cb3d3cd57504ef81f6323ef45b8399),
+  [`72956b0`](https://github.com/tsrx-org/tsrx/commit/72956b0d9a4a55c56b210b1b7669f7e04a77709c),
+  [`fe2c377`](https://github.com/tsrx-org/tsrx/commit/fe2c377664bdcac510bcd137b6468bec7efe9eeb),
+  [`6297ffa`](https://github.com/tsrx-org/tsrx/commit/6297ffa6527f297de69edb95af7a74a87b804970),
+  [`25e5844`](https://github.com/tsrx-org/tsrx/commit/25e58444734d535385f2ca4310445b34286369cb),
+  [`8c6d037`](https://github.com/tsrx-org/tsrx/commit/8c6d037fdd16d28d871126bf48fba4b2583d9bbf),
+  [`54e7644`](https://github.com/tsrx-org/tsrx/commit/54e7644d256f5506fbde84e35ee5e827aaef15ad),
+  [`9d8ea3e`](https://github.com/tsrx-org/tsrx/commit/9d8ea3e61a0ed083af98269f703bb73e91421e64),
+  [`73c170b`](https://github.com/tsrx-org/tsrx/commit/73c170b4d14f961ce49080c604e233886e71e79d),
+  [`129825c`](https://github.com/tsrx-org/tsrx/commit/129825ce427fb80b31c6fcbb148d48781a83485f),
+  [`c28d0b7`](https://github.com/tsrx-org/tsrx/commit/c28d0b7356b9c4456cbe4009c5ea2d38260d7660),
+  [`827030c`](https://github.com/tsrx-org/tsrx/commit/827030cd1441ec3156414a54a1ab6d3de1f4c34b),
+  [`b620e02`](https://github.com/tsrx-org/tsrx/commit/b620e02c284bfdf59c105c2e5d71b14f0cc84228),
+  [`d0a00dc`](https://github.com/tsrx-org/tsrx/commit/d0a00dc54713b459a208fb2e044158a46b0143da),
+  [`d5015d2`](https://github.com/tsrx-org/tsrx/commit/d5015d25b33980d0509ecccf04a341081fee70db),
+  [`4d1def9`](https://github.com/tsrx-org/tsrx/commit/4d1def98977820da6206df0c189a7f525203298e),
+  [`6165298`](https://github.com/tsrx-org/tsrx/commit/6165298529f192d72825c7905973ae2acc881921),
+  [`ee70085`](https://github.com/tsrx-org/tsrx/commit/ee700855c0c7e14b58163f4693c1797be7e96772),
+  [`33022ba`](https://github.com/tsrx-org/tsrx/commit/33022ba2356f9c375242b6edc63ce65fd6215b89),
+  [`66a0791`](https://github.com/tsrx-org/tsrx/commit/66a079126a2604436eb2c934ad88f8b78c7c7bc5),
+  [`2b465b4`](https://github.com/tsrx-org/tsrx/commit/2b465b432b515c07047e3eadeb66ff34df95de2d),
+  [`8d1541b`](https://github.com/tsrx-org/tsrx/commit/8d1541ba83643e51f86b8f46d8034c56bd70d17c),
+  [`3603935`](https://github.com/tsrx-org/tsrx/commit/36039352946b9466f337f00dbc4e0662ba78a395),
+  [`c7dc4ef`](https://github.com/tsrx-org/tsrx/commit/c7dc4efa939153f7b800500f1ebdc71093066340),
+  [`d18720d`](https://github.com/tsrx-org/tsrx/commit/d18720d75e143c26d015d9837fb5d1c860cc0cb9),
+  [`9f90c6a`](https://github.com/tsrx-org/tsrx/commit/9f90c6ae8d85f4a65853d42382f5280e504c08f8),
+  [`02e39f6`](https://github.com/tsrx-org/tsrx/commit/02e39f6bf7f0941bb5b7226a02cfadeb5f9ff264),
+  [`a09bc3d`](https://github.com/tsrx-org/tsrx/commit/a09bc3dffac142c0a8adc347b0683f333b78a705),
+  [`bbf7092`](https://github.com/tsrx-org/tsrx/commit/bbf70925ae7944ebba8275b2090247c1e333fe54),
+  [`964899b`](https://github.com/tsrx-org/tsrx/commit/964899bd268e026dfe5f4832fb44c7cbb0b42141),
+  [`55d2886`](https://github.com/tsrx-org/tsrx/commit/55d2886718cd9134b5c7e7c2ba4129a24d2d94b6),
+  [`9ff7b5d`](https://github.com/tsrx-org/tsrx/commit/9ff7b5d5f80e7697896d91d5674ccccb389a890d),
+  [`418dc53`](https://github.com/tsrx-org/tsrx/commit/418dc530f0897c9c9f54d61eed1269490d3b29aa),
+  [`80316d9`](https://github.com/tsrx-org/tsrx/commit/80316d94773c91a182d15e3bca5e7965ebc225b0),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`135ce77`](https://github.com/tsrx-org/tsrx/commit/135ce776f67596af641c8f2772d0321dbd73274e),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`3c510ee`](https://github.com/tsrx-org/tsrx/commit/3c510ee11929af366393ce5aa582d72c1c38d3a8),
+  [`f38319a`](https://github.com/tsrx-org/tsrx/commit/f38319a6a0f5a133ca0eb9efc864d9e3c69bee4f),
+  [`7484f21`](https://github.com/tsrx-org/tsrx/commit/7484f2135be256f099f6e27af704e894b09ee260),
+  [`21edc74`](https://github.com/tsrx-org/tsrx/commit/21edc743be4622090b007d015c2f0d2699248777),
+  [`3ef0076`](https://github.com/tsrx-org/tsrx/commit/3ef00761631d95ef9fcccbae2673df371d1a4c0d),
+  [`15899ed`](https://github.com/tsrx-org/tsrx/commit/15899ed7a3e324f842e5f1662ac3b2c53dbf2605),
+  [`b2af266`](https://github.com/tsrx-org/tsrx/commit/b2af26663e24648ca777a6893b2e66b67d5c4d28),
+  [`6dbda19`](https://github.com/tsrx-org/tsrx/commit/6dbda190b1fa875d4d196b80c0dcc2903ad41b72),
+  [`059ba30`](https://github.com/tsrx-org/tsrx/commit/059ba30018bb3a74d7fbaf2de2d88068c8b30636),
+  [`829de73`](https://github.com/tsrx-org/tsrx/commit/829de739887b29e42dea5328b5fb370edf5bc58e),
+  [`2aa4bf8`](https://github.com/tsrx-org/tsrx/commit/2aa4bf8b1e38e8be96e149a2b5ba5b6d3c727164),
+  [`da9bec8`](https://github.com/tsrx-org/tsrx/commit/da9bec849cd988e39637654951864d1dba98cfc9),
+  [`4bdbe57`](https://github.com/tsrx-org/tsrx/commit/4bdbe572d5e5e0ac4a746248f7b4a9109f52e02d),
+  [`0fc3819`](https://github.com/tsrx-org/tsrx/commit/0fc3819e6c91a9cc8a2723737dd47f72374ae25f),
+  [`357bbcc`](https://github.com/tsrx-org/tsrx/commit/357bbcc9967848cd48a3ddcc59a4b10ed59db3a1),
+  [`644583f`](https://github.com/tsrx-org/tsrx/commit/644583f0abf521bf04b615e1394d96a3fd1f0d35),
+  [`91d958d`](https://github.com/tsrx-org/tsrx/commit/91d958de44c9e582cd66a5b66aff6bb37ff0ece2),
+  [`e0c07b5`](https://github.com/tsrx-org/tsrx/commit/e0c07b55b199acc4fe05b705255e79020b500376),
+  [`6b60554`](https://github.com/tsrx-org/tsrx/commit/6b60554c73958e7b2d00f385760d533031417f1f),
+  [`6b207b6`](https://github.com/tsrx-org/tsrx/commit/6b207b65e8a339d5fe301c60e72db271ffb9a572),
+  [`2473538`](https://github.com/tsrx-org/tsrx/commit/247353854e918f119dafe88f6474a2738cb82ed8),
+  [`baf1452`](https://github.com/tsrx-org/tsrx/commit/baf1452ef56f7e481112dd7138a69f9010f113c7),
+  [`ab3d989`](https://github.com/tsrx-org/tsrx/commit/ab3d989a68c1c2d68a2d0bfa2a94c4b9019f3f6e),
+  [`bb15638`](https://github.com/tsrx-org/tsrx/commit/bb156380f69d2a7fe23d7522a02580d3f4d276af),
+  [`0ca1023`](https://github.com/tsrx-org/tsrx/commit/0ca10232569e9beaad7d1d0d53d209e6520385fa),
+  [`e9330ea`](https://github.com/tsrx-org/tsrx/commit/e9330ea841e6113e10be39980aae7c0ebfd4b63a),
+  [`153b526`](https://github.com/tsrx-org/tsrx/commit/153b5267ad6445abdb81f85d5ad32409d6101d7e),
+  [`190f797`](https://github.com/tsrx-org/tsrx/commit/190f7970cf968c978b3e5df37b4e3a97c4e7efa5),
+  [`0ee439a`](https://github.com/tsrx-org/tsrx/commit/0ee439a5d94e071ecae594229f61e9b5ee022296),
+  [`56dd6f5`](https://github.com/tsrx-org/tsrx/commit/56dd6f573f9c7c822db9d33313317bed16f7fa45),
+  [`10a8901`](https://github.com/tsrx-org/tsrx/commit/10a89015088a283db1f067ffe7803fef4e621859),
+  [`1589310`](https://github.com/tsrx-org/tsrx/commit/1589310147fa30e065a10199e75092813ed4bb53),
+  [`04ea4f0`](https://github.com/tsrx-org/tsrx/commit/04ea4f0bb85bc3fe25d09366cf04e70d809cc66e),
+  [`0546961`](https://github.com/tsrx-org/tsrx/commit/0546961247f011b32370c6c16be3961b2bb5f533),
+  [`42e3e49`](https://github.com/tsrx-org/tsrx/commit/42e3e4934d2beaa86d5048c303dfa27498599fec),
+  [`70825fb`](https://github.com/tsrx-org/tsrx/commit/70825fb73774dce8753fcff7b6a8bbcdebe3a7fb),
+  [`14a664d`](https://github.com/tsrx-org/tsrx/commit/14a664d8485a89c9cece8cc2080266cd89cc1329),
+  [`f762c09`](https://github.com/tsrx-org/tsrx/commit/f762c09eea9f1071663bdc9d90524f21250132ff),
+  [`ed8c38c`](https://github.com/tsrx-org/tsrx/commit/ed8c38c9fd948270d1136bf269f896402c0d359a),
+  [`c07323a`](https://github.com/tsrx-org/tsrx/commit/c07323a54009fc3fbf95503de00d50ddb2b00725),
+  [`4344150`](https://github.com/tsrx-org/tsrx/commit/4344150cc4786dd717c1df722370e519ad349647),
+  [`c49216e`](https://github.com/tsrx-org/tsrx/commit/c49216e86d15b68c4d84f8763691418d74ad8744),
+  [`fb35a0b`](https://github.com/tsrx-org/tsrx/commit/fb35a0bf5bbea972889e2024b535d0fee3227856),
+  [`910dbae`](https://github.com/tsrx-org/tsrx/commit/910dbaea2d709ff2f53bf800042c8914bd336939),
+  [`d3e8fe4`](https://github.com/tsrx-org/tsrx/commit/d3e8fe44c53fdc64030307dbaaca1448d591cc2e),
+  [`e423279`](https://github.com/tsrx-org/tsrx/commit/e423279be7250a493c555bd98e243db4540d654e),
+  [`5391890`](https://github.com/tsrx-org/tsrx/commit/539189010bd47564395b7ab2c7108e2b9cc53f76),
+  [`5552aa5`](https://github.com/tsrx-org/tsrx/commit/5552aa5ff936fabbec7ee652155df64905968c6a),
+  [`4885ba3`](https://github.com/tsrx-org/tsrx/commit/4885ba3808edf0b2a74bb84b880b9c7f4966e5de),
+  [`1e58a65`](https://github.com/tsrx-org/tsrx/commit/1e58a65f2be6ff7d3aee1f4bff521d172b997159),
+  [`228d7bd`](https://github.com/tsrx-org/tsrx/commit/228d7bd028e879cde8b481a0209d1c3449380c5f),
+  [`5422ee1`](https://github.com/tsrx-org/tsrx/commit/5422ee180deb0422f0359629b0cdbf5533abf07b),
+  [`c19818c`](https://github.com/tsrx-org/tsrx/commit/c19818ce37642c4508fb2ffd41a8325367d46c36),
+  [`ab5a0ff`](https://github.com/tsrx-org/tsrx/commit/ab5a0ff13138746ade811808f27f52d34668ae3f),
+  [`04ef167`](https://github.com/tsrx-org/tsrx/commit/04ef16724d4c3d0a85cebef45fbd081673987fa0),
+  [`0246e95`](https://github.com/tsrx-org/tsrx/commit/0246e95f983c2efd83e3e99100d00a5ba24c9233)]:
+  - @tsrx/core@0.6.0
+  - @tsrx/solid-runtime@0.1.13
+
 ## 0.3.5
 
 ### Patch Changes

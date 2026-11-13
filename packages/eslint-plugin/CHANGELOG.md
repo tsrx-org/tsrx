@@ -1,5 +1,99 @@
 # @tsrx/eslint-plugin
 
+## 0.7.0
+
+### Patch Changes
+
+- [#1093](https://github.com/tsrx-org/tsrx/pull/1093)
+  [`d5015d2`](https://github.com/tsrx-org/tsrx/commit/d5015d25b33980d0509ecccf04a341081fee70db)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - ESLint no longer
+  crashes on a `.tsrx` file that uses `@switch`
+  ([#913](https://github.com/tsrx-org/tsrx/issues/913)). The ESLint parser now
+  gives ESLint the file's comments and tokens, so `eslint-disable` and other
+  directive comments apply in `.tsrx` files
+  ([#454](https://github.com/tsrx-org/tsrx/issues/454)), and rules that read
+  tokens work: `no-unused-vars` reports an unused function parameter instead of
+  crashing ([#228](https://github.com/tsrx-org/tsrx/issues/228)).
+  `template-curly-spacing` and `indent` no longer crash on template literals and
+  JSX children.
+
+  Give ESLint the loop of a `@for` as a real `ForOfStatement`, `ForInStatement` or
+  `ForStatement`, in a new `loop` field of the `JSXForExpression`. Tools that read
+  a `JSXForExpression`'s `left`, `right`, `await`, `init`, `test`, `update` or
+  `body` read `loop.left`, `loop.body` and so on now. Its `index`, `key` and
+  `empty` stay on the `JSXForExpression`. ESLint gets the arms of a `@switch` as
+  `JSXSwitchCase` nodes, not `SwitchCase`, so selectors that match `SwitchCase` no
+  longer match an `@case` or `@default`.
+
+  The parser also returns its own scope manager, built with `eslint-scope`, which
+  is now a dependency of `@tsrx/eslint-parser`. `semi --fix` no longer rewrites a
+  `@for` head into code that does not parse, and `init-declarations` no longer
+  reports a `@for` variable. Core `no-undef` and `no-unused-vars` see the loop's
+  `index`, `key` and `@empty` branch in the right scopes, so `no-undef` no longer
+  reports a declared `index`
+  ([#559](https://github.com/tsrx-org/tsrx/issues/559)). Loop rules such as
+  `no-await-in-loop` and `guard-for-in` now apply to `@for` too.
+
+  A parse with `keywordTokens` records every token on the program as
+  `tsrx_tokens`.
+
+- [#1265](https://github.com/tsrx-org/tsrx/pull/1265)
+  [`57a4232`](https://github.com/tsrx-org/tsrx/commit/57a42329f49a77da25dd46b2267308cb9aeb5ce8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Add
+  `tsrx/jsx-curly-brace-presence`, a TSRX version of
+  `react/jsx-curly-brace-presence` with the same options and messages
+  ([#1249](https://github.com/tsrx-org/tsrx/issues/1249)). It doesn't unwrap a
+  child that TSRX would read differently: a directive such as
+  `{'@for (item of items)'}`, a comment such as `{'// note'}`, text that would
+  join a comment or a directive clause beside it, or the first child of a
+  `<style>`. With the react rule, `--fix` turned those into a file that doesn't
+  parse, or into a comment that silently drops the text. The new
+  `tsrx.configs.react` configuration, listed after eslint-plugin-react's, turns
+  `react/jsx-curly-brace-presence` off for `.tsrx` files and this rule on.
+  `recommended` and `strict` don't change.
+
+- [#1284](https://github.com/tsrx-org/tsrx/pull/1284)
+  [`b3dae68`](https://github.com/tsrx-org/tsrx/commit/b3dae68fb72dd0dc059103838416e4c4ac440f77)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Add
+  `tsrx/no-unused-vars`, `tsrx/no-await-in-loop` and `tsrx/no-unreachable`, which
+  wrap ESLint's core rules of the same names and understand TSRX syntax
+  ([#1154](https://github.com/tsrx-org/tsrx/issues/1154)). `tsrx/no-unused-vars`
+  suggests removing the whole `; index i` clause of an unused `@for` index,
+  instead of leaving `index )`, which doesn't parse. `tsrx/no-await-in-loop` also
+  reports an `await` in a `@for` key. `tsrx/no-unreachable` treats the arms of a
+  `@switch` as alternatives, so after an arm that throws it doesn't report the
+  other arms or the code after the `@switch`. Every other report and suggestion is
+  the core rule's, except in the code `tsrx/no-unreachable` revives after a
+  `@switch` arm that throws, the other arms and the code after the `@switch`,
+  where it follows exits itself.
+
+  A new `tsrx.configs.js` configuration, for `js.configs.recommended` users, turns
+  off `no-unused-vars` and `no-unreachable` for `.tsrx` files and turns on their
+  TSRX versions at `error`. List it after `js.configs.recommended`, and move any
+  options you give the core rules to the TSRX rules. `recommended` and `strict`
+  don't change. `tsrx/no-await-in-loop` stays opt-in: if you turn on
+  `no-await-in-loop`, use `tsrx/no-await-in-loop` for `.tsrx` files instead.
+
+- [#1094](https://github.com/tsrx-org/tsrx/pull/1094)
+  [`6657dd9`](https://github.com/tsrx-org/tsrx/commit/6657dd9019d7b378be6f4cedb91b6083f7a4909c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `tsrx/valid-for-of-key`
+  accepts a loop's declared `index` as its key
+  (`@for (const item of items; index i; key i)`) instead of reporting
+  `Variable 'i' is not defined`
+  ([#559](https://github.com/tsrx-org/tsrx/issues/559)). It also reports an
+  undeclared variable anywhere in the key. Before, it missed one inside an
+  optional chain (`key missing?.id`), a non-null assertion, an `as` or `satisfies`
+  expression, a spread, a sequence, a tagged template, an assignment, an update,
+  `new`, `import()`, or a function
+  ([#860](https://github.com/tsrx-org/tsrx/issues/860)).
+- Updated dependencies
+  [[`5d3bfa9`](https://github.com/tsrx-org/tsrx/commit/5d3bfa9cf2ded3e91e367d855fd5d27c4a990c60),
+  [`fa2243d`](https://github.com/tsrx-org/tsrx/commit/fa2243d793e8fbc3855b71f5576bd0645643b499),
+  [`88f8016`](https://github.com/tsrx-org/tsrx/commit/88f8016cdeecfcf1cbc6fb1eb6a9ae6814551746),
+  [`d5015d2`](https://github.com/tsrx-org/tsrx/commit/d5015d25b33980d0509ecccf04a341081fee70db),
+  [`8b1cfb5`](https://github.com/tsrx-org/tsrx/commit/8b1cfb5d07ca228cc3bcf2bf0683acfd5b967f0c)]:
+  - @tsrx/eslint-parser@0.7.0
+
 ## 0.6.3
 
 ### Patch Changes

@@ -1,5 +1,163 @@
 # Changelog
 
+## 2.2.5
+
+### Patch Changes
+
+- [#1295](https://github.com/tsrx-org/tsrx/pull/1295)
+  [`972010b`](https://github.com/tsrx-org/tsrx/commit/972010b3654c907baa25cf2f03e3cad9b3d6c6fd)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Warn about a `@{ … }`
+  with no output whose only statement is an expression there only for its value,
+  such as `<p>@{user.name}</p>`, which renders nothing: `TSRX2035`, the first
+  warning TSRX itself reports. In a child list the message says how to render an
+  `@` and then the value. A call, an assignment and other expressions that may be
+  there for their effect don't warn, nor does a directive, a block with output, or
+  a block with more than one statement. Like every warning, it shows only in
+  compiles that collect diagnostics, such as the editor and `tsrx-tsc`, and a
+  build drops it. Compiled output doesn't change.
+
+  `@tsrx/mcp` now gives each compile error a `severity`, and a warning no longer
+  makes `ok` false. `@tsrx/content-mapper` leaves warnings out, since TypeScript 7
+  would show each as an error, fail `tsc` on code that compiles, and hide
+  TypeScript's own errors in the statement that holds it. The VS Code extension
+  keeps the language server's warnings when TypeScript 7 serves the workspace, as
+  the content mapper doesn't send them. So on TypeScript 7,
+  `tsc --runExternalCode`, `tsrx-tsc` and editors that run the language server
+  with `--typescript-backend=native` don't show warnings yet.
+
+- [#1110](https://github.com/tsrx-org/tsrx/pull/1110)
+  [`1cf3c47`](https://github.com/tsrx-org/tsrx/commit/1cf3c47c2869a67797306655eae9ee2e4972d944)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The TSRX language
+  server no longer floods the VS Code extension host with file events in a large
+  workspace ([#1084](https://github.com/tsrx-org/tsrx/issues/1084)). It watched
+  every TypeScript, JavaScript and JSON file, `node_modules` included, and
+  vscode-languageclient holds file events until none has arrived for 250 ms, so
+  dev servers that write files all the time grew that queue without limit. Beside
+  the editor's TypeScript (the `plugin` and `native` backends), the server now
+  watches only `.tsrx` files, JSON files, lockfiles and the files package managers
+  write at the end of an install. The extension no longer sends events from
+  `node_modules` or a framework build directory (`.next`, `.nuxt`, `.output`,
+  `.svelte-kit`, `.turbo`, `.vercel`), except TypeScript configs and the files
+  that show an install finished. A `package.json` in those directories, such as
+  the one Vite writes in `node_modules/.vite/deps`, no longer restarts the server.
+  An install still does, also when `git pull` changed the lockfile before it:
+  through the install markers (`node_modules/.modules.yaml`, `.package-lock.json`,
+  `.yarn-state.yml`, `.yarn-integrity`) and the `package.json` of each package
+  installed directly in `node_modules`. A restart waits until package files have
+  stopped changing for a second, and at most ten seconds.
+
+- [#1272](https://github.com/tsrx-org/tsrx/pull/1272)
+  [`dd71454`](https://github.com/tsrx-org/tsrx/commit/dd71454b49d48fc83b7f014eade9e93b48c17818)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Code folding now works
+  in `.tsrx` files. The language server answers `textDocument/foldingRange` with
+  folds computed from the TSRX source, the way TypeScript folds TSX: functions,
+  class `static` blocks and other blocks, `@{ ... }` bodies, each `@if`, `@for`,
+  `@switch` and `@try` body and its `@else`, `@empty`, `@case`, `@default`,
+  `@catch` and `@pending` clauses, multi-line elements, attribute lists and
+  `<style>` blocks, objects, arrays, multi-line calls, template strings, groups of
+  imports, import attributes, comments and `// #region` markers, plus the CSS
+  rules inside `<style>`. While a file does not parse, folds follow indentation
+  and region markers.
+
+  Before, VS Code showed no folds at all in `.tsrx` files, with TypeScript 5.9, 6
+  or 7: TypeScript returned none for them, which also turned off VS Code's folding
+  by indentation, and the server only folded CSS rules in `<style>`.
+
+- [#1277](https://github.com/tsrx-org/tsrx/pull/1277)
+  [`180067b`](https://github.com/tsrx-org/tsrx/commit/180067b45544efd9638df0d981a05327e7f78a58)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Declarations inside
+  `<script>` bodies are document symbols again: the Outline, breadcrumbs and Go to
+  Symbol in File list each body as a `<script>` symbol whose children are the
+  body's top-level declarations (variables, functions, classes, interfaces, type
+  aliases and enums, with the members and locals other declarations show). They
+  went missing when bodies became blocks of the generated TypeScript, which
+  TypeScript's navigation tree skips. It works on every TypeScript backend. Data
+  blocks such as `<script type="application/json">` get no symbol. Enums declared
+  elsewhere in a `.tsrx` file are now listed too.
+
+- [#1111](https://github.com/tsrx-org/tsrx/pull/1111)
+  [`d34a9d3`](https://github.com/tsrx-org/tsrx/commit/d34a9d3b5da40a1d0efd34d89e85acc8cc72e839)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On TypeScript 5.9 and
+  6, auto-import now adds the import in two cases where it inserted nothing in a
+  `.tsrx` file: the auto-import completion for a name that needs a new import line
+  ([#1026](https://github.com/tsrx-org/tsrx/issues/1026)), and the completion, the
+  **Add import from** quick fix and **Add all missing imports** in a file that has
+  no imports yet ([#828](https://github.com/tsrx-org/tsrx/issues/828)). The first
+  import goes where TypeScript puts it in a `.tsx` file: after a hashbang, a
+  directive prologue such as `'use client';`, and pinned, triple-slash or detached
+  comments at the top of the file.
+
+- [#1221](https://github.com/tsrx-org/tsrx/pull/1221)
+  [`d43aac0`](https://github.com/tsrx-org/tsrx/commit/d43aac0e58a555426606c3f7caff38f94b3ed9f8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The TextMate grammar
+  now accepts only HTML whitespace (tab, line feed, form feed, carriage return and
+  space) between `</style` or `</script` and the `>` of a closing tag, as the
+  compiler does. Before, a non-breaking space or a vertical tab there also ended
+  the block, and the CSS or script after it, which the compiler still reads as
+  part of the body, was highlighted as markup.
+
+- [#1104](https://github.com/tsrx-org/tsrx/pull/1104)
+  [`a283f9d`](https://github.com/tsrx-org/tsrx/commit/a283f9d49654d6a954539fcfe297f54d9b712a31)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The TextMate grammar
+  now ends a `<script>` block where the compiler does, at `</script` followed by
+  optional whitespace and `>`. Before, `</script >` was not seen as the closing
+  tag, and the rest of the file was highlighted as script. A closing tag with a
+  line break before its `>` also ends the block. It also highlights `using` and
+  `await using` in an `@for` head as declaration keywords, as it already did in
+  statements and `for…of` loops.
+
+- [#1180](https://github.com/tsrx-org/tsrx/pull/1180)
+  [`985dbfd`](https://github.com/tsrx-org/tsrx/commit/985dbfd446b91c1fffb45b18a3ac5400d82bf137)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The TextMate grammar
+  now ends a `<style>` block where the compiler does, at `</style` followed by
+  optional whitespace and `>`, as it already did for `<script>`. Before,
+  `</style >` was not seen as the closing tag, and the rest of the file was
+  highlighted as CSS. A closing tag with a line break before its `>` also ends the
+  block.
+
+- [#1299](https://github.com/tsrx-org/tsrx/pull/1299)
+  [`2ff978b`](https://github.com/tsrx-org/tsrx/commit/2ff978bf8f6e3dbf337f5a42284d127e2c88b7ae)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The TypeScript 7 setup
+  no longer needs `js/ts.tsdk.path` by hand. The TypeScript 7 extension finds
+  `node_modules/typescript` since version 1.0.2 and asks whether to use it: choose
+  **Use Workspace Version**. TSRX still closes tags in `.tsrx` files, and from
+  1.0.2 TypeScript 7 can close some of them too, so to turn closing tags off on
+  TypeScript 7, set both `tsrx.autoClosingTags.enabled` and
+  `js/ts.autoClosingTags.enabled` to `false`.
+
+  The status item now names the compiler the TypeScript 7 server reports, with
+  extension 1.0.2 or newer. It used to name the compiler the settings point to, so
+  it could say 7.1, with no notice, while the built-in 7.0.2 ran: with a workspace
+  `tsdk` setting the user has not allowed, or with a package whose platform binary
+  is missing. For a setting that is not allowed, the notice now opens the
+  extension's version picker. Choosing **Use Workspace Version** there also adds
+  `"js/ts.experimental.useTsgo": true` to the workspace settings, so committing
+  them turns TypeScript 7 on for the whole team.
+
+  Reading the compiler from the extension has one side effect. When the project's
+  TypeScript changes in place, as `npm install -D typescript@next` does, the
+  TypeScript 7 extension no longer restarts its server on **TSRX: Restart Language
+  Server**. It asks to restart the extension host instead.
+
+  TSRX's **Use Project TypeScript** button now also finds `@typescript/native` and
+  `@typescript/native-preview`, in the extension's order, and a relative `tsdk`
+  setting in a window with several folders and no saved workspace resolves against
+  the first folder, as it does in the extension. A `tsdk` setting that names a
+  local build now counts.
+
+- Updated dependencies
+  [[`1cf3c47`](https://github.com/tsrx-org/tsrx/commit/1cf3c47c2869a67797306655eae9ee2e4972d944),
+  [`dd71454`](https://github.com/tsrx-org/tsrx/commit/dd71454b49d48fc83b7f014eade9e93b48c17818),
+  [`180067b`](https://github.com/tsrx-org/tsrx/commit/180067b45544efd9638df0d981a05327e7f78a58),
+  [`135ce77`](https://github.com/tsrx-org/tsrx/commit/135ce776f67596af641c8f2772d0321dbd73274e),
+  [`d34a9d3`](https://github.com/tsrx-org/tsrx/commit/d34a9d3b5da40a1d0efd34d89e85acc8cc72e839),
+  [`910dbae`](https://github.com/tsrx-org/tsrx/commit/910dbaea2d709ff2f53bf800042c8914bd336939),
+  [`b7b73e5`](https://github.com/tsrx-org/tsrx/commit/b7b73e566a458e4977ea52210627554d1b8bce07),
+  [`407f8ca`](https://github.com/tsrx-org/tsrx/commit/407f8cac8cd746698551f737b813850933b23c30),
+  [`1e58a65`](https://github.com/tsrx-org/tsrx/commit/1e58a65f2be6ff7d3aee1f4bff521d172b997159)]:
+  - @tsrx/language-server@0.7.0
+  - @tsrx/typescript-plugin@0.7.0
+
 ## 2.2.4
 
 ### Patch Changes
