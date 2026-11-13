@@ -1768,6 +1768,7 @@ export function runSharedScopedStyleTests({
 				['.z,:global(.w)', () => `/* (unused) .z,*/.w {`],
 				[':global(.x) .z,.y', (hash) => `/* (unused) .x .z,*/.y.${hash} {`],
 				['.y,.z:global(.k)', (hash) => `.y.${hash} /* (unused) .z.k*/ {`],
+				['.y,.z:global', (hash) => `.y.${hash} /* (unused) .z*/ {`],
 			];
 
 			for (const [rule, expected] of cases) {
