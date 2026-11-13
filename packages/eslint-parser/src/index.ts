@@ -635,15 +635,32 @@ function is_fatal_parser_diagnostic(error: any): boolean {
 	);
 }
 
-function to_eslint_parse_error(error: any): SyntaxError {
-	const parse_error: any = new SyntaxError(error?.message || String(error));
-	const loc = error?.loc?.start;
+/**
+ * A parse error as ESLint reads one: `lineNumber` and a 1-based `column`. A
+ * collected error's `loc` is a range, and a thrown one's is acorn's
+ * `{ line, column }`, which its message ends with too, as `(line:column)`. With
+ * `code`, an error with only `pos` gets its line and column from there.
+ */
+function to_eslint_parse_error(error: any, code?: string): SyntaxError {
+	const index = error?.start ?? error?.pos;
+	let loc = error?.loc?.start ?? error?.loc;
+	if (typeof loc?.line !== 'number' || typeof loc?.column !== 'number') {
+		loc =
+			code !== undefined && typeof index === 'number'
+				? create_locator(code)(index, index).start
+				: null;
+	}
+	let message = error?.message || String(error);
+	if (loc && message.endsWith(` (${loc.line}:${loc.column})`)) {
+		message = message.slice(0, -` (${loc.line}:${loc.column})`.length);
+	}
+	const parse_error: any = new SyntaxError(message);
 	if (loc) {
 		parse_error.lineNumber = loc.line;
 		parse_error.column = loc.column + 1;
 	}
-	if (typeof error?.start === 'number') {
-		parse_error.index = error.start;
+	if (typeof index === 'number') {
+		parse_error.index = index;
 	}
 	return parse_error;
 }
@@ -720,6 +737,9 @@ export function parseForESLint(code: string, options?: Linter.ParserOptions): Pa
 		if (error instanceof SyntaxError && (error as any).lineNumber != null) {
 			throw error;
 		}
+		// A syntax error the parser throws, at its position.
+		const parse_error: any = to_eslint_parse_error(error, code);
+		if (parse_error.lineNumber != null) throw parse_error;
 		// Transform TSRX parse errors to ESLint-compatible format
 		throw new SyntaxError(`Failed to parse TSRX file: ${error.message || error}`);
 	}
