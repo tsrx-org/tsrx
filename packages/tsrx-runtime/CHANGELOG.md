@@ -1,5 +1,236 @@
 # @tsrx/runtime
 
+## 0.2.5
+
+### Patch Changes
+
+- [#1258](https://github.com/tsrx-org/tsrx/pull/1258)
+  [`2bc4f1f`](https://github.com/tsrx-org/tsrx/commit/2bc4f1fc5fcb9863c926ab3d01b0407e89bbf639)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A ref list written on
+  an element, `ref={[a, b]}`, now calls every ref in it on React, Preact, Hono and
+  Vue, as it already did on Solid. These runtimes take a single ref, so the
+  compiler passes the list to `__mergeRefs`: React and Hono share the merged ref
+  through `merge_element_refs`'s cache, so an inline list is applied once, and
+  Preact gets a new callback per render, as its merged refs already do. A list can
+  nest, and a falsy entry such as the `false` of `cond && cb` is left out. Beside
+  a spread, Preact and Vue no longer drop the list.
+
+  The public `mergeRefs` now reads a ref list as the refs in it and leaves out a
+  value that is not a ref instead of throwing, and its type takes lists and the
+  falsy `false`, `0` and `''` of `cond && cb`, so the editor accepts
+  `ref={[a, b]}` on every target. `merge_element_refs` merges a lone ref object
+  from a list rather than giving it back. The `MULTIPLE_REFS` hint no longer
+  limits `ref={[a, b]}` to some targets.
+
+- [#1132](https://github.com/tsrx-org/tsrx/pull/1132)
+  [`bf6d334`](https://github.com/tsrx-org/tsrx/commit/bf6d3349a59f8ec1769d5a2f789801af7cd74ff7)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `@for` on React,
+  Preact, and Hono now reads its source the way `for...of` does. An array with its
+  own `Symbol.iterator`, including an array subclass that overrides it, renders
+  the items its iterator yields instead of its indexed items, and an empty array
+  whose iterator yields items no longer renders `@empty`. A `Symbol.iterator`
+  getter is read once instead of twice. One difference from `for...of` stays as
+  before: the loop pulls the next item before it renders the current one, so it
+  knows which item is last. `map_iterable` and `map_iterable_async` now infer the
+  item type from every member of a union source, so `@for` over
+  `string[] | number[]` type-checks with `string | number` items.
+
+- [#1134](https://github.com/tsrx-org/tsrx/pull/1134)
+  [`2b465b4`](https://github.com/tsrx-org/tsrx/commit/2b465b432b515c07047e3eadeb66ff34df95de2d)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `@for` on Solid now
+  accepts any iterable, as on React, Preact, and Hono. A `Set`, a `Map` iterator,
+  a generator, or an array with its own iterator no longer throws
+  `newItems.slice is not a function` and halts Solid's reactivity; the loop reads
+  the source the way `for...of` does and hands `<For>` the resulting array. Arrays
+  with the built-in iterator, including store arrays, reach `<For>` as they are.
+  The helpers `for_items` and `for_keyed_rows` come from the new
+  `@tsrx/solid/iterable` and `@tsrx/solid-runtime/iterable` subpaths, and
+  `@tsrx/runtime/iterable` gains `iterable_to_array`.
+
+  A Solid `@for` whose key reads its declared index, as in
+  `@for (const item of items(); index i; key i)`, no longer throws
+  `ReferenceError: i is not defined` when the list updates. Solid's `keyed`
+  callback receives the item alone, so such a loop now computes each key from the
+  item and its index up front and renders those rows. A sparse array renders its
+  holes as `undefined` items instead of halting Solid's reactivity.
+
+  A Solid `@for` that destructures its item in a loop with a key or an index, as
+  in `@for (const { id } of items(); key id)`, now renders the item's values
+  instead of `undefined`, and the destructured names follow the row when Solid
+  reuses it for another item or an item replaced under the same key. A
+  destructured component used as a tag (`<Icon />`) renders through Solid's
+  `dynamic`, so it follows the row too.
+
+- [#1266](https://github.com/tsrx-org/tsrx/pull/1266)
+  [`ced2603`](https://github.com/tsrx-org/tsrx/commit/ced260375637359686e521cce628be3057d455df)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - With Hono's server
+  renderer, a class from Hono's `css` helper beside a scoped `<style>` block now
+  renders with the scope classes. ``<span class={css`color: red;`} />`` threw
+  `ReferenceError: document is not defined` during server rendering. The scope
+  classes now join once the `css` promise settles, and the joined class keeps
+  Hono's callbacks, so the rule still reaches `<Style />`. A spread's `class` from
+  `css` joins the same way.
+
+- [#1109](https://github.com/tsrx-org/tsrx/pull/1109)
+  [`9ff7b5d`](https://github.com/tsrx-org/tsrx/commit/9ff7b5d5f80e7697896d91d5674ccccb389a890d)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React, Preact, and
+  Hono, a host spread and a `ref` beside it are now evaluated as they are in plain
+  TSX:
+
+  - A getter in a spread bag is read once. In
+    `<input {...bag} data-reads={reads} />` with
+    `get title() { return String(++reads); }`, the element rendered
+    `title="2" data-reads="2"`: the spread normalizer read every getter, handed
+    back the original bag, and the JSX runtime read the getters again. The
+    runtime's new `copy_spread_props` and `copy_spread_props_for_ref_attr` return
+    the normalized copy instead, and these targets import them in place of
+    `normalize_spread_props` and `normalize_spread_props_for_ref_attr`. Solid and
+    Vue keep the original bag, which their compiled JSX reads property by
+    property.
+  - A `ref` expression is evaluated where it is written. In
+    `<div ref={initRef()} {...{ 'data-ready': String(ready) }} />`, where
+    `initRef()` sets `ready`, the element rendered `data-ready="false"`: the
+    merged `ref` attribute moved after the spread and every later attribute. The
+    merged `ref` now stays where the element's own `ref` is written, and reads the
+    ref of a bag spread after it when the ref is applied.
+
+  A custom platform with `jsx.hostSpreadRefBinding: 'in-place'` now imports
+  `copy_spread_props` and `copy_spread_props_for_ref_attr` from its
+  `imports.refProp` module, so that module must export them. `@tsrx/runtime/ref`
+  and every first-party `*/ref` module re-export them.
+
+- [#1168](https://github.com/tsrx-org/tsrx/pull/1168)
+  [`6b207b6`](https://github.com/tsrx-org/tsrx/commit/6b207b65e8a339d5fe301c60e72db271ffb9a572)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A host element with
+  scoped styles keeps the class a props spread passes it. Beside a `<style>`
+  block, `<span {...props} />` used to render only the scope hash and drop
+  `props.className`, and `<span className="base" {...props} />` dropped the scope
+  hash. Both now render the spread's class followed by the scope classes, which is
+  what plain JSX renders plus the scope hash, on React, Preact, Solid, and Hono.
+  Vue already joined them. On Preact and Hono, a spread's `className` written
+  before a scoped `class` attribute no longer replaces that attribute
+  ([#722](https://github.com/tsrx-org/tsrx/issues/722)).
+
+- [#1232](https://github.com/tsrx-org/tsrx/pull/1232)
+  [`2473538`](https://github.com/tsrx-org/tsrx/commit/247353854e918f119dafe88f6474a2738cb82ed8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Scoped style classes
+  now join an element's class the way its target renders that class. Beside a
+  `<style>` block, `<div className={props.c} />` rendered
+  `class="undefined tsrx-…"` when `c` was unset, and on Solid and Vue
+  `class={{ active: on }}` rendered `[object Object] tsrx-…` and
+  `class={['a', on && 'b']}` rendered `a,false tsrx-…`. A class that may not be a
+  string now joins through the runtime's new `join_scope_class`, which follows the
+  target's rendering, set by the new `jsx.classValue` platform option:
+
+  - React and Hono DOM leave out `null`, `undefined`, `true` and `false`, Preact
+    renders `true` as text, and Hono's server renders `true` and `false` as text.
+    Any other value joins as text.
+  - Solid and Vue keep an object or a list class, and leave out other values that
+    are not strings, such as numbers and functions.
+  - A props spread's class joins the same way on each target.
+  - A class that is always a string (a template literal, a choice between string
+    literals, a `$class` read) still joins as text, and the editor's type-only
+    output is unchanged.
+
+  On Solid and Vue, an authored `className` attribute on an intrinsic element now
+  compiles to `class`, joined with a `class` attribute (or, with a spread between
+  them, kept in its place, so the target handles them as two `class` attributes:
+  Solid keeps the last, Vue joins them), so React-style source keeps its class
+  with or without scoped styles. Solid ignored `className`, and Vue rendered a
+  static one as a `classname` attribute. The editor checks it as `class` too, so
+  it no longer reports that `className` doesn't exist on these targets' elements,
+  and hover, rename and go-to-definition still point at the authored `className`.
+  Components, member and dynamic tags (which may be components) and spread bags
+  keep `className` as written.
+
+- [#1227](https://github.com/tsrx-org/tsrx/pull/1227)
+  [`0ca1023`](https://github.com/tsrx-org/tsrx/commit/0ca10232569e9beaad7d1d0d53d209e6520385fa)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, an element
+  with several spreads and its own `ref` no longer applies a bag's refs again when
+  the bag carries more than one ref and they stay the same. In
+  `<input ref={own} {...first()} {...second()} />`, a `first` of
+  `{ title, ref: a, extra: named }`, with `named` made by `create_ref_prop`,
+  called `a` and `named` again on every update to `first`, because the bag's refs
+  merged into a new callback each time. `spread_ref_bags` now merges them with the
+  runtime's new `normalize_spread_props_sharing_refs`, which gives a new bag
+  carrying the same refs the same `ref`, so they are applied again only when one
+  of them changes.
+
+- [#1185](https://github.com/tsrx-org/tsrx/pull/1185)
+  [`153b526`](https://github.com/tsrx-org/tsrx/commit/153b5267ad6445abdb81f85d5ad32409d6101d7e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, host spreads
+  no longer redo ref and child work on unrelated updates:
+
+  - A component that spreads its props onto an element creates its children once.
+    With `function W(props) @{ <div {...props} /> }`,
+    `<W title={title()}><Child /></W>` ran `Child` twice on mount and once more on
+    every title change. The spread normalizer read every prop to look for refs,
+    and Solid's `children` getter creates the children each time it is read. The
+    normalizer now leaves `children` unread, and a copy it makes reads it through
+    the original props only when the JSX runtime does.
+  - An element with several spreads and its own `ref` applies a bag's ref again
+    only when that ref changes. In
+    `<input ref={own} {...first()} {...second()} />`, an update to `second` called
+    the refs of both bags again. `spread_ref_bags` now hands Solid's `spread()`
+    only the refs that changed, and nothing when a bag update keeps its ref.
+
+- [#1239](https://github.com/tsrx-org/tsrx/pull/1239)
+  [`384972f`](https://github.com/tsrx-org/tsrx/commit/384972fcdd5eaeb09b92a852bb3d9ee186689286)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React, Preact, Hono
+  and Vue, a host spread whose bag's `ref` is a ref list now calls every ref in
+  it. `<input {...{ title, ref: [a, b] }} />` called neither `a` nor `b`: the
+  spread normalizer passed a lone list to the framework as is, and React warned
+  "Unexpected ref object". Beside the element's own ref, Preact and Vue also
+  dropped the list. The normalizer now merges a list even when it is the bag's
+  only ref, as it already did beside a `create_ref_prop` ref prop. A list of one
+  ref object is merged as well, so a `{ value }` ref is written as such rather
+  than read as the framework's own kind of ref object. On React and Hono the
+  merged ref is shared as `merge_element_refs` shares it, so an inline list
+  written each render is applied once. Solid is unchanged, because its spread
+  applies a ref list itself.
+
+- [#1218](https://github.com/tsrx-org/tsrx/pull/1218)
+  [`0ee439a`](https://github.com/tsrx-org/tsrx/commit/0ee439a5d94e071ecae594229f61e9b5ee022296)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React and Hono, a
+  host spread whose bag carries several refs, such as a `ref` and a ref prop made
+  with `create_ref_prop`, no longer detaches and reattaches them on every render.
+  In `<div {...{ title, ref: a, extra: named }} />`, each update ran `a(null)`,
+  `named(null)`, `a(el)` and `named(el)`, with or without a `ref` of the element's
+  own, because the spread normalizer merged the bag's refs into a new callback
+  each time. On these targets it now merges them as `merge_element_refs` does, so
+  a new bag carrying the same refs gets the same `ref`, and its refs are applied
+  again only when one of them changes. `merge_element_refs` now also keys a ref
+  list by the refs in it, so an inline `ref: [a, b]` written each render is
+  applied once as well, and a list whose refs change is applied again.
+
+  Preact is unchanged, for the reason given for `merge_element_refs`. A custom
+  platform that sets `jsx.shareMergedRefs` with `hostSpreadRefBinding: 'in-place'`
+  imports the runtime's new `copy_spread_props_sharing_refs` and
+  `copy_spread_props_for_ref_attr_sharing_refs` from its `imports.refProp` module,
+  which `@tsrx/runtime/ref` and the first-party `*/ref` modules export.
+
+- [#1176](https://github.com/tsrx-org/tsrx/pull/1176)
+  [`56dd6f5`](https://github.com/tsrx-org/tsrx/commit/56dd6f573f9c7c822db9d33313317bed16f7fa45)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React and Hono, an
+  element with its own `ref` and a host spread no longer detaches and reattaches
+  its refs on every render. In `<input ref={log} {...props.rest} />`, every update
+  called `log` with `null` and then with the element again, because the merged
+  `ref` was a new callback each time. These targets now merge with the runtime's
+  new `merge_element_refs`, which returns a single ref as itself and the same
+  callback for the same refs, so a ref is applied again only when one of the refs
+  changes, as in plain TSX. A value that is not a ref, such as the `false` of
+  `ref={cond && cb}`, is left out.
+
+  Preact is unchanged: it stores a ref's cleanup on the callback itself, so
+  elements that shared one merged callback would run each other's cleanups. It
+  keeps a new `mergeRefs` callback per element and render.
+
+  A `ref` written before a spread is still evaluated where it is written: it is
+  assigned to a binding there, and the merged `ref` follows the spreads. The new
+  `jsx.shareMergedRefs` platform option selects `merge_element_refs`; a custom
+  platform that sets it imports `merge_element_refs` from its `imports.mergeRefs`
+  module, which `@tsrx/runtime/ref` and the first-party `*/ref` modules export.
+
 ## 0.2.4
 
 ### Patch Changes

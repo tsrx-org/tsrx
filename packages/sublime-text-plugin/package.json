@@ -1,6 +1,6 @@
 {
   "name": "@tsrx/sublime-text-plugin",
-  "version": "0.0.83",
+  "version": "0.0.84",
   "description": "Sublime Text support for TSRX",
   "private": true,
   "keywords": [

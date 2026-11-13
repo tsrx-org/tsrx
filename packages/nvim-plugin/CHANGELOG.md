@@ -1,5 +1,67 @@
 # @tsrx/nvim-plugin
 
+## 0.0.84
+
+### Patch Changes
+
+- [#1104](https://github.com/tsrx-org/tsrx/pull/1104)
+  [`a283f9d`](https://github.com/tsrx-org/tsrx/commit/a283f9d49654d6a954539fcfe297f54d9b712a31)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The tree-sitter grammar
+  now ends a `<script>` body where the compiler does, at `</script` followed by
+  optional whitespace (a line break included) and `>`. Before, `</script >` was
+  not seen as the closing tag and the script body parsed with errors. It also
+  parses `using` and `await using` declarations (`using_declaration`), in
+  statements, template scopes, `for…of` heads and `@for` heads, and highlights
+  `using` as a declaration keyword. Before, they were parse errors. `using` as a
+  variable name (`using(x)`, `using.dispose()`) parses as before. After updating
+  the Neovim plugin, rebuild the parser with `:TSInstall! tsrx`.
+
+- [#1180](https://github.com/tsrx-org/tsrx/pull/1180)
+  [`985dbfd`](https://github.com/tsrx-org/tsrx/commit/985dbfd446b91c1fffb45b18a3ac5400d82bf137)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The tree-sitter grammar
+  now ends a `<style>` body where the compiler does, at `</style` followed by
+  optional whitespace (a line break included) and `>`, as it already did for
+  `<script>`. Before, `</style >` was not seen as the closing tag and the file
+  parsed as an error from the start.
+
+  It also parses more TypeScript expressions as tree-sitter-typescript does:
+
+  - A generic arrow function (`<T,>(x: T) => x`, `<T extends U>(x: T) => x`,
+    `async <T, U = T>(x: T): U => x`) is an `arrow_function` with
+    `type_parameters`. Before, the whole statement and the lines after it were an
+    error.
+  - A call with type arguments (`useState<Item[]>([])`, `obj.method<A, B>(x)`,
+    ``sql<Row>`…` ``) is a `call_expression` with `type_arguments`, and its callee
+    is highlighted as a function. Before, it was read as `<` and `>` comparisons,
+    and `useState<Item[]>([])` had a missing-node error.
+  - `value as T[]` and `value satisfies T[]` keep the `[]` in the type
+    (`array_type`). Before, they were read as indexing `value as T`, with a
+    missing-node error.
+
+  After updating the Neovim plugin, rebuild the parser with `:TSInstall! tsrx`.
+
+- [#1221](https://github.com/tsrx-org/tsrx/pull/1221)
+  [`d43aac0`](https://github.com/tsrx-org/tsrx/commit/d43aac0e58a555426606c3f7caff38f94b3ed9f8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The tree-sitter grammar
+  now parses more TypeScript expressions and types as TypeScript does:
+
+  - A call with type arguments on a parenthesized or `new` callee (`(f)<T>(x)`,
+    `new Foo()<T>(x)`) is a `call_expression` with `type_arguments`. Before, it
+    was read as `<` and `>` comparisons.
+  - A union or intersection type after `as` or `satisfies`
+    (`el as HTMLInputElement | null`, `x satisfies A | B[]`, `x as A & B[]`) is
+    read whole, as a `union_type` or `intersection_type`. Before, it was read as a
+    `|` or `&` operator applied to `x as A`, and `B[]` had a missing-node error.
+  - Negative number literal types (`0 | -1`), template literal types
+    (`` `id-${number}` ``, a `template_literal_type` with `template_type`
+    substitutions) and constructor types (`new (a: A) => B`,
+    `abstract new () => T`, a `constructor_type`) parse. Before, they were errors.
+
+  In Neovim, the `|` of a union type, the `&` of an intersection type and the `-`
+  of a negative literal type are highlighted as operators, and a template literal
+  type as a string. After updating the Neovim plugin, rebuild the parser with
+  `:TSInstall! tsrx`.
+
 ## 0.0.83
 
 ### Patch Changes

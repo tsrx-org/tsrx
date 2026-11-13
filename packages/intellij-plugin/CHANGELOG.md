@@ -1,5 +1,46 @@
 # @tsrx/intellij-plugin
 
+## 0.0.90
+
+### Patch Changes
+
+- [#1221](https://github.com/tsrx-org/tsrx/pull/1221)
+  [`d43aac0`](https://github.com/tsrx-org/tsrx/commit/d43aac0e58a555426606c3f7caff38f94b3ed9f8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The TextMate grammar
+  now accepts only HTML whitespace (tab, line feed, form feed, carriage return and
+  space) between `</style` or `</script` and the `>` of a closing tag, as the
+  compiler does. Before, a non-breaking space or a vertical tab there also ended
+  the block, and the CSS or script after it, which the compiler still reads as
+  part of the body, was highlighted as markup.
+
+- [#1104](https://github.com/tsrx-org/tsrx/pull/1104)
+  [`a283f9d`](https://github.com/tsrx-org/tsrx/commit/a283f9d49654d6a954539fcfe297f54d9b712a31)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The TextMate grammar
+  now ends a `<script>` block where the compiler does, at `</script` followed by
+  optional whitespace and `>`. Before, `</script >` was not seen as the closing
+  tag, and the rest of the file was highlighted as script. A closing tag with a
+  line break before its `>` also ends the block. It also highlights `using` and
+  `await using` in an `@for` head as declaration keywords, as it already did in
+  statements and `for…of` loops.
+
+- [#1180](https://github.com/tsrx-org/tsrx/pull/1180)
+  [`985dbfd`](https://github.com/tsrx-org/tsrx/commit/985dbfd446b91c1fffb45b18a3ac5400d82bf137)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The TextMate grammar
+  now ends a `<style>` block where the compiler does, at `</style` followed by
+  optional whitespace and `>`, as it already did for `<script>`. Before,
+  `</style >` was not seen as the closing tag, and the rest of the file was
+  highlighted as CSS. A closing tag with a line break before its `>` also ends the
+  block.
+- Updated dependencies
+  [[`1cf3c47`](https://github.com/tsrx-org/tsrx/commit/1cf3c47c2869a67797306655eae9ee2e4972d944),
+  [`dd71454`](https://github.com/tsrx-org/tsrx/commit/dd71454b49d48fc83b7f014eade9e93b48c17818),
+  [`180067b`](https://github.com/tsrx-org/tsrx/commit/180067b45544efd9638df0d981a05327e7f78a58),
+  [`135ce77`](https://github.com/tsrx-org/tsrx/commit/135ce776f67596af641c8f2772d0321dbd73274e),
+  [`910dbae`](https://github.com/tsrx-org/tsrx/commit/910dbaea2d709ff2f53bf800042c8914bd336939),
+  [`b7b73e5`](https://github.com/tsrx-org/tsrx/commit/b7b73e566a458e4977ea52210627554d1b8bce07),
+  [`1e58a65`](https://github.com/tsrx-org/tsrx/commit/1e58a65f2be6ff7d3aee1f4bff521d172b997159)]:
+  - @tsrx/language-server@0.7.0
+
 ## 0.0.89
 
 ### Patch Changes

@@ -1,5 +1,561 @@
 # @tsrx/vue
 
+## 0.4.0
+
+### Minor Changes
+
+- [#1124](https://github.com/tsrx-org/tsrx/pull/1124)
+  [`d18720d`](https://github.com/tsrx-org/tsrx/commit/d18720d75e143c26d015d9837fb5d1c860cc0cb9)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - In a `.tsrx` file, and
+  any other file with JSX, a `<` where an expression starts begins a generic arrow
+  function only where TypeScript's rule for `.tsx` files says it does
+  ([#183](https://github.com/tsrx-org/tsrx/issues/183)): a type parameter followed
+  by a comma, a default, or a constraint. A lone type parameter without one is now
+  a tag, as in TSX, so `<T>(x) => x` no longer compiles or formats, and neither
+  does `async <T>(x) => x`, which TypeScript reads as a call. To migrate, add the
+  trailing comma: `<T>(x) => x` becomes `<T,>(x) => x`, `async <T>(x) => x`
+  becomes `async <T,>(x) => x`, and `<const T>` becomes `<const T,>`. The errors
+  for the old forms, an unclosed `<T>` tag and TS7060, now say to add it.
+
+  The rule reads no further than the type parameter, so a generic arrow with a
+  constraint compiles whatever its parameters hold (comments, regular expressions,
+  template literals), and an element whose text starts like an arrow function,
+  such as `<b>(i) => i</b>` or `<script>(i) => i</script>`, is read as an element
+  ([#734](https://github.com/tsrx-org/tsrx/issues/734)). A template's render node
+  or child is a tag wherever it starts, as before.
+
+  A `.ts`, `.mts`, or `.cts` file has no JSX, as in TypeScript: `<T>(x) => x`
+  stays a generic arrow function there, and `<T>x` is now read as a type assertion
+  instead of a tag (TS7059 in a `.mts` or `.cts` file).
+
+- [#1296](https://github.com/tsrx-org/tsrx/pull/1296)
+  [`00a238c`](https://github.com/tsrx-org/tsrx/commit/00a238cc95013ca90e1fc2bd5fbb47b80c942664)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The Vue packages now
+  need `vue` 3.6 or later, including 3.6.0's prereleases (`>=3.6.0-0`), and
+  `vue-jsx-vapor` 3.2.27 or a later stable release (`>=3.2.27`). Until Vue 3.6.0
+  is stable, install it as `"vue@^3.6.0-0"`.
+
+  - Vue 3.5 has no Vapor, so a Vue 3.5 project never built. Under npm, the old
+    `vue >=3.5` also rejected every Vue 3.6 prerelease, so the documented
+    `npm install` failed with ERESOLVE whichever Vue it named.
+  - `vue-jsx-vapor` 3.2.27 is the first release that fixes both a dev worker that
+    imports a module exporting a function
+    ([#186](https://github.com/tsrx-org/tsrx/issues/186)) and the space after an
+    element that a `{…}` container renders last
+    ([#870](https://github.com/tsrx-org/tsrx/issues/870)).
+  - A project on `vue-jsx-vapor` 3.2.26 or earlier now gets an unmet peer warning
+    from pnpm, and an install error under pnpm's `strict-peer-dependencies`. That
+    is why this is a minor release.
+
+### Patch Changes
+
+- [#1258](https://github.com/tsrx-org/tsrx/pull/1258)
+  [`2bc4f1f`](https://github.com/tsrx-org/tsrx/commit/2bc4f1fc5fcb9863c926ab3d01b0407e89bbf639)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A ref list written on
+  an element, `ref={[a, b]}`, now calls every ref in it on React, Preact, Hono and
+  Vue, as it already did on Solid. These runtimes take a single ref, so the
+  compiler passes the list to `__mergeRefs`: React and Hono share the merged ref
+  through `merge_element_refs`'s cache, so an inline list is applied once, and
+  Preact gets a new callback per render, as its merged refs already do. A list can
+  nest, and a falsy entry such as the `false` of `cond && cb` is left out. Beside
+  a spread, Preact and Vue no longer drop the list.
+
+  The public `mergeRefs` now reads a ref list as the refs in it and leaves out a
+  value that is not a ref instead of throwing, and its type takes lists and the
+  falsy `false`, `0` and `''` of `cond && cb`, so the editor accepts
+  `ref={[a, b]}` on every target. `merge_element_refs` merges a lone ref object
+  from a list rather than giving it back. The `MULTIPLE_REFS` hint no longer
+  limits `ref={[a, b]}` to some targets.
+
+- [#1085](https://github.com/tsrx-org/tsrx/pull/1085)
+  [`4d1def9`](https://github.com/tsrx-org/tsrx/commit/4d1def98977820da6206df0c189a7f525203298e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Require esrap 2.4 and
+  pass it the parser's tokens for editor output. esrap 2.4 removed the
+  `boundaryTokens` option that kept the keywords and punctuation of the generated
+  TypeScript mapped. A fresh install of `@tsrx/core` already got esrap 2.4, so
+  `async` and `function` keywords, Vue's imports, interface declarations, and
+  lowered dynamic tags lost their editor mappings. Single type parameters also
+  printed as `<T,>` everywhere.
+
+  A generic arrow function with one type parameter now compiles to `<T,>(…) => …`,
+  which TypeScript reads as an arrow function in TSX instead of a JSX tag
+  ([#707](https://github.com/tsrx-org/tsrx/issues/707)). Other type parameter
+  lists print as written. Parameter decorators
+  ([#606](https://github.com/tsrx-org/tsrx/issues/606)) and the type arguments of
+  a tagged template ([#272](https://github.com/tsrx-org/tsrx/issues/272)) are no
+  longer dropped from the compiled output. An array pattern parameter with a type
+  annotation no longer prints the annotation twice: on esrap 2.4,
+  `function f([a]: number[]) {}` compiled to
+  `function f([a]: number[]: number[]) {}`, which does not parse.
+
+- [#1135](https://github.com/tsrx-org/tsrx/pull/1135)
+  [`3603935`](https://github.com/tsrx-org/tsrx/commit/36039352946b9466f337f00dbc4e0662ba78a395)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A keyed Vue `@for`
+  whose item is an array pattern, as in
+  `@for (const [first, second] of rows; key first)`, now destructures each item
+  through its iterator instead of reading `item[0]` and `item[1]`. A `Set`, a
+  string with astral characters, or any other re-iterable item now renders its
+  real values, defaults in the pattern work, and the loop stays on `<VaporFor>`,
+  so keyed rows keep their state and still update in place. The key callback
+  destructures the item too, so an item that can be iterated only once, such as a
+  generator, still can't be keyed by a name its pattern binds. The slot imports
+  `computed` from `vue` in a declaration of its own, beside any authored
+  `import type` or `import * as` from `vue`. `Suspense`, which `@try … @pending`
+  imports, no longer goes into an authored `import type` or `import * as` from
+  `vue`, where it was erased or printed as invalid syntax, and is not imported a
+  second time beside an authored `import { Suspense } from 'vue'`.
+
+  A keyed Vue `@for` no longer rewrites type syntax that shares the loop
+  variable's name: `function <item>(x: item) {}`, `type item = string`, an
+  interface that mentions `item`, and the member name in `typeof Types.item` stay
+  as written instead of becoming `item.value` and failing the build.
+
+- [#1230](https://github.com/tsrx-org/tsrx/pull/1230)
+  [`644583f`](https://github.com/tsrx-org/tsrx/commit/644583f0abf521bf04b615e1394d96a3fd1f0d35)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Organize Imports and
+  Sort Imports now work in a `.tsrx` module that reads an
+  `import.meta.env.platform` flag, with TypeScript 7 and with the TypeScript 5.9
+  plugin. They returned no edits there, while Remove Unused Imports worked. The
+  compiler appended `export {};` to such a module to keep it a module. Both
+  actions also rewrite export declarations, and an edit to code that exists only
+  in the generated output made the editor drop the whole action. The marker is now
+  added only when the generated code has no import or export of its own
+  ([#1207](https://github.com/tsrx-org/tsrx/issues/1207)). `withPlatformTypes`
+  takes the generated program as an optional third argument to decide this, and
+  keeps adding the marker when it is not passed.
+
+- [#1175](https://github.com/tsrx-org/tsrx/pull/1175)
+  [`91d958d`](https://github.com/tsrx-org/tsrx/commit/91d958de44c9e582cd66a5b66aff6bb37ff0ece2)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The compiler now
+  imports the components it generates for `@try … @pending`, `@try … @catch` and
+  keyed fragment rows under private names (`__Suspense`, `__TsrxErrorBoundary`,
+  `__Fragment`). A module can declare its own `Suspense`, `TsrxErrorBoundary` or
+  `Fragment` (a type-only import, an import from another module, a local, or a
+  `@for` loop variable) without the build failing with "Identifier `Suspense` has
+  already been declared", and the generated element no longer renders the authored
+  binding in its place. Vue's generated `Suspense` uses the private name too, so
+  an authored `import { type Suspense } from 'vue'` no longer leaves it unbound.
+
+  Imports the compiler adds now go after the module's directive prologue, so a
+  `'use client'` or `'use server'` directive stays first in a module that uses
+  `@pending`, `@catch`, a keyed fragment row or any other construct that needs a
+  generated import. Before, the generated imports went above it and turned it into
+  a plain string, which Next.js treated as a server component.
+
+- [#1222](https://github.com/tsrx-org/tsrx/pull/1222)
+  [`e0c07b5`](https://github.com/tsrx-org/tsrx/commit/e0c07b55b199acc4fe05b705255e79020b500376)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Solid now imports the
+  components it generates for `@if`, `@for`, `@switch` and `@try` under private
+  names (`__Show`, `__For`, `__Switch`, `__Match`, `__Errored`, `__Loading`), and
+  Vue imports the `VaporFor` it generates for `@for` as `__VaporFor`. A module can
+  declare its own binding with one of those names (an import from another module,
+  a type-only import, a module or setup local, or a `@for (const Match of rows)`
+  loop variable) without the build failing with "Identifier `Show` has already
+  been declared", and the generated element no longer renders the authored binding
+  in its place. An authored `import type { VaporFor } from 'vue-jsx-vapor'` now
+  stays type-only beside the generated value imports. The compiler now counts a
+  tag as a component whenever its name doesn't start with a lowercase letter, as
+  JSX does, so a tag like `<_Card>` is treated as a component rather than a host
+  element, and Solid doesn't hoist a static `@if`, `@switch` or `@pending` subtree
+  that renders one of its private components.
+
+  Vue's `defineVaporComponent` keeps its public name, because vue-jsx-vapor finds
+  components by calls to that name. A Vue module that declares its own binding
+  named `defineVaporComponent` (an import from another module, a module function
+  or `const`, or a local in a component) now gets a compile error, `TSRX2032`,
+  instead of a duplicate declaration or every component wrapped in the authored
+  function. A type-only import of `defineVaporComponent` from `vue-jsx-vapor`
+  becomes the value import the compiler needs.
+
+- [#1232](https://github.com/tsrx-org/tsrx/pull/1232)
+  [`2473538`](https://github.com/tsrx-org/tsrx/commit/247353854e918f119dafe88f6474a2738cb82ed8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Scoped style classes
+  now join an element's class the way its target renders that class. Beside a
+  `<style>` block, `<div className={props.c} />` rendered
+  `class="undefined tsrx-…"` when `c` was unset, and on Solid and Vue
+  `class={{ active: on }}` rendered `[object Object] tsrx-…` and
+  `class={['a', on && 'b']}` rendered `a,false tsrx-…`. A class that may not be a
+  string now joins through the runtime's new `join_scope_class`, which follows the
+  target's rendering, set by the new `jsx.classValue` platform option:
+
+  - React and Hono DOM leave out `null`, `undefined`, `true` and `false`, Preact
+    renders `true` as text, and Hono's server renders `true` and `false` as text.
+    Any other value joins as text.
+  - Solid and Vue keep an object or a list class, and leave out other values that
+    are not strings, such as numbers and functions.
+  - A props spread's class joins the same way on each target.
+  - A class that is always a string (a template literal, a choice between string
+    literals, a `$class` read) still joins as text, and the editor's type-only
+    output is unchanged.
+
+  On Solid and Vue, an authored `className` attribute on an intrinsic element now
+  compiles to `class`, joined with a `class` attribute (or, with a spread between
+  them, kept in its place, so the target handles them as two `class` attributes:
+  Solid keeps the last, Vue joins them), so React-style source keeps its class
+  with or without scoped styles. Solid ignored `className`, and Vue rendered a
+  static one as a `classname` attribute. The editor checks it as `class` too, so
+  it no longer reports that `className` doesn't exist on these targets' elements,
+  and hover, rename and go-to-definition still point at the authored `className`.
+  Components, member and dynamic tags (which may be components) and spread bags
+  keep `className` as written.
+
+- [#1280](https://github.com/tsrx-org/tsrx/pull/1280)
+  [`190f797`](https://github.com/tsrx-org/tsrx/commit/190f7970cf968c978b3e5df37b4e3a97c4e7efa5)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid and Vue, a
+  `yield` in a template value that the target's JSX compiler moves into an effect,
+  a getter or a callback is now a TSRX compile error, TSRX2034, at the authored
+  `yield`:
+  ``Solid TSRX does not support `yield` in this part of the template: Solid's JSX compiler evaluates it in an effect, a getter or a callback, which cannot yield from the enclosing generator. …``
+  (and the same for Vue). Before, the build failed later in `babel-preset-solid`
+  or `vue-jsx-vapor` output, with
+  `A 'yield' expression is only allowed in a generator body.` or
+  `The keyword 'yield' is reserved` pointing at compiled code. Yield the value
+  first instead: `const title = yield bag.title;`.
+
+  A `yield` those compilers leave in place still compiles, so code that builds
+  today is unchanged. On Solid that is a static value (no member access, call,
+  spread or `in`) in an attribute, a component prop or a lone component child, any
+  event handler or non-array `ref` on an element without a spread (except a
+  `[handler, data]` array on an event the compiler doesn't delegate, such as
+  `onScroll`, which it wraps in a new listener), any attribute but `ref` beside a
+  host spread unless it's dynamic, and an element nested in the returned one. A
+  `class` or `style` object is split into one setting per key, as the compiler
+  does, so only a dynamic key's value is reported, unless a method or accessor
+  keeps the whole object. The check follows the compiler's folding of literal
+  values and its dropping of an attribute that a later one of the same name
+  replaces, of the children of a void element or a `<noscript>`, of a
+  `<textarea>`'s children when a literal `value` or `defaultValue` (or a bare
+  `value`) replaces them, of a `children` attribute on an element or component
+  that has children (or an element that writes none), of an element's `$key`, and
+  of an event array's elements after the first two, wherever the element is
+  created, so a `yield` in a branch it drops, as in `false && (yield x)`,
+  compiles. A `<select>`'s value is reported, since the compiler also assigns it
+  in a microtask. On Vue, which wraps every element, it is a host spread, which
+  TSRX evaluates before the element. A `yield` in a nested generator function or
+  before the template is allowed on both. React, Preact and Hono evaluate
+  templates eagerly and are unchanged.
+
+- [#1239](https://github.com/tsrx-org/tsrx/pull/1239)
+  [`384972f`](https://github.com/tsrx-org/tsrx/commit/384972fcdd5eaeb09b92a852bb3d9ee186689286)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React, Preact, Hono
+  and Vue, a host spread whose bag's `ref` is a ref list now calls every ref in
+  it. `<input {...{ title, ref: [a, b] }} />` called neither `a` nor `b`: the
+  spread normalizer passed a lone list to the framework as is, and React warned
+  "Unexpected ref object". Beside the element's own ref, Preact and Vue also
+  dropped the list. The normalizer now merges a list even when it is the bag's
+  only ref, as it already did beside a `create_ref_prop` ref prop. A list of one
+  ref object is merged as well, so a `{ value }` ref is written as such rather
+  than read as the framework's own kind of ref object. On React and Hono the
+  merged ref is shared as `merge_element_refs` shares it, so an inline list
+  written each render is applied once. Solid is unchanged, because its spread
+  applies a ref list itself.
+
+- [#1238](https://github.com/tsrx-org/tsrx/pull/1238)
+  [`07e262a`](https://github.com/tsrx-org/tsrx/commit/07e262afedaf6cf614ae78dc9649437ce34d66ef)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A static component used
+  more than once now renders each time on Solid and Vue. These targets no longer
+  hoist static JSX such as `<p class="b">plain</p>` to a module-level constant:
+  Solid and Vue Vapor JSX evaluates to a DOM node, so the constant held one node
+  that every use moved into place. `<Static />` twice rendered one `<p>`, and a
+  static component in a three-row `@for` showed only in the last row. On Vue,
+  which also hoisted inside `@for` and `@if` bodies, a static `@for` row rendered
+  once for the whole list, and a static `@if` branch showed in only one instance
+  of its component. Static JSX now stays in place, and each framework's compiler
+  still parses each template once and clones it per use
+  ([#1236](https://github.com/tsrx-org/tsrx/issues/1236),
+  [#1240](https://github.com/tsrx-org/tsrx/issues/1240)).
+
+- [#1198](https://github.com/tsrx-org/tsrx/pull/1198)
+  [`14a664d`](https://github.com/tsrx-org/tsrx/commit/14a664d8485a89c9cece8cc2080266cd89cc1329)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, Vue and Hono
+  DOM, whose components can't be async, each `await` in a component is now
+  reported once, as TSRX2021 with the target's own message. Before, an `await` in
+  a part of the template that renders through a callback (an `@for` body on Solid
+  and Vue, an `@try` or `@pending` body on Vue, an `@catch` body on all three, an
+  `@if` or `@switch` body with setup statements on Solid) was reported twice: once
+  by the target and once by the shared check, whose advice to await the value in
+  the component body doesn't apply on these targets. An `@for await` on Vue and
+  Hono DOM is no longer also reported as TSRX2024. In collecting mode and in the
+  editor, every `await` of a component is now reported, not only the first. An
+  `await` in a nested function is still allowed.
+
+  The three messages now live in the error tables in `@tsrx/core/diagnostics`:
+  `TARGET_COMPONENT_AWAIT_UNSUPPORTED`
+  (`Solid TSRX components do not support \`await\`.`, and the same for Vue) and `HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED`, which keeps Hono DOM's advice to use `use(promise)`with`<Suspense>`. Solid's message was `` `await` is not allowed inside Solid components. `` and Vue's was `` `await`
+  is not yet supported in Vue TSRX components. ``.
+
+- [#1126](https://github.com/tsrx-org/tsrx/pull/1126)
+  [`aea883a`](https://github.com/tsrx-org/tsrx/commit/aea883a7ec7632ff467b9864052592ae948544b1)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Vue components now
+  render their nested children through `props.children`, as on the other targets.
+  vue-jsx-vapor passes nested children as the default slot, so `props.children`
+  was always `undefined` and `<Card><p>child</p></Card>` rendered without the
+  `<p>`. A read of `props.children`, or of a `children` binding destructured from
+  the props parameter or from `props` at the top of the component
+  (`const { children } = props`), now reads the default slot when the caller
+  writes nested children and the `children` prop otherwise; nested children win
+  over the prop, as on React, and a destructured default (`{ children = 'none' }`)
+  applies only when neither is passed; like any destructuring default, it replaces
+  only `undefined`, so `children={null}` stays `null`. Each place that renders the
+  children renders the slot there, so they are set up when shown and torn down
+  when hidden, as React mounts and unmounts them, and a read that only tests them
+  (`props.children ? <div>{props.children}</div> : …`, `!props.children`,
+  `props.children != null`, `Boolean(props.children)`) checks whether the slot
+  exists instead of rendering it. Two Vue differences remain: a slot exists, and
+  tests truthy, whenever the caller writes nested children, even when they render
+  nothing, and `{...props}` does not forward nested children, so pass them on
+  explicitly (`<Card {...props}>{props.children}</Card>`). The editor's type view
+  still shows `props.children` as written.
+
+- [#1125](https://github.com/tsrx-org/tsrx/pull/1125)
+  [`c19818c`](https://github.com/tsrx-org/tsrx/commit/c19818ce37642c4508fb2ffd41a8325367d46c36)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - More Vue components are
+  now wrapped in `defineVaporComponent`, and wrapped components can be read above
+  their declaration:
+
+  - An arrow component that contains a nested function, such as an inline
+    `onClick={() => …}` handler or a `.map()` callback, is now wrapped. Before, it
+    stayed a plain function, and mounting it as the app root threw
+    `Cannot read properties of undefined (reading 'config')`.
+  - A component that builds its JSX in a local variable and returns it
+    (`const element = <div />; return element;`) is now wrapped. Before, its props
+    never reached it and mounting it as the app root threw. A local binding counts
+    when it holds JSX anywhere, the same rule already used for a returned
+    expression, so a `function Config() { const c = { icon: <i /> }; return c; }`
+    is wrapped just as `function Columns() { return [{ header: <b /> }]; }`
+    already was.
+  - A default-exported component (`export default function Card`) now compiles to
+    `const Card = defineVaporComponent(…); export default Card;`, so the module
+    keeps its `Card` binding. Before, one with a nested function compiled to the
+    invalid `export default const …`, and `typeof Card` or `export { Card }` lost
+    the binding.
+  - A component read above its declaration while the module loads, as in
+    `export const registry = { inner: Inner }` before `function Inner`, now loads:
+    the compiler moves the wrapped `const` above that read when doing so changes
+    nothing else. When the component's destructured prop defaults read a binding
+    that the statements it would move past declare, assign or mutate
+    (vue-jsx-vapor evaluates `{ label = PREFIX }` when the component is defined),
+    the compiler reports the new TSRX2028 at the read and asks you to move the
+    declaration up instead. That includes a binding mutated through a TypeScript
+    wrapper, a destructuring target or `delete` (`(cfg as any).size = 2`,
+    `cfg!.size = 2`, `[cfg.size] = [2]`), and an enum, namespace or `import x = …`
+    alias declared in between, which sets its binding when it runs; a namespace's
+    own `var`s don't count. Reads that do not run at load (in a function, a class
+    instance field, a branch a constant condition skips, or a scope with its own
+    binding of the name) move nothing. Calls are not followed: a read through a
+    call or IIFE still hits the constant before it is initialized, and a call in
+    between to a function that assigns a binding a default reads (`bump()` setting
+    `size`) runs after the moved component captured the old value; reads from
+    another `case` of the declaring `switch` or through a circular import cannot
+    be seen either.
+  - A destructured prop default that vue-jsx-vapor would silently drop now reports
+    the new TSRX2029 at the default. vue-jsx-vapor turns those defaults into prop
+    options and keeps only a string, number, boolean or `null` literal, an
+    identifier, an object or array literal, or a function, so `{ s = cfg.size }`,
+    `-1`, `SIZE + 1`, a call or a template literal left the prop `undefined` when
+    the caller left it out. This applies to every wrapped component, including
+    ones wrapped before this change; read the prop in the body instead
+    (`const s = props.s ?? cfg.size`).
+
+- [#1231](https://github.com/tsrx-org/tsrx/pull/1231)
+  [`ab5a0ff`](https://github.com/tsrx-org/tsrx/commit/ab5a0ff13138746ade811808f27f52d34668ae3f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Vue now reports a
+  destructured prop that vue-jsx-vapor reads wrongly, instead of compiling a
+  component that silently gets the wrong value:
+
+  - The new TSRX2031 reports a key vue-jsx-vapor misreads. It reads a destructured
+    prop by its key's name, so `function Card({ [k]: v })` read the prop `k`,
+    whatever `k` held, and lost any default. It reads only keys that are names, so
+    a binding at any other key (`{ 'a-b': v }`, `{ ['s']: v }`, `{ [1]: v }`)
+    never got the prop: it was left out of the component, and a component with no
+    key it reads got no prop options at all, so Vue passed it no props.
+  - TSRX2031 also reports a props parameter with a default
+    (`function Card({ s } = {})`), which vue-jsx-vapor skips, so the component got
+    no props; remove the default, since Vue always passes a props object. And it
+    reports a rest element inside a prop (`{ t: { a, ...r } }`,
+    `{ t: [a, ...r] }`): vue-jsx-vapor gives the pattern's last rest element the
+    component's attrs, an array's rest element the whole array, and any other the
+    rest of `t` only as it was at setup, so `r` never followed the rest of `t`. A
+    rest element of the props themselves (`{ s, ...rest }`) still compiles.
+  - TSRX2029 now also reports a default inside a destructured prop
+    (`{ s: { a = 3 } }`), which vue-jsx-vapor applies only when the whole prop is
+    missing, so it was lost whenever `s` was passed without `a`.
+
+  The errors suggest taking a `props` parameter and reading the prop where it is
+  used, so it stays reactive: for example `{props.s === undefined ? 3 : props.s}`,
+  which, like a default, replaces only `undefined`, or a `computed`. A kebab-case
+  key is read by its camelized name (`props.aB`), and a value inside a prop with
+  optional chaining (`props.t?.a`), since the prop can be missing. TSRX2029's
+  existing advice, to read the prop once into a constant, changes the same way.
+  The TSRX2028, TSRX2029 and TSRX2031 messages are now in `@tsrx/core/diagnostics`
+  (`TSRX_ERRORS`).
+
+- [#1296](https://github.com/tsrx-org/tsrx/pull/1296)
+  [`00a238c`](https://github.com/tsrx-org/tsrx/commit/00a238cc95013ca90e1fc2bd5fbb47b80c942664)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `@try` with `@pending`
+  no longer reports TS2322 in the editor. `vue-jsx-vapor`'s JSX types reject the
+  `_` slot flag that the type-only output passed to `Suspense`. Compiled output is
+  unchanged.
+
+- [#1108](https://github.com/tsrx-org/tsrx/pull/1108)
+  [`04ef167`](https://github.com/tsrx-org/tsrx/commit/04ef16724d4c3d0a85cebef45fbd081673987fa0)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Vue, a host spread
+  now updates when its expression changes, as in `<button {...bag.value} />` after
+  `bag.value = { disabled: true }`. Before, the compiler read the spread once in a
+  setup declaration, so the element kept its first attributes and a button stayed
+  enabled. The bag is now assigned where it is spread,
+  `{...(bag = __normalize_spread_props_for_ref_attr(expr))}`, inside
+  vue-jsx-vapor's render effect, which reads it again when it changes and sets the
+  element's template ref after it.
+
+  A new `jsx.refAfterProps` platform option says the compiled JSX applies an
+  element's `ref` after its other attributes, so with the in-place binding the
+  merged `ref` still goes last. Vue sets it.
+
+- [#1101](https://github.com/tsrx-org/tsrx/pull/1101)
+  [`41739c6`](https://github.com/tsrx-org/tsrx/commit/41739c6263df8ea48228c78a41c1e53d13bb4ec4)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The Vue and Solid Vite
+  plugins now compile an import that resolves to a `.tsrx` file even when the
+  specifier has no `.tsrx` extension, such as a package whose `exports` point at a
+  `.tsrx` file. Before, the build failed with "Expected function body".
+
+  The Vapor interop rewrite (`@tsrx/vue/interop`, used by the Vue Vite, Bun and
+  Rspack integrations) now parses the module and changes only its real
+  `import { createVaporApp } from 'vue'` declarations. Before, the same text
+  inside a string, template literal, comment or regular expression was rewritten
+  too, which broke the build with "Unterminated string", and a named import on the
+  line before the Vue import (`import { a } from './a';`) kept the real import
+  from being rewritten. A module the parser cannot read gets the previous
+  text-based rewrite.
+
+- [#1118](https://github.com/tsrx-org/tsrx/pull/1118)
+  [`0246e95`](https://github.com/tsrx-org/tsrx/commit/0246e95f983c2efd83e3e99100d00a5ba24c9233)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Vue, `@catch` now
+  handles errors under `@pending`. When an async child's loader rejects, the
+  `@catch` fallback replaces the `@pending` one instead of `@pending` staying up
+  with an unhandled rejection
+  ([#1078](https://github.com/tsrx-org/tsrx/issues/1078)), and `reset()` renders
+  the body again after it threw while setting up
+  ([#937](https://github.com/tsrx-org/tsrx/issues/937)); it did nothing before.
+
+  The boundary also catches errors from child components when the app sets
+  `app.config.errorHandler`, and in production builds, including a `@try` inside
+  element children, which now compiles to a boundary component like every other
+  `@try`. It used to rely on Vue re-throwing unhandled errors, which Vue does only
+  in development and only when no `errorHandler` is set. As with Vue's
+  `errorCaptured`, an error that `@catch` handles no longer reaches
+  `app.config.errorHandler`.
+
+  An error now goes to the boundary around the component it came from, even when
+  another boundary is rendering at the time; `reset()` also recovers after a
+  thrown `null`; and the boundary's `fallback` and `content` props no longer
+  appear as attributes on the element it renders.
+
+- Updated dependencies
+  [[`2bc4f1f`](https://github.com/tsrx-org/tsrx/commit/2bc4f1fc5fcb9863c926ab3d01b0407e89bbf639),
+  [`fb35a0b`](https://github.com/tsrx-org/tsrx/commit/fb35a0bf5bbea972889e2024b535d0fee3227856),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`2646239`](https://github.com/tsrx-org/tsrx/commit/26462399753081501e78478de7495d15775e411e),
+  [`6eaee99`](https://github.com/tsrx-org/tsrx/commit/6eaee992105984b13c38f9de4edfd6ca99eae399),
+  [`972010b`](https://github.com/tsrx-org/tsrx/commit/972010b3654c907baa25cf2f03e3cad9b3d6c6fd),
+  [`dac81a4`](https://github.com/tsrx-org/tsrx/commit/dac81a418448476aa4ab60999096dc629627c9b4),
+  [`677d574`](https://github.com/tsrx-org/tsrx/commit/677d5743b8cb3d3cd57504ef81f6323ef45b8399),
+  [`72956b0`](https://github.com/tsrx-org/tsrx/commit/72956b0d9a4a55c56b210b1b7669f7e04a77709c),
+  [`fe2c377`](https://github.com/tsrx-org/tsrx/commit/fe2c377664bdcac510bcd137b6468bec7efe9eeb),
+  [`6297ffa`](https://github.com/tsrx-org/tsrx/commit/6297ffa6527f297de69edb95af7a74a87b804970),
+  [`25e5844`](https://github.com/tsrx-org/tsrx/commit/25e58444734d535385f2ca4310445b34286369cb),
+  [`8c6d037`](https://github.com/tsrx-org/tsrx/commit/8c6d037fdd16d28d871126bf48fba4b2583d9bbf),
+  [`54e7644`](https://github.com/tsrx-org/tsrx/commit/54e7644d256f5506fbde84e35ee5e827aaef15ad),
+  [`9d8ea3e`](https://github.com/tsrx-org/tsrx/commit/9d8ea3e61a0ed083af98269f703bb73e91421e64),
+  [`73c170b`](https://github.com/tsrx-org/tsrx/commit/73c170b4d14f961ce49080c604e233886e71e79d),
+  [`129825c`](https://github.com/tsrx-org/tsrx/commit/129825ce427fb80b31c6fcbb148d48781a83485f),
+  [`c28d0b7`](https://github.com/tsrx-org/tsrx/commit/c28d0b7356b9c4456cbe4009c5ea2d38260d7660),
+  [`827030c`](https://github.com/tsrx-org/tsrx/commit/827030cd1441ec3156414a54a1ab6d3de1f4c34b),
+  [`b620e02`](https://github.com/tsrx-org/tsrx/commit/b620e02c284bfdf59c105c2e5d71b14f0cc84228),
+  [`d0a00dc`](https://github.com/tsrx-org/tsrx/commit/d0a00dc54713b459a208fb2e044158a46b0143da),
+  [`d5015d2`](https://github.com/tsrx-org/tsrx/commit/d5015d25b33980d0509ecccf04a341081fee70db),
+  [`4d1def9`](https://github.com/tsrx-org/tsrx/commit/4d1def98977820da6206df0c189a7f525203298e),
+  [`6165298`](https://github.com/tsrx-org/tsrx/commit/6165298529f192d72825c7905973ae2acc881921),
+  [`ee70085`](https://github.com/tsrx-org/tsrx/commit/ee700855c0c7e14b58163f4693c1797be7e96772),
+  [`33022ba`](https://github.com/tsrx-org/tsrx/commit/33022ba2356f9c375242b6edc63ce65fd6215b89),
+  [`66a0791`](https://github.com/tsrx-org/tsrx/commit/66a079126a2604436eb2c934ad88f8b78c7c7bc5),
+  [`2b465b4`](https://github.com/tsrx-org/tsrx/commit/2b465b432b515c07047e3eadeb66ff34df95de2d),
+  [`8d1541b`](https://github.com/tsrx-org/tsrx/commit/8d1541ba83643e51f86b8f46d8034c56bd70d17c),
+  [`3603935`](https://github.com/tsrx-org/tsrx/commit/36039352946b9466f337f00dbc4e0662ba78a395),
+  [`c7dc4ef`](https://github.com/tsrx-org/tsrx/commit/c7dc4efa939153f7b800500f1ebdc71093066340),
+  [`d18720d`](https://github.com/tsrx-org/tsrx/commit/d18720d75e143c26d015d9837fb5d1c860cc0cb9),
+  [`9f90c6a`](https://github.com/tsrx-org/tsrx/commit/9f90c6ae8d85f4a65853d42382f5280e504c08f8),
+  [`02e39f6`](https://github.com/tsrx-org/tsrx/commit/02e39f6bf7f0941bb5b7226a02cfadeb5f9ff264),
+  [`a09bc3d`](https://github.com/tsrx-org/tsrx/commit/a09bc3dffac142c0a8adc347b0683f333b78a705),
+  [`bbf7092`](https://github.com/tsrx-org/tsrx/commit/bbf70925ae7944ebba8275b2090247c1e333fe54),
+  [`964899b`](https://github.com/tsrx-org/tsrx/commit/964899bd268e026dfe5f4832fb44c7cbb0b42141),
+  [`55d2886`](https://github.com/tsrx-org/tsrx/commit/55d2886718cd9134b5c7e7c2ba4129a24d2d94b6),
+  [`9ff7b5d`](https://github.com/tsrx-org/tsrx/commit/9ff7b5d5f80e7697896d91d5674ccccb389a890d),
+  [`418dc53`](https://github.com/tsrx-org/tsrx/commit/418dc530f0897c9c9f54d61eed1269490d3b29aa),
+  [`80316d9`](https://github.com/tsrx-org/tsrx/commit/80316d94773c91a182d15e3bca5e7965ebc225b0),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`135ce77`](https://github.com/tsrx-org/tsrx/commit/135ce776f67596af641c8f2772d0321dbd73274e),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`3c510ee`](https://github.com/tsrx-org/tsrx/commit/3c510ee11929af366393ce5aa582d72c1c38d3a8),
+  [`f38319a`](https://github.com/tsrx-org/tsrx/commit/f38319a6a0f5a133ca0eb9efc864d9e3c69bee4f),
+  [`7484f21`](https://github.com/tsrx-org/tsrx/commit/7484f2135be256f099f6e27af704e894b09ee260),
+  [`21edc74`](https://github.com/tsrx-org/tsrx/commit/21edc743be4622090b007d015c2f0d2699248777),
+  [`3ef0076`](https://github.com/tsrx-org/tsrx/commit/3ef00761631d95ef9fcccbae2673df371d1a4c0d),
+  [`15899ed`](https://github.com/tsrx-org/tsrx/commit/15899ed7a3e324f842e5f1662ac3b2c53dbf2605),
+  [`b2af266`](https://github.com/tsrx-org/tsrx/commit/b2af26663e24648ca777a6893b2e66b67d5c4d28),
+  [`6dbda19`](https://github.com/tsrx-org/tsrx/commit/6dbda190b1fa875d4d196b80c0dcc2903ad41b72),
+  [`059ba30`](https://github.com/tsrx-org/tsrx/commit/059ba30018bb3a74d7fbaf2de2d88068c8b30636),
+  [`829de73`](https://github.com/tsrx-org/tsrx/commit/829de739887b29e42dea5328b5fb370edf5bc58e),
+  [`2aa4bf8`](https://github.com/tsrx-org/tsrx/commit/2aa4bf8b1e38e8be96e149a2b5ba5b6d3c727164),
+  [`da9bec8`](https://github.com/tsrx-org/tsrx/commit/da9bec849cd988e39637654951864d1dba98cfc9),
+  [`4bdbe57`](https://github.com/tsrx-org/tsrx/commit/4bdbe572d5e5e0ac4a746248f7b4a9109f52e02d),
+  [`0fc3819`](https://github.com/tsrx-org/tsrx/commit/0fc3819e6c91a9cc8a2723737dd47f72374ae25f),
+  [`357bbcc`](https://github.com/tsrx-org/tsrx/commit/357bbcc9967848cd48a3ddcc59a4b10ed59db3a1),
+  [`644583f`](https://github.com/tsrx-org/tsrx/commit/644583f0abf521bf04b615e1394d96a3fd1f0d35),
+  [`91d958d`](https://github.com/tsrx-org/tsrx/commit/91d958de44c9e582cd66a5b66aff6bb37ff0ece2),
+  [`e0c07b5`](https://github.com/tsrx-org/tsrx/commit/e0c07b55b199acc4fe05b705255e79020b500376),
+  [`6b60554`](https://github.com/tsrx-org/tsrx/commit/6b60554c73958e7b2d00f385760d533031417f1f),
+  [`6b207b6`](https://github.com/tsrx-org/tsrx/commit/6b207b65e8a339d5fe301c60e72db271ffb9a572),
+  [`2473538`](https://github.com/tsrx-org/tsrx/commit/247353854e918f119dafe88f6474a2738cb82ed8),
+  [`baf1452`](https://github.com/tsrx-org/tsrx/commit/baf1452ef56f7e481112dd7138a69f9010f113c7),
+  [`ab3d989`](https://github.com/tsrx-org/tsrx/commit/ab3d989a68c1c2d68a2d0bfa2a94c4b9019f3f6e),
+  [`bb15638`](https://github.com/tsrx-org/tsrx/commit/bb156380f69d2a7fe23d7522a02580d3f4d276af),
+  [`e9330ea`](https://github.com/tsrx-org/tsrx/commit/e9330ea841e6113e10be39980aae7c0ebfd4b63a),
+  [`190f797`](https://github.com/tsrx-org/tsrx/commit/190f7970cf968c978b3e5df37b4e3a97c4e7efa5),
+  [`0ee439a`](https://github.com/tsrx-org/tsrx/commit/0ee439a5d94e071ecae594229f61e9b5ee022296),
+  [`56dd6f5`](https://github.com/tsrx-org/tsrx/commit/56dd6f573f9c7c822db9d33313317bed16f7fa45),
+  [`10a8901`](https://github.com/tsrx-org/tsrx/commit/10a89015088a283db1f067ffe7803fef4e621859),
+  [`1589310`](https://github.com/tsrx-org/tsrx/commit/1589310147fa30e065a10199e75092813ed4bb53),
+  [`04ea4f0`](https://github.com/tsrx-org/tsrx/commit/04ea4f0bb85bc3fe25d09366cf04e70d809cc66e),
+  [`0546961`](https://github.com/tsrx-org/tsrx/commit/0546961247f011b32370c6c16be3961b2bb5f533),
+  [`42e3e49`](https://github.com/tsrx-org/tsrx/commit/42e3e4934d2beaa86d5048c303dfa27498599fec),
+  [`70825fb`](https://github.com/tsrx-org/tsrx/commit/70825fb73774dce8753fcff7b6a8bbcdebe3a7fb),
+  [`14a664d`](https://github.com/tsrx-org/tsrx/commit/14a664d8485a89c9cece8cc2080266cd89cc1329),
+  [`f762c09`](https://github.com/tsrx-org/tsrx/commit/f762c09eea9f1071663bdc9d90524f21250132ff),
+  [`ed8c38c`](https://github.com/tsrx-org/tsrx/commit/ed8c38c9fd948270d1136bf269f896402c0d359a),
+  [`c07323a`](https://github.com/tsrx-org/tsrx/commit/c07323a54009fc3fbf95503de00d50ddb2b00725),
+  [`4344150`](https://github.com/tsrx-org/tsrx/commit/4344150cc4786dd717c1df722370e519ad349647),
+  [`c49216e`](https://github.com/tsrx-org/tsrx/commit/c49216e86d15b68c4d84f8763691418d74ad8744),
+  [`fb35a0b`](https://github.com/tsrx-org/tsrx/commit/fb35a0bf5bbea972889e2024b535d0fee3227856),
+  [`910dbae`](https://github.com/tsrx-org/tsrx/commit/910dbaea2d709ff2f53bf800042c8914bd336939),
+  [`d3e8fe4`](https://github.com/tsrx-org/tsrx/commit/d3e8fe44c53fdc64030307dbaaca1448d591cc2e),
+  [`e423279`](https://github.com/tsrx-org/tsrx/commit/e423279be7250a493c555bd98e243db4540d654e),
+  [`5391890`](https://github.com/tsrx-org/tsrx/commit/539189010bd47564395b7ab2c7108e2b9cc53f76),
+  [`5552aa5`](https://github.com/tsrx-org/tsrx/commit/5552aa5ff936fabbec7ee652155df64905968c6a),
+  [`4885ba3`](https://github.com/tsrx-org/tsrx/commit/4885ba3808edf0b2a74bb84b880b9c7f4966e5de),
+  [`1e58a65`](https://github.com/tsrx-org/tsrx/commit/1e58a65f2be6ff7d3aee1f4bff521d172b997159),
+  [`228d7bd`](https://github.com/tsrx-org/tsrx/commit/228d7bd028e879cde8b481a0209d1c3449380c5f),
+  [`5422ee1`](https://github.com/tsrx-org/tsrx/commit/5422ee180deb0422f0359629b0cdbf5533abf07b),
+  [`c19818c`](https://github.com/tsrx-org/tsrx/commit/c19818ce37642c4508fb2ffd41a8325367d46c36),
+  [`ab5a0ff`](https://github.com/tsrx-org/tsrx/commit/ab5a0ff13138746ade811808f27f52d34668ae3f),
+  [`1310e6a`](https://github.com/tsrx-org/tsrx/commit/1310e6acd55e46e539fca0c63065318cc9bde3bf),
+  [`00a238c`](https://github.com/tsrx-org/tsrx/commit/00a238cc95013ca90e1fc2bd5fbb47b80c942664),
+  [`04ef167`](https://github.com/tsrx-org/tsrx/commit/04ef16724d4c3d0a85cebef45fbd081673987fa0),
+  [`0246e95`](https://github.com/tsrx-org/tsrx/commit/0246e95f983c2efd83e3e99100d00a5ba24c9233)]:
+  - @tsrx/core@0.6.0
+  - @tsrx/vue-runtime@0.2.0
+
 ## 0.3.5
 
 ### Patch Changes

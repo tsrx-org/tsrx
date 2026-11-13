@@ -1,5 +1,1865 @@
 # @tsrx/core
 
+## 0.6.0
+
+### Minor Changes
+
+- [#1223](https://github.com/tsrx-org/tsrx/pull/1223)
+  [`73c170b`](https://github.com/tsrx-org/tsrx/commit/73c170b4d14f961ce49080c604e233886e71e79d)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `var` declared in an
+  `@if`, `@for`, `@switch` or `@try` body (including `@else`, `@empty`, `@case`,
+  `@default`, `@pending` and `@catch` bodies), in a `@{ … }` block that isn't a
+  function's own body (a child or a value, such as
+  `<div>@{ var y = 1; <p>{y}</p> }</div>`), or in a plain block or loop inside one
+  of these, is now reported as TSRX2030 on every target, at the `var` keyword,
+  with a hint to use `const` or `let`. Before, it compiled without an error, but
+  the body or block runs in a function of its own, so code after it that read the
+  variable threw `ReferenceError` at render. A `var` in a component's own `@{ … }`
+  body, or in a function or class inside the body or block, is still allowed.
+
+  Migration: declare the variable with `const` or `let`. If code after the
+  directive or block reads the value, compute it before instead, since some
+  targets run a directive body later or more than once.
+
+- [#1255](https://github.com/tsrx-org/tsrx/pull/1255)
+  [`c28d0b7`](https://github.com/tsrx-org/tsrx/commit/c28d0b7356b9c4456cbe4009c5ea2d38260d7660)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Type arguments after a
+  dynamic tag, as in `<{Tag}<T> />`, now parse and report TSRX2033 on every
+  target, which says to declare a typed alias above the element:
+  `const Typed = Tag<T>;`, then `<{Typed} />`. Most of them used to fail with
+  "Unexpected token". Inside an element's `{ }`, such as
+  `<div>{<{Tag}<string> />}</div>`, they parsed and compiled, but the editor's
+  code passed them to the dynamic helper, so they typed the helper instead of the
+  tag's props; that is now an error too. Collect mode and the editor record the
+  error and leave the type arguments out of the generated code. The Prettier
+  plugin reports the error instead of formatting the file, as it does for
+  TSRX2014.
+
+  Migration: declare a typed alias with an instantiation expression above the
+  element, `const Typed = Tag<string>;`, and use `<{Typed} />`.
+
+- [#1133](https://github.com/tsrx-org/tsrx/pull/1133)
+  [`33022ba`](https://github.com/tsrx-org/tsrx/commit/33022ba2356f9c375242b6edc63ce65fd6215b89)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An `@for` head that
+  assigns to an existing variable or property, as in `@for (state.item of items)`
+  or `@for (item of items)`, is now reported as TSRX2027 on every target, wherever
+  the loop is nested, instead of compiling to invalid output or to a callback
+  parameter that shadows the variable. A `using` or `await using` loop variable is
+  reported the same way instead of losing its disposal.
+
+  Migration: a head without `const` or `let` that compiled before, such as
+  `@for (item of items)`, is now an error. Declare the loop variable:
+  `@for (const item of items)`. To dispose each item, declare the resource in the
+  loop body: `@for (const item of items) { using resource = item; ... }`.
+
+  An `await` in a destructuring default of an `@for` head, as in
+  `@for (const [item = await load()] of rows)`, no longer produces a module that
+  fails to load with "Illegal await-expression in formal parameters of async
+  function". The loop callback now destructures the item first and runs the loop
+  body in a block of its own, so the body's declarations can't shadow names the
+  head reads.
+
+- [#1172](https://github.com/tsrx-org/tsrx/pull/1172)
+  [`8d1541b`](https://github.com/tsrx-org/tsrx/commit/8d1541ba83643e51f86b8f46d8034c56bd70d17c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An `@for` head that
+  declares its loop variable with `var`, as in `@for (var item of items)`, is now
+  reported as TSRX2027 on every target, with a hint to use `const` or `let`.
+  Before, it compiled without an error, but the variable only existed inside the
+  loop, so code after the loop that read it threw `ReferenceError` at render.
+
+  Migration: declare the loop variable with `const` or `let`:
+  `@for (const item of items)`. To keep a value after the loop, assign it to a
+  variable declared before the loop.
+
+- [#1124](https://github.com/tsrx-org/tsrx/pull/1124)
+  [`d18720d`](https://github.com/tsrx-org/tsrx/commit/d18720d75e143c26d015d9837fb5d1c860cc0cb9)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - In a `.tsrx` file, and
+  any other file with JSX, a `<` where an expression starts begins a generic arrow
+  function only where TypeScript's rule for `.tsx` files says it does
+  ([#183](https://github.com/tsrx-org/tsrx/issues/183)): a type parameter followed
+  by a comma, a default, or a constraint. A lone type parameter without one is now
+  a tag, as in TSX, so `<T>(x) => x` no longer compiles or formats, and neither
+  does `async <T>(x) => x`, which TypeScript reads as a call. To migrate, add the
+  trailing comma: `<T>(x) => x` becomes `<T,>(x) => x`, `async <T>(x) => x`
+  becomes `async <T,>(x) => x`, and `<const T>` becomes `<const T,>`. The errors
+  for the old forms, an unclosed `<T>` tag and TS7060, now say to add it.
+
+  The rule reads no further than the type parameter, so a generic arrow with a
+  constraint compiles whatever its parameters hold (comments, regular expressions,
+  template literals), and an element whose text starts like an arrow function,
+  such as `<b>(i) => i</b>` or `<script>(i) => i</script>`, is read as an element
+  ([#734](https://github.com/tsrx-org/tsrx/issues/734)). A template's render node
+  or child is a tag wherever it starts, as before.
+
+  A `.ts`, `.mts`, or `.cts` file has no JSX, as in TypeScript: `<T>(x) => x`
+  stays a generic arrow function there, and `<T>x` is now read as a type assertion
+  instead of a tag (TS7059 in a `.mts` or `.cts` file).
+
+- [#1286](https://github.com/tsrx-org/tsrx/pull/1286)
+  [`357bbcc`](https://github.com/tsrx-org/tsrx/commit/357bbcc9967848cd48a3ddcc59a4b10ed59db3a1)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Five TypeScript-coded
+  errors that no source reached now either match what TypeScript reports or are
+  gone:
+
+  - `TS_ERRORS.DECLARED_IN_SCOPE` is removed, and `createScopes` no longer reports
+    a name declared twice in one scope. The parser reports those with TypeScript's
+    codes, and the scope check also fired on code TypeScript accepts, such as
+    `var a; var a;`. The one case only it caught, a parameter that a `let` or
+    `const` in a `@{ … }` body redeclares, is now TS2300 from the parser, as in a
+    `{ … }` body. In a function's body, of either kind, a function that shares its
+    name with another function, a `var` or a parameter is now TS2300 too, as in a
+    module.
+  - `TS_ERRORS.SIGNATURE_PARAMETER_NAME` is removed: a signature's parameters read
+    as nothing it could report. A hole in them (`type F = (a, , b) => void`) is
+    now an unexpected `,` (TS1012), as in a function's parameters, where it used
+    to crash. A default in a signature without a body
+    (`declare function f(a = 1): void;`, an overload, an abstract method) is
+    TS2371, as in a function type, and comes by position with the list's other
+    errors, before a rest parameter's TS1048. A default after `this` is
+    `',' expected.` (TS1005) at its `=`, as TypeScript's parser reports it.
+  - `TS_ERRORS.JSX_UNESCAPED_GREATER_THAN` (TS1382) is removed: a `>` in JSX text
+    is text in TSRX, now in the JSX of a dynamic tag's expression too.
+  - `TS_ERRORS.UNTERMINATED_JSX_CONTENTS` (TS17008) is removed: an element left
+    open at the end of the input is TSRX1001, as in a template, in an attribute's
+    JSX and in a dynamic tag's expression too.
+  - `TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE` (TS1381) stays, for a `}` in the text
+    of the JSX in a dynamic tag's expression, as TypeScript reports it for JSX
+    text.
+
+### Patch Changes
+
+- [#1258](https://github.com/tsrx-org/tsrx/pull/1258)
+  [`2bc4f1f`](https://github.com/tsrx-org/tsrx/commit/2bc4f1fc5fcb9863c926ab3d01b0407e89bbf639)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A ref list written on
+  an element, `ref={[a, b]}`, now calls every ref in it on React, Preact, Hono and
+  Vue, as it already did on Solid. These runtimes take a single ref, so the
+  compiler passes the list to `__mergeRefs`: React and Hono share the merged ref
+  through `merge_element_refs`'s cache, so an inline list is applied once, and
+  Preact gets a new callback per render, as its merged refs already do. A list can
+  nest, and a falsy entry such as the `false` of `cond && cb` is left out. Beside
+  a spread, Preact and Vue no longer drop the list.
+
+  The public `mergeRefs` now reads a ref list as the refs in it and leaves out a
+  value that is not a ref instead of throwing, and its type takes lists and the
+  falsy `false`, `0` and `''` of `cond && cb`, so the editor accepts
+  `ref={[a, b]}` on every target. `merge_element_refs` merges a lone ref object
+  from a list rather than giving it back. The `MULTIPLE_REFS` hint no longer
+  limits `ref={[a, b]}` to some targets.
+
+- [#1301](https://github.com/tsrx-org/tsrx/pull/1301)
+  [`fb35a0b`](https://github.com/tsrx-org/tsrx/commit/fb35a0bf5bbea972889e2024b535d0fee3227856)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An `await using`
+  declaration in a template body now makes that body async, as `await` does.
+  Before, a body such as `@try { await using resource = acquire(); … }` compiled
+  into a synchronous function, which is invalid output.
+
+- [#1317](https://github.com/tsrx-org/tsrx/pull/1317)
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A block
+  `@ts-expect-error` or `@ts-ignore` comment whose last line starts with `*`, such
+  as `/*` followed by ` * @ts-expect-error */`, now applies in `tsrx-tsc` and the
+  editor, as it does in TypeScript. Before, the type view dropped it, so the error
+  it suppresses was reported.
+
+- [#1251](https://github.com/tsrx-org/tsrx/pull/1251)
+  [`2646239`](https://github.com/tsrx-org/tsrx/commit/26462399753081501e78478de7495d15775e411e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Two kinds of TypeScript
+  errors in `.tsrx` files are now reported where they are written
+  ([#1248](https://github.com/tsrx-org/tsrx/issues/1248)):
+
+  - An unreachable `break` or `continue` (TS7027). Inside an arrow function,
+    `tsrx-tsc` and the TypeScript 5.9 plugin reported it several columns late,
+    mapped by offset through the arrow. Inside a function expression or
+    declaration, it was dropped on TypeScript 5.9 and 7.
+  - A duplicate index signature (TS2374). TypeScript 5.9 dropped it, and
+    TypeScript 7 placed it at the nearest earlier position, such as before a
+    comment or the `{` of a class.
+
+  The statement and the signature now map their start and end, and their first
+  token.
+
+- [#1091](https://github.com/tsrx-org/tsrx/pull/1091)
+  [`6eaee99`](https://github.com/tsrx-org/tsrx/commit/6eaee992105984b13c38f9de4edfd6ca99eae399)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Fix four Bun plugin
+  bugs:
+
+  - Plugin instances that split `.tsrx` files with `include`/`exclude` now each
+    emit the scoped CSS of the files they compile. Before, the first instance
+    served an empty stylesheet for every file another instance compiled (React,
+    Preact, Solid, Vue).
+  - Production builds now use the production JSX runtime when the tsconfig selects
+    an automatic JSX setting such as `"jsx": "react-jsx"`, or none. Before,
+    compiled `.tsrx` modules always called `jsxDEV` from the development runtime,
+    which is undefined in React's production build, so components threw when they
+    rendered (React, Preact, Hono). Under the classic `"jsx": "react"`, Bun keeps
+    using the development runtime, as before. The Hono plugin no longer requires
+    `Bun.Transpiler`.
+  - When `Bun.build()` omits `root`, `tsrx.platform` is read from the tsconfig
+    nearest the entrypoints' common directory, which is Bun's default root,
+    instead of the working directory. When every entrypoint is an in-memory
+    `files` entry, the working directory is still used, as Bun does.
+  - With `Bun.plugin()`, including `bun:test` preloads,
+    `import.meta.env.platform.*` values in compiled `.tsrx` output are now written
+    in. Before, reading a flag as a value threw `undefined is not an object`.
+
+  `@tsrx/core/config` adds `resolveTsconfigJsx()`, which reads the effective
+  `compilerOptions.jsx` of the nearest tsconfig.
+
+- [#1295](https://github.com/tsrx-org/tsrx/pull/1295)
+  [`972010b`](https://github.com/tsrx-org/tsrx/commit/972010b3654c907baa25cf2f03e3cad9b3d6c6fd)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Warn about a `@{ … }`
+  with no output whose only statement is an expression there only for its value,
+  such as `<p>@{user.name}</p>`, which renders nothing: `TSRX2035`, the first
+  warning TSRX itself reports. In a child list the message says how to render an
+  `@` and then the value. A call, an assignment and other expressions that may be
+  there for their effect don't warn, nor does a directive, a block with output, or
+  a block with more than one statement. Like every warning, it shows only in
+  compiles that collect diagnostics, such as the editor and `tsrx-tsc`, and a
+  build drops it. Compiled output doesn't change.
+
+  `@tsrx/mcp` now gives each compile error a `severity`, and a warning no longer
+  makes `ok` false. `@tsrx/content-mapper` leaves warnings out, since TypeScript 7
+  would show each as an error, fail `tsc` on code that compiles, and hide
+  TypeScript's own errors in the statement that holds it. The VS Code extension
+  keeps the language server's warnings when TypeScript 7 serves the workspace, as
+  the content mapper doesn't send them. So on TypeScript 7,
+  `tsc --runExternalCode`, `tsrx-tsc` and editors that run the language server
+  with `--typescript-backend=native` don't show warnings yet.
+
+- [#1119](https://github.com/tsrx-org/tsrx/pull/1119)
+  [`dac81a4`](https://github.com/tsrx-org/tsrx/commit/dac81a418448476aa4ab60999096dc629627c9b4)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Parsing a file with
+  many statements before a distant comment no longer slows down quadratically.
+  Comment attachment scanned all the code between each statement and the next
+  comment, once per statement. It now checks for a blank line only when that gap
+  is whitespace, and looks for a `)` only after a statement header
+  ([#990](https://github.com/tsrx-org/tsrx/issues/990)).
+
+- [#1183](https://github.com/tsrx-org/tsrx/pull/1183)
+  [`677d574`](https://github.com/tsrx-org/tsrx/commit/677d5743b8cb3d3cd57504ef81f6323ef45b8399)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Parsing a long list
+  before a comment no longer slows down quadratically. Comment attachment searched
+  a node's list (the statements of a file or block, the elements of an array, the
+  properties of an object, a function's parameters, an element's attributes or
+  children, and others) for each of its entries. It now indexes each list once
+  ([#1163](https://github.com/tsrx-org/tsrx/issues/1163)).
+
+- [#1167](https://github.com/tsrx-org/tsrx/pull/1167)
+  [`72956b0`](https://github.com/tsrx-org/tsrx/commit/72956b0d9a4a55c56b210b1b7669f7e04a77709c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Keep the parentheses
+  around an element or fragment in compiled output wherever TSX needs them. That
+  covers the object of a member access, call, index, tagged template, non-null
+  assertion or instantiation expression (`(<b />)<T>`), a `new` callee, a
+  superclass, and the end of the left operand of `<`.
+  `return (<b>ok</b>).type === x ? 1 : 2;` compiled to
+  `return <b>ok</b>.type === x ? 1 : 2;`, which TypeScript reads as
+  `return <b>ok</b>;` followed by a separate statement
+  ([#1166](https://github.com/tsrx-org/tsrx/issues/1166)).
+  `class A extends (<div />) {}` compiled to `class A extends <div /> {}`, which
+  TypeScript doesn't parse ([#745](https://github.com/tsrx-org/tsrx/issues/745)).
+  `(<b />) < x` compiled to `<b /> < x`, where TypeScript reads the `<` as the
+  start of another element. The editor output already kept them.
+
+- [#1082](https://github.com/tsrx-org/tsrx/pull/1082)
+  [`fe2c377`](https://github.com/tsrx-org/tsrx/commit/fe2c377664bdcac510bcd137b6468bec7efe9eeb)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Compose TSRX platform
+  flags into compatible JSON `import.meta.env` defaults so Storybook Vite builds
+  and development canvases work with an explicit platform. Keep rejecting
+  conflicting or incomplete platform definitions.
+
+  Refresh extracted Solid and Vue CSS before hot-update requests so simultaneous
+  template and style edits use matching scope hashes, and removing styles clears
+  the cached sheet. An update that doesn't compile keeps the last good CSS and
+  still reloads the module, which reports the error.
+
+- [#1113](https://github.com/tsrx-org/tsrx/pull/1113)
+  [`6297ffa`](https://github.com/tsrx-org/tsrx/commit/6297ffa6527f297de69edb95af7a74a87b804970)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The editor reports the
+  fragment error for a `@{ … }` body in which `@for`, `@if`, `@switch` or `@try`
+  is followed by another output node
+  ([#197](https://github.com/tsrx-org/tsrx/issues/197)). Before, the loose compile
+  that the editor tools and `tsrx-tsc` use threw
+  `Not implemented: JSXForExpression` (or `JSXIfExpression`,
+  `JSXSwitchExpression`, `JSXTryExpression`) on React, Preact, Vue and Hono, so
+  the editor showed that message at the top of the file, lost the collected
+  errors, and dropped every TypeScript diagnostic in the file. The control flow's
+  body now keeps its types too.
+
+- [#1196](https://github.com/tsrx-org/tsrx/pull/1196)
+  [`25e5844`](https://github.com/tsrx-org/tsrx/commit/25e58444734d535385f2ca4310445b34286369cb)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An export list inside a
+  `declare namespace` or `declare module` body can now name a function declared in
+  that body, such as `declare namespace Q { function f(): void; export { f }; }`,
+  overloads and `export { f as g }` included. It can also name a declaration that
+  comes later in the body, such as
+  `declare namespace Q { export { c }; const c: number; }`. Before, both failed
+  with `Export 'c' is not defined`. An export of a name that the body and the
+  scopes around it don't declare is still reported, now also when a later export
+  list in another body or namespace names a declaration of the same name.
+
+- [#1197](https://github.com/tsrx-org/tsrx/pull/1197)
+  [`8c6d037`](https://github.com/tsrx-org/tsrx/commit/8c6d037fdd16d28d871126bf48fba4b2583d9bbf)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Parse time now grows
+  linearly with the number of sibling `@if`, `@for` and `@try` directives in an
+  element or fragment. Before, each directive body left one entry on the
+  tokenizer's context stack and every later directive copied that stack, so the
+  time grew with the square of the sibling count. The parsed AST is unchanged.
+
+- [#1224](https://github.com/tsrx-org/tsrx/pull/1224)
+  [`54e7644`](https://github.com/tsrx-org/tsrx/commit/54e7644d256f5506fbde84e35ee5e827aaef15ad)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A control-flow
+  directive used as a value in parentheses, as an argument, as a property value or
+  inside a template literal's `${ }` no longer changes how the code after it is
+  read. `(@if (c) { … }) / 2`, `foo(@for (…) { … }) <= y`,
+  `` `${(@if (c) { … })}x` `` and `<div title={(@if (c) { … }) / 2} />` used to
+  fail with "Unterminated regular expression", "Unexpected token" or "Unterminated
+  template", because the token after the closing `)` or `}` was read as the start
+  of a new expression. They now parse as the same code with an element in place of
+  the directive does.
+
+- [#1244](https://github.com/tsrx-org/tsrx/pull/1244)
+  [`9d8ea3e`](https://github.com/tsrx-org/tsrx/commit/9d8ea3e61a0ed083af98269f703bb73e91421e64)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `/`, `<`, `<=` or
+  `<<` right after a control-flow directive used as a value inside brackets is now
+  read as an operator, as after an element. `(a = @if (c) { … } / 2) => a`,
+  `foo(@for (…) { … } < y)`, `[@switch (k) { … } / 2]`,
+  `{ a: @try { … } @catch (e) { … } / 2 }` and `` `${@if (c) { … } / 2}` `` used
+  to fail with "Unterminated regular expression" or "Unexpected token". Outside
+  brackets nothing changes: a semicolon can be inserted after the directive there,
+  and a `/` or `<` on the next line still starts the next statement, so
+  `const x = @if (c) { … } / 2;` still fails. A `@try … @catch (e)` statement also
+  no longer leaves two entries on the tokenizer's context stack each time.
+
+- [#1189](https://github.com/tsrx-org/tsrx/pull/1189)
+  [`129825c`](https://github.com/tsrx-org/tsrx/commit/129825ce427fb80b31c6fcbb148d48781a83485f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - In the editor's view of
+  a `.tsrx` file, a `@ts-expect-error` or `@ts-ignore` directive above a statement
+  written over several lines now covers only the first line of the statement, as
+  in TypeScript ([#1144](https://github.com/tsrx-org/tsrx/issues/1144)). The view
+  used to print such a statement on one line, so the directive also hid the errors
+  of its later lines, and an unused directive went unreported. A directive above a
+  long statement written on one line, which the view used to split, now covers all
+  of it. The compiled output is unchanged.
+
+- [#1169](https://github.com/tsrx-org/tsrx/pull/1169)
+  [`827030c`](https://github.com/tsrx-org/tsrx/commit/827030cd1441ec3156414a54a1ab6d3de1f4c34b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The editor's view of a
+  `.tsrx` file now writes imports and the ends of statements as the source does.
+  The compiled output is unchanged.
+
+  - An import is written as in the source, also over several lines, without spaces
+    or with a trailing comma. On TypeScript 7, Organize Imports, Sort Imports and
+    Remove Unused Imports now work when an import ends without `;`
+    ([#1023](https://github.com/tsrx-org/tsrx/issues/1023)) or is written in
+    another layout than the printer's
+    ([#1033](https://github.com/tsrx-org/tsrx/issues/1033)).
+  - On TypeScript 5.9 and 6, removing one unused name from an import also removes
+    the comma next to it, as in a `.tsx` file
+    ([#1025](https://github.com/tsrx-org/tsrx/issues/1025)).
+  - A statement that ends without `;` in the source also ends without one in the
+    editor's view, unless the next line could continue it. On TypeScript 7,
+    auto-import now offers a name such as `useMemo` at the end of
+    `const m = useMem` ([#1064](https://github.com/tsrx-org/tsrx/issues/1064)). On
+    TypeScript 5.9 and 6, the code of an edit, such as the imports Sort Imports
+    writes, uses `;` as the source does.
+
+- [#1170](https://github.com/tsrx-org/tsrx/pull/1170)
+  [`b620e02`](https://github.com/tsrx-org/tsrx/commit/b620e02c284bfdf59c105c2e5d71b14f0cc84228)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The editor and
+  `tsrx-tsc` now report more TypeScript diagnostics of a `.tsrx` file where a
+  `.ts` file has them:
+
+  - In a `@{` body, the warning for an unused destructuring (TS6198) covers the
+    pattern, not the text from the function's `(`
+    ([#1062](https://github.com/tsrx-org/tsrx/issues/1062)).
+  - A diagnostic that starts at a statement's keyword or at a binding pattern is
+    no longer dropped (TypeScript 5.9 and 6) or moved to an earlier position
+    (TypeScript 7): unreachable code (TS7027) on a statement that starts with
+    `const`, `let`, `var`, `if`, `while`, `do`, `for`, `switch`, `throw`, `try`,
+    `debugger`, `new`, `typeof`, `void`, `delete` or `enum`, or on `return 1;`; a
+    declaration whose variables are all unused (TS6199); and a `typeof x`
+    comparison that is never true (TS2367).
+  - On TypeScript 5.9 and 6, Add missing function declaration works for a call in
+    a template's output, and adds the function before the output
+    ([#1027](https://github.com/tsrx-org/tsrx/issues/1027)).
+  - On TypeScript 7, typing `/**` above a function offers the `/** */` JSDoc
+    template ([#1066](https://github.com/tsrx-org/tsrx/issues/1066)).
+
+- [#1219](https://github.com/tsrx-org/tsrx/pull/1219)
+  [`d0a00dc`](https://github.com/tsrx-org/tsrx/commit/d0a00dc54713b459a208fb2e044158a46b0143da)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - TypeScript errors on an
+  array literal or an empty type literal are now reported where they are written
+  in `.tsrx` files. On TypeScript 7, TS2344 on the `{}` in `g<{}>()` landed one
+  column early, on the `<`, and TS2322 on the `[]` in
+  `[ {}, [] ] satisfies number[]` was reported at a generated position past the
+  end of the file. `tsrx-tsc` and the TypeScript 5.9 plugin dropped the errors on
+  an array inside an array, as in `[[]] satisfies number[]`. Array, object and
+  type literals, and spread elements, now map their start, their end and their
+  brackets or `...`, so an error on a whole literal or spread keeps both of its
+  ends. On TypeScript 7 those bracket spans join the exact span over code printed
+  as written. An error after a comment inside an object literal, as in
+  `{ /* c */ a: 1 as string }`, is also no longer reported on the comment by
+  `tsrx-tsc`, and TS2698 on `{ /* c */ ...s }` lands on the spread on both
+  TypeScript 5.9 and 7 ([#1209](https://github.com/tsrx-org/tsrx/issues/1209)).
+
+- [#1093](https://github.com/tsrx-org/tsrx/pull/1093)
+  [`d5015d2`](https://github.com/tsrx-org/tsrx/commit/d5015d25b33980d0509ecccf04a341081fee70db)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - ESLint no longer
+  crashes on a `.tsrx` file that uses `@switch`
+  ([#913](https://github.com/tsrx-org/tsrx/issues/913)). The ESLint parser now
+  gives ESLint the file's comments and tokens, so `eslint-disable` and other
+  directive comments apply in `.tsrx` files
+  ([#454](https://github.com/tsrx-org/tsrx/issues/454)), and rules that read
+  tokens work: `no-unused-vars` reports an unused function parameter instead of
+  crashing ([#228](https://github.com/tsrx-org/tsrx/issues/228)).
+  `template-curly-spacing` and `indent` no longer crash on template literals and
+  JSX children.
+
+  Give ESLint the loop of a `@for` as a real `ForOfStatement`, `ForInStatement` or
+  `ForStatement`, in a new `loop` field of the `JSXForExpression`. Tools that read
+  a `JSXForExpression`'s `left`, `right`, `await`, `init`, `test`, `update` or
+  `body` read `loop.left`, `loop.body` and so on now. Its `index`, `key` and
+  `empty` stay on the `JSXForExpression`. ESLint gets the arms of a `@switch` as
+  `JSXSwitchCase` nodes, not `SwitchCase`, so selectors that match `SwitchCase` no
+  longer match an `@case` or `@default`.
+
+  The parser also returns its own scope manager, built with `eslint-scope`, which
+  is now a dependency of `@tsrx/eslint-parser`. `semi --fix` no longer rewrites a
+  `@for` head into code that does not parse, and `init-declarations` no longer
+  reports a `@for` variable. Core `no-undef` and `no-unused-vars` see the loop's
+  `index`, `key` and `@empty` branch in the right scopes, so `no-undef` no longer
+  reports a declared `index`
+  ([#559](https://github.com/tsrx-org/tsrx/issues/559)). Loop rules such as
+  `no-await-in-loop` and `guard-for-in` now apply to `@for` too.
+
+  A parse with `keywordTokens` records every token on the program as
+  `tsrx_tokens`.
+
+- [#1085](https://github.com/tsrx-org/tsrx/pull/1085)
+  [`4d1def9`](https://github.com/tsrx-org/tsrx/commit/4d1def98977820da6206df0c189a7f525203298e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Require esrap 2.4 and
+  pass it the parser's tokens for editor output. esrap 2.4 removed the
+  `boundaryTokens` option that kept the keywords and punctuation of the generated
+  TypeScript mapped. A fresh install of `@tsrx/core` already got esrap 2.4, so
+  `async` and `function` keywords, Vue's imports, interface declarations, and
+  lowered dynamic tags lost their editor mappings. Single type parameters also
+  printed as `<T,>` everywhere.
+
+  A generic arrow function with one type parameter now compiles to `<T,>(…) => …`,
+  which TypeScript reads as an arrow function in TSX instead of a JSX tag
+  ([#707](https://github.com/tsrx-org/tsrx/issues/707)). Other type parameter
+  lists print as written. Parameter decorators
+  ([#606](https://github.com/tsrx-org/tsrx/issues/606)) and the type arguments of
+  a tagged template ([#272](https://github.com/tsrx-org/tsrx/issues/272)) are no
+  longer dropped from the compiled output. An array pattern parameter with a type
+  annotation no longer prints the annotation twice: on esrap 2.4,
+  `function f([a]: number[]) {}` compiled to
+  `function f([a]: number[]: number[]) {}`, which does not parse.
+
+- [#1225](https://github.com/tsrx-org/tsrx/pull/1225)
+  [`6165298`](https://github.com/tsrx-org/tsrx/commit/6165298529f192d72825c7905973ae2acc881921)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Two editor mapping
+  fixes in `.tsrx` files ([#1210](https://github.com/tsrx-org/tsrx/issues/1210)):
+
+  - `tsrx-tsc` and the TypeScript 5.9 plugin reported unreachable code inside a
+    `for (;;)` body 3 columns late, or 7 when the body is on one line, because the
+    whole loop mapped by offset and the printer writes `for (; ; )` and a blank
+    line after `return;`. A `for…of` or `for…in` body was 1 column late, or 5 on
+    one line. These loops now map only their start and end, so an error inside one
+    lands where it is written, and an unreachable loop is still reported.
+  - On TypeScript 7, hover returned nothing on the names in a braceless `if` or
+    `else` body, such as `c` and `b` in `if (c) c = b`. The `{` and `}` mappings
+    meant for a block body were also added on the body's first and last
+    characters, and replaced the names' own mappings. They are now added only for
+    a block body.
+
+- [#1171](https://github.com/tsrx-org/tsrx/pull/1171)
+  [`ee70085`](https://github.com/tsrx-org/tsrx/commit/ee700855c0c7e14b58163f4693c1797be7e96772)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An element right after
+  `key` in an `@for` head, as in `@for (const x of xs; key <b />)`, now parses
+  like `key (<b />)` instead of failing with "Unexpected token".
+
+- [#1136](https://github.com/tsrx-org/tsrx/pull/1136)
+  [`66a0791`](https://github.com/tsrx-org/tsrx/commit/66a079126a2604436eb2c934ad88f8b78c7c7bc5)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A keyed `@for` whose
+  body is another `@for`, directly or inside an `@if` or `@switch` branch, now
+  keys each iteration on React, Preact, and Hono. The inner loop's rows render in
+  a `<Fragment>` with the outer key, so reordering the outer list moves each
+  group's rows, and their state, with it instead of matching them up by position.
+
+  JSX in a directive header (`@for (… of …)`, `@if (…)`, `@switch (…)`, a `@case`
+  test) now reads its text the way JSX does anywhere else.
+  `@for (const item of [<span>Hello<b /></span>])` no longer fails with
+  `Unexpected token`, and `[<span><b>1</b> 2</span>]` in a header inside an
+  element keeps its text instead of failing to parse.
+
+- [#1134](https://github.com/tsrx-org/tsrx/pull/1134)
+  [`2b465b4`](https://github.com/tsrx-org/tsrx/commit/2b465b432b515c07047e3eadeb66ff34df95de2d)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `@for` on Solid now
+  accepts any iterable, as on React, Preact, and Hono. A `Set`, a `Map` iterator,
+  a generator, or an array with its own iterator no longer throws
+  `newItems.slice is not a function` and halts Solid's reactivity; the loop reads
+  the source the way `for...of` does and hands `<For>` the resulting array. Arrays
+  with the built-in iterator, including store arrays, reach `<For>` as they are.
+  The helpers `for_items` and `for_keyed_rows` come from the new
+  `@tsrx/solid/iterable` and `@tsrx/solid-runtime/iterable` subpaths, and
+  `@tsrx/runtime/iterable` gains `iterable_to_array`.
+
+  A Solid `@for` whose key reads its declared index, as in
+  `@for (const item of items(); index i; key i)`, no longer throws
+  `ReferenceError: i is not defined` when the list updates. Solid's `keyed`
+  callback receives the item alone, so such a loop now computes each key from the
+  item and its index up front and renders those rows. A sparse array renders its
+  holes as `undefined` items instead of halting Solid's reactivity.
+
+  A Solid `@for` that destructures its item in a loop with a key or an index, as
+  in `@for (const { id } of items(); key id)`, now renders the item's values
+  instead of `undefined`, and the destructured names follow the row when Solid
+  reuses it for another item or an item replaced under the same key. A
+  destructured component used as a tag (`<Icon />`) renders through Solid's
+  `dynamic`, so it follows the row too.
+
+- [#1135](https://github.com/tsrx-org/tsrx/pull/1135)
+  [`3603935`](https://github.com/tsrx-org/tsrx/commit/36039352946b9466f337f00dbc4e0662ba78a395)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A keyed Vue `@for`
+  whose item is an array pattern, as in
+  `@for (const [first, second] of rows; key first)`, now destructures each item
+  through its iterator instead of reading `item[0]` and `item[1]`. A `Set`, a
+  string with astral characters, or any other re-iterable item now renders its
+  real values, defaults in the pattern work, and the loop stays on `<VaporFor>`,
+  so keyed rows keep their state and still update in place. The key callback
+  destructures the item too, so an item that can be iterated only once, such as a
+  generator, still can't be keyed by a name its pattern binds. The slot imports
+  `computed` from `vue` in a declaration of its own, beside any authored
+  `import type` or `import * as` from `vue`. `Suspense`, which `@try … @pending`
+  imports, no longer goes into an authored `import type` or `import * as` from
+  `vue`, where it was erased or printed as invalid syntax, and is not imported a
+  second time beside an authored `import { Suspense } from 'vue'`.
+
+  A keyed Vue `@for` no longer rewrites type syntax that shares the loop
+  variable's name: `function <item>(x: item) {}`, `type item = string`, an
+  interface that mentions `item`, and the member name in `typeof Types.item` stay
+  as written instead of becoming `item.value` and failing the build.
+
+- [#1120](https://github.com/tsrx-org/tsrx/pull/1120)
+  [`c7dc4ef`](https://github.com/tsrx-org/tsrx/commit/c7dc4efa939153f7b800500f1ebdc71093066340)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Closures the compiler
+  generates around an `@if` branch, an `@switch` case, or a host element with a
+  spread and a `ref` now run in the same function context as the code around them:
+
+  - `<this.Widget />` in a generator method keeps its receiver. Resuming the
+    generator threw `Cannot read properties of undefined (reading 'Widget')`
+    because the generated generator was called without `this`
+    ([#502](https://github.com/tsrx-org/tsrx/issues/502)).
+  - `await using` in a template body makes the closure async and awaited. Before,
+    the closure stayed synchronous, so a server build failed to load with
+    `SyntaxError: Unexpected reserved word`
+    ([#501](https://github.com/tsrx-org/tsrx/issues/501)).
+  - In an async generator, the generated generator is an async generator, so
+    `yield*` on an async iterable works. It threw `is not iterable`
+    ([#265](https://github.com/tsrx-org/tsrx/issues/265)).
+  - The generated generator gets the enclosing `arguments` object itself, so a
+    write such as `arguments[0] = 'changed'` reaches the enclosing generator, and
+    `<arguments.Widget />` reads the enclosing object. Before, it got a copy
+    ([#264](https://github.com/tsrx-org/tsrx/issues/264)).
+
+- [#1293](https://github.com/tsrx-org/tsrx/pull/1293)
+  [`9f90c6a`](https://github.com/tsrx-org/tsrx/commit/9f90c6ae8d85f4a65853d42382f5280e504c08f8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React, Preact and
+  Hono, static JSX whose member tag starts with an import (`<ui.Button>`,
+  `<Menu.Item>`) now stays at render time when the module writes a property under
+  that import anywhere (`ui.Button = Replacement`, `delete ui.Button`,
+  `[ui.Button] = […]`, `Object.assign(ui, …)`), so the replacement renders.
+  Before, it was hoisted to a module-level constant that kept the property's first
+  value ([#1292](https://github.com/tsrx-org/tsrx/issues/1292)). A tag on a
+  namespace import (`<ns.Button>`) is still hoisted, since a namespace's own
+  properties are read-only.
+
+- [#1290](https://github.com/tsrx-org/tsrx/pull/1290)
+  [`02e39f6`](https://github.com/tsrx-org/tsrx/commit/02e39f6bf7f0941bb5b7226a02cfadeb5f9ff264)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React, Preact and
+  Hono, static JSX whose tag is a function or class declaration that the module
+  assigns anywhere (`Tag = Replacement`, `[Tag] = […]`, `for (Tag of …)`) now
+  stays at render time instead of being hoisted to a module-level constant, so the
+  replacement renders. Before, the static kept the declaration's first value
+  ([#1287](https://github.com/tsrx-org/tsrx/issues/1287)).
+
+- [#1259](https://github.com/tsrx-org/tsrx/pull/1259)
+  [`a09bc3d`](https://github.com/tsrx-org/tsrx/commit/a09bc3dffac142c0a8adc347b0683f333b78a705)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Vue, the helper
+  component that renders a `@catch` body under `@pending` is declared once beside
+  its component, in the enclosing function or namespace body, when the component
+  is inside another function or a namespace and the helper reads nothing from the
+  component's scope (only its own `@catch` parameter, its own locals and bindings
+  outside the component). Before, it was declared in the component's setup, so
+  every instance defined a new helper component. A helper that reads a binding of
+  the component's scope stays in the setup.
+
+  On Solid, the temporary that holds a host element's spread props beside a `ref`
+  in an `@if`, `@for` or other branch skips a name the module already uses even
+  when the component's name contains `$` (`App$__spread_props1`). Before, the
+  check missed it, and the temporary shadowed the authored binding of that name.
+
+- [#1279](https://github.com/tsrx-org/tsrx/pull/1279)
+  [`bbf7092`](https://github.com/tsrx-org/tsrx/commit/bbf70925ae7944ebba8275b2090247c1e333fe54)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React, Preact and
+  Hono, a static element inside an expression container is now hoisted to a
+  module-level constant, like a static element written bare.
+  `<>{<div> 123 </div>}</>` hoisted nothing before; now the inner `<div>` gets its
+  own constant ([#81](https://github.com/tsrx-org/tsrx/issues/81)). This covers a
+  container in an element's or a fragment's children, in an attribute value such
+  as `<Card header={<h1>Title</h1>} />`, in either branch of `?:`, on the right of
+  `&&`, `||` and `??`, and in a nested container, including in the JSX that a
+  render helper or callback in the component body returns, whose bare statics were
+  already hoisted. In a branch that may not render, only host elements such as
+  `<span>` are hoisted, so a component like `<ui.Button />` in
+  `{show && <ui.Button />}` is still read only when it renders, never when the
+  module loads. A static fragment in a container keeps its children, each hoisted
+  on its own, and consecutive statics are not merged into one fragment, so the
+  children React sees keep their shape. An element with a `key`, JSX that reads a
+  binding, a bare child of a dynamic element, and JSX inside a function or array
+  within a container (such as `{items.map(() => <li />)}`) stay in place. A
+  static's name now skips any name the module source already uses, so an authored
+  `App__static1`, in the component or at module level, can't redeclare it or
+  capture its references. Solid, Vue and Hono DOM output is unchanged, since those
+  targets don't hoist.
+
+- [#1187](https://github.com/tsrx-org/tsrx/pull/1187)
+  [`964899b`](https://github.com/tsrx-org/tsrx/commit/964899bd268e026dfe5f4832fb44c7cbb0b42141)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Static JSX stays in
+  place when its tag reads a binding declared in an earlier `case` of the same
+  `switch`. A component in a namespace body keeps its static JSX and helper
+  components in place, since a name there can read an export of any declaration of
+  the namespace (`Foo` inside `namespace Outer.Foo`, or an export of another
+  `namespace Outer` block). Before, such JSX was hoisted to module scope, where
+  the tag named a different binding of the same name.
+
+- [#1098](https://github.com/tsrx-org/tsrx/pull/1098)
+  [`55d2886`](https://github.com/tsrx-org/tsrx/commit/55d2886718cd9134b5c7e7c2ba4129a24d2d94b6)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A dynamic tag
+  (`<{props.tag} />`) no longer gets TS2786 (`cannot be used as a JSX component`)
+  in the editor's type view with Hono 4.13. The type-only `Dynamic` helper now
+  returns what a Hono function component returns, which Hono 4.13's
+  `JSX.ElementType` requires
+  ([#1075](https://github.com/tsrx-org/tsrx/issues/1075)).
+
+  A missing or unknown prop on a dynamic tag's component
+  (`const C = Card; <{C} />`) is now reported at the authored `{C}`, on every
+  target. TypeScript reports it on the generated name of the lowered tag, which
+  had no mapping, so `tsrx-tsc` and the editor dropped it.
+
+- [#1109](https://github.com/tsrx-org/tsrx/pull/1109)
+  [`9ff7b5d`](https://github.com/tsrx-org/tsrx/commit/9ff7b5d5f80e7697896d91d5674ccccb389a890d)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React, Preact, and
+  Hono, a host spread and a `ref` beside it are now evaluated as they are in plain
+  TSX:
+
+  - A getter in a spread bag is read once. In
+    `<input {...bag} data-reads={reads} />` with
+    `get title() { return String(++reads); }`, the element rendered
+    `title="2" data-reads="2"`: the spread normalizer read every getter, handed
+    back the original bag, and the JSX runtime read the getters again. The
+    runtime's new `copy_spread_props` and `copy_spread_props_for_ref_attr` return
+    the normalized copy instead, and these targets import them in place of
+    `normalize_spread_props` and `normalize_spread_props_for_ref_attr`. Solid and
+    Vue keep the original bag, which their compiled JSX reads property by
+    property.
+  - A `ref` expression is evaluated where it is written. In
+    `<div ref={initRef()} {...{ 'data-ready': String(ready) }} />`, where
+    `initRef()` sets `ready`, the element rendered `data-ready="false"`: the
+    merged `ref` attribute moved after the spread and every later attribute. The
+    merged `ref` now stays where the element's own `ref` is written, and reads the
+    ref of a bag spread after it when the ref is applied.
+
+  A custom platform with `jsx.hostSpreadRefBinding: 'in-place'` now imports
+  `copy_spread_props` and `copy_spread_props_for_ref_attr` from its
+  `imports.refProp` module, so that module must export them. `@tsrx/runtime/ref`
+  and every first-party `*/ref` module re-export them.
+
+- [#1193](https://github.com/tsrx-org/tsrx/pull/1193)
+  [`418dc53`](https://github.com/tsrx-org/tsrx/commit/418dc530f0897c9c9f54d61eed1269490d3b29aa)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An element with
+  thousands of children no longer fails to parse with "Not enough stack space to
+  parse input". The parser read each child one call deeper than the one before it,
+  so the limit depended on the available stack, about 2,000 to 4,000 children. It
+  now reads the children in a loop, and stack depth follows how deeply elements
+  nest, not how many children they have.
+
+- [#1229](https://github.com/tsrx-org/tsrx/pull/1229)
+  [`80316d9`](https://github.com/tsrx-org/tsrx/commit/80316d94773c91a182d15e3bca5e7965ebc225b0)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Vue, the helper
+  component that renders a `@catch` body under `@pending` takes the component's
+  name as a prefix (`App__StatementBodyHook1`) when the component is inside
+  another function or a namespace, as it already did at module level. Before, it
+  was declared under the bare name `StatementBodyHook1`, so a setup local of that
+  name failed the build with "Identifier `StatementBodyHook1` has already been
+  declared", and a binding of that name in the enclosing function rendered the
+  helper in its place. The helper's name also skips any name the module source
+  already uses, so an authored `App__StatementBodyHook1` no longer collides with
+  it either.
+
+- [#1317](https://github.com/tsrx-org/tsrx/pull/1317)
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A capture-free local
+  helper of a component declared in a nested block (a bare `{ … }` or a `case`
+  body) is now declared once, inside that block. Before, it was declared there and
+  again in the enclosing statement list, where the block's own bindings were out
+  of scope; on Vue, `defineVaporComponent` ran twice for it.
+
+- [#1273](https://github.com/tsrx-org/tsrx/pull/1273)
+  [`135ce77`](https://github.com/tsrx-org/tsrx/commit/135ce776f67596af641c8f2772d0321dbd73274e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A loose compile, the
+  one the editor, `tsrx-tsc` and `@tsrx/content-mapper` run, now reports an
+  unclosed tag (TSRX1001) or a mismatched closing tag (TSRX1002), as a collecting
+  compile does, instead of recovering silently. `<div>` with no closing tag,
+  `<div><span></div>` and `return <div>;` now show an error in the editor and
+  through TypeScript 7's `tsc --runExternalCode`, where the build's strict compile
+  already rejected them.
+
+  The editor's generated code now closes such a tag, with a closing tag that has
+  no mapping, so it is valid TSX: TypeScript no longer adds TS17008 or TS1005 to
+  the parser's error, and hover, completions and diagnostics elsewhere in the file
+  keep working. An undefined component left unclosed, such as
+  `<div><Missing>valid</div>`, is reported as undefined once, at its name, not
+  again on a closing tag around it, including a dynamic one or one followed by
+  more text. The language server shows an error whose position has no mapping
+  (such as an empty unclosed `<>`) on the nearest code before it, not at the start
+  of the file. The tsserver plugin's closing-tag answer
+  (`getJsxClosingTagAtPosition`) reads the parsed source for such a tag, as the
+  language server's auto-insert does. Strict compiles are unchanged.
+
+- [#1317](https://github.com/tsrx-org/tsrx/pull/1317)
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An element with its own
+  `ref`, then a `key`, then a host spread (`<input ref={r} key="a" {...props} />`)
+  keeps its written `key` on Preact and Hono again when the spread bag has a `key`
+  too. The binding added for the `ref` went in a spread ahead of `key`, which made
+  the JSX compiler pass `key` through `createElement`, where the bag's `key`
+  replaced it. The `key` now stays ahead of that spread, as written.
+
+- [#1317](https://github.com/tsrx-org/tsrx/pull/1317)
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The binding that holds
+  an element's own `ref` written before a host spread, on React, Preact and Hono,
+  now skips any name the module already uses, as spread temporaries do. Before, a
+  component declaring `App__ref1` itself got a second `let App__ref1`, which
+  failed the build or shadowed the authored value.
+
+- [#1122](https://github.com/tsrx-org/tsrx/pull/1122)
+  [`3c510ee`](https://github.com/tsrx-org/tsrx/commit/3c510ee11929af366393ce5aa582d72c1c38d3a8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - More parse errors now
+  have the code and position TypeScript reports for the same source, instead of
+  the code TSRX read from acorn's message:
+
+  - A missing `;` after a statement (`x = 1 2;`, `import "m" x;`) is TS1005
+    `';' expected.`, and `',' expected.` after a variable declaration's
+    declarator, instead of TS1012 `Unexpected token`. After a lone name (`a b;`)
+    it's TS1434 `Unexpected keyword or identifier.` at the name, or TS1435 with
+    the keyword TypeScript takes it for (`cosnt x = 1;`, `constructr x;`). A
+    modifier that starts no statement (`accessor x;`, `readonly x;`) is TS1128
+    `Declaration or statement expected.`
+  - `import` after `new` (`new import.meta`) is TS1109 `Expression expected.`
+  - A `let`, `const` or `using` declaration after `if (…)` or a loop head
+    (`if (a) let x = 1;`) is TS1156, which collecting parses record. After a label
+    it's TS1344 `'A label is not allowed here.` at the label (`l: let x = 1;`),
+    then TS1156 when the label itself follows `if (…)` or a loop head, as in
+    TypeScript; the formatter formats it, as Prettier does.
+  - A word reserved in strict mode used as a name (`let`, `interface`, `public`,
+    `static`, `yield`, …) is TS1214, or TS1213 inside a class, instead of TS1212.
+    Collecting parses (the editor and the formatter) now record it and keep
+    parsing for every such word, not only `let`, so the formatter formats
+    `class public {}` as Prettier does. A `let` or `const` declaration named `let`
+    also reports TS2480, but not a function named `let`. In an ambient context
+    (`declare const public: number;`), or as the name an export specifier exports
+    (`export { public }`), there's no error, as in TypeScript, and a parameter
+    property modifier on a function's parameter in an ambient context
+    (`declare function f(private x: number): void;`) is TS2369 at the modifier, in
+    a strict compile too.
+  - A parameter after a rest parameter is TS1014 at the `...`, and an element
+    after a rest element of a destructuring pattern TS2462 (at the name in an
+    arrow function's parameters, and at each such rest element), instead of TS1013
+    at the comma. TS1013 stays for a trailing comma.
+  - A call of `import.<name>` (`import.foo()`) is TS18061, naming the property
+    without its escapes; without a call it stays TS17012. The formatter refuses
+    both, as Prettier does.
+  - Type arguments after `?.` with no call (`` a?.<T>`c` ``) report TS1358 or
+    TS1005 `'(' expected.` at the token after them, or TS1003
+    `Identifier expected.` at the `<` where TypeScript reads no type arguments
+    (`a?.<T>[0]`), where the error said `Unexpected token (1:NaN)`.
+
+- [#1276](https://github.com/tsrx-org/tsrx/pull/1276)
+  [`f38319a`](https://github.com/tsrx-org/tsrx/commit/f38319a6a0f5a133ca0eb9efc864d9e3c69bee4f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A declaration's
+  modifiers now report only the error TypeScript reports, in a collecting parse
+  (the editor) too. `declare public class A {}` in a `declare namespace` is TS1038
+  at the inner `declare`, without a TS1044 for `public`, and
+  `public private class A {}` is TS1044 at `public` only. The formatter still
+  refuses code whose modifiers the tree leaves out, which it now reads from the
+  declaration's metadata.
+
+- [#1137](https://github.com/tsrx-org/tsrx/pull/1137)
+  [`7484f21`](https://github.com/tsrx-org/tsrx/commit/7484f2135be256f099f6e27af704e894b09ee260)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Some mistakes
+  TypeScript reports from its checker are now reported, or recorded in the editor
+  instead of failing the whole file:
+
+  - Two default exports that can't merge (`export default 1; export default 2;`)
+    report TS2528 at each, and a name that two export specifiers or `export * as`
+    export reports TS2300 at each, as TypeScript's binder does. Before, both
+    compiled without an error.
+  - `import type a, { b } from 'a'` reports TS1363 at `type`. Before, it compiled.
+  - `import type A = B.C;` reports TS1392 at the declaration, and the editor
+    records it and keeps the file's tree. Before, it threw at `B.C` in every mode.
+  - A function body in an ambient context (`declare function f() {}`, a function
+    in a `declare namespace`) reports TS1183 at the body, and the editor records
+    it and keeps the function. Before, it threw at the function's start in every
+    mode.
+
+  The formatter refuses TS1363, TS1392 and TS1183, as Prettier does (Prettier
+  formats a function body in a `declare namespace`, which the formatter still
+  refuses).
+
+- [#1139](https://github.com/tsrx-org/tsrx/pull/1139)
+  [`21edc74`](https://github.com/tsrx-org/tsrx/commit/21edc743be4622090b007d015c2f0d2699248777)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Two outputs in a
+  `@{ … }` body, or a statement after its output, now report one error, TSRX2011
+  or TSRX2012. Before, the first output was also reported as unused output
+  (TSRX2010), which wrapping the outputs in a fragment or moving the statement up
+  fixes too.
+
+- [#1269](https://github.com/tsrx-org/tsrx/pull/1269)
+  [`3ef0076`](https://github.com/tsrx-org/tsrx/commit/3ef00761631d95ef9fcccbae2673df371d1a4c0d)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - More checker errors now
+  match what TypeScript reports, in the same order, in strict, collecting and
+  loose parses:
+
+  - `declare` on a declaration in a block
+    (`function f() { declare const x: number; }`,
+    `if (a) declare const x: number;`) is TS1184 `Modifiers cannot appear here.`
+    at `declare`, as `export` already was, before the errors in the declaration.
+  - A name bound twice in a signature is TS2300 at each binding: in a
+    `declare function`, an overload, an abstract or ambient method or constructor,
+    an interface's or a type literal's members, and a function or constructor type
+    (`type F = (a, a) => void`). A signature's errors come once it's read, so a
+    comparison such as `a < (b, b)`, whose right side acorn-typescript tries as
+    type arguments first, still parses.
+  - A strict parse throws the error that a collecting parse records first in more
+    code. A syntax error, which TypeScript reports alone, drops the checker errors
+    reported only after it: a method's TS2369 (`class A { m(public x) { +; } }`),
+    a signature's errors (`type F = (a, a) => ;`) and a generic async arrow
+    function's parameters' errors. Errors that TSRX throws but TypeScript reports
+    from its binder or checker (a repeated label, `break` outside a loop,
+    `delete x`, `with`, a second `default` clause, a duplicate regular expression
+    flag, and the rest) keep them: each TypeScript code is classified by where
+    TypeScript raises it. A comma after a rest parameter (`m(public x, ...z,)`) is
+    TS1013 after the TS2369 before it. A generic arrow function's parameters
+    (`<T,>(...a, b) => a`, `async <T,>(...a,) => a`) give TS1014, TS1013 or TS2462
+    instead of an error at the `<` or after the arrow function, and
+    `async <T>(...a, b)` is still read as a call. In a `.mts` file, a collecting
+    parse keeps the checker errors in an arrow function that acorn-typescript
+    abandons, and a strict parse throws the first by position. The errors of a
+    rest parameter property, or of a parameter property on a constructor without a
+    body, come by position with the duplicate names around them.
+  - At one position, TS1187 for a parameter property with a binding pattern now
+    comes before TS2369, as TypeScript sorts them by code.
+
+- [#1191](https://github.com/tsrx-org/tsrx/pull/1191)
+  [`15899ed`](https://github.com/tsrx-org/tsrx/commit/15899ed7a3e324f842e5f1662ac3b2c53dbf2605)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - More exports that
+  TypeScript's binder declares twice now report its error, at the same places.
+  Before, these compiled without an error, or with another code:
+
+  - Two `export =` assignments report TS2300 `Duplicate identifier 'export='.` at
+    each.
+  - Duplicate exports inside a `declare namespace`, a `declare module "m"` or a
+    `declare global` body report TS2300 or TS2528, as at the top of a module.
+  - A string export name is the same name as the identifier it spells:
+    `export { a as "b" }; export { c as b };` reports TS2300 at each, named as
+    written.
+  - `export * as default` twice reports TS2300, not TS2528: it exports a name, not
+    a default export.
+  - A default-exported function is declared before the other statements, as in
+    TypeScript, so `export default x; export default function f() {}` reports
+    TS2528 at `x` and at `f`.
+  - A parenthesized default export (`export default (a)`) is an expression,
+    reported at `export`, not an alias of `a`.
+  - `import type a, {} from 'a'` reports TS1363 at `type`, as
+    `import type a, { b } from 'a'` does. The formatter refuses it, as Prettier
+    does.
+
+- [#1092](https://github.com/tsrx-org/tsrx/pull/1092)
+  [`b2af266`](https://github.com/tsrx-org/tsrx/commit/b2af26663e24648ca777a6893b2e66b67d5c4d28)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The parser reports
+  these modifier mistakes with TypeScript's error code and position, the same way
+  in a normal compile and in the editor:
+
+  - `declare` directly inside an ambient namespace or module reports TS1038, as
+    TypeScript does. Before, the parser reported nothing unless another modifier
+    came with it.
+  - A modifier before a class `static` block (`public static {}`) is TS1184 at the
+    modifier. Before, it threw a different message after the `{`, even in the
+    editor. A decorator before a `static` block (`@dec static {}`) is now TS1206.
+    The formatter prints both as `static {}`, as Prettier does.
+  - A parameter property on a method, an accessor, an object literal's method, or
+    a constructor without a body (`m(public a) {}`) is TS2369, as it already was
+    on a function. The formatter now refuses these, as Prettier does.
+  - `abstract` before a declaration other than a class inside a block
+    (`function f() { abstract interface I {} }`), or in the body of an `if` or a
+    label, is TS1184, not TS1242. The formatter still refuses it, also after a
+    `declare` whose error TypeScript reports first
+    (`{ declare abstract function f(): void; }`).
+  - Between `abstract` and `declare` in an ambient namespace, the first one
+    reports its error, TS1242 or TS1038, as TypeScript does.
+  - `static constructor(…) {}` is TS1089 at `static`, and takes parameter
+    properties, as TypeScript reads a constructor there.
+  - A modifier order or compatibility error (TS1029, TS1243) in a normal compile
+    points at the modifier. Before, it pointed at the modifier's column on the
+    first line of the file.
+
+- [#1234](https://github.com/tsrx-org/tsrx/pull/1234)
+  [`6dbda19`](https://github.com/tsrx-org/tsrx/commit/6dbda190b1fa875d4d196b80c0dcc2903ad41b72)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Exports that two blocks
+  of one namespace or ambient module declare twice now report TypeScript's error
+  at each, and two default-exported classes of one name report TS2528 as
+  TypeScript does. Before, these compiled without an error, or with another code
+  first:
+
+  - `declare namespace N { … }` blocks with one name, and
+    `declare module 'm' { … }` blocks with one specifier, share their exports, as
+    TypeScript merges them: `export { a }` in one and `export { b as a }` in
+    another report TS2300 at each, and `export default` in two report TS2528 at
+    each.
+  - Declarations that two blocks export with one name report TS2451, TS2300 or
+    TS2567 at each, as in `namespace N { export const a = 1; }` twice. That
+    includes the declarations an ambient block without export declarations
+    exports.
+  - `export default class C {}` twice reports TS2528 at each `C`, not TS2300
+    `Identifier 'C' has already been declared`, which a strict parse threw first.
+
+- [#1268](https://github.com/tsrx-org/tsrx/pull/1268)
+  [`059ba30`](https://github.com/tsrx-org/tsrx/commit/059ba30018bb3a74d7fbaf2de2d88068c8b30636)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - More exports that two
+  blocks of one namespace declare twice now report TypeScript's error, in its
+  order. Before, these compiled without an error:
+
+  - A namespace's own name: an instantiated namespace conflicts with a variable,
+    as in TypeScript (`namespace a { export const x = 1; }` in one block,
+    `export const a = 1` in another), and one that declares only types shares its
+    name. It no longer hides the other declarations of that name, so `var X` and
+    `let X` in two blocks report TS2300 even with a `namespace X {}` in a third.
+  - `export import A = …` in one block and `export { b as A }` in another report
+    TS2300 at each.
+  - Errors at one position come in tsc's order, by code.
+
+- [#1140](https://github.com/tsrx-org/tsrx/pull/1140)
+  [`829de73`](https://github.com/tsrx-org/tsrx/commit/829de739887b29e42dea5328b5fb370edf5bc58e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The parser now accepts
+  and rejects these as TypeScript does:
+
+  - A `const` type parameter in a function type, a constructor type, or a call,
+    construct or method signature (`type F = <const T>(value: T) => T;`) parses.
+    Before, it failed with `Unexpected keyword 'const'`.
+  - `asserts` in a return type is a type predicate's modifier only before a name
+    or `this` on its line. Before, `asserts` with the name on the next line parsed
+    as a predicate, and the formatter joined the lines into code TypeScript
+    accepts. Now it reports TypeScript's error after the return type, TS1434 or
+    TS1005.
+  - An element or fragment as a class's superclass without parentheses
+    (`class A extends <div /> {}`) reports TS1109 `Expression expected.` at its
+    `<`, as TypeScript does. In parentheses it still parses.
+
+- [#1131](https://github.com/tsrx-org/tsrx/pull/1131)
+  [`2aa4bf8`](https://github.com/tsrx-org/tsrx/commit/2aa4bf8b1e38e8be96e149a2b5ba5b6d3c727164)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A normal compile now
+  reports the same error as the editor for mistakes that TypeScript reports from
+  its checker. Before, it threw acorn's message, or compiled without an error:
+
+  - `type A = readonly string;` reports TS1354 at `readonly` in a normal compile
+    too. Before, it compiled.
+  - `await`, `for await` and `await using` directly in a namespace report TS1308,
+    TS1103 and TS2852, not `Cannot use await in class static initialization block`
+    or `Unexpected token`.
+  - `const;` and `for (let;;)` report TS1123, and `const x: number;` reports
+    TS1155, instead of `Unexpected token`.
+  - A parameter property on a function's parameter reports TS2369, and one on a
+    rest parameter TS1317, instead of a reserved word or `Unexpected token` error.
+  - `let` in a `for` head always starts a declaration list, as in TypeScript:
+    `for (let.a of b)` reports TS1134 `Variable declaration expected.` at the `.`.
+  - A private name that no class around it declares (`this.#x`) is now recorded in
+    the editor (TS1111), as a normal compile already reported it.
+  - A generic arrow function with one type parameter and no trailing comma
+    (`<T>() => 1`) no longer reports TS7060 in a `.ts` file, where TypeScript
+    accepts it. In a `.mts` or `.cts` file a normal compile now reports it too, as
+    TypeScript does. The editor still shows it in a `.tsrx` file.
+
+- [#1235](https://github.com/tsrx-org/tsrx/pull/1235)
+  [`da9bec8`](https://github.com/tsrx-org/tsrx/commit/da9bec849cd988e39637654951864d1dba98cfc9)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A strict parse (a
+  normal compile) now throws the error TypeScript reports first, and a collecting
+  parse (the editor) records it first, for more mistakes. Before, another error
+  came first:
+
+  - Duplicate parameter names report TS2300 at each binding in the order they're
+    written, so `function f(a, b, b, a) {}` throws at the first `a`, not the first
+    `b`.
+  - A parameter property outside a constructor implementation reports TS2369 at
+    its first modifier before the modifiers' own errors
+    (`(public public x: number) => x` throws TS2369, not TS1028) and before any
+    error in a method's body (`class A { m(public a) { let let = 1; } }`), but
+    after a duplicate parameter name before it (`function f(x, public x) {}`
+    throws TS2300 at the first `x`).
+  - `async <T,>(public [a]: T[]) => a` throws TS2369 at `public`, not
+    `Unexpected token` at the `(`.
+  - Decorators written before `export` and after it report TS1206 at the first
+    one: `@a export @b function f() {}` throws at `@a`.
+  - Decorators or modifiers before a class `static` block report TS1206 or TS1184
+    before the checker errors in the block. A syntax error in the block still
+    comes first.
+  - In a `.mts` or `.cts` file, a generic arrow function's TS7060 comes before the
+    checker errors in it, such as the TS7060 of the arrow functions in its
+    parameters, and isn't reported after a mistake in its parameter list
+    (`<T>(...a?: T[]) => a` reports TS1047 only), as in TypeScript.
+
+- [#1192](https://github.com/tsrx-org/tsrx/pull/1192)
+  [`4bdbe57`](https://github.com/tsrx-org/tsrx/commit/4bdbe572d5e5e0ac4a746248f7b4a9109f52e02d)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A normal compile now
+  reports the same error as the editor, at the same place, for three more kinds of
+  mistakes. Before, it threw another error, or the same code somewhere else:
+
+  - A parameter property modifier on an arrow function's parameter or in a
+    function type (`const k = (public x: number) => x;`,
+    `type F = (readonly x: number) => void;`, `async <T,>(public x: T) => x`)
+    reports TS2369 at the modifier, or TS1317 before a rest parameter. Before, it
+    reported `'public' is a reserved word` or `Unexpected token`.
+  - Decorators before something other than a class (`@dec function f() {}`,
+    `export default @dec function f() {}`, `@dec export { a };`) report TS1206 at
+    the first decorator, as TypeScript does, instead of at the declaration after
+    them.
+  - A duplicate parameter name (`function f(a, a) {}`) reports TS2300 at its first
+    binding, as TypeScript does first, instead of at the second.
+
+- [#1138](https://github.com/tsrx-org/tsrx/pull/1138)
+  [`0fc3819`](https://github.com/tsrx-org/tsrx/commit/0fc3819e6c91a9cc8a2723737dd47f72374ae25f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `<style>` body now
+  ends at a closing tag with whitespace before its `>` (`</style >`, or `</style`
+  and `>` on the next line), as JSX allows and as a `<script>` body already does.
+  Before, the element was reported as unclosed. This also applies inside a CSS
+  string or comment: `content: "</style >"` now ends the body there, as HTML and
+  TSX end it, where only an exact `</style>` did before.
+
+  An element closed by a fragment's closing tag (`<b>x</>`) now reports
+  `Expected '</b>' but found '</>'`, where the message said `found '</null>'`.
+
+- [#1230](https://github.com/tsrx-org/tsrx/pull/1230)
+  [`644583f`](https://github.com/tsrx-org/tsrx/commit/644583f0abf521bf04b615e1394d96a3fd1f0d35)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Organize Imports and
+  Sort Imports now work in a `.tsrx` module that reads an
+  `import.meta.env.platform` flag, with TypeScript 7 and with the TypeScript 5.9
+  plugin. They returned no edits there, while Remove Unused Imports worked. The
+  compiler appended `export {};` to such a module to keep it a module. Both
+  actions also rewrite export declarations, and an edit to code that exists only
+  in the generated output made the editor drop the whole action. The marker is now
+  added only when the generated code has no import or export of its own
+  ([#1207](https://github.com/tsrx-org/tsrx/issues/1207)). `withPlatformTypes`
+  takes the generated program as an optional third argument to decide this, and
+  keeps adding the marker when it is not passed.
+
+- [#1175](https://github.com/tsrx-org/tsrx/pull/1175)
+  [`91d958d`](https://github.com/tsrx-org/tsrx/commit/91d958de44c9e582cd66a5b66aff6bb37ff0ece2)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The compiler now
+  imports the components it generates for `@try … @pending`, `@try … @catch` and
+  keyed fragment rows under private names (`__Suspense`, `__TsrxErrorBoundary`,
+  `__Fragment`). A module can declare its own `Suspense`, `TsrxErrorBoundary` or
+  `Fragment` (a type-only import, an import from another module, a local, or a
+  `@for` loop variable) without the build failing with "Identifier `Suspense` has
+  already been declared", and the generated element no longer renders the authored
+  binding in its place. Vue's generated `Suspense` uses the private name too, so
+  an authored `import { type Suspense } from 'vue'` no longer leaves it unbound.
+
+  Imports the compiler adds now go after the module's directive prologue, so a
+  `'use client'` or `'use server'` directive stays first in a module that uses
+  `@pending`, `@catch`, a keyed fragment row or any other construct that needs a
+  generated import. Before, the generated imports went above it and turned it into
+  a plain string, which Next.js treated as a server component.
+
+- [#1222](https://github.com/tsrx-org/tsrx/pull/1222)
+  [`e0c07b5`](https://github.com/tsrx-org/tsrx/commit/e0c07b55b199acc4fe05b705255e79020b500376)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Solid now imports the
+  components it generates for `@if`, `@for`, `@switch` and `@try` under private
+  names (`__Show`, `__For`, `__Switch`, `__Match`, `__Errored`, `__Loading`), and
+  Vue imports the `VaporFor` it generates for `@for` as `__VaporFor`. A module can
+  declare its own binding with one of those names (an import from another module,
+  a type-only import, a module or setup local, or a `@for (const Match of rows)`
+  loop variable) without the build failing with "Identifier `Show` has already
+  been declared", and the generated element no longer renders the authored binding
+  in its place. An authored `import type { VaporFor } from 'vue-jsx-vapor'` now
+  stays type-only beside the generated value imports. The compiler now counts a
+  tag as a component whenever its name doesn't start with a lowercase letter, as
+  JSX does, so a tag like `<_Card>` is treated as a component rather than a host
+  element, and Solid doesn't hoist a static `@if`, `@switch` or `@pending` subtree
+  that renders one of its private components.
+
+  Vue's `defineVaporComponent` keeps its public name, because vue-jsx-vapor finds
+  components by calls to that name. A Vue module that declares its own binding
+  named `defineVaporComponent` (an import from another module, a module function
+  or `const`, or a local in a component) now gets a compile error, `TSRX2032`,
+  instead of a duplicate declaration or every component wrapped in the authored
+  function. A type-only import of `defineVaporComponent` from `vue-jsx-vapor`
+  becomes the value import the compiler needs.
+
+- [#1102](https://github.com/tsrx-org/tsrx/pull/1102)
+  [`6b60554`](https://github.com/tsrx-org/tsrx/commit/6b60554c73958e7b2d00f385760d533031417f1f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A module that imports
+  `Suspense` or `Fragment` itself can now use `@try … @pending` or a keyed `@for`
+  with a fragment body. The compiler reuses the authored import instead of adding
+  a second one, which failed the build with "Identifier `Suspense` has already
+  been declared".
+
+  The React and Preact Vite plugins no longer compile a `.tsrx` file that is only
+  imported as an asset (`?raw`) when it changes, so an incomplete example updates
+  over HMR instead of reporting a compile error.
+
+- [#1168](https://github.com/tsrx-org/tsrx/pull/1168)
+  [`6b207b6`](https://github.com/tsrx-org/tsrx/commit/6b207b65e8a339d5fe301c60e72db271ffb9a572)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A host element with
+  scoped styles keeps the class a props spread passes it. Beside a `<style>`
+  block, `<span {...props} />` used to render only the scope hash and drop
+  `props.className`, and `<span className="base" {...props} />` dropped the scope
+  hash. Both now render the spread's class followed by the scope classes, which is
+  what plain JSX renders plus the scope hash, on React, Preact, Solid, and Hono.
+  Vue already joined them. On Preact and Hono, a spread's `className` written
+  before a scoped `class` attribute no longer replaces that attribute
+  ([#722](https://github.com/tsrx-org/tsrx/issues/722)).
+
+- [#1232](https://github.com/tsrx-org/tsrx/pull/1232)
+  [`2473538`](https://github.com/tsrx-org/tsrx/commit/247353854e918f119dafe88f6474a2738cb82ed8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Scoped style classes
+  now join an element's class the way its target renders that class. Beside a
+  `<style>` block, `<div className={props.c} />` rendered
+  `class="undefined tsrx-…"` when `c` was unset, and on Solid and Vue
+  `class={{ active: on }}` rendered `[object Object] tsrx-…` and
+  `class={['a', on && 'b']}` rendered `a,false tsrx-…`. A class that may not be a
+  string now joins through the runtime's new `join_scope_class`, which follows the
+  target's rendering, set by the new `jsx.classValue` platform option:
+
+  - React and Hono DOM leave out `null`, `undefined`, `true` and `false`, Preact
+    renders `true` as text, and Hono's server renders `true` and `false` as text.
+    Any other value joins as text.
+  - Solid and Vue keep an object or a list class, and leave out other values that
+    are not strings, such as numbers and functions.
+  - A props spread's class joins the same way on each target.
+  - A class that is always a string (a template literal, a choice between string
+    literals, a `$class` read) still joins as text, and the editor's type-only
+    output is unchanged.
+
+  On Solid and Vue, an authored `className` attribute on an intrinsic element now
+  compiles to `class`, joined with a `class` attribute (or, with a spread between
+  them, kept in its place, so the target handles them as two `class` attributes:
+  Solid keeps the last, Vue joins them), so React-style source keeps its class
+  with or without scoped styles. Solid ignored `className`, and Vue rendered a
+  static one as a `classname` attribute. The editor checks it as `class` too, so
+  it no longer reports that `className` doesn't exist on these targets' elements,
+  and hover, rename and go-to-definition still point at the authored `className`.
+  Components, member and dynamic tags (which may be components) and spread bags
+  keep `className` as written.
+
+- [#1089](https://github.com/tsrx-org/tsrx/pull/1089)
+  [`baf1452`](https://github.com/tsrx-org/tsrx/commit/baf1452ef56f7e481112dd7138a69f9010f113c7)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Scoped CSS keeps more
+  rules that the browser matches but the compiler commented out as `(unused)`:
+
+  - Attribute selectors on attributes whose values HTML matches in any case, such
+    as `type` and `dir`. Before, `input[type="TEXT"]` next to
+    `<input type="text">` was dropped. An `s` flag still asks for an exact match.
+  - Sibling rules (`+` and `~`) whose elements are apart in the source but
+    siblings in the DOM. Before, `.a + .b` was dropped when text, a fragment, or a
+    `@if`, `@else if`, `@for`, `@switch`, `@try`, or `@{ … }` body sat between or
+    around the two elements, and `.a + .a` was dropped for an element repeated by
+    `@for`.
+  - Sibling rules whose siblings the compiler cannot place: an element in an
+    expression (`{show && <i class="a" />}`), an element passed to a component as
+    a child or prop, and an element with a dynamic `class`. A `<title>`, `<meta>`,
+    or `<link>` between two elements no longer separates them either, since React
+    moves those into `<head>`.
+
+- [#1173](https://github.com/tsrx-org/tsrx/pull/1173)
+  [`ab3d989`](https://github.com/tsrx-org/tsrx/commit/ab3d989a68c1c2d68a2d0bfa2a94c4b9019f3f6e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Scoped CSS keeps
+  attribute selectors whose attribute an element sets through its React prop name.
+  Before, `label[for]` next to `<label htmlFor="x">` was commented out as
+  `(unused)`, and so were `meta[http-equiv]` with `httpEquiv`,
+  `form[accept-charset]` with `acceptCharset`, and SVG rules such as
+  `circle[stroke-width]` with `strokeWidth`, although the browser matches them.
+
+- [#1088](https://github.com/tsrx-org/tsrx/pull/1088)
+  [`bb15638`](https://github.com/tsrx-org/tsrx/commit/bb156380f69d2a7fe23d7522a02580d3f4d276af)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Scoped keyframes now
+  keep working in more valid CSS forms. Before, a newline or tab after
+  `@keyframes` put the hash on the at-rule keyword (`@keyframestsrx-…-`), a quoted
+  name got the hash outside its quotes (`tsrx-…-"fade"`), a comment right after a
+  name (`fade/*note*/`) kept the reference from being renamed, and an `animation`
+  shorthand keyword such as `linear` was renamed as well when local keyframes
+  shared its name. The compiler now finds the name after any whitespace or
+  comment, prefixes a quoted name inside its quotes, reads names in `var()` and
+  `env()` fallbacks, and in the `animation` shorthand reads a keyword as a
+  keyframes name only when CSS does: once the longhand the keyword belongs to
+  already has a value. Keyframes or animation names such as `constructor` or
+  `toString` no longer make the compiler throw.
+
+- [#1107](https://github.com/tsrx-org/tsrx/pull/1107)
+  [`e9330ea`](https://github.com/tsrx-org/tsrx/commit/e9330ea841e6113e10be39980aae7c0ebfd4b63a)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, a host
+  element with spreads and its own `ref` now behaves as it does in plain Solid
+  TSX:
+
+  - `ref={el}` assigns the element to `el`. Before, the compiler put the ref in an
+    array with the spreads' refs, and Solid only calls the functions in an array,
+    so `el` stayed `undefined`.
+  - A `ref` inside a spread is called once. Before, it was called twice (`bag`,
+    `own`, `bag`): once through the element's ref array and again by Solid's
+    `spread()`.
+  - The spread updates when its expression changes, as in
+    `<button {...bag()} ref={cb} />`. Before, the bag was read once in a setup
+    declaration, so its attributes kept their first values.
+
+  The element now keeps its `ref` as written, and Solid's `spread()` applies the
+  spreads' refs. One spread is normalized in place. Solid keeps only the last of
+  several spreads' refs, so an element with more than one spread goes through the
+  Solid runtime's new `spread_ref_bags`: each bag is normalized lazily in a memo,
+  its spread gets it without its `ref`, and one more spread carries every bag's
+  ref, so each of them still applies, in order, after the element's own. A bag
+  that gains or loses a ref while mounted updates, and the bags stay reactive
+  without rebuilding the element's children. The new
+  `jsx.hostSpreadRefStrategy: 'spread'` platform option selects this lowering.
+
+- [#1280](https://github.com/tsrx-org/tsrx/pull/1280)
+  [`190f797`](https://github.com/tsrx-org/tsrx/commit/190f7970cf968c978b3e5df37b4e3a97c4e7efa5)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid and Vue, a
+  `yield` in a template value that the target's JSX compiler moves into an effect,
+  a getter or a callback is now a TSRX compile error, TSRX2034, at the authored
+  `yield`:
+  ``Solid TSRX does not support `yield` in this part of the template: Solid's JSX compiler evaluates it in an effect, a getter or a callback, which cannot yield from the enclosing generator. …``
+  (and the same for Vue). Before, the build failed later in `babel-preset-solid`
+  or `vue-jsx-vapor` output, with
+  `A 'yield' expression is only allowed in a generator body.` or
+  `The keyword 'yield' is reserved` pointing at compiled code. Yield the value
+  first instead: `const title = yield bag.title;`.
+
+  A `yield` those compilers leave in place still compiles, so code that builds
+  today is unchanged. On Solid that is a static value (no member access, call,
+  spread or `in`) in an attribute, a component prop or a lone component child, any
+  event handler or non-array `ref` on an element without a spread (except a
+  `[handler, data]` array on an event the compiler doesn't delegate, such as
+  `onScroll`, which it wraps in a new listener), any attribute but `ref` beside a
+  host spread unless it's dynamic, and an element nested in the returned one. A
+  `class` or `style` object is split into one setting per key, as the compiler
+  does, so only a dynamic key's value is reported, unless a method or accessor
+  keeps the whole object. The check follows the compiler's folding of literal
+  values and its dropping of an attribute that a later one of the same name
+  replaces, of the children of a void element or a `<noscript>`, of a
+  `<textarea>`'s children when a literal `value` or `defaultValue` (or a bare
+  `value`) replaces them, of a `children` attribute on an element or component
+  that has children (or an element that writes none), of an element's `$key`, and
+  of an event array's elements after the first two, wherever the element is
+  created, so a `yield` in a branch it drops, as in `false && (yield x)`,
+  compiles. A `<select>`'s value is reported, since the compiler also assigns it
+  in a microtask. On Vue, which wraps every element, it is a host spread, which
+  TSRX evaluates before the element. A `yield` in a nested generator function or
+  before the template is allowed on both. React, Preact and Hono evaluate
+  templates eagerly and are unchanged.
+
+- [#1218](https://github.com/tsrx-org/tsrx/pull/1218)
+  [`0ee439a`](https://github.com/tsrx-org/tsrx/commit/0ee439a5d94e071ecae594229f61e9b5ee022296)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React and Hono, a
+  host spread whose bag carries several refs, such as a `ref` and a ref prop made
+  with `create_ref_prop`, no longer detaches and reattaches them on every render.
+  In `<div {...{ title, ref: a, extra: named }} />`, each update ran `a(null)`,
+  `named(null)`, `a(el)` and `named(el)`, with or without a `ref` of the element's
+  own, because the spread normalizer merged the bag's refs into a new callback
+  each time. On these targets it now merges them as `merge_element_refs` does, so
+  a new bag carrying the same refs gets the same `ref`, and its refs are applied
+  again only when one of them changes. `merge_element_refs` now also keys a ref
+  list by the refs in it, so an inline `ref: [a, b]` written each render is
+  applied once as well, and a list whose refs change is applied again.
+
+  Preact is unchanged, for the reason given for `merge_element_refs`. A custom
+  platform that sets `jsx.shareMergedRefs` with `hostSpreadRefBinding: 'in-place'`
+  imports the runtime's new `copy_spread_props_sharing_refs` and
+  `copy_spread_props_for_ref_attr_sharing_refs` from its `imports.refProp` module,
+  which `@tsrx/runtime/ref` and the first-party `*/ref` modules export.
+
+- [#1176](https://github.com/tsrx-org/tsrx/pull/1176)
+  [`56dd6f5`](https://github.com/tsrx-org/tsrx/commit/56dd6f573f9c7c822db9d33313317bed16f7fa45)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React and Hono, an
+  element with its own `ref` and a host spread no longer detaches and reattaches
+  its refs on every render. In `<input ref={log} {...props.rest} />`, every update
+  called `log` with `null` and then with the element again, because the merged
+  `ref` was a new callback each time. These targets now merge with the runtime's
+  new `merge_element_refs`, which returns a single ref as itself and the same
+  callback for the same refs, so a ref is applied again only when one of the refs
+  changes, as in plain TSX. A value that is not a ref, such as the `false` of
+  `ref={cond && cb}`, is left out.
+
+  Preact is unchanged: it stores a ref's cleanup on the callback itself, so
+  elements that shared one merged callback would run each other's cleanups. It
+  keeps a new `mergeRefs` callback per element and render.
+
+  A `ref` written before a spread is still evaluated where it is written: it is
+  assigned to a binding there, and the merged `ref` follows the spreads. The new
+  `jsx.shareMergedRefs` platform option selects `merge_element_refs`; a custom
+  platform that sets it imports `merge_element_refs` from its `imports.mergeRefs`
+  module, which `@tsrx/runtime/ref` and the first-party `*/ref` modules export.
+
+- [#1256](https://github.com/tsrx-org/tsrx/pull/1256)
+  [`10a8901`](https://github.com/tsrx-org/tsrx/commit/10a89015088a283db1f067ffe7803fef4e621859)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `static` class index
+  signature stays static in the build output, the editor output and the
+  declarations `tsrx-tsc` emits
+  ([#1253](https://github.com/tsrx-org/tsrx/issues/1253)). esrap, which prints the
+  output, writes `readonly` before an index signature but not `static`. So
+  `class Store { static [key: string]: number }` became an instance signature. Two
+  static signatures were then reported as duplicates (TS2374), `new Store()['y']`
+  type-checked, and the emitted declaration gave consumers an instance signature.
+
+- [#1121](https://github.com/tsrx-org/tsrx/pull/1121)
+  [`1589310`](https://github.com/tsrx-org/tsrx/commit/1589310147fa30e065a10199e75092813ed4bb53)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Fixes bugs in hoisting
+  static JSX to module-level constants:
+
+  - Static JSX is hoisted only when every tag it reads is ready when the module
+    loads and cannot change later: an import, a function declaration, or a `const`
+    or class declared earlier. A member tag like `<Menu.Item>` is hoisted only
+    when it starts with an import, since the module can assign `Menu.Item` after
+    it loads. A tag that reads `this`, `super`, a local binding, a `let` or `var`,
+    an enum, a namespace, an import alias, or a name the module does not declare
+    is read at render time. Before, `<Screen.Tag>` in a method of `class Screen`
+    threw `Cannot access 'Screen' before initialization` on import, and
+    `<Menu.Item>` rendered an undefined type when `Menu.Item` was assigned later
+    ([#204](https://github.com/tsrx-org/tsrx/issues/204)). Intrinsic tags like
+    `<div>` read no binding and are still hoisted.
+  - A component declared inside another function keeps its static JSX in place.
+    Before, it referenced a static that was never declared and threw a
+    `ReferenceError` when it rendered.
+  - The temporary that holds a host element's spread props beside a `ref` is named
+    apart from every identifier in the module, so it can't shadow or redeclare a
+    binding the author wrote.
+  - A raw `<script>` in an expression container or prop of static JSX keeps its
+    body, as in `<div>{<script type="application/json">{"a":1}</script>}</div>`.
+    The script rendered empty
+    ([#845](https://github.com/tsrx-org/tsrx/issues/845)).
+
+- [#1130](https://github.com/tsrx-org/tsrx/pull/1130)
+  [`04ea4f0`](https://github.com/tsrx-org/tsrx/commit/04ea4f0bb85bc3fe25d09366cf04e70d809cc66e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `<style>` block
+  rendered as an expression child, such as
+  `<div>{<style>.card { … }</style>}</div>` or `{ready && <style>…</style>}`, now
+  reports TSRX3014
+  (`A <style> block inside an expression container … evaluates to its class map, so as a child it styles nothing`)
+  in the compiler, the editor and `tsrx-tsc`. Before, it compiled to the block's
+  class-map object rendered as a child, and the elements beside it got no scope
+  hash. A block whose value is used, such as an attribute value or a member read,
+  is still an assigned block.
+
+- [#1090](https://github.com/tsrx-org/tsrx/pull/1090)
+  [`0546961`](https://github.com/tsrx-org/tsrx/commit/0546961247f011b32370c6c16be3961b2bb5f533)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A style theme that
+  applies itself, such as `const theme = <style apply={theme} />`, now reports
+  TSRX3003 (`'theme' is applied before its declaration`). Before, compiling,
+  collecting diagnostics, and generating virtual TSX for the editor all threw
+  `RangeError: Maximum call stack size exceeded`, so the editor showed no
+  diagnostics or mappings for the file. A block of an object literal that applies
+  a later block of the same object reports TSRX3003 too, since the two could apply
+  each other. Applying an earlier block of the same object still works.
+
+- [#1261](https://github.com/tsrx-org/tsrx/pull/1261)
+  [`42e3e49`](https://github.com/tsrx-org/tsrx/commit/42e3e4934d2beaa86d5048c303dfa27498599fec)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Any type arguments
+  after a tag name now parse, as in TSX: `<Tag<T, U> />`,
+  `<List<string | number> />`, `<a.b<[T]> />`, `<Tag<{ a: T }> />`,
+  `<Tag<() => void> />` and the like. Only a single name, a literal or a nested
+  generic used to parse; anything else failed with "Unexpected token", except
+  inside an element's `{ }`.
+
+- [#1220](https://github.com/tsrx-org/tsrx/pull/1220)
+  [`70825fb`](https://github.com/tsrx-org/tsrx/commit/70825fb73774dce8753fcff7b6a8bbcdebe3a7fb)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, Vue and Hono
+  DOM, whose components can't be async, an `await` anywhere in a component body is
+  now reported as TSRX2021. Before, an `await` in an attribute of the component's
+  root element, in an `if` test, in a `switch` discriminant or case test, or in a
+  `catch` parameter default, and an `await using` declaration, compiled to an
+  async component with no error. On Hono DOM, a module that also renders the
+  component got no error in the editor either. The errors for a component now come
+  in source order, so strict mode throws at the first `await`.
+  `findFirstTopLevelAwait` now also returns an `await using` declaration.
+
+  On React, Preact and Hono server, which accept async components, an
+  `await using` in an `@for` body, or in an `@if` or `@switch` body with setup
+  statements, now makes the generated callback async, as an `await` there does.
+  Before, the callback stayed synchronous and TypeScript reported TS2852 on the
+  output. In an `@catch` body, whose callback the target calls itself, it is now
+  reported as TSRX2021, as an `await` there is. Their output is otherwise
+  unchanged.
+
+- [#1198](https://github.com/tsrx-org/tsrx/pull/1198)
+  [`14a664d`](https://github.com/tsrx-org/tsrx/commit/14a664d8485a89c9cece8cc2080266cd89cc1329)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, Vue and Hono
+  DOM, whose components can't be async, each `await` in a component is now
+  reported once, as TSRX2021 with the target's own message. Before, an `await` in
+  a part of the template that renders through a callback (an `@for` body on Solid
+  and Vue, an `@try` or `@pending` body on Vue, an `@catch` body on all three, an
+  `@if` or `@switch` body with setup statements on Solid) was reported twice: once
+  by the target and once by the shared check, whose advice to await the value in
+  the component body doesn't apply on these targets. An `@for await` on Vue and
+  Hono DOM is no longer also reported as TSRX2024. In collecting mode and in the
+  editor, every `await` of a component is now reported, not only the first. An
+  `await` in a nested function is still allowed.
+
+  The three messages now live in the error tables in `@tsrx/core/diagnostics`:
+  `TARGET_COMPONENT_AWAIT_UNSUPPORTED`
+  (`Solid TSRX components do not support \`await\`.`, and the same for Vue) and `HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED`, which keeps Hono DOM's advice to use `use(promise)`with`<Suspense>`. Solid's message was `` `await` is not allowed inside Solid components. `` and Vue's was `` `await`
+  is not yet supported in Vue TSRX components. ``.
+
+- [#1228](https://github.com/tsrx-org/tsrx/pull/1228)
+  [`f762c09`](https://github.com/tsrx-org/tsrx/commit/f762c09eea9f1071663bdc9d90524f21250132ff)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The last target error
+  messages written outside the error tables now come from
+  `@tsrx/core/diagnostics`, with their codes unchanged. Hono DOM's error for an
+  async component it renders is the new `HONO_DOM_ASYNC_COMPONENT_UNSUPPORTED`
+  entry, and now formats `use(promise)` and `<Suspense>` as code. Hono's error for
+  `@catch (error, reset)` is the new `TARGET_CATCH_RESET_UNSUPPORTED` entry
+  (TSRX2026). Solid's error for the `finally` of a JavaScript `try` that throws in
+  a component body raises core's `TEMPLATE_TRY_FINALLY`, so its wording follows
+  core's:
+  ``Solid TSRX does not support JavaScript `try/finally` in TSRX templates. …``
+  (was "in component templates"). When such a `try` has no `catch`, that is now
+  its only error. Before, Solid also reported
+  ``Solid try statements must have a `pending` or `catch` block.`` over the whole
+  statement. Solid's missing-handler check now raises core's
+  `TEMPLATE_TRY_HANDLER`.
+
+- [#1281](https://github.com/tsrx-org/tsrx/pull/1281)
+  [`ed8c38c`](https://github.com/tsrx-org/tsrx/commit/ed8c38c9fd948270d1136bf269f896402c0d359a)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `//` right after a
+  block comment in element children, as in `<b />/* c */// c`, is now text after
+  an `@if`, `@for`, `@switch` or `@try` block too, as it is without one. After a
+  directive it used to read as a line comment, so the rest of the line disappeared
+  from the output and the comment list had a comment the same source didn't have
+  elsewhere.
+
+- [#1271](https://github.com/tsrx-org/tsrx/pull/1271)
+  [`c07323a`](https://github.com/tsrx-org/tsrx/commit/c07323a54009fc3fbf95503de00d50ddb2b00725)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Text right before a tag
+  now parses after a directive's block, as in `<p>@if (ok) {<b />}a<br /></p>` or
+  `<p>@if (ok) {<b />}, write to me@x.dev<br /></p>`, and after an element that
+  follows a directive in an element inside a `{ }` container, as in
+  `{ok ? <p>@if (ok) {<b />}<i />x<em /></p> : null}`. Both used to fail with
+  "Unexpected token", because the `<` after the text's last letter was read as the
+  start of type arguments.
+
+- [#1086](https://github.com/tsrx-org/tsrx/pull/1086)
+  [`4344150`](https://github.com/tsrx-org/tsrx/commit/4344150cc4786dd717c1df722370e519ad349647)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Report more TypeScript
+  errors where they are written in `.tsrx` files, using the parser's tokens:
+
+  - A failed `satisfies` check (TS1360) reports on the `satisfies` keyword instead
+    of being dropped ([#243](https://github.com/tsrx-org/tsrx/issues/243)).
+  - A literal that starts a sequence expression, such as `0` in `(0, plain)`,
+    reports at its own column
+    ([#232](https://github.com/tsrx-org/tsrx/issues/232)).
+  - A missing return on a composite return type (`number[]`, `{ a: number }`,
+    `keyof T`) reports TS2355 on the type
+    ([#216](https://github.com/tsrx-org/tsrx/issues/216)).
+  - A superclass with a non-null assertion, such as `extends maybe!`, reports
+    TS2507 ([#230](https://github.com/tsrx-org/tsrx/issues/230)).
+  - A computed key's bracket span maps whatever spaces, comments or line breaks
+    sit inside the brackets.
+  - The `class` keyword maps correctly after a decorator, `abstract` or `declare`
+    ([#193](https://github.com/tsrx-org/tsrx/issues/193)).
+
+  A target that builds editor output from a parse without `keywordTokens` still
+  gets these mappings: the tokens are read from a second parse of the source when
+  the AST does not carry them.
+
+- [#1114](https://github.com/tsrx-org/tsrx/pull/1114)
+  [`c49216e`](https://github.com/tsrx-org/tsrx/commit/c49216e86d15b68c4d84f8763691418d74ad8744)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React, Preact and
+  Hono, a `@try` body's setup statements now run inside its boundary, as they
+  already do on Solid and Vue. A synchronous throw in the body, such as
+  `const data = load();`, renders the `@catch` fallback instead of escaping the
+  boundary, and `use(promise)` called in the body shows the `@pending` fallback
+  instead of leaving the root blank
+  ([#510](https://github.com/tsrx-org/tsrx/issues/510)). The compiled body renders
+  through a new `TsrxTryBody` component from the new `try-body` runtime modules
+  (`@tsrx/react/try-body`, `@tsrx/preact/try-body`, `@tsrx/hono/try-body` and the
+  matching `-runtime` packages). These modules import nothing, so a `@try` with
+  only `@pending` still works in React Server Components. Each `@try` site is
+  keyed, so two `@try` blocks rendered in the same place, such as the arms of an
+  `@if`, no longer share boundary state or body hooks. A body that uses `await` or
+  `yield` still runs inline in the enclosing function, which has to settle it.
+
+  `@catch` now also catches a thrown `null` on React and Preact
+  ([#847](https://github.com/tsrx-org/tsrx/issues/847)). Preact itself turns a
+  `null` or `undefined` thrown while rendering into a `TypeError`, so on Preact
+  the value arrives unchanged only when it is thrown from an effect.
+
+- [#1301](https://github.com/tsrx-org/tsrx/pull/1301)
+  [`fb35a0b`](https://github.com/tsrx-org/tsrx/commit/fb35a0bf5bbea972889e2024b535d0fee3227856)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React and Preact,
+  when rendering on the client, a `@pending` body now runs only while the `@try`
+  body suspends, as it already does on Solid, and a throw in it reaches `@catch`.
+  Before, the body ran on every render of the parent component, even when nothing
+  suspended, and a throw in it escaped the same `@try`'s `@catch` and rejected the
+  render. The fallback now renders as the `TsrxTryBody` component that the `@try`
+  body already uses.
+
+  What moves with it:
+
+  - Hooks in a `@pending` body now belong to the fallback rather than the parent
+    component, so their state starts fresh each time the fallback appears.
+  - `useContext` in a `@pending` body now sees providers that the same component
+    renders around the `@try`. Before, it saw the parent's context.
+  - A `@pending` body that uses `await` or `yield` still runs inline in the
+    enclosing function, which has to settle it, so it still runs on every render
+    and a throw in it still escapes the same `@try`'s `@catch`.
+
+  Limits:
+
+  - On Preact, when the `@pending` body itself suspends, nothing renders in its
+    place until the `@try` body resolves. React shows the enclosing `@pending`
+    instead, and so did Preact before this change. preact/compat's `Suspense`
+    counts a suspension thrown by its own fallback as one more suspension of its
+    children.
+  - On the server, `@catch` doesn't apply, because React's server renderer doesn't
+    run error boundaries. When a `@pending` body throws while the `@try` body
+    suspends, `renderToString` now fails with React's "A component suspended while
+    responding to synchronous input" message instead of the thrown error.
+  - React Server Components render the fallback eagerly, so there the `@pending`
+    body still runs even when nothing suspends.
+
+  Hono keeps the inline fallback. Its DOM renderer can't recover when a `Suspense`
+  fallback component throws, and with the inline fallback an enclosing `@catch`
+  still catches the throw. A new `jsx.pendingFallback` platform option selects the
+  new behavior.
+
+- [#1294](https://github.com/tsrx-org/tsrx/pull/1294)
+  [`910dbae`](https://github.com/tsrx-org/tsrx/commit/910dbaea2d709ff2f53bf800042c8914bd336939)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Carry diagnostic
+  severity and codes through the collected-error channel end to end.
+  `CompileError` gains an optional `severity: 'error' | 'warning'` (absent means
+  error) and `error()` accepts it as a trailing parameter, so consumer compilers
+  can publish warning-severity diagnostics. `error()` never throws a warning: in a
+  compile that doesn't collect, such as a build, it drops it. `tsrx-tsc` now
+  prints collected diagnostics in tsc convention —
+  `[tsrx-tsc] file(line,col): <error|warning> <code>: message` — instead of
+  dropping `code`. The language server's compile-diagnostic plugin maps
+  `severity: 'warning'` entries to real editor warnings.
+
+- [#1318](https://github.com/tsrx-org/tsrx/pull/1318)
+  [`d3e8fe4`](https://github.com/tsrx-org/tsrx/commit/d3e8fe44c53fdc64030307dbaaca1448d591cc2e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `TSRX2035` now also
+  warns when the only statement of a `@{ … }` puts a `<style>` block, a `@{ … }`
+  block or a directive behind `&&`, `||`, `??` or `?:`, such as
+  `@{ok && @if (c) { <b /> }}`, as it already did for an element or a fragment.
+  The statement throws that output away, so the block renders nothing. Output that
+  runs statements of its own, such as `@{ok && @{ log(user) }}` or a directive
+  with a statement in one of its bodies, doesn't warn, as a call doesn't. Compiled
+  output doesn't change.
+
+- [#1087](https://github.com/tsrx-org/tsrx/pull/1087)
+  [`e423279`](https://github.com/tsrx-org/tsrx/commit/e423279be7250a493c555bd98e243db4540d654e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Next App Router builds
+  with Turbopack no longer fail on components with a scoped `<style>` block. The
+  loader now imports the generated stylesheet by a relative path, and the
+  stylesheet is linked into the page when a server component imports the
+  component, in `next dev` and `next build`
+  ([#565](https://github.com/tsrx-org/tsrx/issues/565)). The Pages Router still
+  rejects these imports with Next's "Global CSS cannot be imported from files
+  other than your Custom <App>" error.
+
+  `create_tsrx_react_turbopack_css_rule()` and the `TsrxReactTurbopackCssRule`
+  type now use `as: '*.css'` instead of `type: 'css'`. If you spread or inspect
+  this rule, expect `as: '*.css'`.
+
+  The `next` peer dependency is now `>=16.2.0`, the first release whose
+  `turbopack.rules` accept the `condition.query` these rules use. Next 16.1
+  rejects the config with "Unrecognized key(s) in object: 'query'".
+
+  With a platform selected, ordinary `.js`, `.jsx`, `.ts` and `.tsx` modules are
+  read with their own grammar while platform flags are replaced: comment-like JSX
+  text such as `<pre>/*</pre>` no longer fails with "Unclosed tag", a flag inside
+  `{…}` next to such text is replaced, and `.ts` files can use `<T>value` type
+  assertions ([#910](https://github.com/tsrx-org/tsrx/issues/910)).
+
+- [#1096](https://github.com/tsrx-org/tsrx/pull/1096)
+  [`5391890`](https://github.com/tsrx-org/tsrx/commit/539189010bd47564395b7ab2c7108e2b9cc53f76)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `tsrx-tsc` and the
+  editor now report TypeScript errors that start at a keyword or punctuation of a
+  `.tsrx` file that had no mapping:
+
+  - TS7057 at an authored `yield` in a generator without a return type, also in a
+    template condition such as `@if (yield 1)`
+    ([#257](https://github.com/tsrx-org/tsrx/issues/257)).
+  - TS2370 at the `...` of a rest parameter whose type is not an array, in
+    function declarations, class methods, declared functions and components
+    ([#823](https://github.com/tsrx-org/tsrx/issues/823)).
+  - TS1316 on a nested `export as namespace`, whose `export`, `as` and `namespace`
+    keywords now map to the source
+    ([#979](https://github.com/tsrx-org/tsrx/issues/979)).
+
+  A closing tag (`</div>`) and the `/>` of a self-closing tag now map to exactly
+  their generated text, without the next character
+  ([#982](https://github.com/tsrx-org/tsrx/issues/982)). The `;` that ends an
+  expression or variable statement gets a mapping of its own, so unreachable code
+  (TS7027) still reports on a statement that ends with an element, and now also on
+  one such as `foo();`.
+
+- [#1095](https://github.com/tsrx-org/tsrx/pull/1095)
+  [`5552aa5`](https://github.com/tsrx-org/tsrx/commit/5552aa5ff936fabbec7ee652155df64905968c6a)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `tsrx-tsc` and the
+  editor now report TypeScript errors in parts of a `.tsrx` file whose mappings
+  were missing:
+
+  - The type arguments of an import type, as in `import('./store').Store<Missing>`
+    and `typeof import('./store').create<Missing>`
+    ([#552](https://github.com/tsrx-org/tsrx/issues/552)).
+  - A whole import type, so an ES module used as a type without `typeof`
+    (`type M = import('./store')`) reports TS1340
+    ([#594](https://github.com/tsrx-org/tsrx/issues/594)).
+  - The options of `import(source, options)` and `import.defer(source, options)`
+    ([#599](https://github.com/tsrx-org/tsrx/issues/599)).
+  - The parameter types of a `declare function` and of an overload signature
+    ([#935](https://github.com/tsrx-org/tsrx/issues/935)).
+  - The key remapping (`as`) clause of a mapped type, including a key type that is
+    not a property key, as `as {}` or `as T[K]`
+    ([#939](https://github.com/tsrx-org/tsrx/issues/939)).
+
+- [#1097](https://github.com/tsrx-org/tsrx/pull/1097)
+  [`4885ba3`](https://github.com/tsrx-org/tsrx/commit/4885ba3808edf0b2a74bb84b880b9c7f4966e5de)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Compiled output and the
+  editor's type view now keep more of a `.tsrx` file as written:
+
+  - An optional binding pattern parameter keeps its `?`, as in
+    `declare function f({ a }?: T): void`. Calling `f()` no longer reports TS2554
+    ([#556](https://github.com/tsrx-org/tsrx/issues/556)).
+  - A string statement that is not a directive keeps its parentheses, so
+    `('use strict');` no longer compiles to a `'use strict'` directive
+    ([#968](https://github.com/tsrx-org/tsrx/issues/968)). An empty directive
+    (`'';`) stays a directive.
+  - Block-form `/* @ts-expect-error */` and `/* @ts-ignore */` directives now
+    apply in `tsrx-tsc` and the editor, as in TypeScript, including one whose last
+    line holds the directive
+    ([#866](https://github.com/tsrx-org/tsrx/issues/866)). The comments around a
+    directive keep their lines, so a plain block comment between a directive and
+    its code still ends the directive's reach, for the line form too. A directive
+    on the line where its statement starts covers the line after it in the source,
+    which the printed code need not keep, so it is left out.
+  - Block comments print as written. A JSDoc comment no longer gets an extra space
+    after `/**`, and one over several lines keeps its closing line
+    ([#1065](https://github.com/tsrx-org/tsrx/issues/1065)).
+
+- [#1298](https://github.com/tsrx-org/tsrx/pull/1298)
+  [`1e58a65`](https://github.com/tsrx-org/tsrx/commit/1e58a65f2be6ff7d3aee1f4bff521d172b997159)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Each unclosed tag's
+  TSRX1001 is now reported on its own tag, not all of them at the token that ends
+  the template. In `<main><section>`, the editor and TypeScript 7's
+  `tsc --runExternalCode` show one error on `main` and one on `section`. Before,
+  the editor showed both on the `>` of `<section>`, and TypeScript 7 showed both
+  at the `}`. At module level or inside a closed parent, they show an unclosed
+  `<style>` or `<script>` on its opening tag.
+
+  The change is to collected errors, so `@tsrx/prettier-plugin` and
+  `@tsrx/eslint-parser`, which report the first one, now report an unclosed
+  element or fragment at the tag as well: `const y = <div>` is reported at `1:12`,
+  where Prettier's `typescript` parser reports it, and no longer at `2:1`. A
+  collected error's `raisedAt` doesn't move, except at the end of the file, where
+  it's now one past the input. A strict compile, the one builds run, throws the
+  same error at the same place as before.
+
+  A `<>` has no mapping in the editor's code, in a template or not, so the
+  language server shows an unclosed one on the nearest code it can. That's its
+  first child when the child has a mapping, as in `<><div>` and `<>{1}`, and
+  otherwise the code before it, as with `<>` and `<>hello`. TypeScript 7 shows it
+  on the `<>`.
+
+  On the TypeScript 7 language server, an unclosed tag hides what it hid before:
+  TypeScript's errors in whatever holds the place the parser stopped, until the
+  tag is closed. That's usually the enclosing function, and it can be a namespace,
+  block, object or class, along with any component inside it. A tag that runs to
+  the end of the file has nothing holding that place, so it hides errors only on
+  its own name: `export const y = <Missing>` no longer repeats TS2304 beside the
+  TSRX1001, and `@{` components after it at the top level keep their errors. An
+  unclosed `<style>` or `<script>` stops at its body, which it hides. A plain
+  `{ }` function after such a tag is still a parse error in the file.
+
+  An error's anchor, the mapping for a token that isn't in the generated code, now
+  stays on its generated line. It can still sit on other code on that line.
+
+- [#1282](https://github.com/tsrx-org/tsrx/pull/1282)
+  [`228d7bd`](https://github.com/tsrx-org/tsrx/commit/228d7bd028e879cde8b481a0209d1c3449380c5f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A target that sets
+  `requireUseServerForAwait` without an `await` validator of its own now allows a
+  top-level `await` in a TSRX function when the module has a `"use server"`
+  directive, as TSRX2025's message says. Without the directive, TSRX2025 is still
+  reported. Before, it was reported with or without the directive. Only a real
+  directive counts: a `'use server'` after an import, or a parenthesized one,
+  doesn't. A target's `validateComponentAwait` hook now gets whether the module
+  has the directive as its `moduleUsesServerDirective` argument, which was always
+  `false`, unless the target sets
+  `scanUseServerDirectiveForAwaitWithCustomValidator: false`. No bundled target is
+  affected: Solid and Vue set that flag, and Solid, Vue and Hono DOM report their
+  own TSRX2021 first.
+
+- [#1103](https://github.com/tsrx-org/tsrx/pull/1103)
+  [`5422ee1`](https://github.com/tsrx-org/tsrx/commit/5422ee180deb0422f0359629b0cdbf5533abf07b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The Vite plugins
+  restart the dev server when a tsconfig change selects a different
+  `tsrx.platform`, including a change to an `extends` target or project reference
+  outside the Vite root. `@tsrx/core/config` exports `getBuildPlatformConfigFiles`
+  for the files a platform comes from. Before, both `.tsrx` modules and ordinary
+  modules kept the previous platform until you restarted Vite by hand.
+
+  Without a configured platform, the Vite plugins now reject an
+  `import.meta.env.platform` flag in an ordinary `.ts`, `.tsx` or JavaScript
+  module with the same "Platform flag usage requires a configured TSRX platform"
+  error a `.tsrx` module gets. Before, the build succeeded and the bundle failed
+  when it ran (`(void 0).web`).
+
+- [#1125](https://github.com/tsrx-org/tsrx/pull/1125)
+  [`c19818c`](https://github.com/tsrx-org/tsrx/commit/c19818ce37642c4508fb2ffd41a8325367d46c36)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - More Vue components are
+  now wrapped in `defineVaporComponent`, and wrapped components can be read above
+  their declaration:
+
+  - An arrow component that contains a nested function, such as an inline
+    `onClick={() => …}` handler or a `.map()` callback, is now wrapped. Before, it
+    stayed a plain function, and mounting it as the app root threw
+    `Cannot read properties of undefined (reading 'config')`.
+  - A component that builds its JSX in a local variable and returns it
+    (`const element = <div />; return element;`) is now wrapped. Before, its props
+    never reached it and mounting it as the app root threw. A local binding counts
+    when it holds JSX anywhere, the same rule already used for a returned
+    expression, so a `function Config() { const c = { icon: <i /> }; return c; }`
+    is wrapped just as `function Columns() { return [{ header: <b /> }]; }`
+    already was.
+  - A default-exported component (`export default function Card`) now compiles to
+    `const Card = defineVaporComponent(…); export default Card;`, so the module
+    keeps its `Card` binding. Before, one with a nested function compiled to the
+    invalid `export default const …`, and `typeof Card` or `export { Card }` lost
+    the binding.
+  - A component read above its declaration while the module loads, as in
+    `export const registry = { inner: Inner }` before `function Inner`, now loads:
+    the compiler moves the wrapped `const` above that read when doing so changes
+    nothing else. When the component's destructured prop defaults read a binding
+    that the statements it would move past declare, assign or mutate
+    (vue-jsx-vapor evaluates `{ label = PREFIX }` when the component is defined),
+    the compiler reports the new TSRX2028 at the read and asks you to move the
+    declaration up instead. That includes a binding mutated through a TypeScript
+    wrapper, a destructuring target or `delete` (`(cfg as any).size = 2`,
+    `cfg!.size = 2`, `[cfg.size] = [2]`), and an enum, namespace or `import x = …`
+    alias declared in between, which sets its binding when it runs; a namespace's
+    own `var`s don't count. Reads that do not run at load (in a function, a class
+    instance field, a branch a constant condition skips, or a scope with its own
+    binding of the name) move nothing. Calls are not followed: a read through a
+    call or IIFE still hits the constant before it is initialized, and a call in
+    between to a function that assigns a binding a default reads (`bump()` setting
+    `size`) runs after the moved component captured the old value; reads from
+    another `case` of the declaring `switch` or through a circular import cannot
+    be seen either.
+  - A destructured prop default that vue-jsx-vapor would silently drop now reports
+    the new TSRX2029 at the default. vue-jsx-vapor turns those defaults into prop
+    options and keeps only a string, number, boolean or `null` literal, an
+    identifier, an object or array literal, or a function, so `{ s = cfg.size }`,
+    `-1`, `SIZE + 1`, a call or a template literal left the prop `undefined` when
+    the caller left it out. This applies to every wrapped component, including
+    ones wrapped before this change; read the prop in the body instead
+    (`const s = props.s ?? cfg.size`).
+
+- [#1231](https://github.com/tsrx-org/tsrx/pull/1231)
+  [`ab5a0ff`](https://github.com/tsrx-org/tsrx/commit/ab5a0ff13138746ade811808f27f52d34668ae3f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Vue now reports a
+  destructured prop that vue-jsx-vapor reads wrongly, instead of compiling a
+  component that silently gets the wrong value:
+
+  - The new TSRX2031 reports a key vue-jsx-vapor misreads. It reads a destructured
+    prop by its key's name, so `function Card({ [k]: v })` read the prop `k`,
+    whatever `k` held, and lost any default. It reads only keys that are names, so
+    a binding at any other key (`{ 'a-b': v }`, `{ ['s']: v }`, `{ [1]: v }`)
+    never got the prop: it was left out of the component, and a component with no
+    key it reads got no prop options at all, so Vue passed it no props.
+  - TSRX2031 also reports a props parameter with a default
+    (`function Card({ s } = {})`), which vue-jsx-vapor skips, so the component got
+    no props; remove the default, since Vue always passes a props object. And it
+    reports a rest element inside a prop (`{ t: { a, ...r } }`,
+    `{ t: [a, ...r] }`): vue-jsx-vapor gives the pattern's last rest element the
+    component's attrs, an array's rest element the whole array, and any other the
+    rest of `t` only as it was at setup, so `r` never followed the rest of `t`. A
+    rest element of the props themselves (`{ s, ...rest }`) still compiles.
+  - TSRX2029 now also reports a default inside a destructured prop
+    (`{ s: { a = 3 } }`), which vue-jsx-vapor applies only when the whole prop is
+    missing, so it was lost whenever `s` was passed without `a`.
+
+  The errors suggest taking a `props` parameter and reading the prop where it is
+  used, so it stays reactive: for example `{props.s === undefined ? 3 : props.s}`,
+  which, like a default, replaces only `undefined`, or a `computed`. A kebab-case
+  key is read by its camelized name (`props.aB`), and a value inside a prop with
+  optional chaining (`props.t?.a`), since the prop can be missing. TSRX2029's
+  existing advice, to read the prop once into a constant, changes the same way.
+  The TSRX2028, TSRX2029 and TSRX2031 messages are now in `@tsrx/core/diagnostics`
+  (`TSRX_ERRORS`).
+
+- [#1108](https://github.com/tsrx-org/tsrx/pull/1108)
+  [`04ef167`](https://github.com/tsrx-org/tsrx/commit/04ef16724d4c3d0a85cebef45fbd081673987fa0)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Vue, a host spread
+  now updates when its expression changes, as in `<button {...bag.value} />` after
+  `bag.value = { disabled: true }`. Before, the compiler read the spread once in a
+  setup declaration, so the element kept its first attributes and a button stayed
+  enabled. The bag is now assigned where it is spread,
+  `{...(bag = __normalize_spread_props_for_ref_attr(expr))}`, inside
+  vue-jsx-vapor's render effect, which reads it again when it changes and sets the
+  element's template ref after it.
+
+  A new `jsx.refAfterProps` platform option says the compiled JSX applies an
+  element's `ref` after its other attributes, so with the in-place binding the
+  merged `ref` still goes last. Vue sets it.
+
+- [#1118](https://github.com/tsrx-org/tsrx/pull/1118)
+  [`0246e95`](https://github.com/tsrx-org/tsrx/commit/0246e95f983c2efd83e3e99100d00a5ba24c9233)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Vue, `@catch` now
+  handles errors under `@pending`. When an async child's loader rejects, the
+  `@catch` fallback replaces the `@pending` one instead of `@pending` staying up
+  with an unhandled rejection
+  ([#1078](https://github.com/tsrx-org/tsrx/issues/1078)), and `reset()` renders
+  the body again after it threw while setting up
+  ([#937](https://github.com/tsrx-org/tsrx/issues/937)); it did nothing before.
+
+  The boundary also catches errors from child components when the app sets
+  `app.config.errorHandler`, and in production builds, including a `@try` inside
+  element children, which now compiles to a boundary component like every other
+  `@try`. It used to rely on Vue re-throwing unhandled errors, which Vue does only
+  in development and only when no `errorHandler` is set. As with Vue's
+  `errorCaptured`, an error that `@catch` handles no longer reaches
+  `app.config.errorHandler`.
+
+  An error now goes to the boundary around the component it came from, even when
+  another boundary is rendering at the time; `reset()` also recovers after a
+  thrown `null`; and the boundary's `fallback` and `content` props no longer
+  appear as attributes on the element it renders.
+
+- Updated dependencies
+  [[`2bc4f1f`](https://github.com/tsrx-org/tsrx/commit/2bc4f1fc5fcb9863c926ab3d01b0407e89bbf639),
+  [`bf6d334`](https://github.com/tsrx-org/tsrx/commit/bf6d3349a59f8ec1769d5a2f789801af7cd74ff7),
+  [`2b465b4`](https://github.com/tsrx-org/tsrx/commit/2b465b432b515c07047e3eadeb66ff34df95de2d),
+  [`ced2603`](https://github.com/tsrx-org/tsrx/commit/ced260375637359686e521cce628be3057d455df),
+  [`9ff7b5d`](https://github.com/tsrx-org/tsrx/commit/9ff7b5d5f80e7697896d91d5674ccccb389a890d),
+  [`6b207b6`](https://github.com/tsrx-org/tsrx/commit/6b207b65e8a339d5fe301c60e72db271ffb9a572),
+  [`2473538`](https://github.com/tsrx-org/tsrx/commit/247353854e918f119dafe88f6474a2738cb82ed8),
+  [`0ca1023`](https://github.com/tsrx-org/tsrx/commit/0ca10232569e9beaad7d1d0d53d209e6520385fa),
+  [`153b526`](https://github.com/tsrx-org/tsrx/commit/153b5267ad6445abdb81f85d5ad32409d6101d7e),
+  [`384972f`](https://github.com/tsrx-org/tsrx/commit/384972fcdd5eaeb09b92a852bb3d9ee186689286),
+  [`0ee439a`](https://github.com/tsrx-org/tsrx/commit/0ee439a5d94e071ecae594229f61e9b5ee022296),
+  [`56dd6f5`](https://github.com/tsrx-org/tsrx/commit/56dd6f573f9c7c822db9d33313317bed16f7fa45)]:
+  - @tsrx/runtime@0.2.5
+
 ## 0.5.5
 
 ### Patch Changes

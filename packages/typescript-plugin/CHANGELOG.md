@@ -1,5 +1,150 @@
 # @tsrx/typescript-plugin
 
+## 0.7.0
+
+### Patch Changes
+
+- [#1277](https://github.com/tsrx-org/tsrx/pull/1277)
+  [`180067b`](https://github.com/tsrx-org/tsrx/commit/180067b45544efd9638df0d981a05327e7f78a58)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Declarations inside
+  `<script>` bodies are document symbols again: the Outline, breadcrumbs and Go to
+  Symbol in File list each body as a `<script>` symbol whose children are the
+  body's top-level declarations (variables, functions, classes, interfaces, type
+  aliases and enums, with the members and locals other declarations show). They
+  went missing when bodies became blocks of the generated TypeScript, which
+  TypeScript's navigation tree skips. It works on every TypeScript backend. Data
+  blocks such as `<script type="application/json">` get no symbol. Enums declared
+  elsewhere in a `.tsrx` file are now listed too.
+
+- [#1273](https://github.com/tsrx-org/tsrx/pull/1273)
+  [`135ce77`](https://github.com/tsrx-org/tsrx/commit/135ce776f67596af641c8f2772d0321dbd73274e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A loose compile, the
+  one the editor, `tsrx-tsc` and `@tsrx/content-mapper` run, now reports an
+  unclosed tag (TSRX1001) or a mismatched closing tag (TSRX1002), as a collecting
+  compile does, instead of recovering silently. `<div>` with no closing tag,
+  `<div><span></div>` and `return <div>;` now show an error in the editor and
+  through TypeScript 7's `tsc --runExternalCode`, where the build's strict compile
+  already rejected them.
+
+  The editor's generated code now closes such a tag, with a closing tag that has
+  no mapping, so it is valid TSX: TypeScript no longer adds TS17008 or TS1005 to
+  the parser's error, and hover, completions and diagnostics elsewhere in the file
+  keep working. An undefined component left unclosed, such as
+  `<div><Missing>valid</div>`, is reported as undefined once, at its name, not
+  again on a closing tag around it, including a dynamic one or one followed by
+  more text. The language server shows an error whose position has no mapping
+  (such as an empty unclosed `<>`) on the nearest code before it, not at the start
+  of the file. The tsserver plugin's closing-tag answer
+  (`getJsxClosingTagAtPosition`) reads the parsed source for such a tag, as the
+  language server's auto-insert does. Strict compiles are unchanged.
+
+- [#1111](https://github.com/tsrx-org/tsrx/pull/1111)
+  [`d34a9d3`](https://github.com/tsrx-org/tsrx/commit/d34a9d3b5da40a1d0efd34d89e85acc8cc72e839)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On TypeScript 5.9 and
+  6, auto-import now adds the import in two cases where it inserted nothing in a
+  `.tsrx` file: the auto-import completion for a name that needs a new import line
+  ([#1026](https://github.com/tsrx-org/tsrx/issues/1026)), and the completion, the
+  **Add import from** quick fix and **Add all missing imports** in a file that has
+  no imports yet ([#828](https://github.com/tsrx-org/tsrx/issues/828)). The first
+  import goes where TypeScript puts it in a `.tsx` file: after a hashbang, a
+  directive prologue such as `'use client';`, and pinned, triple-slash or detached
+  comments at the top of the file.
+
+- [#1294](https://github.com/tsrx-org/tsrx/pull/1294)
+  [`910dbae`](https://github.com/tsrx-org/tsrx/commit/910dbaea2d709ff2f53bf800042c8914bd336939)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Carry diagnostic
+  severity and codes through the collected-error channel end to end.
+  `CompileError` gains an optional `severity: 'error' | 'warning'` (absent means
+  error) and `error()` accepts it as a trailing parameter, so consumer compilers
+  can publish warning-severity diagnostics. `error()` never throws a warning: in a
+  compile that doesn't collect, such as a build, it drops it. `tsrx-tsc` now
+  prints collected diagnostics in tsc convention —
+  `[tsrx-tsc] file(line,col): <error|warning> <code>: message` — instead of
+  dropping `code`. The language server's compile-diagnostic plugin maps
+  `severity: 'warning'` entries to real editor warnings.
+
+- [#1285](https://github.com/tsrx-org/tsrx/pull/1285)
+  [`b7b73e5`](https://github.com/tsrx-org/tsrx/commit/b7b73e566a458e4977ea52210627554d1b8bce07)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Under
+  `"module": "node16"` or `"nodenext"`, `.tsrx` files now take their module format
+  from the nearest `package.json`, as `.ts` files do. Before, `tsrx-tsc`, the
+  tsserver plugin and the language server treated every `.tsrx` file as CommonJS,
+  so `import.meta` reported `TS1470` ("The 'import.meta' meta-property is not
+  allowed in files which will build into CommonJS output") even in a
+  `"type": "module"` package. A `.tsrx` file in a `"type": "commonjs"` package
+  still reports it. TypeScript 7 (`@tsrx/content-mapper`) already did this.
+
+- [#1100](https://github.com/tsrx-org/tsrx/pull/1100)
+  [`407f8ca`](https://github.com/tsrx-org/tsrx/commit/407f8cac8cd746698551f737b813850933b23c30)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On TypeScript 5.9 and 6
+  (the classic `tsrx-tsc` path), `tsrx-tsc` no longer writes the editor-only
+  `ImportMetaEnv` / `ImportMeta` globals into the declaration files of `.tsrx`
+  modules that use `import.meta.env.platform` flags. Before, a consumer that
+  imported two such modules failed with `TS2374: Duplicate index signature`, and
+  every emitted module forced the library's platform onto the consumer's
+  `import.meta.env` types. Authored global augmentations are kept. The TypeScript
+  7 native path is not covered yet.
+
+  An incremental build (`tsrx-tsc -b`, or `incremental: true`) that has nothing to
+  rebuild keeps declaration files written before this release; run it once with
+  `--force`, or delete the output, to rewrite them.
+
+- Updated dependencies
+  [[`2bc4f1f`](https://github.com/tsrx-org/tsrx/commit/2bc4f1fc5fcb9863c926ab3d01b0407e89bbf639),
+  [`334af09`](https://github.com/tsrx-org/tsrx/commit/334af09f6686dcc619796c0911debacbe6ab307f),
+  [`972010b`](https://github.com/tsrx-org/tsrx/commit/972010b3654c907baa25cf2f03e3cad9b3d6c6fd),
+  [`6e5aeab`](https://github.com/tsrx-org/tsrx/commit/6e5aeab2c793e4c701384fd117a9573b029ffeab),
+  [`b6953e0`](https://github.com/tsrx-org/tsrx/commit/b6953e0a2676661cf40c4b4772a14419443bb1c6),
+  [`b70c3a2`](https://github.com/tsrx-org/tsrx/commit/b70c3a2e055655384bd4febe59e4ac2c584796d8),
+  [`3cecb2c`](https://github.com/tsrx-org/tsrx/commit/3cecb2c59ded5c708167b9a94606a20118334faf),
+  [`d0a00dc`](https://github.com/tsrx-org/tsrx/commit/d0a00dc54713b459a208fb2e044158a46b0143da),
+  [`4d1def9`](https://github.com/tsrx-org/tsrx/commit/4d1def98977820da6206df0c189a7f525203298e),
+  [`2b465b4`](https://github.com/tsrx-org/tsrx/commit/2b465b432b515c07047e3eadeb66ff34df95de2d),
+  [`3603935`](https://github.com/tsrx-org/tsrx/commit/36039352946b9466f337f00dbc4e0662ba78a395),
+  [`d18720d`](https://github.com/tsrx-org/tsrx/commit/d18720d75e143c26d015d9837fb5d1c860cc0cb9),
+  [`a09bc3d`](https://github.com/tsrx-org/tsrx/commit/a09bc3dffac142c0a8adc347b0683f333b78a705),
+  [`9ff7b5d`](https://github.com/tsrx-org/tsrx/commit/9ff7b5d5f80e7697896d91d5674ccccb389a890d),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`644583f`](https://github.com/tsrx-org/tsrx/commit/644583f0abf521bf04b615e1394d96a3fd1f0d35),
+  [`91d958d`](https://github.com/tsrx-org/tsrx/commit/91d958de44c9e582cd66a5b66aff6bb37ff0ece2),
+  [`e0c07b5`](https://github.com/tsrx-org/tsrx/commit/e0c07b55b199acc4fe05b705255e79020b500376),
+  [`6b207b6`](https://github.com/tsrx-org/tsrx/commit/6b207b65e8a339d5fe301c60e72db271ffb9a572),
+  [`2473538`](https://github.com/tsrx-org/tsrx/commit/247353854e918f119dafe88f6474a2738cb82ed8),
+  [`5d4482f`](https://github.com/tsrx-org/tsrx/commit/5d4482fd0a1f80532780fcc6ac5f1ab712229d0d),
+  [`e151432`](https://github.com/tsrx-org/tsrx/commit/e15143265338cb25e13a743d095d328e95f6dddd),
+  [`18654c4`](https://github.com/tsrx-org/tsrx/commit/18654c46052d516c70b5a71c4775816574c0e452),
+  [`0ca1023`](https://github.com/tsrx-org/tsrx/commit/0ca10232569e9beaad7d1d0d53d209e6520385fa),
+  [`e9330ea`](https://github.com/tsrx-org/tsrx/commit/e9330ea841e6113e10be39980aae7c0ebfd4b63a),
+  [`153b526`](https://github.com/tsrx-org/tsrx/commit/153b5267ad6445abdb81f85d5ad32409d6101d7e),
+  [`120b9b9`](https://github.com/tsrx-org/tsrx/commit/120b9b9fce954685257ba5cfee6a115c0e21347c),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`6f1e46b`](https://github.com/tsrx-org/tsrx/commit/6f1e46b54d10b33d656f02bf91aa69132bd187d6),
+  [`190f797`](https://github.com/tsrx-org/tsrx/commit/190f7970cf968c978b3e5df37b4e3a97c4e7efa5),
+  [`384972f`](https://github.com/tsrx-org/tsrx/commit/384972fcdd5eaeb09b92a852bb3d9ee186689286),
+  [`0ee439a`](https://github.com/tsrx-org/tsrx/commit/0ee439a5d94e071ecae594229f61e9b5ee022296),
+  [`56dd6f5`](https://github.com/tsrx-org/tsrx/commit/56dd6f573f9c7c822db9d33313317bed16f7fa45),
+  [`1589310`](https://github.com/tsrx-org/tsrx/commit/1589310147fa30e065a10199e75092813ed4bb53),
+  [`07e262a`](https://github.com/tsrx-org/tsrx/commit/07e262afedaf6cf614ae78dc9649437ce34d66ef),
+  [`14a664d`](https://github.com/tsrx-org/tsrx/commit/14a664d8485a89c9cece8cc2080266cd89cc1329),
+  [`f762c09`](https://github.com/tsrx-org/tsrx/commit/f762c09eea9f1071663bdc9d90524f21250132ff),
+  [`c49216e`](https://github.com/tsrx-org/tsrx/commit/c49216e86d15b68c4d84f8763691418d74ad8744),
+  [`fb35a0b`](https://github.com/tsrx-org/tsrx/commit/fb35a0bf5bbea972889e2024b535d0fee3227856),
+  [`1e58a65`](https://github.com/tsrx-org/tsrx/commit/1e58a65f2be6ff7d3aee1f4bff521d172b997159),
+  [`aea883a`](https://github.com/tsrx-org/tsrx/commit/aea883a7ec7632ff467b9864052592ae948544b1),
+  [`c19818c`](https://github.com/tsrx-org/tsrx/commit/c19818ce37642c4508fb2ffd41a8325367d46c36),
+  [`ab5a0ff`](https://github.com/tsrx-org/tsrx/commit/ab5a0ff13138746ade811808f27f52d34668ae3f),
+  [`00a238c`](https://github.com/tsrx-org/tsrx/commit/00a238cc95013ca90e1fc2bd5fbb47b80c942664),
+  [`00a238c`](https://github.com/tsrx-org/tsrx/commit/00a238cc95013ca90e1fc2bd5fbb47b80c942664),
+  [`04ef167`](https://github.com/tsrx-org/tsrx/commit/04ef16724d4c3d0a85cebef45fbd081673987fa0),
+  [`41739c6`](https://github.com/tsrx-org/tsrx/commit/41739c6263df8ea48228c78a41c1e53d13bb4ec4),
+  [`0246e95`](https://github.com/tsrx-org/tsrx/commit/0246e95f983c2efd83e3e99100d00a5ba24c9233)]:
+  - @tsrx/react@0.5.0
+  - @tsrx/preact@0.4.0
+  - @tsrx/vue@0.4.0
+  - @tsrx/content-mapper@0.1.3
+  - @tsrx/solid@0.4.0
+
 ## 0.6.3
 
 ### Patch Changes

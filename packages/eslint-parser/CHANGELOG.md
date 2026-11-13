@@ -1,5 +1,222 @@
 # @tsrx/eslint-parser
 
+## 0.7.0
+
+### Minor Changes
+
+- [#1274](https://github.com/tsrx-org/tsrx/pull/1274)
+  [`5d3bfa9`](https://github.com/tsrx-org/tsrx/commit/5d3bfa9cf2ded3e91e367d855fd5d27c4a990c60)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Give ESLint an `@if`'s
+  condition and arms as a real `if` statement, in a new `statement` field of the
+  `JSXIfExpression`, as a `@for`'s loop is in `loop`. Tools that read a
+  `JSXIfExpression`'s `test`, `consequent` or `alternate` read `statement.test`,
+  `statement.consequent` and `statement.alternate` now, and a selector such as
+  `JSXIfExpression > Identifier` no longer matches the condition.
+
+  Each arm of an `@if` now gets its own code path, as the branches of an `if` do
+  ([#1154](https://github.com/tsrx-org/tsrx/issues/1154)). After an arm that ends
+  in `throw`, `no-unreachable` no longer reports the `@else` arm or the code after
+  the `@if`, and `no-useless-assignment` no longer treats an assignment in one arm
+  as overwritten by another. `react-hooks/rules-of-hooks` reports a hook called in
+  an `@if` arm. Rules that read `if` statements apply to an `@if` as they already
+  did to `@else if`: `no-constant-condition` reports `@if (true)`, and
+  `max-statements-per-line` reports an `@if` on the same line as `=>` or `return`.
+
+  A `@try` keeps its blocks, now visited in source order: the body, `@pending`,
+  then `@catch`. As a `try` statement, its body would be inside a `try` the React,
+  Preact and Hono output doesn't have, and `react-hooks/rules-of-hooks` would
+  report as conditional every hook after the body's first call, member access or
+  identifier, except `use()`, which react-hooks 6.1.1 and 7.1.1 report anywhere in
+  the body as inside a try/catch block. So code path analysis still runs the
+  blocks of a `@try` one after another, and the README lists what that costs. With
+  `@pending` now before `@catch`, `no-unreachable` reports the `@catch` after a
+  `@pending` that throws.
+
+  Scope analysis now visits the `pending` block of a plain `try … pending … catch`
+  statement, so `no-undef` reports an undefined name there.
+
+  The `reset` function of `@catch (e, reset)` is now defined in the catch scope,
+  as the error is. `no-undef` no longer reports it, and `no-unused-vars` reports
+  it when it's unused.
+
+  The README lists the `@for`, `@switch` and `@try` cases core rules still miss.
+
+- [#1093](https://github.com/tsrx-org/tsrx/pull/1093)
+  [`d5015d2`](https://github.com/tsrx-org/tsrx/commit/d5015d25b33980d0509ecccf04a341081fee70db)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - ESLint no longer
+  crashes on a `.tsrx` file that uses `@switch`
+  ([#913](https://github.com/tsrx-org/tsrx/issues/913)). The ESLint parser now
+  gives ESLint the file's comments and tokens, so `eslint-disable` and other
+  directive comments apply in `.tsrx` files
+  ([#454](https://github.com/tsrx-org/tsrx/issues/454)), and rules that read
+  tokens work: `no-unused-vars` reports an unused function parameter instead of
+  crashing ([#228](https://github.com/tsrx-org/tsrx/issues/228)).
+  `template-curly-spacing` and `indent` no longer crash on template literals and
+  JSX children.
+
+  Give ESLint the loop of a `@for` as a real `ForOfStatement`, `ForInStatement` or
+  `ForStatement`, in a new `loop` field of the `JSXForExpression`. Tools that read
+  a `JSXForExpression`'s `left`, `right`, `await`, `init`, `test`, `update` or
+  `body` read `loop.left`, `loop.body` and so on now. Its `index`, `key` and
+  `empty` stay on the `JSXForExpression`. ESLint gets the arms of a `@switch` as
+  `JSXSwitchCase` nodes, not `SwitchCase`, so selectors that match `SwitchCase` no
+  longer match an `@case` or `@default`.
+
+  The parser also returns its own scope manager, built with `eslint-scope`, which
+  is now a dependency of `@tsrx/eslint-parser`. `semi --fix` no longer rewrites a
+  `@for` head into code that does not parse, and `init-declarations` no longer
+  reports a `@for` variable. Core `no-undef` and `no-unused-vars` see the loop's
+  `index`, `key` and `@empty` branch in the right scopes, so `no-undef` no longer
+  reports a declared `index`
+  ([#559](https://github.com/tsrx-org/tsrx/issues/559)). Loop rules such as
+  `no-await-in-loop` and `guard-for-in` now apply to `@for` too.
+
+  A parse with `keywordTokens` records every token on the program as
+  `tsrx_tokens`.
+
+### Patch Changes
+
+- [#1233](https://github.com/tsrx-org/tsrx/pull/1233)
+  [`fa2243d`](https://github.com/tsrx-org/tsrx/commit/fa2243d793e8fbc3855b71f5576bd0645643b499)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - ESLint rules no longer
+  crash on a dynamic tag such as `<{as}>`
+  ([#1205](https://github.com/tsrx-org/tsrx/issues/1205)). Before,
+  `react/no-danger`, `react/forbid-component-props`, `jsx-a11y/alt-text` and
+  `jsx-a11y/control-has-associated-label` threw on one, and other rules reported
+  tags such as `'[object Object]' is not defined`. Rules now see the name as the
+  JSX name it mirrors: `<{as}>` as `as`, and `<{ui.Box}>` as `ui.Box`. A tag that
+  no JSX name can show, such as `<{'div'}>` or `<{icons[name]}>`, gets the
+  synthetic name `tsrx-dynamic-tag`. The expression itself moves to the element's
+  `tagExpression`, where rules still lint it.
+
+  `no-unused-vars` and `no-undef` now see the variables in a dynamic tag's
+  expression in a self-closing tag and with `ecmaFeatures.jsx` enabled, and report
+  an undefined one once per element. With `ecmaFeatures.jsx` enabled, `no-undef`
+  also no longer reports `'style' is not defined` at every `</style>`.
+
+- [#1179](https://github.com/tsrx-org/tsrx/pull/1179)
+  [`88f8016`](https://github.com/tsrx-org/tsrx/commit/88f8016cdeecfcf1cbc6fb1eb6a9ae6814551746)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - ESLint's `max-params`
+  no longer crashes on a `.tsrx` file with a TypeScript function type, such as a
+  prop typed `onPress?: () => void`
+  ([#1153](https://github.com/tsrx-org/tsrx/issues/1153)). Function types and
+  signatures now carry the `params` field that typescript-eslint gives them.
+
+  A `@for` loop with a `var` head, or a head that declares nothing, now has its
+  own scope, as a `const` or `let` loop does
+  ([#1154](https://github.com/tsrx-org/tsrx/issues/1154)). `no-redeclare` no
+  longer reports the same `index` name in two such loops, and `no-undef` reports
+  the loop variable or index when the `@empty` branch uses it. The loop's `loc` is
+  also right in files with CR or U+2028 line breaks.
+
+- [#1297](https://github.com/tsrx-org/tsrx/pull/1297)
+  [`8b1cfb5`](https://github.com/tsrx-org/tsrx/commit/8b1cfb5d07ca228cc3bcf2bf0683acfd5b967f0c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A plain
+  `try { … } pending { … }` statement with no `catch` or `finally` is now a parse
+  error ("Missing catch or finally clause") instead of crashing ESLint. It
+  compiles to a `try` with neither, which isn't valid JavaScript.
+- Updated dependencies
+  [[`2bc4f1f`](https://github.com/tsrx-org/tsrx/commit/2bc4f1fc5fcb9863c926ab3d01b0407e89bbf639),
+  [`fb35a0b`](https://github.com/tsrx-org/tsrx/commit/fb35a0bf5bbea972889e2024b535d0fee3227856),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`2646239`](https://github.com/tsrx-org/tsrx/commit/26462399753081501e78478de7495d15775e411e),
+  [`6eaee99`](https://github.com/tsrx-org/tsrx/commit/6eaee992105984b13c38f9de4edfd6ca99eae399),
+  [`972010b`](https://github.com/tsrx-org/tsrx/commit/972010b3654c907baa25cf2f03e3cad9b3d6c6fd),
+  [`dac81a4`](https://github.com/tsrx-org/tsrx/commit/dac81a418448476aa4ab60999096dc629627c9b4),
+  [`677d574`](https://github.com/tsrx-org/tsrx/commit/677d5743b8cb3d3cd57504ef81f6323ef45b8399),
+  [`72956b0`](https://github.com/tsrx-org/tsrx/commit/72956b0d9a4a55c56b210b1b7669f7e04a77709c),
+  [`fe2c377`](https://github.com/tsrx-org/tsrx/commit/fe2c377664bdcac510bcd137b6468bec7efe9eeb),
+  [`6297ffa`](https://github.com/tsrx-org/tsrx/commit/6297ffa6527f297de69edb95af7a74a87b804970),
+  [`25e5844`](https://github.com/tsrx-org/tsrx/commit/25e58444734d535385f2ca4310445b34286369cb),
+  [`8c6d037`](https://github.com/tsrx-org/tsrx/commit/8c6d037fdd16d28d871126bf48fba4b2583d9bbf),
+  [`54e7644`](https://github.com/tsrx-org/tsrx/commit/54e7644d256f5506fbde84e35ee5e827aaef15ad),
+  [`9d8ea3e`](https://github.com/tsrx-org/tsrx/commit/9d8ea3e61a0ed083af98269f703bb73e91421e64),
+  [`73c170b`](https://github.com/tsrx-org/tsrx/commit/73c170b4d14f961ce49080c604e233886e71e79d),
+  [`129825c`](https://github.com/tsrx-org/tsrx/commit/129825ce427fb80b31c6fcbb148d48781a83485f),
+  [`c28d0b7`](https://github.com/tsrx-org/tsrx/commit/c28d0b7356b9c4456cbe4009c5ea2d38260d7660),
+  [`827030c`](https://github.com/tsrx-org/tsrx/commit/827030cd1441ec3156414a54a1ab6d3de1f4c34b),
+  [`b620e02`](https://github.com/tsrx-org/tsrx/commit/b620e02c284bfdf59c105c2e5d71b14f0cc84228),
+  [`d0a00dc`](https://github.com/tsrx-org/tsrx/commit/d0a00dc54713b459a208fb2e044158a46b0143da),
+  [`d5015d2`](https://github.com/tsrx-org/tsrx/commit/d5015d25b33980d0509ecccf04a341081fee70db),
+  [`4d1def9`](https://github.com/tsrx-org/tsrx/commit/4d1def98977820da6206df0c189a7f525203298e),
+  [`6165298`](https://github.com/tsrx-org/tsrx/commit/6165298529f192d72825c7905973ae2acc881921),
+  [`ee70085`](https://github.com/tsrx-org/tsrx/commit/ee700855c0c7e14b58163f4693c1797be7e96772),
+  [`33022ba`](https://github.com/tsrx-org/tsrx/commit/33022ba2356f9c375242b6edc63ce65fd6215b89),
+  [`66a0791`](https://github.com/tsrx-org/tsrx/commit/66a079126a2604436eb2c934ad88f8b78c7c7bc5),
+  [`2b465b4`](https://github.com/tsrx-org/tsrx/commit/2b465b432b515c07047e3eadeb66ff34df95de2d),
+  [`8d1541b`](https://github.com/tsrx-org/tsrx/commit/8d1541ba83643e51f86b8f46d8034c56bd70d17c),
+  [`3603935`](https://github.com/tsrx-org/tsrx/commit/36039352946b9466f337f00dbc4e0662ba78a395),
+  [`c7dc4ef`](https://github.com/tsrx-org/tsrx/commit/c7dc4efa939153f7b800500f1ebdc71093066340),
+  [`d18720d`](https://github.com/tsrx-org/tsrx/commit/d18720d75e143c26d015d9837fb5d1c860cc0cb9),
+  [`9f90c6a`](https://github.com/tsrx-org/tsrx/commit/9f90c6ae8d85f4a65853d42382f5280e504c08f8),
+  [`02e39f6`](https://github.com/tsrx-org/tsrx/commit/02e39f6bf7f0941bb5b7226a02cfadeb5f9ff264),
+  [`a09bc3d`](https://github.com/tsrx-org/tsrx/commit/a09bc3dffac142c0a8adc347b0683f333b78a705),
+  [`bbf7092`](https://github.com/tsrx-org/tsrx/commit/bbf70925ae7944ebba8275b2090247c1e333fe54),
+  [`964899b`](https://github.com/tsrx-org/tsrx/commit/964899bd268e026dfe5f4832fb44c7cbb0b42141),
+  [`55d2886`](https://github.com/tsrx-org/tsrx/commit/55d2886718cd9134b5c7e7c2ba4129a24d2d94b6),
+  [`9ff7b5d`](https://github.com/tsrx-org/tsrx/commit/9ff7b5d5f80e7697896d91d5674ccccb389a890d),
+  [`418dc53`](https://github.com/tsrx-org/tsrx/commit/418dc530f0897c9c9f54d61eed1269490d3b29aa),
+  [`80316d9`](https://github.com/tsrx-org/tsrx/commit/80316d94773c91a182d15e3bca5e7965ebc225b0),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`135ce77`](https://github.com/tsrx-org/tsrx/commit/135ce776f67596af641c8f2772d0321dbd73274e),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`28440d7`](https://github.com/tsrx-org/tsrx/commit/28440d79a59d6cf54530f386471687f99e914ae8),
+  [`3c510ee`](https://github.com/tsrx-org/tsrx/commit/3c510ee11929af366393ce5aa582d72c1c38d3a8),
+  [`f38319a`](https://github.com/tsrx-org/tsrx/commit/f38319a6a0f5a133ca0eb9efc864d9e3c69bee4f),
+  [`7484f21`](https://github.com/tsrx-org/tsrx/commit/7484f2135be256f099f6e27af704e894b09ee260),
+  [`21edc74`](https://github.com/tsrx-org/tsrx/commit/21edc743be4622090b007d015c2f0d2699248777),
+  [`3ef0076`](https://github.com/tsrx-org/tsrx/commit/3ef00761631d95ef9fcccbae2673df371d1a4c0d),
+  [`15899ed`](https://github.com/tsrx-org/tsrx/commit/15899ed7a3e324f842e5f1662ac3b2c53dbf2605),
+  [`b2af266`](https://github.com/tsrx-org/tsrx/commit/b2af26663e24648ca777a6893b2e66b67d5c4d28),
+  [`6dbda19`](https://github.com/tsrx-org/tsrx/commit/6dbda190b1fa875d4d196b80c0dcc2903ad41b72),
+  [`059ba30`](https://github.com/tsrx-org/tsrx/commit/059ba30018bb3a74d7fbaf2de2d88068c8b30636),
+  [`829de73`](https://github.com/tsrx-org/tsrx/commit/829de739887b29e42dea5328b5fb370edf5bc58e),
+  [`2aa4bf8`](https://github.com/tsrx-org/tsrx/commit/2aa4bf8b1e38e8be96e149a2b5ba5b6d3c727164),
+  [`da9bec8`](https://github.com/tsrx-org/tsrx/commit/da9bec849cd988e39637654951864d1dba98cfc9),
+  [`4bdbe57`](https://github.com/tsrx-org/tsrx/commit/4bdbe572d5e5e0ac4a746248f7b4a9109f52e02d),
+  [`0fc3819`](https://github.com/tsrx-org/tsrx/commit/0fc3819e6c91a9cc8a2723737dd47f72374ae25f),
+  [`357bbcc`](https://github.com/tsrx-org/tsrx/commit/357bbcc9967848cd48a3ddcc59a4b10ed59db3a1),
+  [`644583f`](https://github.com/tsrx-org/tsrx/commit/644583f0abf521bf04b615e1394d96a3fd1f0d35),
+  [`91d958d`](https://github.com/tsrx-org/tsrx/commit/91d958de44c9e582cd66a5b66aff6bb37ff0ece2),
+  [`e0c07b5`](https://github.com/tsrx-org/tsrx/commit/e0c07b55b199acc4fe05b705255e79020b500376),
+  [`6b60554`](https://github.com/tsrx-org/tsrx/commit/6b60554c73958e7b2d00f385760d533031417f1f),
+  [`6b207b6`](https://github.com/tsrx-org/tsrx/commit/6b207b65e8a339d5fe301c60e72db271ffb9a572),
+  [`2473538`](https://github.com/tsrx-org/tsrx/commit/247353854e918f119dafe88f6474a2738cb82ed8),
+  [`baf1452`](https://github.com/tsrx-org/tsrx/commit/baf1452ef56f7e481112dd7138a69f9010f113c7),
+  [`ab3d989`](https://github.com/tsrx-org/tsrx/commit/ab3d989a68c1c2d68a2d0bfa2a94c4b9019f3f6e),
+  [`bb15638`](https://github.com/tsrx-org/tsrx/commit/bb156380f69d2a7fe23d7522a02580d3f4d276af),
+  [`e9330ea`](https://github.com/tsrx-org/tsrx/commit/e9330ea841e6113e10be39980aae7c0ebfd4b63a),
+  [`190f797`](https://github.com/tsrx-org/tsrx/commit/190f7970cf968c978b3e5df37b4e3a97c4e7efa5),
+  [`0ee439a`](https://github.com/tsrx-org/tsrx/commit/0ee439a5d94e071ecae594229f61e9b5ee022296),
+  [`56dd6f5`](https://github.com/tsrx-org/tsrx/commit/56dd6f573f9c7c822db9d33313317bed16f7fa45),
+  [`10a8901`](https://github.com/tsrx-org/tsrx/commit/10a89015088a283db1f067ffe7803fef4e621859),
+  [`1589310`](https://github.com/tsrx-org/tsrx/commit/1589310147fa30e065a10199e75092813ed4bb53),
+  [`04ea4f0`](https://github.com/tsrx-org/tsrx/commit/04ea4f0bb85bc3fe25d09366cf04e70d809cc66e),
+  [`0546961`](https://github.com/tsrx-org/tsrx/commit/0546961247f011b32370c6c16be3961b2bb5f533),
+  [`42e3e49`](https://github.com/tsrx-org/tsrx/commit/42e3e4934d2beaa86d5048c303dfa27498599fec),
+  [`70825fb`](https://github.com/tsrx-org/tsrx/commit/70825fb73774dce8753fcff7b6a8bbcdebe3a7fb),
+  [`14a664d`](https://github.com/tsrx-org/tsrx/commit/14a664d8485a89c9cece8cc2080266cd89cc1329),
+  [`f762c09`](https://github.com/tsrx-org/tsrx/commit/f762c09eea9f1071663bdc9d90524f21250132ff),
+  [`ed8c38c`](https://github.com/tsrx-org/tsrx/commit/ed8c38c9fd948270d1136bf269f896402c0d359a),
+  [`c07323a`](https://github.com/tsrx-org/tsrx/commit/c07323a54009fc3fbf95503de00d50ddb2b00725),
+  [`4344150`](https://github.com/tsrx-org/tsrx/commit/4344150cc4786dd717c1df722370e519ad349647),
+  [`c49216e`](https://github.com/tsrx-org/tsrx/commit/c49216e86d15b68c4d84f8763691418d74ad8744),
+  [`fb35a0b`](https://github.com/tsrx-org/tsrx/commit/fb35a0bf5bbea972889e2024b535d0fee3227856),
+  [`910dbae`](https://github.com/tsrx-org/tsrx/commit/910dbaea2d709ff2f53bf800042c8914bd336939),
+  [`d3e8fe4`](https://github.com/tsrx-org/tsrx/commit/d3e8fe44c53fdc64030307dbaaca1448d591cc2e),
+  [`e423279`](https://github.com/tsrx-org/tsrx/commit/e423279be7250a493c555bd98e243db4540d654e),
+  [`5391890`](https://github.com/tsrx-org/tsrx/commit/539189010bd47564395b7ab2c7108e2b9cc53f76),
+  [`5552aa5`](https://github.com/tsrx-org/tsrx/commit/5552aa5ff936fabbec7ee652155df64905968c6a),
+  [`4885ba3`](https://github.com/tsrx-org/tsrx/commit/4885ba3808edf0b2a74bb84b880b9c7f4966e5de),
+  [`1e58a65`](https://github.com/tsrx-org/tsrx/commit/1e58a65f2be6ff7d3aee1f4bff521d172b997159),
+  [`228d7bd`](https://github.com/tsrx-org/tsrx/commit/228d7bd028e879cde8b481a0209d1c3449380c5f),
+  [`5422ee1`](https://github.com/tsrx-org/tsrx/commit/5422ee180deb0422f0359629b0cdbf5533abf07b),
+  [`c19818c`](https://github.com/tsrx-org/tsrx/commit/c19818ce37642c4508fb2ffd41a8325367d46c36),
+  [`ab5a0ff`](https://github.com/tsrx-org/tsrx/commit/ab5a0ff13138746ade811808f27f52d34668ae3f),
+  [`04ef167`](https://github.com/tsrx-org/tsrx/commit/04ef16724d4c3d0a85cebef45fbd081673987fa0),
+  [`0246e95`](https://github.com/tsrx-org/tsrx/commit/0246e95f983c2efd83e3e99100d00a5ba24c9233)]:
+  - @tsrx/core@0.6.0
+
 ## 0.6.3
 
 ### Patch Changes
