@@ -14,7 +14,12 @@ import {
 	isLayoutWhitespace,
 	parseModule,
 } from '../../src/index.js';
-import { TS_ERRORS, TSRX_ERRORS, UPSTREAM_ERRORS } from '../../src/diagnostics.js';
+import {
+	DIAGNOSTIC_CODES,
+	TS_ERRORS,
+	TSRX_ERRORS,
+	UPSTREAM_ERRORS,
+} from '../../src/diagnostics.js';
 import { node_children } from '../../src/utils/ast.js';
 import { code_of, error_with, line_column, thrown } from '../shared/errors.js';
 import { as_type, assert_type } from '../shared/node-types.js';
@@ -7066,6 +7071,83 @@ describe('raw-text <style> elements', () => {
 				closing,
 			).toMatchObject({ openingElement: { name: { name: 'div' } } });
 		}
+	});
+});
+
+// A CSS syntax error is TSRX3013 at the CSS that fails: where the CSS parser
+// stopped (#1306).
+describe('a CSS syntax error in a <style> body', () => {
+	/** @type {Array<[label: string, source: string, at: string, message: string, rules: number]>} */
+	const cases = [
+		[
+			'a stray `}`',
+			'export function App() @{\n\t<div>\n\t\t<style>\n\t\t\t.a { color: red; }\n\t\t\t}\n\t\t</style>\n\t\t<p>x</p>\n\t</div>\n}\n',
+			'\t\t\t}\n',
+			'Expected identifier',
+			1,
+		],
+		[
+			'a missing `}`',
+			'export function App() @{\n\t<div>\n\t\t<style>\n\t\t\t.a { color: red;\n\t\t</style>\n\t\t<p>x</p>\n\t</div>\n}\n',
+			'\n\t\t</style>',
+			'Expected }',
+			0,
+		],
+		[
+			'a stray `}` outside a template',
+			'export const a = <style>.a { color: red; } }</style>;\n',
+			'}</style>',
+			'Expected identifier',
+			1,
+		],
+	];
+	/** @param {string} source @param {string} at */
+	const offset_of = (source, at) => source.indexOf(at) + at.search(/[^\t]/);
+
+	it.each(cases)('throws %s at its place, collecting too', (_label, source, at, message) => {
+		const pos = offset_of(source, at);
+		for (const options of [{}, { collect: true }]) {
+			expect(() => parseModule(source, 'App.tsrx', options)).toThrow(
+				expect.objectContaining({
+					code: DIAGNOSTIC_CODES.CSS_SYNTAX,
+					pos,
+					loc: expect.objectContaining(
+						/** @type {{ line: number, column: number }} */ (acorn.getLineInfo(source, pos)),
+					),
+					message: `${message} (${line_column(source, pos)})`,
+				}),
+			);
+		}
+	});
+
+	// The editor's parse reports it and keeps the rules before it.
+	it.each(cases)('records %s in a loose parse', (_label, source, at, message, rules) => {
+		const pos = offset_of(source, at);
+		/** @type {import('../../types/index').CompileError[]} */
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', {
+			loose: true,
+			errors: /** @type {any} */ (errors),
+		});
+
+		expect(errors).toEqual([
+			expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_SYNTAX, message, pos, end: pos + 1 }),
+		]);
+		const style = /** @type {AST.JSXStyleElement} */ (
+			find_first(ast, (node) => node.type === 'JSXStyleElement')
+		);
+		expect(style.children[0].children.map((rule) => rule.type)).toEqual(Array(rules).fill('Rule'));
+	});
+
+	// Its body is still being typed, so its TSRX1001 is enough.
+	it('records only TSRX1001 for an unclosed <style> in a loose parse', () => {
+		const source =
+			'export function App() @{\n\t<div>\n\t\t<style>.a {\n\t\t<p>x</p>\n\t</div>\n}\n';
+		/** @type {import('../../types/index').CompileError[]} */
+		const errors = [];
+		parseModule(source, 'App.tsrx', { loose: true, errors: /** @type {any} */ (errors) });
+
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG('style').code]);
 	});
 });
 

@@ -12,6 +12,7 @@ import { parse_style } from './parse/style.js';
 import { regex_newline_characters, regex_not_whitespace } from './utils/patterns.js';
 import { error } from './errors.js';
 import {
+	DIAGNOSTIC_CODES,
 	TS_ERRORS,
 	TS_SYNTAX_ERROR_CODES,
 	TSRX_ERRORS,
@@ -4476,16 +4477,32 @@ export function TSRXPlugin(config) {
 				}
 				const content = this.#parseRawTextElement(open, node, 'style', contextDepth);
 				const bodyLoc = get_line_info(this, open.end);
-				const parsedCss = parse_style(
-					content,
-					{
-						filename,
-						line: open.loc.start.line,
-						column: open.loc.start.column,
-						body: { start: open.end, line: bodyLoc.line, column: bodyLoc.column },
-					},
-					{ loose: this.#loose },
-				);
+				const location = {
+					filename,
+					line: open.loc.start.line,
+					column: open.loc.start.column,
+					body: { start: open.end, line: bodyLoc.line, column: bodyLoc.column },
+				};
+				let parsedCss;
+				try {
+					parsedCss = parse_style(content, location, { loose: false });
+				} catch (error) {
+					const css_error = /** @type {{ code?: string, pos?: number, message: string }} */ (error);
+					if (css_error?.code !== DIAGNOSTIC_CODES.CSS_SYNTAX || css_error.pos === undefined) {
+						throw error;
+					}
+					const reported = { code: css_error.code, message: css_error.message };
+					if (!this.#loose) {
+						this.#throwError(css_error.pos, reported);
+					}
+					// A loose parse, the editor's, reports it and keeps the rules before
+					// it. An unclosed `<style>`, whose body is still being typed, gets
+					// its TSRX1001 alone.
+					if (!node.unclosed) {
+						this.#report_recoverable_error(css_error.pos, reported);
+					}
+					parsedCss = parse_style(content, location, { loose: true });
+				}
 
 				if (!insideHead) {
 					node.metadata.styleScopeHash = parsedCss.hash;

@@ -884,6 +884,26 @@ export const p = 1
 			expect(result.code).toContain('<style></style>');
 			expect(virtual_parse_diagnostics(result.code)).toEqual([]);
 		});
+
+		// At the CSS that fails, and the rest of the file compiles (#1306).
+		it('reports a CSS syntax error in a loose type-only compile', function () {
+			const source = `export function App() @{
+	<div>
+		<style>
+			.a { color: red; }
+			}
+		</style>
+		<p class="a">x</p>
+	</div>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const pos = source.indexOf('}\n\t\t</style>');
+
+			expect(
+				result.errors.map((error) => [error.code, error.message, error.pos, error.end]),
+			).toEqual([[DIAGNOSTIC_CODES.CSS_SYNTAX, 'Expected identifier', pos, pos + 1]]);
+			expect(virtual_parse_diagnostics(result.code)).toEqual([]);
+		});
 	});
 
 	describe(`[${name}] compile diagnostics`, () => {
