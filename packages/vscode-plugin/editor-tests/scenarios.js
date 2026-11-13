@@ -46,7 +46,7 @@
  * closes it as well (`js/ts.autoClosingTags.enabled`).
  *
  * @typedef {'typescript-7' | 'vscode-typescript' | 'nothing'} Server
- * @typedef {'vscode' | 'typescript-7' | 'typescript-7-unsupported' | 'typescript-7-missing'} Status
+ * @typedef {'vscode' | 'typescript-7' | 'typescript-7-unsupported'} Status
  * @typedef {{
  * 	name: string,
  * 	description: string,
@@ -460,14 +460,12 @@ export const SCENARIOS = [
 	{
 		name: 'ts7-nightly-only',
 		description:
-			"Only the TypeScript 7 Nightly extension, TypeScript 7 on: it has no server, and VS Code's own TypeScript stands down",
+			"Only the TypeScript 7 Nightly extension, TypeScript 7 on: it has no server, so VS Code's own TypeScript stays on",
 		extensions: ['tsrx', 'ts7-nightly'],
 		settings: { 'js/ts.experimental.useTsgo': true },
-		expect: 'nothing',
-		typescript: 'typescript-7-missing',
-		notice: 'typescript-7-missing',
+		expect: 'vscode-typescript',
+		typescript: 'vscode',
 		closingTag: '<b></b>',
-		gap: "The TypeScript 7 Nightly extension only ships a compiler for the TypeScript 7 extension. The TSRX extension's notice offers to install it or turn TypeScript 7 off.",
 	},
 	{
 		name: 'ts7-off',

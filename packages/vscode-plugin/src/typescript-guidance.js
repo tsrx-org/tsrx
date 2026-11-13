@@ -31,14 +31,12 @@ const FIX_COMMAND = 'tsrx.typescript.fix';
  * - `typescript-7`: the TypeScript 7 extension, with a compiler that runs the mapper.
  * - `typescript-7-unsupported`: the TypeScript 7 extension, with a compiler that
  *   cannot (the stable 7.0 line, an older nightly), so nothing checks the file.
- * - `typescript-7-missing`: TypeScript 7 is on, which turns VS Code's own TypeScript
- *   off, but only the TypeScript 7 Nightly extension is installed, which has no server.
  *
  * `project` is the TypeScript package the file's project installs. `workspace_tsdk_ignored`
  * says that the server runs another compiler than the one a `tsdk` setting in the
  * workspace names, because the user has not allowed that setting.
  * @typedef {{
- * 	kind: 'vscode' | 'typescript-7' | 'typescript-7-unsupported' | 'typescript-7-missing',
+ * 	kind: 'vscode' | 'typescript-7' | 'typescript-7-unsupported',
  * 	version?: string,
  * 	project?: { name?: string, version: string, directory: string },
  * 	workspace_tsdk_ignored?: boolean,
@@ -51,9 +49,8 @@ const FIX_COMMAND = 'tsrx.typescript.fix';
  */
 export function typescript_status(uri) {
 	const project = project_typescript(uri);
-	if (!typescript_7_on()) return { kind: 'vscode', project };
-	const compiler = typescript_7_compiler();
-	if (!compiler) return { kind: 'typescript-7-missing', project };
+	const compiler = typescript_7_on() ? typescript_7_compiler() : undefined;
+	if (!compiler) return { kind: 'vscode', project };
 	// What the settings predict is all there is until the server reports, and on extension
 	// 1.0.1, which never does.
 	const running = running_compiler();
@@ -231,14 +228,6 @@ export function notice_for(status) {
 				actions: [LEARN_MORE, TURN_OFF_TYPESCRIPT_7],
 			};
 		}
-		case 'typescript-7-missing':
-			return {
-				id: 'typescript-7-missing',
-				severity: 'warning',
-				title: 'Fix type checking in .tsrx files',
-				message: `No TypeScript features work in .tsrx files. The TypeScript 7 Nightly extension only adds a compiler. The editor features come from the TypeScript 7 extension, which is not installed. To add it, click Install TypeScript 7. ${turn_off}`,
-				actions: [INSTALL_TYPESCRIPT_7, TURN_OFF_TYPESCRIPT_7],
-			};
 		default:
 			return undefined;
 	}
@@ -278,13 +267,6 @@ function status_item_content(status, notice) {
 				severity: vscode.LanguageStatusSeverity.Warning,
 				text: `TypeScript ${status.version}`,
 				detail: 'cannot type-check this file',
-				command: fix,
-			};
-		default:
-			return {
-				severity: vscode.LanguageStatusSeverity.Warning,
-				text: 'No type checking',
-				detail: 'the TypeScript 7 extension is not installed',
 				command: fix,
 			};
 	}
