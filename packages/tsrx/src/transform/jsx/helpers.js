@@ -715,22 +715,13 @@ export function tsx_with_ts_locations(
 				const previous = node.body[index - 1];
 				if (previous && source !== undefined) {
 					// Statements on one line in the source stay on one line, with the
-					// text between them as written, which then isn't printed again.
-					const end = /** @type {number} */ (previous.end);
-					const start = /** @type {number} */ (statement.start);
-					const between = source.slice(end, start);
-					if (regex_line_break.test(between)) {
-						context.newline();
-					} else {
-						for (const comment of comments ?? []) {
-							if (comment.start >= end && comment.end <= start) {
-								emitted_comments?.add(
-									`${comment.start}:${comment.end}:${comment.type}:${comment.value}`,
-								);
-							}
-						}
-						context.write(between);
-					}
+					// same spaces between them.
+					const between = source.slice(
+						/** @type {number} */ (previous.end),
+						/** @type {number} */ (statement.start),
+					);
+					if (/^[ \t]*$/.test(between)) context.write(between);
+					else context.newline();
 				}
 				context.visit(statement);
 			});

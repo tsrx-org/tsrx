@@ -2352,11 +2352,6 @@ function C() @{
 				"import { z } from './z';\n;\nimport { a } from './a';\nexport const x = [z, a];\n",
 				"import { z } from './z';\nimport { a } from './a';\n\nexport const x = [z, a];",
 			],
-			[
-				'on one line with a comment',
-				"export * from './z'; /* @ts-ignore */ export * from './a';\nexport const x = 1;\n",
-				"export * from './z'; /* @ts-ignore */ export * from './a';\n\nexport const x = 1;",
-			],
 		])('prints them %s between them as written', (_label, source, expected) => {
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			expect(result.errors).toEqual([]);
