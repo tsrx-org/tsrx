@@ -210,7 +210,7 @@ export function create_tsrx_content_mapper(context = {}) {
 			result.sourceAst,
 			generated.mappings,
 			content.length,
-			generated.text.length,
+			generated.text,
 		);
 		return {
 			text: generated.text,
