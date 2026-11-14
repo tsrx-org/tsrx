@@ -12639,6 +12639,13 @@ export function TSRXPlugin(config) {
 				node.handler = null;
 
 				if (this.value === 'pending') {
+					// `@tsrx/ripple` compiles a `pending` block on a plain `try`; the JSX
+					// targets report it at the keyword (see `createJsxTransform`).
+					node.pendingKeyword = {
+						start: this.start,
+						end: this.end,
+						loc: { start: this.startLoc, end: this.endLoc },
+					};
 					this.next();
 					node.pending = this.parseBlock();
 				} else {

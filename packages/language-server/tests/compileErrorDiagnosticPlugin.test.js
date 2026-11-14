@@ -339,6 +339,30 @@ export {};`,
 		]);
 	});
 
+	it("reports a plain try's pending block at `pending`, and checks its code (#1303)", async () => {
+		const source = `export function f() {
+	try {
+		a();
+	} pending {
+		b(1);
+	}
+}
+declare function a(): void;
+declare function b(): void;`;
+		const { document, diagnostics } = await editor_diagnostics_for('PlainTryPending', source);
+
+		expect(reported(document, diagnostics, 'TS1472')).toEqual([
+			{ source: 'TSRX', text: 'pending', offset: source.indexOf('pending') },
+		]);
+		// TypeScript checks the block's code: `b` takes no argument.
+		expect(reported(document, diagnostics, 'TS2554')).toEqual([
+			{ source: 'ts', text: '1', offset: source.indexOf('1)') },
+		]);
+		expect(diagnostics.filter((diagnostic) => diagnostic.code === 'tsrx-compile-error')).toEqual(
+			[],
+		);
+	});
+
 	it('keeps the mistakes while TypeScript validation is off', async () => {
 		const { document, diagnostics } = await editor_diagnostics_for(
 			'ValidationOff',
