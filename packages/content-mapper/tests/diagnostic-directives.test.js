@@ -126,9 +126,10 @@ describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler)
 		}
 	});
 
-	// The closing tag recovery adds has no mapping, so TypeScript's error on it,
-	// such as TS2304 for a name that isn't a value, has no place in the file: a
-	// directive of its own covers it (#1328).
+	// The closing tag recovery adds has no place in the file (Solid maps only its
+	// name, to the opening tag's), so TypeScript's error on it, such as TS2304 for
+	// a name that isn't a value, showed at the top of the file as TS18080 on
+	// TypeScript 7: a directive of its own covers it (#1328).
 	it.each([
 		['a generic arrow', 'export const f = <T>(x: T) => x;\n', '</T>'],
 		[
@@ -147,6 +148,31 @@ describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler)
 				`${source} at ${offset}`,
 			).toBe(true);
 		}
+	});
+
+	it('covers that closing tag when an older compiler reports the tag at the end of the file', () => {
+		for (const source of ['export const f = <T>(x: T) => x;\n', 'export const y = <Missing>;\n']) {
+			const at_the_end = (/** @type {any} */ error) => ({
+				code: error.code,
+				pos: source.length,
+				end: source.length,
+				raisedAt: source.length,
+			});
+			const closing = source.includes('<T>') ? '</T>' : '</Missing>';
+			expect(covers(compiler, source, closing, at_the_end), source).toBe(true);
+		}
+	});
+
+	it('leaves the same text in an attribute alone', () => {
+		const source = 'export const y = <Missing data-x="</Missing>">;\n';
+		const { ranges } = hidden_ranges(compiler, source, '</Missing>');
+		const result = transform_tsrx(compiler, 'App.tsrx', source);
+		const authored = result.text.indexOf('"</Missing>"');
+		const recovered = result.text.lastIndexOf('</Missing>');
+		expect(authored).toBeGreaterThan(-1);
+		expect(recovered).toBeGreaterThan(authored);
+		expect(ranges.some(([start, end]) => start <= authored + 1 && authored + 1 < end)).toBe(false);
+		expect(ranges.some(([start, end]) => start <= recovered && recovered < end)).toBe(true);
 	});
 
 	// With nothing holding the tag, the directive is still there for its own code.

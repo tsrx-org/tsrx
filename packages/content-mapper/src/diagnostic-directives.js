@@ -48,29 +48,32 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 	const generated_length = generated_text.length;
 	/** @type {Array<[original_start: number, original_end: number, generated_start: number, generated_end: number]>} */
 	const ranges = [];
-	/** @type {Set<number>} */
-	const claimed_closing_tags = new Set();
+	// The closing tags recovery adds, for every unclosed element, wherever the
+	// compiler reported its error: a compiler from before tags were reported on
+	// themselves reports them all where the parser stopped.
+	if (
+		source_ast &&
+		errors.some(
+			(error) => error.code === DIAGNOSTIC_CODES.UNCLOSED_TAG && typeof error.pos === 'number',
+		)
+	) {
+		/** @type {Set<number>} */
+		const claimed = new Set();
+		for (const opening of unclosed_openings(source_ast)) {
+			const closing_tag = recovered_closing_tag(opening, mappings, generated_text, claimed);
+			if (closing_tag) {
+				ranges.push([
+					Math.min(opening.start, original_length),
+					Math.min(opening.end, original_length),
+					closing_tag[0],
+					closing_tag[1],
+				]);
+			}
+		}
+	}
 	for (const error of errors) {
 		if (typeof error.pos !== 'number') {
 			continue;
-		}
-		const closing_tag =
-			error.code === DIAGNOSTIC_CODES.UNCLOSED_TAG && source_ast
-				? recovered_closing_tag(
-						source_ast,
-						error.pos,
-						mappings,
-						generated_text,
-						claimed_closing_tags,
-					)
-				: null;
-		if (closing_tag) {
-			ranges.push([
-				Math.min(error.pos, original_length),
-				Math.min(typeof error.end === 'number' ? error.end : error.pos, original_length),
-				closing_tag[0],
-				closing_tag[1],
-			]);
 		}
 		const on_tag = reported_on_tag(error);
 		const position = on_tag ? /** @type {number} */ (error.raisedAt) - 1 : error.pos;
@@ -124,25 +127,23 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 }
 
 /**
- * The generated range of the closing tag that recovery adds to the unclosed
- * element whose opening tag holds `position`, or `null`. The React, Preact and
- * Vue targets give it no mapping, so TypeScript's error on it, such as TS2304
- * for a name that isn't a value, has no place in the file and shows at its top
- * as TS18080. An ignore directive over just that tag holds no authored code, so
- * it can't hide errors in the code that follows. The tag is the first
- * `</name>` after the opening tag that no other element has claimed and that
- * no mapping ties to code outside the opening tag: the Solid target maps the
- * added tag's name to the opening tag's.
- * @param {AST.Node} source_ast
- * @param {number} position
+ * The generated range of the closing tag that recovery adds to an unclosed
+ * element, or `null`. The React, Preact, Vue and Hono targets give it no
+ * mapping, so TypeScript's error on it, such as TS2304 for a name that isn't a
+ * value, has no place in the file and shows at its top as TS18080. An ignore
+ * directive over just that tag holds no authored code, so it can't hide errors
+ * in the code that follows. The tag is the first `</name>` from the opening
+ * tag on that no other element has claimed and that no mapping ties to
+ * authored code: the only mapping it may have is its name's to the opening
+ * tag, as the Solid target maps it.
+ * @param {{ start: number, end: number, name: unknown }} opening
  * @param {readonly CodeMapping[]} mappings
  * @param {string} generated_text
  * @param {Set<number>} claimed
  * @returns {[number, number] | null}
  */
-function recovered_closing_tag(source_ast, position, mappings, generated_text, claimed) {
-	const opening = /** @type {any} */ (unclosed_element_at(source_ast, position))?.openingElement;
-	const name = opening && jsx_name(opening.name);
+function recovered_closing_tag(opening, mappings, generated_text, claimed) {
+	const name = jsx_name(opening.name);
 	if (!name) return null;
 	/** @type {number | undefined} */
 	let from;
@@ -161,7 +162,13 @@ function recovered_closing_tag(source_ast, position, mappings, generated_text, c
 		at !== -1;
 		at = generated_text.indexOf(text, at + 1)
 	) {
-		if (claimed.has(at) || maps_elsewhere(mappings, at, at + text.length, opening)) continue;
+		const name_start = at + '</'.length;
+		if (
+			claimed.has(at) ||
+			maps_authored_code(mappings, at, at + text.length, opening, name_start, name.length)
+		) {
+			continue;
+		}
 		claimed.add(at);
 		return [at, at + text.length];
 	}
@@ -169,25 +176,23 @@ function recovered_closing_tag(source_ast, position, mappings, generated_text, c
 }
 
 /**
- * The innermost unclosed element whose opening tag holds `position`.
+ * The opening tags of the elements the parser found unclosed, outermost first.
  * @param {AST.Node} node
- * @param {number} position
- * @returns {AST.Node | null}
+ * @returns {Array<{ start: number, end: number, name: unknown }>}
  */
-function unclosed_element_at(node, position) {
-	/** @type {AST.Node | null} */
-	let found = null;
+function unclosed_openings(node) {
+	/** @type {Array<{ start: number, end: number, name: unknown }>} */
+	const openings = [];
 	/** @param {AST.Node} current */
 	const visit = (current) => {
-		const opening = /** @type {any} */ (current).openingElement;
+		const element = /** @type {any} */ (current);
 		if (
-			current.type === 'JSXElement' &&
-			/** @type {any} */ (current).unclosed &&
-			opening &&
-			opening.start <= position &&
-			position < opening.end
+			element.type === 'JSXElement' &&
+			element.unclosed &&
+			typeof element.openingElement?.start === 'number' &&
+			typeof element.openingElement?.end === 'number'
 		) {
-			found = current;
+			openings.push(element.openingElement);
 		}
 		for (const [key, value] of Object.entries(current)) {
 			if (NOT_CHILDREN.has(key) || !value || typeof value !== 'object') continue;
@@ -197,7 +202,7 @@ function unclosed_element_at(node, position) {
 		}
 	};
 	visit(node);
-	return found;
+	return openings;
 }
 
 /**
@@ -217,23 +222,28 @@ function jsx_name(name) {
 }
 
 /**
- * Whether a mapping ties generated code in `[start, end)` to source code
- * outside `node`.
+ * Whether a mapping ties generated code in `[start, end)` to authored code:
+ * any mapping there but one of just the name, at `name_start`, to the opening
+ * tag, as the Solid target maps a recovered closing tag's name.
  * @param {readonly CodeMapping[]} mappings
  * @param {number} start
  * @param {number} end
- * @param {{ start: number, end: number }} node
+ * @param {{ start: number, end: number }} opening
+ * @param {number} name_start
+ * @param {number} name_length
  * @returns {boolean}
  */
-function maps_elsewhere(mappings, start, end, node) {
+function maps_authored_code(mappings, start, end, opening, name_start, name_length) {
 	return mappings.some((mapping) =>
 		mapping.generatedOffsets.some((offset, i) => {
 			const length = mapping.generatedLengths?.[i] ?? mapping.lengths[i];
+			if (offset >= end || start >= offset + length) return false;
 			const source = mapping.sourceOffsets[i];
-			return (
-				offset < end &&
-				start < offset + length &&
-				(source < node.start || source + mapping.lengths[i] > node.end)
+			return !(
+				offset >= name_start &&
+				offset + length <= name_start + name_length &&
+				source >= opening.start &&
+				source + mapping.lengths[i] <= opening.end
 			);
 		}),
 	);
