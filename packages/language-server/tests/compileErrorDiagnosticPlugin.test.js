@@ -604,6 +604,19 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 			'export function C({ Tag }: { Tag: string }) @{\n\t<div><{Tag}><Missing>x</{Tag}>tail</div>\n}\n',
 			'Missing',
 		],
+		// No mapping of the expression container around it covers it (#1307).
+		['InBraces', 'export function C() {\n\treturn <div>{<Missing>}</div>;\n}\n', 'Missing'],
+		['InBracesInTemplate', 'export function C() @{\n\t<div>{<Missing>x}</div>\n}\n', 'Missing'],
+		[
+			'InAttributeValue',
+			'export function C() {\n\treturn <div title={<Missing>}></div>;\n}\n',
+			'Missing',
+		],
+		[
+			'InCondition',
+			'export function C(props: { x: boolean }) {\n\treturn <div>{props.x && <Missing>}</div>;\n}\n',
+			'Missing',
+		],
 	])('reports the undefined unclosed tag of %s once, at its name', async (name, source, tag) => {
 		const { document, diagnostics } = await editor_diagnostics_for(`Undefined${name}`, source);
 
