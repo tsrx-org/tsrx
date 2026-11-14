@@ -124,7 +124,8 @@ On TypeScript 5.9 and 6, `tsrx-tsc` prints the TSRX compiler's own errors and
 warnings the way `tsc` prints a diagnostic, such as
 `src/App.tsrx(4,2): error TSRX2011: …`, before TypeScript's. A mistake that
 TypeScript reports itself at the same place prints once. A TSRX error fails the
-run with exit code 2, as TypeScript's errors do; a warning doesn't.
+run: where TypeScript alone would exit 0, `tsrx-tsc` exits 2; a warning doesn't
+change the exit code.
 
 With Deno 2.8 or newer and the npm dependencies installed locally, add a task to
 `deno.json`:

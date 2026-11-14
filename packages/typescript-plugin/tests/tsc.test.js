@@ -120,7 +120,7 @@ try {
 	});
 	expect(result.error).toBeUndefined();
 	expect(result.signal).toBeNull();
-	return { status: result.status, output: result.stdout + result.stderr };
+	return { status: result.status, output: result.stdout + result.stderr, stdout: result.stdout };
 }
 
 describe.each(['native', 'bypass', 'legacy'])('tsrx-tsc with the %s loader', (loader) => {
@@ -201,7 +201,9 @@ describe('tsrx-tsc with a TSRX compile error', () => {
 		);
 		const result = run_cli('native');
 		const { code, message } = TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT;
-		expect(result.output).toBe(`layout.tsrx(4,2): error ${code}: ${message}\n`);
+		// On standard output, where tsc writes its diagnostics.
+		expect(result.stdout).toBe(`layout.tsrx(4,2): error ${code}: ${message}\n`);
+		expect(result.output).toBe(result.stdout);
 		expect(result.status).toBe(2);
 	});
 

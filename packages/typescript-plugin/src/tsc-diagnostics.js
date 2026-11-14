@@ -34,9 +34,9 @@ const LINE_BREAK = /\r\n?|[\n\u2028\u2029]/g;
  * `severity`, as the language server shows it.
  *
  * An error with a TypeScript code is a mistake the parser collects where
- * TypeScript's parser goes on (#415). When TypeScript reports the same code at
- * the same place in the file, its line is the one tsc prints, so this one is
- * left out, as the language server leaves it to TypeScript (#946).
+ * TypeScript's parser goes on (#415). When tsc reports the same code at the
+ * same place in the file, its line is the one tsc prints, so this one is left
+ * out, as the language server leaves it to TypeScript (#946).
  *
  * `tsrx-tsc` calls this once for each program it checks, after Volar has
  * decorated it, so its diagnostics point at the `.tsrx` source.
@@ -48,6 +48,8 @@ const LINE_BREAK = /\r\n?|[\n\u2028\u2029]/g;
  */
 export function report_tsrx_diagnostics(language, program, extensions, write) {
 	let printed_error = false;
+	/** @type {boolean | undefined} */
+	let semantic_reported;
 	for (const source_file of program.getSourceFiles()) {
 		if (!extensions.some((extension) => source_file.fileName.endsWith(extension))) continue;
 		const root = /** @type {CompiledFile | undefined} */ (
@@ -67,7 +69,8 @@ export function report_tsrx_diagnostics(language, program, extensions, write) {
 			if (diagnostic.severity === 'error' && diagnostic.code && diagnostic.offset !== undefined) {
 				const match = TYPESCRIPT_CODE.exec(diagnostic.code);
 				if (match) {
-					reported_by_typescript ??= typescript_places(program, source_file);
+					semantic_reported ??= reports_semantic_diagnostics(program);
+					reported_by_typescript ??= typescript_places(program, source_file, semantic_reported);
 					if (reported_by_typescript.has(`${match[1]}@${diagnostic.offset}`)) continue;
 				}
 			}
@@ -82,22 +85,37 @@ export function report_tsrx_diagnostics(language, program, extensions, write) {
 }
 
 /**
- * The codes and source offsets of TypeScript's own diagnostics for a file, as
- * `<code>@<offset>`. Syntactic diagnostics stop tsc from checking types, so a
- * mistake TypeScript reports is in one list or the other. Both are cached, so
- * tsc reuses them when it asks next.
+ * Whether tsc reports the program's semantic diagnostics: as
+ * `emitFilesAndReportErrors` decides, not with `--listFilesOnly`, and only when
+ * no file has a syntax error and the options and globals have no errors. The
+ * diagnostics are cached, so tsc reuses them when it asks next.
+ * @param {Program} program
+ * @returns {boolean}
+ */
+function reports_semantic_diagnostics(program) {
+	return (
+		!program.getCompilerOptions().listFilesOnly &&
+		program.getSyntacticDiagnostics().length === 0 &&
+		program.getOptionsDiagnostics().length === 0 &&
+		program.getGlobalDiagnostics().length === 0
+	);
+}
+
+/**
+ * The codes and source offsets of the diagnostics tsc reports for a file, as
+ * `<code>@<offset>`: its syntactic diagnostics, and its semantic ones when tsc
+ * reports those.
  * @param {Program} program
  * @param {SourceFile} source_file
+ * @param {boolean} semantic_reported
  * @returns {Set<string>}
  */
-function typescript_places(program, source_file) {
+function typescript_places(program, source_file, semantic_reported) {
 	/** @type {Set<string>} */
 	const places = new Set();
 	/** @type {ReadonlyArray<Diagnostic>[]} */
-	const lists = [
-		program.getSyntacticDiagnostics(source_file),
-		program.getSemanticDiagnostics(source_file),
-	];
+	const lists = [program.getSyntacticDiagnostics(source_file)];
+	if (semantic_reported) lists.push(program.getSemanticDiagnostics(source_file));
 	for (const diagnostics of lists) {
 		for (const diagnostic of diagnostics) {
 			if (diagnostic.file?.fileName !== source_file.fileName) continue;

@@ -2,6 +2,7 @@
 
 import fs from 'node:fs';
 import node_module, { createRequire } from 'node:module';
+import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { strip_platform_globals_from_declaration_output } from './declaration-output.js';
 import { TSRX_EXTENSIONS, getTsrxLanguagePlugin } from './language.js';
@@ -61,16 +62,18 @@ const decorate_program = decorate_program_module.decorateProgram;
 let printed_tsrx_error = false;
 decorate_program_module.decorateProgram = (language, program) => {
 	decorate_program(language, program);
+	// tsc writes to standard output, with the platform's line break.
 	const printed_error = report_tsrx_diagnostics(language, program, TSRX_EXTENSIONS, (line) =>
-		process.stdout.write(`${line}\n`),
+		process.stdout.write(`${line}${os.EOL}`),
 	);
 	printed_tsrx_error ||= printed_error;
 };
 
 // TypeScript knows nothing of the TSRX errors, so a run where they are the only
-// errors would exit 0. Exit as tsc does when it reports an error: 2. A warning
-// doesn't change the exit code. tsc exits through `sys.exit`, which calls
-// `process.exit`; in watch mode it doesn't exit.
+// errors would exit 0. Exit 2 then, as tsc does when it reports an error and
+// emits; a nonzero code of tsc's own stays. A warning doesn't change the exit
+// code. tsc exits through `sys.exit`, which calls `process.exit`; in watch mode
+// it doesn't exit.
 const exit = process.exit;
 process.exit = (code) =>
 	exit.call(process, printed_tsrx_error && (code === undefined || code === 0) ? 2 : code);
