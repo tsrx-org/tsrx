@@ -612,10 +612,11 @@ describe('which TypeScript serves .tsrx files', () => {
 		expect(typescript_status(app_file()).version).toBe('7.0.2');
 	});
 
-	it('serves nothing when TypeScript 7 is on with only the Nightly extension, which has no server', () => {
+	it("leaves .tsrx files to VS Code's TypeScript when TypeScript 7 is on with only the Nightly extension, which has no server", () => {
 		install('TypeScriptTeam.vscode-typescript-nightly', NIGHTLY);
 		use_tsgo();
-		expect(typescript_status(app_file()).kind).toBe('typescript-7-missing');
+		expect(typescript_status(app_file()).kind).toBe('vscode');
+		expect(notice_for(typescript_status(app_file()))).toBeUndefined();
 	});
 
 	it('reads typescript.experimental.useTsgo only while js/ts.experimental.useTsgo is not set', () => {
@@ -684,14 +685,6 @@ describe('notices', () => {
 			"TypeScript 7 uses version 7.0.2. This version cannot type-check .tsrx files. Please use version 7.1.0-dev.20260923.1 or newer. To get it, install typescript@next in your project. To use VS Code's built-in TypeScript instead, click Turn Off TypeScript 7.",
 		);
 		expect(labels(notice)).toEqual(['Learn More', 'Turn Off TypeScript 7']);
-	});
-
-	it('explain that the Nightly extension alone serves nothing', () => {
-		const missing = notice_for({ kind: 'typescript-7-missing' });
-		expect(missing?.message).toBe(
-			"No TypeScript features work in .tsrx files. The TypeScript 7 Nightly extension only adds a compiler. The editor features come from the TypeScript 7 extension, which is not installed. To add it, click Install TypeScript 7. To use VS Code's built-in TypeScript instead, click Turn Off TypeScript 7.",
-		);
-		expect(labels(missing)).toEqual(['Install TypeScript 7', 'Turn Off TypeScript 7']);
 	});
 });
 

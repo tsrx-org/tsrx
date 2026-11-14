@@ -88,9 +88,18 @@ describe('TSRX: Restart Language Server', () => {
 		);
 	});
 
-	it('restarts only the TSRX server when no TypeScript server runs', async () => {
+	it("restarts VS Code's tsserver when TypeScript 7 is on with only the Nightly extension, which has no server", async () => {
 		host.use_tsgo = true;
 		host.extensions.add('typescriptteam.vscode-typescript-nightly');
+		const { client, run } = restart();
+		await run();
+		expect(client.restart).toHaveBeenCalledOnce();
+		expect(host.executeCommand).toHaveBeenCalledExactlyOnceWith('typescript.restartTsServer');
+	});
+
+	it('restarts only the TSRX server when no TypeScript server runs', async () => {
+		host.use_tsgo = true;
+		host.extensions.add('typescriptteam.native-preview');
 		host.commands = [];
 		const { client, run } = restart();
 		await run();

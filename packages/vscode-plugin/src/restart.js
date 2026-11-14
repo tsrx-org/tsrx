@@ -39,8 +39,7 @@ export function register_restart_command(get_client) {
 		const typescript_restart = typescript_7_on()
 			? 'typescript.native-preview.restart'
 			: 'typescript.restartTsServer';
-		// Missing while no TypeScript server runs, such as TypeScript 7 on with only the
-		// TypeScript 7 Nightly extension installed.
+		// Missing while the TypeScript extension that serves the file has not registered it.
 		const commands = await vscode.commands.getCommands(true);
 		/** @param {unknown} error */
 		function report_failure(error) {
