@@ -2342,6 +2342,79 @@ function C() @{
 		});
 	});
 
+	describe(`[${name}] imports and re-exports in the editor code (#1029)`, () => {
+		// TypeScript sorts each block of imports and re-exports that no blank line
+		// splits, so the editor code has a blank line between them only where the
+		// source has one, and writes a re-export as it is in the source.
+		it.each([
+			[
+				'with no blank line',
+				"import { label } from './label';\nexport * from './lib';\nexport { label as other } from './label';\n\nexport const x = label;\n",
+				"import { label } from './label';\nexport * from './lib';\nexport { label as other } from './label';\n\nexport const x = label;",
+			],
+			[
+				'with a blank line',
+				"import { label } from './label';\n\nexport * from './lib';\nexport type { T } from './t';\nexport * as ns from './ns';\nexport type * from './types';\nexport const x = label;\n",
+				"import { label } from './label';\n\nexport * from './lib';\nexport type { T } from './t';\nexport * as ns from './ns';\nexport type * from './types';\n\nexport const x = label;",
+			],
+			[
+				'with a blank line between two of one kind',
+				"export * from './z';\n\nexport * from './a';\nexport const x = 1;\n",
+				"export * from './z';\n\nexport * from './a';\n\nexport const x = 1;",
+			],
+			[
+				'on one line',
+				"export * from './z'; export { a } from './a';\nexport const x = 1;\n",
+				"export * from './z'; export { a } from './a';\n\nexport const x = 1;",
+			],
+			[
+				'with a comment over two lines',
+				"export * from './z'; /* a\n b */\nexport { a } from './a';\nexport const x = 1;\n",
+				"export * from './z';\nexport { a } from './a';\n\nexport const x = 1;",
+			],
+			[
+				'with an empty statement',
+				"import { z } from './z';\n;\nimport { a } from './a';\nexport const x = [z, a];\n",
+				"import { z } from './z';\nimport { a } from './a';\n\nexport const x = [z, a];",
+			],
+			[
+				'on one line with a no-break space',
+				"export * from './z';\u00a0export * from './a';\nexport const x = 1;\n",
+				"export * from './z';\u00a0export * from './a';\n\nexport const x = 1;",
+			],
+			// A comment or an empty statement between two on one line has no mapping
+			// an edit could go through, so they go on two lines, as esrap prints them.
+			[
+				'on one line with a comment',
+				"export * from './z'; /* note */ export * from './a';\nexport const x = 1;\n",
+				"export * from './z';\nexport * from './a';\n\nexport const x = 1;",
+			],
+			[
+				'on one line with an empty statement',
+				"import { z } from './z';; import { a } from './a';\nexport const x = [z, a];\n",
+				"import { z } from './z';\nimport { a } from './a';\n\nexport const x = [z, a];",
+			],
+		])('prints them %s between them as written', (_label, source, expected) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain(expected);
+		});
+
+		it('maps the names of a re-export written as it is', () => {
+			const source = "export { label as other } from './label';\nexport const x = 1;\n";
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			for (const name of ['label', 'other']) {
+				const start = source.indexOf(name);
+				const mapping = result.mappings.find(
+					(mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === name.length,
+				);
+				assert(mapping, name);
+				const generated = mapping.generatedOffsets[0];
+				expect(result.code.slice(generated, generated + mapping.generatedLengths[0])).toBe(name);
+			}
+		});
+	});
+
 	describe(`[${name}] whole import mappings`, () => {
 		/**
 		 * Each import in the generated code: the range TypeScript reports an import

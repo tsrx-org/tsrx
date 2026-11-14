@@ -612,6 +612,31 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map a re-export's module string and an authored `;`, as an import's are.
+	 * TypeScript 7 (`@tsrx/content-mapper`) applies an Organize Imports edit only
+	 * inside one span of identical text, and joins neighbouring spans only when
+	 * their features match, so a re-export written as it is then has one span,
+	 * like an import (#1029).
+	 * @param {AST.ExportAllDeclaration | AST.ExportNamedDeclaration} node
+	 * @param {(node: AST.Node) => void} visit
+	 */
+	function add_re_export_source_mappings(node, visit) {
+		if (!has_location(node) || !node.source) return;
+		visit(node.source);
+		if (source[node.end - 1] === ';') {
+			tokens.push({
+				source: ';',
+				generated: ';',
+				loc: {
+					start: { line: node.loc.end.line, column: node.loc.end.column - 1 },
+					end: node.loc.end,
+				},
+				metadata: {},
+			});
+		}
+	}
+
+	/**
 	 * Add the start of the next line to the points of a whole-statement mapping,
 	 * when the rest of the line after the statement is the same in both files:
 	 * only spaces, or the comments the type-only print writes after an import
@@ -1387,6 +1412,7 @@ export function convert_source_map_to_mappings(
 					// The declaration will be visited with proper ordering
 					visit(node.declaration);
 				}
+				if (node.source) add_re_export_source_mappings(node, visit);
 				return;
 			} else if (node.type === 'ExportDefaultDeclaration') {
 				add_export_mapping(node);
@@ -1397,7 +1423,8 @@ export function convert_source_map_to_mappings(
 				return;
 			} else if (node.type === 'ExportAllDeclaration') {
 				add_export_mapping(node);
-				// Nothing to visit (just source string)
+				if (node.exported) visit(node.exported);
+				add_re_export_source_mappings(node, visit);
 				return;
 			} else if (node.type === 'JSXOpeningElement') {
 				// Visit name, type arguments, and attributes in source order

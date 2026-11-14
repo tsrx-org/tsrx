@@ -473,6 +473,11 @@ import Button from './Button.tsrx';`;
 		['source.organizeImports', 'over several lines (#1033)', SEVERAL_LINES],
 		['source.sortImports', 'over several lines (#1033)', SEVERAL_LINES],
 		[
+			'source.sortImports',
+			'with re-exports (#1029)',
+			"import Button from './Button.tsrx';\nexport * from './lib';\nexport { default as Panel } from './Panel.tsrx';\nexport { helperB } from './lib';",
+		],
+		[
 			'source.removeUnusedImports',
 			'without spaces (#1033)',
 			"import {helperA, helperB} from './lib';\nimport Button from './Button.tsrx';",
