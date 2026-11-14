@@ -200,6 +200,7 @@ describe('error codes', () => {
 	}
 }`,
 			],
+			['TSRX1012', 'const a = <div>@if (x) { <b /> } note @else { <i /> }</div>;'],
 			[
 				'TSRX2001',
 				`function App() @{

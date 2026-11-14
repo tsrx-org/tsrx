@@ -1309,6 +1309,19 @@ function skip_whitespace_from(input, i) {
 }
 
 /**
+ * Where each directive clause belongs, as TSRX1012 says it.
+ * @type {Record<string, string>}
+ */
+const DIRECTIVE_OF_CLAUSE = {
+	else: 'right after an `@if` block',
+	empty: 'right after an `@for` block',
+	pending: 'right after an `@try` block',
+	catch: 'right after an `@try` or `@pending` block',
+	case: 'inside an `@switch` body',
+	default: 'inside an `@switch` body',
+};
+
+/**
  * Skip whitespace and comments starting at `i`. Returns -1 when a block
  * comment is left open at the end of the input.
  * @param {string} input
@@ -2328,6 +2341,7 @@ export function TSRXPlugin(config) {
 					) {
 						break;
 					}
+					if (ch === CharCode.at) this.#reportDetachedClause(index);
 					index++;
 				}
 
@@ -2354,6 +2368,41 @@ export function TSRXPlugin(config) {
 					if (node.raw !== '') body.push(node);
 				}
 				return index;
+			}
+
+			/**
+			 * A directive's clause at `index` in template text: a clause keyword and
+			 * what starts its clause (`@else {`, `@else if`, `@empty {`, `@pending {`,
+			 * `@catch {` or `(`, `@case …:`, `@default:`). The directive takes its
+			 * clause only right after its block (`@case` and `@default` only in its
+			 * body), so this one is text, and its `{ … }` would render whatever the
+			 * directive does: TSRX1012, in every mode (#1330). `&#64;else` is the text.
+			 * @param {number} index
+			 */
+			#reportDetachedClause(index) {
+				const word = /^(else|empty|pending|catch|case|default)(?![\w$])/.exec(
+					this.input.slice(index + 1, index + 9),
+				)?.[1];
+				if (!word) return;
+				const keyword_end = index + 1 + word.length;
+				const next = skip_space_and_comments_from(this.input, keyword_end);
+				if (next === -1) return;
+				const rest = this.input.slice(next);
+				const detached =
+					word === 'else'
+						? rest.startsWith('{') || /^if(?![\w$])/.test(rest)
+						: word === 'catch'
+							? rest.startsWith('{') || rest.startsWith('(')
+							: word === 'case'
+								? /^[^\n\r{}<]*:/.test(rest)
+								: word === 'default'
+									? rest.startsWith(':')
+									: rest.startsWith('{');
+				if (!detached) return;
+				const error = TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE(word, DIRECTIVE_OF_CLAUSE[word]);
+				// Once, though the text may be read again.
+				if (this.#errors?.some((other) => other.pos === index && other.code === error.code)) return;
+				this.#report_recoverable_error_range(index, keyword_end, error);
 			}
 
 			/**

@@ -900,6 +900,14 @@ const StatusBadge = ({ status }: { status: string }) => @if (status === 'active'
 };
 ```
 
+A clause comes right after the block before it: `@else` after an `@if` block,
+`@empty` after an `@for` block, `@pending` after an `@try` block, and `@catch`
+after an `@try` or `@pending` block (`@case` and `@default` only in an `@switch`
+body). Comments may come between them, but not text, an element or an expression
+container. A clause anywhere else in element children, such as
+`<p>@if (ok) { <i /> } note @else { <b /> }</p>`, is the `TSRX1012` error. To
+write the words as text, write the `@` as `&#64;` (`&#64;else`).
+
 ### `for...of` with `index` and `key`
 
 ```tsrx
