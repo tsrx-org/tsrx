@@ -1555,7 +1555,7 @@ function transform_return_statement(node, { next, visit, state, path }) {
 	if (active_native_tsrx_function && is_native_tsrx_node(node.argument)) {
 		if (!active_native_tsrx_function.metadata?.native_tsrx_body) {
 			const statements = mark_native_pretransformed_jsx(
-				create_native_tsrx_render_statements(node.argument, state),
+				create_native_tsrx_return_statements(node, state),
 			);
 			if (statements.length === 1) {
 				return visit(statements[0], state);
@@ -2211,6 +2211,30 @@ function create_native_tsrx_render_statements(fragment, transform_context) {
 }
 
 /**
+ * The statements an authored `return` of `statement.argument`, render output,
+ * lowers to (see `create_native_tsrx_render_statements`). When that is a
+ * `return` alone, it keeps the authored statement's location, so the editor's
+ * code maps its keyword and its `;` as for any other authored `return`, and
+ * TypeScript's errors at it, such as TS7027 for unreachable code, map back
+ * (#1324).
+ *
+ * @param {AST.ReturnStatement} statement
+ * @param {TransformContext} transform_context
+ * @returns {AST.Statement[]}
+ */
+function create_native_tsrx_return_statements(statement, transform_context) {
+	const statements = create_native_tsrx_render_statements(
+		/** @type {AST.NativeTSRXNode} */ (statement.argument),
+		transform_context,
+	);
+	const [only] = statements;
+	if (statements.length === 1 && only.type === 'ReturnStatement' && !has_location(only)) {
+		set_loc(only, statement);
+	}
+	return statements;
+}
+
+/**
  * Style `ref` setup statements the scope pre-pass left on a scope rooted at
  * a native fragment/element (see style-scopes.js), consumed once: the same
  * fragment can reach both the return-statement lowering and the fragment
@@ -2250,7 +2274,7 @@ function expand_native_tsrx_return_statement_list(statements, transform_context)
  */
 function expand_native_tsrx_return_statement(statement, transform_context) {
 	if (statement.type === 'ReturnStatement' && is_native_tsrx_node(statement.argument)) {
-		return create_native_tsrx_render_statements(statement.argument, transform_context);
+		return create_native_tsrx_return_statements(statement, transform_context);
 	}
 
 	if (is_function_or_class_boundary(statement)) {
