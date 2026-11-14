@@ -10723,7 +10723,8 @@ describe('a `<` in a file without JSX', () => {
 				'const a = async <U,>(b = (x as (q = <T>(y: T) => y) => void), 1);',
 				'type F = (q = (r = <T>(y: T) => y) => r, s: (t = <U>(z: U) => z) => void) => void;',
 				'declare function f(q = <T>(y: T) => y): readonly string;',
-				// Checked: a function with a body, an overload, a rest parameter.
+				// Checked: a function with a body, an overload, a rest parameter, a
+				// binding pattern, and a parameter whose type a `typeof` needs.
 				'const g = <T>(y: T) => y;',
 				'const h = (q = <T>(y = <U>(z: U) => z) => y) => q;',
 				'function f(q = <T>(y: T) => y, a, a): readonly string { return q; }',
@@ -10731,6 +10732,10 @@ describe('a `<` in a file without JSX', () => {
 				'class E { m(q = <T>(y: T) => y): void; m() {} }',
 				'class B { constructor(public q = <T>(y: T) => y); constructor() {} }',
 				'type F = (...q = <T>(y: T) => y) => void;',
+				'type F = ({ x } = <T>(y: T) => y) => void;',
+				'abstract class A { abstract m([x] = <T>(y: T) => y): void }',
+				'type G = (q = <T>(y: T) => y, r?: typeof q) => void;',
+				'declare function f(q = <T>(y: T) => y): typeof q.x;',
 			]) {
 				const label = `${filename}: ${source}`;
 				const path = `/${filename}`;
@@ -10761,6 +10766,16 @@ describe('a `<` in a file without JSX', () => {
 					expect.objectContaining({ code: expected[0][0], pos: expected[0][1] }),
 				);
 			}
+			// A syntax error in the return type, which tsc reports alone, keeps none.
+			const source = 'declare function f(q = <T>(y: T) => y): ;';
+			const thrown = expect.objectContaining({ code: 'TS1012', pos: source.indexOf(';') });
+			expect(() => parseModule(source, filename), source).toThrow(thrown);
+			/** @type {CompileError[]} */
+			const errors = [];
+			expect(() => parseModule(source, filename, { collect: true, errors }), source).toThrow(
+				thrown,
+			);
+			expect(errors, source).toEqual([]);
 		}
 	});
 

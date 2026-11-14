@@ -794,6 +794,38 @@ function compare_errors(a, b) {
 }
 
 /**
+ * The names that a `typeof` type query in `nodes` starts with.
+ * @param {Array<AST.Node | null | undefined>} nodes
+ * @returns {Set<string>}
+ */
+function type_query_names(nodes) {
+	/** @type {Set<string>} */
+	const names = new Set();
+	/** @type {unknown[]} */
+	const stack = [...nodes];
+	while (stack.length > 0) {
+		const value = stack.pop();
+		if (!value || typeof value !== 'object') continue;
+		if (Array.isArray(value)) {
+			stack.push(...value);
+			continue;
+		}
+		const node = /** @type {Record<string, unknown> & { type?: unknown }} */ (value);
+		if (node.type === 'TSTypeQuery') {
+			let name = /** @type {{ type: string, name?: string, left?: unknown }} */ (node.exprName);
+			while (name?.type === 'TSQualifiedName') {
+				name = /** @type {{ type: string, name?: string, left?: unknown }} */ (name.left);
+			}
+			if (name?.type === 'Identifier' && name.name) names.add(name.name);
+		}
+		for (const key in node) {
+			if (key !== 'loc' && key !== 'metadata') stack.push(node[key]);
+		}
+	}
+	return names;
+}
+
+/**
  * The deferred errors of a method's parameter list, which come once the method
  * is read (see `parseMethod`).
  * @type {WeakMap<unknown[], CompileError[]>}
@@ -6841,14 +6873,9 @@ export function TSRXPlugin(config) {
 					this.#readingSignatureTypeParameters = false;
 				}
 				this.#signatureErrors = outer;
-				// See `#isInUncheckedDefault`.
-				const kept = errors.filter(
-					(error) =>
-						!this.#isInUncheckedDefault(
-							error,
-							/** @type {{ parameters?: AST.Node[] }} */ (signature).parameters ?? [],
-						),
-				);
+				const { parameters, typeAnnotation } =
+					/** @type {{ parameters?: AST.Node[], typeAnnotation?: AST.Node | null }} */ (signature);
+				const kept = this.#withoutUncheckedDefaults(errors, parameters ?? [], typeAnnotation);
 				if (kept.length === 0) return;
 				if (outer) {
 					outer.push(...kept);
@@ -6863,29 +6890,56 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Whether `error` is the TS7060 of an arrow function in the default of a
-			 * parameter of `params`, a signature's or a function's without a body,
-			 * whose default is TS2371 (see `#checkSignatureParameter` and
-			 * `#signatureInitializerErrors`). TypeScript reports TS7060 when its
+			 * `errors` without the TS7060 of an arrow function in the default of a
+			 * parameter of `params`, a signature's or a function's without an
+			 * implementation, whose default is TS2371 (see `#checkSignatureParameter`
+			 * and `#signatureInitializerErrors`). TypeScript reports TS7060 when its
 			 * checker checks the arrow function, and it doesn't check a default it
 			 * reports TS2371 for (`checkVariableLikeDeclaration`), unless something
-			 * needs the parameter's type, such as an implementation of an overload.
-			 * A rest parameter's type is always needed (TS2370), and a binding
-			 * pattern's, which a default in it is part of (#1315).
-			 * @param {CompileError} error
+			 * needs the parameter's type: an implementation of an overload, a rest
+			 * parameter (TS2370), a binding pattern, whose elements it checks first,
+			 * or `typeof` the parameter in the signature (#1315).
+			 * @param {CompileError[]} errors
 			 * @param {AST.Node[]} params
+			 * @param {AST.Node | null | undefined} return_type
+			 * @returns {CompileError[]}
 			 */
-			#isInUncheckedDefault(error, params) {
-				if (error.code !== TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER.code) return false;
-				const position = error.pos ?? -1;
-				return params.some((param) => {
+			#withoutUncheckedDefaults(errors, params, return_type) {
+				const code = TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER.code;
+				if (!errors.some((error) => error.code === code)) return errors;
+				const queried = type_query_names([...params, return_type]);
+				/** @type {Array<[number, number]>} */
+				const unchecked = [];
+				for (const param of params) {
 					const parameter = param.type === 'TSParameterProperty' ? param.parameter : param;
-					return (
+					if (
 						parameter.type === 'AssignmentPattern' &&
-						/** @type {number} */ (parameter.right.start) <= position &&
-						position < /** @type {number} */ (parameter.right.end)
-					);
-				});
+						parameter.left.type === 'Identifier' &&
+						!queried.has(parameter.left.name)
+					) {
+						unchecked.push([
+							/** @type {number} */ (parameter.right.start),
+							/** @type {number} */ (parameter.right.end),
+						]);
+					}
+				}
+				return errors.filter(
+					(error) =>
+						error.code !== code ||
+						!unchecked.some(
+							([start, end]) => start <= (error.pos ?? -1) && (error.pos ?? -1) < end,
+						),
+				);
+			}
+
+			/**
+			 * Whether the function or method whose parameters are `params`, which has
+			 * no body, has no implementation either: an ambient one, or an abstract
+			 * method. Otherwise it's an overload (see `#withoutUncheckedDefaults`).
+			 * @param {unknown[]} params
+			 */
+			#hasNoImplementation(params) {
+				return this.isAmbientContext || abstract_method_parameters.has(params);
 			}
 
 			/**
@@ -11920,8 +11974,26 @@ export function TSRXPlugin(config) {
 						// Its errors come by position with the parameters' (see
 						// `parseBindingList`).
 						const held = function_parameter_errors.get(node.params);
-						const read_type = () => this.tsParseTypeOrTypePredicateAnnotation(tt.colon);
-						node.returnType = held ? this.#holdingErrors(held, read_type) : read_type();
+						const outer_held = this.#hold.held;
+						if (held) this.#setHeld(held);
+						try {
+							node.returnType = this.tsParseTypeOrTypePredicateAnnotation(tt.colon);
+						} catch (error) {
+							this.#hold.held = outer_held;
+							// See `#holdingErrors`, without the TS7060 that a function without
+							// an implementation never has.
+							if (held) {
+								this.#abandonHeldErrors(
+									this.#hasNoImplementation(node.params)
+										? this.#withoutUncheckedDefaults(held, node.params, null)
+										: held,
+									error,
+								);
+							}
+							throw error;
+						} finally {
+							if (held) this.#setHeld(outer_held);
+						}
 					}
 					const is_code_block = this.#isCodeBlockStart(this.start);
 					if (isArrowFunction) {
@@ -11950,8 +12022,8 @@ export function TSRXPlugin(config) {
 						// none (#1315).
 						const held = function_parameter_errors.get(node.params) ?? [];
 						const initializers = [
-							...(this.isAmbientContext || abstract_method_parameters.has(node.params)
-								? held.filter((error) => !this.#isInUncheckedDefault(error, node.params))
+							...(this.#hasNoImplementation(node.params)
+								? this.#withoutUncheckedDefaults(held, node.params, node.returnType)
 								: held),
 							...this.#signatureInitializerErrors(node.params),
 						];
@@ -15093,8 +15165,8 @@ export function TSRXPlugin(config) {
 					this.#hold.held = held.outer;
 					// Without a body, as in `parseFunctionBody` (#1315).
 					this.#releaseErrors(
-						!node.body && (this.isAmbientContext || abstract_method_parameters.has(node.params))
-							? held.held.filter((error) => !this.#isInUncheckedDefault(error, node.params))
+						!node.body && this.#hasNoImplementation(node.params)
+							? this.#withoutUncheckedDefaults(held.held, node.params, node.returnType)
 							: held.held,
 					);
 				}
