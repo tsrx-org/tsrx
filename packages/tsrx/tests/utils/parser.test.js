@@ -10706,7 +10706,8 @@ describe('a `<` in a file without JSX', () => {
 	// TypeScript reports TS7060 when its checker checks the arrow function, and
 	// it doesn't check a parameter's default that is TS2371, unless it needs the
 	// parameter's type: for an overload, to compare it with the implementation,
-	// and for a rest parameter (#1315).
+	// and for a rest parameter (#1315). With `strict`, as the issue ran tsc: it
+	// checks a binding pattern's default with a type annotation only then.
 	it('reports TS7060 in a parameter default only where tsc checks the default', () => {
 		const codes = [7060, 2371, 2369, 2300, 1354, 1048];
 		for (const filename of ['a.mts', 'a.cts']) {
@@ -10736,6 +10737,14 @@ describe('a `<` in a file without JSX', () => {
 				'abstract class A { abstract m([x] = <T>(y: T) => y): void }',
 				'type G = (q = <T>(y: T) => y, r?: typeof q) => void;',
 				'declare function f(q = <T>(y: T) => y): typeof q.x;',
+				'type F = (q = <T>(x: T) => x, r: (s: number) => typeof q) => void;',
+				'type F = ({ x }: {} = <T>(y: T) => y) => void;',
+				// Not checked: a type annotation gives the parameter's type, and a
+				// `typeof` in another default or of another parameter doesn't count.
+				'type F = (q: number = <T>(x: T) => x, r?: typeof q) => void;',
+				'type F = (...q: any[] = <T>(y: T) => y) => void;',
+				'declare function f(q = <T>(y: T) => y, r = null as typeof q): void;',
+				'type F = (q = <T>(x: T) => x, r: (q: number) => typeof q) => void;',
 			]) {
 				const label = `${filename}: ${source}`;
 				const path = `/${filename}`;
@@ -10747,7 +10756,7 @@ describe('a `<` in a file without JSX', () => {
 						: get_source_file(name, version);
 				const program = ts.createProgram(
 					[path],
-					{ noLib: true, types: [], module: ts.ModuleKind.NodeNext },
+					{ noLib: true, strict: true, types: [], module: ts.ModuleKind.NodeNext },
 					host,
 				);
 				const file = /** @type {ts.SourceFile} */ (program.getSourceFile(path));

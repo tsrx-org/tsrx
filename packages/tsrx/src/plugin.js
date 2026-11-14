@@ -794,32 +794,53 @@ function compare_errors(a, b) {
 }
 
 /**
- * The names that a `typeof` type query in `nodes` starts with.
+ * The names that a `typeof` type query in `nodes`, the parameters and return
+ * type of a signature, starts with: in a type, not in a parameter's default,
+ * which isn't checked there, and not a name that a signature in it declares
+ * as a parameter of its own.
  * @param {Array<AST.Node | null | undefined>} nodes
  * @returns {Set<string>}
  */
 function type_query_names(nodes) {
 	/** @type {Set<string>} */
 	const names = new Set();
-	/** @type {unknown[]} */
-	const stack = [...nodes];
+	/** @type {Array<{ value: unknown, shadowed: Set<string> }>} */
+	const stack = nodes.map((value) => ({ value, shadowed: new Set() }));
 	while (stack.length > 0) {
-		const value = stack.pop();
+		const { value, shadowed } = /** @type {{ value: unknown, shadowed: Set<string> }} */ (
+			stack.pop()
+		);
 		if (!value || typeof value !== 'object') continue;
 		if (Array.isArray(value)) {
-			stack.push(...value);
+			for (const item of value) stack.push({ value: item, shadowed });
 			continue;
 		}
 		const node = /** @type {Record<string, unknown> & { type?: unknown }} */ (value);
+		if (node.type === 'AssignmentPattern') {
+			stack.push({ value: node.left, shadowed });
+			continue;
+		}
 		if (node.type === 'TSTypeQuery') {
 			let name = /** @type {{ type: string, name?: string, left?: unknown }} */ (node.exprName);
 			while (name?.type === 'TSQualifiedName') {
 				name = /** @type {{ type: string, name?: string, left?: unknown }} */ (name.left);
 			}
-			if (name?.type === 'Identifier' && name.name) names.add(name.name);
+			if (name?.type === 'Identifier' && name.name && !shadowed.has(name.name)) {
+				names.add(name.name);
+			}
+		}
+		let inner = shadowed;
+		if (Array.isArray(node.parameters)) {
+			inner = new Set(shadowed);
+			for (const param of /** @type {AST.Node[]} */ (node.parameters)) {
+				const pattern = param.type === 'TSParameterProperty' ? param.parameter : param;
+				for (const id of extract_identifiers(/** @type {AST.Pattern} */ (pattern))) {
+					inner.add(id.name);
+				}
+			}
 		}
 		for (const key in node) {
-			if (key !== 'loc' && key !== 'metadata') stack.push(node[key]);
+			if (key !== 'loc' && key !== 'metadata') stack.push({ value: node[key], shadowed: inner });
 		}
 	}
 	return names;
@@ -6896,9 +6917,10 @@ export function TSRXPlugin(config) {
 			 * and `#signatureInitializerErrors`). TypeScript reports TS7060 when its
 			 * checker checks the arrow function, and it doesn't check a default it
 			 * reports TS2371 for (`checkVariableLikeDeclaration`), unless something
-			 * needs the parameter's type: an implementation of an overload, a rest
-			 * parameter (TS2370), a binding pattern, whose elements it checks first,
-			 * or `typeof` the parameter in the signature (#1315).
+			 * needs the type it gives a parameter: an implementation of an overload,
+			 * a binding pattern, whose elements it checks first, and without a type
+			 * annotation, a rest parameter (TS2370) or `typeof` the parameter in the
+			 * signature (#1315).
 			 * @param {CompileError[]} errors
 			 * @param {AST.Node[]} params
 			 * @param {AST.Node | null | undefined} return_type
@@ -6911,11 +6933,14 @@ export function TSRXPlugin(config) {
 				/** @type {Array<[number, number]>} */
 				const unchecked = [];
 				for (const param of params) {
-					const parameter = param.type === 'TSParameterProperty' ? param.parameter : param;
+					const node = param.type === 'TSParameterProperty' ? param.parameter : param;
+					const rest = node.type === 'RestElement';
+					const parameter = rest ? node.argument : node;
+					if (parameter.type !== 'AssignmentPattern') continue;
+					const { left } = parameter;
 					if (
-						parameter.type === 'AssignmentPattern' &&
-						parameter.left.type === 'Identifier' &&
-						!queried.has(parameter.left.name)
+						left.type === 'Identifier' &&
+						(!!left.typeAnnotation || (!rest && !queried.has(left.name)))
 					) {
 						unchecked.push([
 							/** @type {number} */ (parameter.right.start),
