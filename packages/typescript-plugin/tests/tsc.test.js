@@ -120,7 +120,7 @@ try {
 	});
 	expect(result.error).toBeUndefined();
 	expect(result.signal).toBeNull();
-	return { status: result.status, output: result.stdout + result.stderr };
+	return { status: result.status, output: result.stdout + result.stderr, stdout: result.stdout };
 }
 
 describe.each(['native', 'bypass', 'legacy'])('tsrx-tsc with the %s loader', (loader) => {
@@ -186,19 +186,84 @@ describe('tsrx-tsc with a warning', () => {
 		);
 		const result = run_cli('native');
 		const { code, message } = TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD;
-		expect(result.output).toMatch(
-			new RegExp(
-				`^\\[tsrx-tsc\\] \\S*layout\\.tsrx\\(2,7\\): warning ${code}: ${escape_regexp(message)}\n$`,
-			),
-		);
+		expect(result.output).toBe(`layout.tsrx(2,7): warning ${code}: ${message}${os.EOL}`);
 		expect(result.status).toBe(0);
 	});
 });
 
-/** @param {string} text */
-function escape_regexp(text) {
-	return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
+// TSRX's own errors print as tsc prints a diagnostic, with the path relative to
+// the current directory, and fail the run like TypeScript's errors (#196, #957).
+describe('tsrx-tsc with a TSRX compile error', () => {
+	it('prints it in tsc format and exits 2 when TypeScript reports nothing', () => {
+		fs.writeFileSync(
+			path.join(workspace, 'layout.tsrx'),
+			'export default function MainLayout({ title }: { title: string }) @{\n\tconst x = 1;\n\t<div>{title}</div>\n\t<span />\n}\n',
+		);
+		const result = run_cli('native');
+		const { code, message } = TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT;
+		// On standard output, where tsc writes its diagnostics.
+		expect(result.stdout).toBe(`layout.tsrx(4,2): error ${code}: ${message}${os.EOL}`);
+		expect(result.output).toBe(result.stdout);
+		expect(result.status).toBe(2);
+	});
+
+	it('exits 2 on a fatal compile error whose raw text TypeScript accepts', () => {
+		// After a fatal error the file falls back to its raw text, which is valid
+		// TypeScript here, and nothing else is checked, so only the TSRX error can
+		// fail the run (#196).
+		const compiler_dir = path.join(workspace, 'node_modules', 'throwing-tsrx-compiler');
+		fs.mkdirSync(compiler_dir);
+		fs.writeFileSync(
+			path.join(compiler_dir, 'package.json'),
+			'{"name":"throwing-tsrx-compiler","main":"index.cjs"}',
+		);
+		fs.writeFileSync(
+			path.join(compiler_dir, 'index.cjs'),
+			"exports.compile_to_volar_mappings = () => { throw Object.assign(new Error('the compiler gave up'), { code: 'stub-fatal' }); };\n",
+		);
+		fs.writeFileSync(path.join(workspace, 'fatal.tsrx'), 'export const value = 1;\n');
+		const config_path = path.join(workspace, 'tsconfig.json');
+		const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+		config.tsrx = { compiler: 'throwing-tsrx-compiler' };
+		config.include = ['fatal.tsrx'];
+		fs.writeFileSync(config_path, JSON.stringify(config));
+		const result = run_cli('native');
+		expect(result.output).toBe(`fatal.tsrx: error stub-fatal: the compiler gave up${os.EOL}`);
+		expect(result.status).toBe(2);
+	});
+
+	it('prints a mistake once when TypeScript reports it too', () => {
+		fs.writeFileSync(
+			path.join(workspace, 'rest.tsrx'),
+			'const b = [1];\nconst [...a = [1]] = b;\nconst [...c = [2]] = b;\nexport { a, c };\n',
+		);
+		const config_path = path.join(workspace, 'tsconfig.json');
+		const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+		config.include = ['main.ts', 'rest.tsrx'];
+		fs.writeFileSync(config_path, JSON.stringify(config));
+		const result = run_cli('native');
+		const ts1186 = 'error TS1186: A rest element cannot have an initializer.';
+		expect(result.output).toBe(`rest.tsrx(2,13): ${ts1186}\nrest.tsrx(3,13): ${ts1186}\n`);
+		expect(result.status).toBe(2);
+	});
+
+	it('prints a mistake TypeScript does not report, and the ones it does once', () => {
+		fs.writeFileSync(
+			path.join(workspace, 'rest.tsrx'),
+			'export function f(...a: number[], b: number) {\n\treturn [a, b];\n}\nexport const [...c,] = [1];\n',
+		);
+		const config_path = path.join(workspace, 'tsconfig.json');
+		const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+		config.include = ['main.ts', 'rest.tsrx'];
+		fs.writeFileSync(config_path, JSON.stringify(config));
+		const result = run_cli('native');
+		expect(result.output).toBe(
+			`rest.tsrx(4,19): error TS1013: Comma is not permitted after the rest element${os.EOL}` +
+				'rest.tsrx(1,19): error TS1014: A rest parameter must be last in a parameter list.\n',
+		);
+		expect(result.status).toBe(2);
+	});
+});
 
 /**
  * Stand in for what `typescript@7` resolves to: a launcher with an export map
@@ -510,9 +575,8 @@ it.each([
 		`export default function MainLayout({ title }: { title: string }) @{\n${body}}\n`,
 	);
 	const result = run_cli('native');
-	expect(result.output).toContain(
-		`[tsrx-tsc] ${path.join(fs.realpathSync(workspace), 'layout.tsrx')}${diagnostic}`,
-	);
+	expect(result.output.split('\n')).toContain(`layout.tsrx${diagnostic}`);
+	expect(result.status).toBe(2);
 });
 
 it('reports unresolved class field and heritage types in .tsrx files', () => {
