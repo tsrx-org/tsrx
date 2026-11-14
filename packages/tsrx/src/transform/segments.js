@@ -1483,13 +1483,38 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'JSXExpressionContainer' || node.type === 'JSXSpreadChild') {
-				// A mapping of the whole container would cover the closing tag that
-				// loose recovery adds to a tag left unclosed in it (#978), and
-				// TypeScript's errors on that tag would show again at its end.
-				if (has_location(node) && !(errors.length > 0 && holds_recovered_closing(node))) {
-					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+				if (has_location(node)) {
+					const mapping = get_mapping_from_node(
+						node,
+						src_to_gen_map,
+						gen_line_offsets,
+						mapping_data_verify_only,
 					);
+					if (errors.length > 0 && holds_recovered_closing(node)) {
+						// A mapping of the whole container would cover the closing tag
+						// that loose recovery adds to a tag left unclosed in it (#978),
+						// and TypeScript's errors on that tag would show again at its
+						// end. Map its braces alone, so that an error on the code in it
+						// still has the end it reaches.
+						const [source_start] = mapping.sourceOffsets;
+						const [generated_start] = mapping.generatedOffsets;
+						const source_end = source_start + mapping.lengths[0] - 1;
+						const generated_end = generated_start + mapping.generatedLengths[0] - 1;
+						for (const [source_offset, generated_offset] of [
+							[source_start, generated_start],
+							[source_end, generated_end],
+						]) {
+							mappings.push({
+								sourceOffsets: [source_offset],
+								lengths: [1],
+								generatedOffsets: [generated_offset],
+								generatedLengths: [1],
+								data: { ...mapping_data_verify_only, customData: {} },
+							});
+						}
+					} else {
+						mappings.push(mapping);
+					}
 				}
 				// Visit the expression inside {}
 				if (node.expression) {

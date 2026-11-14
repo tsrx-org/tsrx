@@ -625,6 +625,20 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		]);
 	});
 
+	// An error over the unclosed tag in braces ends at the closing tag the
+	// editor's code adds, where the braces' own `}` still maps it.
+	it.each([
+		['InBraces', '<div>{delete <Known>}</div>'],
+		['InAttributeValue', '<div title={delete <Known>}></div>'],
+	])("keeps TypeScript's error over an unclosed tag %s", async (name, markup) => {
+		const source = `function Known() {\n\treturn <span />;\n}\nexport function C() {\n\treturn ${markup};\n}\n`;
+		const { document, diagnostics } = await editor_diagnostics_for(`DeleteOperand${name}`, source);
+
+		expect(reported(document, diagnostics, 'TS2703')).toEqual([
+			{ source: 'ts', text: '<Known>', offset: source.indexOf('<Known>') },
+		]);
+	});
+
 	it('keeps hover, completions and diagnostics elsewhere in the file', async () => {
 		const source = `export function C({ items }: { items: string[] }) @{
 	const count: number = 'one';
