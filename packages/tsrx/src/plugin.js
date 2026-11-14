@@ -794,34 +794,37 @@ function compare_errors(a, b) {
 }
 
 /**
- * The names that a `typeof` type query or a type predicate with a type
- * (`q is T`) in `nodes`, the parameters and return type of a signature, starts
- * with: in a type, not in a parameter's default, which isn't checked there,
- * and not a name that a signature in it declares as a parameter of its own,
- * outside its type parameters.
+ * The names that a `typeof` type query in `nodes`, the parameters and return
+ * type of a signature, starts with, or the signature's own type predicate with
+ * a type (`q is T`): in a type, not in a parameter's default, which isn't
+ * checked there, and not a name that a signature in it declares as a parameter
+ * of its own, outside its type parameters. A predicate in a signature in it is
+ * that signature's.
  * @param {Array<AST.Node | null | undefined>} nodes
  * @returns {Set<string>}
  */
 function type_query_names(nodes) {
 	/** @type {Set<string>} */
 	const names = new Set();
-	/** @type {Array<{ value: unknown, shadowed: Set<string> }>} */
-	const stack = nodes.map((value) => ({ value, shadowed: new Set() }));
+	/** @typedef {{ value: unknown, shadowed: Set<string>, nested: boolean }} Item */
+	/** @type {Item[]} */
+	const stack = nodes.map((value) => ({ value, shadowed: new Set(), nested: false }));
 	while (stack.length > 0) {
-		const { value, shadowed } = /** @type {{ value: unknown, shadowed: Set<string> }} */ (
-			stack.pop()
-		);
+		const { value, shadowed, nested } = /** @type {Item} */ (stack.pop());
 		if (!value || typeof value !== 'object') continue;
 		if (Array.isArray(value)) {
-			for (const item of value) stack.push({ value: item, shadowed });
+			for (const item of value) stack.push({ value: item, shadowed, nested });
 			continue;
 		}
 		const node = /** @type {Record<string, unknown> & { type?: unknown }} */ (value);
 		if (node.type === 'AssignmentPattern') {
-			stack.push({ value: node.left, shadowed });
+			stack.push({ value: node.left, shadowed, nested });
 			continue;
 		}
-		if (node.type === 'TSTypeQuery' || (node.type === 'TSTypePredicate' && node.typeAnnotation)) {
+		if (
+			node.type === 'TSTypeQuery' ||
+			(node.type === 'TSTypePredicate' && node.typeAnnotation && !nested)
+		) {
 			let name = /** @type {{ type: string, name?: string, left?: unknown }} */ (
 				node.type === 'TSTypeQuery' ? node.exprName : node.parameterName
 			);
@@ -833,7 +836,8 @@ function type_query_names(nodes) {
 			}
 		}
 		let inner = shadowed;
-		if (Array.isArray(node.parameters)) {
+		const signature = Array.isArray(node.parameters);
+		if (signature) {
 			inner = new Set(shadowed);
 			for (const param of /** @type {AST.Node[]} */ (node.parameters)) {
 				const pattern = param.type === 'TSParameterProperty' ? param.parameter : param;
@@ -844,7 +848,11 @@ function type_query_names(nodes) {
 		}
 		for (const key in node) {
 			if (key === 'loc' || key === 'metadata') continue;
-			stack.push({ value: node[key], shadowed: key === 'typeParameters' ? shadowed : inner });
+			stack.push({
+				value: node[key],
+				shadowed: key === 'typeParameters' ? shadowed : inner,
+				nested: nested || signature,
+			});
 		}
 	}
 	return names;

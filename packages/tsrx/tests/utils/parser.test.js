@@ -10748,6 +10748,7 @@ describe('a `<` in a file without JSX', () => {
 				'declare function f(q = <T>(y: T) => y, r = null as typeof q): void;',
 				'type F = (q = <T>(x: T) => x, r: (q: number) => typeof q) => void;',
 				'declare function f(q = <T>(x: T) => x): asserts q;',
+				'type F = (q = <T>(x: T) => x, r: (x: unknown) => q is number) => void;',
 			]) {
 				const label = `${filename}: ${source}`;
 				const path = `/${filename}`;
