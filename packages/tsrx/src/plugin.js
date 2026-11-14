@@ -10874,6 +10874,14 @@ export function TSRXPlugin(config) {
 			 * reserves it in a `.mts` or `.cts` file (TS7059), where a strict parse
 			 * throws that and a collecting one records it, or either holds it while
 			 * checker errors are held (see `#parseArrowOrTypeAssertion`).
+			 *
+			 * TypeScript's checker reports an assertion's TS7059 before it checks the
+			 * operand, so before the errors in it, such as an inner assertion's
+			 * TS7059 (`<A>(<B>x)`). The operand is read first, so its checker errors
+			 * are held until the assertion is read, and reported after its TS7059, by
+			 * position (#1326). An operand that doesn't parse gets no TS7059, as
+			 * TypeScript reports its syntax error alone (`<A>(;`); its held errors go
+			 * as `#holdingErrors` lets them.
 			 * @returns {AST.TSTypeAssertion}
 			 */
 			#parseTypeAssertion() {
@@ -10881,24 +10889,29 @@ export function TSRXPlugin(config) {
 				const constant = this.tsTryNextParseConstantContext();
 				node.typeAnnotation = /** @type {any} */ (constant || this.tsNextThenParseType());
 				this.expect(tt.relational);
-				node.expression = this.parseMaybeUnary();
+				const reserved = regex_reserved_jsx_like_file.test(this.#filename ?? '');
+				/** @type {CompileError[]} */
+				const held = [];
+				node.expression = reserved
+					? this.#holdingErrors(held, () => this.parseMaybeUnary())
+					: this.parseMaybeUnary();
 				const assertion = this.finishNode(
 					node,
 					/** @type {AST.TSTypeAssertion['type']} */ ('TSTypeAssertion'),
 				);
-				if (regex_reserved_jsx_like_file.test(this.#filename ?? '')) {
-					const start = /** @type {number} */ (assertion.start);
-					if (this.#collect || this.#hold.held) {
-						// Dropped with an attempt that fails (`#parseArrowOrTypeAssertion`).
-						this.#recordCheckerLevelError(
-							start,
-							/** @type {number} */ (assertion.end),
-							TS_ERRORS.RESERVED_TYPE_ASSERTION,
-							true,
-						);
-					} else {
-						this.raise(start, TS_ERRORS.RESERVED_TYPE_ASSERTION);
-					}
+				if (reserved) {
+					// Dropped with an attempt that fails (`#parseArrowOrTypeAssertion`), as
+					// `#releaseErrors` notes it where it goes.
+					const outer_hold = this.#hold.held;
+					this.#hold.held = held;
+					this.#recordCheckerLevelError(
+						/** @type {number} */ (assertion.start),
+						/** @type {number} */ (assertion.end),
+						TS_ERRORS.RESERVED_TYPE_ASSERTION,
+						true,
+					);
+					this.#hold.held = outer_hold;
+					this.#releaseErrors(held);
 				}
 				return assertion;
 			}
