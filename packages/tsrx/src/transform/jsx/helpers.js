@@ -703,18 +703,29 @@ export function tsx_with_ts_locations(
 
 	/** @type {ESRap.Visitors<AST.Node>} */
 	const visitors = { ...base_visitors, ...wrappers };
-	// A block of imports and re-exports with no blank line between them, as
-	// `with_import_blocks` groups them: one per line, without the blank line
-	// esrap puts between statements of different types.
+	// A block of imports and re-exports, as `with_import_blocks` groups them:
+	// one per line, without the blank line esrap puts between statements of
+	// different types.
 	Object.assign(visitors, {
 		[IMPORT_BLOCK]: (
 			/** @type {{ body: AST.Node[] }} */ node,
 			/** @type {ESRap.Context} */ context,
 		) => {
 			node.body.forEach((statement, index) => {
-				if (index > 0) context.newline();
+				const previous = node.body[index - 1];
+				if (previous && source !== undefined) {
+					// Statements on one line in the source stay on one line, with the
+					// same spaces between them.
+					const between = source.slice(/** @type {number} */ (previous.end), statement.start);
+					if (/^[ \t]*$/.test(between)) context.write(between);
+					else context.newline();
+				}
 				context.visit(statement);
 			});
+			// esrap's statement printer puts a blank line after a multiline
+			// statement and before the next one, so the block gets one on either
+			// side, as the source has between blocks.
+			context.multiline = true;
 		},
 	});
 	return visitors;
@@ -1029,12 +1040,13 @@ function import_names_as_written(node, source) {
 const IMPORT_BLOCK = 'TSRXImportBlock';
 
 /**
- * A program whose imports and re-exports with no blank line between them in
- * the source are grouped into one node each, which the printer writes without
- * the blank line esrap puts between statements of different types. TypeScript
- * sorts the imports and re-exports of each block in Organize Imports, and a
- * blank line ends a block, so a block is one where the source has fewer than
- * two line breaks between statements, as TypeScript counts them.
+ * A program whose imports and re-exports are grouped into blocks as
+ * TypeScript groups them: a blank line ends a block, that is two line breaks
+ * between statements outside comments, as TypeScript counts `NewLineTrivia`.
+ * TypeScript sorts each block on its own in Organize Imports. The printer
+ * writes a block one statement per line, with a blank line around it, so the
+ * editor code has the source's blocks: esrap puts a blank line between
+ * statements of different types and none between two of the same type.
  * @param {AST.Program} program
  * @param {string} source
  * @returns {AST.Program}
@@ -1044,40 +1056,47 @@ function with_import_blocks(program, source) {
 	const body = [];
 	/** @type {AST.Node[]} */
 	let block = [];
+	let grouped = false;
 	const end_block = () => {
-		if (block.length > 1) {
+		if (block.length > 0) {
+			grouped = true;
 			body.push(
 				/** @type {AST.Node} */ (/** @type {unknown} */ ({ type: IMPORT_BLOCK, body: block })),
 			);
-		} else {
-			body.push(...block);
 		}
 		block = [];
 	};
 	for (const statement of program.body) {
+		const organized = is_organized_import(statement) && has_location(statement);
 		const previous = block.at(-1);
-		if (
-			!is_organized_import(statement) ||
-			!has_location(statement) ||
-			(previous &&
-				(source
-					.slice(/** @type {number} */ (previous.end), statement.start)
-					.match(regex_line_breaks)?.length ?? 0) > 1)
-		) {
+		if (!organized || (previous && line_breaks_between(previous, statement, source) > 1)) {
 			end_block();
 		}
-		if (is_organized_import(statement) && has_location(statement)) {
+		if (organized) {
 			block.push(statement);
 		} else {
 			body.push(statement);
 		}
 	}
 	end_block();
-	return body.length === program.body.length
-		? program
-		: { ...program, body: /** @type {AST.Program['body']} */ (body) };
+	return grouped ? { ...program, body: /** @type {AST.Program['body']} */ (body) } : program;
 }
 
+/**
+ * The line breaks between two statements, outside comments.
+ * @param {AST.Node} previous
+ * @param {AST.Node} next
+ * @param {string} source
+ * @returns {number}
+ */
+function line_breaks_between(previous, next, source) {
+	const between = source
+		.slice(/** @type {number} */ (previous.end), next.start)
+		.replace(regex_comment, '');
+	return between.match(regex_line_breaks)?.length ?? 0;
+}
+
+const regex_comment = /\/\*[\s\S]*?\*\/|\/\/[^\n\r\u2028\u2029]*/g;
 const regex_line_breaks = /\r\n?|[\n\u2028\u2029]/g;
 
 /**

@@ -748,6 +748,21 @@ export async function App() @{
 				"import { label } from './label';\n\nexport * from './lib';\nexport type { T } from './t';\nexport * as ns from './ns';\nexport type * from './types';\nexport const x = label;\n",
 				"import { label } from './label';\n\nexport * from './lib';\nexport type { T } from './t';\nexport * as ns from './ns';\nexport type * from './types';\n\nexport const x = label;",
 			],
+			[
+				'with a blank line between two of one kind',
+				"export * from './z';\n\nexport * from './a';\nexport const x = 1;\n",
+				"export * from './z';\n\nexport * from './a';\n\nexport const x = 1;",
+			],
+			[
+				'on one line',
+				"export * from './z'; export { a } from './a';\nexport const x = 1;\n",
+				"export * from './z'; export { a } from './a';\n\nexport const x = 1;",
+			],
+			[
+				'with a comment over two lines',
+				"export * from './z'; /* a\n b */\nexport { a } from './a';\nexport const x = 1;\n",
+				"export * from './z';\nexport { a } from './a';\n\nexport const x = 1;",
+			],
 		])('prints them %s between them as written', (_label, source, expected) => {
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			expect(result.errors).toEqual([]);
