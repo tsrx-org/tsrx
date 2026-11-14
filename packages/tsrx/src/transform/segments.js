@@ -40,7 +40,7 @@ import {
 	format_comment,
 	get_line_comments_after,
 } from '../comment-utils.js';
-import { has_location, is_organized_import } from '../utils/ast.js';
+import { child_nodes, has_location, is_organized_import } from '../utils/ast.js';
 import { regex_whitespaces_strict } from '../utils/patterns.js';
 import { get_source_tokens } from '../parse/source-tokens.js';
 import { regex_jsx_text_escaped } from './jsx/helpers.js';
@@ -1494,9 +1494,37 @@ export function convert_source_map_to_mappings(
 				return;
 			} else if (node.type === 'JSXExpressionContainer' || node.type === 'JSXSpreadChild') {
 				if (has_location(node)) {
-					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+					const mapping = get_mapping_from_node(
+						node,
+						src_to_gen_map,
+						gen_line_offsets,
+						mapping_data_verify_only,
 					);
+					if (errors.length > 0 && holds_recovered_closing(node)) {
+						// A mapping of the whole container would cover the closing tag
+						// that loose recovery adds to a tag left unclosed in it (#978),
+						// and TypeScript's errors on that tag would show again at its
+						// end. Map its braces alone, so that an error on the code in it
+						// still has the end it reaches.
+						const [source_start] = mapping.sourceOffsets;
+						const [generated_start] = mapping.generatedOffsets;
+						const source_end = source_start + mapping.lengths[0] - 1;
+						const generated_end = generated_start + mapping.generatedLengths[0] - 1;
+						for (const [source_offset, generated_offset] of [
+							[source_start, generated_start],
+							[source_end, generated_end],
+						]) {
+							mappings.push({
+								sourceOffsets: [source_offset],
+								lengths: [1],
+								generatedOffsets: [generated_offset],
+								generatedLengths: [1],
+								data: { ...mapping_data_verify_only, customData: {} },
+							});
+						}
+					} else {
+						mappings.push(mapping);
+					}
 				}
 				// Visit the expression inside {}
 				if (node.expression) {
@@ -3418,6 +3446,22 @@ export function create_volar_mappings_result({
 		sourceAst: ast_from_source,
 		errors,
 	};
+}
+
+/**
+ * Whether `node` holds an element with the closing tag that loose recovery
+ * adds to a tag left unclosed (#978).
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function holds_recovered_closing(node) {
+	if (
+		node.type === 'JSXElement' &&
+		/** @type {AST.TSRXJSXElement} */ (node).closingElement?.metadata?.recovered
+	) {
+		return true;
+	}
+	return child_nodes(node).some(holds_recovered_closing);
 }
 
 /**

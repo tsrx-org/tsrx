@@ -988,6 +988,9 @@ function lower_dynamic_jsx_element(node, transform_context) {
 			has_location(node) ? node : undefined,
 		);
 		element.metadata = { ...(node.metadata || {}), path: [] };
+		// A tag recovered as unclosed gets the closing tag the type-only output
+		// adds for one (#978).
+		if (node.unclosed) element.unclosed = true;
 		return element;
 	};
 
@@ -2831,6 +2834,7 @@ function hoist_static_jsx(node, transform_context) {
 	}
 	if (references_scope_bindings(node, transform_context.available_bindings)) return null;
 	if (reads_unhoistable_tag(node, transform_context.hoistable_tags())) return null;
+	if (holds_unclosed_tag(node)) return null;
 
 	// Skip a name the source already uses, so the static can't redeclare or be
 	// shadowed by an authored `App__static1`.
@@ -3432,6 +3436,26 @@ function reads_unhoistable_tag(node, hoistable_tags) {
 		}
 	}
 	return child_nodes(node).some((child) => reads_unhoistable_tag(child, hoistable_tags));
+}
+
+/**
+ * Whether `node` holds a tag that a collecting or loose parse recovered as
+ * unclosed and that is still as parsed: one in an expression container or an
+ * attribute value. The walk gives it its closing tag, and a static leaves the
+ * walk, so the tag would be printed unclosed: a fragment throws, and an
+ * element leaves the editor's code invalid.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function holds_unclosed_tag(node) {
+	if (
+		(node.type === 'JSXElement' || node.type === 'JSXFragment') &&
+		/** @type {AST.TSRXJSXElement | AST.TSRXJSXFragment} */ (node).unclosed
+	) {
+		return true;
+	}
+	return child_nodes(node).some(holds_unclosed_tag);
 }
 
 /**

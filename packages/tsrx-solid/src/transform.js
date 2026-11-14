@@ -2818,7 +2818,7 @@ function to_jsx_element(node, transform_context) {
 		node.openingElement || node,
 	);
 
-	const closingElement = selfClosing
+	let closingElement = selfClosing
 		? null
 		: set_loc(
 				b.jsx_closing_element(
@@ -2832,6 +2832,9 @@ function to_jsx_element(node, transform_context) {
 				),
 				node.closingElement || node,
 			);
+	if (closingElement && !node.closingElement && transform_context.typeOnly && node.unclosed) {
+		closingElement = recovered_closing_element(source_name);
+	}
 
 	const element = b.jsx_element_fresh(openingElement, closingElement, children);
 	// Keep lowered dynamic tags recognizable to scoped-CSS passes and the
@@ -2841,6 +2844,21 @@ function to_jsx_element(node, transform_context) {
 	}
 
 	return set_loc(element, node);
+}
+
+/**
+ * The closing tag the type-only output adds to a tag recovered as unclosed,
+ * with no mapping, as core's `to_jsx_element` adds it (#978): the editor shows
+ * the parser's TSRX1001 and nothing on the added tag.
+ *
+ * @param {ESTreeJSX.JSXOpeningElement['name']} name
+ * @returns {ESTreeJSX.TSRXJSXClosingElement}
+ */
+function recovered_closing_element(name) {
+	const closing = b.jsx_closing_element(clone_ast_node(name, false));
+	// The closing-tag mappings around it leave it out (`segments.js`).
+	closing.metadata.recovered = true;
+	return closing;
 }
 
 /**
