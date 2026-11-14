@@ -11498,15 +11498,56 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			// Within one block, the scope check reports the second declaration as
-			// it reads it.
+			// it reads it. Those of two blocks come by position with it, as tsc
+			// sorts them, and a strict parse throws the first (#1263).
 			source:
 				'namespace N { export const a = 1; }\nnamespace N { export const a = 2; export const a = 3; }',
 			errors: [
-				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 3'],
 				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
 				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 2'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 3'],
 			],
-			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '2:47'],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:27'],
+		},
+		{
+			source:
+				'namespace N { export const a = 1; }\nnamespace N { export const a = 2; function f(x, x) {} }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 2'],
+				[TS_ERRORS.ARGUMENT_NAME_CLASH, 'x, x'],
+				[TS_ERRORS.ARGUMENT_NAME_CLASH, 'x) {}'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:27'],
+		},
+		{
+			source: 'namespace N { export const a = 1; const z; }\nnamespace N { export const a = 2; }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
+				[TS_ERRORS.DECLARATION_NOT_INITIALIZED, 'z;'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 2'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:27'],
+		},
+		{
+			source:
+				'namespace O { export namespace N { export const a = 1; } export namespace N { export const a = 2; export const a = 3; } }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 2'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 3'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:48'],
+		},
+		{
+			source:
+				"declare module 'm' { export const a: number; }\ndeclare module 'm' { export const a: number; export const a: string; }",
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a: number; }\n'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a: number; export'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a: string'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:34'],
 		},
 		// A namespace's name is a value when the namespace is instantiated, and
 		// shares the name with anything otherwise (#1263).
