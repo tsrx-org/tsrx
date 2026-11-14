@@ -317,6 +317,37 @@ export function tsx_with_ts_locations(
 		);
 	};
 
+	/**
+	 * Print an import or a re-export as it is in the source, through its names,
+	 * when the compiler did not change it, else with `print`.
+	 * @template {AST.Node} T
+	 * @param {T} node
+	 * @param {ESRap.Context} context
+	 * @param {((node: T, context: ESRap.Context) => void) | undefined} print
+	 */
+	const print_as_written = (node, context, print) => {
+		const names =
+			type_only && source !== undefined && is_organized_import(node)
+				? import_names_as_written(
+						/** @type {AST.ImportDeclaration | AST.ExportAllDeclaration | AST.ExportNamedDeclaration} */ (
+							/** @type {unknown} */ (node)
+						),
+						source,
+					)
+				: null;
+		if (!names || source === undefined) {
+			/** @type {NonNullable<typeof print>} */ (print)(node, context);
+			return;
+		}
+		let offset = /** @type {number} */ (node.start);
+		for (const name of names) {
+			write_source_text(source.slice(offset, name.start), context);
+			context.visit(name);
+			offset = name.end;
+		}
+		write_source_text(source.slice(offset, node.end), context);
+	};
+
 	/** @type {ESRap.Visitors<AST.Node>} */
 	const wrappers = {
 		Program: (node, context) => {
@@ -329,28 +360,21 @@ export function tsx_with_ts_locations(
 			for (const comment of leading_preserved(node)) {
 				write_preserved_comment(comment, context);
 			}
-			/** @type {NonNullable<typeof base.Program>} */ (base.Program)(node, context);
+			const program = type_only && source !== undefined ? with_import_blocks(node, source) : node;
+			/** @type {NonNullable<typeof base.Program>} */ (base.Program)(program, context);
 		},
-		// The editor output writes an import as it is in the source: TypeScript 7
-		// applies an Organize Imports edit only to text that is the same in both
-		// files. An import the compiler changed prints in esrap's layout.
+		// The editor output writes an import or a re-export as it is in the
+		// source: TypeScript 7 applies an Organize Imports edit only to text that
+		// is the same in both files. One the compiler changed prints in esrap's
+		// layout, which writes `export *  from` with two spaces.
 		ImportDeclaration: (node, context) => {
-			const names =
-				type_only && source !== undefined ? import_names_as_written(node, source) : null;
-			if (!names || source === undefined) {
-				/** @type {NonNullable<typeof base.ImportDeclaration>} */ (base.ImportDeclaration)(
-					node,
-					context,
-				);
-				return;
-			}
-			let offset = /** @type {number} */ (node.start);
-			for (const name of names) {
-				write_source_text(source.slice(offset, name.start), context);
-				context.visit(name);
-				offset = name.end;
-			}
-			write_source_text(source.slice(offset, node.end), context);
+			print_as_written(node, context, base.ImportDeclaration);
+		},
+		ExportAllDeclaration: (node, context) => {
+			print_as_written(node, context, base.ExportAllDeclaration);
+		},
+		ExportNamedDeclaration: (node, context) => {
+			print_as_written(node, context, base.ExportNamedDeclaration);
 		},
 		ArrayPattern: (node, context) => {
 			print_binding_pattern(
@@ -679,6 +703,20 @@ export function tsx_with_ts_locations(
 
 	/** @type {ESRap.Visitors<AST.Node>} */
 	const visitors = { ...base_visitors, ...wrappers };
+	// A block of imports and re-exports with no blank line between them, as
+	// `with_import_blocks` groups them: one per line, without the blank line
+	// esrap puts between statements of different types.
+	Object.assign(visitors, {
+		[IMPORT_BLOCK]: (
+			/** @type {{ body: AST.Node[] }} */ node,
+			/** @type {ESRap.Context} */ context,
+		) => {
+			node.body.forEach((statement, index) => {
+				if (index > 0) context.newline();
+				context.visit(statement);
+			});
+		},
+	});
 	return visitors;
 }
 
@@ -905,8 +943,8 @@ function write_keyword(keyword, node, context) {
 }
 
 /**
- * The text of an import around its names: spaces, comments, and the keywords
- * and punctuation of the import syntax.
+ * The text of an import or a re-export around its names: spaces, comments, and
+ * the keywords and punctuation of the import syntax.
  */
 const regex_import_text_token =
 	/\s+|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\/|[{},*:;]|[\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*|[^]/gu;
@@ -920,6 +958,7 @@ const IMPORT_SYNTAX = new Set([
 	':',
 	';',
 	'import',
+	'export',
 	'defer',
 	'source',
 	'type',
@@ -931,22 +970,27 @@ const IMPORT_SYNTAX = new Set([
 ]);
 
 /**
- * The names, module string and attribute keys and values of an import that
- * the compiler did not change, in source order, or `null` when it changed the
- * import: a name has no location or another spelling, or the text between two
- * names holds more than the import syntax, as after a removed name.
- * @param {AST.ImportDeclaration | AST.TSRXImportDeclaration} node
+ * The names, module string and attribute keys and values of an import or a
+ * re-export that the compiler did not change, in source order, or `null` when
+ * it changed it: a name has no location or another spelling, or the text
+ * between two names holds more than the import syntax, as after a removed name.
+ * @param {AST.ImportDeclaration | AST.TSRXImportDeclaration | AST.ExportAllDeclaration | AST.ExportNamedDeclaration} node
  * @param {string} source
  * @returns {Array<AST.Node & AST.NodeWithLocation> | null}
  */
 function import_names_as_written(node, source) {
-	if (!has_location(node)) return null;
+	if (!has_location(node) || !node.source) return null;
 	/** @type {AST.Node[]} */
 	const nodes = [];
-	for (const specifier of node.specifiers) {
-		if (!has_location(specifier)) return null;
-		if (specifier.type === 'ImportSpecifier') nodes.push(specifier.imported);
-		nodes.push(specifier.local);
+	if (node.type === 'ExportAllDeclaration') {
+		if (node.exported) nodes.push(node.exported);
+	} else {
+		for (const specifier of node.specifiers) {
+			if (!has_location(specifier)) return null;
+			if (specifier.type === 'ImportSpecifier') nodes.push(specifier.imported);
+			nodes.push(specifier.local);
+			if (specifier.type === 'ExportSpecifier') nodes.push(specifier.exported);
+		}
 	}
 	nodes.push(node.source);
 	for (const attribute of node.attributes ?? []) nodes.push(attribute.key, attribute.value);
@@ -980,6 +1024,61 @@ function import_names_as_written(node, source) {
 	}
 	return names;
 }
+
+/** The type of the node that `with_import_blocks` puts a block of imports in. */
+const IMPORT_BLOCK = 'TSRXImportBlock';
+
+/**
+ * A program whose imports and re-exports with no blank line between them in
+ * the source are grouped into one node each, which the printer writes without
+ * the blank line esrap puts between statements of different types. TypeScript
+ * sorts the imports and re-exports of each block in Organize Imports, and a
+ * blank line ends a block, so a block is one where the source has fewer than
+ * two line breaks between statements, as TypeScript counts them.
+ * @param {AST.Program} program
+ * @param {string} source
+ * @returns {AST.Program}
+ */
+function with_import_blocks(program, source) {
+	/** @type {AST.Node[]} */
+	const body = [];
+	/** @type {AST.Node[]} */
+	let block = [];
+	const end_block = () => {
+		if (block.length > 1) {
+			body.push(
+				/** @type {AST.Node} */ (/** @type {unknown} */ ({ type: IMPORT_BLOCK, body: block })),
+			);
+		} else {
+			body.push(...block);
+		}
+		block = [];
+	};
+	for (const statement of program.body) {
+		const previous = block.at(-1);
+		if (
+			!is_organized_import(statement) ||
+			!has_location(statement) ||
+			(previous &&
+				(source
+					.slice(/** @type {number} */ (previous.end), statement.start)
+					.match(regex_line_breaks)?.length ?? 0) > 1)
+		) {
+			end_block();
+		}
+		if (is_organized_import(statement) && has_location(statement)) {
+			block.push(statement);
+		} else {
+			body.push(statement);
+		}
+	}
+	end_block();
+	return body.length === program.body.length
+		? program
+		: { ...program, body: /** @type {AST.Program['body']} */ (body) };
+}
+
+const regex_line_breaks = /\r\n?|[\n\u2028\u2029]/g;
 
 /**
  * Write source text one token at a time, so that each keyword and punctuation
