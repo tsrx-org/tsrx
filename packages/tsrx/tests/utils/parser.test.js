@@ -11050,6 +11050,28 @@ describe('a redeclared name (#948, #952)', () => {
 			for (const [, at] of errors) expect(source.slice(at), source).toMatch(/^(?:a|\\u0061)/);
 		}
 	});
+
+	it('finds the earlier declaration among thousands of names (#1163)', async () => {
+		const names = Array.from({ length: 3000 }, (_, index) => `let a${index};`).join('\n');
+		const redeclared = `${names}\nlet a0;`;
+		const before_function = `${names}\nlet a1500;\nfunction a1500() {}`;
+		const outcomes = await parse_in_worker(
+			[redeclared, before_function].flatMap((source) =>
+				modes.map((options) => ({ source, options })),
+			),
+		);
+
+		const at = before_function.lastIndexOf('let a1500') + 4;
+		expect(outcomes).toEqual([
+			thrown(TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, redeclared.lastIndexOf('a0')),
+			{ ok: true, errors: [code_of(TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED)] },
+			thrown(UPSTREAM_ERRORS.REDECLARED, at),
+			{
+				ok: true,
+				errors: [code_of(UPSTREAM_ERRORS.REDECLARED), code_of(UPSTREAM_ERRORS.REDECLARED)],
+			},
+		]);
+	});
 });
 
 describe('comments around empty statements', () => {

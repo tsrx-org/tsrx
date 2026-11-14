@@ -746,6 +746,43 @@ function function_names_of(scope) {
 }
 
 /**
+ * The index each name of a `block_scoped_names` or `function_names` list was
+ * first appended at, so that `has_name` doesn't scan the list (#1163).
+ * @type {WeakMap<string[], Map<string, number>>}
+ */
+const name_indexes = new WeakMap();
+
+/**
+ * Whether `names` has `name`. The lists only grow, but an abandoned parse
+ * truncates them (see `parseEffects`), so the index recorded for a name counts
+ * only while the list still holds the name there; `append_name` records the
+ * name again once it doesn't.
+ * @param {string[]} names
+ * @param {string} name
+ * @returns {boolean}
+ */
+function has_name(names, name) {
+	const index = name_indexes.get(names)?.get(name);
+	return index !== undefined && names[index] === name;
+}
+
+/**
+ * Append `name` to a `block_scoped_names` or `function_names` list.
+ * @param {string[]} names
+ * @param {string} name
+ * @param {Parse.Parser['parseEffects']} effects
+ */
+function append_name(names, name, effects) {
+	effects?.willAppend(names);
+	if (!has_name(names, name)) {
+		let indexes = name_indexes.get(names);
+		if (!indexes) name_indexes.set(names, (indexes = new Map()));
+		indexes.set(name, names.length);
+	}
+	names.push(name);
+}
+
+/**
  * The names of a `catch` clause's parameter, by the scope of the clause, which
  * acorn shares with its block (see `parseTryStatement`).
  * @type {WeakMap<Parse.Scope, string[]>}
@@ -5440,14 +5477,10 @@ export function TSRXPlugin(config) {
 					this.#redeclaration = outer;
 				}
 				if (kind === 'function') {
-					const names = function_names_of(scope);
-					this.parseEffects?.willAppend(names);
-					names.push(name);
+					append_name(function_names_of(scope), name, this.parseEffects);
 					this.#reportRedeclarationsBeforeFunction(scope, name);
 				} else if (kind !== null && kind !== 'var' && kind !== 'class') {
-					const names = block_scoped_names_of(scope);
-					this.parseEffects?.willAppend(names);
-					names.push(name);
+					append_name(block_scoped_names_of(scope), name, this.parseEffects);
 				}
 			}
 
@@ -5495,13 +5528,13 @@ export function TSRXPlugin(config) {
 				if (block_scoped && catch_parameter_names.get(scope)?.includes(name)) {
 					return { name, error: TS_ERRORS.CATCH_PARAMETER_REDECLARED(name), table: null };
 				}
-				if (kind === 'function' || !block_scoped_names_of(scope).includes(name)) return null;
+				if (kind === 'function' || !has_name(block_scoped_names_of(scope), name)) return null;
 				if (!table) {
 					return kind === 'var'
 						? { name, error: TS_ERRORS.OUTER_SCOPED_VARIABLE_INITIALIZED(name, name), table: null }
 						: null;
 				}
-				if (function_names_of(scope).includes(name)) return null;
+				if (has_name(function_names_of(scope), name)) return null;
 				return { name, error: TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED(name), table: scope };
 			}
 
