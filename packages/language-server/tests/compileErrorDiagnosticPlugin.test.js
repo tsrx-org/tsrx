@@ -490,32 +490,33 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		).toEqual(tags.map((tag) => ({ text: tag, offset: source.indexOf(tag) })));
 	});
 
-	// A `<>` has no mapping in a template, and the editor shows a diagnostic
-	// only where the generated code maps back, so a `<>` left open shows on its
-	// first child, not on the code before the template (#1288).
+	// The editor shows a diagnostic only where the generated code maps back,
+	// and a `<>` has no mapping, but the error of a `<>` left open has an
+	// anchor on the `<>` the editor's code prints, so it shows there, not on its
+	// first child or on the code before the template (#1288, #1322).
 	it.each([
-		['FragmentChild', 'export function C() @{\n\t<><div>\n}\n', '<div>'],
+		['FragmentChild', 'export function C() @{\n\t<><div>\n}\n'],
 		[
 			'FragmentChildOnNextLine',
 			'export function C() @{\n\tconst a = 1;\n\t<>\n\t\t<h1>{a}</h1>\n}\n',
-			'<h1>',
 		],
-	])('reports the unclosed fragment of %s on its first child', async (name, source, child) => {
+	])('reports the unclosed fragment of %s on the `<>`', async (name, source) => {
 		const { document, diagnostics } = await editor_diagnostics_for(name, source);
 
 		expect(
 			reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code)
-				.filter(({ offset }) => offset === source.indexOf(child))
-				.map(({ text }) => text),
-		).toEqual(['<']);
+				.filter(({ text }) => text.startsWith('<'))
+				.map(({ text, offset }) => ({ text, offset })),
+		).toEqual([{ text: '<>', offset: source.indexOf('<>') }]);
 	});
 
-	// Outside a template a `<>` has no mapping either: the editor's code maps no
-	// `<>`, closed or not. So a `<>` left open there also shows on its first
-	// child, and the `<div>` at its name.
-	it('reports an unclosed fragment outside a template on its first child', async () => {
-		const source = 'export const a = <><div>;\n';
-		const { document, diagnostics } = await editor_diagnostics_for('UnclosedFragment', source);
+	// Outside a template too, and the `<div>` shows at its name.
+	it.each([
+		['UnclosedFragment', '<>'],
+		['UnclosedFragmentWithComment', '</* a */>'],
+	])('reports %s outside a template on the `<>`', async (name, fragment) => {
+		const source = `export const a = ${fragment}<div>;\n`;
+		const { document, diagnostics } = await editor_diagnostics_for(name, source);
 
 		expect(
 			reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code).map(({ text, offset }) => ({
@@ -523,14 +524,33 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 				offset,
 			})),
 		).toEqual([
-			{ text: '<', offset: source.indexOf('<div>') },
+			{ text: fragment, offset: source.indexOf(fragment) },
 			{ text: 'div', offset: source.indexOf('div') },
 		]);
 	});
 
-	// The first offset of a file is where a `<>` there has no mapping to widen
-	// it, so it shows on its `<`.
-	it('reports an unclosed fragment at the start of the file on its `<`', async () => {
+	// Each of two in a row on its own `<>`.
+	it.each([
+		['StackedFragments', 'export function C() @{\n\t<><><div>\n}\n'],
+		['StackedFragmentsOutsideTemplate', 'export const a = <><><div>;\n'],
+	])('reports each unclosed fragment of %s on its `<>`', async (name, source) => {
+		const { document, diagnostics } = await editor_diagnostics_for(name, source);
+		const outer = source.indexOf('<>');
+
+		expect(
+			reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code).map(({ text, offset }) => ({
+				text,
+				offset,
+			})),
+		).toEqual([
+			{ text: '<>', offset: outer },
+			{ text: '<>', offset: outer + 2 },
+			{ text: 'div', offset: source.indexOf('div') },
+		]);
+	});
+
+	// At the first offset of a file as anywhere else.
+	it('reports an unclosed fragment at the start of the file on the `<>`', async () => {
 		const { document, diagnostics } = await editor_diagnostics_for(
 			'FragmentAtFileStart',
 			'<><div>;\n',
@@ -542,19 +562,21 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 				offset,
 			})),
 		).toEqual([
-			{ text: '<', offset: 0 },
+			{ text: '<>', offset: 0 },
 			{ text: 'div', offset: 3 },
 		]);
 	});
 
 	// The static `<div />` is hoisted, which leaves the `{value}` before it a
-	// mapping that runs backwards. Volar would drop a diagnostic on that range.
-	it('reports an unclosed fragment before a hoisted child on the code after it', async () => {
+	// mapping that runs backwards. Volar would drop a diagnostic on that range,
+	// but the `<>`'s error has its anchor, on the `return` the editor's code
+	// prints for the template.
+	it('reports an unclosed fragment before a hoisted child on the `<>`', async () => {
 		const source = 'export function C({ value }: { value: string }) @{\n\t<>{value}<div />\n}\n';
 		const { document, diagnostics } = await editor_diagnostics_for('FragmentHoisted', source);
 
 		expect(reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([
-			{ source: DIAGNOSTIC_SOURCE, text: 'value', offset: source.indexOf('value}') },
+			{ source: DIAGNOSTIC_SOURCE, text: '<>', offset: source.indexOf('<>') },
 		]);
 	});
 
@@ -580,14 +602,13 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		).toEqual([source.indexOf('div'), source.indexOf('<>'), source.indexOf('span')]);
 	});
 
-	// An empty `<>` reaches no code of its own, so it stays with the code
-	// before it. It doesn't move on to the next function.
-	it('reports an empty unclosed fragment on the code before it', async () => {
+	// An empty `<>` too. It doesn't move on to the next function.
+	it('reports an empty unclosed fragment on the `<>`', async () => {
 		const source = 'export function A() @{\n\t<>\n}\nexport function B() @{\n\t<div />\n}\n';
 		const { document, diagnostics } = await editor_diagnostics_for('EmptyFragment', source);
 
 		expect(reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([
-			{ source: DIAGNOSTIC_SOURCE, text: 'A', offset: source.indexOf('A') },
+			{ source: DIAGNOSTIC_SOURCE, text: '<>', offset: source.indexOf('<>') },
 		]);
 	});
 
@@ -618,7 +639,7 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 	// The editor's code leaves a repeated modifier out, but the compile anchors
 	// the error on the code it reads in its place, so the editor shows it on
 	// the modifier's first character, not on the code before it or at the start
-	// of the file. EmptyFragment above covers the fallback to the code before.
+	// of the file.
 	it.each([
 		[
 			'RepeatedAccessibility',
