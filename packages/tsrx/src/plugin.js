@@ -1309,23 +1309,23 @@ function skip_whitespace_from(input, i) {
 }
 
 /**
- * The index of the first `}` in a `<style>` or `<script>` body that closes no
- * `{` in it, or -1. Braces in strings and comments, and in a script's template
- * literals and line comments, don't count; a regular expression's do.
+ * The index of the first `}` from `from` in a `<style>` or `<script>` body
+ * that closes no `{` after `from`, or -1. Braces in strings and comments, and
+ * in a script's template literals (but not their `${…}`) and line comments,
+ * don't count; a regular expression's do.
  * @param {string} text
  * @param {boolean} script
+ * @param {number} [from]
+ * @returns {number}
  */
-function unmatched_closing_brace(text, script) {
+function unmatched_closing_brace(text, script, from = 0) {
 	let depth = 0;
-	for (let i = 0; i < text.length; i++) {
+	for (let i = from; i < text.length; i++) {
 		const ch = text[i];
-		if (ch === '"' || ch === "'" || (script && ch === '`')) {
-			// To the closing quote, past escapes; a quote other than a backquote
-			// ends at the line too.
-			for (i++; i < text.length && text[i] !== ch; i++) {
-				if (text[i] === '\\') i++;
-				else if (ch !== '`' && (text[i] === '\n' || text[i] === '\r')) break;
-			}
+		if (ch === '"' || ch === "'") {
+			i = string_end(text, i);
+		} else if (script && ch === '`') {
+			i = template_end(text, i);
 		} else if (text.startsWith('/*', i)) {
 			const end = text.indexOf('*/', i + 2);
 			if (end === -1) return -1;
@@ -1339,6 +1339,46 @@ function unmatched_closing_brace(text, script) {
 		}
 	}
 	return -1;
+}
+
+/**
+ * The index of the quote that ends the string starting at `start`, past
+ * escaped characters and escaped line breaks, or of the line break that ends
+ * it unclosed.
+ * @param {string} text
+ * @param {number} start
+ */
+function string_end(text, start) {
+	let i = start + 1;
+	for (; i < text.length && text[i] !== text[start]; i++) {
+		if (text[i] === '\\') {
+			i++;
+			if (text[i] === '\r' && text[i + 1] === '\n') i++;
+		} else if (text[i] === '\n' || text[i] === '\r') {
+			break;
+		}
+	}
+	return i;
+}
+
+/**
+ * The index of the backquote that ends the template literal starting at
+ * `start`, past escapes and its `${…}` substitutions.
+ * @param {string} text
+ * @param {number} start
+ */
+function template_end(text, start) {
+	let i = start + 1;
+	for (; i < text.length && text[i] !== '`'; i++) {
+		if (text[i] === '\\') {
+			i++;
+		} else if (text[i] === '$' && text[i + 1] === '{') {
+			const close = unmatched_closing_brace(text, true, i + 2);
+			if (close === -1) return text.length;
+			i = close;
+		}
+	}
+	return i;
 }
 
 /**
@@ -4913,43 +4953,61 @@ export function TSRXPlugin(config) {
 			 * to the end of the template. Drop it from the children and read it again
 			 * as code, so that the code around the element still parses and TSRX1001
 			 * is the error the tools report (#1305). The code goes on with `)` or `,`
-			 * in parentheses, `]` or `,` in brackets opened in its statement, and `:`
-			 * after a conditional's `?`; other text stays the element's
-			 * (`@{ <div>: label }`), and so does text with a comment in it, whose
-			 * comments are recorded as it is read.
+			 * in parentheses, `]` or `,` after an element right after `[` or `,`, `:`
+			 * after a conditional's `?`, and `}` in a template literal's `${…}`; other
+			 * text stays the element's (`@{ <div>: label }`), and so does text with a
+			 * comment in it, whose comments are recorded as it is read.
 			 * @param {AST.NativeTSRXTemplateNode} node
 			 * @param {number} context_depth The tokenizer context depth where the
 			 *   element began
 			 */
 			#rereadTrailingCodeOfUnclosedElement(node, context_depth) {
 				let closers = '';
-				if (this.context[context_depth - 1]?.token === '(') closers += '),';
-				if (this.#openBrackets > this.#statementOpenBrackets) closers += '],';
+				const context = this.context[context_depth - 1]?.token;
+				if (context === '(') closers += '),';
+				else if (context === '${') closers += '}';
+				// The code right before the element, past whitespace and block comments
 				let before = /** @type {number} */ (node.start) - 1;
-				while (before >= 0 && regex_whitespace_character.test(this.input[before])) before--;
-				if (this.input[before] === '?' && this.input[before - 1] !== '?') closers += ':';
-				const last = node.children.at(-1);
-				// The element now ends at its opening tag. A container's element can
-				// leave its text out of its children, read before its body.
-				const start = /** @type {number} */ (
-					last ? (last.type === 'JSXText' ? last.start : last.end) : node.end
-				);
-				const code_start = skip_whitespace_from(this.input, start);
-				if (
-					!closers.includes(this.input[code_start] || '\0') ||
-					/\/[/*]/.test(this.input.slice(start, this.start))
-				) {
-					return;
+				for (;;) {
+					while (before >= 0 && regex_whitespace_character.test(this.input[before])) before--;
+					if (this.input[before] !== '/' || this.input[before - 1] !== '*') break;
+					before = this.input.lastIndexOf('/*', before - 2) - 1;
 				}
-				if (last?.type === 'JSXText') {
-					// The whitespace before the code stays the element's text.
-					if (code_start === start) {
-						node.children.pop();
-					} else {
-						last.value = last.raw = this.input.slice(start, code_start);
-						last.end = code_start;
-						/** @type {AST.SourceLocation} */ (last.loc).end = get_line_info(this, code_start);
-					}
+				const previous = this.input[before];
+				if (previous === '[' || previous === ',') closers += '],';
+				if (previous === '?' && this.input[before - 1] !== '?') closers += ':';
+				/** @param {number} start */
+				const goes_on_at = (start) => {
+					const code_start = skip_whitespace_from(this.input, start);
+					return closers.includes(this.input[code_start] || '\0') &&
+						!/\/[/*]/.test(this.input.slice(start, this.start))
+						? code_start
+						: -1;
+				};
+				// The code goes on right after the opening tag (`f(<div>, x)`), and
+				// what the children read is code, or after the last child: text, or
+				// what a container's element read before its body and left out of its
+				// children. The element now ends at its opening tag.
+				const children = node.children;
+				const last = children.at(-1);
+				const first = /** @type {any} */ (children[0]);
+				let keep = 0;
+				let code_start = goes_on_at(/** @type {number} */ (node.end));
+				if (code_start === -1 && last) {
+					keep = last.type === 'JSXText' ? children.length - 1 : children.length;
+					code_start = goes_on_at(
+						/** @type {number} */ (last.type === 'JSXText' ? last.start : last.end),
+					);
+				}
+				if (code_start === -1) return;
+				const text = keep === 0 ? first : last;
+				// The whitespace before the code stays the element's text.
+				children.length = keep;
+				if (text?.type === 'JSXText' && text.start < code_start) {
+					text.value = text.raw = this.input.slice(text.start, code_start);
+					text.end = code_start;
+					/** @type {AST.SourceLocation} */ (text.loc).end = get_line_info(this, code_start);
+					children.push(text);
 				}
 				this.#truncateContext(context_depth);
 				const loc = get_line_info(this, code_start);
@@ -13493,13 +13551,16 @@ export function TSRXPlugin(config) {
 							? /** @type {ESTreeJSX.JSXFragment} */ (node).openingFragment.end
 							: /** @type {ESTreeJSX.JSXElement} */ (node).openingElement.end;
 						this.#path.pop();
-						// In code: no template parent, or none opened in the `{ … }` container
-						// the element is in.
+						// In code: no template parent, none opened in the `{ … }` container
+						// the element is in, or code that started after the parent opened (a
+						// `@{ … }` body's setup statement).
 						const parent_index = this.#path.length - 1;
+						const parent = this.#path[parent_index];
 						if (
 							type_parameter === null &&
 							(parent_index < this.#containerPathBaseline() ||
-								!this.#isNativeTemplateNode(this.#path[parent_index]))
+								!this.#isNativeTemplateNode(parent) ||
+								this.#templateScriptParsingDepth > this.#elementStart(parent).scriptDepth)
 						) {
 							this.#rereadTrailingCodeOfUnclosedElement(
 								/** @type {AST.NativeTSRXTemplateNode} */ (node),

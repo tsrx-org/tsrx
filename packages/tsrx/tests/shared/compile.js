@@ -105,11 +105,32 @@ const UNCLOSED_TAG_RECOVERY = [
 	],
 	['<style> in an element', 'function App() @{\n\t<div>\n\t\t<style>.a { color: red; }</div>\n}'],
 	['<script> in a block', 'function App() @{\n\t<script>const a = 1;\n}'],
+	[
+		'in a setup statement',
+		'function App() @{\n\tconst y = String(<div>, 1);\n\t<span>{y}</span>\n}',
+	],
+	[
+		'after a comment after `?`',
+		'function App(props: { x: boolean }) {\n\treturn <div>{props.x ? /* c */ <b> : null}</div>;\n}',
+	],
+	['in a template literal', 'function App() {\n\treturn `${<div>}`;\n}'],
 	// Its text, where nothing around it goes on with the punctuation
 	['with text that starts with `:`', 'function App() @{\n\t<div>: label\n}'],
 	['with text that starts with `,`', 'function App() @{\n\t<div>, hello\n}'],
+	[
+		'in a directive body in brackets',
+		'function App(props: { c: boolean }) {\n\treturn [@if (props.c) { <div>, label }];\n}',
+	],
 	// Braces in strings and comments don't close the block
 	['<script> with a `}` in a string', 'function App() @{\n\t<script>const s = "}";\n}'],
+	[
+		'<script> with a `}` in a string after an escaped line break',
+		'function App() @{\r\n\t<script>const s = "a\\\r\n}";\r\n}',
+	],
+	[
+		'<script> with a `}` in a nested template literal',
+		'function App() @{\n\t<script>const s = `${`}`}`;\n}',
+	],
 	[
 		'<style> with a `}` in a string',
 		'function App() @{\n\t<style>.a::before { content: "}"; } /* } */\n}',
