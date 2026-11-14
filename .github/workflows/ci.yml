@@ -13,6 +13,7 @@ on:
       - "pnpm-workspace.yaml"
       - "scripts/**"
       - "vitest.config.js"
+      - "vitest.eslint-9.config.js"
       - ".changeset/**"
       - ".github/workflows/ci.yml"
 
@@ -27,6 +28,7 @@ on:
       - "pnpm-workspace.yaml"
       - "scripts/**"
       - "vitest.config.js"
+      - "vitest.eslint-9.config.js"
       - ".changeset/**"
       - ".github/workflows/ci.yml"
 
@@ -88,6 +90,46 @@ jobs:
 
       - name: Test Solid with Bun
         run: pnpm --filter @tsrx/bun-plugin-solid test:native
+
+  # The ESLint parser and plugin against ESLint 9, the oldest major in their
+  # `eslint` peer range. The test job runs them against the catalog's ESLint 10.
+  eslint-9:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: "pnpm"
+
+      - name: Install dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if pnpm install --prod false --frozen-lockfile; then
+              exit 0
+            fi
+
+            if [ "$attempt" -eq 3 ]; then
+              exit 1
+            fi
+
+            echo "::warning::Dependency installation failed (attempt $attempt/3); retrying in 5 seconds"
+            sleep 5
+          done
+
+      - name: Build eslint-parser
+        working-directory: ./packages/eslint-parser
+        run: pnpm build
+
+      - name: Test the ESLint parser and plugin with ESLint 9
+        run: pnpm test:eslint-9
 
   lint:
     runs-on: ubuntu-latest

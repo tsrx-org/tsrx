@@ -46,6 +46,7 @@
     "@types/eslint": "catalog:default",
     "@types/estree": "catalog:default",
     "@types/node": "catalog:default",
+    "eslint-9": "npm:eslint@9.39.5",
     "tsdown": "catalog:default",
     "typescript": "catalog:default"
   },
