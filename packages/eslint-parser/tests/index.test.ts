@@ -399,6 +399,14 @@ export function A({ items }) @{
 		}
 	});
 
+	it('reports a clause that no directive takes as a parse error (#1330)', () => {
+		expect(
+			lint('export function App({ ok }) @{\n\t<p>@if (ok) {<i />} note @else {<b />}</p>\n}\n'),
+		).toEqual([
+			'2: null: Parsing error: `@else` must come right after an `@if` block. To write it as text, write `&#64;else`.',
+		]);
+	});
+
 	it('reports a plain try with only a pending block as a parse error', () => {
 		const code = `export function App() @{
 	try { <p>a</p> } pending { <p>loading</p> }

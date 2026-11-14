@@ -41,6 +41,8 @@ export const DIAGNOSTIC_CODES = {
 	TRY_HANDLER_MISSING: 'TSRX1010',
 	/** An `@for`'s `index` or `key` clause is incomplete or out of order. */
 	FOR_CLAUSE: 'TSRX1011',
+	/** A directive's clause (`@else {`, `@catch (e) {`, `@case 1:`) in element children, where no directive takes it. */
+	DETACHED_DIRECTIVE_CLAUSE: 'TSRX1012',
 
 	/** A `return` in a template. */
 	TEMPLATE_RETURN_STATEMENT: 'TSRX2001',
@@ -377,6 +379,12 @@ export const TSRX_ERRORS = {
 	),
 	FOR_INDEX_NAME_EXPECTED: tsrx('FOR_CLAUSE', 'Expected identifier after "index" keyword'),
 	FOR_INDEX_AFTER_KEY: tsrx('FOR_CLAUSE', '"index" must come before "key" in for-of loop'),
+	/** `clause` is the clause's keyword, such as `else`, and `place` where it belongs. */
+	DETACHED_DIRECTIVE_CLAUSE: tsrx_with_values(
+		'DETACHED_DIRECTIVE_CLAUSE',
+		(clause, place) =>
+			`\`@${clause}\` must come ${place}. To write it as text, write \`&#64;${clause}\`.`,
+	),
 
 	// TSRX2xxx
 	TEMPLATE_RETURN_STATEMENT: tsrx(

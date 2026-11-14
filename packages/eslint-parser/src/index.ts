@@ -628,10 +628,17 @@ function token_type(
 	return keyword ? 'Keyword' : 'Punctuator';
 }
 
+/**
+ * The collected errors ESLint reports as a parse error: broken markup, and a
+ * directive's clause that no directive takes (TSRX1012), which the parser
+ * reads as text and an expression container, as it throws a clause written
+ * without its `@` (TSRX1009).
+ */
 function is_fatal_parser_diagnostic(error: any): boolean {
 	return (
 		error?.code === DIAGNOSTIC_CODES.UNCLOSED_TAG ||
-		error?.code === DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG
+		error?.code === DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG ||
+		error?.code === DIAGNOSTIC_CODES.DETACHED_DIRECTIVE_CLAUSE
 	);
 }
 

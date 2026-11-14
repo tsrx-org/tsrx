@@ -28,6 +28,22 @@ const regex_space_and_comments = /(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\
 /** A character acorn's `skipSpace` skips as whitespace or a line terminator */
 const regex_whitespace_character = /\s/;
 
+/** An identifier character at the start, ASCII or not */
+const regex_identifier_part = /^[\p{ID_Continue}$\u200C\u200D]/u;
+
+/**
+ * Where each directive clause belongs, as TSRX1012 says it.
+ * @type {Record<string, string>}
+ */
+const CLAUSE_PLACEMENT = {
+	else: 'right after an `@if` block',
+	empty: 'right after an `@for` block',
+	pending: 'right after an `@try` block',
+	catch: 'right after an `@try` or `@pending` block',
+	case: 'directly inside an `@switch` body',
+	default: 'directly inside an `@switch` body',
+};
+
 /**
  * A comment between template children, as `#parseTemplateRawText` reads it.
  * @typedef {{ type: 'Line' | 'Block', value: string, start: number, end: number }} TemplateTextComment
@@ -2418,6 +2434,7 @@ export function TSRXPlugin(config) {
 					) {
 						break;
 					}
+					if (ch === CharCode.at) this.#reportDetachedClause(index);
 					index++;
 				}
 
@@ -2444,6 +2461,91 @@ export function TSRXPlugin(config) {
 					if (node.raw !== '') body.push(node);
 				}
 				return index;
+			}
+
+			/**
+			 * A directive's clause at `index` in template text: a clause keyword and
+			 * what starts its clause (`@else {`, `@else if`, `@empty {`, `@pending {`,
+			 * `@catch {` or `(`, `@case …:`, `@default:`). The directive takes its
+			 * clause only right after its block (`@case` and `@default` only in its
+			 * body), so this one is text, and its `{ … }` would render whatever the
+			 * directive does: TSRX1012, in every mode (#1330). `&#64;else` is the text.
+			 * @param {number} index
+			 */
+			#reportDetachedClause(index) {
+				const word = /^(?:else|empty|pending|catch|case|default)/.exec(
+					this.input.slice(index + 1, index + 8),
+				)?.[0];
+				const keyword_end = index + 1 + (word?.length ?? 0);
+				// A keyword ends where no identifier character, ASCII or not, follows.
+				/** @param {number} at */
+				const word_ends_at = (at) => !regex_identifier_part.test(this.input.slice(at, at + 2));
+				if (!word || !word_ends_at(keyword_end)) return;
+				let detached;
+				if (word === 'case') {
+					detached = this.#caseLabelColonAhead(keyword_end);
+				} else {
+					const next = skip_space_and_comments_from(this.input, keyword_end);
+					if (next === -1) return;
+					const ch = this.input[next];
+					detached =
+						word === 'else'
+							? ch === '{' || (this.input.startsWith('if', next) && word_ends_at(next + 2))
+							: word === 'catch'
+								? ch === '{' || ch === '('
+								: word === 'default'
+									? ch === ':'
+									: ch === '{';
+				}
+				if (!detached) return;
+				const error = TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE(word, CLAUSE_PLACEMENT[word]);
+				// Once, though the text may be read again.
+				if (this.#errors?.some((other) => other.pos === index && other.code === error.code)) return;
+				this.#report_recoverable_error_range(index, keyword_end, error);
+			}
+
+			/**
+			 * Whether a `:` comes after `index` on the same line, before a `{`, a `}`
+			 * or a tag: the end of an `@case …:` label. Strings and block comments on
+			 * the line are skipped; a `//`, which template text reads as a comment,
+			 * ends the line.
+			 * @param {number} index
+			 */
+			#caseLabelColonAhead(index) {
+				for (let i = index; i < this.input.length; i++) {
+					const ch = this.input[i];
+					if (ch === ':') return true;
+					if (
+						ch === '{' ||
+						ch === '}' ||
+						(ch === '<' && can_start_tag_after_lt(this.input, i)) ||
+						this.input.startsWith('//', i) ||
+						this.#isNewlineCharCode(i)
+					) {
+						return false;
+					}
+					let close = -1;
+					if (this.input.startsWith('/*', i)) {
+						close = this.input.indexOf('*/', i + 2) + 1;
+					} else if (ch === '"' || ch === "'" || ch === '`') {
+						// To the closing quote, past escapes
+						for (close = i + 1; close < this.input.length; close++) {
+							if (this.input[close] === '\\') close++;
+							else if (this.input[close] === ch) break;
+						}
+					} else {
+						continue;
+					}
+					if (
+						close <= 0 ||
+						close >= this.input.length ||
+						/[\n\r\u2028\u2029]/.test(this.input.slice(i, close))
+					) {
+						return false;
+					}
+					i = close;
+				}
+				return false;
 			}
 
 			/**

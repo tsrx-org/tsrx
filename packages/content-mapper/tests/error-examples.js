@@ -132,6 +132,20 @@ export const ERROR_EXAMPLES = [
 `,
 	},
 	{
+		error: TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE,
+		source: `export function C(props: { ok: boolean }) @{
+	<p>
+		@if (props.ok) {
+			<i />
+		} note
+		@else {
+			<b />
+		}
+	</p>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
 		source: `export function C() @{
 	<div>

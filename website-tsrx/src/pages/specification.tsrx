@@ -556,6 +556,8 @@ const TSRX_ERROR_CODES = [
 	'          <div>@try { <b /> }</div>',
 	'TSRX1011  Expected identifier after "index" keyword; "index" must come before "key"',
 	'          @for (const x of xs; key x index i) { <li /> }',
+	'TSRX1012  `@else` must come right after an `@if` block. (also `@empty`, `@pending`, `@catch`, `@case`, `@default`)',
+	'          <div>@if (x) { <b /> } note @else { <i /> }</div>',
 	'TSRX2001  Return statements are not allowed inside TSRX templates.',
 	'          @try { return; } @catch (e) { <p /> }',
 	'TSRX2002  Return statements are not allowed inside TSRX template @if blocks.',
