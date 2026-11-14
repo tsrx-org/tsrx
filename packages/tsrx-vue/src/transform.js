@@ -27,6 +27,7 @@ import {
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	setLocation,
+	sourceMentionsIdentifier,
 	SUSPENSE_INTERNAL_NAME,
 	TSRX_ERRORS,
 } from '@tsrx/core';
@@ -2648,6 +2649,68 @@ function imported_name(specifier) {
 }
 
 /**
+ * The name a keyed row's `<Fragment>` takes. vue-jsx-vapor's server build
+ * passes a fragment's children as an array only when its tag is spelled
+ * `Fragment`; under any other name it passes them as slots, which Vue's
+ * `Fragment` doesn't render. So the row uses `Fragment` itself, unless the
+ * module names something else `Fragment` (anything but a value import of it
+ * from `vue`), and then a generated name the source doesn't use.
+ *
+ * @param {AST.Program} program
+ * @param {string} source
+ * @returns {string}
+ */
+function fragment_local_name(program, source) {
+	const imports_vue_fragment = program.body.some(
+		(statement) =>
+			statement.type === 'ImportDeclaration' &&
+			statement.source.value === 'vue' &&
+			statement.importKind !== 'type' &&
+			statement.specifiers.some(
+				(specifier) =>
+					specifier.type === 'ImportSpecifier' &&
+					specifier.importKind !== 'type' &&
+					imported_name(specifier) === 'Fragment' &&
+					specifier.local.name === 'Fragment',
+			),
+	);
+	if (imports_vue_fragment || !sourceMentionsIdentifier(source, 'Fragment')) {
+		return 'Fragment';
+	}
+	let local = FRAGMENT_INTERNAL_NAME;
+	for (let count = 1; sourceMentionsIdentifier(source, local); count++) {
+		local = `${FRAGMENT_INTERNAL_NAME}_${count}`;
+	}
+	return local;
+}
+
+/**
+ * Renames the `<__Fragment>` tags the shared lowering generated (they have no
+ * source location) to `local`.
+ *
+ * @param {AST.Program} program
+ * @param {string} local
+ * @returns {void}
+ */
+function rename_generated_fragments(program, local) {
+	walk(/** @type {AST.Node} */ (program), null, {
+		JSXElement(node, { next }) {
+			const element = /** @type {ESTreeJSX.JSXElement} */ (/** @type {unknown} */ (node));
+			for (const name of [element.openingElement.name, element.closingElement?.name]) {
+				if (
+					name?.type === 'JSXIdentifier' &&
+					name.name === FRAGMENT_INTERNAL_NAME &&
+					!has_location(name)
+				) {
+					name.name = local;
+				}
+			}
+			next();
+		},
+	});
+}
+
+/**
  * Turn an authored type-only import of `defineVaporComponent` from
  * `vue-jsx-vapor` into the value import the generated components need. The
  * specifier is replaced by one without a location, as for a name the compiler
@@ -2873,7 +2936,11 @@ function inject_vue_imports(program, transform_context) {
 	// through `VaporFor`, is a `<Fragment key>`, which vue-jsx-vapor lowers to a
 	// keyed fragment.
 	if (transform_context.needs_fragment) {
-		ensure_named_import(program, 'vue', 'Fragment', FRAGMENT_INTERNAL_NAME);
+		const local = fragment_local_name(program, transform_context.source);
+		if (local !== FRAGMENT_INTERNAL_NAME) {
+			rename_generated_fragments(program, local);
+		}
+		ensure_named_import(program, 'vue', 'Fragment', local);
 	}
 
 	if (transform_context.needs_error_boundary) {

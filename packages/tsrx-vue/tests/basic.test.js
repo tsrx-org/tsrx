@@ -1740,6 +1740,43 @@ export function Card(${params}: any) @{
 		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
 	});
 
+	it('imports Fragment from vue for a keyed fragment row outside VaporFor (#179)', () => {
+		const loop = `<ul>
+			@for (const item of items; key item.id) {
+				<>
+					<li>{item.id}</li>
+				</>
+			} @empty {
+				<p>{'none'}</p>
+			}
+		</ul>`;
+		/** @param {string} module_scope */
+		const compile_with = (module_scope) =>
+			compile(
+				`${module_scope}
+				export function App({ items }: { items: { id: number }[] }) @{
+					${loop}
+				}`,
+				'App.tsrx',
+			);
+
+		// The tag is spelled `Fragment`, as vue-jsx-vapor's server build needs.
+		for (const module_scope of ['', 'const __Fragment = 1;', "import { Fragment } from 'vue';"]) {
+			const { code, errors } = compile_with(module_scope);
+			expect(errors, module_scope).toEqual([]);
+			expect(code, module_scope).toMatch(/^import \{ Fragment \} from 'vue';$/m);
+			expect(code, module_scope).toContain('<Fragment key={item.id}><li>{item.id}</li></Fragment>');
+			expect(code, module_scope).not.toContain('Fragment as');
+		}
+
+		// A module that names something else `Fragment` keeps it, and the row takes
+		// a generated name the source doesn't use.
+		const { code, errors } = compile_with('function Fragment() @{ <b /> }\nconst __Fragment = 1;');
+		expect(errors).toEqual([]);
+		expect(code).toContain("import { Fragment as __Fragment_1 } from 'vue';");
+		expect(code).toContain('<__Fragment_1 key={item.id}><li>{item.id}</li></__Fragment_1>');
+	});
+
 	it('reads the index as a number in getKey and through its ref in the slot when a default reads it (#1312)', () => {
 		const { code, errors } = compile(
 			`function App({ rows }: { rows: [string | undefined, string][] }) @{
