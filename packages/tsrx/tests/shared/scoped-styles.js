@@ -1805,6 +1805,22 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('keeps the arguments of a :global() compound in a scope without elements', () => {
+			for (const pseudo of ['not', 'is', 'where', 'has']) {
+				const { css } = compile(
+					`export function App() @{
+						<div>
+							<style>:global(.x):${pseudo}(.z) { color: red; }</style>
+							{'text'}
+						</div>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(css, pseudo).toContain(`.x:${pseudo}(.z) { color: red; }`);
+			}
+		});
+
 		it('still prunes a rule whose :global() compound cannot match a parent in the component', () => {
 			for (const rule of [':global(.x):is(.z) > .y', ':global(.x):has(.z) > .y']) {
 				const { css } = compile(
