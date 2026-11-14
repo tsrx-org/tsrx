@@ -186,7 +186,7 @@ describe('tsrx-tsc with a warning', () => {
 		);
 		const result = run_cli('native');
 		const { code, message } = TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD;
-		expect(result.output).toBe(`layout.tsrx(2,7): warning ${code}: ${message}\n`);
+		expect(result.output).toBe(`layout.tsrx(2,7): warning ${code}: ${message}${os.EOL}`);
 		expect(result.status).toBe(0);
 	});
 });
@@ -202,7 +202,7 @@ describe('tsrx-tsc with a TSRX compile error', () => {
 		const result = run_cli('native');
 		const { code, message } = TSRX_ERRORS.CODE_BLOCK_SINGLE_OUTPUT;
 		// On standard output, where tsc writes its diagnostics.
-		expect(result.stdout).toBe(`layout.tsrx(4,2): error ${code}: ${message}\n`);
+		expect(result.stdout).toBe(`layout.tsrx(4,2): error ${code}: ${message}${os.EOL}`);
 		expect(result.output).toBe(result.stdout);
 		expect(result.status).toBe(2);
 	});
@@ -228,7 +228,7 @@ describe('tsrx-tsc with a TSRX compile error', () => {
 		config.include = ['fatal.tsrx'];
 		fs.writeFileSync(config_path, JSON.stringify(config));
 		const result = run_cli('native');
-		expect(result.output).toBe('fatal.tsrx: error stub-fatal: the compiler gave up\n');
+		expect(result.output).toBe(`fatal.tsrx: error stub-fatal: the compiler gave up${os.EOL}`);
 		expect(result.status).toBe(2);
 	});
 
@@ -258,7 +258,7 @@ describe('tsrx-tsc with a TSRX compile error', () => {
 		fs.writeFileSync(config_path, JSON.stringify(config));
 		const result = run_cli('native');
 		expect(result.output).toBe(
-			'rest.tsrx(4,19): error TS1013: Comma is not permitted after the rest element\n' +
+			`rest.tsrx(4,19): error TS1013: Comma is not permitted after the rest element${os.EOL}` +
 				'rest.tsrx(1,19): error TS1014: A rest parameter must be last in a parameter list.\n',
 		);
 		expect(result.status).toBe(2);

@@ -63,9 +63,14 @@ const FILE_NAME = path.resolve('src', 'App.tsrx');
  * file.
  * @param {import('../src/language.js').TSRXCompilerModule} compiler
  * @param {string} [source]
- * @param {Array<{ code: number, start: number }>} [typescript] Codes below 2000
- *   are syntactic diagnostics, the others semantic.
- * @param {{ listFilesOnly?: boolean, syntax_error_elsewhere?: boolean }} [options]
+ * @param {Array<{ code: number, start: number, semantic?: boolean }>} [typescript]
+ *   TypeScript's syntactic diagnostics for the file, and its semantic ones.
+ * @param {{
+ * 	listFilesOnly?: boolean,
+ * 	syntax_error_elsewhere?: boolean,
+ * 	options_error?: boolean,
+ * 	global_error?: boolean,
+ * }} [options]
  */
 function report(
 	compiler,
@@ -87,18 +92,22 @@ function report(
 			},
 		})
 	);
-	const diagnostics = typescript.map(({ code, start }) => ({ file: source_file, code, start }));
-	const syntactic = diagnostics.filter(({ code }) => code < 2000);
+	const of_kind = (/** @type {boolean} */ semantic) =>
+		typescript
+			.filter((diagnostic) => !!diagnostic.semantic === semantic)
+			.map(({ code, start }) => ({ file: source_file, code, start }));
+	const syntactic = of_kind(false);
 	const elsewhere = { file: { fileName: path.resolve('other.ts') }, code: 1005, start: 0 };
+	const global = { code: 2318, messageText: "Cannot find global type 'Array'." };
 	const program = /** @type {import('typescript').Program} */ (
 		/** @type {unknown} */ ({
 			getSourceFiles: () => [{ fileName: path.resolve('lib.d.ts') }, source_file],
 			getCompilerOptions: () => ({ listFilesOnly: options.listFilesOnly }),
 			getSyntacticDiagnostics: (/** @type {unknown} */ file) =>
 				file || !options.syntax_error_elsewhere ? syntactic : [...syntactic, elsewhere],
-			getOptionsDiagnostics: () => [],
-			getGlobalDiagnostics: () => [],
-			getSemanticDiagnostics: () => diagnostics.filter(({ code }) => code >= 2000),
+			getOptionsDiagnostics: () => (options.options_error ? [global] : []),
+			getGlobalDiagnostics: () => (options.global_error ? [global] : []),
+			getSemanticDiagnostics: () => of_kind(true),
 		})
 	);
 	/** @type {string[]} */
@@ -229,8 +238,8 @@ describe('tsrx-tsc diagnostic lines', () => {
 		const first = source.indexOf('= [1]]');
 		const second = source.indexOf('= [2]]');
 		const result = report(react, source, [
-			{ code: 1186, start: first },
-			{ code: 2322, start: second },
+			{ code: 1186, start: first, semantic: true },
+			{ code: 2322, start: second, semantic: true },
 		]);
 		expect(result).toEqual({
 			lines: [`src/App.tsrx(3,13): error ${code}: ${message}`],
@@ -240,27 +249,32 @@ describe('tsrx-tsc diagnostic lines', () => {
 		// exit code to tsc.
 		expect(
 			report(react, source, [
-				{ code: 1186, start: first },
-				{ code: 1186, start: second },
+				{ code: 1186, start: first, semantic: true },
+				{ code: 1186, start: second, semantic: true },
 			]),
 		).toEqual({ lines: [], printed_error: false });
 	});
 
 	it('leaves nothing to semantic diagnostics that tsc does not report', () => {
 		// tsc reports no semantic diagnostic with `--listFilesOnly`, or when a file
-		// has a syntax error, so tsrx-tsc's line is then the only one.
+		// has a syntax error or the options or globals have errors, so tsrx-tsc's
+		// line is then the only one.
 		const source = 'const a = 1;\nconst a = 2;\nexport { a };\n';
 		const second = source.lastIndexOf('a =');
 		const compiler = compiler_collecting([
 			{ message: "Cannot redeclare block-scoped variable 'a'.", code: 'TS2451', pos: second },
 		]);
-		const typescript = [{ code: 2451, start: second }];
+		const typescript = [{ code: 2451, start: second, semantic: true }];
 		const line = "src/App.tsrx(2,7): error TS2451: Cannot redeclare block-scoped variable 'a'.";
 		expect(report(compiler, source, typescript).lines).toEqual([]);
-		expect(report(compiler, source, typescript, { listFilesOnly: true }).lines).toEqual([line]);
-		expect(report(compiler, source, typescript, { syntax_error_elsewhere: true }).lines).toEqual([
-			line,
-		]);
+		for (const gate of [
+			'listFilesOnly',
+			'syntax_error_elsewhere',
+			'options_error',
+			'global_error',
+		]) {
+			expect(report(compiler, source, typescript, { [gate]: true }).lines, gate).toEqual([line]);
+		}
 	});
 
 	it("doesn't leave a TSRX code to TypeScript", () => {
