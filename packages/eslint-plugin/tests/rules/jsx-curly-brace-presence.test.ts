@@ -37,6 +37,9 @@ const tsrx_syntax_children = [
 	// TSRX also reads a clause written without its `@` and reports it.
 	"<p>@if (ok) {<b />} {'else if'}</p>",
 	"<p>@try {<b />} @pending {<i />} {'catch (e)'}</p>",
+	// `@case …:` and `@default:` in an element are a label no `@switch` takes,
+	// TSRX1012 (#1330).
+	"<code>{'@case 1: @default:'}</code>",
 	// A comment may come between a directive's keyword and its `(`.
 	"<p>{'@for// c'}\n\t\t(const item of items) {1}\n\t</p>",
 	"<code>{'//'}</code>",
@@ -107,12 +110,6 @@ const invalid: RuleTester.InvalidTestCase[] = [
 		// Without a `(`, `@if`, `@switch` and `@for` are text.
 		code: component("<code>{'@if, @switch and @for'}</code>"),
 		output: component('<code>@if, @switch and @for</code>'),
-		errors: [{ messageId: 'unnecessaryCurly' }],
-	},
-	{
-		// `@case` and `@default` are labels only in a `@switch` body, not in an element.
-		code: component("<code>{'@case 1: @default:'}</code>"),
-		output: component('<code>@case 1: @default:</code>'),
 		errors: [{ messageId: 'unnecessaryCurly' }],
 	},
 	{
