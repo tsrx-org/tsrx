@@ -729,6 +729,8 @@ export const TS_ERRORS = {
 		code: 'TS1478',
 		message: 'Identifier or string literal expected.',
 	},
+	// After a plain `try` block, a `pending` block, which only `@try` has
+	CATCH_OR_FINALLY_EXPECTED: { code: 'TS1472', message: "'catch' or 'finally' expected." },
 	// A word reserved only in strict mode (`let`, `static`, `yield`, …) used as a
 	// name, which TypeScript's parser reads and its binder reports: TSRX's input
 	// is a module, and inside a class TypeScript says so instead
@@ -1076,6 +1078,11 @@ export const TS_ERRORS = {
 	JSX_UNESCAPED_CLOSING_BRACE: {
 		code: 'TS1381',
 		message: 'Unexpected token `}`. Did you mean `&rbrace;` or `{"}"}`?',
+	},
+	// acorn-typescript's wording, for an attribute's empty `{}` value
+	JSX_ATTRIBUTE_EMPTY_EXPRESSION: {
+		code: 'TS17000',
+		message: 'JSX attributes must only be assigned a non-empty expression',
 	},
 	// TSRX's shorter wording of acorn-typescript's `JSX value should be either
 	// an expression or a quoted JSX text`
@@ -1494,7 +1501,7 @@ function upstream_lookup_rows() {
 		// acorn: regexp_classSetExpression
 		[/^Invalid regular expression: \/.*\/: Invalid character in character class$/, 'TS1508'],
 		// acorn-typescript: jsx_parseAttributeValue
-		[/^JSX attributes must only be assigned a non-empty expression$/, 'TS17000'],
+		TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION,
 		// acorn-typescript: jsx_parseAttributeValue
 		[/^JSX value should be either an expression or a quoted JSX text$/, 'TS1145'],
 		// acorn-typescript: jsx_parseElementAt

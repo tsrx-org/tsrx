@@ -996,4 +996,35 @@ describe('text right before a tag, after a directive (#1270)', () => {
 			sources.map((_, index) => children_of(programs[index - (index % step)])),
 		);
 	});
+
+	// Text whose start the tokenizer can't read as code (#1323), right after the
+	// directive or after a later child, which in a `{ … }` container read the
+	// text as code too.
+	it('reads text that is no code token as text, as after an element', async () => {
+		const children = [
+			'%s 1st prize',
+			'%s1st prize',
+			'%s\n\t\t1st prize',
+			'%s 10px',
+			'%s 0x',
+			'%s #1',
+			"%s's here",
+			'%s "quoted',
+			'%s<i /> 1st prize',
+			'%s<i />\n\t\t2nd',
+			'%s<i>z</i> 1st',
+			'%s{x} 1st',
+			'%s<i /><em /> #1',
+		];
+		const sources = positions.flatMap((position) =>
+			children.flatMap((child) =>
+				['<z />', ...directives].map((value) => position(child.replace('%s', value))),
+			),
+		);
+		const programs = await parse_all(sources);
+		const step = directives.length + 1;
+		expect(programs.map(children_of)).toEqual(
+			sources.map((_, index) => children_of(programs[index - (index % step)])),
+		);
+	});
 });

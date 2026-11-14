@@ -1945,6 +1945,7 @@ export function TSRXPlugin(config) {
 				// directive would copy a longer stack (#1194).
 				this.context = enclosing_context;
 				this.#truncateContext(depth_before_brace);
+				this.#resumeContainerTemplateChildren();
 				if (this.#readsTemplateTextAfterBlock()) {
 					this.#readEmptyTemplateTextToken();
 				} else {
@@ -1960,10 +1961,14 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Whether template text that starts with a `//` touching a block comment
-			 * comes right after the current token, a directive's closing `}`
-			 * (`}/* c *\/// text`). That `//` is text, not a comment, so the token
-			 * after it can't be read as code: it may not be one (`'s`, `1st`).
+			 * Whether template text comes right after the current token, a
+			 * directive's closing `}`, in element children: anything but what starts
+			 * a clause or a child (`@`, `<`, `{`), the `}` that ends the children, or
+			 * the end of the input. That text can't be read as code: it may not be a
+			 * token (`'s`, `1st`, `#1`), and a `//` touching a block comment
+			 * (`}/* c *\/// text`) is text, not a comment (#1323). A clause written
+			 * without its `@` (`} else {`) is found in the input, after the empty text
+			 * token read instead.
 			 */
 			#readsTemplateTextAfterBlock() {
 				const after = this.end;
@@ -1985,7 +1990,7 @@ export function TSRXPlugin(config) {
 						break;
 					}
 				}
-				if (!this.input.startsWith('//', index)) {
+				if (index >= this.input.length || '@<{}'.includes(this.input[index])) {
 					return false;
 				}
 				const pos = this.pos;
@@ -1998,6 +2003,32 @@ export function TSRXPlugin(config) {
 					this.pos = pos;
 					this.#readingJSXControlFlowHeader = reading_header;
 				}
+			}
+
+			/**
+			 * After a directive's closing `}` in the children of an element in a
+			 * `{ … }` container, the context on top is the statement context that
+			 * reading the directive pushed, not the element's children context, where
+			 * the tokenizer reads the element's text. Outside a container the text is
+			 * read without it; in one the text after a later child (`<b /> 1st`,
+			 * `</b> 1st`, `{x} 1st`) was read as code, which the tokenizer can reject
+			 * (#1323). Put the children context back on top while the children go on,
+			 * as after a child that isn't a directive.
+			 */
+			#resumeContainerTemplateChildren() {
+				if (this.#jsxExpressionContainerDepth === 0) return;
+				const pos = this.pos;
+				const reading_header = this.#readingJSXControlFlowHeader;
+				this.pos = this.end;
+				this.#readingJSXControlFlowHeader = false;
+				try {
+					if (!this.#shouldReadTemplateRawTextToken(true, true)) return;
+				} finally {
+					this.pos = pos;
+					this.#readingJSXControlFlowHeader = reading_header;
+				}
+				if (this.curContext() === b_stat) this.#popContext();
+				if (this.curContext() !== tstc.tc_expr) this.context.push(tstc.tc_expr);
 			}
 
 			/**
@@ -4054,6 +4085,7 @@ export function TSRXPlugin(config) {
 				if (this.context.length === this.#bracketedDirectiveDepth) {
 					this.exprAllowed = false;
 				}
+				this.#resumeContainerTemplateChildren();
 				if (this.#readsTemplateTextAfterBlock()) {
 					this.#readEmptyTemplateTextToken();
 				} else {
@@ -7973,8 +8005,9 @@ export function TSRXPlugin(config) {
 			 * acorn-typescript.
 			 * @param {number} position
 			 * @param {Diagnostic} error
+			 * @param {number} [end] Where a collected error ends
 			 */
-			#raiseCheckerError(position, error) {
+			#raiseCheckerError(position, error, end = position + 1) {
 				if (this.#throwsCheckerErrors()) {
 					try {
 						this.#throwError(position, error);
@@ -7983,7 +8016,7 @@ export function TSRXPlugin(config) {
 						throw thrown;
 					}
 				}
-				this.#recordCheckerLevelError(position, position + 1, error, true);
+				this.#recordCheckerLevelError(position, end, error, true);
 			}
 
 			/**
@@ -10873,6 +10906,14 @@ export function TSRXPlugin(config) {
 			 * reserves it in a `.mts` or `.cts` file (TS7059), where a strict parse
 			 * throws that and a collecting one records it, or either holds it while
 			 * checker errors are held (see `#parseArrowOrTypeAssertion`).
+			 *
+			 * TypeScript's checker reports an assertion's TS7059 before it checks the
+			 * operand, so before the errors in it, such as an inner assertion's
+			 * TS7059 (`<A>(<B>x)`). The operand is read first, so its checker errors
+			 * are held until the assertion is read, and reported after its TS7059, by
+			 * position (#1326). An operand that doesn't parse gets no TS7059, as
+			 * TypeScript reports its syntax error alone (`<A>(;`); its held errors go
+			 * as `#holdingErrors` lets them.
 			 * @returns {AST.TSTypeAssertion}
 			 */
 			#parseTypeAssertion() {
@@ -10880,24 +10921,29 @@ export function TSRXPlugin(config) {
 				const constant = this.tsTryNextParseConstantContext();
 				node.typeAnnotation = /** @type {any} */ (constant || this.tsNextThenParseType());
 				this.expect(tt.relational);
-				node.expression = this.parseMaybeUnary();
+				const reserved = regex_reserved_jsx_like_file.test(this.#filename ?? '');
+				/** @type {CompileError[]} */
+				const held = [];
+				node.expression = reserved
+					? this.#holdingErrors(held, () => this.parseMaybeUnary())
+					: this.parseMaybeUnary();
 				const assertion = this.finishNode(
 					node,
 					/** @type {AST.TSTypeAssertion['type']} */ ('TSTypeAssertion'),
 				);
-				if (regex_reserved_jsx_like_file.test(this.#filename ?? '')) {
-					const start = /** @type {number} */ (assertion.start);
-					if (this.#collect || this.#hold.held) {
-						// Dropped with an attempt that fails (`#parseArrowOrTypeAssertion`).
-						this.#recordCheckerLevelError(
-							start,
-							/** @type {number} */ (assertion.end),
-							TS_ERRORS.RESERVED_TYPE_ASSERTION,
-							true,
-						);
-					} else {
-						this.raise(start, TS_ERRORS.RESERVED_TYPE_ASSERTION);
-					}
+				if (reserved) {
+					// Dropped with an attempt that fails (`#parseArrowOrTypeAssertion`), as
+					// `#releaseErrors` notes it where it goes.
+					const outer_hold = this.#hold.held;
+					this.#hold.held = held;
+					this.#recordCheckerLevelError(
+						/** @type {number} */ (assertion.start),
+						/** @type {number} */ (assertion.end),
+						TS_ERRORS.RESERVED_TYPE_ASSERTION,
+						true,
+					);
+					this.#hold.held = outer_hold;
+					this.#releaseErrors(held);
 				}
 				return assertion;
 			}
@@ -12429,6 +12475,13 @@ export function TSRXPlugin(config) {
 							const value = this.jsx_parseExpressionContainer();
 							if (value.type === 'JSXSpreadChild') {
 								this.raise(/** @type {number} */ (value.start), TSRX_ERRORS.ATTRIBUTE_VALUE_SPREAD);
+							} else if (value.expression.type === 'JSXEmptyExpression') {
+								// `a={}`, which TypeScript's checker reports at the braces.
+								this.#raiseCheckerError(
+									/** @type {number} */ (value.start),
+									TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION,
+									/** @type {number} */ (value.end),
+								);
 							}
 							return value;
 						} finally {
@@ -12618,6 +12671,13 @@ export function TSRXPlugin(config) {
 				node.handler = null;
 
 				if (this.value === 'pending') {
+					// `@tsrx/ripple` compiles a `pending` block on a plain `try`; the JSX
+					// targets report it at the keyword (see `createJsxTransform`).
+					node.pendingKeyword = {
+						start: this.start,
+						end: this.end,
+						loc: { start: this.startLoc, end: this.endLoc },
+					};
 					this.next();
 					node.pending = this.parseBlock();
 				} else {

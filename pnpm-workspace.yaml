@@ -4,13 +4,6 @@
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - '@sveltejs/acorn-typescript@1.0.13'
-  - '@ripple-ts/adapter-node@0.4.0'
-  - '@ripple-ts/adapter@0.4.0'
-  - '@ripple-ts/vite-plugin@0.4.0'
-  - '@tsrx/core@0.2.0'
-  - '@tsrx/ripple@0.2.0'
-  - '@tsrx/runtime@0.2.0'
-  - ripple@0.4.0
   # The TypeScript 7.1 nightly of the `native` catalog (ts_native below) and its
   # platform binaries, newer than the release-age policy. Keep in step with ts_native.
   - typescript@7.1.0-dev.20260930.4
@@ -127,8 +120,8 @@ catalogs:
     '@jridgewell/sourcemap-codec': ^1.5.5
     '@modelcontextprotocol/sdk': ^1.29.0
     '@noble/hashes': ^2.2.0
-    '@ripple-ts/adapter-node': ^0.4.0
-    '@ripple-ts/vite-plugin': ^0.4.0
+    '@ripple-ts/adapter-node': ^0.6.1
+    '@ripple-ts/vite-plugin': ^0.6.1
     '@rollup/pluginutils': ^5.3.0
     resolve-pkg-maps: ^1.0.0
     jsonc-parser: ^3.3.1
@@ -185,7 +178,7 @@ catalogs:
     prompts: ^2.4.2
     react: ^19.2.0
     react-dom: ^19.2.0
-    ripple: ^0.4.0
+    ripple: ^0.6.1
     rollup: ^4.59.0
     rulesync: ^8.17.0
     shiki: 4.0.1

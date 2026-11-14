@@ -1247,6 +1247,39 @@ it('reports unreachable code on a statement that ends with an element in .tsrx f
 	}
 });
 
+it('reports unreachable code on a return of an element in .tsrx files', () => {
+	const config_path = path.join(workspace, 'tsconfig.json');
+	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));
+	config.compilerOptions.allowUnreachableCode = false;
+	fs.writeFileSync(config_path, JSON.stringify(config));
+	// Preact's output hoists a static element out of the `return` (#1324).
+	const lines = [
+		'let x: unknown;',
+		'export function b() { return; return <div></div>; }',
+		'export function c() { return; return <br />; }',
+		'export function h() { return; return <div>{String(x)}</div>; }',
+		'export function i() { return; return <div></div> }',
+		'export class C { m() { return; return <b />; } }',
+		'export function l() { return; return <><i /><b /></>; }',
+		'export function j() {',
+		'\treturn;',
+		'\treturn <div></div>;',
+		'}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const unreachable = result.output
+		.split('\n')
+		.filter((line) => line.includes('error TS7027'))
+		.map((line) => line.slice(0, line.indexOf(':')));
+	expect(unreachable).toEqual(
+		[1, 2, 3, 4, 5, 6, 9].map(
+			(index) => `layout.tsrx(${index + 4},${lines[index].lastIndexOf('return') + 1})`,
+		),
+	);
+});
+
 it('reports errors that start at a statement keyword or a binding pattern in .tsrx files', () => {
 	const config_path = path.join(workspace, 'tsconfig.json');
 	const config = JSON.parse(fs.readFileSync(config_path, 'utf8'));

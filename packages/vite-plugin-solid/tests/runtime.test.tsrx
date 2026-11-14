@@ -4,6 +4,7 @@ import { createMemo, createSignal, createStore, lazy } from 'solid-js';
 import { create_ref_prop } from '@tsrx/solid/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runForOfSourcesRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-sources';
+import { runForOfHeadScopeRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-head-scope';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
 import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace';
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
@@ -3100,6 +3101,7 @@ describe('tsrx-solid static @if conditions', () => {
 
 runSwitchFallthroughRuntimeTests();
 runForOfSourcesRuntimeTests();
+runForOfHeadScopeRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
 runScriptBodyRuntimeTests();
