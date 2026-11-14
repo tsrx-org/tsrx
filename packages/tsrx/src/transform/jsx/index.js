@@ -2404,7 +2404,10 @@ function expand_native_tsrx_return_statement(statement, transform_context) {
 						has_location(statement.handler) ? statement.handler : undefined,
 					)
 				: statement.handler;
-		return [set_loc(b.try(block, handler, finalizer, pending ?? null), statement)];
+		const rebuilt = set_loc(b.try(block, handler, finalizer, pending ?? null), statement);
+		// Where a plain `try`'s TS1472 goes (see `transform_plain_try_statement`).
+		if (statement.pendingKeyword) rebuilt.pendingKeyword = statement.pendingKeyword;
+		return [rebuilt];
 	}
 
 	return [statement];

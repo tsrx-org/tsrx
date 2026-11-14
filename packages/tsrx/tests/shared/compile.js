@@ -4105,6 +4105,12 @@ export function App() @{
 				TS_ERRORS.CATCH_OR_FINALLY_EXPECTED.code,
 				'pending',
 			],
+			// A `return` of an element in the `try`, which rebuilds it (Bugbot on #1335)
+			[
+				'export function App() @{\n\ttry { return <a />; } pending { b(); }\n\t<div />\n}\n',
+				TS_ERRORS.CATCH_OR_FINALLY_EXPECTED.code,
+				'pending',
+			],
 			[
 				'export function f() {\n\ttry { a(); } catch (e /* x, y */, reset) { reset(); }\n}\n',
 				TS_ERRORS.TOKEN_EXPECTED.code,
