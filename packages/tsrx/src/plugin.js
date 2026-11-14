@@ -1694,6 +1694,11 @@ export function TSRXPlugin(config) {
 			// `#readSkippedTemplateText`).
 			/** @type {Array<[number, number]> | undefined} */
 			#textComments;
+			// Where the caller collects the template text read again as code, whose
+			// comments it keeps as the code reads them (see
+			// `#rereadTrailingCodeOfUnclosedElement`).
+			/** @type {Array<[number, number]> | undefined} */
+			#textReadAsCode;
 			// Set while `parseVarStatement` or `parseVar` lets `const` declarators omit
 			// the initializer (see `#parseConstWithoutInitializer`).
 			#readingConstWithoutInitializer = false;
@@ -2037,6 +2042,7 @@ export function TSRXPlugin(config) {
 				this.#filename = tsrx_options?.filename || null;
 				this.#jsxFile = !regex_file_without_jsx.test(this.#filename ?? '');
 				this.#textComments = tsrx_options?.textComments;
+				this.#textReadAsCode = tsrx_options?.textReadAsCode;
 				if (this.#collect) {
 					// With private-field checks on, acorn rejects `#x in obj` outside a class
 					// with `Unexpected token`. TypeScript parses it and reports TS18016 from
@@ -5237,8 +5243,10 @@ export function TSRXPlugin(config) {
 			 * is the error the tools report (#1305). The code goes on with `)` or `,`
 			 * in parentheses, `]` or `,` after an element right after `[` or `,`, `:`
 			 * after a conditional's `?`, and `}` in a template literal's `${…}`; other
-			 * text stays the element's (`@{ <div>: label }`), and so does text with a
-			 * comment in it, whose comments are recorded as it is read.
+			 * text stays the element's (`@{ <div>: label }`). The code records its
+			 * comments again, and the parser keeps them as the code reads them,
+			 * dropping those the text read where the code has none, in a string, for
+			 * one (see `drop_text_comments`).
 			 * @param {AST.NativeTSRXTemplateNode} node
 			 * @param {number} context_depth The tokenizer context depth where the
 			 *   element began
@@ -5261,25 +5269,39 @@ export function TSRXPlugin(config) {
 				/** @param {number} start */
 				const goes_on_at = (start) => {
 					const code_start = skip_whitespace_from(this.input, start);
-					return closers.includes(this.input[code_start] || '\0') &&
-						!/\/[/*]/.test(this.input.slice(start, this.start))
-						? code_start
-						: -1;
+					return closers.includes(this.input[code_start] || '\0') ? code_start : -1;
 				};
 				// The code goes on right after the opening tag (`f(<div>, x)`), and
-				// what the children read is code, or after the last child: text, or
-				// what a container's element read before its body and left out of its
-				// children. The element now ends at its opening tag.
-				const children = node.children;
+				// what the children read is code, or after the last child: in the last
+				// text child, in what a container's element read before its body and
+				// left out of its children, or, where a comment splits the text after
+				// the last child into pieces, where that text starts, past whitespace
+				// and comments (`<b />);` and a comment after it). The element now ends
+				// at its opening tag.
+				const children = /** @type {any[]} */ (node.children);
 				const last = children.at(-1);
-				const first = /** @type {any} */ (children[0]);
 				let keep = 0;
 				let code_start = goes_on_at(/** @type {number} */ (node.end));
 				if (code_start === -1 && last) {
 					keep = last.type === 'JSXText' ? children.length - 1 : children.length;
-					code_start = goes_on_at(
-						/** @type {number} */ (last.type === 'JSXText' ? last.start : last.end),
-					);
+					code_start = goes_on_at(last.type === 'JSXText' ? last.start : last.end);
+				}
+				if (code_start === -1 && last) {
+					keep = children.length;
+					while (
+						keep > 0 &&
+						(children[keep - 1].type === 'JSXText' ||
+							children[keep - 1].expression?.type === 'JSXEmptyExpression')
+					) {
+						keep--;
+					}
+					while (
+						keep < children.length &&
+						!(children[keep].type === 'JSXText' && /\S/.test(children[keep].raw))
+					) {
+						keep++;
+					}
+					if (keep < children.length) code_start = goes_on_at(children[keep].start);
 				}
 				if (code_start === -1) return;
 				// What the dropped children recorded is reported again as the code is
@@ -5302,7 +5324,13 @@ export function TSRXPlugin(config) {
 						errors.push(...kept);
 					}
 				}
-				const text = keep === 0 ? first : last;
+				// And so are the comments in it, which the caller keeps as the code
+				// reads them.
+				if (this.#textReadAsCode) {
+					this.parseEffects?.willAppend(this.#textReadAsCode);
+					this.#textReadAsCode.push([code_start, this.start]);
+				}
+				const text = children[keep];
 				// The whitespace before the code stays the element's text.
 				children.length = keep;
 				if (text?.type === 'JSXText' && text.start < code_start) {

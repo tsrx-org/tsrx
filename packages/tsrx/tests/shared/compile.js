@@ -9,6 +9,7 @@ import { error_with } from './errors.js';
 import { runSharedScopedStyleTests } from './scoped-styles.js';
 import { runSharedScopedStyleConformanceTests } from './scoped-styles-conformance.js';
 
+/** @import * as AST from 'estree' */
 /** @import { CodeMapping, CompileDiagnosticsHarness, CompileHarness } from '../../types/index' */
 
 /**
@@ -132,8 +133,9 @@ const BROKEN_MARKUP = [
  * collecting parse reads as code again, and `<style>` and `<script>` bodies
  * left open, which end at the next tag or at the `}` that closes their block
  * (#1305). A `<style>` that is a `@{ … }` block's output is TSRX3009 too, as
- * it is closed.
- * @type {Array<[label: string, source: string, codes?: string[]]>}
+ * it is closed. The comments are those a collecting parse records, each once,
+ * though the code after the tag is read again.
+ * @type {Array<[label: string, source: string, codes?: string[], comments?: string[]]>}
  */
 const UNCLOSED_TAG_RECOVERY = [
 	['in parentheses', 'function App() {\n\treturn (\n\t\t<div>\n\t);\n}'],
@@ -156,8 +158,100 @@ const UNCLOSED_TAG_RECOVERY = [
 	[
 		'after a comment after `?`',
 		'function App(props: { x: boolean }) {\n\treturn <div>{props.x ? /* c */ <b> : null}</div>;\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['/* c */'],
 	],
 	['in a template literal', 'function App() {\n\treturn `${<div>}`;\n}'],
+	// With comments in the code after it, which the text read too
+	[
+		'with a line comment after it',
+		'function App() {\n\treturn (\n\t\t<div>\n\t);\n\t// later\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// later'],
+	],
+	[
+		'in an array, with a block comment after it',
+		'function App() {\n\treturn [<div>];\n\t/* later */\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['/* later */'],
+	],
+	[
+		'after a child, with a comment after it',
+		'function App() {\n\treturn (\n\t\t<div>\n\t\t\t<b>x</b>\n\t);\n\t// later\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// later'],
+	],
+	[
+		'with a `)` and comments in its text',
+		'function App() {\n\treturn (<div>x /* c */ ) y /* d */ );\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['/* c */', '/* d */'],
+	],
+	[
+		'after a child, with a `)` and a comment in its text',
+		'function App() {\n\treturn (<div><b />) y /* d */ );\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['/* d */'],
+	],
+	[
+		'with a comment in its text and one after it',
+		'function App() {\n\treturn (\n\t\t<div>\n\t\t\t/* child */\n\t);\n\t// later\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['/* child */', '// later'],
+	],
+	[
+		'with comments the code reads differently after it',
+		'function App() {\n\treturn [<div>];\n\t/* a */// b\n\tconst c = 1;// d\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['/* a */', '// b', '// d'],
+	],
+	[
+		'in a call, with a comment after it',
+		'function App() {\n\tString(<div>, 1); // later\n\treturn null;\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// later'],
+	],
+	[
+		'in a speculative parse, with a comment after it',
+		'const f = async <T,>(a = [<div>, 1]) => a; // later',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// later'],
+	],
+	['with a URL in a string after it', "function App() {\n\treturn [<div>, 'http://x'];\n}"],
+	// The text reads a comment there, the code none
+	['with `//` in a string after it', "function App() {\n\treturn [<div>, 'a // b'];\n}"],
+	['with `/*` in a template literal after it', 'function App() {\n\treturn [<div>, `a /* b`];\n}'],
+	[
+		'with `/*` in a regular expression after it',
+		'function App() {\n\treturn [<div>, /a\\/*b*/, 1]; // later\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// later'],
+	],
+	[
+		'after a child, with `/*` and a `]` in a string after it',
+		"function App() {\n\treturn [<div><b />, 'a /* b */ ] c']; // later\n}",
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// later'],
+	],
+	[
+		'with `/*` and `*/` in strings around a comment after it',
+		"function App() {\n\treturn [<div>, 'a /* b',\n\t\t// later\n\t\t'*/'];\n}",
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// later'],
+	],
+	[
+		'with a division and a comment after it',
+		'function App() {\n\treturn [<div>, 1 / 2]; // later\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// later'],
+	],
+	// The text reads `/* b */` as a comment, the code as part of one
+	[
+		'with a line comment that touches the code after it',
+		'function App() {\n\treturn [<div>];// a /* b */\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// a /* b */'],
+	],
 	// Each once, though the code after the first is read again
 	[
 		'twice in an array',
@@ -768,17 +862,23 @@ export const p = 1
 
 		it.each(UNCLOSED_TAG_RECOVERY)(
 			'reports a tag left open %s, and nothing after it (#1305)',
-			(_label, source, codes = [DIAGNOSTIC_CODES.UNCLOSED_TAG]) => {
+			(_label, source, codes = [DIAGNOSTIC_CODES.UNCLOSED_TAG], comments = []) => {
 				const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 				/** @type {Array<{ code?: string, pos?: number, end?: number }>} */
 				const collected = [];
+				/** @type {AST.CommentWithLocation[]} */
+				const recorded = [];
 				parseModule(source, 'App.tsrx', {
 					collect: true,
 					errors: /** @type {any} */ (collected),
+					comments: recorded,
 				});
 
 				expect(collected.map((reported) => reported.code)).toEqual(
 					codes.filter((code) => code === DIAGNOSTIC_CODES.UNCLOSED_TAG),
+				);
+				expect(recorded.map((comment) => source.slice(comment.start, comment.end))).toEqual(
+					comments,
 				);
 				expect(
 					errors

@@ -2277,6 +2277,9 @@ describe('parse errors', () => {
 			['export function App() {\n\treturn (\n\t\t<div>\n\t);\n}\n', '3:4'],
 			['export function App(props) {\n\treturn <div>{props.x ? <b> : null}</div>;\n}\n', '2:26'],
 			['export function App() {\n\treturn [<div>];\n}\n', '2:11'],
+			// With a comment in the code after it
+			['export function App() {\n\treturn (\n\t\t<div>\n\t);\n\t// later\n}\n', '3:4'],
+			['export function App() {\n\treturn [<div>];\n\t/* later */\n}\n', '2:11'],
 			['export function App() @{\n\t<style>.a {}\n}\n', '2:2'],
 			['export function App() @{\n\t<div>\n\t\t<style>.a { color: red; }</div>\n}\n', '3:3'],
 		]) {
