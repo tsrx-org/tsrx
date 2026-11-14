@@ -794,10 +794,11 @@ function compare_errors(a, b) {
 }
 
 /**
- * The names that a `typeof` type query in `nodes`, the parameters and return
- * type of a signature, starts with: in a type, not in a parameter's default,
- * which isn't checked there, and not a name that a signature in it declares
- * as a parameter of its own.
+ * The names that a `typeof` type query or a type predicate with a type
+ * (`q is T`) in `nodes`, the parameters and return type of a signature, starts
+ * with: in a type, not in a parameter's default, which isn't checked there,
+ * and not a name that a signature in it declares as a parameter of its own,
+ * outside its type parameters.
  * @param {Array<AST.Node | null | undefined>} nodes
  * @returns {Set<string>}
  */
@@ -820,8 +821,10 @@ function type_query_names(nodes) {
 			stack.push({ value: node.left, shadowed });
 			continue;
 		}
-		if (node.type === 'TSTypeQuery') {
-			let name = /** @type {{ type: string, name?: string, left?: unknown }} */ (node.exprName);
+		if (node.type === 'TSTypeQuery' || (node.type === 'TSTypePredicate' && node.typeAnnotation)) {
+			let name = /** @type {{ type: string, name?: string, left?: unknown }} */ (
+				node.type === 'TSTypeQuery' ? node.exprName : node.parameterName
+			);
 			while (name?.type === 'TSQualifiedName') {
 				name = /** @type {{ type: string, name?: string, left?: unknown }} */ (name.left);
 			}
@@ -840,7 +843,8 @@ function type_query_names(nodes) {
 			}
 		}
 		for (const key in node) {
-			if (key !== 'loc' && key !== 'metadata') stack.push({ value: node[key], shadowed: inner });
+			if (key === 'loc' || key === 'metadata') continue;
+			stack.push({ value: node[key], shadowed: key === 'typeParameters' ? shadowed : inner });
 		}
 	}
 	return names;
@@ -6919,8 +6923,8 @@ export function TSRXPlugin(config) {
 			 * reports TS2371 for (`checkVariableLikeDeclaration`), unless something
 			 * needs the type it gives a parameter: an implementation of an overload,
 			 * a binding pattern, whose elements it checks first, and without a type
-			 * annotation, a rest parameter (TS2370) or `typeof` the parameter in the
-			 * signature (#1315).
+			 * annotation, a rest parameter (TS2370), or `typeof` the parameter or a
+			 * type predicate of it with a type in the signature (#1315).
 			 * @param {CompileError[]} errors
 			 * @param {AST.Node[]} params
 			 * @param {AST.Node | null | undefined} return_type

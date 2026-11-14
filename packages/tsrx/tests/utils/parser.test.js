@@ -10739,12 +10739,15 @@ describe('a `<` in a file without JSX', () => {
 				'declare function f(q = <T>(y: T) => y): typeof q.x;',
 				'type F = (q = <T>(x: T) => x, r: (s: number) => typeof q) => void;',
 				'type F = ({ x }: {} = <T>(y: T) => y) => void;',
+				'type F = (q = <T>(x: T) => x) => q is any;',
+				'type F = (q = <T>(x: T) => x, r: <U extends typeof q>(q: number) => U) => void;',
 				// Not checked: a type annotation gives the parameter's type, and a
 				// `typeof` in another default or of another parameter doesn't count.
 				'type F = (q: number = <T>(x: T) => x, r?: typeof q) => void;',
 				'type F = (...q: any[] = <T>(y: T) => y) => void;',
 				'declare function f(q = <T>(y: T) => y, r = null as typeof q): void;',
 				'type F = (q = <T>(x: T) => x, r: (q: number) => typeof q) => void;',
+				'declare function f(q = <T>(x: T) => x): asserts q;',
 			]) {
 				const label = `${filename}: ${source}`;
 				const path = `/${filename}`;
