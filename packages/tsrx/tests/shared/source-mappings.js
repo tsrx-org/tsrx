@@ -733,6 +733,31 @@ export async function App() @{
 		});
 	});
 
+	describe(`[${name}] a statement right after a \`{\` (#1321)`, () => {
+		// The printer puts the statement on a line of its own. A member expression
+		// or call that starts it maps from its own text, not from the line break and
+		// indent before it, so an editor diagnostic on it covers the right text.
+		const type = '{ user: { a?: { b: string } } }';
+		it.each([
+			['a function body', `export function f({ user }: ${type}) {user.a.b;\n}\n`],
+			['an `if` block', `export function f({ user }: ${type}) {\n\tif (user) {user.a.b;}\n}\n`],
+			['a code block', `export function App({ user }: ${type}) @{\n\t<p>@{user.a.b}</p>\n}\n`],
+			['a call', 'declare function go(n: number): void;\nexport function f() {go(1);\n}\n'],
+		])('maps an expression right after the `{` of %s from its own text', (label, source) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const texts = label === 'a call' ? ['go(1)'] : ['user.a.b', 'user.a'];
+			const start = source.indexOf(texts[0]);
+			for (const text of texts) {
+				const mapping = result.mappings.find(
+					(mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === text.length,
+				);
+				assert(mapping, text);
+				const generated = mapping.generatedOffsets[0];
+				expect(result.code.slice(generated, generated + mapping.generatedLengths[0])).toBe(text);
+			}
+		});
+	});
+
 	describe(`[${name}] text with a comment and characters JSX text can't hold`, () => {
 		// A comment between children prints as `{}`, and text writes a `>` as
 		// `&gt;`, so the output is shorter or longer than the source it spans. The

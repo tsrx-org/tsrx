@@ -164,9 +164,9 @@ describe('compile error diagnostic plugin — a statement-only code block', () =
 				severity: diagnostic.severity,
 				message: diagnostic.source === 'TSRX' ? diagnostic.message : undefined,
 				// The editor spans the tokens the virtual code maps, so not `@{`
-				// and `}`. The virtual code maps `user.nmae` from the line break
-				// and indent before it, so Volar maps the warning's start, at the
-				// generated `user`, to the source `nmae`.
+				// and `}`. The virtual code puts `user.nmae` on a line of its own
+				// and maps it from its own text, not the line break before it
+				// (#1321).
 				text: document.getText(diagnostic.range),
 			}));
 		expect(shown).toEqual([
@@ -182,8 +182,25 @@ describe('compile error diagnostic plugin — a statement-only code block', () =
 				code: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD.code,
 				severity: DiagnosticSeverity.Warning,
 				message: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD.message,
-				text: 'nmae',
+				text: 'user.nmae',
 			},
+		]);
+	});
+});
+
+describe('TypeScript diagnostics on a statement right after a `{` (#1321)', () => {
+	const type = '{ user: { a?: { b: string } } }';
+	it.each([
+		['FunctionBody', `export function f({ user }: ${type}) {user.a.b;\n}\n`],
+		['IfBlock', `export function f({ user }: ${type}) {\n\tif (user) {user.a.b;}\n}\n`],
+		['CodeBlock', `export function App({ user }: ${type}) @{\n\t<p>@{user.a.b}</p>\n}\n`],
+	])('shows TS18048 on the expression it is about in %s', async (name, source) => {
+		const { document, diagnostics } = await editor_diagnostics_for(
+			`StatementAfterBrace${name}`,
+			source,
+		);
+		expect(reported(document, diagnostics, 'TS18048')).toEqual([
+			{ source: 'ts', text: 'user.a', offset: source.indexOf('user.a.b') },
 		]);
 	});
 });

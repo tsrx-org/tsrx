@@ -216,6 +216,34 @@ function maybe_get_generated_position(src_line, src_column, src_to_gen_map) {
 }
 
 /**
+ * The generated position where a node that starts at a source position starts.
+ * esrap prints a block's `{` with a segment for the source position right after
+ * it, then a line break and an indent. A statement written right after the `{`
+ * (`{user.a.b;`) starts at that same source position, so the position after the
+ * generated `{`, at the end of its line, comes first. A node's text never starts
+ * with a line break, so take the first position that isn't at the end of a line.
+ * @param {number} src_line - 1-based line number in source
+ * @param {number} src_column - 0-based column number in source
+ * @param {SourceToGeneratedMap} src_to_gen_map - Lookup map
+ * @param {number[]} gen_line_offsets - Generated line start offsets
+ * @returns {GeneratedPosition | Error} Generated position
+ */
+function maybe_get_node_start_position(src_line, src_column, src_to_gen_map, gen_line_offsets) {
+	const positions = src_to_gen_map.get(`${src_line}:${src_column}`);
+	if (!positions || positions.length === 0) {
+		return maybe_get_generated_position(src_line, src_column, src_to_gen_map);
+	}
+	return (
+		positions.find(
+			(position) =>
+				position.line >= gen_line_offsets.length ||
+				loc_to_offset(position.line, position.column, gen_line_offsets) !==
+					gen_line_offsets[position.line] - 1,
+		) ?? positions[0]
+	);
+}
+
+/**
  * Look up generated position for a given source position
  * @param {number} src_line - 1-based line number in source
  * @param {number} src_column - 0-based column number in source
@@ -307,7 +335,12 @@ function __maybe_get_mapping_from_node(
 	const src_length = src_max_len || src_end_offset - src_start_offset;
 	const loc = /** @type {AST.SourceLocation} */ (node.loc);
 
-	const gen_loc = maybe_get_generated_position(loc.start.line, loc.start.column, src_to_gen_map);
+	const gen_loc = maybe_get_node_start_position(
+		loc.start.line,
+		loc.start.column,
+		src_to_gen_map,
+		gen_line_offsets,
+	);
 	if (gen_loc instanceof Error) {
 		return gen_loc;
 	}
