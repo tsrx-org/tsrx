@@ -1581,10 +1581,19 @@ function transform_plain_try_statement(node, { next, state }) {
 function comma_after(source, start) {
 	let comma = start;
 	while (comma < source.length && source[comma] !== ',') {
-		if (source.startsWith('/*', comma)) comma = source.indexOf('*/', comma + 2) + 1;
-		else if (source.startsWith('//', comma)) comma = source.indexOf('\n', comma);
-		if (comma <= 0) break;
-		comma++;
+		/** @type {number} */
+		let end;
+		if (source.startsWith('/*', comma)) {
+			end = source.indexOf('*/', comma + 2);
+			end = end === -1 ? -1 : end + 2;
+		} else if (source.startsWith('//', comma)) {
+			// A line comment ends at any line terminator.
+			end = source.slice(comma).search(/[\n\r\u2028\u2029]/);
+			end = end === -1 ? -1 : comma + end;
+		} else {
+			end = comma + 1;
+		}
+		comma = end === -1 ? source.length : end;
 	}
 	/** @param {number} offset */
 	const position = (offset) => {

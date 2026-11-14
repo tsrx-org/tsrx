@@ -4110,6 +4110,15 @@ export function App() @{
 				TS_ERRORS.TOKEN_EXPECTED.code,
 				', reset',
 			],
+			// A line comment that a carriage return or a line separator ends
+			...['\r', '\u2028'].map(
+				(/** @type {string} */ terminator) =>
+					/** @type {[string, string, string]} */ ([
+						`export function f() {\n\ttry { a(); } catch (e // x, y${terminator}, reset) { reset(); }\n}\n`,
+						TS_ERRORS.TOKEN_EXPECTED.code,
+						', reset',
+					]),
+			),
 		];
 
 		it('throws the error at `pending` or at the comma', () => {
