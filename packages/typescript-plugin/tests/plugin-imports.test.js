@@ -557,27 +557,19 @@ import def from './def';
 	});
 
 	describe('Organize Imports', () => {
-		it('sorts the imports of a file with re-exports, but not the re-exports (#1029)', async () => {
+		it('sorts the imports and re-exports of a file as in a .tsx file (#1029)', async () => {
 			// TypeScript also sorts and joins re-exports. An edit for them that did not map
 			// would make the plugin drop the edits for the imports too.
-			expect(await organized_imports('src/ReExports.tsx', 'SortAndCombine')).toBe(
-				`import { useState } from 'react';
+			const expected = `import { useState } from 'react';
 import { label } from './label';
 export { label as other } from './label';
 export * from './lib';
 
-`,
-			);
-			// The generated code has a blank line between the re-exports, so TypeScript
-			// sorts each one on its own and they keep their order.
-			expect(await organized_imports('src/ReExports.tsrx', 'SortAndCombine')).toBe(
-				`import { useState } from 'react';
-import { label } from './label';
-export * from './lib';
-export { label as other } from './label';
-
-`,
-			);
+`;
+			expect(await organized_imports('src/ReExports.tsx', 'SortAndCombine')).toBe(expected);
+			// TypeScript sorts each block of imports and re-exports that no blank line
+			// splits. The generated code has a blank line only where the source has one.
+			expect(await organized_imports('src/ReExports.tsrx', 'SortAndCombine')).toBe(expected);
 		}, 60_000);
 
 		it.each(/** @type {const} */ (['SortAndCombine', 'All']))(

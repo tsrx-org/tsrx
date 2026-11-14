@@ -17,6 +17,7 @@
     "rules:generate": "rulesync generate",
     "rules:check": "rulesync generate --check",
     "test": "vitest run",
+    "test:eslint-9": "vitest run --config vitest.eslint-9.config.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "changeset": "changeset && node scripts/check-changesets.js",

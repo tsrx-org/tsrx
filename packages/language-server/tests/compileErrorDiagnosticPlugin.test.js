@@ -144,6 +144,42 @@ export function App() @{
 		expect(diagnostics[0].code).toBe('octane-style-unused-selector');
 		expect(document.getText(diagnostics[0].range)).toBe('theme');
 	});
+
+	// The editor's compile reports a CSS syntax error (#1306). Its code has no
+	// `<style>` body, so an error on a line of the body with no code shows on
+	// the nearest code before it, the opening tag's `>`.
+	it.each([
+		[
+			'on a line of its own',
+			'export function App() @{\n\t<div>\n\t\t<style>\n\t\t\t.a { color: red; }\n\t\t\t}\n\t\t</style>\n\t\t<p>x</p>\n\t</div>\n}\n',
+			'<style>',
+			'>',
+		],
+		[
+			'on the line of the opening tag',
+			'export const a = <style>.a { color: red; } }</style>;\n',
+			'}</style>',
+			'}',
+		],
+	])('reports a CSS syntax error %s', async (_label, source, near, text) => {
+		const { document, diagnostics } = await diagnostics_for(source);
+
+		expect(
+			diagnostics.map((diagnostic) => ({
+				code: diagnostic.code,
+				message: diagnostic.message,
+				text: document.getText(diagnostic.range),
+				offset: document.offsetAt(diagnostic.range.start),
+			})),
+		).toEqual([
+			{
+				code: 'TSRX3013',
+				message: 'Expected identifier',
+				text,
+				offset: source.indexOf(near) + near.indexOf(text),
+			},
+		]);
+	});
 });
 
 describe('compile error diagnostic plugin — a statement-only code block', () => {
@@ -164,9 +200,9 @@ describe('compile error diagnostic plugin — a statement-only code block', () =
 				severity: diagnostic.severity,
 				message: diagnostic.source === 'TSRX' ? diagnostic.message : undefined,
 				// The editor spans the tokens the virtual code maps, so not `@{`
-				// and `}`. The virtual code maps `user.nmae` from the line break
-				// and indent before it, so Volar maps the warning's start, at the
-				// generated `user`, to the source `nmae`.
+				// and `}`. The virtual code puts `user.nmae` on a line of its own
+				// and maps it from its own text, not the line break before it
+				// (#1321).
 				text: document.getText(diagnostic.range),
 			}));
 		expect(shown).toEqual([
@@ -182,8 +218,25 @@ describe('compile error diagnostic plugin — a statement-only code block', () =
 				code: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD.code,
 				severity: DiagnosticSeverity.Warning,
 				message: TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD.message,
-				text: 'nmae',
+				text: 'user.nmae',
 			},
+		]);
+	});
+});
+
+describe('TypeScript diagnostics on a statement right after a `{` (#1321)', () => {
+	const type = '{ user: { a?: { b: string } } }';
+	it.each([
+		['FunctionBody', `export function f({ user }: ${type}) {user.a.b;\n}\n`],
+		['IfBlock', `export function f({ user }: ${type}) {\n\tif (user) {user.a.b;}\n}\n`],
+		['CodeBlock', `export function App({ user }: ${type}) @{\n\t<p>@{user.a.b}</p>\n}\n`],
+	])('shows TS18048 on the expression it is about in %s', async (name, source) => {
+		const { document, diagnostics } = await editor_diagnostics_for(
+			`StatementAfterBrace${name}`,
+			source,
+		);
+		expect(reported(document, diagnostics, 'TS18048')).toEqual([
+			{ source: 'ts', text: 'user.a', offset: source.indexOf('user.a.b') },
 		]);
 	});
 });
@@ -314,6 +367,19 @@ export {};`,
 		]);
 	});
 
+	it('leaves an empty attribute value to TypeScript (#1311)', async () => {
+		const { document, diagnostics } = await editor_diagnostics_for(
+			'EmptyAttributeValue',
+			`export function App() @{
+	<div title={} />
+}`,
+		);
+
+		expect(reported(document, diagnostics, 'TS17000')).toEqual([
+			{ source: 'ts', text: '{}', offset: 37 },
+		]);
+	});
+
 	it('keeps a mistake that the virtual code leaves out', async () => {
 		const { document, diagnostics } = await editor_diagnostics_for(
 			'DroppedDecorator',
@@ -324,6 +390,30 @@ export {};`,
 		expect(reported(document, diagnostics, 'TS1206')).toEqual([
 			{ source: 'TSRX', text: '@', offset: 0 },
 		]);
+	});
+
+	it("reports a plain try's pending block at `pending`, and checks its code (#1303)", async () => {
+		const source = `export function f() {
+	try {
+		a();
+	} pending {
+		b(1);
+	}
+}
+declare function a(): void;
+declare function b(): void;`;
+		const { document, diagnostics } = await editor_diagnostics_for('PlainTryPending', source);
+
+		expect(reported(document, diagnostics, 'TS1472')).toEqual([
+			{ source: 'TSRX', text: 'pending', offset: source.indexOf('pending') },
+		]);
+		// TypeScript checks the block's code: `b` takes no argument.
+		expect(reported(document, diagnostics, 'TS2554')).toEqual([
+			{ source: 'ts', text: '1', offset: source.indexOf('1)') },
+		]);
+		expect(diagnostics.filter((diagnostic) => diagnostic.code === 'tsrx-compile-error')).toEqual(
+			[],
+		);
 	});
 
 	it('keeps the mistakes while TypeScript validation is off', async () => {
@@ -368,6 +458,20 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		['UnclosedTag', 'export function C() @{\n\t<div>\n}\n', 'TSRX1001', '<div>'],
 		['MismatchedTag', 'export function C() @{\n\t<div><span></div>\n}\n', 'TSRX1002', '</div>'],
 		['UnclosedReturnedTag', 'export function C() {\n\treturn <div>;\n}\n', 'TSRX1001', '<div>'],
+		// In braces, where a static element is hoisted out of the walk that
+		// closes the tag (#1307).
+		[
+			'UnclosedTagInBraces',
+			'export function C() {\n\treturn <div>{<b>}</div>;\n}\n',
+			'TSRX1001',
+			'<b>',
+		],
+		[
+			'UnclosedTagInBracesInTemplate',
+			'export function C() @{\n\t<div>{<b>}</div>\n}\n',
+			'TSRX1001',
+			'<b>',
+		],
 	])('reports %s once, near the tag', async (name, source, code, near) => {
 		const { document, diagnostics } = await editor_diagnostics_for(name, source);
 
@@ -381,7 +485,7 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 			diagnostics
 				.filter((diagnostic) => diagnostic.source === 'ts')
 				.map((diagnostic) => diagnostic.code)
-				.filter((ts_code) => ts_code === 17008 || ts_code === 1005 || ts_code === 17002),
+				.filter((ts_code) => [17008, 1005, 17002, 1381].includes(Number(ts_code))),
 		).toEqual([]);
 	});
 
@@ -403,32 +507,33 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		).toEqual(tags.map((tag) => ({ text: tag, offset: source.indexOf(tag) })));
 	});
 
-	// A `<>` has no mapping in a template, and the editor shows a diagnostic
-	// only where the generated code maps back, so a `<>` left open shows on its
-	// first child, not on the code before the template (#1288).
+	// The editor shows a diagnostic only where the generated code maps back,
+	// and a `<>` has no mapping, but the error of a `<>` left open has an
+	// anchor on the `<>` the editor's code prints, so it shows there, not on its
+	// first child or on the code before the template (#1288, #1322).
 	it.each([
-		['FragmentChild', 'export function C() @{\n\t<><div>\n}\n', '<div>'],
+		['FragmentChild', 'export function C() @{\n\t<><div>\n}\n'],
 		[
 			'FragmentChildOnNextLine',
 			'export function C() @{\n\tconst a = 1;\n\t<>\n\t\t<h1>{a}</h1>\n}\n',
-			'<h1>',
 		],
-	])('reports the unclosed fragment of %s on its first child', async (name, source, child) => {
+	])('reports the unclosed fragment of %s on the `<>`', async (name, source) => {
 		const { document, diagnostics } = await editor_diagnostics_for(name, source);
 
 		expect(
 			reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code)
-				.filter(({ offset }) => offset === source.indexOf(child))
-				.map(({ text }) => text),
-		).toEqual(['<']);
+				.filter(({ text }) => text.startsWith('<'))
+				.map(({ text, offset }) => ({ text, offset })),
+		).toEqual([{ text: '<>', offset: source.indexOf('<>') }]);
 	});
 
-	// Outside a template a `<>` has no mapping either: the editor's code maps no
-	// `<>`, closed or not. So a `<>` left open there also shows on its first
-	// child, and the `<div>` at its name.
-	it('reports an unclosed fragment outside a template on its first child', async () => {
-		const source = 'export const a = <><div>;\n';
-		const { document, diagnostics } = await editor_diagnostics_for('UnclosedFragment', source);
+	// Outside a template too, and the `<div>` shows at its name.
+	it.each([
+		['UnclosedFragment', '<>'],
+		['UnclosedFragmentWithComment', '</* a */>'],
+	])('reports %s outside a template on the `<>`', async (name, fragment) => {
+		const source = `export const a = ${fragment}<div>;\n`;
+		const { document, diagnostics } = await editor_diagnostics_for(name, source);
 
 		expect(
 			reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code).map(({ text, offset }) => ({
@@ -436,14 +541,33 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 				offset,
 			})),
 		).toEqual([
-			{ text: '<', offset: source.indexOf('<div>') },
+			{ text: fragment, offset: source.indexOf(fragment) },
 			{ text: 'div', offset: source.indexOf('div') },
 		]);
 	});
 
-	// The first offset of a file is where a `<>` there has no mapping to widen
-	// it, so it shows on its `<`.
-	it('reports an unclosed fragment at the start of the file on its `<`', async () => {
+	// Each of two in a row on its own `<>`.
+	it.each([
+		['StackedFragments', 'export function C() @{\n\t<><><div>\n}\n'],
+		['StackedFragmentsOutsideTemplate', 'export const a = <><><div>;\n'],
+	])('reports each unclosed fragment of %s on its `<>`', async (name, source) => {
+		const { document, diagnostics } = await editor_diagnostics_for(name, source);
+		const outer = source.indexOf('<>');
+
+		expect(
+			reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code).map(({ text, offset }) => ({
+				text,
+				offset,
+			})),
+		).toEqual([
+			{ text: '<>', offset: outer },
+			{ text: '<>', offset: outer + 2 },
+			{ text: 'div', offset: source.indexOf('div') },
+		]);
+	});
+
+	// At the first offset of a file as anywhere else.
+	it('reports an unclosed fragment at the start of the file on the `<>`', async () => {
 		const { document, diagnostics } = await editor_diagnostics_for(
 			'FragmentAtFileStart',
 			'<><div>;\n',
@@ -455,19 +579,21 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 				offset,
 			})),
 		).toEqual([
-			{ text: '<', offset: 0 },
+			{ text: '<>', offset: 0 },
 			{ text: 'div', offset: 3 },
 		]);
 	});
 
 	// The static `<div />` is hoisted, which leaves the `{value}` before it a
-	// mapping that runs backwards. Volar would drop a diagnostic on that range.
-	it('reports an unclosed fragment before a hoisted child on the code after it', async () => {
+	// mapping that runs backwards. Volar would drop a diagnostic on that range,
+	// but the `<>`'s error has its anchor, on the `return` the editor's code
+	// prints for the template.
+	it('reports an unclosed fragment before a hoisted child on the `<>`', async () => {
 		const source = 'export function C({ value }: { value: string }) @{\n\t<>{value}<div />\n}\n';
 		const { document, diagnostics } = await editor_diagnostics_for('FragmentHoisted', source);
 
 		expect(reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([
-			{ source: DIAGNOSTIC_SOURCE, text: 'value', offset: source.indexOf('value}') },
+			{ source: DIAGNOSTIC_SOURCE, text: '<>', offset: source.indexOf('<>') },
 		]);
 	});
 
@@ -493,21 +619,44 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		).toEqual([source.indexOf('div'), source.indexOf('<>'), source.indexOf('span')]);
 	});
 
-	// An empty `<>` reaches no code of its own, so it stays with the code
-	// before it. It doesn't move on to the next function.
-	it('reports an empty unclosed fragment on the code before it', async () => {
+	// An empty `<>` too. It doesn't move on to the next function.
+	it('reports an empty unclosed fragment on the `<>`', async () => {
 		const source = 'export function A() @{\n\t<>\n}\nexport function B() @{\n\t<div />\n}\n';
 		const { document, diagnostics } = await editor_diagnostics_for('EmptyFragment', source);
 
 		expect(reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([
-			{ source: DIAGNOSTIC_SOURCE, text: 'A', offset: source.indexOf('A') },
+			{ source: DIAGNOSTIC_SOURCE, text: '<>', offset: source.indexOf('<>') },
 		]);
+	});
+
+	// A `<>` in braces was printed unclosed and threw a TypeError, which the
+	// editor showed at the start of the file (#1304).
+	it.each([
+		['FragmentInBraces', 'export function C() {\n\treturn <div>{<>}</div>;\n}\n'],
+		['FragmentInBracesInTemplate', 'export function C() @{\n\t<div>{<>}</div>\n}\n'],
+	])('reports the unclosed fragment of %s on the `<>`', async (name, source) => {
+		const { document, diagnostics } = await editor_diagnostics_for(name, source);
+
+		expect(
+			diagnostics
+				.filter((diagnostic) => diagnostic.source === DIAGNOSTIC_SOURCE)
+				.map((diagnostic) => [diagnostic.code, document.getText(diagnostic.range)]),
+		).toEqual([[TSRX_ERRORS.UNCLOSED_TAG.code, '<>']]);
+		expect(reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([
+			{ source: DIAGNOSTIC_SOURCE, text: '<>', offset: source.indexOf('<>') },
+		]);
+		// The harness has no JSX types (TS7026).
+		expect(
+			diagnostics
+				.filter((diagnostic) => diagnostic.source === 'ts' && diagnostic.code !== 7026)
+				.map((diagnostic) => diagnostic.code),
+		).toEqual([]);
 	});
 
 	// The editor's code leaves a repeated modifier out, but the compile anchors
 	// the error on the code it reads in its place, so the editor shows it on
 	// the modifier's first character, not on the code before it or at the start
-	// of the file. EmptyFragment above covers the fallback to the code before.
+	// of the file.
 	it.each([
 		[
 			'RepeatedAccessibility',
@@ -566,11 +715,38 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 			'export function C({ Tag }: { Tag: string }) @{\n\t<div><{Tag}><Missing>x</{Tag}>tail</div>\n}\n',
 			'Missing',
 		],
+		// No mapping of the expression container around it covers it (#1307).
+		['InBraces', 'export function C() {\n\treturn <div>{<Missing>}</div>;\n}\n', 'Missing'],
+		['InBracesInTemplate', 'export function C() @{\n\t<div>{<Missing>x}</div>\n}\n', 'Missing'],
+		[
+			'InAttributeValue',
+			'export function C() {\n\treturn <div title={<Missing>}></div>;\n}\n',
+			'Missing',
+		],
+		[
+			'InCondition',
+			'export function C(props: { x: boolean }) {\n\treturn <div>{props.x && <Missing>}</div>;\n}\n',
+			'Missing',
+		],
 	])('reports the undefined unclosed tag of %s once, at its name', async (name, source, tag) => {
 		const { document, diagnostics } = await editor_diagnostics_for(`Undefined${name}`, source);
 
 		expect(reported(document, diagnostics, 'TS2304')).toEqual([
 			{ source: 'ts', text: tag, offset: source.indexOf(tag) },
+		]);
+	});
+
+	// An error over the unclosed tag in braces ends at the closing tag the
+	// editor's code adds, where the braces' own `}` still maps it.
+	it.each([
+		['InBraces', '<div>{delete <Known>}</div>'],
+		['InAttributeValue', '<div title={delete <Known>}></div>'],
+	])("keeps TypeScript's error over an unclosed tag %s", async (name, markup) => {
+		const source = `function Known() {\n\treturn <span />;\n}\nexport function C() {\n\treturn ${markup};\n}\n`;
+		const { document, diagnostics } = await editor_diagnostics_for(`DeleteOperand${name}`, source);
+
+		expect(reported(document, diagnostics, 'TS2703')).toEqual([
+			{ source: 'ts', text: '<Known>', offset: source.indexOf('<Known>') },
 		]);
 	});
 

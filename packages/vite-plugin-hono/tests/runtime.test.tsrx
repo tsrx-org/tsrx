@@ -77,6 +77,7 @@ import {
 	ForOfSourceEmptyApp,
 	for_of_source_cases,
 } from '@tsrx/core/test-harness/runtime/for-of-sources-components.tsrx';
+import { for_of_head_scope_cases } from '@tsrx/core/test-harness/runtime/for-of-head-scope-components.tsrx';
 
 let container: HTMLDivElement;
 let resolveValue: (value: string) => void;
@@ -621,6 +622,18 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			expect(
 				Array.from(container.querySelectorAll('.for-of-source-empty li'), (li) => li.textContent),
 			).toEqual(rows.length > 0 ? rows : ['empty']);
+		});
+	}
+
+	// An `@for` body can declare the head's names again (#1325), and a default
+	// in the item's pattern can read the index (#1312).
+	for (const [label, App, list, rows, expected] of for_of_head_scope_cases) {
+		it(`renders @for with ${label}`, () => {
+			const Component = App as (props: { rows: unknown[] }) => any;
+			render(<Component rows={rows} />, container);
+			expect(Array.from(container.querySelectorAll(`.${list} li`), (li) => li.textContent)).toEqual(
+				expected,
+			);
 		});
 	}
 

@@ -1740,6 +1740,76 @@ export function Card(${params}: any) @{
 		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
 	});
 
+	it('imports Fragment from vue for a keyed fragment row outside VaporFor (#179)', () => {
+		const loop = `<ul>
+			@for (const item of items; key item.id) {
+				<>
+					<li>{item.id}</li>
+				</>
+			} @empty {
+				<p>{'none'}</p>
+			}
+		</ul>`;
+		/** @param {string} module_scope */
+		const compile_with = (module_scope) =>
+			compile(
+				`${module_scope}
+				export function App({ items }: { items: { id: number }[] }) @{
+					${loop}
+				}`,
+				'App.tsrx',
+			);
+
+		// The tag is spelled `Fragment`, as vue-jsx-vapor's server build needs.
+		for (const module_scope of [
+			'',
+			'const __Fragment = 1;',
+			"import { Fragment } from 'vue';",
+			'interface Fragment {}\nconst label = { Fragment: 1 }.Fragment;',
+		]) {
+			const { code, errors } = compile_with(module_scope);
+			expect(errors, module_scope).toEqual([]);
+			expect(code, module_scope).toMatch(/^import \{ Fragment \} from 'vue';$/m);
+			expect(code, module_scope).toContain('<Fragment key={item.id}><li>{item.id}</li></Fragment>');
+			expect(code, module_scope).not.toContain('Fragment as');
+		}
+
+		// A module that declares something else by that name, at any depth, keeps
+		// it, and the row is an unkeyed fragment, which renders on the server too.
+		for (const module_scope of [
+			'function Fragment() @{ <b /> }',
+			"import type { Fragment } from 'vue';",
+			"import { Fragment } from 'vue';\nfunction Other() { const Fragment = 'section'; return Fragment; }",
+			"const Fragm\\u0065nt = 'section';",
+			'class Host { constructor(public Fragment: unknown) {} }',
+			'declare function Fragment(): void;',
+			"import * as Vue from 'vue';\nimport Fragment = Vue.Fragment;",
+		]) {
+			const { code, errors } = compile_with(module_scope);
+			expect(errors, module_scope).toEqual([]);
+			expect(code, module_scope).not.toContain('<Fragment key=');
+			expect(code, module_scope).toContain('return <><li>{item.id}</li></>;');
+			expect(code, module_scope).not.toContain('__Fragment');
+		}
+	});
+
+	it('reads the index as a number in getKey and through its ref in the slot when a default reads it (#1312)', () => {
+		const { code, errors } = compile(
+			`function App({ rows }: { rows: [string | undefined, string][] }) @{
+				@for (const [a = 'r' + i, b] of rows; index i; key a) {
+					<p>{a}|{b}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toMatch(
+			/getKey=\{\(_\$_item, i\) => \{\s*const \[a = 'r' \+ i, b\] = _\$_item;\s*return a;\s*\}\}/,
+		);
+		expect(code).toMatch(/const \[a = 'r' \+ i\.value, b\] = __vapor_item\.value;/);
+	});
+
 	it('imports computed for a keyed array pattern beside type and namespace imports of vue', () => {
 		for (const authored of [
 			"import type { Ref } from 'vue';",

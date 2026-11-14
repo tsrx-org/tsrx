@@ -80,6 +80,9 @@ const TSRX_VISITOR_KEYS = /** @type {Record<string, string[]>} */ ({
 /** `@catch (error, reset)` has a second parameter. */
 const CATCH_CLAUSE_KEYS = ['param', 'resetParam', 'body'];
 
+/** A plain `try` with a `pending` block (see `printTsrx`). */
+const PENDING_TRY_KEYS = ['block', 'pending', 'handler', 'finalizer'];
+
 /**
  * A shorthand attribute (`{name}`) prints only its value: its `name` is the
  * same identifier as the value's expression, so no comment may attach to it.
@@ -169,6 +172,7 @@ export const printer = {
 		const keys = TSRX_VISITOR_KEYS[node.tsrxType ?? node.type];
 		if (keys) return keys;
 		if (node.type === 'CatchClause' && node.resetParam) return CATCH_CLAUSE_KEYS;
+		if (node.type === 'TryStatement' && node.pending) return PENDING_TRY_KEYS;
 		if (node.type === 'JSXAttribute' && node.shorthand) return SHORTHAND_ATTRIBUTE_KEYS;
 		return /** @type {NonNullable<Printer<Node>['getVisitorKeys']>} */ (estree.getVisitorKeys)(
 			node,
@@ -835,6 +839,21 @@ function printTsrx(path, options, print) {
 				print('body'),
 			];
 		}
+
+		// A `pending` block on a plain `try`, which the parser reads for
+		// `@tsrx/ripple`, and Prettier's `try` would leave out (#1303). It prints
+		// as Prettier prints a `try`, with the block after the `try` block.
+		case 'TryStatement':
+			return node.pending
+				? [
+						'try ',
+						print('block'),
+						' pending ',
+						print('pending'),
+						node.handler ? [' ', print('handler')] : '',
+						node.finalizer ? [' finally ', print('finalizer')] : '',
+					]
+				: null;
 
 		case 'JSXForExpression':
 			return printFor(path, options, print);

@@ -132,6 +132,20 @@ export const ERROR_EXAMPLES = [
 `,
 	},
 	{
+		error: TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE,
+		source: `export function C(props: { ok: boolean }) @{
+	<p>
+		@if (props.ok) {
+			<i />
+		} note
+		@else {
+			<b />
+		}
+	</p>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
 		source: `export function C() @{
 	<div>
@@ -896,6 +910,20 @@ let E;`,
 	{ error: TS_ERRORS.FOR_IN_INITIALIZER, source: `for (var a = 1 in b) {}` },
 	{ error: TS_ERRORS.FOR_OF_INITIALIZER, source: `for (let a = 1 of b) {}` },
 	{ error: TS_ERRORS.MISSING_CATCH_OR_FINALLY, source: `try {}` },
+	// A plain `try`'s `pending` block, which only `@tsrx/ripple` compiles
+	{
+		error: TS_ERRORS.CATCH_OR_FINALLY_EXPECTED,
+		source: `export function f() {
+	try {
+		a();
+	} pending {
+		b();
+	}
+}
+declare function a(): void;
+declare function b(): void;
+`,
+	},
 	{
 		error: TS_ERRORS.MULTIPLE_DEFAULT_CLAUSES,
 		source: `switch (a) {
@@ -912,6 +940,13 @@ let E;`,
 `,
 	},
 	{ error: TS_ERRORS.JSX_ATTRIBUTE_VALUE, source: `const a = <div a=1 />;` },
+	{
+		error: TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION,
+		source: `export function C() @{
+	<div title={} />
+}
+`,
+	},
 	// In the JSX of a dynamic tag's expression; in a template, a `}` in an open
 	// element ends the text, and the element is TSRX1001.
 	{

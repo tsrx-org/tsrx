@@ -50,6 +50,7 @@
     "@types/node": "catalog:default",
     "@typescript-eslint/parser": "catalog:default",
     "eslint": "catalog:default",
+    "eslint-9": "npm:eslint@9.39.5",
     "tsdown": "catalog:default",
     "typescript": "catalog:default",
     "vitest": "catalog:default"

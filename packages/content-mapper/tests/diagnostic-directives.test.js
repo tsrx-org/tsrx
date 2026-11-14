@@ -24,7 +24,7 @@ function hidden_ranges(compiler, source, needle, reported = (error) => error) {
 		result.sourceAst,
 		result.mappings,
 		source.length,
-		result.text.length,
+		result.text,
 	) ?? { directives: [] };
 	return { at, ranges: directives.map(([, , start, end]) => [start, end]) };
 }
@@ -67,6 +67,8 @@ const UNCLOSED = [
 	'export const y = <div><b>\n',
 	'const Tag = 1;\nexport const y = <{Tag}>\n',
 	'export const y = <Foo<string>>\n',
+	'export const f = <T>(x: T) => x;\n',
+	'export const y = <Missing>;\n',
 ];
 
 describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler) => {
@@ -122,6 +124,55 @@ describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler)
 				expect(covers(compiler, source, needle), source).toBe(false);
 			}
 		}
+	});
+
+	// The closing tag recovery adds has no place in the file (Solid maps only its
+	// name, to the opening tag's), so TypeScript's error on it, such as TS2304 for
+	// a name that isn't a value, showed at the top of the file as TS18080 on
+	// TypeScript 7: a directive of its own covers it (#1328).
+	it.each([
+		['a generic arrow', 'export const f = <T>(x: T) => x;\n', '</T>'],
+		[
+			'a generic arrow in a function',
+			'export function g() {\n\treturn <T>(x: T) => x;\n}\n',
+			'</T>',
+		],
+		['a tag at the end of the file', 'export const y = <Missing>;\n', '</Missing>'],
+		['a member tag', 'export const y = <a.b>;\n', '</a.b>'],
+		['two tags of one name', 'export const y = <Missing><Missing>;\n', '</Missing></Missing>'],
+	])('covers the closing tag that recovery adds to %s', (_, source, closing) => {
+		const { at, ranges } = hidden_ranges(compiler, source, closing);
+		for (let offset = at; offset < at + closing.length; offset++) {
+			expect(
+				ranges.some(([start, end]) => start <= offset && offset < end),
+				`${source} at ${offset}`,
+			).toBe(true);
+		}
+	});
+
+	it('covers that closing tag when an older compiler reports the tag at the end of the file', () => {
+		for (const source of ['export const f = <T>(x: T) => x;\n', 'export const y = <Missing>;\n']) {
+			const at_the_end = (/** @type {any} */ error) => ({
+				code: error.code,
+				pos: source.length,
+				end: source.length,
+				raisedAt: source.length,
+			});
+			const closing = source.includes('<T>') ? '</T>' : '</Missing>';
+			expect(covers(compiler, source, closing, at_the_end), source).toBe(true);
+		}
+	});
+
+	it('leaves the same text in an attribute alone', () => {
+		const source = 'export const y = <Missing data-x="</Missing>">;\n';
+		const { ranges } = hidden_ranges(compiler, source, '</Missing>');
+		const result = transform_tsrx(compiler, 'App.tsrx', source);
+		const authored = result.text.indexOf('"</Missing>"');
+		const recovered = result.text.lastIndexOf('</Missing>');
+		expect(authored).toBeGreaterThan(-1);
+		expect(recovered).toBeGreaterThan(authored);
+		expect(ranges.some(([start, end]) => start <= authored + 1 && authored + 1 < end)).toBe(false);
+		expect(ranges.some(([start, end]) => start <= recovered && recovered < end)).toBe(true);
 	});
 
 	// With nothing holding the tag, the directive is still there for its own code.

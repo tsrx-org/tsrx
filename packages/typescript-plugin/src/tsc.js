@@ -2,11 +2,13 @@
 
 import fs from 'node:fs';
 import node_module, { createRequire } from 'node:module';
+import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 import { strip_platform_globals_from_declaration_output } from './declaration-output.js';
-import { getTsrxLanguagePlugin } from './language.js';
+import { TSRX_EXTENSIONS, getTsrxLanguagePlugin } from './language.js';
 import { with_tsrx_module_format_on_host } from './module-format.js';
 import { run_native_tsc } from './native-tsc.js';
+import { report_tsrx_diagnostics } from './tsc-diagnostics.js';
 import {
 	is_native_typescript_package,
 	unsupported_typescript_message,
@@ -48,6 +50,33 @@ const { runTsc } = /** @type {typeof import('@volar/typescript/lib/quickstart/ru
 const tscPath = require.resolve('typescript/lib/tsc.js');
 
 process.env.TSRX_TSC = 'true';
+
+// Volar decorates each program tsc creates so that its diagnostics point at the
+// `.tsrx` source. Print the TSRX compile errors and warnings of the program's
+// `.tsrx` files then, before tsc reports its own diagnostics.
+const decorate_program_module =
+	/** @type {typeof import('@volar/typescript/lib/node/decorateProgram.js')} */ (
+		require('@volar/typescript/lib/node/decorateProgram.js')
+	);
+const decorate_program = decorate_program_module.decorateProgram;
+let printed_tsrx_error = false;
+decorate_program_module.decorateProgram = (language, program) => {
+	decorate_program(language, program);
+	// tsc writes to standard output, with the platform's line break.
+	const printed_error = report_tsrx_diagnostics(language, program, TSRX_EXTENSIONS, (line) =>
+		process.stdout.write(`${line}${os.EOL}`),
+	);
+	printed_tsrx_error ||= printed_error;
+};
+
+// TypeScript knows nothing of the TSRX errors, so a run where they are the only
+// errors would exit 0. Exit 2 then, as tsc does when it reports an error and
+// emits; a nonzero code of tsc's own stays. A warning doesn't change the exit
+// code. tsc exits through `sys.exit`, which calls `process.exit`; in watch mode
+// it doesn't exit.
+const exit = process.exit;
+process.exit = (code) =>
+	exit.call(process, printed_tsrx_error && (code === undefined || code === 0) ? 2 : code);
 
 // Deno's CommonJS loader bypasses Volar's fs.readFileSync patch. Read the CLI
 // through that patch explicitly, keeping Volar responsible for transforming it.

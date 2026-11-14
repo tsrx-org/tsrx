@@ -4,14 +4,10 @@ import path from 'node:path';
 import vscode from 'vscode';
 import { is_native_typescript_package } from '@tsrx/typescript-plugin/src/typescript-version.js';
 
-/** The extensions whose presence makes VS Code's own TypeScript stand down for TypeScript 7. */
-const TYPESCRIPT_7_EXTENSIONS = [
-	'TypeScriptTeam.vscode-typescript',
-	'TypeScriptTeam.vscode-typescript-nightly',
-	'TypeScriptTeam.native-preview',
-];
-
-/** The TypeScript 7 extensions that run a server: the marketplace one, and builds from source. */
+/**
+ * The TypeScript 7 extensions that run a server: the marketplace one, and builds from source.
+ * VS Code's own TypeScript stands down for TypeScript 7 only when one of these is installed.
+ */
 export const TYPESCRIPT_7_SERVER_EXTENSIONS = [
 	'TypeScriptTeam.native-preview',
 	'TypeScriptTeam.vscode-typescript',
@@ -67,7 +63,9 @@ function is_set(configuration, key) {
 /**
  * Whether TypeScript 7 serves TypeScript files, by the check VS Code's own TypeScript
  * makes to stand down: `js/ts.experimental.useTsgo` (or, when that is not set,
- * `typescript.experimental.useTsgo`) is on and a TypeScript 7 extension is installed.
+ * `typescript.experimental.useTsgo`) is on and a TypeScript 7 extension with a server is
+ * installed. The TypeScript 7 Nightly extension alone does not count, so VS Code's own
+ * TypeScript goes on serving.
  * @returns {boolean}
  */
 export function typescript_7_on() {
@@ -75,7 +73,7 @@ export function typescript_7_on() {
 	const use_tsgo = is_set(unified, USE_TSGO)
 		? unified.get(USE_TSGO)
 		: vscode.workspace.getConfiguration('typescript').get(USE_TSGO);
-	return !!use_tsgo && TYPESCRIPT_7_EXTENSIONS.some((id) => vscode.extensions.getExtension(id));
+	return !!use_tsgo && !!typescript_7_server_extension();
 }
 
 /** @returns {import('vscode').Extension<unknown> | undefined} */

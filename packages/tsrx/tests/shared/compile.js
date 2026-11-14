@@ -81,6 +81,50 @@ const BROKEN_MARKUP = [
 		TSRX_ERRORS.UNCLOSED_TAG,
 		'</div>',
 	],
+	// In an expression container, where a static element is hoisted out of the
+	// walk that closes the tag (#1304, #1307).
+	[
+		'an unclosed tag in braces',
+		'function App() {\n\treturn <div>{<b>}</div>;\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</b>',
+	],
+	[
+		'an unclosed tag in braces in a template',
+		'function App() @{\n\t<div>{<b>}</div>\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</b>',
+	],
+	[
+		'an unclosed fragment in braces',
+		'function App() {\n\treturn <div>{<>}</div>;\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</>',
+	],
+	[
+		'an unclosed fragment in braces in a template',
+		'function App() @{\n\t<div>{<>}</div>\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</>',
+	],
+	[
+		'an unclosed tag in an attribute value',
+		'function App() {\n\treturn <div title={<b>}></div>;\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</b>',
+	],
+	[
+		'an unclosed fragment in an attribute value',
+		'function App() {\n\treturn <div title={<>}></div>;\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</>',
+	],
+	[
+		'an unclosed dynamic tag in braces',
+		'function App({ Tag }) @{\n\t<div>{<{Tag}>}</div>\n}',
+		TSRX_ERRORS.UNCLOSED_TAG,
+		'</TsrxDynamic>',
+	],
 ];
 
 /**
@@ -775,6 +819,53 @@ export const p = 1
 				).toEqual([]);
 			},
 		);
+
+		// The error of an unclosed `<>` has an anchor on the `<>`, wherever
+		// esrap's source map records the `<>` or not (#1322).
+		it.each([
+			['export const a = <><div>;', '<>'],
+			['export function C() @{\n\t<><div>\n}', '<>'],
+			['export function A() @{\n\t<>\n}\nexport function B() @{\n\t<div />\n}', '<>'],
+			['export const a = <>;', '<>'],
+			['export const a = </* a */><div>;', '</* a */>'],
+		])('anchors the error of the unclosed `<>` of %j on it', (source, fragment) => {
+			const { errors, mappings } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const start = source.indexOf(fragment);
+
+			expect(
+				errors.filter((error) => error.pos === start).map((error) => [error.code, error.end]),
+			).toEqual([[TSRX_ERRORS.UNCLOSED_TAG.code, start + fragment.length]]);
+			expect(
+				mappings.filter(
+					(mapping) =>
+						mapping.data.customData?.diagnosticAnchor &&
+						mapping.sourceOffsets[0] === start &&
+						mapping.lengths[0] === fragment.length,
+				),
+			).toHaveLength(1);
+		});
+
+		// Each of two in a row, though esrap records the inner one's position
+		// where the editor's code prints no `<>`.
+		it.each(['export function C() @{\n\t<><><div>\n}', 'export const a = <><><div>;'])(
+			'anchors the error of each unclosed `<>` of %j on it',
+			(source) => {
+				const { mappings } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const outer = source.indexOf('<>');
+
+				for (const start of [outer, outer + '<>'.length]) {
+					expect(
+						mappings.filter(
+							(mapping) =>
+								mapping.data.customData?.diagnosticAnchor &&
+								mapping.sourceOffsets[0] === start &&
+								mapping.lengths[0] === '<>'.length,
+						),
+						String(start),
+					).toHaveLength(1);
+				}
+			},
+		);
 	});
 
 	describe(`[${name}] type arguments on a tag in virtual code (#1260)`, () => {
@@ -969,9 +1060,55 @@ export const p = 1
 			expect(result.code).toContain('<style></style>');
 			expect(virtual_parse_diagnostics(result.code)).toEqual([]);
 		});
+
+		// At the CSS that fails, and the rest of the file compiles (#1306).
+		it('reports a CSS syntax error in a loose type-only compile', function () {
+			const source = `export function App() @{
+	<div>
+		<style>
+			.a { color: red; }
+			}
+		</style>
+		<p class="a">x</p>
+	</div>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const pos = source.indexOf('}\n\t\t</style>');
+
+			expect(
+				result.errors.map((error) => [error.code, error.message, error.pos, error.end]),
+			).toEqual([[DIAGNOSTIC_CODES.CSS_SYNTAX, 'Expected identifier', pos, pos + 1]]);
+			expect(virtual_parse_diagnostics(result.code)).toEqual([]);
+		});
 	});
 
 	describe(`[${name}] compile diagnostics`, () => {
+		it('reports a pending block on a plain try, and keeps and maps its code (#1303)', () => {
+			for (const source of [
+				'export function f() {\n\ttry {\n\t\ta();\n\t} pending {\n\t\tb();\n\t}\n}\n',
+				'export function f() {\n\ttry { a(); } pending { b(); } catch (e) { c(); } finally { d(); }\n}\n',
+				'export function App() @{\n\ttry { a(); } pending { b(); }\n\t<div />\n}\n',
+			]) {
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(
+					result.errors.map((error) => [error.code, error.pos]),
+					source,
+				).toEqual([[TS_ERRORS.CATCH_OR_FINALLY_EXPECTED.code, source.indexOf('pending')]]);
+				const b = source.indexOf('b()');
+				const generated_b = result.code.indexOf('b()');
+				expect(generated_b, result.code).toBeGreaterThan(-1);
+				expect(
+					result.mappings.some(
+						(mapping) =>
+							mapping.sourceOffsets[0] === b && mapping.generatedOffsets[0] === generated_b,
+					),
+					result.code,
+				).toBe(true);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
 		it('keeps nested loop-target defaults in type-only output', () => {
 			const result = compile_to_volar_mappings(
 				`export function read(items, fallback) {
@@ -1134,6 +1271,64 @@ export const p = 1
 					clauses,
 				).toEqual([TSRX_ERRORS.FOR_HEAD_ASSIGNMENT.code]);
 				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
+		it('lets an `@for` body declare the head’s names again in virtual code (#1325)', () => {
+			for (const [head, body] of [
+				['const { id } of rows', 'const { id } = other; <li>{id}</li>'],
+				['const row of rows', "const row = 'body'; <li>{row}</li>"],
+				['const { id } of rows; index i', "const i = '!'; <li>{id + i}</li>"],
+				['const { id, name } of rows; key id', 'const { id } = other; <li>{name + id}</li>'],
+				['const { id } of rows; index i; key id', 'const { id } = other; <li>{id + i}</li>'],
+				['const row of rows; index i', 'function i() { return 1; } <li>{row.id + i()}</li>'],
+				['const row of rows; key row.id', 'class row {} <li>{String(row)}</li>'],
+			]) {
+				const source = `export function App({ rows, other }: { rows: { id: string; name: string }[]; other: { id: string } }) @{
+					<ul>
+						@for (${head}) {
+							${body}
+						}
+					</ul>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(result.errors, head).toEqual([]);
+				expect(
+					virtual_semantic_diagnostics(result.code)
+						.filter((diagnostic) => [2300, 2451].includes(diagnostic.code))
+						.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+					result.code,
+				).toEqual([]);
+			}
+		});
+
+		it('lets a default in an `@for` item pattern read the index in virtual code (#1312)', () => {
+			for (const [head, body] of [
+				["const [a = 'r' + i, b] of rows; index i", '<li>{a + b}</li>'],
+				["const [a = 'r' + i, b] of rows; index i; key b", '<li>{a + b}</li>'],
+				["const { 0: a = 'r' + i, 1: b } of rows; index i", '<li>{a + b}</li>'],
+				["const { [i]: a = 'r', 1: b } of rows; index i; key b", '<li>{a + b}</li>'],
+				["const [a = 'r' + i, b] of rows; index i; key b", '@if (b) { <li>{a + b}</li> }'],
+				["const [a = 'r' + i, b] of rows; index i; key b", "const b = 'body'; <li>{a + b}</li>"],
+				["let [a = 'r' + i, b] of rows; index i; key (a += b)", '<li>{a + b}</li>'],
+			]) {
+				const source = `export function App({ rows }: { rows: [string | undefined, string][] }) @{
+					<ul>
+						@for (${head}) {
+							${body}
+						}
+					</ul>
+				}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+
+				expect(result.errors, head).toEqual([]);
+				expect(
+					virtual_semantic_diagnostics(result.code)
+						.filter((diagnostic) => [2300, 2373, 2448, 2451, 2588].includes(diagnostic.code))
+						.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+					result.code,
+				).toEqual([]);
 			}
 		});
 
@@ -4143,6 +4338,84 @@ export function App() @{
 		});
 	});
 
+	// The parser reads a `pending` block, and a reset parameter after a `catch`
+	// parameter, on a plain `try` (not `@try`) for `@tsrx/ripple`. These targets
+	// report each where TypeScript does (#1303).
+	describe(`[${name}] a plain try with a pending block or a reset parameter (#1303)`, () => {
+		/** @type {Array<[source: string, code: string, at: string]>} */
+		const cases = [
+			[
+				'export function f() {\n\ttry {\n\t\ta();\n\t} pending {\n\t\tb();\n\t}\n}\n',
+				TS_ERRORS.CATCH_OR_FINALLY_EXPECTED.code,
+				'pending',
+			],
+			[
+				'export function f() {\n\ttry {\n\t\ta();\n\t} pending {\n\t\tb();\n\t} catch (e) {\n\t\tc();\n\t}\n}\n',
+				TS_ERRORS.CATCH_OR_FINALLY_EXPECTED.code,
+				'pending',
+			],
+			[
+				'export function App() @{\n\ttry { a(); } /* p */ pending { b(); } finally { d(); }\n\t<div />\n}\n',
+				TS_ERRORS.CATCH_OR_FINALLY_EXPECTED.code,
+				'pending',
+			],
+			// A `return` of an element in the `try`, which rebuilds it (Bugbot on #1335)
+			[
+				'export function App() @{\n\ttry { return <a />; } pending { b(); }\n\t<div />\n}\n',
+				TS_ERRORS.CATCH_OR_FINALLY_EXPECTED.code,
+				'pending',
+			],
+			[
+				'export function f() {\n\ttry { a(); } catch (e /* x, y */, reset) { reset(); }\n}\n',
+				TS_ERRORS.TOKEN_EXPECTED.code,
+				', reset',
+			],
+			// A line comment that a carriage return or a line separator ends
+			...['\r', '\u2028'].map(
+				(/** @type {string} */ terminator) =>
+					/** @type {[string, string, string]} */ ([
+						`export function f() {\n\ttry { a(); } catch (e // x, y${terminator}, reset) { reset(); }\n}\n`,
+						TS_ERRORS.TOKEN_EXPECTED.code,
+						', reset',
+					]),
+			),
+		];
+
+		it('throws the error at `pending` or at the comma', () => {
+			for (const [source, code, at] of cases) {
+				expect(() => compile(source, 'App.tsrx'), source).toThrow(
+					expect.objectContaining({ code, pos: source.indexOf(at) }),
+				);
+			}
+		});
+
+		it.each([{ collect: true }, { loose: true }])(
+			'records it and keeps the pending block in the output (%o)',
+			(options) => {
+				for (const [source, code, at] of cases) {
+					const result = compile(source, 'App.tsrx', options);
+					expect(
+						result.errors.map((error) => [error.code, error.pos]),
+						source,
+					).toEqual([[code, source.indexOf(at)]]);
+					if (source.includes('pending')) {
+						expect(result.code, source).toMatch(/finally \{\s*(\{\s*)?b\(\);/);
+						expect(result.code, source).not.toContain('pending');
+					}
+				}
+			},
+		);
+
+		it('leaves `@try … @pending` alone', () => {
+			const { code } = compile(
+				`export function App() @{\n\t@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }\n}`,
+				'App.tsrx',
+			);
+			expect(code).toContain("{'loading'}");
+			expect(code).not.toContain('finally');
+		});
+	});
+
 	// The components each target imports itself, and the sources it imports
 	// them from. React, Preact and Hono share the core import injector; Solid
 	// and Vue have their own. Vue's `defineVaporComponent` keeps its public
@@ -4844,6 +5117,30 @@ export function App() @{
 
 			expect(code).toContain('(value: T) => value');
 			expect(code).toContain('{make}');
+		});
+	});
+
+	describe(`[${name}] @for item defaults that read the index (#1312)`, () => {
+		it('compiles a default that writes the index to an assignable index', () => {
+			const { code } = compile(
+				`export function App({ rows }: { rows: [string | undefined, string][] }) @{
+					<ul>
+						@for (const [a = 'r' + i++, b] of rows; index i; key b) {
+							<li>{a + b}</li>
+						}
+					</ul>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			// TS2357: `i++` on something other than a variable or a property.
+			expect(
+				virtual_semantic_diagnostics(code)
+					.filter((diagnostic) => diagnostic.code === 2357)
+					.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+				code,
+			).toEqual([]);
 		});
 	});
 

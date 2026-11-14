@@ -733,6 +733,31 @@ export async function App() @{
 		});
 	});
 
+	describe(`[${name}] a statement right after a \`{\` (#1321)`, () => {
+		// The printer puts the statement on a line of its own. A member expression
+		// or call that starts it maps from its own text, not from the line break and
+		// indent before it, so an editor diagnostic on it covers the right text.
+		const type = '{ user: { a?: { b: string } } }';
+		it.each([
+			['a function body', `export function f({ user }: ${type}) {user.a.b;\n}\n`],
+			['an `if` block', `export function f({ user }: ${type}) {\n\tif (user) {user.a.b;}\n}\n`],
+			['a code block', `export function App({ user }: ${type}) @{\n\t<p>@{user.a.b}</p>\n}\n`],
+			['a call', 'declare function go(n: number): void;\nexport function f() {go(1);\n}\n'],
+		])('maps an expression right after the `{` of %s from its own text', (label, source) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const texts = label === 'a call' ? ['go(1)'] : ['user.a.b', 'user.a'];
+			const start = source.indexOf(texts[0]);
+			for (const text of texts) {
+				const mapping = result.mappings.find(
+					(mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === text.length,
+				);
+				assert(mapping, text);
+				const generated = mapping.generatedOffsets[0];
+				expect(result.code.slice(generated, generated + mapping.generatedLengths[0])).toBe(text);
+			}
+		});
+	});
+
 	describe(`[${name}] text with a comment and characters JSX text can't hold`, () => {
 		// A comment between children prints as `{}`, and text writes a `>` as
 		// `&gt;`, so the output is shorter or longer than the source it spans. The
@@ -2317,6 +2342,79 @@ function C() @{
 		});
 	});
 
+	describe(`[${name}] imports and re-exports in the editor code (#1029)`, () => {
+		// TypeScript sorts each block of imports and re-exports that no blank line
+		// splits, so the editor code has a blank line between them only where the
+		// source has one, and writes a re-export as it is in the source.
+		it.each([
+			[
+				'with no blank line',
+				"import { label } from './label';\nexport * from './lib';\nexport { label as other } from './label';\n\nexport const x = label;\n",
+				"import { label } from './label';\nexport * from './lib';\nexport { label as other } from './label';\n\nexport const x = label;",
+			],
+			[
+				'with a blank line',
+				"import { label } from './label';\n\nexport * from './lib';\nexport type { T } from './t';\nexport * as ns from './ns';\nexport type * from './types';\nexport const x = label;\n",
+				"import { label } from './label';\n\nexport * from './lib';\nexport type { T } from './t';\nexport * as ns from './ns';\nexport type * from './types';\n\nexport const x = label;",
+			],
+			[
+				'with a blank line between two of one kind',
+				"export * from './z';\n\nexport * from './a';\nexport const x = 1;\n",
+				"export * from './z';\n\nexport * from './a';\n\nexport const x = 1;",
+			],
+			[
+				'on one line',
+				"export * from './z'; export { a } from './a';\nexport const x = 1;\n",
+				"export * from './z'; export { a } from './a';\n\nexport const x = 1;",
+			],
+			[
+				'with a comment over two lines',
+				"export * from './z'; /* a\n b */\nexport { a } from './a';\nexport const x = 1;\n",
+				"export * from './z';\nexport { a } from './a';\n\nexport const x = 1;",
+			],
+			[
+				'with an empty statement',
+				"import { z } from './z';\n;\nimport { a } from './a';\nexport const x = [z, a];\n",
+				"import { z } from './z';\nimport { a } from './a';\n\nexport const x = [z, a];",
+			],
+			[
+				'on one line with a no-break space',
+				"export * from './z';\u00a0export * from './a';\nexport const x = 1;\n",
+				"export * from './z';\u00a0export * from './a';\n\nexport const x = 1;",
+			],
+			// A comment or an empty statement between two on one line has no mapping
+			// an edit could go through, so they go on two lines, as esrap prints them.
+			[
+				'on one line with a comment',
+				"export * from './z'; /* note */ export * from './a';\nexport const x = 1;\n",
+				"export * from './z';\nexport * from './a';\n\nexport const x = 1;",
+			],
+			[
+				'on one line with an empty statement',
+				"import { z } from './z';; import { a } from './a';\nexport const x = [z, a];\n",
+				"import { z } from './z';\nimport { a } from './a';\n\nexport const x = [z, a];",
+			],
+		])('prints them %s between them as written', (_label, source, expected) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain(expected);
+		});
+
+		it('maps the names of a re-export written as it is', () => {
+			const source = "export { label as other } from './label';\nexport const x = 1;\n";
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			for (const name of ['label', 'other']) {
+				const start = source.indexOf(name);
+				const mapping = result.mappings.find(
+					(mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === name.length,
+				);
+				assert(mapping, name);
+				const generated = mapping.generatedOffsets[0];
+				expect(result.code.slice(generated, generated + mapping.generatedLengths[0])).toBe(name);
+			}
+		});
+	});
+
 	describe(`[${name}] whole import mappings`, () => {
 		/**
 		 * Each import in the generated code: the range TypeScript reports an import
@@ -3256,6 +3354,48 @@ export function* View() @{
 			const authored = statement.endsWith(';');
 			const end = start + statement.length - (authored ? 1 : 0);
 			expect(generated_at(result, end, authored ? 1 : 0)).toEqual([';']);
+		});
+
+		it.each([
+			['an element', 'return <div></div>;'],
+			['a self-closing element', 'return <br />;'],
+			['an element with an expression', 'return <div>{String(x)}</div>;'],
+			['a fragment', 'return <><i /><b /></>;'],
+			['an element, without a ;', 'return <div></div>'],
+		])('maps the keyword and the end of a return of %s (#1324)', (_kind, statement) => {
+			// TypeScript reports unreachable code (TS7027) on the whole statement, from
+			// its `return`. A target can print the element elsewhere, hoisted.
+			const source = `let x: unknown;\nexport function f() {\n\treturn;\n\t${statement}\n}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const start = source.indexOf(statement);
+			const keyword = result.mappings.find(
+				(mapping) =>
+					mapping.data.verification &&
+					mapping.sourceOffsets[0] === start &&
+					mapping.lengths[0] === 'return'.length,
+			);
+			expect(generated_at(result, start, 'return'.length)).toEqual(['return']);
+			// Its end, as written, maps to the end of the printed statement: its `;`,
+			// or the closing tag it ends with.
+			const end = start + statement.length;
+			const ends = result.mappings
+				.filter(
+					(mapping) =>
+						mapping.data.verification &&
+						mapping.sourceOffsets[0] + mapping.lengths[0] === end &&
+						mapping.generatedOffsets[0] > (keyword?.generatedOffsets[0] ?? Infinity),
+				)
+				.map((mapping) =>
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					),
+				);
+			expect(
+				ends.some((text) => text === ';' || /^<\/\w*>$/.test(text)),
+				ends.join(' '),
+			).toBe(true);
 		});
 
 		it.each([

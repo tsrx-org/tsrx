@@ -14,7 +14,12 @@ import {
 	isLayoutWhitespace,
 	parseModule,
 } from '../../src/index.js';
-import { TS_ERRORS, TSRX_ERRORS, UPSTREAM_ERRORS } from '../../src/diagnostics.js';
+import {
+	DIAGNOSTIC_CODES,
+	TS_ERRORS,
+	TSRX_ERRORS,
+	UPSTREAM_ERRORS,
+} from '../../src/diagnostics.js';
 import { node_children } from '../../src/utils/ast.js';
 import { code_of, error_with, line_column, thrown } from '../shared/errors.js';
 import { as_type, assert_type } from '../shared/node-types.js';
@@ -7069,6 +7074,83 @@ describe('raw-text <style> elements', () => {
 	});
 });
 
+// A CSS syntax error is TSRX3013 at the CSS that fails: where the CSS parser
+// stopped (#1306).
+describe('a CSS syntax error in a <style> body', () => {
+	/** @type {Array<[label: string, source: string, at: string, message: string, rules: number]>} */
+	const cases = [
+		[
+			'a stray `}`',
+			'export function App() @{\n\t<div>\n\t\t<style>\n\t\t\t.a { color: red; }\n\t\t\t}\n\t\t</style>\n\t\t<p>x</p>\n\t</div>\n}\n',
+			'\t\t\t}\n',
+			'Expected identifier',
+			1,
+		],
+		[
+			'a missing `}`',
+			'export function App() @{\n\t<div>\n\t\t<style>\n\t\t\t.a { color: red;\n\t\t</style>\n\t\t<p>x</p>\n\t</div>\n}\n',
+			'\n\t\t</style>',
+			'Expected }',
+			0,
+		],
+		[
+			'a stray `}` outside a template',
+			'export const a = <style>.a { color: red; } }</style>;\n',
+			'}</style>',
+			'Expected identifier',
+			1,
+		],
+	];
+	/** @param {string} source @param {string} at */
+	const offset_of = (source, at) => source.indexOf(at) + at.search(/[^\t]/);
+
+	it.each(cases)('throws %s at its place, collecting too', (_label, source, at, message) => {
+		const pos = offset_of(source, at);
+		for (const options of [{}, { collect: true }]) {
+			expect(() => parseModule(source, 'App.tsrx', options)).toThrow(
+				expect.objectContaining({
+					code: DIAGNOSTIC_CODES.CSS_SYNTAX,
+					pos,
+					loc: expect.objectContaining(
+						/** @type {{ line: number, column: number }} */ (acorn.getLineInfo(source, pos)),
+					),
+					message: `${message} (${line_column(source, pos)})`,
+				}),
+			);
+		}
+	});
+
+	// The editor's parse reports it and keeps the rules before it.
+	it.each(cases)('records %s in a loose parse', (_label, source, at, message, rules) => {
+		const pos = offset_of(source, at);
+		/** @type {import('../../types/index').CompileError[]} */
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', {
+			loose: true,
+			errors: /** @type {any} */ (errors),
+		});
+
+		expect(errors).toEqual([
+			expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_SYNTAX, message, pos, end: pos + 1 }),
+		]);
+		const style = /** @type {AST.JSXStyleElement} */ (
+			find_first(ast, (node) => node.type === 'JSXStyleElement')
+		);
+		expect(style.children[0].children.map((rule) => rule.type)).toEqual(Array(rules).fill('Rule'));
+	});
+
+	// Its body is still being typed, so its TSRX1001 is enough.
+	it('records only TSRX1001 for an unclosed <style> in a loose parse', () => {
+		const source =
+			'export function App() @{\n\t<div>\n\t\t<style>.a {\n\t\t<p>x</p>\n\t</div>\n}\n';
+		/** @type {import('../../types/index').CompileError[]} */
+		const errors = [];
+		parseModule(source, 'App.tsrx', { loose: true, errors: /** @type {any} */ (errors) });
+
+		expect(errors.map((error) => error.code)).toEqual([TSRX_ERRORS.UNCLOSED_TAG('style').code]);
+	});
+});
+
 describe("a closing tag that doesn't match the open element", () => {
 	it("names a fragment's closing tag `</>` in the mismatch it reports (#712)", () => {
 		for (const source of [
@@ -9845,6 +9927,48 @@ describe('JSX spread children', () => {
 	});
 });
 
+// TypeScript's checker reports an attribute's empty value (`a={}`) as TS17000
+// at its braces (#1311).
+describe('an empty attribute value', () => {
+	/** @type {Array<[source: string, braces: string, at: string]>} */
+	const cases = [
+		['export function App(bag: any) @{\n\t<div {...bag} title={} />\n}', '{}', '2:21'],
+		['export function App() @{\n\t<div title={/* c */} />\n}', '{/* c */}', '2:12'],
+		['export function App() {\n\treturn <div title={} />;\n}', '{}', '2:19'],
+		['export function App({ C }: any) @{\n\t<C value={\n\t} />\n}', '{\n\t}', '2:10'],
+	];
+
+	it('throws it in a strict parse', () => {
+		for (const [source, , at] of cases) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				error_with(TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION, at),
+			);
+		}
+	});
+
+	it.each([{ collect: true }, { loose: true }])(
+		'records it at the braces and keeps the attribute (%o)',
+		(options) => {
+			for (const [source, braces] of cases) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				const ast = parseModule(source, 'App.tsrx', { ...options, errors, comments: [] });
+				expect(
+					errors.map((error) => [error.code, source.slice(error.pos, error.end)]),
+					source,
+				).toEqual([['TS17000', braces]]);
+				const attribute = find_first(
+					ast,
+					(node) => node.type === 'JSXAttribute' && node.value?.type === 'JSXExpressionContainer',
+				);
+				expect(attribute, source).toMatchObject({
+					value: { expression: { type: 'JSXEmptyExpression' } },
+				});
+			}
+		},
+	);
+});
+
 // A `<` in markup child position only opens a tag when the next character can
 // begin one. Anything else — a digit, an operator, an emoji, whitespace — is a
 // literal `<` in the text, the same rule the HTML tokenizer uses. Every case
@@ -10703,6 +10827,101 @@ describe('a `<` in a file without JSX', () => {
 		}
 	});
 
+	// TypeScript reports TS7060 when its checker checks the arrow function, and
+	// it doesn't check a parameter's default that is TS2371, unless it needs the
+	// parameter's type: for an overload, to compare it with the implementation,
+	// and for a rest parameter (#1315). With `strict`, as the issue ran tsc: it
+	// checks a binding pattern's default with a type annotation only then.
+	it('reports TS7060 in a parameter default only where tsc checks the default', () => {
+		const codes = [7060, 2371, 2369, 2300, 1354, 1048];
+		for (const filename of ['a.mts', 'a.cts']) {
+			for (const source of [
+				'type F = (q = <T>(y: T) => y) => void;',
+				'let x: (q = <T>(y: T) => y) => void;',
+				'type C = new (q = <T>(y: T) => y) => object;',
+				'interface I { m(q = <T>(y: T) => y): void }',
+				'type L = { (q = <T>(y: T) => y): void; new (r = <U>(z: U) => z): object };',
+				'declare function f(q = <T>(y: T) => y): void;',
+				'declare class D { m(q = <T>(y: T) => y): void; constructor(public r = <U>(z: U) => z) }',
+				'abstract class A { abstract m(q = <T>(y: T) => y): void }',
+				'abstract class A { abstract m(q = <T>(y: T) => y, public a): void }',
+				'const a = async <U,>(b = (x as (q = <T>(y: T) => y) => void), 1);',
+				'type F = (q = (r = <T>(y: T) => y) => r, s: (t = <U>(z: U) => z) => void) => void;',
+				'declare function f(q = <T>(y: T) => y): readonly string;',
+				// Checked: a function with a body, an overload, a rest parameter, a
+				// binding pattern, and a parameter whose type a `typeof` needs.
+				'const g = <T>(y: T) => y;',
+				'const h = (q = <T>(y = <U>(z: U) => z) => y) => q;',
+				'function f(q = <T>(y: T) => y, a, a): readonly string { return q; }',
+				'function k(q = <T>(y: T) => y): void; function k() {}',
+				'class E { m(q = <T>(y: T) => y): void; m() {} }',
+				'class B { constructor(public q = <T>(y: T) => y); constructor() {} }',
+				'type F = (...q = <T>(y: T) => y) => void;',
+				'type F = ({ x } = <T>(y: T) => y) => void;',
+				'abstract class A { abstract m([x] = <T>(y: T) => y): void }',
+				'type G = (q = <T>(y: T) => y, r?: typeof q) => void;',
+				'declare function f(q = <T>(y: T) => y): typeof q.x;',
+				'type F = (q = <T>(x: T) => x, r: (s: number) => typeof q) => void;',
+				'type F = ({ x }: {} = <T>(y: T) => y) => void;',
+				'type F = (q = <T>(x: T) => x) => q is any;',
+				'type F = (q = <T>(x: T) => x, r: <U extends typeof q>(q: number) => U) => void;',
+				'type F = (q = <T>(x: T) => x, r: { [k: string]: typeof q }) => void;',
+				// Not checked: a type annotation gives the parameter's type, and a
+				// `typeof` in another default or of another parameter doesn't count.
+				'type F = (q: number = <T>(x: T) => x, r?: typeof q) => void;',
+				'type F = (...q: any[] = <T>(y: T) => y) => void;',
+				'declare function f(q = <T>(y: T) => y, r = null as typeof q): void;',
+				'type F = (q = <T>(x: T) => x, r: (q: number) => typeof q) => void;',
+				'declare function f(q = <T>(x: T) => x): asserts q;',
+				'type F = (q = <T>(x: T) => x, r: (x: unknown) => q is number) => void;',
+				// An index signature's parameter is the name `typeof` reads in it, and
+				// a signature's own parameters aren't in scope in its type parameters.
+				'type F = (q = <T>(x: T) => x, r: { [q: string]: typeof q }) => void;',
+				'type F = <U extends typeof q>(q = <T>(x: T) => x) => void;',
+				'declare function f<U = typeof q>(q = <T>(x: T) => x): void;',
+			]) {
+				const label = `${filename}: ${source}`;
+				const path = `/${filename}`;
+				const host = ts.createCompilerHost({});
+				const get_source_file = host.getSourceFile;
+				host.getSourceFile = (name, version) =>
+					name === path
+						? ts.createSourceFile(name, source, version)
+						: get_source_file(name, version);
+				const program = ts.createProgram(
+					[path],
+					{ noLib: true, strict: true, types: [], module: ts.ModuleKind.NodeNext },
+					host,
+				);
+				const file = /** @type {ts.SourceFile} */ (program.getSourceFile(path));
+				const expected = ts
+					.sortAndDeduplicateDiagnostics([...program.getSemanticDiagnostics(file)])
+					.filter((diagnostic) => codes.includes(diagnostic.code))
+					.map((diagnostic) => [`TS${diagnostic.code}`, diagnostic.start]);
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, filename, { collect: true, errors, comments: [] });
+				expect(
+					errors.map((error) => [error.code, error.pos]),
+					label,
+				).toEqual(expected);
+				expect(() => parseModule(source, filename), label).toThrow(
+					expect.objectContaining({ code: expected[0][0], pos: expected[0][1] }),
+				);
+			}
+			// A syntax error in the return type, which tsc reports alone, keeps none.
+			const source = 'declare function f(q = <T>(y: T) => y): ;';
+			const thrown = expect.objectContaining({ code: 'TS1012', pos: source.indexOf(';') });
+			expect(() => parseModule(source, filename), source).toThrow(thrown);
+			/** @type {CompileError[]} */
+			const errors = [];
+			expect(() => parseModule(source, filename, { collect: true, errors }), source).toThrow(
+				thrown,
+			);
+			expect(errors, source).toEqual([]);
+		}
+	});
+
 	it('records TS7059 once for each type assertion when collecting in a .mts or .cts file', () => {
 		for (const filename of ['a.mts', 'a.cts']) {
 			/** @type {CompileError[]} */
@@ -10715,6 +10934,55 @@ describe('a `<` in a file without JSX', () => {
 				[TS_ERRORS.RESERVED_TYPE_ASSERTION.code, 8],
 				[TS_ERRORS.RESERVED_TYPE_ASSERTION.code, 12],
 			]);
+		}
+	});
+
+	// TypeScript's checker reports an assertion's TS7059 before it checks the
+	// operand (#1326).
+	it('reports an outer type assertion before the errors in its operand, as tsc does', () => {
+		for (const filename of ['a.mts', 'a.cts']) {
+			for (const source of [
+				'const v = <A>(<B>x);',
+				'const v = <A><B>x;',
+				'const v = <A>(<B>(<C>x));',
+				'const h = <Handler>((e) => <number>e.x);',
+				'const v = <A>((a, a) => <B>a);',
+				'const v = <A>{ m() { return <B>x; } };',
+				'const v = <A>(<B>x); const w = <C>y;',
+				// The parenthesized operand is tried as an arrow function's parameters
+				// first, which threw TS1012 in a strict parse.
+				'const v = <A>((x ? <B>y : z));',
+			]) {
+				const label = `${filename}: ${source}`;
+				const path = `/${filename}`;
+				const host = ts.createCompilerHost({});
+				const get_source_file = host.getSourceFile;
+				host.getSourceFile = (name, version) =>
+					name === path
+						? ts.createSourceFile(name, source, version)
+						: get_source_file(name, version);
+				const program = ts.createProgram(
+					[path],
+					{ noLib: true, types: [], module: ts.ModuleKind.NodeNext },
+					host,
+				);
+				const file = /** @type {ts.SourceFile} */ (program.getSourceFile(path));
+				const expected = ts
+					.sortAndDeduplicateDiagnostics([...program.getSemanticDiagnostics(file)])
+					.filter((diagnostic) => [7059, 2300].includes(diagnostic.code))
+					.map((diagnostic) => [`TS${diagnostic.code}`, diagnostic.start]);
+				expect(expected.length, label).toBeGreaterThan(1);
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, filename, { collect: true, errors, comments: [] });
+				expect(
+					errors.map((error) => [error.code, error.pos]),
+					label,
+				).toEqual(expected);
+				expect(() => parseModule(source, filename), label).toThrow(
+					expect.objectContaining({ code: expected[0][0], pos: expected[0][1] }),
+				);
+			}
 		}
 	});
 
@@ -11048,6 +11316,116 @@ describe('a redeclared name (#948, #952)', () => {
 		);
 		for (const [source, errors] of cases) {
 			for (const [, at] of errors) expect(source.slice(at), source).toMatch(/^(?:a|\\u0061)/);
+		}
+	});
+
+	it('finds the earlier declaration among thousands of names (#1163)', async () => {
+		const names = Array.from({ length: 3000 }, (_, index) => `let a${index};`).join('\n');
+		const redeclared = `${names}\nlet a0;`;
+		const before_function = `${names}\nlet a1500;\nfunction a1500() {}`;
+		const outcomes = await parse_in_worker(
+			[redeclared, before_function].flatMap((source) =>
+				modes.map((options) => ({ source, options })),
+			),
+		);
+
+		const at = before_function.lastIndexOf('let a1500') + 4;
+		expect(outcomes).toEqual([
+			thrown(TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, redeclared.lastIndexOf('a0')),
+			{ ok: true, errors: [code_of(TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED)] },
+			thrown(UPSTREAM_ERRORS.REDECLARED, at),
+			{
+				ok: true,
+				errors: [code_of(UPSTREAM_ERRORS.REDECLARED), code_of(UPSTREAM_ERRORS.REDECLARED)],
+			},
+		]);
+	});
+});
+
+// A directive's clause written where no directive takes it, after text, an
+// element or an expression container, or with no directive before it, is
+// TSRX1012 at its keyword in every mode (#1330).
+describe('a clause that no directive takes', () => {
+	/** @type {Array<[children: string, keyword: string]>} */
+	const cases = [
+		['@if (ok) {<i />} note\n\t\t@else {<b />}', '@else'],
+		['@if (ok) {<i />}\n\t\tnote @else {<b />}', '@else'],
+		['@if (ok) {<i />} note @else if (ok) {<b />}', '@else'],
+		['@if (ok) {<i />} {x}\n\t\t@else {<b />}', '@else'],
+		['@if (ok) {<i />} <em />\n\t\t@else {<b />}', '@else'],
+		['@if (ok) {<i />}/* c */// note\n\t\t@else {<b />}', '@else'],
+		['@for (const y of xs) {<i />} note\n\t\t@empty {<b />}', '@empty'],
+		['@try {<i />} @catch (e) {<b />} note\n\t\t@pending {<u />}', '@pending'],
+		['@try {<i />} @pending {<u />} note\n\t\t@catch (e) {<b />}', '@catch'],
+		['@try {<i />} @catch (e) {<b />} @pending {<u />}', '@pending'],
+		['@switch (x) {\n\t\t\t@case 1: {<i />}\n\t\t} note\n\t\t@case 2: {<b />}', '@case 2'],
+		['@switch (x) {\n\t\t\t@case 1: {<i />}\n\t\t} note\n\t\t@default: {<b />}', '@default'],
+		['@else {<b />}', '@else'],
+		['<i />@else {<b />}', '@else'],
+		['note @catch {<b />}', '@catch'],
+		// A `<` that starts no tag, and one in a string, in a `@case` label
+		['note @case x < 2: {<b />}', '@case'],
+		['note @case "<": {<b />}', '@case'],
+		['note @case "a\\"b": {<b />}', '@case'],
+		// A block comment on the label's line, even with a `{` in it
+		['note @case value /* { */: {<b />}', '@case'],
+	];
+	/** @param {string} children */
+	const source_of = (children) =>
+		`export function App({ ok, x, xs }: any) @{\n\t<p>\n\t\t${children}\n\t</p>\n}`;
+
+	it('throws TSRX1012 at the keyword in a strict parse', () => {
+		for (const [children, at] of cases) {
+			const source = source_of(children);
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({
+					code: TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE.code,
+					pos: source.indexOf(at),
+				}),
+			);
+		}
+	});
+
+	it.each([{ collect: true }, { loose: true }])(
+		'records it once at the keyword (%o)',
+		(options) => {
+			for (const [children, at] of cases) {
+				const source = source_of(children);
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, 'App.tsrx', { ...options, errors, comments: [] });
+				const keyword = at.split(' ')[0];
+				expect(
+					errors.map((error) => [error.code, source.slice(error.pos, error.end)]),
+					source,
+				).toEqual([[TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE.code, keyword]]);
+			}
+		},
+	);
+
+	it('leaves a clause right after its block, an escaped one, and other text alone', () => {
+		for (const children of [
+			'@if (ok) {<i />}\n\t\t@else {<b />}',
+			'@if (ok) {<i />} /* c */ @else if (x) {<b />} // c\n\t\t@else {<u />}',
+			'@for (const y of xs) {<i />} @empty {<b />}',
+			'@try {<i />} @pending {<u />} @catch (e) {<b />}',
+			"&#64;else {'literal'}",
+			'mail me@else.dev, or @else, @catch me, @casework, @default',
+			// No `:` on the label's line, before a comment
+			'@case value /* note: prose */ text',
+			'@case value // note: prose\n\t\ttext',
+			'@case value /* note\n\t\t*/: prose',
+			'@case "a\\": prose" text',
+			'@case\n\t\tvalue: description',
+			// A keyword that goes on with a letter that isn't ASCII
+			'@caseé: prose, @else ifé prose, @elseé {x}',
+		]) {
+			const source = source_of(children);
+			/** @type {CompileError[]} */
+			const errors = [];
+			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
+			parseModule(source, 'App.tsrx', { collect: true, errors, comments: [] });
+			expect(errors, source).toEqual([]);
 		}
 	});
 });
@@ -11498,15 +11876,78 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		{
 			// Within one block, the scope check reports the second declaration as
-			// it reads it.
+			// it reads it. Those of two blocks come by position with it, as tsc
+			// sorts them, and a strict parse throws the first (#1263).
 			source:
 				'namespace N { export const a = 1; }\nnamespace N { export const a = 2; export const a = 3; }',
 			errors: [
-				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 3'],
 				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
 				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 2'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 3'],
 			],
-			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '2:47'],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:27'],
+		},
+		{
+			source:
+				'namespace N { export const a = 1; }\nnamespace N { export const a = 2; function f(x, x) {} }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 2'],
+				[TS_ERRORS.ARGUMENT_NAME_CLASH, 'x, x'],
+				[TS_ERRORS.ARGUMENT_NAME_CLASH, 'x) {}'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:27'],
+		},
+		{
+			source: 'namespace N { export const a = 1; const z; }\nnamespace N { export const a = 2; }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
+				[TS_ERRORS.DECLARATION_NOT_INITIALIZED, 'z;'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 2'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:27'],
+		},
+		{
+			source:
+				'namespace O { export namespace N { export const a = 1; } export namespace N { export const a = 2; export const a = 3; } }',
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 1'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 2'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a = 3'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:48'],
+		},
+		{
+			source:
+				"declare module 'm' { export const a: number; }\ndeclare module 'm' { export const a: number; export const a: string; }",
+			errors: [
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a: number; }\n'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a: number; export'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'a: string'],
+			],
+			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:34'],
+		},
+		{
+			// So do the module's own.
+			source: 'export default 1; let q = 1; let q = 2; export default 2;',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 1'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'q = 2'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 2'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '1:0'],
+		},
+		{
+			// A strict parse that also tells a redeclaration's code from the rest of
+			// the input (see `#declaresFunctionLater`) parses it once for both.
+			source: 'export default 1;\nlet a;\nlet a;\nfunction a() {}\nexport default 2;',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 1'],
+				[UPSTREAM_ERRORS.REDECLARED, 'a;\nfunction'],
+				[UPSTREAM_ERRORS.REDECLARED, 'a() {}'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 2'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '1:0'],
 		},
 		// A namespace's name is a value when the namespace is instantiated, and
 		// shares the name with anything otherwise (#1263).
@@ -14400,6 +14841,51 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				'const f = <T>(x: T) => { const z; return x +; };',
 				[[uninitialized, 'z;']],
 				[unexpected, '; };'],
+			],
+			// Any generic arrow function, whose errors acorn-typescript's undo log
+			// dropped with its attempt at it (#1327).
+			.../** @type {Array<[string, string]>} */ ([
+				['a.tsrx', 'const f = <T,>(x: T) => { const z; return x +; };'],
+				['a.tsx', 'const f = <T,>(x: T) => { const z; return x +; };'],
+				['a.ts', 'const f = <T,>(x: T) => { const z; return x +; };'],
+				['a.mts', 'const f = <T,>(x: T) => { const z; return x +; };'],
+				['a.ts', 'const f = <T>(x: T) => { const z; return x +; };'],
+				['a.mts', 'const f = <T extends string>(x: T) => { const z; return x +; };'],
+				['a.tsrx', 'const f = async <T,>(x: T) => { const z; return x +; };'],
+				['a.ts', 'const f = async <T>(x: T) => { const z; return x +; };'],
+				['a.tsrx', 'const f = <T,>(x: T): T => { const z; return x +; };'],
+				['a.ts', 'const f = <T,>(x: T) => <U,>(y: U) => { const z; return y +; };'],
+				['a.ts', 'type G = (q = <T,>(x: T) => { const z; return x +; }) => void;'],
+				[
+					'App.tsrx',
+					'export function A() @{ <b onClick={<T,>(x: T) => { const z; return x +; }} /> }',
+				],
+			]).map(
+				([filename, source]) =>
+					/** @type {[string, string, Array<[string | undefined, string]>, [string, string]]} */ ([
+						filename,
+						source,
+						[[uninitialized, 'z;']],
+						[unexpected, '; }'],
+					]),
+			),
+			[
+				'a.ts',
+				'const f = <T extends (...q: any[], x: any) => void,>(x: T) => { const z; return x +; };',
+				[
+					[rest_not_last, '...q'],
+					[uninitialized, 'z;'],
+				],
+				[unexpected, '; }'],
+			],
+			[
+				'a.ts',
+				'const f = <T,>(...a?: T[]) => { const z; return a +; };',
+				[
+					[code_of(TS_ERRORS.OPTIONAL_REST_PARAMETER), '?:'],
+					[uninitialized, 'z;'],
+				],
+				[unexpected, '; }'],
 			],
 			['a.ts', 'const f = <T,>(...a, b) => a;', [[rest_not_last, '...a']]],
 			['a.mts', 'const f = <T>(...a, b) => a;', [[rest_not_last, '...a']]],

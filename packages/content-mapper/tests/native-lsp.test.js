@@ -473,6 +473,11 @@ import Button from './Button.tsrx';`;
 		['source.organizeImports', 'over several lines (#1033)', SEVERAL_LINES],
 		['source.sortImports', 'over several lines (#1033)', SEVERAL_LINES],
 		[
+			'source.sortImports',
+			'with re-exports (#1029)',
+			"import Button from './Button.tsrx';\nexport * from './lib';\nexport { default as Panel } from './Panel.tsrx';\nexport { helperB } from './lib';",
+		],
+		[
 			'source.removeUnusedImports',
 			'without spaces (#1033)',
 			"import {helperA, helperB} from './lib';\nimport Button from './Button.tsrx';",
@@ -859,6 +864,11 @@ import def from './mixed';
 			[plain("const n: number = 'x';\n\treturn <div>{n};"), ['div']],
 			['export class A {\n\ty = <Missing>;\n}\n', ['Missing']],
 			['export const y = <div>\n', ['div']],
+			// TypeScript reports TS2304 on these closing tags, as `T` and `Missing`
+			// name no value (#1328).
+			['export const f = <T>(x: T) => x;\n', ['<T>']],
+			[plain('return <T>(x: T) => x;'), ['<T>']],
+			['export const y = <Missing>;\n', ['Missing']],
 			['export const y = <style>.a {}\n', ['<style>']],
 			['export const y = <script>const a = 1;\n', ['<script>']],
 			['<><div>;\n', ['<>', 'div']],

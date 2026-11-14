@@ -900,6 +900,14 @@ const StatusBadge = ({ status }: { status: string }) => @if (status === 'active'
 };
 ```
 
+A clause comes right after the block before it: `@else` after an `@if` block,
+`@empty` after an `@for` block, `@pending` after an `@try` block, and `@catch`
+after an `@try` or `@pending` block (`@case` and `@default` only in an `@switch`
+body). Comments may come between them, but not text, an element or an expression
+container. A clause anywhere else in element children, such as
+`<p>@if (ok) { <i /> } note @else { <b /> }</p>`, is the `TSRX1012` error. To
+write the words as text, write the `@` as `&#64;` (`&#64;else`).
+
 ### `for...of` with `index` and `key`
 
 ```tsrx
@@ -1217,6 +1225,10 @@ with CSS nesting:
   element, only when an ancestor carries the class.
 - Compound `.card:global(.is-open)` -> `.card.<hash>.is-open`: your own
   element, with a class another library toggles on it.
+- Pseudo-classes right after `:global(...)` stay in its compound, which stays
+  global: `:global(.theme-dark):not(.print) .card` ->
+  `.theme-dark:not(.print) .card.<hash>`. The arguments of that `:not()`,
+  `:is()`, `:where()` or `:has()` are kept as written, never scoped or pruned.
 - `:global` in the middle of a selector (`.card :global(.x) .title`) is the
   `TSRX3011` error: it may only start or end a selector.
 - Block `:global { .toast { ... } body { ... } }` -> `.toast { ... } body { ... }`:

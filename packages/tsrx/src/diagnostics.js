@@ -41,6 +41,8 @@ export const DIAGNOSTIC_CODES = {
 	TRY_HANDLER_MISSING: 'TSRX1010',
 	/** An `@for`'s `index` or `key` clause is incomplete or out of order. */
 	FOR_CLAUSE: 'TSRX1011',
+	/** A directive's clause (`@else {`, `@catch (e) {`, `@case 1:`) in element children, where no directive takes it. */
+	DETACHED_DIRECTIVE_CLAUSE: 'TSRX1012',
 
 	/** A `return` in a template. */
 	TEMPLATE_RETURN_STATEMENT: 'TSRX2001',
@@ -377,6 +379,12 @@ export const TSRX_ERRORS = {
 	),
 	FOR_INDEX_NAME_EXPECTED: tsrx('FOR_CLAUSE', 'Expected identifier after "index" keyword'),
 	FOR_INDEX_AFTER_KEY: tsrx('FOR_CLAUSE', '"index" must come before "key" in for-of loop'),
+	/** `clause` is the clause's keyword, such as `else`, and `place` where it belongs. */
+	DETACHED_DIRECTIVE_CLAUSE: tsrx_with_values(
+		'DETACHED_DIRECTIVE_CLAUSE',
+		(clause, place) =>
+			`\`@${clause}\` must come ${place}. To write it as text, write \`&#64;${clause}\`.`,
+	),
 
 	// TSRX2xxx
 	TEMPLATE_RETURN_STATEMENT: tsrx(
@@ -729,6 +737,8 @@ export const TS_ERRORS = {
 		code: 'TS1478',
 		message: 'Identifier or string literal expected.',
 	},
+	// After a plain `try` block, a `pending` block, which only `@try` has
+	CATCH_OR_FINALLY_EXPECTED: { code: 'TS1472', message: "'catch' or 'finally' expected." },
 	// A word reserved only in strict mode (`let`, `static`, `yield`, …) used as a
 	// name, which TypeScript's parser reads and its binder reports: TSRX's input
 	// is a module, and inside a class TypeScript says so instead
@@ -1076,6 +1086,11 @@ export const TS_ERRORS = {
 	JSX_UNESCAPED_CLOSING_BRACE: {
 		code: 'TS1381',
 		message: 'Unexpected token `}`. Did you mean `&rbrace;` or `{"}"}`?',
+	},
+	// acorn-typescript's wording, for an attribute's empty `{}` value
+	JSX_ATTRIBUTE_EMPTY_EXPRESSION: {
+		code: 'TS17000',
+		message: 'JSX attributes must only be assigned a non-empty expression',
 	},
 	// TSRX's shorter wording of acorn-typescript's `JSX value should be either
 	// an expression or a quoted JSX text`
@@ -1494,7 +1509,7 @@ function upstream_lookup_rows() {
 		// acorn: regexp_classSetExpression
 		[/^Invalid regular expression: \/.*\/: Invalid character in character class$/, 'TS1508'],
 		// acorn-typescript: jsx_parseAttributeValue
-		[/^JSX attributes must only be assigned a non-empty expression$/, 'TS17000'],
+		TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION,
 		// acorn-typescript: jsx_parseAttributeValue
 		[/^JSX value should be either an expression or a quoted JSX text$/, 'TS1145'],
 		// acorn-typescript: jsx_parseElementAt

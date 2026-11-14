@@ -1752,6 +1752,150 @@ export function runSharedScopedStyleTests({
 			expect(css).not.toContain('(unused)');
 		});
 
+		it('closes the comment over a pruned selector that touches a :global() selector', () => {
+			/** @type {Array<[string, (hash: string) => string]>} */
+			const cases = [
+				['.y:is(.z,:global(.w))', (hash) => `.y.${hash}:is(/* (unused) .z,*/.w) {`],
+				['.y:where(.z,:global(.w))', (hash) => `.y.${hash}:where(/* (unused) .z,*/.w) {`],
+				['.y:has(.z,:global(.w))', (hash) => `.y.${hash}:has(/* (unused) .z,*/.w) {`],
+				['.y:is(.z ,:global(.w))', (hash) => `.y.${hash}:is(/* (unused) .z ,*/.w) {`],
+				['.y:is(.z,.q,:global(.w))', (hash) => `.y.${hash}:is(/* (unused) .z,.q,*/.w) {`],
+				['.y:is(.z,:global(.w),:global(.v))', (hash) => `.y.${hash}:is(/* (unused) .z,*/.w,.v) {`],
+				[
+					'.y:is(.z,:global(.w),.q)',
+					(hash) => `.y.${hash}:is(/* (unused) .z,*/.w /* (unused) .q*/) {`,
+				],
+				['.z,:global(.w)', () => `/* (unused) .z,*/.w {`],
+				[':global(.x) .z,.y', (hash) => `/* (unused) .x .z,*/.y.${hash} {`],
+				['.y,.z:global(.k)', (hash) => `.y.${hash} /* (unused) .z.k*/ {`],
+				['.y,.z:global', (hash) => `.y.${hash} /* (unused) .z*/ {`],
+			];
+
+			for (const [rule, expected] of cases) {
+				const { css, cssHash } = compile(
+					`export function App() @{
+						<>
+							<style>
+								${rule} { color: red; }
+								.y { font-weight: bold; }
+							</style>
+							<i ${attr}="y" />
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				const hash = hashes_of(cssHash)[0];
+				expect(css, rule).toContain(expected(hash));
+				// An unclosed comment would swallow the rest of the stylesheet
+				const uncommented = css.replace(/\/\*[^]*?\*\//g, '');
+				expect(uncommented, rule).not.toMatch(/\/\*|\*\//);
+				expect(uncommented, rule).toContain(`.y.${hash} { font-weight: bold; }`);
+			}
+		});
+
+		it('keeps the :not(), :is(), :where() and :has() arguments of a :global() compound as written', () => {
+			const alone = `<i ${attr}="y" />`;
+			const in_parent = `<div><i ${attr}="y" /></div>`;
+			const in_expression = `{show && <i ${attr}="y" />}`;
+			/** @type {Array<[string, string, (hash: string) => string]>} */
+			const cases = [
+				[':global(.x):not(.z) .y', alone, (hash) => `.x:not(.z) .y.${hash} {`],
+				[':global(.x):not(.z) .y', in_parent, (hash) => `.x:not(.z) .y.${hash} {`],
+				[':global(.x):not(.z, .q) .y', alone, (hash) => `.x:not(.z, .q) .y.${hash} {`],
+				[':global(div):not(.z) .y', alone, (hash) => `div:not(.z) .y.${hash} {`],
+				// An argument that matches an element of the component stays unscoped too
+				[':global(.x):not(.y) .y', alone, (hash) => `.x:not(.y) .y.${hash} {`],
+				[':global(.x):not(.p .z) .y', in_parent, (hash) => `.x:not(.p .z) .y.${hash} {`],
+				['.y:is(:global(.x):not(.z))', alone, (hash) => `.y.${hash}:is(.x:not(.z)) {`],
+				['.y :global(.x):not(.z)', alone, (hash) => `.y.${hash} .x:not(.z) {`],
+				[':global(.x):is(.z) .y', alone, (hash) => `.x:is(.z) .y.${hash} {`],
+				[':global(.x):where(.z) .y', alone, (hash) => `.x:where(.z) .y.${hash} {`],
+				[':global(.x):has(.z) .y', alone, (hash) => `.x:has(.z) .y.${hash} {`],
+				[':global(.x):has(> .y) .y', alone, (hash) => `.x:has(> .y) .y.${hash} {`],
+				[':global(.x):is(.a:not(.b)) .y', alone, (hash) => `.x:is(.a:not(.b)) .y.${hash} {`],
+				[
+					':global(.x):is(.z) > .y',
+					`<div ${attr}="z"><i ${attr}="y" /></div>`,
+					(hash) => `.x:is(.z) > .y.${hash} {`,
+				],
+				[
+					':global(.x):has(.z) > .y',
+					`<div><i ${attr}="y" /><b ${attr}="z" /></div>`,
+					(hash) => `.x:has(.z) > .y.${hash} {`,
+				],
+				// A rule kept for an element the sibling search cannot place
+				[':global(.x):is(.z) + .y', in_expression, (hash) => `.x:is(.z) + .y.${hash} {`],
+				[':global(.x):has(.z) ~ .y', in_expression, (hash) => `.x:has(.z) ~ .y.${hash} {`],
+				[':global(.x):not(.p .z) + .y', in_expression, (hash) => `.x:not(.p .z) + .y.${hash} {`],
+			];
+
+			for (const [rule, body, expected] of cases) {
+				const { css, cssHash } = compile(
+					`export function App({ show }: { show: boolean }) @{
+						<>
+							<style>${rule} { color: red; }</style>
+							${body}
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				// An empty `:not()` is invalid, and an empty `:is()` matches nothing
+				expect(css, `${rule} ${body}`).not.toContain('(unused)');
+				expect(css, `${rule} ${body}`).toContain(expected(hashes_of(cssHash)[0]));
+			}
+		});
+
+		it('keeps the arguments of a :global() compound in a scope without elements', () => {
+			for (const pseudo of ['not', 'is', 'where', 'has']) {
+				const { css } = compile(
+					`export function App() @{
+						<div>
+							<style>:global(.x):${pseudo}(.z) { color: red; }</style>
+							{'text'}
+						</div>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(css, pseudo).toContain(`.x:${pseudo}(.z) { color: red; }`);
+			}
+		});
+
+		it('still prunes a rule whose :global() compound cannot match a parent in the component', () => {
+			for (const rule of [':global(.x):is(.z) > .y', ':global(.x):has(.z) > .y']) {
+				const { css } = compile(
+					`export function App() @{
+						<>
+							<style>${rule} { color: red; }</style>
+							<div><i ${attr}="y" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(css, rule).toContain(`/* (unused) ${rule} { color: red; }*/`);
+			}
+		});
+
+		it('keeps the arguments of a :global() compound unscoped in a theme', () => {
+			const { css, cssHash } = compile(
+				`export const theme = <style>
+					:global(.x):not(.z) .y { color: red; }
+					:global(.x):has(.z) .y { color: blue; }
+					.y:not(.z) { color: green; }
+				</style>;`,
+				'theme.tsrx',
+			);
+
+			const [hash] = hashes_of(cssHash);
+			expect(css).toContain(`.x:not(.z) .y.${hash} { color: red; }`);
+			expect(css).toContain(`.x:has(.z) .y.${hash} { color: blue; }`);
+			// Outside a global compound a theme still scopes them
+			expect(css).toContain(`.y.${hash}:not(.z:where(.${hash})) { color: green; }`);
+		});
+
 		it('global-theme: a theme keeps bare and prefixed :global rules with its own hash', () => {
 			const { css, cssHash } = compile(
 				`export const theme = <style>

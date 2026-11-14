@@ -40,12 +40,15 @@ import {
 	format_comment,
 	get_line_comments_after,
 } from '../comment-utils.js';
-import { has_location, is_organized_import } from '../utils/ast.js';
+import { child_nodes, has_location, is_organized_import } from '../utils/ast.js';
 import { regex_whitespaces_strict } from '../utils/patterns.js';
 import { get_source_tokens } from '../parse/source-tokens.js';
 import { regex_jsx_text_escaped } from './jsx/helpers.js';
+import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 
 const RETURN_KEYWORD = 'return';
+/** A fragment's `<>`, with any whitespace or comments between its `<` and `>`. */
+const regex_opening_fragment = /^<(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*>$/;
 const EXPORT_KEYWORD = 'export';
 const BLOCK_DECLARATION_TYPES = new Set([
 	'FunctionDeclaration',
@@ -609,6 +612,31 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map a re-export's module string and an authored `;`, as an import's are.
+	 * TypeScript 7 (`@tsrx/content-mapper`) applies an Organize Imports edit only
+	 * inside one span of identical text, and joins neighbouring spans only when
+	 * their features match, so a re-export written as it is then has one span,
+	 * like an import (#1029).
+	 * @param {AST.ExportAllDeclaration | AST.ExportNamedDeclaration} node
+	 * @param {(node: AST.Node) => void} visit
+	 */
+	function add_re_export_source_mappings(node, visit) {
+		if (!has_location(node) || !node.source) return;
+		visit(node.source);
+		if (source[node.end - 1] === ';') {
+			tokens.push({
+				source: ';',
+				generated: ';',
+				loc: {
+					start: { line: node.loc.end.line, column: node.loc.end.column - 1 },
+					end: node.loc.end,
+				},
+				metadata: {},
+			});
+		}
+	}
+
+	/**
 	 * Add the start of the next line to the points of a whole-statement mapping,
 	 * when the rest of the line after the statement is the same in both files:
 	 * only spaces, or the comments the type-only print writes after an import
@@ -967,18 +995,29 @@ export function convert_source_map_to_mappings(
 	 * TypeScript reports some errors on a whole statement, up to its `;` (TS7027
 	 * on unreachable code), and Volar drops a diagnostic whose end no mapping
 	 * covers. Map the `;` the printer writes after a statement: an authored one
-	 * to itself, and one the printer adds to the end of the statement.
+	 * to itself, and one the printer adds to the end of the statement, after
+	 * its last expression, or, where nothing printed in the statement ends there
+	 * (`return <div></div>` printed as `return b__static1;`), before the end of
+	 * the printed statement. The statement's last expression can be printed
+	 * elsewhere too, as an element hoisted out of a `return` is: only a `;` after
+	 * `after`, where the statement is printed, is the statement's (#1324).
 	 * @param {AST.Node} node
+	 * @param {number} [after] A generated offset the statement's `;` comes after
 	 * @returns {void}
 	 */
-	function push_statement_end_mapping(node) {
+	function push_statement_end_mapping(node, after = -1) {
 		if (!has_location(node)) return;
 		const authored = source[node.end - 1] === ';';
 		const { line, column } = node.loc.end;
-		for (const generated of src_to_gen_map.get(`${line}:${column}`) ?? []) {
-			const end = loc_to_offset(generated.line, generated.column, gen_line_offsets);
-			const semicolon = authored ? end - 1 : end;
-			if (generated_code[semicolon] !== ';') continue;
+		const ends = (src_to_gen_map.get(`${line}:${column}`) ?? []).map((generated) =>
+			loc_to_offset(generated.line, generated.column, gen_line_offsets),
+		);
+		/** @param {number} offset */
+		const is_semicolon = (offset) => offset > after && generated_code[offset] === ';';
+		const semicolon = authored
+			? ends.map((end) => end - 1).find(is_semicolon)
+			: (ends.find(is_semicolon) ?? ends.map((end) => end - 1).find(is_semicolon));
+		if (semicolon !== undefined) {
 			mappings.push({
 				sourceOffsets: [authored ? node.end - 1 : node.end],
 				lengths: [authored ? 1 : 0],
@@ -986,7 +1025,6 @@ export function convert_source_map_to_mappings(
 				generatedLengths: [1],
 				data: { ...mapping_data_verify_only, customData: {} },
 			});
-			return;
 		}
 	}
 
@@ -1374,6 +1412,7 @@ export function convert_source_map_to_mappings(
 					// The declaration will be visited with proper ordering
 					visit(node.declaration);
 				}
+				if (node.source) add_re_export_source_mappings(node, visit);
 				return;
 			} else if (node.type === 'ExportDefaultDeclaration') {
 				add_export_mapping(node);
@@ -1384,7 +1423,8 @@ export function convert_source_map_to_mappings(
 				return;
 			} else if (node.type === 'ExportAllDeclaration') {
 				add_export_mapping(node);
-				// Nothing to visit (just source string)
+				if (node.exported) visit(node.exported);
+				add_re_export_source_mappings(node, visit);
 				return;
 			} else if (node.type === 'JSXOpeningElement') {
 				// Visit name, type arguments, and attributes in source order
@@ -1484,9 +1524,37 @@ export function convert_source_map_to_mappings(
 				return;
 			} else if (node.type === 'JSXExpressionContainer' || node.type === 'JSXSpreadChild') {
 				if (has_location(node)) {
-					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+					const mapping = get_mapping_from_node(
+						node,
+						src_to_gen_map,
+						gen_line_offsets,
+						mapping_data_verify_only,
 					);
+					if (errors.length > 0 && holds_recovered_closing(node)) {
+						// A mapping of the whole container would cover the closing tag
+						// that loose recovery adds to a tag left unclosed in it (#978),
+						// and TypeScript's errors on that tag would show again at its
+						// end. Map its braces alone, so that an error on the code in it
+						// still has the end it reaches.
+						const [source_start] = mapping.sourceOffsets;
+						const [generated_start] = mapping.generatedOffsets;
+						const source_end = source_start + mapping.lengths[0] - 1;
+						const generated_end = generated_start + mapping.generatedLengths[0] - 1;
+						for (const [source_offset, generated_offset] of [
+							[source_start, generated_start],
+							[source_end, generated_end],
+						]) {
+							mappings.push({
+								sourceOffsets: [source_offset],
+								lengths: [1],
+								generatedOffsets: [generated_offset],
+								generatedLengths: [1],
+								data: { ...mapping_data_verify_only, customData: {} },
+							});
+						}
+					} else {
+						mappings.push(mapping);
+					}
 				}
 				// Visit the expression inside {}
 				if (node.expression) {
@@ -2257,7 +2325,7 @@ export function convert_source_map_to_mappings(
 					mapping.generatedLengths = [RETURN_KEYWORD.length];
 
 					mappings.push(mapping);
-					push_statement_end_mapping(node);
+					push_statement_end_mapping(node, mapping.generatedOffsets[0]);
 				} else if (node.type === 'ThrowStatement') {
 					push_statement_end_mapping(node);
 				} else {
@@ -3253,6 +3321,7 @@ export function convert_source_map_to_mappings(
 	add_diagnostic_mappings(
 		mappings,
 		errors,
+		source,
 		generated_code,
 		src_to_gen_map,
 		source_line_generated_map,
@@ -3411,12 +3480,29 @@ export function create_volar_mappings_result({
 }
 
 /**
+ * Whether `node` holds an element with the closing tag that loose recovery
+ * adds to a tag left unclosed (#978).
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function holds_recovered_closing(node) {
+	if (
+		node.type === 'JSXElement' &&
+		/** @type {AST.TSRXJSXElement} */ (node).closingElement?.metadata?.recovered
+	) {
+		return true;
+	}
+	return child_nodes(node).some(holds_recovered_closing);
+}
+
+/**
  * Parser diagnostics can point at source-only tokens that are intentionally
  * omitted or rewritten away in generated TSX. Add a narrow mapping so the
  * language-server diagnostic plugin can translate those exact source ranges.
  *
  * @param {CodeMapping[]} mappings
  * @param {CompileError[]} errors
+ * @param {string} source
  * @param {string} generated_code
  * @param {Map<string, Array<{ line: number, column: number }>>} src_to_gen_map
  * @param {Map<number, Array<{ column: number, position: { line: number, column: number } }>> | null} source_line_generated_map
@@ -3425,6 +3511,7 @@ export function create_volar_mappings_result({
 function add_diagnostic_mappings(
 	mappings,
 	errors,
+	source,
 	generated_code,
 	src_to_gen_map,
 	source_line_generated_map,
@@ -3440,9 +3527,25 @@ function add_diagnostic_mappings(
 	for (const error of errors) {
 		const start = error.pos;
 		if (start === undefined) continue;
-		if (has_exact_source_map_position(error, src_to_gen_map)) continue;
-
 		const end = error.end && error.end > start ? error.end : start + 1;
+		if (has_exact_source_map_position(error, src_to_gen_map)) {
+			// The mapping walker gives a fragment's `<>` no mapping, so an unclosed
+			// `<>` that the editor's code prints, where esrap records its position,
+			// gets an anchor on that `<>`, and one it leaves out gets an anchor as
+			// any error does (#1322).
+			if (!is_unclosed_fragment_error(error, source)) continue;
+			const fragment = unclosed_fragment_anchor(
+				error,
+				generated_code,
+				src_to_gen_map,
+				gen_line_offsets,
+			);
+			if (fragment) {
+				diagnostic_mappings.push(fragment);
+				continue;
+			}
+		}
+
 		const length = end - start;
 		const generated_start = get_nearest_generated_offset_from_source_line_map(
 			error,
@@ -3470,6 +3573,51 @@ function add_diagnostic_mappings(
 	}
 
 	mappings.unshift(...diagnostic_mappings);
+}
+
+/**
+ * Whether `error` is an unclosed `<>`'s TSRX1001, recorded over the `<>`.
+ * @param {CompileError} error
+ * @param {string} source
+ * @returns {boolean}
+ */
+function is_unclosed_fragment_error(error, source) {
+	return (
+		error.code === DIAGNOSTIC_CODES.UNCLOSED_TAG &&
+		error.pos !== undefined &&
+		regex_opening_fragment.test(source.slice(error.pos, error.end ?? error.pos))
+	);
+}
+
+/**
+ * An anchor from an unclosed `<>`'s TSRX1001 to the `<>` the editor's code
+ * prints at the position esrap records for it, or `null`.
+ * @param {CompileError} error
+ * @param {string} generated_code
+ * @param {Map<string, Array<{ line: number, column: number }>>} src_to_gen_map
+ * @param {LineOffsets} gen_line_offsets
+ * @returns {CodeMapping | null}
+ */
+function unclosed_fragment_anchor(error, generated_code, src_to_gen_map, gen_line_offsets) {
+	const loc = error.loc?.start;
+	if (!loc || error.pos === undefined) return null;
+	const end = error.end ?? error.pos;
+	for (const position of src_to_gen_map.get(`${loc.line}:${loc.column}`) ?? []) {
+		const generated = loc_to_offset(position.line, position.column, gen_line_offsets);
+		if (generated_code.startsWith('<>', generated)) {
+			return {
+				sourceOffsets: [error.pos],
+				generatedOffsets: [generated],
+				lengths: [end - error.pos],
+				generatedLengths: ['<>'.length],
+				data: {
+					...mapping_data_verify_only,
+					customData: { diagnosticAnchor: true },
+				},
+			};
+		}
+	}
+	return null;
 }
 
 /**
