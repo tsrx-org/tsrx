@@ -2272,6 +2272,18 @@ describe('parse errors', () => {
 		await expect(format('const a = <div></span>;\n')).rejects.toThrow();
 	});
 
+	test('an unclosed tag is the error, not one in the code after it (#1305)', async () => {
+		for (const [source, at] of [
+			['export function App() {\n\treturn (\n\t\t<div>\n\t);\n}\n', '3:4'],
+			['export function App(props) {\n\treturn <div>{props.x ? <b> : null}</div>;\n}\n', '2:26'],
+			['export function App() {\n\treturn [<div>];\n}\n', '2:11'],
+			['export function App() @{\n\t<style>.a {}\n}\n', '2:2'],
+			['export function App() @{\n\t<div>\n\t\t<style>.a { color: red; }</div>\n}\n', '3:3'],
+		]) {
+			await expect_reported(source, TSRX_ERRORS.UNCLOSED_TAG, at);
+		}
+	});
+
 	// The dynamic tag grammar allows an identifier, a member access or a string
 	// literal (TSRX2014, decision 58 of #852, #906).
 	test('a dynamic tag with any other expression is an error', async () => {

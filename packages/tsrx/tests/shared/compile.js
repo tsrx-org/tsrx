@@ -84,6 +84,30 @@ const BROKEN_MARKUP = [
 ];
 
 /**
+ * Tags left open where the code around them goes on after them, which a
+ * collecting parse reads as code again, and `<style>` and `<script>` bodies
+ * left open, which end at the next tag or at the `}` that closes their block
+ * (#1305). A `<style>` that is a `@{ … }` block's output is TSRX3009 too, as
+ * it is closed.
+ * @type {Array<[label: string, source: string, codes?: string[]]>}
+ */
+const UNCLOSED_BEFORE_CODE = [
+	['in parentheses', 'function App() {\n\treturn (\n\t\t<div>\n\t);\n}'],
+	[
+		'in a conditional',
+		'function App(props: { x: boolean }) {\n\treturn <div>{props.x ? <b> : null}</div>;\n}',
+	],
+	['in an array', 'function App() {\n\treturn [<div>, 1];\n}'],
+	[
+		'<style> in a block',
+		'function App() @{\n\t<style>.a {}\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG, DIAGNOSTIC_CODES.STYLE_STANDALONE_NEEDS_FRAGMENT],
+	],
+	['<style> in an element', 'function App() @{\n\t<div>\n\t\t<style>.a { color: red; }</div>\n}'],
+	['<script> in a block', 'function App() @{\n\t<script>const a = 1;\n}'],
+];
+
+/**
  * Parse generated target output as TSX and return syntax diagnostics. Target
  * compilers intentionally leave TypeScript and JSX for downstream tooling, so
  * this checks the same grammar boundary their virtual modules must satisfy.
@@ -660,6 +684,28 @@ export const p = 1
 			);
 			expect(errors.map((reported) => reported.code)).toEqual([error.code]);
 		});
+
+		it.each(UNCLOSED_BEFORE_CODE)(
+			'reports a tag left open %s, and nothing after it (#1305)',
+			(_label, source, codes = [DIAGNOSTIC_CODES.UNCLOSED_TAG]) => {
+				const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				/** @type {Array<{ code?: string, pos?: number, end?: number }>} */
+				const collected = [];
+				parseModule(source, 'App.tsrx', {
+					collect: true,
+					errors: /** @type {any} */ (collected),
+				});
+
+				expect(collected.map((reported) => reported.code)).toEqual([DIAGNOSTIC_CODES.UNCLOSED_TAG]);
+				expect(
+					errors
+						.filter((reported) => reported.code === DIAGNOSTIC_CODES.UNCLOSED_TAG)
+						.map((reported) => [reported.pos, reported.end]),
+				).toEqual(collected.map((reported) => [reported.pos, reported.end]));
+				expect(errors.map((reported) => reported.code)).toEqual(codes);
+				expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			},
+		);
 
 		// The missing closing tag is added with no mapping of its own, so the code
 		// is valid TSX and TypeScript reports nothing more. A verification span of

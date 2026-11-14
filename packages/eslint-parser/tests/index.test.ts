@@ -34,6 +34,20 @@ describe('eslint-parser', () => {
 		expect([thrown.lineNumber, thrown.column]).toEqual([2, 9]);
 	});
 
+	it('reports an unclosed tag, not an error in the code after it (#1305)', () => {
+		for (const [code, line] of [
+			['export function App() {\n\treturn (\n\t\t<div>\n\t);\n}\n', '3'],
+			['export function App(props: any) {\n\treturn <div>{props.x ? <b> : null}</div>;\n}\n', '2'],
+			['export function App() {\n\treturn [<div>];\n}\n', '2'],
+			['export function App() @{\n\t<div>\n\t\t<style>.a { color: red; }</div>\n}\n', '3'],
+			['export function App() @{\n\t<script>const a = 1;\n}\n', '2'],
+		]) {
+			expect(lint(code), code).toEqual([
+				expect.stringMatching(new RegExp(`^${line}: null: Parsing error: Unclosed tag '<\\w+>'`)),
+			]);
+		}
+	});
+
 	it('keeps forgotten statement-container hints available to ESLint rules', () => {
 		const result = parseForESLint(
 			`export function UserBadge({ user }: UserBadgeProps): JSX.Element {

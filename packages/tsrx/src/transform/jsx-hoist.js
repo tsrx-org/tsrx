@@ -109,6 +109,10 @@ export function is_hoist_safe_jsx_attribute(attribute) {
  * @returns {boolean}
  */
 export function is_hoist_safe_jsx_node(node) {
+	// A tag recovered as unclosed gets its closing tag where the element is
+	// printed in place (#1305).
+	if (node.unclosed) return false;
+
 	if (node.type === 'JSXFragment') {
 		return node.children.every(is_hoist_safe_jsx_child);
 	}

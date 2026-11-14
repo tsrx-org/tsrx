@@ -1309,6 +1309,20 @@ function skip_whitespace_from(input, i) {
 }
 
 /**
+ * The index of the first `}` in `text` that closes no `{` in it, or -1.
+ * @param {string} text
+ */
+function unmatched_closing_brace(text) {
+	let depth = 0;
+	for (let i = 0; i < text.length; i++) {
+		const ch = text.charCodeAt(i);
+		if (ch === CharCode.openBrace) depth++;
+		else if (ch === CharCode.closeBrace && --depth < 0) return i;
+	}
+	return -1;
+}
+
+/**
  * Skip whitespace and comments starting at `i`. Returns -1 when a block
  * comment is left open at the end of the input.
  * @param {string} input
@@ -4244,13 +4258,14 @@ export function TSRXPlugin(config) {
 			 * whitespace, then `>`, as a closing tag can be written in JSX; a
 			 * `<script>` body ends where HTML ends it (see `#findScriptBodyEnd`).
 			 *
-			 * Without a closing tag the element is unclosed and the rest of the input
-			 * is its body, except that in loose mode inside a template the body stops
-			 * at the next tag start (`<x`, `</x>`, `</>`): while `<style>` is being
-			 * typed, partial CSS reaches the loose CSS parser, and the tokenizer
-			 * resumes at the following sibling or closing tag so the rest of the file
-			 * keeps its mappings. Outside a template only JS follows, with no marker to
-			 * resume at, so the body runs to the end of the input.
+			 * Without a closing tag the element is unclosed (TSRX1001, which a strict
+			 * parse throws). A collecting or loose parse then ends the body where what
+			 * is around the element goes on: inside a template at the next tag start
+			 * (`<x`, `</x>`, `</>`), and anywhere at a `}` that closes the block the
+			 * element is in (`@{ <style>.a {} }`), so the tokenizer resumes there and
+			 * the rest of the file keeps its mappings (#1305). While `<style>` is being
+			 * typed, partial CSS reaches the loose CSS parser. Without either, the
+			 * body runs to the end of the input.
 			 *
 			 * @param {ESTreeJSX.TSRXJSXOpeningElement & AST.NodeWithLocation} open
 			 * @param {AST.JSXStyleElement | AST.TSRXJSXElement} node
@@ -4291,14 +4306,6 @@ export function TSRXPlugin(config) {
 					]);
 					node.unclosed = true;
 					relativeCloseStart = input.length;
-					if (!this.#loose) {
-						const newLines = input.match(regex_newline_characters)?.length;
-						if (newLines) {
-							this.curLine = open.loc.end.line + newLines;
-							this.lineStart = contentStart + input.lastIndexOf('\n') + 1;
-						}
-						return input;
-					}
 					if (insideTemplate) {
 						// A `<` inside CSS text (`content: "<"`, `<!--`) is not a tag start.
 						let lt = input.indexOf('<');
@@ -4307,6 +4314,8 @@ export function TSRXPlugin(config) {
 						}
 						if (lt !== -1) relativeCloseStart = lt;
 					}
+					const brace = unmatched_closing_brace(input);
+					if (brace !== -1 && brace < relativeCloseStart) relativeCloseStart = brace;
 				}
 
 				const content = input.slice(0, relativeCloseStart);
@@ -4484,7 +4493,8 @@ export function TSRXPlugin(config) {
 						column: open.loc.start.column,
 						body: { start: open.end, line: bodyLoc.line, column: bodyLoc.column },
 					},
-					{ loose: this.#loose },
+					// An unclosed body is partial CSS (see `#parseRawTextElement`).
+					{ loose: this.#loose || node.unclosed === true },
 				);
 
 				if (!insideHead) {
@@ -4874,6 +4884,52 @@ export function TSRXPlugin(config) {
 				} else {
 					this.#report_recoverable_error(position, message);
 				}
+			}
+
+			/**
+			 * An element left open in code, outside any template, whose children end
+			 * with text that starts with `)`, `]`, `:`, `,` or `;`: in a collecting
+			 * parse, after TSRX1001, that text is the code after the element
+			 * (`(<div>)`, `c ? <b> : d`, `[<div>]`), which the children read to the
+			 * end of the template. Drop it from the children and read it again as
+			 * code, so that the code around the element still parses and TSRX1001 is
+			 * the error the tools report (#1305). Text with a comment in it stays: its
+			 * comments are recorded as it is read.
+			 * @param {AST.NativeTSRXTemplateNode} node
+			 * @param {number} context_depth The tokenizer context depth where the
+			 *   element began
+			 */
+			#rereadTrailingCodeOfUnclosedElement(node, context_depth) {
+				const last = node.children.at(-1);
+				// The element now ends at its opening tag. A container's element can
+				// leave its text out of its children, read before its body.
+				const start = /** @type {number} */ (
+					last ? (last.type === 'JSXText' ? last.start : last.end) : node.end
+				);
+				const code_start = skip_whitespace_from(this.input, start);
+				if (
+					!')]:,;'.includes(this.input[code_start] ?? '') ||
+					/\/[/*]/.test(this.input.slice(start, this.start))
+				) {
+					return;
+				}
+				if (last?.type === 'JSXText') {
+					// The whitespace before the code stays the element's text.
+					if (code_start === start) {
+						node.children.pop();
+					} else {
+						last.value = last.raw = this.input.slice(start, code_start);
+						last.end = code_start;
+						/** @type {AST.SourceLocation} */ (last.loc).end = get_line_info(this, code_start);
+					}
+				}
+				this.#truncateContext(context_depth);
+				const loc = get_line_info(this, code_start);
+				this.pos = code_start;
+				this.curLine = loc.line;
+				this.lineStart = code_start - loc.column;
+				this.exprAllowed = false;
+				this.nextToken();
 			}
 
 			/**
@@ -13409,6 +13465,19 @@ export function TSRXPlugin(config) {
 							? /** @type {ESTreeJSX.JSXFragment} */ (node).openingFragment.end
 							: /** @type {ESTreeJSX.JSXElement} */ (node).openingElement.end;
 						this.#path.pop();
+						// In code: no template parent, or none opened in the `{ … }` container
+						// the element is in.
+						const parent_index = this.#path.length - 1;
+						if (
+							type_parameter === null &&
+							(parent_index < this.#containerPathBaseline() ||
+								!this.#isNativeTemplateNode(this.#path[parent_index]))
+						) {
+							this.#rereadTrailingCodeOfUnclosedElement(
+								/** @type {AST.NativeTSRXTemplateNode} */ (node),
+								pre_element_context_depth,
+							);
+						}
 					}
 
 					// A balanced element must leave the tokenizer context exactly where it
