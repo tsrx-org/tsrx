@@ -48,7 +48,10 @@ const regex_whitespace_character = /\s/;
  * parameters are TS7060 (`reserved`), the checker errors in it, which come
  * after its own (`held`, see `#reportReservedArrowTypeParameters`), the errors
  * held around it (`outerHeld`), and the arrow function once its `=>` is read
- * (`node`).
+ * (`node`). Otherwise, where its errors are recorded or held, when they
+ * aren't thrown, from the length the list had when its type parameters were
+ * read (`recorded`), and those its attempt recorded before the error it threw
+ * after its `=>` (`kept`, see `parseArrowExpression`).
  * @typedef {{
  *   typeParametersStart: number,
  *   parametersStart: number,
@@ -59,6 +62,8 @@ const regex_whitespace_character = /\s/;
  *   held: CompileError[],
  *   outerHeld: CompileError[] | null,
  *   node?: AST.ArrowFunctionExpression,
+ *   recorded: { errors: CompileError[], length: number } | null,
+ *   kept: CompileError[],
  * }} GenericArrowFunction
  */
 
@@ -10624,6 +10629,8 @@ export function TSRXPlugin(config) {
 				}
 				const arrow = this.#genericArrowFunction;
 				if (arrow?.typeParametersStart === start) {
+					const errors = this.#hold.held ?? (this.#collect ? this.#errors : undefined);
+					arrow.recorded = errors ? { errors, length: errors.length } : null;
 					arrow.parametersStart = this.start;
 					// Without `async`, the arrow function starts at its `(`.
 					if (arrow.arrowStart === -1) arrow.arrowStart = this.start;
@@ -10677,17 +10684,31 @@ export function TSRXPlugin(config) {
 					reserved: null,
 					held: [],
 					outerHeld: null,
+					recorded: null,
+					kept: [],
 				};
 				this.#genericArrowFunction = arrow;
+				/** @type {AST.Expression | undefined} */
+				let node;
 				try {
-					const node = parse();
-					if (arrow.error) throw arrow.error;
-					return node;
+					node = parse();
 				} catch (error) {
-					throw arrow.error && error instanceof SyntaxError ? arrow.error : error;
+					if (!arrow.error || !(error instanceof SyntaxError)) throw error;
 				} finally {
 					this.#genericArrowFunction = outer;
 				}
+				if (!arrow.error) return /** @type {AST.Expression} */ (node);
+				// The errors before it, which acorn-typescript's undo log dropped with
+				// its attempt at the arrow function (see `parseArrowExpression`).
+				const errors = this.#hold.held ?? (this.#collect ? this.#errors : undefined);
+				for (const kept of arrow.kept) {
+					if (!errors || errors.some((e) => e.pos === kept.pos && e.message === kept.message)) {
+						continue;
+					}
+					this.parseEffects?.willAppend(errors);
+					errors.push(kept);
+				}
+				throw arrow.error;
 			}
 
 			/**
@@ -10712,10 +10733,36 @@ export function TSRXPlugin(config) {
 					return super.parseArrowExpression(node, params, isAsync, forInit);
 				}
 				arrow.arrowRead = true;
+				// The parameters' errors of a generic async arrow function come once
+				// it's read, so not after a syntax error in its body (see
+				// `parseFunctionBody`): only its body's are kept.
+				if (isAsync && arrow.recorded) {
+					arrow.recorded = {
+						errors: arrow.recorded.errors,
+						length: arrow.recorded.errors.length,
+					};
+				}
 				try {
 					return super.parseArrowExpression(node, params, isAsync, forInit);
 				} catch (error) {
-					if (error instanceof SyntaxError) arrow.error = error;
+					if (error instanceof SyntaxError) {
+						arrow.error = error;
+						// Once its `=>` is read, TypeScript reads an arrow function whatever
+						// follows, and a collecting parse records the checker errors in it
+						// before a syntax error, as for an arrow function without type
+						// parameters. acorn-typescript reads it in an attempt, whose undo
+						// log drops them when it fails, so they're recorded again once it's
+						// abandoned (see `#parseGenericArrowFunction`). Those an arrow
+						// function holds are kept with them (see `#abandonReservedArrow`)
+						// (#1327).
+						const recorded = arrow.recorded;
+						if (recorded && !arrow.reserved) {
+							const at = /** @type {{ pos?: number }} */ (error).pos ?? Infinity;
+							arrow.kept = recorded.errors
+								.slice(recorded.length)
+								.filter((kept) => (kept.pos ?? 0) < at);
+						}
+					}
 					throw error;
 				}
 			}

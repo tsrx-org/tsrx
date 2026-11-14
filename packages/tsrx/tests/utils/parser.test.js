@@ -14401,6 +14401,42 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				[[uninitialized, 'z;']],
 				[unexpected, '; };'],
 			],
+			// Any generic arrow function, whose errors acorn-typescript's undo log
+			// dropped with its attempt at it (#1327).
+			.../** @type {Array<[string, string]>} */ ([
+				['a.tsrx', 'const f = <T,>(x: T) => { const z; return x +; };'],
+				['a.tsx', 'const f = <T,>(x: T) => { const z; return x +; };'],
+				['a.ts', 'const f = <T,>(x: T) => { const z; return x +; };'],
+				['a.mts', 'const f = <T,>(x: T) => { const z; return x +; };'],
+				['a.ts', 'const f = <T>(x: T) => { const z; return x +; };'],
+				['a.mts', 'const f = <T extends string>(x: T) => { const z; return x +; };'],
+				['a.tsrx', 'const f = async <T,>(x: T) => { const z; return x +; };'],
+				['a.ts', 'const f = async <T>(x: T) => { const z; return x +; };'],
+				['a.tsrx', 'const f = <T,>(x: T): T => { const z; return x +; };'],
+				['a.ts', 'const f = <T,>(x: T) => <U,>(y: U) => { const z; return y +; };'],
+				['a.ts', 'type G = (q = <T,>(x: T) => { const z; return x +; }) => void;'],
+				[
+					'App.tsrx',
+					'export function A() @{ <b onClick={<T,>(x: T) => { const z; return x +; }} /> }',
+				],
+			]).map(
+				([filename, source]) =>
+					/** @type {[string, string, Array<[string | undefined, string]>, [string, string]]} */ ([
+						filename,
+						source,
+						[[uninitialized, 'z;']],
+						[unexpected, '; }'],
+					]),
+			),
+			[
+				'a.ts',
+				'const f = <T,>(...a?: T[]) => { const z; return a +; };',
+				[
+					[code_of(TS_ERRORS.OPTIONAL_REST_PARAMETER), '?:'],
+					[uninitialized, 'z;'],
+				],
+				[unexpected, '; }'],
+			],
 			['a.ts', 'const f = <T,>(...a, b) => a;', [[rest_not_last, '...a']]],
 			['a.mts', 'const f = <T>(...a, b) => a;', [[rest_not_last, '...a']]],
 			['a.ts', 'const f = async <T,>(...a,) => a;', [[rest_comma, ',)']]],
