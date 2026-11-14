@@ -847,9 +847,6 @@ const block_scoped_redeclarations = new WeakMap();
  */
 const duplicate_export_errors = new WeakSet();
 
-// A word that can export a name.
-const regex_export_word = /\bexport\b/;
-
 /** @type {WeakMap<Parse.Parser, number[]>} */
 const parser_line_starts = new WeakMap();
 
@@ -1509,10 +1506,14 @@ export function TSRXPlugin(config) {
 			#localExportNamesByScope = new WeakMap();
 			/** @type {ModuleBodyExports[]} */
 			#moduleBodyExports = [];
-			// Whether a namespace or module body, and the whole module, have been
-			// read (see `parseTopLevel`).
+			// Whether an export or a namespace or module body, and the whole module,
+			// have been read, and what a collecting parse of the input records (see
+			// `parseTopLevel`).
+			#exportRead = false;
 			#moduleBodyRead = false;
 			#moduleRead = false;
+			/** @type {{ errors: CompileError[], threw: boolean } | null} */
+			#inputCollected = null;
 			#functionBodyDepth = 0;
 			#allowExpressionContainerTrailingSemicolon = false;
 			#jsxAttributeValueExpressionDepth = 0;
@@ -5599,8 +5600,9 @@ export function TSRXPlugin(config) {
 			 * `#reportDuplicateExports`), such as by two blocks of one namespace.
 			 * When one of those comes before it, TypeScript reports that first: throw
 			 * it instead (#1263). Only a parse of the whole input can tell, as for
-			 * `#declaresFunctionLater`; it's made only where something can be
-			 * exported, and when the error isn't a syntax error, which TypeScript
+			 * `#declaresFunctionLater`; it's made only once an export or a namespace
+			 * or module body has been read, which the first of two declarations of an
+			 * export is in, and when the error isn't a syntax error, which TypeScript
 			 * reports alone.
 			 * @type {Parse.Parser['parseTopLevel']}
 			 */
@@ -5611,7 +5613,7 @@ export function TSRXPlugin(config) {
 					if (
 						!this.#collect &&
 						!this.#moduleRead &&
-						(this.#moduleBodyRead || regex_export_word.test(this.input)) &&
+						(this.#exportRead || this.#moduleBodyRead) &&
 						!this.#isSyntaxError(error)
 					) {
 						const before = this.#duplicateExportErrorBefore(
@@ -6032,6 +6034,7 @@ export function TSRXPlugin(config) {
 			 * @returns {{ errors: CompileError[], threw: boolean }}
 			 */
 			#parseInputCollecting() {
+				if (this.#inputCollected) return this.#inputCollected;
 				/** @type {CompileError[]} */
 				const errors = [];
 				try {
@@ -6047,9 +6050,18 @@ export function TSRXPlugin(config) {
 						}),
 					);
 				} catch {
-					return { errors, threw: true };
+					return (this.#inputCollected = { errors, threw: true });
 				}
-				return { errors, threw: false };
+				return (this.#inputCollected = { errors, threw: false });
+			}
+
+			/**
+			 * See `parseTopLevel`.
+			 * @type {Parse.Parser['parseExport']}
+			 */
+			parseExport(node, exports) {
+				this.#exportRead = true;
+				return super.parseExport(node, exports);
 			}
 
 			/**
