@@ -1945,6 +1945,7 @@ export function TSRXPlugin(config) {
 				// directive would copy a longer stack (#1194).
 				this.context = enclosing_context;
 				this.#truncateContext(depth_before_brace);
+				this.#resumeContainerTemplateChildren();
 				if (this.#readsTemplateTextAfterBlock()) {
 					this.#readEmptyTemplateTextToken();
 				} else {
@@ -1960,10 +1961,14 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Whether template text that starts with a `//` touching a block comment
-			 * comes right after the current token, a directive's closing `}`
-			 * (`}/* c *\/// text`). That `//` is text, not a comment, so the token
-			 * after it can't be read as code: it may not be one (`'s`, `1st`).
+			 * Whether template text comes right after the current token, a
+			 * directive's closing `}`, in element children: anything but what starts
+			 * a clause or a child (`@`, `<`, `{`), the `}` that ends the children, or
+			 * the end of the input. That text can't be read as code: it may not be a
+			 * token (`'s`, `1st`, `#1`), and a `//` touching a block comment
+			 * (`}/* c *\/// text`) is text, not a comment (#1323). A clause written
+			 * without its `@` (`} else {`) is found in the input, after the empty text
+			 * token read instead.
 			 */
 			#readsTemplateTextAfterBlock() {
 				const after = this.end;
@@ -1985,7 +1990,7 @@ export function TSRXPlugin(config) {
 						break;
 					}
 				}
-				if (!this.input.startsWith('//', index)) {
+				if (index >= this.input.length || '@<{}'.includes(this.input[index])) {
 					return false;
 				}
 				const pos = this.pos;
@@ -1998,6 +2003,32 @@ export function TSRXPlugin(config) {
 					this.pos = pos;
 					this.#readingJSXControlFlowHeader = reading_header;
 				}
+			}
+
+			/**
+			 * After a directive's closing `}` in the children of an element in a
+			 * `{ … }` container, the context on top is the statement context that
+			 * reading the directive pushed, not the element's children context, where
+			 * the tokenizer reads the element's text. Outside a container the text is
+			 * read without it; in one the text after a later child (`<b /> 1st`,
+			 * `</b> 1st`, `{x} 1st`) was read as code, which the tokenizer can reject
+			 * (#1323). Put the children context back on top while the children go on,
+			 * as after a child that isn't a directive.
+			 */
+			#resumeContainerTemplateChildren() {
+				if (this.#jsxExpressionContainerDepth === 0) return;
+				const pos = this.pos;
+				const reading_header = this.#readingJSXControlFlowHeader;
+				this.pos = this.end;
+				this.#readingJSXControlFlowHeader = false;
+				try {
+					if (!this.#shouldReadTemplateRawTextToken(true, true)) return;
+				} finally {
+					this.pos = pos;
+					this.#readingJSXControlFlowHeader = reading_header;
+				}
+				if (this.curContext() === b_stat) this.#popContext();
+				if (this.curContext() !== tstc.tc_expr) this.context.push(tstc.tc_expr);
 			}
 
 			/**
@@ -4054,6 +4085,7 @@ export function TSRXPlugin(config) {
 				if (this.context.length === this.#bracketedDirectiveDepth) {
 					this.exprAllowed = false;
 				}
+				this.#resumeContainerTemplateChildren();
 				if (this.#readsTemplateTextAfterBlock()) {
 					this.#readEmptyTemplateTextToken();
 				} else {
