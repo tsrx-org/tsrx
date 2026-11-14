@@ -11559,6 +11559,18 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			],
 			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '1:0'],
 		},
+		{
+			// A strict parse that also tells a redeclaration's code from the rest of
+			// the input (see `#declaresFunctionLater`) parses it once for both.
+			source: 'export default 1;\nlet a;\nlet a;\nfunction a() {}\nexport default 2;',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 1'],
+				[UPSTREAM_ERRORS.REDECLARED, 'a;\nfunction'],
+				[UPSTREAM_ERRORS.REDECLARED, 'a() {}'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 2'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '1:0'],
+		},
 		// A namespace's name is a value when the namespace is instantiated, and
 		// shares the name with anything otherwise (#1263).
 		{
