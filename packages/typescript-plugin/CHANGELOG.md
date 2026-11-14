@@ -1,5 +1,33 @@
 # @tsrx/typescript-plugin
 
+## 0.7.1
+
+### Patch Changes
+
+- [#1340](https://github.com/tsrx-org/tsrx/pull/1340)
+  [`f23ebb0`](https://github.com/tsrx-org/tsrx/commit/f23ebb0e1da477f396d6ea74a134d1c0a01531f5)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `tsrx-tsc` on
+  TypeScript 5.9 and 6 now fails when a `.tsrx` file has a TSRX compile error,
+  collected or fatal: where TypeScript alone would exit 0, it exits 2, the code
+  tsc gives a run that reports errors and emits. A warning doesn't change the exit
+  code. It prints the TSRX compiler's own errors and warnings the way `tsc` prints
+  a diagnostic, without the `[tsrx-tsc] ` prefix and with the path relative to the
+  current directory, such as `src/App.tsrx(4,2): error TSRX2011: …`. They go to
+  standard output, before TypeScript's diagnostics, in the shape of tsc's
+  `--pretty false` output, and tsc's own error count leaves them out. A mistake
+  the TSRX parser reports with a TypeScript code, such as `TS1186`, no longer
+  prints a second time when TypeScript reports the same code at the same place.
+- Updated dependencies
+  [[`440bd21`](https://github.com/tsrx-org/tsrx/commit/440bd21bedc3e32a939f7cd9130bc6e0728ab6cd),
+  [`daf8c84`](https://github.com/tsrx-org/tsrx/commit/daf8c84f815e1d834f2699ab4b4397b8022afcd0),
+  [`2015571`](https://github.com/tsrx-org/tsrx/commit/20155718ffe8c8d445dd93729168d8a888a5e7bb),
+  [`a0f7749`](https://github.com/tsrx-org/tsrx/commit/a0f77497f4370b2ff04412b35f8b3f0a0c0748a8)]:
+  - @tsrx/solid@0.4.1
+  - @tsrx/vue@0.4.1
+  - @tsrx/content-mapper@0.1.4
+  - @tsrx/preact@0.4.1
+  - @tsrx/react@0.5.1
+
 ## 0.7.0
 
 ### Patch Changes

@@ -1,5 +1,19 @@
 # @tsrx/content-mapper
 
+## 0.1.4
+
+### Patch Changes
+
+- [#1349](https://github.com/tsrx-org/tsrx/pull/1349)
+  [`daf8c84`](https://github.com/tsrx-org/tsrx/commit/daf8c84f815e1d834f2699ab4b4397b8022afcd0)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - With TypeScript 7, an
+  unclosed `<T>(x: T) => x` whose `T` names no value, or an unclosed tag such as
+  `<Missing>` at module level, no longer adds a TS18080 error at the top of the
+  file next to the mapper's TSRX1001. The closing tag that recovery adds has no
+  place in the file, so TypeScript's error on it (TS2304) showed there; the mapper
+  now sends an ignore directive over just that closing tag, which holds no
+  authored code.
+
 ## 0.1.3
 
 ### Patch Changes

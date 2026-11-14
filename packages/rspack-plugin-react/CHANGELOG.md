@@ -1,5 +1,33 @@
 # @tsrx/rspack-plugin-react
 
+## 0.0.115
+
+### Patch Changes
+
+- Updated dependencies
+  [[`1668091`](https://github.com/tsrx-org/tsrx/commit/1668091afe1eb8e59bdca59621b11aee3ce40e5c),
+  [`760f9fe`](https://github.com/tsrx-org/tsrx/commit/760f9fe5bc5bf51b8eec56743da154f88160a08a),
+  [`7e4aaf0`](https://github.com/tsrx-org/tsrx/commit/7e4aaf007deda3af77f24a7daf38ba196802c5d1),
+  [`3376fa2`](https://github.com/tsrx-org/tsrx/commit/3376fa2ad40d6ba7cf43845c17e0a10dd130dd89),
+  [`440bd21`](https://github.com/tsrx-org/tsrx/commit/440bd21bedc3e32a939f7cd9130bc6e0728ab6cd),
+  [`1148a6e`](https://github.com/tsrx-org/tsrx/commit/1148a6e66512d73b21ae36c1497032f9fa6076d4),
+  [`462cdbb`](https://github.com/tsrx-org/tsrx/commit/462cdbb17b8f5e2696fe59c02db26313331d7b5b),
+  [`522adf4`](https://github.com/tsrx-org/tsrx/commit/522adf487da2e085cd72f4623934e53cde8b335c),
+  [`af56597`](https://github.com/tsrx-org/tsrx/commit/af56597e28b606a56a0864bb4401b50520e729fa),
+  [`ab88cd8`](https://github.com/tsrx-org/tsrx/commit/ab88cd80e8109ca8273383328ed40de180674dba),
+  [`dcf9704`](https://github.com/tsrx-org/tsrx/commit/dcf9704fd1c1e7ead0e608a1faaa4316ce4e462e),
+  [`463bd99`](https://github.com/tsrx-org/tsrx/commit/463bd999b2ae1b9c686ad989ff0bd5298964773f),
+  [`1c472c2`](https://github.com/tsrx-org/tsrx/commit/1c472c26802cef015346b2a82d1f66863f1c3ca7),
+  [`55cb0b1`](https://github.com/tsrx-org/tsrx/commit/55cb0b1640918979802fff5eb053078d21eaf863),
+  [`ba3db46`](https://github.com/tsrx-org/tsrx/commit/ba3db468c6b2bf067374ddcb6ded12381b8d9bf3),
+  [`a0e9a7a`](https://github.com/tsrx-org/tsrx/commit/a0e9a7a85a2f478fa63b05f085c9952a1fe317b4),
+  [`10059ac`](https://github.com/tsrx-org/tsrx/commit/10059ac90e00ab4dbeb6aa26dc96de5b2795672a),
+  [`2015571`](https://github.com/tsrx-org/tsrx/commit/20155718ffe8c8d445dd93729168d8a888a5e7bb),
+  [`fb920eb`](https://github.com/tsrx-org/tsrx/commit/fb920eb190d03ee81dc4b2b2ee57cddc93333429),
+  [`a0f7749`](https://github.com/tsrx-org/tsrx/commit/a0f77497f4370b2ff04412b35f8b3f0a0c0748a8)]:
+  - @tsrx/core@0.6.1
+  - @tsrx/react@0.5.1
+
 ## 0.0.114
 
 ### Patch Changes

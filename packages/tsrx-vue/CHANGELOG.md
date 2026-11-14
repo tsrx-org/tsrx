@@ -1,5 +1,62 @@
 # @tsrx/vue
 
+## 0.4.1
+
+### Patch Changes
+
+- [#1342](https://github.com/tsrx-org/tsrx/pull/1342)
+  [`440bd21`](https://github.com/tsrx-org/tsrx/commit/440bd21bedc3e32a939f7cd9130bc6e0728ab6cd)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An `@for` body can
+  declare the item's or the index's name again, as a `for...of` body can:
+  `@for (const { id } of rows) { const { id } = other; ... }` no longer compiles
+  to a duplicate declaration on React, Preact, Hono, Solid or Vue. The body runs
+  in a block of its own, and a key the head gives (`key id`, or the index an index
+  loop is keyed by) still reads the head's name.
+
+  A default in an `@for` item pattern can read the loop's index, as in
+  `@for (const [a = 'r' + i, b] of rows; index i)`. It no longer throws "Cannot
+  access 'i' before initialization" when a row needs the default, and on Solid a
+  keyed loop's default reads the index number instead of its accessor. The loop
+  callback takes the item whole and destructures it once the index is set.
+
+- [#1359](https://github.com/tsrx-org/tsrx/pull/1359)
+  [`a0f7749`](https://github.com/tsrx-org/tsrx/commit/a0f77497f4370b2ff04412b35f8b3f0a0c0748a8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, a
+  keyed `@for` row whose body is a fragment no longer throws
+  `ReferenceError: __Fragment is not defined` when the loop doesn't render through
+  `VaporFor`: a loop with `@empty`, or a body with setup statements before the
+  fragment. The row is a `<Fragment key>` with `Fragment` imported from `vue`,
+  which vue-jsx-vapor renders as a keyed fragment in the browser and on the
+  server, and the editor no longer reports TS2304 for it. In a module that
+  declares something else named `Fragment`, the row is an unkeyed fragment
+  instead; such a loop recreates its rows when they move, so the key kept no row
+  state there. `@tsrx/core` exports `FRAGMENT_INTERNAL_NAME`, the name the Vue
+  target finds the generated rows by.
+- Updated dependencies
+  [[`1668091`](https://github.com/tsrx-org/tsrx/commit/1668091afe1eb8e59bdca59621b11aee3ce40e5c),
+  [`760f9fe`](https://github.com/tsrx-org/tsrx/commit/760f9fe5bc5bf51b8eec56743da154f88160a08a),
+  [`7e4aaf0`](https://github.com/tsrx-org/tsrx/commit/7e4aaf007deda3af77f24a7daf38ba196802c5d1),
+  [`3376fa2`](https://github.com/tsrx-org/tsrx/commit/3376fa2ad40d6ba7cf43845c17e0a10dd130dd89),
+  [`440bd21`](https://github.com/tsrx-org/tsrx/commit/440bd21bedc3e32a939f7cd9130bc6e0728ab6cd),
+  [`1148a6e`](https://github.com/tsrx-org/tsrx/commit/1148a6e66512d73b21ae36c1497032f9fa6076d4),
+  [`462cdbb`](https://github.com/tsrx-org/tsrx/commit/462cdbb17b8f5e2696fe59c02db26313331d7b5b),
+  [`522adf4`](https://github.com/tsrx-org/tsrx/commit/522adf487da2e085cd72f4623934e53cde8b335c),
+  [`af56597`](https://github.com/tsrx-org/tsrx/commit/af56597e28b606a56a0864bb4401b50520e729fa),
+  [`ab88cd8`](https://github.com/tsrx-org/tsrx/commit/ab88cd80e8109ca8273383328ed40de180674dba),
+  [`dcf9704`](https://github.com/tsrx-org/tsrx/commit/dcf9704fd1c1e7ead0e608a1faaa4316ce4e462e),
+  [`463bd99`](https://github.com/tsrx-org/tsrx/commit/463bd999b2ae1b9c686ad989ff0bd5298964773f),
+  [`1c472c2`](https://github.com/tsrx-org/tsrx/commit/1c472c26802cef015346b2a82d1f66863f1c3ca7),
+  [`55cb0b1`](https://github.com/tsrx-org/tsrx/commit/55cb0b1640918979802fff5eb053078d21eaf863),
+  [`ba3db46`](https://github.com/tsrx-org/tsrx/commit/ba3db468c6b2bf067374ddcb6ded12381b8d9bf3),
+  [`a0e9a7a`](https://github.com/tsrx-org/tsrx/commit/a0e9a7a85a2f478fa63b05f085c9952a1fe317b4),
+  [`10059ac`](https://github.com/tsrx-org/tsrx/commit/10059ac90e00ab4dbeb6aa26dc96de5b2795672a),
+  [`2015571`](https://github.com/tsrx-org/tsrx/commit/20155718ffe8c8d445dd93729168d8a888a5e7bb),
+  [`fb920eb`](https://github.com/tsrx-org/tsrx/commit/fb920eb190d03ee81dc4b2b2ee57cddc93333429),
+  [`a0f7749`](https://github.com/tsrx-org/tsrx/commit/a0f77497f4370b2ff04412b35f8b3f0a0c0748a8),
+  [`85567b6`](https://github.com/tsrx-org/tsrx/commit/85567b6852444e49dd900d00f80ce196c29c7f8f)]:
+  - @tsrx/core@0.6.1
+  - @tsrx/vue-runtime@0.2.1
+
 ## 0.4.0
 
 ### Minor Changes
