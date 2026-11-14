@@ -2645,6 +2645,54 @@ describe('tsrx-vue merged refs', () => {
 		expect(calls).toEqual(['a(node)', 'a(null)', 'b(node)', 'b(null)']);
 	});
 
+	it('cleans up what a merged ref set before a ref threw when Vue unsets it (#1329)', () => {
+		const node = document.createElement('input');
+		const calls: string[] = [];
+		const failing = mergeRefs(
+			mergeRefs((value: HTMLInputElement | null) => {
+				calls.push(`a(${value ? 'node' : 'null'})`);
+			}),
+			() => {
+				throw new Error('ref boom');
+			},
+		);
+		expect(() => failing(node)).toThrow('ref boom');
+		failing(null);
+		expect(calls).toEqual(['a(node)', 'a(null)']);
+	});
+
+	it('leaves a nested merged ref set on another element after a ref beside it threw (#1329)', () => {
+		const first = document.createElement('input');
+		const second = document.createElement('input');
+		const calls: string[] = [];
+		const log = (name: string) => (value: HTMLInputElement | null) => {
+			calls.push(`${name}(${value === first ? 'first' : value === second ? 'second' : 'null'})`);
+		};
+		const inner = mergeRefs(log('a'));
+		const failing = mergeRefs(inner, () => {
+			throw new Error('ref boom');
+		});
+		expect(() => failing(first)).toThrow('ref boom');
+		inner(second);
+		mergeRefs(log('b'))(first);
+		expect(calls).toEqual(['a(first)', 'a(null)', 'a(second)', 'b(first)']);
+	});
+
+	it('clears nested merged refs in order after a ref beside them threw (#1329)', () => {
+		const node = document.createElement('input');
+		const calls: string[] = [];
+		const log = (name: string) => (value: HTMLInputElement | null) => {
+			calls.push(`${name}(${value ? 'node' : 'null'})`);
+			if (name === 'x' && !value) throw new Error('x cleanup boom');
+		};
+		const failing = mergeRefs(mergeRefs(log('c'), mergeRefs(log('x'))), () => {
+			throw new Error('ref boom');
+		});
+		expect(() => failing(node)).toThrow('ref boom');
+		expect(() => mergeRefs(log('r'))(node)).toThrow('x cleanup boom');
+		expect(calls).toEqual(['c(node)', 'x(node)', 'c(null)', 'x(null)']);
+	});
+
 	it('runs the replaced merged ref cleanup when a new one is set on the element', async () => {
 		swapped_ref_log.length = 0;
 		swapped_ref_which.value = 0;

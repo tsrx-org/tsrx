@@ -12,12 +12,13 @@ export * from '@tsrx/runtime/ref';
 const pending_cleanups = new WeakMap();
 
 /**
- * For each node a merged ref is setting its refs on, the `unset` of every
- * merged ref it sets on the same node meanwhile. Such a merged ref, as in
+ * For each node a merged ref is setting its refs on, the unsets of the merged
+ * refs it sets on the same node meanwhile. Such a merged ref, as in
  * `mergeRefs(mergeRefs(a), mergeRefs(b))`, is set beside its siblings rather
  * than in place of one of them, so it leaves `pending_cleanups` to the
  * outermost merged ref, whose cleanup runs its own. If a later ref throws,
- * the outermost merged ref has no cleanup, and the node keeps theirs pending.
+ * the merged ref setting the node has no cleanup of its own, so it keeps
+ * theirs to run when it is unset or replaced.
  *
  * @type {WeakMap<object, Array<() => void>>}
  */
@@ -49,11 +50,30 @@ export function mergeRefs(...refs) {
 		}
 		current.cleanup();
 	};
+	/**
+	 * @param {T} node
+	 * @param {() => void} cleanup
+	 * @param {boolean} outermost
+	 * @param {Array<() => void> | undefined} parent
+	 */
+	const set = (node, cleanup, outermost, parent) => {
+		const current = { node, cleanup };
+		mounted = current;
+		if (outermost && is_object(node)) {
+			pending_cleanups.set(node, cleanup);
+		} else if (parent) {
+			// Only while this merged ref is still set on the node: it may be set on
+			// another node before the one it was set beside is replaced.
+			parent.push(() => {
+				if (mounted === current) unset();
+			});
+		}
+	};
 	return (node) => {
 		unset();
 		if (node == null) return () => {};
-		const siblings = is_object(node) ? nested_unsets.get(node) : undefined;
-		const outermost = is_object(node) && !siblings;
+		const parent = is_object(node) ? nested_unsets.get(node) : undefined;
+		const outermost = is_object(node) && !parent;
 		/** @type {Array<() => void>} */
 		const nested = [];
 		if (outermost) {
@@ -62,31 +82,28 @@ export function mergeRefs(...refs) {
 				pending_cleanups.delete(node);
 				replaced();
 			}
-			nested_unsets.set(node, nested);
 		}
+		if (is_object(node)) nested_unsets.set(node, nested);
 		/** @type {() => void} */
 		let cleanup;
 		try {
 			cleanup = once(merged(node));
 		} catch (error) {
-			if (outermost && nested.length > 0) {
-				pending_cleanups.set(
-					node,
-					once(() => {
-						for (const nested_unset of nested) nested_unset();
-					}),
-				);
+			if (nested.length > 0) {
+				cleanup = once(() => {
+					for (const nested_unset of nested) nested_unset();
+				});
+				set(node, cleanup, outermost, parent);
 			}
 			throw error;
 		} finally {
-			if (outermost) nested_unsets.delete(node);
+			if (outermost) {
+				nested_unsets.delete(node);
+			} else if (parent) {
+				nested_unsets.set(node, parent);
+			}
 		}
-		mounted = { node, cleanup };
-		if (outermost) {
-			pending_cleanups.set(node, cleanup);
-		} else {
-			siblings?.push(unset);
-		}
+		set(node, cleanup, outermost, parent);
 		return unset;
 	};
 }
