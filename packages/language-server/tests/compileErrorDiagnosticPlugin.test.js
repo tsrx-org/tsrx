@@ -144,6 +144,42 @@ export function App() @{
 		expect(diagnostics[0].code).toBe('octane-style-unused-selector');
 		expect(document.getText(diagnostics[0].range)).toBe('theme');
 	});
+
+	// The editor's compile reports a CSS syntax error (#1306). Its code has no
+	// `<style>` body, so an error on a line of the body with no code shows on
+	// the nearest code before it, the opening tag's `>`.
+	it.each([
+		[
+			'on a line of its own',
+			'export function App() @{\n\t<div>\n\t\t<style>\n\t\t\t.a { color: red; }\n\t\t\t}\n\t\t</style>\n\t\t<p>x</p>\n\t</div>\n}\n',
+			'<style>',
+			'>',
+		],
+		[
+			'on the line of the opening tag',
+			'export const a = <style>.a { color: red; } }</style>;\n',
+			'}</style>',
+			'}',
+		],
+	])('reports a CSS syntax error %s', async (_label, source, near, text) => {
+		const { document, diagnostics } = await diagnostics_for(source);
+
+		expect(
+			diagnostics.map((diagnostic) => ({
+				code: diagnostic.code,
+				message: diagnostic.message,
+				text: document.getText(diagnostic.range),
+				offset: document.offsetAt(diagnostic.range.start),
+			})),
+		).toEqual([
+			{
+				code: 'TSRX3013',
+				message: 'Expected identifier',
+				text,
+				offset: source.indexOf(near) + near.indexOf(text),
+			},
+		]);
+	});
 });
 
 describe('compile error diagnostic plugin — a statement-only code block', () => {

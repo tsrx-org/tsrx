@@ -34,6 +34,44 @@ describe('eslint-parser', () => {
 		expect([thrown.lineNumber, thrown.column]).toEqual([2, 9]);
 	});
 
+	// At its line and 1-based column, and without the `(line:column)` that
+	// acorn adds to its message (#1308).
+	it.each([
+		['export function App() {\n\tconst a = ;\n\treturn <div />;\n}\n', 2, 12, 'Unexpected token'],
+		['export function App() {\n\tlet b = 1 +;\n\treturn <div />;\n}\n', 2, 13, 'Unexpected token'],
+		['export const x = {\n\ta: 1\n\tb: 2,\n};\n', 3, 2, 'Unexpected token'],
+		['export function App() {\n\tif (a {\n\t}\n}\n', 2, 8, 'Unexpected token'],
+		[
+			'export function App() @{\n\t<div>\n\t\t<style>\n\t\t\t.a { color: red; }\n\t\t\t}\n\t\t</style>\n\t</div>\n}\n',
+			5,
+			4,
+			'Expected identifier',
+		],
+	])('reports a parse error the parser throws at its place: %j', (code, line, column, message) => {
+		const messages = new Linter().verify(
+			code,
+			{ files: ['**/*.tsrx'], languageOptions: { parser } },
+			'App.tsrx',
+		);
+
+		expect(messages).toEqual([
+			expect.objectContaining({ fatal: true, line, column, message: `Parsing error: ${message}` }),
+		]);
+	});
+
+	it('gives a thrown parse error its offset', () => {
+		const code = 'export function App() {\n\tconst a = ;\n\treturn <div />;\n}\n';
+		let thrown: any;
+		try {
+			parseForESLint(code, { filePath: 'App.tsrx' });
+		} catch (error) {
+			thrown = error;
+		}
+
+		expect(thrown).toBeInstanceOf(SyntaxError);
+		expect(thrown.index).toBe(code.indexOf(';'));
+	});
+
 	it('keeps forgotten statement-container hints available to ESLint rules', () => {
 		const result = parseForESLint(
 			`export function UserBadge({ user }: UserBadgeProps): JSX.Element {

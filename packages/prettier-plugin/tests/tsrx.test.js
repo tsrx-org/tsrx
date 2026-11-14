@@ -2272,6 +2272,20 @@ describe('parse errors', () => {
 		await expect(format('const a = <div></span>;\n')).rejects.toThrow();
 	});
 
+	// At the CSS that fails, where the CSS parser stopped (#1306).
+	test('a CSS syntax error in a <style> body is reported at its place', async () => {
+		await expect_reported(
+			'export function App() @{\n  <div>\n    <style>\n      .a { color: red; }\n      }\n    </style>\n  </div>\n}\n',
+			'TSRX3013',
+			'5:7',
+		);
+		await expect_reported(
+			'export const a = <style>.a { color: red;</style>;\n',
+			'TSRX3013',
+			'1:41',
+		);
+	});
+
 	// The dynamic tag grammar allows an identifier, a member access or a string
 	// literal (TSRX2014, decision 58 of #852, #906).
 	test('a dynamic tag with any other expression is an error', async () => {

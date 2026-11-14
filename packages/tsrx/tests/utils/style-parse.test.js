@@ -69,6 +69,24 @@ describe('parseStyle loose recovery', function () {
 	});
 });
 
+// A syntax error gets where the parser stopped (#1306).
+describe('parseStyle syntax errors', function () {
+	it('gives the offset in the body', function () {
+		expect(function () {
+			parseStyle('.a { color: red; } }', LOCATION, { loose: false });
+		}).toThrow(expect.objectContaining({ code: 'TSRX3013', pos: 19 }));
+	});
+
+	it('gives the position in the file with a body origin', function () {
+		const body = { start: 100, line: 3, column: 9 };
+		expect(function () {
+			parseStyle('\n\t.a { color: red; }\n\t}', { ...LOCATION, body }, { loose: false });
+		}).toThrow(
+			expect.objectContaining({ code: 'TSRX3013', pos: 122, loc: { line: 5, column: 1 } }),
+		);
+	});
+});
+
 describe('parseStyle escapes', function () {
 	/**
 	 * @param {string} css
