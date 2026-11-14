@@ -28,11 +28,11 @@ catalogs:
       specifier: ^2.2.0
       version: 2.2.0
     '@ripple-ts/adapter-node':
-      specifier: ^0.4.0
-      version: 0.4.0
+      specifier: ^0.6.1
+      version: 0.6.1
     '@ripple-ts/vite-plugin':
-      specifier: ^0.4.0
-      version: 0.4.0
+      specifier: ^0.6.1
+      version: 0.6.1
     '@solidjs/web':
       specifier: 2.0.0-rc.3
       version: 2.0.0-rc.3
@@ -41,7 +41,7 @@ catalogs:
       version: 1.0.13
     '@tsrx/ripple':
       specifier: ^0.2.0
-      version: 0.2.0
+      version: 0.2.11
     '@types/adm-zip':
       specifier: ^0.5.8
       version: 0.5.8
@@ -145,8 +145,8 @@ catalogs:
       specifier: ^1.0.0
       version: 1.0.0
     ripple:
-      specifier: ^0.4.0
-      version: 0.4.0
+      specifier: ^0.6.1
+      version: 0.6.1
     rulesync:
       specifier: ^8.17.0
       version: 8.17.0
@@ -244,7 +244,7 @@ importers:
         version: link:packages/tsrx-react
       '@tsrx/ripple':
         specifier: catalog:default
-        version: 0.2.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)
+        version: 0.2.11(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)
       '@tsrx/solid':
         specifier: workspace:*
         version: link:packages/tsrx-solid
@@ -461,7 +461,7 @@ importers:
         version: link:../tsrx-react
       '@tsrx/ripple':
         specifier: catalog:default
-        version: 0.2.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
+        version: 0.2.11(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
       '@tsrx/solid':
         specifier: workspace:*
         version: link:../tsrx-solid
@@ -488,7 +488,7 @@ importers:
         version: 19.2.4
       ripple:
         specifier: catalog:default
-        version: 0.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
+        version: 0.6.1(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
       solid-js:
         specifier: catalog:default
         version: 2.0.0-rc.3
@@ -743,7 +743,7 @@ importers:
         version: 1.61.0
       '@ripple-ts/vite-plugin':
         specifier: catalog:default
-        version: 0.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))
+        version: 0.6.1(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))
       '@solidjs/web':
         specifier: catalog:default
         version: 2.0.0-rc.3(solid-js@2.0.0-rc.3)
@@ -773,7 +773,7 @@ importers:
         version: link:../tsrx-react
       '@tsrx/ripple':
         specifier: catalog:default
-        version: 0.2.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
+        version: 0.2.11(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
       '@tsrx/solid':
         specifier: workspace:*
         version: link:../tsrx-solid
@@ -821,7 +821,7 @@ importers:
         version: 19.2.4(react@19.2.4)
       ripple:
         specifier: catalog:default
-        version: 0.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
+        version: 0.6.1(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
       solid-js:
         specifier: catalog:default
         version: 2.0.0-rc.3
@@ -1172,7 +1172,7 @@ importers:
         version: link:../tsrx-react
       '@tsrx/ripple':
         specifier: catalog:default
-        version: 0.2.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
+        version: 0.2.11(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
       '@tsrx/solid':
         specifier: workspace:*
         version: link:../tsrx-solid
@@ -1546,7 +1546,7 @@ importers:
         version: link:../packages/tsrx-react
       '@tsrx/ripple':
         specifier: catalog:default
-        version: 0.2.0(@typescript-eslint/types@8.56.1(typescript@6.0.3))(typescript@5.9.3)
+        version: 0.2.11(@typescript-eslint/types@8.56.1(typescript@6.0.3))(typescript@6.0.3)
       '@tsrx/solid':
         specifier: workspace:*
         version: link:../packages/tsrx-solid
@@ -1570,7 +1570,7 @@ importers:
         version: 6.41.1
       '@ripple-ts/adapter-node':
         specifier: catalog:default
-        version: 0.4.0
+        version: 0.6.1
       '@tsrx/hono':
         specifier: workspace:*
         version: link:../packages/tsrx-hono
@@ -1585,7 +1585,7 @@ importers:
         version: link:../packages/tsrx-react
       '@tsrx/ripple':
         specifier: catalog:default
-        version: 0.2.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)
+        version: 0.2.11(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)
       '@tsrx/solid':
         specifier: workspace:*
         version: link:../packages/tsrx-solid
@@ -1607,7 +1607,7 @@ importers:
     devDependencies:
       '@ripple-ts/vite-plugin':
         specifier: catalog:default
-        version: 0.4.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))
+        version: 0.6.1(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))
       '@tsrx/typescript-plugin':
         specifier: workspace:*
         version: link:../packages/typescript-plugin
@@ -1616,7 +1616,7 @@ importers:
         version: 24.11.0
       ripple:
         specifier: catalog:default
-        version: 0.4.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)
+        version: 0.6.1(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)
       typescript:
         specifier: catalog:native
         version: 7.1.0-dev.20260930.4
@@ -3048,18 +3048,24 @@ packages:
     peerDependencies:
       react: ^16.8.0 || ^17.0.0-rc.1 || ^18.0.0 || ^19.0.0-rc.1
 
-  '@ripple-ts/adapter-node@0.4.0':
-    resolution: {integrity: sha512-Q/F0euy3psudtqNwK+q/5YthXSDFq6efMmMZ/rLemD3JDkPE+U/L81AOcPPADTUs8bwNPbjGyVkPhuge2Yyutw==}
+  '@ripple-ts/adapter-node@0.6.1':
+    resolution: {integrity: sha512-op5xw9dRWrNcKArDuhQ3p9krTeNzehgSbl88ufCnHmIywWj4/smPj0RfaxCf2LtWK5BN5yZ9t6IDevpZjUhQmA==}
 
-  '@ripple-ts/adapter@0.4.0':
-    resolution: {integrity: sha512-V+4JQnKJHpnb7um3ImJ0j67bTGpOIJBQRjd+BxIBXTAhCu2OKNm+UoDzGPCvndC7dgMt2WEy15s8/6UV359/sg==}
+  '@ripple-ts/adapter@0.6.1':
+    resolution: {integrity: sha512-uIvC6RFAFNL8QFbT0faLx3Eaz9LpbLlphf/gZJPKXrhNxs7i5aWiQcWXI8gagO91jeKZHl0NQQj8tvr1nxIpHw==}
 
-  '@ripple-ts/vite-plugin@0.4.0':
-    resolution: {integrity: sha512-kQB7oF9bhn6dbUS95SHIyqZCHpD9Lmv0JRAJODYHRRCO15jmY3uIP8pLS+KoAixNXQtMgZ3PeWp0Crukr7Ov2A==}
+  '@ripple-ts/vite-plugin@0.6.1':
+    resolution: {integrity: sha512-TnOnf8nNdKiHvj3MnLibZYD74lvzAyR8bjalB3s2G6IMCArU0v8wNk9+iAy7g49hJoki0surnj/wOjZxQL1SaQ==}
     hasBin: true
     peerDependencies:
+      '@stylexjs/stylex': ^0.19.1
+      '@stylexjs/unplugin': ^0.19.1
       vite: '*'
     peerDependenciesMeta:
+      '@stylexjs/stylex':
+        optional: true
+      '@stylexjs/unplugin':
+        optional: true
       vite:
         optional: true
 
@@ -3603,19 +3609,19 @@ packages:
   '@tsrx/core@0.1.40':
     resolution: {integrity: sha512-JLvoVchSw3qVgrMj6hEPqhF4iojAasENLuyohWkKoF9k6Sk3nFR3puBE2++iL67g2RuvhQ7sLfKQg2VUxcdGUQ==}
 
-  '@tsrx/core@0.2.0':
-    resolution: {integrity: sha512-IuzVAVOtGNxJnI1nnExyUoLErUpVjtHd0Hlaf4wlfVU2ENUNzrWnyrKBz2ogvV3vbgeNSdjSnJPhCRYTaayKAw==}
+  '@tsrx/core@0.3.3':
+    resolution: {integrity: sha512-7DafQrpMFRSACmGGeqm0fU1Va0QTdun85Te6o4MKBIJrT+kpslB2ahm9X8oq0167UgJCNN1//0zv1kRXOCxsCA==}
 
-  '@tsrx/ripple@0.2.0':
-    resolution: {integrity: sha512-zgQ9Q77XF545yPPheOllwXXF4nIuAaBY+Q63JLCRKyP0NjdV4PaDLxmHWZfW4MBPVmYDF7z6+Gsji46Nj/+Blw==}
+  '@tsrx/ripple@0.2.11':
+    resolution: {integrity: sha512-MtmGin82M8nWdRswmjFAjkl0iENTrMTlZStU49cQSgHtsCeacgSbiIyVy6iCx+7z9OCbYogR1W6dk7IskJ4NRA==}
     peerDependencies:
       typescript: '>=5.9.3'
     peerDependenciesMeta:
       typescript:
         optional: true
 
-  '@tsrx/runtime@0.2.0':
-    resolution: {integrity: sha512-eMsHoysp2AO5Q2Aa178V+qSDNnYgiEPih0fQkMdaE3gWCWiKVoskrQEWIkK6WaXwJ6fTyo6Fw4bCfGksvproAA==}
+  '@tsrx/runtime@0.2.3':
+    resolution: {integrity: sha512-OTyZfuGOusdikUdT+Tva6W8HoCcHcPKrwZiJaW0r30oZsze63vU+V5Q1vEKjZpvlI1tyel2WXg90Pghdbjn4BA==}
 
   '@tybys/wasm-util@0.10.1':
     resolution: {integrity: sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg==}
@@ -3702,6 +3708,9 @@ packages:
 
   '@types/sarif@2.1.7':
     resolution: {integrity: sha512-kRz0VEkJqWLf1LLVN4pT1cg1Z9wAuvI6L97V3m2f5B76Tg8d413ddvLBPTEHAZJlnn4XSvu0FkZtViCQGVyrXQ==}
+
+  '@types/trusted-types@2.0.7':
+    resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
 
   '@types/unist@3.0.3':
     resolution: {integrity: sha512-ko/gIFJRv177XgZsZcBwnqJN5x/Gien8qNOn0D5bQU/zAzVf9Zt3BlcUiLqhV9y4ARk0GbT3tnUiPNgnTXzc/Q==}
@@ -4286,11 +4295,6 @@ packages:
     engines: {node: '>=0.4.0'}
     hasBin: true
 
-  acorn@8.17.0:
-    resolution: {integrity: sha512-xRQbDb9BnwDafYNn6Vwl839DYVjqXYb1XVGtWAZ1kcDc6iwAL4hg3B1dZlRiuENFeO2H53gFG3in621AdERVAg==}
-    engines: {node: '>=0.4.0'}
-    hasBin: true
-
   acorn@8.18.0:
     resolution: {integrity: sha512-lGq+9yr1/GuAWaVYIHRjvvySG5/4VfKIvC8EWxStPdcDh/Ka7FG3twP6v4d5BkravUilhIAsG4Qj83t02LWUPQ==}
     engines: {node: '>=0.4.0'}
@@ -4765,8 +4769,9 @@ packages:
   devalue@5.8.1:
     resolution: {integrity: sha512-4CXDYRBGqN+57wVJkuXBYmpAVUSg3L6JAQa/DFqm238G73E1wuyc/JhGQJzN7vUf/CMphYau2zXbfWzDR5aTEw==}
 
-  devalue@5.9.2:
-    resolution: {integrity: sha512-po4PAY5c53tw5XMocSnf8A/5OHhbbUftpr93aEN6BBoAdntUmK7vu7wOATqvt7cXO7m1Cl4gMVn6p7n6n4mj0w==}
+  devalue@6.0.3:
+    resolution: {integrity: sha512-3woMEITftG1wKeO/4d/QXH1DVKctTSZg3jNGPpjp9hNr5Hos8MCFF5McTML5ZtgKDObm2R591B0spRp2IVernA==}
+    engines: {node: '>=18'}
 
   devlop@1.1.0:
     resolution: {integrity: sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==}
@@ -6388,8 +6393,8 @@ packages:
     resolution: {integrity: sha512-g6QUff04oZpHs0eG5p83rFLhHeV00ug/Yf9nZM6fLeUrPguBTkTQOdpAWWspMh55TZfVQDPaN3NQJfbVRAxdIw==}
     engines: {iojs: '>=1.0.0', node: '>=0.10.0'}
 
-  ripple@0.4.0:
-    resolution: {integrity: sha512-FlqvZkvNv09hjU2RYAkH+MRMwkTiEp7aM0XH3C0UyjydugHwxOhhtclLsfm4RN62cUqItYME50xXtqRZfavORg==}
+  ripple@0.6.1:
+    resolution: {integrity: sha512-A602qdhKrHXmzsUQXQVbOYhgeBqe0oJoCr3Y1EPZ9lQetKge7P4JfnQ8X8vuiTFVH2Xcqvo3SrmS67I8/yITkw==}
 
   rolldown-plugin-dts@0.28.6:
     resolution: {integrity: sha512-qKrFtBfRfR2hP233m7Ic9zf3wv6MSYdZghWKMdEO6dRYZGlNfINJAa1P5ZVvyHh3mrcd7IJQvIY8L9vnm+v5rQ==}
@@ -8356,7 +8361,7 @@ snapshots:
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
       '@jridgewell/trace-mapping': 0.3.31
 
   '@jridgewell/remapping@2.3.5':
@@ -8373,7 +8378,7 @@ snapshots:
   '@jridgewell/trace-mapping@0.3.31':
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
 
   '@lezer/common@1.5.2': {}
 
@@ -8826,28 +8831,28 @@ snapshots:
     dependencies:
       react: 19.2.4
 
-  '@ripple-ts/adapter-node@0.4.0':
+  '@ripple-ts/adapter-node@0.6.1':
     dependencies:
-      '@ripple-ts/adapter': 0.4.0
+      '@ripple-ts/adapter': 0.6.1
 
-  '@ripple-ts/adapter@0.4.0': {}
+  '@ripple-ts/adapter@0.6.1': {}
 
-  '@ripple-ts/vite-plugin@0.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))':
+  '@ripple-ts/vite-plugin@0.6.1(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))':
     dependencies:
-      '@ripple-ts/adapter': 0.4.0
-      '@tsrx/core': 0.2.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))
-      '@tsrx/ripple': 0.2.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
+      '@ripple-ts/adapter': 0.6.1
+      '@tsrx/core': 0.3.3(@typescript-eslint/types@8.56.1(typescript@5.9.3))
+      '@tsrx/ripple': 0.2.11(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
     optionalDependencies:
       vite: 8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1)
     transitivePeerDependencies:
       - '@typescript-eslint/types'
       - typescript
 
-  '@ripple-ts/vite-plugin@0.4.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))':
+  '@ripple-ts/vite-plugin@0.6.1(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)(vite@8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1))':
     dependencies:
-      '@ripple-ts/adapter': 0.4.0
-      '@tsrx/core': 0.2.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))
-      '@tsrx/ripple': 0.2.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)
+      '@ripple-ts/adapter': 0.6.1
+      '@tsrx/core': 0.3.3(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))
+      '@tsrx/ripple': 0.2.11(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)
     optionalDependencies:
       vite: 8.1.5(@types/node@24.11.0)(esbuild@0.27.3)(jiti@2.6.1)(yaml@2.9.1)
     transitivePeerDependencies:
@@ -9263,10 +9268,6 @@ snapshots:
     dependencies:
       acorn: 8.16.0
 
-  '@sveltejs/acorn-typescript@1.0.13(acorn@8.17.0)':
-    dependencies:
-      acorn: 8.17.0
-
   '@sveltejs/acorn-typescript@1.0.13(acorn@8.18.0)':
     dependencies:
       acorn: 8.18.0
@@ -9376,15 +9377,15 @@ snapshots:
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
-  '@tsrx/core@0.2.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))':
+  '@tsrx/core@0.3.3(@typescript-eslint/types@8.56.1(typescript@5.9.3))':
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
       '@noble/hashes': 2.2.0
-      '@sveltejs/acorn-typescript': 1.0.13(acorn@8.17.0)
-      '@tsrx/runtime': 0.2.0
+      '@sveltejs/acorn-typescript': 1.0.13(acorn@8.18.0)
+      '@tsrx/runtime': 0.2.3
       '@types/estree': 1.0.8
       '@types/estree-jsx': 1.0.5
-      acorn: 8.17.0
+      acorn: 8.18.0
       esrap: 2.3.2(@typescript-eslint/types@8.56.1(typescript@5.9.3))
       get-tsconfig: 5.0.0-beta.6
       magic-string: 0.30.21
@@ -9392,15 +9393,15 @@ snapshots:
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
-  '@tsrx/core@0.2.0(@typescript-eslint/types@8.56.1(typescript@6.0.3))':
+  '@tsrx/core@0.3.3(@typescript-eslint/types@8.56.1(typescript@6.0.3))':
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
       '@noble/hashes': 2.2.0
-      '@sveltejs/acorn-typescript': 1.0.13(acorn@8.17.0)
-      '@tsrx/runtime': 0.2.0
+      '@sveltejs/acorn-typescript': 1.0.13(acorn@8.18.0)
+      '@tsrx/runtime': 0.2.3
       '@types/estree': 1.0.8
       '@types/estree-jsx': 1.0.5
-      acorn: 8.17.0
+      acorn: 8.18.0
       esrap: 2.3.2(@typescript-eslint/types@8.56.1(typescript@6.0.3))
       get-tsconfig: 5.0.0-beta.6
       magic-string: 0.30.21
@@ -9408,15 +9409,15 @@ snapshots:
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
-  '@tsrx/core@0.2.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))':
+  '@tsrx/core@0.3.3(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))':
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
       '@noble/hashes': 2.2.0
-      '@sveltejs/acorn-typescript': 1.0.13(acorn@8.17.0)
-      '@tsrx/runtime': 0.2.0
+      '@sveltejs/acorn-typescript': 1.0.13(acorn@8.18.0)
+      '@tsrx/runtime': 0.2.3
       '@types/estree': 1.0.8
       '@types/estree-jsx': 1.0.5
-      acorn: 8.17.0
+      acorn: 8.18.0
       esrap: 2.3.2(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))
       get-tsconfig: 5.0.0-beta.6
       magic-string: 0.30.21
@@ -9424,9 +9425,9 @@ snapshots:
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
-  '@tsrx/ripple@0.2.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)':
+  '@tsrx/ripple@0.2.11(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)':
     dependencies:
-      '@tsrx/core': 0.2.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))
+      '@tsrx/core': 0.3.3(@typescript-eslint/types@8.56.1(typescript@5.9.3))
       esrap: 2.3.2(@typescript-eslint/types@8.56.1(typescript@5.9.3))
       is-reference: 3.0.3
       source-map: 0.7.6
@@ -9436,21 +9437,21 @@ snapshots:
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
-  '@tsrx/ripple@0.2.0(@typescript-eslint/types@8.56.1(typescript@6.0.3))(typescript@5.9.3)':
+  '@tsrx/ripple@0.2.11(@typescript-eslint/types@8.56.1(typescript@6.0.3))(typescript@6.0.3)':
     dependencies:
-      '@tsrx/core': 0.2.0(@typescript-eslint/types@8.56.1(typescript@6.0.3))
+      '@tsrx/core': 0.3.3(@typescript-eslint/types@8.56.1(typescript@6.0.3))
       esrap: 2.3.2(@typescript-eslint/types@8.56.1(typescript@6.0.3))
       is-reference: 3.0.3
       source-map: 0.7.6
       zimmerframe: 1.1.4
     optionalDependencies:
-      typescript: 5.9.3
+      typescript: 6.0.3
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
-  '@tsrx/ripple@0.2.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)':
+  '@tsrx/ripple@0.2.11(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)':
     dependencies:
-      '@tsrx/core': 0.2.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))
+      '@tsrx/core': 0.3.3(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))
       esrap: 2.3.2(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))
       is-reference: 3.0.3
       source-map: 0.7.6
@@ -9460,7 +9461,7 @@ snapshots:
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
-  '@tsrx/runtime@0.2.0': {}
+  '@tsrx/runtime@0.2.3': {}
 
   '@tybys/wasm-util@0.10.1':
     dependencies:
@@ -9562,6 +9563,8 @@ snapshots:
   '@types/resolve@1.20.6': {}
 
   '@types/sarif@2.1.7': {}
+
+  '@types/trusted-types@2.0.7': {}
 
   '@types/unist@3.0.3': {}
 
@@ -10165,8 +10168,6 @@ snapshots:
 
   acorn@8.16.0: {}
 
-  acorn@8.17.0: {}
-
   acorn@8.18.0: {}
 
   adm-zip@0.5.16: {}
@@ -10611,7 +10612,7 @@ snapshots:
 
   devalue@5.8.1: {}
 
-  devalue@5.9.2: {}
+  devalue@6.0.3: {}
 
   devlop@1.1.0:
     dependencies:
@@ -10819,19 +10820,19 @@ snapshots:
 
   esrap@2.3.2(@typescript-eslint/types@8.56.1(typescript@5.9.3)):
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
     optionalDependencies:
       '@typescript-eslint/types': 8.56.1(typescript@5.9.3)
 
   esrap@2.3.2(@typescript-eslint/types@8.56.1(typescript@6.0.3)):
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
     optionalDependencies:
       '@typescript-eslint/types': 8.56.1(typescript@6.0.3)
 
   esrap@2.3.2(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4)):
     dependencies:
-      '@jridgewell/sourcemap-codec': 1.5.5
+      '@jridgewell/sourcemap-codec': 1.6.0
     optionalDependencies:
       '@typescript-eslint/types': 8.56.1(typescript@7.1.0-dev.20260930.4)
 
@@ -12431,23 +12432,25 @@ snapshots:
 
   reusify@1.1.0: {}
 
-  ripple@0.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3):
+  ripple@0.6.1(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3):
     dependencies:
-      '@tsrx/core': 0.2.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))
-      '@tsrx/ripple': 0.2.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
-      clsx: 2.1.1
-      devalue: 5.9.2
+      '@tsrx/core': 0.3.3(@typescript-eslint/types@8.56.1(typescript@5.9.3))
+      '@tsrx/ripple': 0.2.11(@typescript-eslint/types@8.56.1(typescript@5.9.3))(typescript@5.9.3)
+      '@types/trusted-types': 2.0.7
+      csstype: 3.2.3
+      devalue: 6.0.3
       esm-env: 1.2.2
     transitivePeerDependencies:
       - '@typescript-eslint/types'
       - typescript
 
-  ripple@0.4.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4):
+  ripple@0.6.1(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4):
     dependencies:
-      '@tsrx/core': 0.2.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))
-      '@tsrx/ripple': 0.2.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)
-      clsx: 2.1.1
-      devalue: 5.9.2
+      '@tsrx/core': 0.3.3(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))
+      '@tsrx/ripple': 0.2.11(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))(typescript@7.1.0-dev.20260930.4)
+      '@types/trusted-types': 2.0.7
+      csstype: 3.2.3
+      devalue: 6.0.3
       esm-env: 1.2.2
     transitivePeerDependencies:
       - '@typescript-eslint/types'
