@@ -180,6 +180,7 @@ export {
 	DYNAMIC_IMPORT_LOCAL,
 	ERROR_BOUNDARY_INTERNAL_NAME,
 	extract_jsx_setup_declarations as extractJsxSetupDeclarations,
+	FRAGMENT_INTERNAL_NAME,
 	for_of_pattern_reads_index as forOfPatternReadsIndex,
 	get_for_of_shadowed_names as getForOfShadowedNames,
 	insert_after_directives as insertAfterDirectives,

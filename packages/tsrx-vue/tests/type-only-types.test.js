@@ -155,6 +155,39 @@ describe('@tsrx/vue type-only output type-checks', () => {
 				<div>{props.ref ? <input {...props} ref={own} /> : null}</div>
 			}`,
 		],
+		[
+			'a keyed fragment row in a loop with @empty (#179)',
+			`export function App({ items }: { items: { id: number }[] }) @{
+				<ul>
+					@for (const item of items; key item.id) {
+						<>
+							<li>{item.id}</li>
+						</>
+					} @empty {
+						<p>{'none'}</p>
+					}
+				</ul>
+			}`,
+		],
+		[
+			// Vue exports `Fragment` as a value only, so the rows' import of it sits
+			// beside a type of that name.
+			'a keyed fragment row beside an interface named Fragment (#179)',
+			`interface Fragment {
+				label: string;
+			}
+			export function App({ items }: { items: Fragment[] }) @{
+				<ul>
+					@for (const item of items; key item.label) {
+						<>
+							<li>{item.label}</li>
+						</>
+					} @empty {
+						<p>{'none'}</p>
+					}
+				</ul>
+			}`,
+		],
 	])('%s', (_name, source) => {
 		expect(type_only_diagnostics(source)).toEqual([]);
 	});

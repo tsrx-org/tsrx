@@ -16,6 +16,7 @@ import {
 	destructure_for_of_item,
 	ERROR_BOUNDARY_INTERNAL_NAME,
 	error,
+	FRAGMENT_INTERNAL_NAME,
 	forOfPatternReadsIndex as for_of_pattern_reads_index,
 	has_location,
 	IDENTIFIER_OBFUSCATION_PREFIX,
@@ -2647,6 +2648,89 @@ function imported_name(specifier) {
 }
 
 /**
+ * Whether the module may bind `Fragment` to something other than Vue's: any
+ * identifier `Fragment` in a value position, at any depth, other than in a
+ * value import of `Fragment` from `vue`. Declarations of every form count, and
+ * so do references, which costs only the row's key; a property name or a type
+ * doesn't.
+ *
+ * @param {AST.Program} program
+ * @returns {boolean}
+ */
+function declares_other_fragment(program) {
+	let found = false;
+	walk(/** @type {AST.Node} */ (program), null, {
+		_(node, { next }) {
+			// A type names no runtime value.
+			if (!found && !is_type_only_node(node)) next();
+		},
+		ImportDeclaration(node) {
+			for (const specifier of node.specifiers) {
+				if (specifier.local.name !== 'Fragment') continue;
+				const vue_value =
+					/** @type {AST.Literal} */ (node.source).value === 'vue' &&
+					node.importKind !== 'type' &&
+					specifier.type === 'ImportSpecifier' &&
+					specifier.importKind !== 'type' &&
+					imported_name(specifier) === 'Fragment';
+				if (!vue_value) found = true;
+			}
+		},
+		Identifier(node, { path }) {
+			if (node.name !== 'Fragment') return;
+			const parent = /** @type {AST.Node & { computed?: boolean, shorthand?: boolean }} */ (
+				path.at(-1)
+			);
+			const name_only =
+				!parent.computed &&
+				((parent.type === 'MemberExpression' && parent.property === node) ||
+					((parent.type === 'Property' ||
+						parent.type === 'MethodDefinition' ||
+						parent.type === 'PropertyDefinition') &&
+						parent.key === node &&
+						!parent.shorthand));
+			if (!name_only) found = true;
+		},
+	});
+	return found;
+}
+
+/**
+ * Rewrites the `<__Fragment key>` rows the shared lowering generated (their
+ * names have no source location). vue-jsx-vapor's server build passes a
+ * fragment's children as an array only when its tag is spelled `Fragment`;
+ * under any other name it passes them as slots, which Vue's `Fragment`
+ * doesn't render. So a row becomes `<Fragment key>`, with `Fragment` imported
+ * from `vue`, unless the module declares something else by that name, and then
+ * an unkeyed `<>` fragment: a loop that doesn't render through `VaporFor`
+ * recreates its rows when they move (#178), so the key keeps no row state.
+ *
+ * @param {AST.Program} program
+ * @param {boolean} keyed
+ * @returns {void}
+ */
+function rewrite_generated_fragments(program, keyed) {
+	/** @param {ESTreeJSX.JSXElement['openingElement']['name'] | undefined} name */
+	const is_generated = (name) =>
+		name?.type === 'JSXIdentifier' && name.name === FRAGMENT_INTERNAL_NAME && !has_location(name);
+	const rewritten = walk(/** @type {AST.Node} */ (program), null, {
+		JSXElement(node, { next }) {
+			const element = /** @type {ESTreeJSX.JSXElement} */ (/** @type {unknown} */ (node));
+			if (!is_generated(element.openingElement.name)) return next();
+			const walked = /** @type {ESTreeJSX.JSXElement} */ (next() ?? element);
+			if (!keyed) {
+				return /** @type {AST.Node} */ (/** @type {unknown} */ (b.jsx_fragment(walked.children)));
+			}
+			for (const name of [walked.openingElement.name, walked.closingElement?.name]) {
+				if (is_generated(name)) /** @type {ESTreeJSX.JSXIdentifier} */ (name).name = 'Fragment';
+			}
+			return walked;
+		},
+	});
+	program.body = /** @type {AST.Program} */ (rewritten).body;
+}
+
+/**
  * Turn an authored type-only import of `defineVaporComponent` from
  * `vue-jsx-vapor` into the value import the generated components need. The
  * specifier is replaced by one without a location, as for a name the compiler
@@ -2866,6 +2950,18 @@ function inject_vue_imports(program, transform_context) {
 
 	if (transform_context.needs_suspense) {
 		ensure_named_import(program, 'vue', 'Suspense', SUSPENSE_INTERNAL_NAME);
+	}
+
+	// A keyed row whose body is a fragment, in a loop that doesn't render
+	// through `VaporFor`, is a `<Fragment key>`, which vue-jsx-vapor lowers to a
+	// keyed fragment.
+	if (transform_context.needs_fragment) {
+		if (!declares_other_fragment(program)) {
+			rewrite_generated_fragments(program, true);
+			ensure_named_import(program, 'vue', 'Fragment');
+		} else {
+			rewrite_generated_fragments(program, false);
+		}
 	}
 
 	if (transform_context.needs_error_boundary) {
