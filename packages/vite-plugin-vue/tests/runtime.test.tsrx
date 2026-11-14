@@ -2628,6 +2628,23 @@ describe('tsrx-vue merged refs', () => {
 		expect(calls).toEqual(['first(node)', 'first(null)', 'second(node)']);
 	});
 
+	it('cleans up a nested merged ref set before a sibling threw when the element gets another (#1329)', () => {
+		const node = document.createElement('input');
+		const calls: string[] = [];
+		const log = (name: string) => (value: HTMLInputElement | null) => {
+			calls.push(`${name}(${value ? 'node' : 'null'})`);
+		};
+		const failing = mergeRefs(mergeRefs(log('a')), () => {
+			throw new Error('ref boom');
+		});
+		expect(() => failing(node)).toThrow('ref boom');
+
+		const replacement = mergeRefs(log('b'));
+		replacement(node);
+		replacement(null);
+		expect(calls).toEqual(['a(node)', 'a(null)', 'b(node)', 'b(null)']);
+	});
+
 	it('runs the replaced merged ref cleanup when a new one is set on the element', async () => {
 		swapped_ref_log.length = 0;
 		swapped_ref_which.value = 0;

@@ -12,15 +12,16 @@ export * from '@tsrx/runtime/ref';
 const pending_cleanups = new WeakMap();
 
 /**
- * The nodes a merged ref is setting its refs on. A merged ref that another
- * merged ref calls for the same node, as in
+ * For each node a merged ref is setting its refs on, the `unset` of every
+ * merged ref it sets on the same node meanwhile. Such a merged ref, as in
  * `mergeRefs(mergeRefs(a), mergeRefs(b))`, is set beside its siblings rather
  * than in place of one of them, so it leaves `pending_cleanups` to the
- * outermost merged ref, whose cleanup runs its own.
+ * outermost merged ref, whose cleanup runs its own. If a later ref throws,
+ * the outermost merged ref has no cleanup, and the node keeps theirs pending.
  *
- * @type {WeakSet<object>}
+ * @type {WeakMap<object, Array<() => void>>}
  */
-const setting_nodes = new WeakSet();
+const nested_unsets = new WeakMap();
 
 /**
  * The shared `mergeRefs`, adapted to how Vue calls a function ref: with the
@@ -29,7 +30,7 @@ const setting_nodes = new WeakSet();
  * runs each callback's own cleanup, or calls it with `null`, and clears ref
  * objects) runs on that `null` call instead, or when another merged ref is set
  * on the same node. A merged ref that this one sets the node on is not another
- * merged ref replacing it (see `setting_nodes`).
+ * merged ref replacing it (see `nested_unsets`).
  *
  * @template T
  * @param {...import('@tsrx/runtime/ref').MergeableRefValue<T>} refs
@@ -51,24 +52,41 @@ export function mergeRefs(...refs) {
 	return (node) => {
 		unset();
 		if (node == null) return () => {};
-		const outermost = is_object(node) && !setting_nodes.has(node);
+		const siblings = is_object(node) ? nested_unsets.get(node) : undefined;
+		const outermost = is_object(node) && !siblings;
+		/** @type {Array<() => void>} */
+		const nested = [];
 		if (outermost) {
 			const replaced = pending_cleanups.get(node);
 			if (replaced) {
 				pending_cleanups.delete(node);
 				replaced();
 			}
-			setting_nodes.add(node);
+			nested_unsets.set(node, nested);
 		}
 		/** @type {() => void} */
 		let cleanup;
 		try {
 			cleanup = once(merged(node));
+		} catch (error) {
+			if (outermost && nested.length > 0) {
+				pending_cleanups.set(
+					node,
+					once(() => {
+						for (const nested_unset of nested) nested_unset();
+					}),
+				);
+			}
+			throw error;
 		} finally {
-			if (outermost) setting_nodes.delete(node);
+			if (outermost) nested_unsets.delete(node);
 		}
 		mounted = { node, cleanup };
-		if (outermost) pending_cleanups.set(node, cleanup);
+		if (outermost) {
+			pending_cleanups.set(node, cleanup);
+		} else {
+			siblings?.push(unset);
+		}
 		return unset;
 	};
 }
