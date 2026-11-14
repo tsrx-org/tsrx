@@ -11076,6 +11076,7 @@ describe('a clause that no directive takes', () => {
 		// A `<` that starts no tag, and one in a string, in a `@case` label
 		['note @case x < 2: {<b />}', '@case'],
 		['note @case "<": {<b />}', '@case'],
+		['note @case "a\\"b": {<b />}', '@case'],
 		// A block comment on the label's line, even with a `{` in it
 		['note @case value /* { */: {<b />}', '@case'],
 	];
@@ -11124,6 +11125,7 @@ describe('a clause that no directive takes', () => {
 			'@case value /* note: prose */ text',
 			'@case value // note: prose\n\t\ttext',
 			'@case value /* note\n\t\t*/: prose',
+			'@case "a\\": prose" text',
 			'@case\n\t\tvalue: description',
 			// A keyword that goes on with a letter that isn't ASCII
 			'@caseé: prose, @else ifé prose, @elseé {x}',

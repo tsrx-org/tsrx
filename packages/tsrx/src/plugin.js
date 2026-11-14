@@ -2434,16 +2434,26 @@ export function TSRXPlugin(config) {
 					) {
 						return false;
 					}
-					const block_comment = this.input.startsWith('/*', i);
-					if (block_comment || ch === '"' || ch === "'" || ch === '`') {
-						const close = block_comment
-							? this.input.indexOf('*/', i + 2) + 1
-							: this.input.indexOf(ch, i + 1);
-						if (close <= 0 || /[\n\r\u2028\u2029]/.test(this.input.slice(i, close))) {
-							return false;
+					let close = -1;
+					if (this.input.startsWith('/*', i)) {
+						close = this.input.indexOf('*/', i + 2) + 1;
+					} else if (ch === '"' || ch === "'" || ch === '`') {
+						// To the closing quote, past escapes
+						for (close = i + 1; close < this.input.length; close++) {
+							if (this.input[close] === '\\') close++;
+							else if (this.input[close] === ch) break;
 						}
-						i = close;
+					} else {
+						continue;
 					}
+					if (
+						close <= 0 ||
+						close >= this.input.length ||
+						/[\n\r\u2028\u2029]/.test(this.input.slice(i, close))
+					) {
+						return false;
+					}
+					i = close;
 				}
 				return false;
 			}
