@@ -27,7 +27,6 @@ import {
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	setLocation,
-	sourceMentionsIdentifier,
 	SUSPENSE_INTERNAL_NAME,
 	TSRX_ERRORS,
 } from '@tsrx/core';
@@ -2649,59 +2648,48 @@ function imported_name(specifier) {
 }
 
 /**
- * Whether the module declares a binding named `Fragment`, at any depth, other
- * than a value import of `Fragment` from `vue`.
+ * Whether the module may bind `Fragment` to something other than Vue's: any
+ * identifier `Fragment` in a value position, at any depth, other than in a
+ * value import of `Fragment` from `vue`. Declarations of every form count, and
+ * so do references, which costs only the row's key; a property name or a type
+ * doesn't.
  *
  * @param {AST.Program} program
  * @returns {boolean}
  */
 function declares_other_fragment(program) {
 	let found = false;
-	/** @param {AST.Node | null | undefined} pattern */
-	const check = (pattern) => {
-		/** @type {Set<string>} */
-		const names = new Set();
-		collect_pattern_names(pattern ?? null, names);
-		if (names.has('Fragment')) found = true;
-	};
 	walk(/** @type {AST.Node} */ (program), null, {
 		_(node, { next }) {
-			if (found) return;
-			switch (node.type) {
-				case 'ImportDeclaration':
-					for (const specifier of node.specifiers) {
-						if (specifier.local.name !== 'Fragment') continue;
-						const vue_value =
-							/** @type {AST.Literal} */ (node.source).value === 'vue' &&
-							node.importKind !== 'type' &&
-							specifier.type === 'ImportSpecifier' &&
-							specifier.importKind !== 'type' &&
-							imported_name(specifier) === 'Fragment';
-						if (!vue_value) found = true;
-					}
-					return;
-				case 'VariableDeclarator':
-					check(node.id);
-					break;
-				case 'FunctionDeclaration':
-				case 'FunctionExpression':
-				case 'ArrowFunctionExpression':
-					if (node.type !== 'ArrowFunctionExpression') check(node.id);
-					for (const param of node.params) check(param);
-					break;
-				case 'ClassDeclaration':
-				case 'ClassExpression':
-					check(node.id);
-					break;
-				case 'CatchClause':
-					check(node.param);
-					break;
-				default: {
-					const declared = /** @type {{ id?: AST.Node }} */ (/** @type {unknown} */ (node)).id;
-					if (/^TS(TypeAlias|Interface|Enum|Module)Declaration$/.test(node.type)) check(declared);
-				}
+			// A type names no runtime value.
+			if (!found && !is_type_only_node(node)) next();
+		},
+		ImportDeclaration(node) {
+			for (const specifier of node.specifiers) {
+				if (specifier.local.name !== 'Fragment') continue;
+				const vue_value =
+					/** @type {AST.Literal} */ (node.source).value === 'vue' &&
+					node.importKind !== 'type' &&
+					specifier.type === 'ImportSpecifier' &&
+					specifier.importKind !== 'type' &&
+					imported_name(specifier) === 'Fragment';
+				if (!vue_value) found = true;
 			}
-			next();
+		},
+		Identifier(node, { path }) {
+			if (node.name !== 'Fragment') return;
+			const parent = /** @type {AST.Node & { computed?: boolean, shorthand?: boolean }} */ (
+				path.at(-1)
+			);
+			const name_only =
+				!parent.computed &&
+				((parent.type === 'MemberExpression' && parent.property === node) ||
+					((parent.type === 'Property' ||
+						parent.type === 'MethodDefinition' ||
+						parent.type === 'PropertyDefinition') &&
+						parent.key === node &&
+						!parent.shorthand));
+			if (!name_only) found = true;
 		},
 	});
 	return found;
@@ -2968,10 +2956,7 @@ function inject_vue_imports(program, transform_context) {
 	// through `VaporFor`, is a `<Fragment key>`, which vue-jsx-vapor lowers to a
 	// keyed fragment.
 	if (transform_context.needs_fragment) {
-		if (
-			!sourceMentionsIdentifier(transform_context.source, 'Fragment') ||
-			!declares_other_fragment(program)
-		) {
+		if (!declares_other_fragment(program)) {
 			rewrite_generated_fragments(program, true);
 			ensure_named_import(program, 'vue', 'Fragment');
 		} else {

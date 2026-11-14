@@ -1761,7 +1761,12 @@ export function Card(${params}: any) @{
 			);
 
 		// The tag is spelled `Fragment`, as vue-jsx-vapor's server build needs.
-		for (const module_scope of ['', 'const __Fragment = 1;', "import { Fragment } from 'vue';"]) {
+		for (const module_scope of [
+			'',
+			'const __Fragment = 1;',
+			"import { Fragment } from 'vue';",
+			'interface Fragment {}\nconst label = { Fragment: 1 }.Fragment;',
+		]) {
 			const { code, errors } = compile_with(module_scope);
 			expect(errors, module_scope).toEqual([]);
 			expect(code, module_scope).toMatch(/^import \{ Fragment \} from 'vue';$/m);
@@ -1775,6 +1780,10 @@ export function Card(${params}: any) @{
 			'function Fragment() @{ <b /> }',
 			"import type { Fragment } from 'vue';",
 			"import { Fragment } from 'vue';\nfunction Other() { const Fragment = 'section'; return Fragment; }",
+			"const Fragm\\u0065nt = 'section';",
+			'class Host { constructor(public Fragment: unknown) {} }',
+			'declare function Fragment(): void;',
+			"import * as Vue from 'vue';\nimport Fragment = Vue.Fragment;",
 		]) {
 			const { code, errors } = compile_with(module_scope);
 			expect(errors, module_scope).toEqual([]);
