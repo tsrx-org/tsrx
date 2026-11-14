@@ -62,6 +62,14 @@ export function IndexDefaultKeyedApp({ rows }: { rows: PairRow[] }) @{
 	</ul>
 }
 
+export function IndexDefaultKeyApp({ rows }: { rows: PairRow[] }) @{
+	<ul class="index-default-key">
+		@for (const [a = 'r' + i, b] of rows; index i; key a) {
+			<li>{a + ':' + b}</li>
+		}
+	</ul>
+}
+
 export function IndexDefaultObjectApp({ rows }: { rows: ObjectRow[] }) @{
 	<ul class="index-default-object">
 		@for (const { a = 'r' + i, b } of rows; index i) {
@@ -153,6 +161,16 @@ export const for_of_head_scope_cases: Array<[string, unknown, string, unknown[],
 		'index-default-keyed',
 		pair_rows,
 		['r0:x', 'y:z'],
+	],
+	[
+		'a pattern default that reads the index, read by the key',
+		IndexDefaultKeyApp,
+		'index-default-key',
+		[
+			[undefined, 'x'],
+			[undefined, 'z'],
+		],
+		['r0:x', 'r1:z'],
 	],
 	[
 		'an object pattern default that reads the index',
