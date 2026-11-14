@@ -494,13 +494,15 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 	});
 
 	// The static `<div />` is hoisted, which leaves the `{value}` before it a
-	// mapping that runs backwards. Volar would drop a diagnostic on that range.
-	it('reports an unclosed fragment before a hoisted child on the code after it', async () => {
+	// mapping that runs backwards. Volar would drop a diagnostic on that range,
+	// but the `<>`'s error has its anchor, on the `return` the editor's code
+	// prints for the template.
+	it('reports an unclosed fragment before a hoisted child on the `<>`', async () => {
 		const source = 'export function C({ value }: { value: string }) @{\n\t<>{value}<div />\n}\n';
 		const { document, diagnostics } = await editor_diagnostics_for('FragmentHoisted', source);
 
 		expect(reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([
-			{ source: DIAGNOSTIC_SOURCE, text: 'value', offset: source.indexOf('value}') },
+			{ source: DIAGNOSTIC_SOURCE, text: '<>', offset: source.indexOf('<>') },
 		]);
 	});
 
@@ -539,7 +541,7 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 	// The editor's code leaves a repeated modifier out, but the compile anchors
 	// the error on the code it reads in its place, so the editor shows it on
 	// the modifier's first character, not on the code before it or at the start
-	// of the file. FragmentHoisted above covers the fallback to the code after.
+	// of the file.
 	it.each([
 		[
 			'RepeatedAccessibility',
