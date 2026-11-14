@@ -2,12 +2,14 @@
 /** @import { CompileError, TSRXAnalysisOptions } from '../../types/index' */
 
 import { describe, expect, it } from 'vitest';
+import { walk } from 'zimmerframe';
 import {
 	analyzeCss,
 	analyzeTsrx,
 	DIAGNOSTIC_CODES,
 	parseModule,
 	parseStyle,
+	renderStylesheets,
 } from '../../src/index.js';
 import {
 	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
@@ -1018,6 +1020,45 @@ describe('scoped style analysis', () => {
 				'.a:not(:global(.b)) { color: red; }',
 			]) {
 				expect(() => analyzeCss(parse_stylesheet(css)), css).not.toThrow();
+			}
+		});
+	});
+
+	describe('pruned selectors beside :global', () => {
+		/**
+		 * Render `css` with the complex selectors written as `pruned` unused, as
+		 * the pruner leaves the selectors no element matches.
+		 *
+		 * @param {string} css
+		 * @param {string[]} pruned
+		 * @param {boolean} minify
+		 */
+		function render(css, pruned, minify) {
+			const sheet = parseStyle(css, { filename, line: 1, column: 0 }, {});
+			analyzeCss(sheet);
+			walk(/** @type {AST.CSS.Node} */ (sheet), null, {
+				ComplexSelector(node, { next }) {
+					node.metadata.used ||= !pruned.includes(css.slice(node.start, node.end));
+					next();
+				},
+			});
+			return renderStylesheets([sheet], minify);
+		}
+
+		it('keeps the comment markers at the edges of a :global selector, and minifies them away', () => {
+			/** @type {Array<[string, string, string, string]>} */
+			const cases = [
+				['.y:is(.z,:global(.w))', '.z', '.y:is(/* (unused) .z,*/.w)', '.y:is(.w)'],
+				['.z,:global(.w)', '.z', '/* (unused) .z,*/.w', '.w'],
+				[':global(.x) .z,.y', ':global(.x) .z', '/* (unused) .x .z,*/.y', '.y'],
+				['.y,.z:global(.k)', '.z:global(.k)', '.y /* (unused) .z.k*/', '.y'],
+				['.y,.z:global', '.z:global', '.y /* (unused) .z*/', '.y'],
+			];
+
+			for (const [selector, pruned, expected, minified] of cases) {
+				const css = `${selector} { color: red; }`;
+				expect(render(css, [pruned], false), selector).toBe(`${expected} { color: red; }`);
+				expect(render(css, [pruned], true), selector).toBe(`${minified} { color: red; }`);
 			}
 		});
 	});

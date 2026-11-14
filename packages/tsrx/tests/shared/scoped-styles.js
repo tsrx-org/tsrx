@@ -1752,6 +1752,48 @@ export function runSharedScopedStyleTests({
 			expect(css).not.toContain('(unused)');
 		});
 
+		it('closes the comment over a pruned selector that touches a :global() selector', () => {
+			/** @type {Array<[string, (hash: string) => string]>} */
+			const cases = [
+				['.y:is(.z,:global(.w))', (hash) => `.y.${hash}:is(/* (unused) .z,*/.w) {`],
+				['.y:where(.z,:global(.w))', (hash) => `.y.${hash}:where(/* (unused) .z,*/.w) {`],
+				['.y:has(.z,:global(.w))', (hash) => `.y.${hash}:has(/* (unused) .z,*/.w) {`],
+				['.y:is(.z ,:global(.w))', (hash) => `.y.${hash}:is(/* (unused) .z ,*/.w) {`],
+				['.y:is(.z,.q,:global(.w))', (hash) => `.y.${hash}:is(/* (unused) .z,.q,*/.w) {`],
+				['.y:is(.z,:global(.w),:global(.v))', (hash) => `.y.${hash}:is(/* (unused) .z,*/.w,.v) {`],
+				[
+					'.y:is(.z,:global(.w),.q)',
+					(hash) => `.y.${hash}:is(/* (unused) .z,*/.w /* (unused) .q*/) {`,
+				],
+				['.z,:global(.w)', () => `/* (unused) .z,*/.w {`],
+				[':global(.x) .z,.y', (hash) => `/* (unused) .x .z,*/.y.${hash} {`],
+				['.y,.z:global(.k)', (hash) => `.y.${hash} /* (unused) .z.k*/ {`],
+				['.y,.z:global', (hash) => `.y.${hash} /* (unused) .z*/ {`],
+			];
+
+			for (const [rule, expected] of cases) {
+				const { css, cssHash } = compile(
+					`export function App() @{
+						<>
+							<style>
+								${rule} { color: red; }
+								.y { font-weight: bold; }
+							</style>
+							<i ${attr}="y" />
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				const hash = hashes_of(cssHash)[0];
+				expect(css, rule).toContain(expected(hash));
+				// An unclosed comment would swallow the rest of the stylesheet
+				const uncommented = css.replace(/\/\*[^]*?\*\//g, '');
+				expect(uncommented, rule).not.toMatch(/\/\*|\*\//);
+				expect(uncommented, rule).toContain(`.y.${hash} { font-weight: bold; }`);
+			}
+		});
+
 		it('global-theme: a theme keeps bare and prefixed :global rules with its own hash', () => {
 			const { css, cssHash } = compile(
 				`export const theme = <style>
