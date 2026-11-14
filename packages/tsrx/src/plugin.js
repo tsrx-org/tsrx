@@ -853,6 +853,71 @@ function compare_errors(a, b) {
 }
 
 /**
+ * The names that a `typeof` type query in `nodes`, the parameters and return
+ * type of a signature, starts with, or the signature's own type predicate with
+ * a type (`q is T`): in a type, not in a parameter's default, which isn't
+ * checked there, and not a name that a signature in it declares as a parameter
+ * of its own, outside its type parameters. A predicate in a signature in it is
+ * that signature's.
+ * @param {Array<AST.Node | null | undefined>} nodes
+ * @returns {Set<string>}
+ */
+function type_query_names(nodes) {
+	/** @type {Set<string>} */
+	const names = new Set();
+	/** @typedef {{ value: unknown, shadowed: Set<string>, nested: boolean }} Item */
+	/** @type {Item[]} */
+	const stack = nodes.map((value) => ({ value, shadowed: new Set(), nested: false }));
+	while (stack.length > 0) {
+		const { value, shadowed, nested } = /** @type {Item} */ (stack.pop());
+		if (!value || typeof value !== 'object') continue;
+		if (Array.isArray(value)) {
+			for (const item of value) stack.push({ value: item, shadowed, nested });
+			continue;
+		}
+		const node = /** @type {Record<string, unknown> & { type?: unknown }} */ (value);
+		if (node.type === 'AssignmentPattern') {
+			stack.push({ value: node.left, shadowed, nested });
+			continue;
+		}
+		if (
+			node.type === 'TSTypeQuery' ||
+			(node.type === 'TSTypePredicate' && node.typeAnnotation && !nested)
+		) {
+			let name = /** @type {{ type: string, name?: string, left?: unknown }} */ (
+				node.type === 'TSTypeQuery' ? node.exprName : node.parameterName
+			);
+			while (name?.type === 'TSQualifiedName') {
+				name = /** @type {{ type: string, name?: string, left?: unknown }} */ (name.left);
+			}
+			if (name?.type === 'Identifier' && name.name && !shadowed.has(name.name)) {
+				names.add(name.name);
+			}
+		}
+		let inner = shadowed;
+		const signature = Array.isArray(node.parameters);
+		if (signature) {
+			inner = new Set(shadowed);
+			for (const param of /** @type {AST.Node[]} */ (node.parameters)) {
+				const pattern = param.type === 'TSParameterProperty' ? param.parameter : param;
+				for (const id of extract_identifiers(/** @type {AST.Pattern} */ (pattern))) {
+					inner.add(id.name);
+				}
+			}
+		}
+		for (const key in node) {
+			if (key === 'loc' || key === 'metadata') continue;
+			stack.push({
+				value: node[key],
+				shadowed: key === 'typeParameters' ? shadowed : inner,
+				nested: nested || signature,
+			});
+		}
+	}
+	return names;
+}
+
+/**
  * The deferred errors of a method's parameter list, which come once the method
  * is read (see `parseMethod`).
  * @type {WeakMap<unknown[], CompileError[]>}
@@ -867,12 +932,19 @@ const deferred_parameter_errors = new WeakMap();
 const parameter_lists_with_clashes = new WeakSet();
 
 /**
- * The errors held in the parameter list of an ambient function or method, which
- * `parseFunctionBody` reports with the TS2371 of each default (see
- * `parseBindingList`).
+ * The errors held in the parameter list of a function or method, which
+ * `parseFunctionBody` reports once it knows whether there is a body: without
+ * one, with the TS2371 of each default (see `parseBindingList`).
  * @type {WeakMap<unknown[], CompileError[]>}
  */
-const ambient_parameter_errors = new WeakMap();
+const function_parameter_errors = new WeakMap();
+
+/**
+ * The parameter lists of abstract methods, which have no implementation, so
+ * TypeScript's checker never checks a default in one (see `parseFunctionBody`).
+ * @type {WeakSet<unknown[]>}
+ */
+const abstract_method_parameters = new WeakSet();
 
 /**
  * The errors a strict parse recorded in a generic async arrow function's
@@ -1627,7 +1699,7 @@ export function TSRXPlugin(config) {
 			// a parameter property on it is TS2369 whatever follows the list, as on
 			// any function or method but a constructor, and what reads it (see
 			// `parseBindingList`).
-			/** @type {{ start: number, typeParametersStart?: number, outside: boolean, kind: 'function' | 'method' | 'signature' } | null} */
+			/** @type {{ start: number, typeParametersStart?: number, outside: boolean, kind: 'function' | 'method' | 'signature', abstract?: boolean } | null} */
 			#ownParameterList = null;
 			// While a method is read whose TS2369 comes once it's read, from the end
 			// of its parameter list: its held errors, with its body's, and the errors
@@ -6431,9 +6503,10 @@ export function TSRXPlugin(config) {
 
 			/**
 			 * Records the list's closing token for `parseBindingListItem`: `)` for
-			 * parameters, `]` for an array pattern. A function's or method's own
-			 * parameters (see `#ownParameterList`) hold the errors of their parameter
-			 * properties until the list is read (see `#reportParameterList`).
+			 * parameters, `]` for an array pattern. A function's, method's or
+			 * signature's own parameters (see `#ownParameterList`) hold their checker
+			 * errors until it's known whether there is a body (see `parseFunctionBody`
+			 * and `tsFillSignature`).
 			 * @type {Parse.Parser['parseBindingList']}
 			 */
 			parseBindingList(close, allowEmpty, allowTrailingComma, allowModifiers) {
@@ -6469,15 +6542,13 @@ export function TSRXPlugin(config) {
 					allowModifiers = !this.#collect && this.#readingGenericArrowParameters;
 				}
 				const outer_hold = this.#hold.held;
-				// A signature's, or an ambient function's, which has no body: their
-				// errors come with the TS2371 of a default, which is found after the
-				// list (see `#checkSignatureParameter` and `parseFunctionBody`), so hold
-				// them all from the start (#964).
-				const signature_like =
-					list &&
-					(kind === 'signature' ||
-						(this.isAmbientContext && (kind === 'function' || kind === 'method')));
-				if (list && signature_like) this.#setHeld(list.held);
+				// A signature's, or a function's or method's, which can have no body:
+				// their errors come with the TS2371 of a default, which is found once it's
+				// known that there is no body (see `#checkSignatureParameter` and
+				// `parseFunctionBody`), so hold them all from the start (#964). Without a
+				// body, TypeScript's checker doesn't check a default, so the TS7060 in it
+				// goes (#1315).
+				if (list) this.#setHeld(list.held);
 				/** @type {AST.Pattern[]} */
 				let params;
 				/** @type {CompileError[] | null} */
@@ -6526,6 +6597,7 @@ export function TSRXPlugin(config) {
 				}
 				if (recorded) generic_arrow_parameter_errors.set(params, recorded);
 				if (list?.deferred.length) deferred_parameter_errors.set(params, list.deferred);
+				if (list && own?.abstract) abstract_method_parameters.add(params);
 				let method_held = false;
 				if (list && kind === 'method') {
 					// `parseMethod` raises TS2369 for a rest parameter property, and for a
@@ -6571,14 +6643,12 @@ export function TSRXPlugin(config) {
 					// A signature's duplicate names too, which `checkParams` doesn't
 					// check, once the signature is read (see `tsFillSignature`) (#1264).
 					this.#signatureErrors.push(...list.held, ...this.#parameterClashErrors(params, true));
-				} else if (list && signature_like) {
+				} else if (list) {
 					// With the TS2371 of each default, from `parseFunctionBody` (#964).
-					ambient_parameter_errors.set(params, [
+					function_parameter_errors.set(params, [
 						...list.held,
 						...this.#parameterClashErrors(params),
 					]);
-				} else if (list && (list.held.length > 0 || kind === 'signature')) {
-					this.#reportParameterList(params, list.held, kind === 'signature');
 				}
 				return params;
 			}
@@ -7130,17 +7200,77 @@ export function TSRXPlugin(config) {
 					this.#readingSignatureTypeParameters = false;
 				}
 				this.#signatureErrors = outer;
-				if (errors.length === 0) return;
+				const { parameters, typeAnnotation } =
+					/** @type {{ parameters?: AST.Node[], typeAnnotation?: AST.Node | null }} */ (signature);
+				const kept = this.#withoutUncheckedDefaults(errors, parameters ?? [], typeAnnotation);
+				if (kept.length === 0) return;
 				if (outer) {
-					outer.push(...errors);
+					outer.push(...kept);
 				} else if (!this.#collect && !this.#hold.held && this.parseEffects?.active) {
-					for (const error of errors) {
+					for (const error of kept) {
 						this.parseEffects.willAppend(this.#speculativeErrors);
 						this.#speculativeErrors.push(error);
 					}
 				} else {
-					this.#releaseErrors(errors);
+					this.#releaseErrors(kept);
 				}
+			}
+
+			/**
+			 * `errors` without the TS7060 of an arrow function in the default of a
+			 * parameter of `params`, a signature's or a function's without an
+			 * implementation, whose default is TS2371 (see `#checkSignatureParameter`
+			 * and `#signatureInitializerErrors`). TypeScript reports TS7060 when its
+			 * checker checks the arrow function, and it doesn't check a default it
+			 * reports TS2371 for (`checkVariableLikeDeclaration`), unless something
+			 * needs the type it gives a parameter: an implementation of an overload,
+			 * a binding pattern, whose elements it checks first, and without a type
+			 * annotation, a rest parameter (TS2370), or `typeof` the parameter or a
+			 * type predicate of it with a type in the signature (#1315).
+			 * @param {CompileError[]} errors
+			 * @param {AST.Node[]} params
+			 * @param {AST.Node | null | undefined} return_type
+			 * @returns {CompileError[]}
+			 */
+			#withoutUncheckedDefaults(errors, params, return_type) {
+				const code = TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER.code;
+				if (!errors.some((error) => error.code === code)) return errors;
+				const queried = type_query_names([...params, return_type]);
+				/** @type {Array<[number, number]>} */
+				const unchecked = [];
+				for (const param of params) {
+					const node = param.type === 'TSParameterProperty' ? param.parameter : param;
+					const rest = node.type === 'RestElement';
+					const parameter = rest ? node.argument : node;
+					if (parameter.type !== 'AssignmentPattern') continue;
+					const { left } = parameter;
+					if (
+						left.type === 'Identifier' &&
+						(!!left.typeAnnotation || (!rest && !queried.has(left.name)))
+					) {
+						unchecked.push([
+							/** @type {number} */ (parameter.right.start),
+							/** @type {number} */ (parameter.right.end),
+						]);
+					}
+				}
+				return errors.filter(
+					(error) =>
+						error.code !== code ||
+						!unchecked.some(
+							([start, end]) => start <= (error.pos ?? -1) && (error.pos ?? -1) < end,
+						),
+				);
+			}
+
+			/**
+			 * Whether the function or method whose parameters are `params`, which has
+			 * no body, has no implementation either: an ambient one, or an abstract
+			 * method. Otherwise it's an overload (see `#withoutUncheckedDefaults`).
+			 * @param {unknown[]} params
+			 */
+			#hasNoImplementation(params) {
+				return this.isAmbientContext || abstract_method_parameters.has(params);
 			}
 
 			/**
@@ -12236,7 +12366,29 @@ export function TSRXPlugin(config) {
 					// would never be seen. Parse the return type here first (exactly as
 					// acorn-typescript does) so `this.start` lands on the `@` that follows.
 					if (!isArrowFunction && this.match(tt.colon)) {
-						node.returnType = this.tsParseTypeOrTypePredicateAnnotation(tt.colon);
+						// Its errors come by position with the parameters' (see
+						// `parseBindingList`).
+						const held = function_parameter_errors.get(node.params);
+						const outer_held = this.#hold.held;
+						if (held) this.#setHeld(held);
+						try {
+							node.returnType = this.tsParseTypeOrTypePredicateAnnotation(tt.colon);
+						} catch (error) {
+							this.#hold.held = outer_held;
+							// See `#holdingErrors`, without the TS7060 that a function without
+							// an implementation never has.
+							if (held) {
+								this.#abandonHeldErrors(
+									this.#hasNoImplementation(node.params)
+										? this.#withoutUncheckedDefaults(held, node.params, null)
+										: held,
+									error,
+								);
+							}
+							throw error;
+						} finally {
+							if (held) this.#setHeld(outer_held);
+						}
 					}
 					const is_code_block = this.#isCodeBlockStart(this.start);
 					if (isArrowFunction) {
@@ -12253,15 +12405,21 @@ export function TSRXPlugin(config) {
 						this.#reportRestParameterMistakes(/** @type {AST.ArrowFunctionExpression} */ (node));
 						this.#reportOptionalPatternParameters(node);
 					} else if (is_code_block || !this.#isBodilessSignature(args[0])) {
-						const held = ambient_parameter_errors.get(node.params);
+						const held = function_parameter_errors.get(node.params);
 						if (held?.length) this.#releaseErrors(held);
 						this.#reportOptionalPatternParameters(node);
 					} else {
 						// A signature without a body: `checkParams` doesn't check its
 						// duplicate names (#1264), and a parameter's default is TS2371, as
-						// in a function type (#964).
+						// in a function type (#964). TypeScript's checker checks the
+						// defaults of an overload, to compare it with the implementation,
+						// but not of an ambient function or an abstract method, which have
+						// none (#1315).
+						const held = function_parameter_errors.get(node.params) ?? [];
 						const initializers = [
-							...(ambient_parameter_errors.get(node.params) ?? []),
+							...(this.#hasNoImplementation(node.params)
+								? this.#withoutUncheckedDefaults(held, node.params, node.returnType)
+								: held),
 							...this.#signatureInitializerErrors(node.params),
 						];
 						if (!parameter_lists_with_clashes.has(node.params)) {
@@ -15329,22 +15487,23 @@ export function TSRXPlugin(config) {
 			/**
 			 * Run `read`, which reads a function or a method from its parameter list,
 			 * noting the list's `(` for `parseBindingList`, and whether a parameter
-			 * property on it is TS2369 whatever follows it (`outside`), and what
-			 * reads it (`kind`, see `parseBindingList`).
+			 * property on it is TS2369 whatever follows it (`outside`), what reads it
+			 * (`kind`, see `parseBindingList`), and whether it's an abstract method's.
 			 * @template T
 			 * @param {boolean} outside
 			 * @param {() => T} read
 			 * @param {'function' | 'method'} [kind]
+			 * @param {boolean} [abstract]
 			 * @returns {T}
 			 */
-			#readingOwnParameters(outside, read, kind = 'function') {
+			#readingOwnParameters(outside, read, kind = 'function', abstract = false) {
 				// After type parameters, the list starts where they end (see
 				// `tsParseTypeParameters`).
 				this.#ownParameterList =
 					this.type === tt.parenL
-						? { start: this.start, outside, kind }
+						? { start: this.start, outside, kind, abstract }
 						: this.tsMatchLeftRelational()
-							? { start: -1, typeParametersStart: this.start, outside, kind }
+							? { start: -1, typeParametersStart: this.start, outside, kind, abstract }
 							: null;
 				try {
 					return read();
@@ -15388,6 +15547,7 @@ export function TSRXPlugin(config) {
 						!(method?.kind === 'constructor' || static_constructor),
 						() => super.parseMethod(isGenerator, isAsync, allowDirectSuper, inClassScope, method),
 						'method',
+						/** @type {{ abstract?: boolean } | undefined} */ (method)?.abstract === true,
 					);
 				} catch (error) {
 					const held =
@@ -15412,7 +15572,12 @@ export function TSRXPlugin(config) {
 				}
 				if (held) {
 					this.#hold.held = held.outer;
-					this.#releaseErrors(held.held);
+					// Without a body, as in `parseFunctionBody` (#1315).
+					this.#releaseErrors(
+						!node.body && this.#hasNoImplementation(node.params)
+							? this.#withoutUncheckedDefaults(held.held, node.params, node.returnType)
+							: held.held,
+					);
 				}
 				// Written with an escape, TS1260 is a syntax error first (see
 				// `parseClassElement`).

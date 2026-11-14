@@ -10827,6 +10827,101 @@ describe('a `<` in a file without JSX', () => {
 		}
 	});
 
+	// TypeScript reports TS7060 when its checker checks the arrow function, and
+	// it doesn't check a parameter's default that is TS2371, unless it needs the
+	// parameter's type: for an overload, to compare it with the implementation,
+	// and for a rest parameter (#1315). With `strict`, as the issue ran tsc: it
+	// checks a binding pattern's default with a type annotation only then.
+	it('reports TS7060 in a parameter default only where tsc checks the default', () => {
+		const codes = [7060, 2371, 2369, 2300, 1354, 1048];
+		for (const filename of ['a.mts', 'a.cts']) {
+			for (const source of [
+				'type F = (q = <T>(y: T) => y) => void;',
+				'let x: (q = <T>(y: T) => y) => void;',
+				'type C = new (q = <T>(y: T) => y) => object;',
+				'interface I { m(q = <T>(y: T) => y): void }',
+				'type L = { (q = <T>(y: T) => y): void; new (r = <U>(z: U) => z): object };',
+				'declare function f(q = <T>(y: T) => y): void;',
+				'declare class D { m(q = <T>(y: T) => y): void; constructor(public r = <U>(z: U) => z) }',
+				'abstract class A { abstract m(q = <T>(y: T) => y): void }',
+				'abstract class A { abstract m(q = <T>(y: T) => y, public a): void }',
+				'const a = async <U,>(b = (x as (q = <T>(y: T) => y) => void), 1);',
+				'type F = (q = (r = <T>(y: T) => y) => r, s: (t = <U>(z: U) => z) => void) => void;',
+				'declare function f(q = <T>(y: T) => y): readonly string;',
+				// Checked: a function with a body, an overload, a rest parameter, a
+				// binding pattern, and a parameter whose type a `typeof` needs.
+				'const g = <T>(y: T) => y;',
+				'const h = (q = <T>(y = <U>(z: U) => z) => y) => q;',
+				'function f(q = <T>(y: T) => y, a, a): readonly string { return q; }',
+				'function k(q = <T>(y: T) => y): void; function k() {}',
+				'class E { m(q = <T>(y: T) => y): void; m() {} }',
+				'class B { constructor(public q = <T>(y: T) => y); constructor() {} }',
+				'type F = (...q = <T>(y: T) => y) => void;',
+				'type F = ({ x } = <T>(y: T) => y) => void;',
+				'abstract class A { abstract m([x] = <T>(y: T) => y): void }',
+				'type G = (q = <T>(y: T) => y, r?: typeof q) => void;',
+				'declare function f(q = <T>(y: T) => y): typeof q.x;',
+				'type F = (q = <T>(x: T) => x, r: (s: number) => typeof q) => void;',
+				'type F = ({ x }: {} = <T>(y: T) => y) => void;',
+				'type F = (q = <T>(x: T) => x) => q is any;',
+				'type F = (q = <T>(x: T) => x, r: <U extends typeof q>(q: number) => U) => void;',
+				'type F = (q = <T>(x: T) => x, r: { [k: string]: typeof q }) => void;',
+				// Not checked: a type annotation gives the parameter's type, and a
+				// `typeof` in another default or of another parameter doesn't count.
+				'type F = (q: number = <T>(x: T) => x, r?: typeof q) => void;',
+				'type F = (...q: any[] = <T>(y: T) => y) => void;',
+				'declare function f(q = <T>(y: T) => y, r = null as typeof q): void;',
+				'type F = (q = <T>(x: T) => x, r: (q: number) => typeof q) => void;',
+				'declare function f(q = <T>(x: T) => x): asserts q;',
+				'type F = (q = <T>(x: T) => x, r: (x: unknown) => q is number) => void;',
+				// An index signature's parameter is the name `typeof` reads in it, and
+				// a signature's own parameters aren't in scope in its type parameters.
+				'type F = (q = <T>(x: T) => x, r: { [q: string]: typeof q }) => void;',
+				'type F = <U extends typeof q>(q = <T>(x: T) => x) => void;',
+				'declare function f<U = typeof q>(q = <T>(x: T) => x): void;',
+			]) {
+				const label = `${filename}: ${source}`;
+				const path = `/${filename}`;
+				const host = ts.createCompilerHost({});
+				const get_source_file = host.getSourceFile;
+				host.getSourceFile = (name, version) =>
+					name === path
+						? ts.createSourceFile(name, source, version)
+						: get_source_file(name, version);
+				const program = ts.createProgram(
+					[path],
+					{ noLib: true, strict: true, types: [], module: ts.ModuleKind.NodeNext },
+					host,
+				);
+				const file = /** @type {ts.SourceFile} */ (program.getSourceFile(path));
+				const expected = ts
+					.sortAndDeduplicateDiagnostics([...program.getSemanticDiagnostics(file)])
+					.filter((diagnostic) => codes.includes(diagnostic.code))
+					.map((diagnostic) => [`TS${diagnostic.code}`, diagnostic.start]);
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, filename, { collect: true, errors, comments: [] });
+				expect(
+					errors.map((error) => [error.code, error.pos]),
+					label,
+				).toEqual(expected);
+				expect(() => parseModule(source, filename), label).toThrow(
+					expect.objectContaining({ code: expected[0][0], pos: expected[0][1] }),
+				);
+			}
+			// A syntax error in the return type, which tsc reports alone, keeps none.
+			const source = 'declare function f(q = <T>(y: T) => y): ;';
+			const thrown = expect.objectContaining({ code: 'TS1012', pos: source.indexOf(';') });
+			expect(() => parseModule(source, filename), source).toThrow(thrown);
+			/** @type {CompileError[]} */
+			const errors = [];
+			expect(() => parseModule(source, filename, { collect: true, errors }), source).toThrow(
+				thrown,
+			);
+			expect(errors, source).toEqual([]);
+		}
+	});
+
 	it('records TS7059 once for each type assertion when collecting in a .mts or .cts file', () => {
 		for (const filename of ['a.mts', 'a.cts']) {
 			/** @type {CompileError[]} */
