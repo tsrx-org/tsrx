@@ -2774,6 +2774,26 @@ function IndexedFragmentEmptyApp() @{
 	</ul>
 }
 
+function OwnFragmentRow(props: { label: string }) @{
+	<li class="own">{props.label}</li>
+}
+
+// A module can't import Vue's `Fragment` under its own name beside its own
+// `Fragment`, so here (aliased) the rows are unkeyed fragments.
+function OwnFragmentApp() @{
+	const Fragment = OwnFragmentRow;
+	<ul class="own-fragment">
+		@for (const item of fragment_rows.value; key item.id) {
+			<>
+				<li>{item.id}</li>
+				<Fragment label={'own ' + item.id} />
+			</>
+		} @empty {
+			<p>{'none'}</p>
+		}
+	</ul>
+}
+
 describe('tsrx-vue keyed fragment rows (#179)', () => {
 	beforeEach(() => {
 		fragment_rows.value = [{ id: 1 }, { id: 2 }, { id: 3 }];
@@ -2808,6 +2828,16 @@ describe('tsrx-vue keyed fragment rows (#179)', () => {
 		fragment_rows.value = [{ id: 2 }, { id: 1 }];
 		await flush();
 		expect(texts('.keyed-fragment-setup li')).toEqual(['item 2', '2', 'item 1', '1']);
+	});
+
+	it('renders fragment rows in a component that declares its own Fragment', async () => {
+		fragment_rows.value = [{ id: 1 }, { id: 2 }];
+		await render(OwnFragmentApp);
+		expect(texts('.own-fragment li')).toEqual(['1', 'own 1', '2', 'own 2']);
+
+		fragment_rows.value = [];
+		await flush();
+		expect(texts('.own-fragment p')).toEqual(['none']);
 	});
 
 	it('renders a fragment body keyed by the index in a loop with @empty', async () => {

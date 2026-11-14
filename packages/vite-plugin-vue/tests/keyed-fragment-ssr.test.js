@@ -51,6 +51,22 @@ export function App({ items }: { items: { id: number }[] }) @{
 		</ul>
 	</Fragment>
 }`,
+
+	'own-fragment.tsrx': `function Fragment(props: { label: string }) @{
+	<li class="own">{props.label}</li>
+}
+export function App({ items }: { items: { id: number }[] }) @{
+	<ul>
+		@for (const item of items; key item.id) {
+			<>
+				<li>{item.id}</li>
+				<Fragment label={'own ' + item.id} />
+			</>
+		} @empty {
+			<p>{'none'}</p>
+		}
+	</ul>
+}`,
 };
 
 /** @type {string} */
@@ -98,6 +114,12 @@ describe('[vue] keyed fragment rows on the server (#179)', () => {
 	it('renders a keyed fragment body after setup statements', async () => {
 		expect(await render('setup.tsrx', [{ id: 1 }, { id: 2 }])).toBe(
 			'<ul><li>item 1</li><li>1</li><li>item 2</li><li>2</li></ul>',
+		);
+	});
+
+	it('renders in a module that declares its own Fragment', async () => {
+		expect(await render('own-fragment.tsrx', [{ id: 1 }, { id: 2 }])).toBe(
+			'<ul><li>1</li><li class="own">own 1</li><li>2</li><li class="own">own 2</li></ul>',
 		);
 	});
 

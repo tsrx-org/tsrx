@@ -2649,65 +2649,97 @@ function imported_name(specifier) {
 }
 
 /**
- * The name a keyed row's `<Fragment>` takes. vue-jsx-vapor's server build
- * passes a fragment's children as an array only when its tag is spelled
- * `Fragment`; under any other name it passes them as slots, which Vue's
- * `Fragment` doesn't render. So the row uses `Fragment` itself, unless the
- * module names something else `Fragment` (anything but a value import of it
- * from `vue`), and then a generated name the source doesn't use.
+ * Whether the module declares a binding named `Fragment`, at any depth, other
+ * than a value import of `Fragment` from `vue`.
  *
  * @param {AST.Program} program
- * @param {string} source
- * @returns {string}
+ * @returns {boolean}
  */
-function fragment_local_name(program, source) {
-	const imports_vue_fragment = program.body.some(
-		(statement) =>
-			statement.type === 'ImportDeclaration' &&
-			statement.source.value === 'vue' &&
-			statement.importKind !== 'type' &&
-			statement.specifiers.some(
-				(specifier) =>
-					specifier.type === 'ImportSpecifier' &&
-					specifier.importKind !== 'type' &&
-					imported_name(specifier) === 'Fragment' &&
-					specifier.local.name === 'Fragment',
-			),
-	);
-	if (imports_vue_fragment || !sourceMentionsIdentifier(source, 'Fragment')) {
-		return 'Fragment';
-	}
-	let local = FRAGMENT_INTERNAL_NAME;
-	for (let count = 1; sourceMentionsIdentifier(source, local); count++) {
-		local = `${FRAGMENT_INTERNAL_NAME}_${count}`;
-	}
-	return local;
-}
-
-/**
- * Renames the `<__Fragment>` tags the shared lowering generated (they have no
- * source location) to `local`.
- *
- * @param {AST.Program} program
- * @param {string} local
- * @returns {void}
- */
-function rename_generated_fragments(program, local) {
+function declares_other_fragment(program) {
+	let found = false;
+	/** @param {AST.Node | null | undefined} pattern */
+	const check = (pattern) => {
+		/** @type {Set<string>} */
+		const names = new Set();
+		collect_pattern_names(pattern ?? null, names);
+		if (names.has('Fragment')) found = true;
+	};
 	walk(/** @type {AST.Node} */ (program), null, {
-		JSXElement(node, { next }) {
-			const element = /** @type {ESTreeJSX.JSXElement} */ (/** @type {unknown} */ (node));
-			for (const name of [element.openingElement.name, element.closingElement?.name]) {
-				if (
-					name?.type === 'JSXIdentifier' &&
-					name.name === FRAGMENT_INTERNAL_NAME &&
-					!has_location(name)
-				) {
-					name.name = local;
+		_(node, { next }) {
+			if (found) return;
+			switch (node.type) {
+				case 'ImportDeclaration':
+					for (const specifier of node.specifiers) {
+						if (specifier.local.name !== 'Fragment') continue;
+						const vue_value =
+							/** @type {AST.Literal} */ (node.source).value === 'vue' &&
+							node.importKind !== 'type' &&
+							specifier.type === 'ImportSpecifier' &&
+							specifier.importKind !== 'type' &&
+							imported_name(specifier) === 'Fragment';
+						if (!vue_value) found = true;
+					}
+					return;
+				case 'VariableDeclarator':
+					check(node.id);
+					break;
+				case 'FunctionDeclaration':
+				case 'FunctionExpression':
+				case 'ArrowFunctionExpression':
+					if (node.type !== 'ArrowFunctionExpression') check(node.id);
+					for (const param of node.params) check(param);
+					break;
+				case 'ClassDeclaration':
+				case 'ClassExpression':
+					check(node.id);
+					break;
+				case 'CatchClause':
+					check(node.param);
+					break;
+				default: {
+					const declared = /** @type {{ id?: AST.Node }} */ (/** @type {unknown} */ (node)).id;
+					if (/^TS(TypeAlias|Interface|Enum|Module)Declaration$/.test(node.type)) check(declared);
 				}
 			}
 			next();
 		},
 	});
+	return found;
+}
+
+/**
+ * Rewrites the `<__Fragment key>` rows the shared lowering generated (their
+ * names have no source location). vue-jsx-vapor's server build passes a
+ * fragment's children as an array only when its tag is spelled `Fragment`;
+ * under any other name it passes them as slots, which Vue's `Fragment`
+ * doesn't render. So a row becomes `<Fragment key>`, with `Fragment` imported
+ * from `vue`, unless the module declares something else by that name, and then
+ * an unkeyed `<>` fragment: a loop that doesn't render through `VaporFor`
+ * recreates its rows when they move (#178), so the key keeps no row state.
+ *
+ * @param {AST.Program} program
+ * @param {boolean} keyed
+ * @returns {void}
+ */
+function rewrite_generated_fragments(program, keyed) {
+	/** @param {ESTreeJSX.JSXElement['openingElement']['name'] | undefined} name */
+	const is_generated = (name) =>
+		name?.type === 'JSXIdentifier' && name.name === FRAGMENT_INTERNAL_NAME && !has_location(name);
+	const rewritten = walk(/** @type {AST.Node} */ (program), null, {
+		JSXElement(node, { next }) {
+			const element = /** @type {ESTreeJSX.JSXElement} */ (/** @type {unknown} */ (node));
+			if (!is_generated(element.openingElement.name)) return next();
+			const walked = /** @type {ESTreeJSX.JSXElement} */ (next() ?? element);
+			if (!keyed) {
+				return /** @type {AST.Node} */ (/** @type {unknown} */ (b.jsx_fragment(walked.children)));
+			}
+			for (const name of [walked.openingElement.name, walked.closingElement?.name]) {
+				if (is_generated(name)) /** @type {ESTreeJSX.JSXIdentifier} */ (name).name = 'Fragment';
+			}
+			return walked;
+		},
+	});
+	program.body = /** @type {AST.Program} */ (rewritten).body;
 }
 
 /**
@@ -2936,11 +2968,15 @@ function inject_vue_imports(program, transform_context) {
 	// through `VaporFor`, is a `<Fragment key>`, which vue-jsx-vapor lowers to a
 	// keyed fragment.
 	if (transform_context.needs_fragment) {
-		const local = fragment_local_name(program, transform_context.source);
-		if (local !== FRAGMENT_INTERNAL_NAME) {
-			rename_generated_fragments(program, local);
+		if (
+			!sourceMentionsIdentifier(transform_context.source, 'Fragment') ||
+			!declares_other_fragment(program)
+		) {
+			rewrite_generated_fragments(program, true);
+			ensure_named_import(program, 'vue', 'Fragment');
+		} else {
+			rewrite_generated_fragments(program, false);
 		}
-		ensure_named_import(program, 'vue', 'Fragment', local);
 	}
 
 	if (transform_context.needs_error_boundary) {

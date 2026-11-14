@@ -1769,12 +1769,19 @@ export function Card(${params}: any) @{
 			expect(code, module_scope).not.toContain('Fragment as');
 		}
 
-		// A module that names something else `Fragment` keeps it, and the row takes
-		// a generated name the source doesn't use.
-		const { code, errors } = compile_with('function Fragment() @{ <b /> }\nconst __Fragment = 1;');
-		expect(errors).toEqual([]);
-		expect(code).toContain("import { Fragment as __Fragment_1 } from 'vue';");
-		expect(code).toContain('<__Fragment_1 key={item.id}><li>{item.id}</li></__Fragment_1>');
+		// A module that declares something else by that name, at any depth, keeps
+		// it, and the row is an unkeyed fragment, which renders on the server too.
+		for (const module_scope of [
+			'function Fragment() @{ <b /> }',
+			"import type { Fragment } from 'vue';",
+			"import { Fragment } from 'vue';\nfunction Other() { const Fragment = 'section'; return Fragment; }",
+		]) {
+			const { code, errors } = compile_with(module_scope);
+			expect(errors, module_scope).toEqual([]);
+			expect(code, module_scope).not.toContain('<Fragment key=');
+			expect(code, module_scope).toContain('return <><li>{item.id}</li></>;');
+			expect(code, module_scope).not.toContain('__Fragment');
+		}
 	});
 
 	it('reads the index as a number in getKey and through its ref in the slot when a default reads it (#1312)', () => {
