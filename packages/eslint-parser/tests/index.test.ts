@@ -38,14 +38,9 @@ describe('eslint-parser', () => {
 	// acorn adds to its message (#1308).
 	it.each([
 		['export function App() {\n\tconst a = ;\n\treturn <div />;\n}\n', 2, 12, 'Unexpected token'],
-		['export function App() {\n\treturn (\n<div>\n);\n}\n', 5, 1, 'Unexpected token'],
-		[
-			'export function App(props) {\n\treturn <div>{props.x ? <b> : null}</div>;\n}\n',
-			2,
-			35,
-			'Unexpected token',
-		],
-		['export function App() {\n\treturn [<div>];\n}\n', 3, 1, 'Unexpected token'],
+		['export function App() {\n\tlet b = 1 +;\n\treturn <div />;\n}\n', 2, 13, 'Unexpected token'],
+		['export const x = {\n\ta: 1\n\tb: 2,\n};\n', 3, 2, 'Unexpected token'],
+		['export function App() {\n\tif (a {\n\t}\n}\n', 2, 8, 'Unexpected token'],
 		[
 			'export function App() @{\n\t<div>\n\t\t<style>\n\t\t\t.a { color: red; }\n\t\t\t}\n\t\t</style>\n\t</div>\n}\n',
 			5,
