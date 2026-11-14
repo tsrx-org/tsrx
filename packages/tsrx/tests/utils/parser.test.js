@@ -9845,80 +9845,6 @@ describe('JSX spread children', () => {
 	});
 });
 
-// A directive's clause written where no directive takes it, after text, an
-// element or an expression container, or with no directive before it, is
-// TSRX1012 at its keyword in every mode (#1330).
-describe('a clause that no directive takes', () => {
-	/** @type {Array<[children: string, keyword: string]>} */
-	const cases = [
-		['@if (ok) {<i />} note\n\t\t@else {<b />}', '@else'],
-		['@if (ok) {<i />}\n\t\tnote @else {<b />}', '@else'],
-		['@if (ok) {<i />} note @else if (ok) {<b />}', '@else'],
-		['@if (ok) {<i />} {x}\n\t\t@else {<b />}', '@else'],
-		['@if (ok) {<i />} <em />\n\t\t@else {<b />}', '@else'],
-		['@if (ok) {<i />}/* c */// note\n\t\t@else {<b />}', '@else'],
-		['@for (const y of xs) {<i />} note\n\t\t@empty {<b />}', '@empty'],
-		['@try {<i />} @catch (e) {<b />} note\n\t\t@pending {<u />}', '@pending'],
-		['@try {<i />} @pending {<u />} note\n\t\t@catch (e) {<b />}', '@catch'],
-		['@try {<i />} @catch (e) {<b />} @pending {<u />}', '@pending'],
-		['@switch (x) {\n\t\t\t@case 1: {<i />}\n\t\t} note\n\t\t@case 2: {<b />}', '@case 2'],
-		['@switch (x) {\n\t\t\t@case 1: {<i />}\n\t\t} note\n\t\t@default: {<b />}', '@default'],
-		['@else {<b />}', '@else'],
-		['<i />@else {<b />}', '@else'],
-		['note @catch {<b />}', '@catch'],
-	];
-	/** @param {string} children */
-	const source_of = (children) =>
-		`export function App({ ok, x, xs }: any) @{\n\t<p>\n\t\t${children}\n\t</p>\n}`;
-
-	it('throws TSRX1012 at the keyword in a strict parse', () => {
-		for (const [children, at] of cases) {
-			const source = source_of(children);
-			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
-				expect.objectContaining({
-					code: TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE.code,
-					pos: source.indexOf(at),
-				}),
-			);
-		}
-	});
-
-	it.each([{ collect: true }, { loose: true }])(
-		'records it once at the keyword (%o)',
-		(options) => {
-			for (const [children, at] of cases) {
-				const source = source_of(children);
-				/** @type {CompileError[]} */
-				const errors = [];
-				parseModule(source, 'App.tsrx', { ...options, errors, comments: [] });
-				const keyword = at.split(' ')[0];
-				expect(
-					errors.map((error) => [error.code, source.slice(error.pos, error.end)]),
-					source,
-				).toEqual([[TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE.code, keyword]]);
-			}
-		},
-	);
-
-	it('leaves a clause right after its block, an escaped one, and other text alone', () => {
-		for (const children of [
-			'@if (ok) {<i />}\n\t\t@else {<b />}',
-			'@if (ok) {<i />} /* c */ @else if (x) {<b />} // c\n\t\t@else {<u />}',
-			'@for (const y of xs) {<i />} @empty {<b />}',
-			'@try {<i />} @pending {<u />} @catch (e) {<b />}',
-			"&#64;else {'literal'}",
-			'mail me@else.dev, or @else, @catch me, @casework, @default',
-		]) {
-			const source = source_of(children);
-			/** @type {CompileError[]} */
-			const errors = [];
-			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
-			parseModule(source, 'App.tsrx', { collect: true, errors, comments: [] });
-			expect(errors, source).toEqual([]);
-		}
-	});
-});
-
 // A `<` in markup child position only opens a tag when the next character can
 // begin one. Anything else — a digit, an operator, an emoji, whitespace — is a
 // literal `<` in the text, the same rule the HTML tokenizer uses. Every case
@@ -11122,6 +11048,87 @@ describe('a redeclared name (#948, #952)', () => {
 		);
 		for (const [source, errors] of cases) {
 			for (const [, at] of errors) expect(source.slice(at), source).toMatch(/^(?:a|\\u0061)/);
+		}
+	});
+});
+
+// A directive's clause written where no directive takes it, after text, an
+// element or an expression container, or with no directive before it, is
+// TSRX1012 at its keyword in every mode (#1330).
+describe('a clause that no directive takes', () => {
+	/** @type {Array<[children: string, keyword: string]>} */
+	const cases = [
+		['@if (ok) {<i />} note\n\t\t@else {<b />}', '@else'],
+		['@if (ok) {<i />}\n\t\tnote @else {<b />}', '@else'],
+		['@if (ok) {<i />} note @else if (ok) {<b />}', '@else'],
+		['@if (ok) {<i />} {x}\n\t\t@else {<b />}', '@else'],
+		['@if (ok) {<i />} <em />\n\t\t@else {<b />}', '@else'],
+		['@if (ok) {<i />}/* c */// note\n\t\t@else {<b />}', '@else'],
+		['@for (const y of xs) {<i />} note\n\t\t@empty {<b />}', '@empty'],
+		['@try {<i />} @catch (e) {<b />} note\n\t\t@pending {<u />}', '@pending'],
+		['@try {<i />} @pending {<u />} note\n\t\t@catch (e) {<b />}', '@catch'],
+		['@try {<i />} @catch (e) {<b />} @pending {<u />}', '@pending'],
+		['@switch (x) {\n\t\t\t@case 1: {<i />}\n\t\t} note\n\t\t@case 2: {<b />}', '@case 2'],
+		['@switch (x) {\n\t\t\t@case 1: {<i />}\n\t\t} note\n\t\t@default: {<b />}', '@default'],
+		['@else {<b />}', '@else'],
+		['<i />@else {<b />}', '@else'],
+		['note @catch {<b />}', '@catch'],
+		// A comment in a `@case` label, even one with a `{` in it
+		['note @case value /* { */: {<b />}', '@case'],
+	];
+	/** @param {string} children */
+	const source_of = (children) =>
+		`export function App({ ok, x, xs }: any) @{\n\t<p>\n\t\t${children}\n\t</p>\n}`;
+
+	it('throws TSRX1012 at the keyword in a strict parse', () => {
+		for (const [children, at] of cases) {
+			const source = source_of(children);
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({
+					code: TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE.code,
+					pos: source.indexOf(at),
+				}),
+			);
+		}
+	});
+
+	it.each([{ collect: true }, { loose: true }])(
+		'records it once at the keyword (%o)',
+		(options) => {
+			for (const [children, at] of cases) {
+				const source = source_of(children);
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, 'App.tsrx', { ...options, errors, comments: [] });
+				const keyword = at.split(' ')[0];
+				expect(
+					errors.map((error) => [error.code, source.slice(error.pos, error.end)]),
+					source,
+				).toEqual([[TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE.code, keyword]]);
+			}
+		},
+	);
+
+	it('leaves a clause right after its block, an escaped one, and other text alone', () => {
+		for (const children of [
+			'@if (ok) {<i />}\n\t\t@else {<b />}',
+			'@if (ok) {<i />} /* c */ @else if (x) {<b />} // c\n\t\t@else {<u />}',
+			'@for (const y of xs) {<i />} @empty {<b />}',
+			'@try {<i />} @pending {<u />} @catch (e) {<b />}',
+			"&#64;else {'literal'}",
+			'mail me@else.dev, or @else, @catch me, @casework, @default',
+			// No `:` on the label's line, past comments
+			'@case value /* note: prose */ text',
+			'@case\n\t\tvalue: description',
+			// A keyword that goes on with a letter that isn't ASCII
+			'@caseé: prose, @else ifé prose, @elseé {x}',
+		]) {
+			const source = source_of(children);
+			/** @type {CompileError[]} */
+			const errors = [];
+			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
+			parseModule(source, 'App.tsrx', { collect: true, errors, comments: [] });
+			expect(errors, source).toEqual([]);
 		}
 	});
 });

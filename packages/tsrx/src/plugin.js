@@ -27,6 +27,22 @@ const regex_space_and_comments = /(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\
 /** A character acorn's `skipSpace` skips as whitespace or a line terminator */
 const regex_whitespace_character = /\s/;
 
+/** An identifier character at the start, ASCII or not */
+const regex_identifier_part = /^[\p{ID_Continue}$\u200C\u200D]/u;
+
+/**
+ * Where each directive clause belongs, as TSRX1012 says it.
+ * @type {Record<string, string>}
+ */
+const CLAUSE_PLACEMENT = {
+	else: 'right after an `@if` block',
+	empty: 'right after an `@for` block',
+	pending: 'right after an `@try` block',
+	catch: 'right after an `@try` or `@pending` block',
+	case: 'directly inside an `@switch` body',
+	default: 'directly inside an `@switch` body',
+};
+
 /**
  * A comment between template children, as `#parseTemplateRawText` reads it.
  * @typedef {{ type: 'Line' | 'Block', value: string, start: number, end: number }} TemplateTextComment
@@ -1309,19 +1325,6 @@ function skip_whitespace_from(input, i) {
 }
 
 /**
- * Where each directive clause belongs, as TSRX1012 says it.
- * @type {Record<string, string>}
- */
-const DIRECTIVE_OF_CLAUSE = {
-	else: 'right after an `@if` block',
-	empty: 'right after an `@for` block',
-	pending: 'right after an `@try` block',
-	catch: 'right after an `@try` or `@pending` block',
-	case: 'inside an `@switch` body',
-	default: 'inside an `@switch` body',
-};
-
-/**
  * Skip whitespace and comments starting at `i`. Returns -1 when a block
  * comment is left open at the end of the input.
  * @param {string} input
@@ -2380,29 +2383,54 @@ export function TSRXPlugin(config) {
 			 * @param {number} index
 			 */
 			#reportDetachedClause(index) {
-				const word = /^(else|empty|pending|catch|case|default)(?![\w$])/.exec(
-					this.input.slice(index + 1, index + 9),
-				)?.[1];
-				if (!word) return;
-				const keyword_end = index + 1 + word.length;
-				const next = skip_space_and_comments_from(this.input, keyword_end);
-				if (next === -1) return;
-				const rest = this.input.slice(next);
-				const detached =
-					word === 'else'
-						? rest.startsWith('{') || /^if(?![\w$])/.test(rest)
-						: word === 'catch'
-							? rest.startsWith('{') || rest.startsWith('(')
-							: word === 'case'
-								? /^[^\n\r{}<]*:/.test(rest)
+				const word = /^(?:else|empty|pending|catch|case|default)/.exec(
+					this.input.slice(index + 1, index + 8),
+				)?.[0];
+				const keyword_end = index + 1 + (word?.length ?? 0);
+				// A keyword ends where no identifier character, ASCII or not, follows.
+				/** @param {number} at */
+				const word_ends_at = (at) => !regex_identifier_part.test(this.input.slice(at, at + 2));
+				if (!word || !word_ends_at(keyword_end)) return;
+				let detached;
+				if (word === 'case') {
+					detached = this.#caseLabelColonAhead(keyword_end);
+				} else {
+					const next = skip_space_and_comments_from(this.input, keyword_end);
+					if (next === -1) return;
+					const ch = this.input[next];
+					detached =
+						word === 'else'
+							? ch === '{' || (this.input.startsWith('if', next) && word_ends_at(next + 2))
+							: word === 'catch'
+								? ch === '{' || ch === '('
 								: word === 'default'
-									? rest.startsWith(':')
-									: rest.startsWith('{');
+									? ch === ':'
+									: ch === '{';
+				}
 				if (!detached) return;
-				const error = TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE(word, DIRECTIVE_OF_CLAUSE[word]);
+				const error = TSRX_ERRORS.DETACHED_DIRECTIVE_CLAUSE(word, CLAUSE_PLACEMENT[word]);
 				// Once, though the text may be read again.
 				if (this.#errors?.some((other) => other.pos === index && other.code === error.code)) return;
 				this.#report_recoverable_error_range(index, keyword_end, error);
+			}
+
+			/**
+			 * Whether a `:` comes after `index` on the same line, past block comments,
+			 * before a `{`, `}` or `<`: the end of an `@case …:` label.
+			 * @param {number} index
+			 */
+			#caseLabelColonAhead(index) {
+				for (let i = index; i < this.input.length; i++) {
+					const ch = this.input[i];
+					if (ch === ':') return true;
+					if (ch === '{' || ch === '}' || ch === '<' || this.#isNewlineCharCode(i)) return false;
+					if (this.input.startsWith('/*', i)) {
+						const end = this.input.indexOf('*/', i + 2);
+						if (end === -1) return false;
+						i = end + 1;
+					}
+				}
+				return false;
 			}
 
 			/**
