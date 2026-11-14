@@ -34,14 +34,6 @@ describe('eslint-parser', () => {
 		expect([thrown.lineNumber, thrown.column]).toEqual([2, 9]);
 	});
 
-	it('reports a clause that no directive takes as a parse error (#1330)', () => {
-		expect(
-			lint('export function App({ ok }) @{\n\t<p>@if (ok) {<i />} note @else {<b />}</p>\n}\n'),
-		).toEqual([
-			'2: null: Parsing error: `@else` must come right after an `@if` block. To write it as text, write `&#64;else`.',
-		]);
-	});
-
 	it('keeps forgotten statement-container hints available to ESLint rules', () => {
 		const result = parseForESLint(
 			`export function UserBadge({ user }: UserBadgeProps): JSX.Element {
@@ -367,6 +359,14 @@ export function A({ items }) @{
 				end: { line: 3, column: 48 },
 			});
 		}
+	});
+
+	it('reports a clause that no directive takes as a parse error (#1330)', () => {
+		expect(
+			lint('export function App({ ok }) @{\n\t<p>@if (ok) {<i />} note @else {<b />}</p>\n}\n'),
+		).toEqual([
+			'2: null: Parsing error: `@else` must come right after an `@if` block. To write it as text, write `&#64;else`.',
+		]);
 	});
 
 	it('reports a plain try with only a pending block as a parse error', () => {
