@@ -733,57 +733,6 @@ export async function App() @{
 		});
 	});
 
-	describe(`[${name}] imports and re-exports in the editor code (#1029)`, () => {
-		// TypeScript sorts each block of imports and re-exports that no blank line
-		// splits, so the editor code has a blank line between them only where the
-		// source has one, and writes a re-export as it is in the source.
-		it.each([
-			[
-				'with no blank line',
-				"import { label } from './label';\nexport * from './lib';\nexport { label as other } from './label';\n\nexport const x = label;\n",
-				"import { label } from './label';\nexport * from './lib';\nexport { label as other } from './label';\n\nexport const x = label;",
-			],
-			[
-				'with a blank line',
-				"import { label } from './label';\n\nexport * from './lib';\nexport type { T } from './t';\nexport * as ns from './ns';\nexport type * from './types';\nexport const x = label;\n",
-				"import { label } from './label';\n\nexport * from './lib';\nexport type { T } from './t';\nexport * as ns from './ns';\nexport type * from './types';\n\nexport const x = label;",
-			],
-			[
-				'with a blank line between two of one kind',
-				"export * from './z';\n\nexport * from './a';\nexport const x = 1;\n",
-				"export * from './z';\n\nexport * from './a';\n\nexport const x = 1;",
-			],
-			[
-				'on one line',
-				"export * from './z'; export { a } from './a';\nexport const x = 1;\n",
-				"export * from './z'; export { a } from './a';\n\nexport const x = 1;",
-			],
-			[
-				'with a comment over two lines',
-				"export * from './z'; /* a\n b */\nexport { a } from './a';\nexport const x = 1;\n",
-				"export * from './z';\nexport { a } from './a';\n\nexport const x = 1;",
-			],
-		])('prints them %s between them as written', (_label, source, expected) => {
-			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-			expect(result.errors).toEqual([]);
-			expect(result.code).toContain(expected);
-		});
-
-		it('maps the names of a re-export written as it is', () => {
-			const source = "export { label as other } from './label';\nexport const x = 1;\n";
-			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-			for (const name of ['label', 'other']) {
-				const start = source.indexOf(name);
-				const mapping = result.mappings.find(
-					(mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === name.length,
-				);
-				assert(mapping, name);
-				const generated = mapping.generatedOffsets[0];
-				expect(result.code.slice(generated, generated + mapping.generatedLengths[0])).toBe(name);
-			}
-		});
-	});
-
 	describe(`[${name}] text with a comment and characters JSX text can't hold`, () => {
 		// A comment between children prints as `{}`, and text writes a `>` as
 		// `&gt;`, so the output is shorter or longer than the source it spans. The
@@ -2365,6 +2314,57 @@ function C() @{
 			expect_mapping(source_load_offset, generated_load_offset, 'load'.length);
 			expect_mapping(source_get_load_offset, generated_get_load_offset, 'getLoad'.length);
 			expect_mapping(source_server_offset, generated_server_offset, 'server'.length);
+		});
+	});
+
+	describe(`[${name}] imports and re-exports in the editor code (#1029)`, () => {
+		// TypeScript sorts each block of imports and re-exports that no blank line
+		// splits, so the editor code has a blank line between them only where the
+		// source has one, and writes a re-export as it is in the source.
+		it.each([
+			[
+				'with no blank line',
+				"import { label } from './label';\nexport * from './lib';\nexport { label as other } from './label';\n\nexport const x = label;\n",
+				"import { label } from './label';\nexport * from './lib';\nexport { label as other } from './label';\n\nexport const x = label;",
+			],
+			[
+				'with a blank line',
+				"import { label } from './label';\n\nexport * from './lib';\nexport type { T } from './t';\nexport * as ns from './ns';\nexport type * from './types';\nexport const x = label;\n",
+				"import { label } from './label';\n\nexport * from './lib';\nexport type { T } from './t';\nexport * as ns from './ns';\nexport type * from './types';\n\nexport const x = label;",
+			],
+			[
+				'with a blank line between two of one kind',
+				"export * from './z';\n\nexport * from './a';\nexport const x = 1;\n",
+				"export * from './z';\n\nexport * from './a';\n\nexport const x = 1;",
+			],
+			[
+				'on one line',
+				"export * from './z'; export { a } from './a';\nexport const x = 1;\n",
+				"export * from './z'; export { a } from './a';\n\nexport const x = 1;",
+			],
+			[
+				'with a comment over two lines',
+				"export * from './z'; /* a\n b */\nexport { a } from './a';\nexport const x = 1;\n",
+				"export * from './z';\nexport { a } from './a';\n\nexport const x = 1;",
+			],
+		])('prints them %s between them as written', (_label, source, expected) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain(expected);
+		});
+
+		it('maps the names of a re-export written as it is', () => {
+			const source = "export { label as other } from './label';\nexport const x = 1;\n";
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			for (const name of ['label', 'other']) {
+				const start = source.indexOf(name);
+				const mapping = result.mappings.find(
+					(mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === name.length,
+				);
+				assert(mapping, name);
+				const generated = mapping.generatedOffsets[0];
+				expect(result.code.slice(generated, generated + mapping.generatedLengths[0])).toBe(name);
+			}
 		});
 	});
 
