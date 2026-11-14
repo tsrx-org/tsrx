@@ -10741,6 +10741,7 @@ describe('a `<` in a file without JSX', () => {
 				'type F = ({ x }: {} = <T>(y: T) => y) => void;',
 				'type F = (q = <T>(x: T) => x) => q is any;',
 				'type F = (q = <T>(x: T) => x, r: <U extends typeof q>(q: number) => U) => void;',
+				'type F = (q = <T>(x: T) => x, r: { [k: string]: typeof q }) => void;',
 				// Not checked: a type annotation gives the parameter's type, and a
 				// `typeof` in another default or of another parameter doesn't count.
 				'type F = (q: number = <T>(x: T) => x, r?: typeof q) => void;',
@@ -10749,6 +10750,11 @@ describe('a `<` in a file without JSX', () => {
 				'type F = (q = <T>(x: T) => x, r: (q: number) => typeof q) => void;',
 				'declare function f(q = <T>(x: T) => x): asserts q;',
 				'type F = (q = <T>(x: T) => x, r: (x: unknown) => q is number) => void;',
+				// An index signature's parameter is the name `typeof` reads in it, and
+				// a signature's own parameters aren't in scope in its type parameters.
+				'type F = (q = <T>(x: T) => x, r: { [q: string]: typeof q }) => void;',
+				'type F = <U extends typeof q>(q = <T>(x: T) => x) => void;',
+				'declare function f<U = typeof q>(q = <T>(x: T) => x): void;',
 			]) {
 				const label = `${filename}: ${source}`;
 				const path = `/${filename}`;
