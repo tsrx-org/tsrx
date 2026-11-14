@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { synchronizeIntellijPluginVersions } from '../../../scripts/sync-intellij-plugin-version.js';
 import {
+	installPublishedPackages,
 	readLanguageServerVersion,
 	validateInstalledLanguageServer,
 	waitForPublishedLanguageServer,
@@ -287,6 +288,60 @@ describe('@tsrx/intellij-plugin release contract', () => {
 				logger: { log() {} },
 			}),
 		).rejects.toThrow(/npm does not serve @tsrx\/language-server@1\.2\.3:\nnpm error code E404/);
+		expect(attempts).toBe(10);
+	});
+
+	// npm served @tsrx/language-server 0.7.1 before @tsrx/core 0.6.1, which it
+	// depends on, so the release's install failed with ETARGET.
+	it('installs again while npm does not serve a dependency yet', async () => {
+		const not_served = {
+			status: 1,
+			stdout: '',
+			stderr:
+				'npm error code ETARGET\nnpm error notarget No matching version found for @tsrx/core@0.6.1.\n',
+		};
+		const installed = { status: 0, stdout: 'added 12 packages\n', stderr: '' };
+		const responses = [not_served, not_served, installed];
+		const calls = [];
+		const waits = [];
+
+		const result = await installPublishedPackages({
+			args: ['install', '@tsrx/language-server@1.2.3'],
+			runNpm: (args) => {
+				calls.push(args);
+				return responses.shift();
+			},
+			wait: async (ms) => {
+				waits.push(ms);
+			},
+			logger: { log() {} },
+		});
+
+		expect(result).toBe(installed);
+		expect(calls).toEqual(Array(3).fill(['install', '@tsrx/language-server@1.2.3']));
+		expect(waits).toEqual([30_000, 30_000]);
+	});
+
+	it('returns any other install failure at once, and one for a package npm does not serve after ten attempts', async () => {
+		const failure = { status: 1, stdout: '', stderr: 'npm error code EACCES\n' };
+		let attempts = 0;
+		const run = (response) =>
+			installPublishedPackages({
+				args: ['install'],
+				runNpm: () => {
+					attempts++;
+					return response;
+				},
+				wait: async () => {},
+				logger: { log() {} },
+			});
+
+		await expect(run(failure)).resolves.toBe(failure);
+		expect(attempts).toBe(1);
+
+		attempts = 0;
+		const missing = { status: 1, stdout: '', stderr: 'npm error code E404\n' };
+		await expect(run(missing)).resolves.toBe(missing);
 		expect(attempts).toBe(10);
 	});
 
