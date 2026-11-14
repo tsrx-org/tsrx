@@ -44,8 +44,11 @@ import { has_location, is_organized_import } from '../utils/ast.js';
 import { regex_whitespaces_strict } from '../utils/patterns.js';
 import { get_source_tokens } from '../parse/source-tokens.js';
 import { regex_jsx_text_escaped } from './jsx/helpers.js';
+import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 
 const RETURN_KEYWORD = 'return';
+/** A fragment's `<>`, with any whitespace or comments between its `<` and `>`. */
+const regex_opening_fragment = /^<(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*>$/;
 const EXPORT_KEYWORD = 'export';
 const BLOCK_DECLARATION_TYPES = new Set([
 	'FunctionDeclaration',
@@ -3253,6 +3256,7 @@ export function convert_source_map_to_mappings(
 	add_diagnostic_mappings(
 		mappings,
 		errors,
+		source,
 		generated_code,
 		src_to_gen_map,
 		source_line_generated_map,
@@ -3417,6 +3421,7 @@ export function create_volar_mappings_result({
  *
  * @param {CodeMapping[]} mappings
  * @param {CompileError[]} errors
+ * @param {string} source
  * @param {string} generated_code
  * @param {Map<string, Array<{ line: number, column: number }>>} src_to_gen_map
  * @param {Map<number, Array<{ column: number, position: { line: number, column: number } }>> | null} source_line_generated_map
@@ -3425,6 +3430,7 @@ export function create_volar_mappings_result({
 function add_diagnostic_mappings(
 	mappings,
 	errors,
+	source,
 	generated_code,
 	src_to_gen_map,
 	source_line_generated_map,
@@ -3440,9 +3446,22 @@ function add_diagnostic_mappings(
 	for (const error of errors) {
 		const start = error.pos;
 		if (start === undefined) continue;
-		if (has_exact_source_map_position(error, src_to_gen_map)) continue;
-
 		const end = error.end && error.end > start ? error.end : start + 1;
+		if (has_exact_source_map_position(error, src_to_gen_map)) {
+			// The mapping walker gives a fragment's `<>` no mapping, so an unclosed
+			// `<>` that the editor's code prints, where esrap records its position,
+			// gets an anchor on that `<>` (#1322).
+			const fragment = unclosed_fragment_anchor(
+				error,
+				source,
+				generated_code,
+				src_to_gen_map,
+				gen_line_offsets,
+			);
+			if (fragment) diagnostic_mappings.push(fragment);
+			continue;
+		}
+
 		const length = end - start;
 		const generated_start = get_nearest_generated_offset_from_source_line_map(
 			error,
@@ -3470,6 +3489,39 @@ function add_diagnostic_mappings(
 	}
 
 	mappings.unshift(...diagnostic_mappings);
+}
+
+/**
+ * An anchor from an unclosed `<>`'s TSRX1001 to the `<>` the editor's code
+ * prints at the position esrap records for it, or `null`.
+ * @param {CompileError} error
+ * @param {string} source
+ * @param {string} generated_code
+ * @param {Map<string, Array<{ line: number, column: number }>>} src_to_gen_map
+ * @param {LineOffsets} gen_line_offsets
+ * @returns {CodeMapping | null}
+ */
+function unclosed_fragment_anchor(error, source, generated_code, src_to_gen_map, gen_line_offsets) {
+	const loc = error.loc?.start;
+	if (error.code !== DIAGNOSTIC_CODES.UNCLOSED_TAG || !loc || error.pos === undefined) return null;
+	const end = error.end ?? error.pos;
+	if (!regex_opening_fragment.test(source.slice(error.pos, end))) return null;
+	for (const position of src_to_gen_map.get(`${loc.line}:${loc.column}`) ?? []) {
+		const generated = loc_to_offset(position.line, position.column, gen_line_offsets);
+		if (generated_code.startsWith('<>', generated)) {
+			return {
+				sourceOffsets: [error.pos],
+				generatedOffsets: [generated],
+				lengths: [end - error.pos],
+				generatedLengths: ['<>'.length],
+				data: {
+					...mapping_data_verify_only,
+					customData: { diagnosticAnchor: true },
+				},
+			};
+		}
+	}
+	return null;
 }
 
 /**
