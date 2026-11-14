@@ -16,6 +16,7 @@ import {
 	destructure_for_of_item,
 	ERROR_BOUNDARY_INTERNAL_NAME,
 	error,
+	FRAGMENT_INTERNAL_NAME,
 	forOfPatternReadsIndex as for_of_pattern_reads_index,
 	has_location,
 	IDENTIFIER_OBFUSCATION_PREFIX,
@@ -2866,6 +2867,13 @@ function inject_vue_imports(program, transform_context) {
 
 	if (transform_context.needs_suspense) {
 		ensure_named_import(program, 'vue', 'Suspense', SUSPENSE_INTERNAL_NAME);
+	}
+
+	// A keyed row whose body is a fragment, in a loop that doesn't render
+	// through `VaporFor`, is a `<Fragment key>`, which vue-jsx-vapor lowers to a
+	// keyed fragment.
+	if (transform_context.needs_fragment) {
+		ensure_named_import(program, 'vue', 'Fragment', FRAGMENT_INTERNAL_NAME);
 	}
 
 	if (transform_context.needs_error_boundary) {

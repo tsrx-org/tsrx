@@ -2734,6 +2734,92 @@ describe('tsrx-vue merged refs', () => {
 	});
 });
 
+// A keyed `@for` row whose body is a fragment, in a loop that doesn't render
+// through `VaporFor` (#179).
+const fragment_rows = ref([{ id: 1 }, { id: 2 }, { id: 3 }]);
+
+function KeyedFragmentEmptyApp() @{
+	<ul class="keyed-fragment-empty">
+		@for (const item of fragment_rows.value; key item.id) {
+			<>
+				<li>{item.id}</li>
+			</>
+		} @empty {
+			<p>{'none'}</p>
+		}
+	</ul>
+}
+
+function KeyedFragmentSetupApp() @{
+	<ul class="keyed-fragment-setup">
+		@for (const item of fragment_rows.value; key item.id) {
+			const label = 'item ' + item.id;
+			<>
+				<li>{label}</li>
+				<li>{item.id}</li>
+			</>
+		}
+	</ul>
+}
+
+function IndexedFragmentEmptyApp() @{
+	<ul class="indexed-fragment-empty">
+		@for (const item of fragment_rows.value; index i) {
+			<>
+				<li>{i + ':' + item.id}</li>
+			</>
+		} @empty {
+			<p>{'none'}</p>
+		}
+	</ul>
+}
+
+describe('tsrx-vue keyed fragment rows (#179)', () => {
+	beforeEach(() => {
+		fragment_rows.value = [{ id: 1 }, { id: 2 }, { id: 3 }];
+	});
+
+	it('renders a keyed fragment body in a loop with @empty', async () => {
+		await render(KeyedFragmentEmptyApp);
+		expect(texts('.keyed-fragment-empty li')).toEqual(['1', '2', '3']);
+
+		fragment_rows.value = [];
+		await flush();
+		expect(texts('.keyed-fragment-empty li')).toEqual([]);
+		expect(texts('.keyed-fragment-empty p')).toEqual(['none']);
+
+		fragment_rows.value = [{ id: 3 }, { id: 1 }];
+		await flush();
+		expect(texts('.keyed-fragment-empty li')).toEqual(['3', '1']);
+		expect(texts('.keyed-fragment-empty p')).toEqual([]);
+	});
+
+	it('renders a keyed fragment body after setup statements', async () => {
+		await render(KeyedFragmentSetupApp);
+		expect(texts('.keyed-fragment-setup li')).toEqual([
+			'item 1',
+			'1',
+			'item 2',
+			'2',
+			'item 3',
+			'3',
+		]);
+
+		fragment_rows.value = [{ id: 2 }, { id: 1 }];
+		await flush();
+		expect(texts('.keyed-fragment-setup li')).toEqual(['item 2', '2', 'item 1', '1']);
+	});
+
+	it('renders a fragment body keyed by the index in a loop with @empty', async () => {
+		await render(IndexedFragmentEmptyApp);
+		expect(texts('.indexed-fragment-empty li')).toEqual(['0:1', '1:2', '2:3']);
+
+		fragment_rows.value = [];
+		await flush();
+		expect(texts('.indexed-fragment-empty p')).toEqual(['none']);
+	});
+});
+
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runForOfHeadScopeRuntimeTests();

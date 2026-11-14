@@ -155,6 +155,20 @@ describe('@tsrx/vue type-only output type-checks', () => {
 				<div>{props.ref ? <input {...props} ref={own} /> : null}</div>
 			}`,
 		],
+		[
+			'a keyed fragment row in a loop with @empty (#179)',
+			`export function App({ items }: { items: { id: number }[] }) @{
+				<ul>
+					@for (const item of items; key item.id) {
+						<>
+							<li>{item.id}</li>
+						</>
+					} @empty {
+						<p>{'none'}</p>
+					}
+				</ul>
+			}`,
+		],
 	])('%s', (_name, source) => {
 		expect(type_only_diagnostics(source)).toEqual([]);
 	});
