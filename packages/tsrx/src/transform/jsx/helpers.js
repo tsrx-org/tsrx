@@ -715,10 +715,22 @@ export function tsx_with_ts_locations(
 				const previous = node.body[index - 1];
 				if (previous && source !== undefined) {
 					// Statements on one line in the source stay on one line, with the
-					// same spaces between them.
-					const between = source.slice(/** @type {number} */ (previous.end), statement.start);
-					if (/^[ \t]*$/.test(between)) context.write(between);
-					else context.newline();
+					// text between them as written, which then isn't printed again.
+					const end = /** @type {number} */ (previous.end);
+					const start = /** @type {number} */ (statement.start);
+					const between = source.slice(end, start);
+					if (regex_line_break.test(between)) {
+						context.newline();
+					} else {
+						for (const comment of comments ?? []) {
+							if (comment.start >= end && comment.end <= start) {
+								emitted_comments?.add(
+									`${comment.start}:${comment.end}:${comment.type}:${comment.value}`,
+								);
+							}
+						}
+						context.write(between);
+					}
 				}
 				context.visit(statement);
 			});
@@ -1066,14 +1078,21 @@ function with_import_blocks(program, source) {
 		}
 		block = [];
 	};
+	// Where the last statement of the block ends, or an empty statement after
+	// it, which esrap leaves out.
+	let block_end = 0;
 	for (const statement of program.body) {
+		if (statement.type === 'EmptyStatement' && block.length > 0 && has_location(statement)) {
+			block_end = statement.end;
+			continue;
+		}
 		const organized = is_organized_import(statement) && has_location(statement);
-		const previous = block.at(-1);
-		if (!organized || (previous && line_breaks_between(previous, statement, source) > 1)) {
+		if (!organized || (block.length > 0 && line_breaks_between(block_end, statement, source) > 1)) {
 			end_block();
 		}
 		if (organized) {
 			block.push(statement);
+			block_end = statement.end;
 		} else {
 			body.push(statement);
 		}
@@ -1083,16 +1102,14 @@ function with_import_blocks(program, source) {
 }
 
 /**
- * The line breaks between two statements, outside comments.
- * @param {AST.Node} previous
+ * The line breaks from an offset to a statement, outside comments.
+ * @param {number} from
  * @param {AST.Node} next
  * @param {string} source
  * @returns {number}
  */
-function line_breaks_between(previous, next, source) {
-	const between = source
-		.slice(/** @type {number} */ (previous.end), next.start)
-		.replace(regex_comment, '');
+function line_breaks_between(from, next, source) {
+	const between = source.slice(from, next.start).replace(regex_comment, '');
 	return between.match(regex_line_breaks)?.length ?? 0;
 }
 
