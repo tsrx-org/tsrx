@@ -350,7 +350,22 @@ function __maybe_get_mapping_from_node(
 	if (gen_end_loc instanceof Error) {
 		return gen_end_loc;
 	}
-	const gen_end_offset = loc_to_offset(gen_end_loc.line, gen_end_loc.column, gen_line_offsets);
+	let gen_end_offset = loc_to_offset(gen_end_loc.line, gen_end_loc.column, gen_line_offsets);
+	// When the start is a later position than the first (see
+	// `maybe_get_node_start_position`), a node that ends where it starts, as an
+	// empty one does, ends at that start too, not before it.
+	if (
+		gen_end_offset < gen_start_offset &&
+		gen_loc !== src_to_gen_map.get(`${loc.start.line}:${loc.start.column}`)?.[0]
+	) {
+		for (const position of src_to_gen_map.get(`${loc.end.line}:${loc.end.column}`) ?? []) {
+			const offset = loc_to_offset(position.line, position.column, gen_line_offsets);
+			if (offset >= gen_start_offset) {
+				gen_end_offset = offset;
+				break;
+			}
+		}
+	}
 
 	const gen_length = gen_max_len || gen_end_offset - gen_start_offset;
 	return {
