@@ -840,13 +840,15 @@ const default_class_names = new WeakMap();
 const block_scoped_redeclarations = new WeakMap();
 
 /**
- * The errors for a name that two blocks of one namespace or ambient module
- * export, which a collecting parse records once the module is read (see
- * `#reportDuplicateExports`), for a strict parse to tell them (see
- * `parseTopLevel`).
+ * The errors for the exports declared twice, which a collecting parse records
+ * once the module is read (see `#reportDuplicateExports`), for a strict parse
+ * to tell them (see `parseTopLevel`).
  * @type {WeakSet<CompileError>}
  */
-const cross_block_errors = new WeakSet();
+const duplicate_export_errors = new WeakSet();
+
+// A word that can export a name.
+const regex_export_word = /\bexport\b/;
 
 /** @type {WeakMap<Parse.Parser, number[]>} */
 const parser_line_starts = new WeakMap();
@@ -1507,8 +1509,10 @@ export function TSRXPlugin(config) {
 			#localExportNamesByScope = new WeakMap();
 			/** @type {ModuleBodyExports[]} */
 			#moduleBodyExports = [];
-			// Whether a namespace or module body has been read (see `parseTopLevel`).
+			// Whether a namespace or module body, and the whole module, have been
+			// read (see `parseTopLevel`).
 			#moduleBodyRead = false;
+			#moduleRead = false;
 			#functionBodyDepth = 0;
 			#allowExpressionContainerTrailingSemicolon = false;
 			#jsxAttributeValueExpressionDepth = 0;
@@ -5553,7 +5557,7 @@ export function TSRXPlugin(config) {
 			 * @param {AST.Program} program
 			 */
 			#reportDuplicateExports(program) {
-				/** @type {Array<{ position: number, error: Diagnostic, cross_block?: boolean }>} */
+				/** @type {Array<{ position: number, error: Diagnostic }>} */
 				const found = [];
 				/** @type {Map<string, ExportBlock[]>} */
 				const tables = new Map();
@@ -5568,17 +5572,18 @@ export function TSRXPlugin(config) {
 						a.position - b.position ||
 						Number(a.error.code?.slice(2)) - Number(b.error.code?.slice(2)),
 				);
-				for (const { position, error, cross_block } of found) {
+				this.#moduleRead = true;
+				for (const { position, error } of found) {
 					if (!this.#collect) this.#throwError(position, error);
 					const errors = this.#errors;
 					const length = errors?.length ?? 0;
 					this.#recordCheckerLevelError(position, position + 1, error);
-					if (!cross_block || !errors || errors.length === length) continue;
+					if (!errors || errors.length === length) continue;
 					// Among the errors recorded as the module was read, by position, as
-					// tsc sorts them, and not after an in-block redeclaration that comes
-					// later in the second block (#1263).
+					// tsc sorts them: not after a redeclaration that comes later in the
+					// second block of a namespace, say (#1263).
 					const recorded = errors[length];
-					cross_block_errors.add(recorded);
+					duplicate_export_errors.add(recorded);
 					const at = errors.findIndex(
 						(other, index) => index < length && compare_errors(other, recorded) > 0,
 					);
@@ -5590,12 +5595,12 @@ export function TSRXPlugin(config) {
 
 			/**
 			 * A strict parse throws a checker error as it reads it, before the module
-			 * is read and the duplicate exports of the blocks of a namespace or
-			 * ambient module are found (see `#reportDuplicateExports`). When one of
-			 * those comes before it, TypeScript reports that first: throw it instead
-			 * (#1263). Only a parse of the whole input can tell, as for
-			 * `#declaresFunctionLater`; it's made only once a namespace or module body
-			 * has been read, and the error isn't a syntax error, which TypeScript
+			 * is read and the exports declared twice are found (see
+			 * `#reportDuplicateExports`), such as by two blocks of one namespace.
+			 * When one of those comes before it, TypeScript reports that first: throw
+			 * it instead (#1263). Only a parse of the whole input can tell, as for
+			 * `#declaresFunctionLater`; it's made only where something can be
+			 * exported, and when the error isn't a syntax error, which TypeScript
 			 * reports alone.
 			 * @type {Parse.Parser['parseTopLevel']}
 			 */
@@ -5603,8 +5608,13 @@ export function TSRXPlugin(config) {
 				try {
 					return super.parseTopLevel(node);
 				} catch (error) {
-					if (!this.#collect && this.#moduleBodyRead && !this.#isSyntaxError(error)) {
-						const before = this.#crossBlockErrorBefore(
+					if (
+						!this.#collect &&
+						!this.#moduleRead &&
+						(this.#moduleBodyRead || regex_export_word.test(this.input)) &&
+						!this.#isSyntaxError(error)
+					) {
+						const before = this.#duplicateExportErrorBefore(
 							/** @type {{ pos?: number }} */ (error)?.pos ?? Infinity,
 						);
 						if (before) {
@@ -5619,33 +5629,18 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * The first error for an export that two blocks of one namespace or
-			 * ambient module declare (`cross_block_errors`) that a collecting parse of
-			 * the input records before `position`, or `undefined`.
+			 * The first error for an export declared twice
+			 * (`duplicate_export_errors`) that a collecting parse of the input
+			 * records before `position`, or `undefined`.
 			 * @param {number} position
 			 * @returns {CompileError | undefined}
 			 */
-			#crossBlockErrorBefore(position) {
-				/** @type {CompileError[]} */
-				const errors = [];
-				try {
-					/** @type {typeof acorn.Parser} */ (/** @type {unknown} */ (this.constructor)).parse(
-						this.input,
-						/** @type {acorn.Options} */ ({
-							sourceType: this.options.sourceType,
-							ecmaVersion: this.options.ecmaVersion,
-							allowReturnOutsideFunction: this.options.allowReturnOutsideFunction,
-							locations: true,
-							preserveParens: this.options.preserveParens,
-							tsrxOptions: { filename: this.#filename, collect: true, errors },
-						}),
-					);
-				} catch {
-					// A syntax error comes before the module is read, and before them.
-					return undefined;
-				}
+			#duplicateExportErrorBefore(position) {
+				const { errors, threw } = this.#parseInputCollecting();
+				// A syntax error comes before the module is read, and before them.
+				if (threw) return undefined;
 				return errors
-					.filter((error) => cross_block_errors.has(error) && (error.pos ?? 0) < position)
+					.filter((error) => duplicate_export_errors.has(error) && (error.pos ?? 0) < position)
 					.sort(compare_errors)[0];
 			}
 
@@ -5715,7 +5710,7 @@ export function TSRXPlugin(config) {
 			 * `#findDuplicateExports`'s, and one with an `export import` is reported
 			 * here.
 			 * @param {ExportBlock[]} blocks
-			 * @param {Array<{ position: number, error: Diagnostic, cross_block?: boolean }>} found
+			 * @param {Array<{ position: number, error: Diagnostic }>} found
 			 */
 			#findDuplicateExportedDeclarations(blocks, found) {
 				/** @typedef {{ name: string, written: string, position: number, block: string, includes: number, excludes: number, specifier: boolean }} Entry */
@@ -5824,7 +5819,7 @@ export function TSRXPlugin(config) {
 						const id = `${other.position} ${error.message}`;
 						if (reported.has(id) || this.#redeclarationRecorded(other.position)) continue;
 						reported.add(id);
-						found.push({ position: other.position, error, cross_block: true });
+						found.push({ position: other.position, error });
 					}
 				}
 			}
@@ -6023,7 +6018,21 @@ export function TSRXPlugin(config) {
 			 */
 			#declaresFunctionLater(position) {
 				if (!/\bfunction\b/.test(this.input.slice(position))) return false;
-				/** @type {import('../types/index').CompileError[]} */
+				// The errors recorded before a syntax error still tell.
+				const { errors } = this.#parseInputCollecting();
+				return (
+					errors.find((error) => error.pos === position)?.code === UPSTREAM_ERRORS.REDECLARED.code
+				);
+			}
+
+			/**
+			 * The errors a collecting parse of the input records, and whether it
+			 * throws, for a strict parse to tell what it throws (see
+			 * `#declaresFunctionLater` and `parseTopLevel`).
+			 * @returns {{ errors: CompileError[], threw: boolean }}
+			 */
+			#parseInputCollecting() {
+				/** @type {CompileError[]} */
 				const errors = [];
 				try {
 					/** @type {typeof acorn.Parser} */ (/** @type {unknown} */ (this.constructor)).parse(
@@ -6038,11 +6047,9 @@ export function TSRXPlugin(config) {
 						}),
 					);
 				} catch {
-					// The errors recorded before a syntax error still tell.
+					return { errors, threw: true };
 				}
-				return (
-					errors.find((error) => error.pos === position)?.code === UPSTREAM_ERRORS.REDECLARED.code
-				);
+				return { errors, threw: false };
 			}
 
 			/**

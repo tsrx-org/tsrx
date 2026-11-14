@@ -11549,6 +11549,16 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			],
 			throws: [TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, '1:34'],
 		},
+		{
+			// So do the module's own.
+			source: 'export default 1; let q = 1; let q = 2; export default 2;',
+			errors: [
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 1'],
+				[TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED, 'q = 2'],
+				[TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, 'export default 2'],
+			],
+			throws: [TS_ERRORS.MULTIPLE_DEFAULT_EXPORTS, '1:0'],
+		},
 		// A namespace's name is a value when the namespace is instantiated, and
 		// shares the name with anything otherwise (#1263).
 		{
