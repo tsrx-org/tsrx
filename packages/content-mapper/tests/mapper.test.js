@@ -296,7 +296,7 @@ export { rest };
 				source_ast,
 				mappings,
 				20,
-				20,
+				' '.repeat(20),
 			)?.directives.map(([start, length]) => [start, length]);
 
 		expect(directive_for(TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([[7, 13]]);
@@ -329,7 +329,7 @@ export { rest };
 				mapping(15, 4, { diagnosticAnchor: true }),
 			]),
 			20,
-			20,
+			' '.repeat(20),
 		)?.directives;
 
 		expect(directives?.map(([, , start, end]) => [start, end])).toEqual([
@@ -357,7 +357,7 @@ export { rest };
 				source_ast,
 				mappings,
 				20,
-				20,
+				' '.repeat(20),
 			)?.directives.map(([start, length]) => [start, length]);
 
 		expect(directive_for(12)).toEqual([[10, 2]]);

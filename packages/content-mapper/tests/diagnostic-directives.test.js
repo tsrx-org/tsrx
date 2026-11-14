@@ -24,7 +24,7 @@ function hidden_ranges(compiler, source, needle, reported = (error) => error) {
 		result.sourceAst,
 		result.mappings,
 		source.length,
-		result.text.length,
+		result.text,
 	) ?? { directives: [] };
 	return { at, ranges: directives.map(([, , start, end]) => [start, end]) };
 }
@@ -67,6 +67,8 @@ const UNCLOSED = [
 	'export const y = <div><b>\n',
 	'const Tag = 1;\nexport const y = <{Tag}>\n',
 	'export const y = <Foo<string>>\n',
+	'export const f = <T>(x: T) => x;\n',
+	'export const y = <Missing>;\n',
 ];
 
 describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler) => {
@@ -121,6 +123,29 @@ describe.each(Object.entries({ react, preact, solid, vue }))('%s', (_, compiler)
 				const source = `${first} <div>{/*${'c'.repeat(n)}*/}<>${children}\n`;
 				expect(covers(compiler, source, needle), source).toBe(false);
 			}
+		}
+	});
+
+	// The closing tag recovery adds has no mapping, so TypeScript's error on it,
+	// such as TS2304 for a name that isn't a value, has no place in the file: a
+	// directive of its own covers it (#1328).
+	it.each([
+		['a generic arrow', 'export const f = <T>(x: T) => x;\n', '</T>'],
+		[
+			'a generic arrow in a function',
+			'export function g() {\n\treturn <T>(x: T) => x;\n}\n',
+			'</T>',
+		],
+		['a tag at the end of the file', 'export const y = <Missing>;\n', '</Missing>'],
+		['a member tag', 'export const y = <a.b>;\n', '</a.b>'],
+		['two tags of one name', 'export const y = <Missing><Missing>;\n', '</Missing></Missing>'],
+	])('covers the closing tag that recovery adds to %s', (_, source, closing) => {
+		const { at, ranges } = hidden_ranges(compiler, source, closing);
+		for (let offset = at; offset < at + closing.length; offset++) {
+			expect(
+				ranges.some(([start, end]) => start <= offset && offset < end),
+				`${source} at ${offset}`,
+			).toBe(true);
 		}
 	});
 
