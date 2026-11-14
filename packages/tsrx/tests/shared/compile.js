@@ -114,6 +114,12 @@ const UNCLOSED_TAG_RECOVERY = [
 		'function App(props: { x: boolean }) {\n\treturn <div>{props.x ? /* c */ <b> : null}</div>;\n}',
 	],
 	['in a template literal', 'function App() {\n\treturn `${<div>}`;\n}'],
+	// Each once, though the code after the first is read again
+	[
+		'twice in an array',
+		'function App() {\n\treturn [<div>, <b>];\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG, DIAGNOSTIC_CODES.UNCLOSED_TAG],
+	],
 	// Its text, where nothing around it goes on with the punctuation
 	['with text that starts with `:`', 'function App() @{\n\t<div>: label\n}'],
 	['with text that starts with `,`', 'function App() @{\n\t<div>, hello\n}'],
@@ -727,7 +733,9 @@ export const p = 1
 					errors: /** @type {any} */ (collected),
 				});
 
-				expect(collected.map((reported) => reported.code)).toEqual([DIAGNOSTIC_CODES.UNCLOSED_TAG]);
+				expect(collected.map((reported) => reported.code)).toEqual(
+					codes.filter((code) => code === DIAGNOSTIC_CODES.UNCLOSED_TAG),
+				);
 				expect(
 					errors
 						.filter((reported) => reported.code === DIAGNOSTIC_CODES.UNCLOSED_TAG)

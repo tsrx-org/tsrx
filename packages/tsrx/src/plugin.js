@@ -1309,23 +1309,26 @@ function skip_whitespace_from(input, i) {
 }
 
 /**
- * The index of the first `}` from `from` in a `<style>` or `<script>` body
- * that closes no `{` after `from`, or -1. Braces in strings and comments, and
- * in a script's template literals (but not their `${…}`) and line comments,
- * don't count; a regular expression's do.
+ * The index of the first `}` in a `<style>` or `<script>` body that closes no
+ * `{` in it, or -1. Braces in strings and comments, and in a script's template
+ * literals (but not their `${…}`) and line comments, don't count; a regular
+ * expression's do.
  * @param {string} text
  * @param {boolean} script
- * @param {number} [from]
  * @returns {number}
  */
-function unmatched_closing_brace(text, script, from = 0) {
+function unmatched_closing_brace(text, script) {
+	// The brace depth outside each template literal `${…}` that is open
+	/** @type {number[]} */
+	const substitutions = [];
 	let depth = 0;
-	for (let i = from; i < text.length; i++) {
+	for (let i = 0; i < text.length; i++) {
 		const ch = text[i];
+		let template_part = -1;
 		if (ch === '"' || ch === "'") {
 			i = string_end(text, i);
 		} else if (script && ch === '`') {
-			i = template_end(text, i);
+			template_part = i + 1;
 		} else if (text.startsWith('/*', i)) {
 			const end = text.indexOf('*/', i + 2);
 			if (end === -1) return -1;
@@ -1334,8 +1337,27 @@ function unmatched_closing_brace(text, script, from = 0) {
 			while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i++;
 		} else if (ch === '{') {
 			depth++;
-		} else if (ch === '}' && --depth < 0) {
-			return i;
+		} else if (ch === '}') {
+			if (depth > 0) {
+				depth--;
+			} else if (substitutions.length > 0) {
+				depth = /** @type {number} */ (substitutions.pop());
+				template_part = i + 1;
+			} else {
+				return i;
+			}
+		}
+		if (template_part !== -1) {
+			// To the end of the literal, or into its next `${…}`
+			i = template_part;
+			while (i < text.length && text[i] !== '`' && !text.startsWith('${', i)) {
+				i += text[i] === '\\' ? 2 : 1;
+			}
+			if (text.startsWith('${', i)) {
+				substitutions.push(depth);
+				depth = 0;
+				i++;
+			}
 		}
 	}
 	return -1;
@@ -1356,26 +1378,6 @@ function string_end(text, start) {
 			if (text[i] === '\r' && text[i + 1] === '\n') i++;
 		} else if (text[i] === '\n' || text[i] === '\r') {
 			break;
-		}
-	}
-	return i;
-}
-
-/**
- * The index of the backquote that ends the template literal starting at
- * `start`, past escapes and its `${…}` substitutions.
- * @param {string} text
- * @param {number} start
- */
-function template_end(text, start) {
-	let i = start + 1;
-	for (; i < text.length && text[i] !== '`'; i++) {
-		if (text[i] === '\\') {
-			i++;
-		} else if (text[i] === '$' && text[i + 1] === '{') {
-			const close = unmatched_closing_brace(text, true, i + 2);
-			if (close === -1) return text.length;
-			i = close;
 		}
 	}
 	return i;
@@ -5000,6 +5002,23 @@ export function TSRXPlugin(config) {
 					);
 				}
 				if (code_start === -1) return;
+				// What the dropped children recorded is reported again as the code is
+				// read again.
+				const errors = this.#errors;
+				if (errors) {
+					const kept = errors.filter(
+						(error) =>
+							!(
+								/** @type {number} */ (error.pos) >= code_start &&
+								/** @type {number} */ (error.pos) < this.start
+							),
+					);
+					if (kept.length < errors.length) {
+						this.parseEffects?.willAppend(errors);
+						errors.length = 0;
+						errors.push(...kept);
+					}
+				}
 				const text = keep === 0 ? first : last;
 				// The whitespace before the code stays the element's text.
 				children.length = keep;
