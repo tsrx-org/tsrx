@@ -5,6 +5,7 @@ import { useContext, useState } from 'preact/hooks';
 import { mergeRefs } from '@tsrx/preact/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runForOfSourcesRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-sources';
+import { runForOfHeadScopeRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-head-scope';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
 import { runJsxTextWhitespaceRuntimeTests } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace';
 import { runScriptBodyRuntimeTests } from '@tsrx/core/test-harness/runtime/script-body';
@@ -1178,6 +1179,7 @@ describe('@tsrx/vite-plugin-preact runtime', () => {
 
 runSwitchFallthroughRuntimeTests();
 runForOfSourcesRuntimeTests();
+runForOfHeadScopeRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
 runScriptBodyRuntimeTests();

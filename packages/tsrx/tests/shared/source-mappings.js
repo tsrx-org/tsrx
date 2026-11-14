@@ -3259,6 +3259,48 @@ export function* View() @{
 		});
 
 		it.each([
+			['an element', 'return <div></div>;'],
+			['a self-closing element', 'return <br />;'],
+			['an element with an expression', 'return <div>{String(x)}</div>;'],
+			['a fragment', 'return <><i /><b /></>;'],
+			['an element, without a ;', 'return <div></div>'],
+		])('maps the keyword and the end of a return of %s (#1324)', (_kind, statement) => {
+			// TypeScript reports unreachable code (TS7027) on the whole statement, from
+			// its `return`. A target can print the element elsewhere, hoisted.
+			const source = `let x: unknown;\nexport function f() {\n\treturn;\n\t${statement}\n}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const start = source.indexOf(statement);
+			const keyword = result.mappings.find(
+				(mapping) =>
+					mapping.data.verification &&
+					mapping.sourceOffsets[0] === start &&
+					mapping.lengths[0] === 'return'.length,
+			);
+			expect(generated_at(result, start, 'return'.length)).toEqual(['return']);
+			// Its end, as written, maps to the end of the printed statement: its `;`,
+			// or the closing tag it ends with.
+			const end = start + statement.length;
+			const ends = result.mappings
+				.filter(
+					(mapping) =>
+						mapping.data.verification &&
+						mapping.sourceOffsets[0] + mapping.lengths[0] === end &&
+						mapping.generatedOffsets[0] > (keyword?.generatedOffsets[0] ?? Infinity),
+				)
+				.map((mapping) =>
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+					),
+				);
+			expect(
+				ends.some((text) => text === ';' || /^<\/\w*>$/.test(text)),
+				ends.join(' '),
+			).toBe(true);
+		});
+
+		it.each([
 			'export function bad(...args: number) {}',
 			'export class K { m(...args: number) {} }',
 			'export declare function f(...args: number): void;',

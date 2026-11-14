@@ -970,18 +970,29 @@ export function convert_source_map_to_mappings(
 	 * TypeScript reports some errors on a whole statement, up to its `;` (TS7027
 	 * on unreachable code), and Volar drops a diagnostic whose end no mapping
 	 * covers. Map the `;` the printer writes after a statement: an authored one
-	 * to itself, and one the printer adds to the end of the statement.
+	 * to itself, and one the printer adds to the end of the statement, after
+	 * its last expression, or, where nothing printed in the statement ends there
+	 * (`return <div></div>` printed as `return b__static1;`), before the end of
+	 * the printed statement. The statement's last expression can be printed
+	 * elsewhere too, as an element hoisted out of a `return` is: only a `;` after
+	 * `after`, where the statement is printed, is the statement's (#1324).
 	 * @param {AST.Node} node
+	 * @param {number} [after] A generated offset the statement's `;` comes after
 	 * @returns {void}
 	 */
-	function push_statement_end_mapping(node) {
+	function push_statement_end_mapping(node, after = -1) {
 		if (!has_location(node)) return;
 		const authored = source[node.end - 1] === ';';
 		const { line, column } = node.loc.end;
-		for (const generated of src_to_gen_map.get(`${line}:${column}`) ?? []) {
-			const end = loc_to_offset(generated.line, generated.column, gen_line_offsets);
-			const semicolon = authored ? end - 1 : end;
-			if (generated_code[semicolon] !== ';') continue;
+		const ends = (src_to_gen_map.get(`${line}:${column}`) ?? []).map((generated) =>
+			loc_to_offset(generated.line, generated.column, gen_line_offsets),
+		);
+		/** @param {number} offset */
+		const is_semicolon = (offset) => offset > after && generated_code[offset] === ';';
+		const semicolon = authored
+			? ends.map((end) => end - 1).find(is_semicolon)
+			: (ends.find(is_semicolon) ?? ends.map((end) => end - 1).find(is_semicolon));
+		if (semicolon !== undefined) {
 			mappings.push({
 				sourceOffsets: [authored ? node.end - 1 : node.end],
 				lengths: [authored ? 1 : 0],
@@ -989,7 +1000,6 @@ export function convert_source_map_to_mappings(
 				generatedLengths: [1],
 				data: { ...mapping_data_verify_only, customData: {} },
 			});
-			return;
 		}
 	}
 
@@ -2260,7 +2270,7 @@ export function convert_source_map_to_mappings(
 					mapping.generatedLengths = [RETURN_KEYWORD.length];
 
 					mappings.push(mapping);
-					push_statement_end_mapping(node);
+					push_statement_end_mapping(node, mapping.generatedOffsets[0]);
 				} else if (node.type === 'ThrowStatement') {
 					push_statement_end_mapping(node);
 				} else {

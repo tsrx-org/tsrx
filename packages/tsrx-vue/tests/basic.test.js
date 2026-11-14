@@ -1740,6 +1740,23 @@ export function Card(${params}: any) @{
 		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
 	});
 
+	it('reads the index as a number in getKey and through its ref in the slot when a default reads it (#1312)', () => {
+		const { code, errors } = compile(
+			`function App({ rows }: { rows: [string | undefined, string][] }) @{
+				@for (const [a = 'r' + i, b] of rows; index i; key a) {
+					<p>{a}|{b}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toMatch(
+			/getKey=\{\(_\$_item, i\) => \{\s*const \[a = 'r' \+ i, b\] = _\$_item;\s*return a;\s*\}\}/,
+		);
+		expect(code).toMatch(/const \[a = 'r' \+ i\.value, b\] = __vapor_item\.value;/);
+	});
+
 	it('imports computed for a keyed array pattern beside type and namespace imports of vue', () => {
 		for (const authored of [
 			"import type { Ref } from 'vue';",

@@ -1077,6 +1077,11 @@ export const TS_ERRORS = {
 		code: 'TS1381',
 		message: 'Unexpected token `}`. Did you mean `&rbrace;` or `{"}"}`?',
 	},
+	// acorn-typescript's wording, for an attribute's empty `{}` value
+	JSX_ATTRIBUTE_EMPTY_EXPRESSION: {
+		code: 'TS17000',
+		message: 'JSX attributes must only be assigned a non-empty expression',
+	},
 	// TSRX's shorter wording of acorn-typescript's `JSX value should be either
 	// an expression or a quoted JSX text`
 	JSX_ATTRIBUTE_VALUE: {
@@ -1494,7 +1499,7 @@ function upstream_lookup_rows() {
 		// acorn: regexp_classSetExpression
 		[/^Invalid regular expression: \/.*\/: Invalid character in character class$/, 'TS1508'],
 		// acorn-typescript: jsx_parseAttributeValue
-		[/^JSX attributes must only be assigned a non-empty expression$/, 'TS17000'],
+		TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION,
 		// acorn-typescript: jsx_parseAttributeValue
 		[/^JSX value should be either an expression or a quoted JSX text$/, 'TS1145'],
 		// acorn-typescript: jsx_parseElementAt

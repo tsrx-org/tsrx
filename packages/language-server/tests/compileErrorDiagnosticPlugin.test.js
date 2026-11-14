@@ -314,6 +314,19 @@ export {};`,
 		]);
 	});
 
+	it('leaves an empty attribute value to TypeScript (#1311)', async () => {
+		const { document, diagnostics } = await editor_diagnostics_for(
+			'EmptyAttributeValue',
+			`export function App() @{
+	<div title={} />
+}`,
+		);
+
+		expect(reported(document, diagnostics, 'TS17000')).toEqual([
+			{ source: 'ts', text: '{}', offset: 37 },
+		]);
+	});
+
 	it('keeps a mistake that the virtual code leaves out', async () => {
 		const { document, diagnostics } = await editor_diagnostics_for(
 			'DroppedDecorator',

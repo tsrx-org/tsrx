@@ -28,7 +28,8 @@ import {
 	clone_jsx_name,
 	create_generated_identifier,
 	create_null_literal,
-	FOR_OF_ITEM_PARAM_NAME,
+	destructure_for_of_item,
+	FOR_OF_KEY_NAME,
 	get_for_of_iteration_params,
 	identifier_to_jsx_identifier,
 	is_bare_render_expression,
@@ -1555,7 +1556,7 @@ function transform_return_statement(node, { next, visit, state, path }) {
 	if (active_native_tsrx_function && is_native_tsrx_node(node.argument)) {
 		if (!active_native_tsrx_function.metadata?.native_tsrx_body) {
 			const statements = mark_native_pretransformed_jsx(
-				create_native_tsrx_render_statements(node.argument, state),
+				create_native_tsrx_return_statements(node, state),
 			);
 			if (statements.length === 1) {
 				return visit(statements[0], state);
@@ -2211,6 +2212,30 @@ function create_native_tsrx_render_statements(fragment, transform_context) {
 }
 
 /**
+ * The statements an authored `return` of `statement.argument`, render output,
+ * lowers to (see `create_native_tsrx_render_statements`). When that is a
+ * `return` alone, it keeps the authored statement's location, so the editor's
+ * code maps its keyword and its `;` as for any other authored `return`, and
+ * TypeScript's errors at it, such as TS7027 for unreachable code, map back
+ * (#1324).
+ *
+ * @param {AST.ReturnStatement} statement
+ * @param {TransformContext} transform_context
+ * @returns {AST.Statement[]}
+ */
+function create_native_tsrx_return_statements(statement, transform_context) {
+	const statements = create_native_tsrx_render_statements(
+		/** @type {AST.NativeTSRXNode} */ (statement.argument),
+		transform_context,
+	);
+	const [only] = statements;
+	if (statements.length === 1 && only.type === 'ReturnStatement' && !has_location(only)) {
+		set_loc(only, statement);
+	}
+	return statements;
+}
+
+/**
  * Style `ref` setup statements the scope pre-pass left on a scope rooted at
  * a native fragment/element (see style-scopes.js), consumed once: the same
  * fragment can reach both the return-statement lowering and the fragment
@@ -2250,7 +2275,7 @@ function expand_native_tsrx_return_statement_list(statements, transform_context)
  */
 function expand_native_tsrx_return_statement(statement, transform_context) {
 	if (statement.type === 'ReturnStatement' && is_native_tsrx_node(statement.argument)) {
-		return create_native_tsrx_render_statements(statement.argument, transform_context);
+		return create_native_tsrx_return_statements(statement, transform_context);
 	}
 
 	if (is_function_or_class_boundary(statement)) {
@@ -2458,6 +2483,79 @@ export function collect_param_bindings(params) {
 		collect_pattern_bindings(param, bindings);
 	}
 	return bindings;
+}
+
+/**
+ * The names an `@for` body declares again that the loop's head binds: the
+ * item pattern's names and the index. A `for…of` body is a scope of its own,
+ * so it can; a callback's parameters share one scope with the top-level
+ * declarations of its body, so a callback whose body does this needs the body
+ * in a block of its own.
+ *
+ * @param {AST.Pattern[]} loop_params The head's pattern, then the index if any.
+ * @param {AST.Node[]} body_nodes The body's top-level statements.
+ * @returns {Map<string, AST.Identifier>}
+ */
+export function get_for_of_shadowed_names(loop_params, body_nodes) {
+	const head = collect_param_bindings(loop_params);
+	/** @type {Map<string, AST.Identifier>} */
+	const declared = new Map();
+	for (const node of body_nodes) {
+		if (
+			(node?.type === 'TSEnumDeclaration' || node?.type === 'TSModuleDeclaration') &&
+			node.id.type === 'Identifier'
+		) {
+			declared.set(node.id.name, node.id);
+		} else {
+			collect_statement_bindings(node, declared);
+		}
+	}
+	/** @type {Map<string, AST.Identifier>} */
+	const shadowed = new Map();
+	for (const [name, id] of declared) {
+		if (head.has(name)) shadowed.set(name, id);
+	}
+	return shadowed;
+}
+
+/**
+ * Whether the item pattern of an `@for` head reads the loop's index, in a
+ * default or a computed key. The index is in scope in the head, but a loop
+ * callback whose parameters are the pattern and then the index sets the
+ * index after it destructures the item, so such a pattern has to be
+ * destructured in the callback's body instead.
+ *
+ * @param {AST.Pattern | null | undefined} pattern
+ * @param {AST.Identifier | null | undefined} index
+ * @returns {boolean}
+ */
+export function for_of_pattern_reads_index(pattern, index) {
+	if (!pattern || !index) return false;
+	const index_binding = new Map([[index.name, index]]);
+	/**
+	 * @param {AST.Node | null | undefined} node
+	 * @returns {boolean}
+	 */
+	const reads = (node) => {
+		switch (node?.type) {
+			case 'AssignmentPattern':
+				return reads(node.left) || references_scope_bindings(node.right, index_binding);
+			case 'ArrayPattern':
+				return node.elements.some(reads);
+			case 'ObjectPattern':
+				return node.properties.some((property) =>
+					property.type === 'RestElement'
+						? reads(property.argument)
+						: (property.computed && references_scope_bindings(property.key, index_binding)) ||
+							reads(property.value),
+				);
+			case 'RestElement':
+				return reads(node.argument);
+			default:
+				return false;
+		}
+	};
+	return reads(pattern);
 }
 
 /**
@@ -5675,7 +5773,8 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 	let loop_body = node.body.type === 'BlockStatement' ? node.body.body : [node.body];
 	validate_for_body_control_flow(loop_body, transform_context);
 	const body_key_expression = find_key_expression_in_body(loop_body);
-	const implicit_key_expression =
+	/** @type {AST.Expression | undefined} */
+	let implicit_key_expression =
 		body_key_expression == null
 			? node.key
 				? clone_ast_node(node.key)
@@ -5684,11 +5783,29 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 					: undefined
 			: undefined;
 
+	// A body that declares a name the head binds runs in a block of its own
+	// (see below), and the key the head gives reads the head's name, so it is
+	// read into a generated name before that block.
+	const shadowed_names = get_for_of_shadowed_names(loop_params, loop_body);
+	/** @type {AST.VariableDeclaration | null} */
+	let key_declaration = null;
+	if (
+		implicit_key_expression &&
+		shadowed_names.size > 0 &&
+		references_scope_bindings(implicit_key_expression, shadowed_names)
+	) {
+		key_declaration = b.const(b.id(FOR_OF_KEY_NAME), implicit_key_expression);
+		implicit_key_expression = b.id(FOR_OF_KEY_NAME);
+	}
+
 	// Add loop params to available bindings so static hoisting sees them as references
 	const saved_bindings = transform_context.available_bindings;
 	transform_context.available_bindings = new Map(saved_bindings);
 	for (const param of loop_params) {
 		collect_pattern_bindings(param, transform_context.available_bindings);
+	}
+	if (key_declaration) {
+		transform_context.available_bindings.set(FOR_OF_KEY_NAME, b.id(FOR_OF_KEY_NAME));
 	}
 
 	// The key placed before lowering and the one placed after it come from the
@@ -5732,24 +5849,34 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 	transform_context.available_bindings = saved_bindings;
 
 	// An `await` in a default of the head's pattern can't stay in the
-	// parameters of the async callback the loop becomes, so that callback takes
-	// the item whole and destructures it as its first statement.
+	// parameters of the async callback the loop becomes, and a default that
+	// reads the index would read it before the second parameter is set, so
+	// that callback takes the item whole and destructures it as its first
+	// statement.
 	let callback_params = loop_params;
 	if (
 		node.left.type === 'VariableDeclaration' &&
 		loop_params[0] === node.left.declarations[0]?.id &&
-		find_first_top_level_await(loop_params[0], false)
+		(find_first_top_level_await(loop_params[0], false) ||
+			for_of_pattern_reads_index(loop_params[0], node.index))
 	) {
-		const item = b.id(FOR_OF_ITEM_PARAM_NAME);
-		// `using` binds only a name, so a pattern that awaits is never one.
+		// `using` binds only a name, so a pattern that awaits or has a default
+		// is never one.
 		const kind = /** @type {'const' | 'let' | 'var'} */ (node.left.kind);
-		callback_params = [item, ...loop_params.slice(1)];
+		const item = destructure_for_of_item(loop_params, kind);
+		callback_params = item.params;
 		// The head runs before the body's scope is entered, so the body's own
 		// declarations stay in a block of their own and can't shadow the head.
 		body_statements = [
-			b.declaration(kind, [b.declarator(loop_params[0], item)]),
+			item.declaration,
+			...(key_declaration ? [key_declaration] : []),
 			b.block(body_statements),
 		];
+	} else if (shadowed_names.size > 0) {
+		// A `for…of` body is a scope of its own, so it can declare the item's or
+		// the index's name again; a callback's body shares one scope with its
+		// parameters.
+		body_statements = [...(key_declaration ? [key_declaration] : []), b.block(body_statements)];
 	}
 
 	const iter_callback = b.arrow(callback_params, b.block(body_statements));

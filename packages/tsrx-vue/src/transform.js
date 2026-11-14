@@ -13,8 +13,10 @@ import {
 	createHookSafeHelper,
 	create_generated_identifier,
 	createJsxTransform,
+	destructure_for_of_item,
 	ERROR_BOUNDARY_INTERNAL_NAME,
 	error,
+	forOfPatternReadsIndex as for_of_pattern_reads_index,
 	has_location,
 	IDENTIFIER_OBFUSCATION_PREFIX,
 	insertAfterDirectives,
@@ -1791,6 +1793,14 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 		return null;
 	}
 
+	// A default in the head's pattern that reads the index can't be read in
+	// the parameters, where the index comes second. The shared lowering
+	// destructures the item in the callback for a body that can skip a row.
+	const pattern_reads_index = for_of_pattern_reads_index(loop_params[0], node.index);
+	if (pattern_reads_index && expression_can_skip_rendering(statement.argument)) {
+		return null;
+	}
+
 	const rendered = statement.argument;
 	if (expression_can_skip_rendering(rendered)) {
 		return render_for_of_as_flat_map(node, loop_params, rendered);
@@ -1818,12 +1828,19 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 	];
 
 	if (key_expression) {
-		attributes.push(
-			b.jsx_attribute(
-				b.jsx_id('getKey'),
-				to_jsx_expression_container(create_loop_callback(loop_params, key_expression, true)),
-			),
-		);
+		let get_key;
+		if (pattern_reads_index) {
+			const item = destructure_for_of_item(
+				loop_params.map((param) => clone_ast_node(param)),
+				/** @type {'const' | 'let' | 'var'} */ (
+					/** @type {AST.VariableDeclaration} */ (node.left).kind
+				),
+			);
+			get_key = b.arrow(item.params, b.block([item.declaration, b.return(key_expression)]));
+		} else {
+			get_key = create_loop_callback(loop_params, key_expression, true);
+		}
+		attributes.push(b.jsx_attribute(b.jsx_id('getKey'), to_jsx_expression_container(get_key)));
 	}
 
 	return to_jsx_expression_container(

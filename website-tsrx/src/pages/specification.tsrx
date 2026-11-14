@@ -1731,7 +1731,7 @@ export function SpecificationPage() @{
 								</li>
 								<li>
 									A style element that is the expression of a child expression container, directly
-									or as a branch of a conditional or logical expression, is
+									or as a branch of a conditional or logical expression, is{' '}
 									<code class="inline-code">TSRX3014</code>: it evaluates to its class map, which
 									styles nothing as a child. A style element whose value is used, such as an
 									attribute value or a member read, is an assigned block.

@@ -9845,6 +9845,48 @@ describe('JSX spread children', () => {
 	});
 });
 
+// TypeScript's checker reports an attribute's empty value (`a={}`) as TS17000
+// at its braces (#1311).
+describe('an empty attribute value', () => {
+	/** @type {Array<[source: string, braces: string, at: string]>} */
+	const cases = [
+		['export function App(bag: any) @{\n\t<div {...bag} title={} />\n}', '{}', '2:21'],
+		['export function App() @{\n\t<div title={/* c */} />\n}', '{/* c */}', '2:12'],
+		['export function App() {\n\treturn <div title={} />;\n}', '{}', '2:19'],
+		['export function App({ C }: any) @{\n\t<C value={\n\t} />\n}', '{\n\t}', '2:10'],
+	];
+
+	it('throws it in a strict parse', () => {
+		for (const [source, , at] of cases) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				error_with(TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION, at),
+			);
+		}
+	});
+
+	it.each([{ collect: true }, { loose: true }])(
+		'records it at the braces and keeps the attribute (%o)',
+		(options) => {
+			for (const [source, braces] of cases) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				const ast = parseModule(source, 'App.tsrx', { ...options, errors, comments: [] });
+				expect(
+					errors.map((error) => [error.code, source.slice(error.pos, error.end)]),
+					source,
+				).toEqual([['TS17000', braces]]);
+				const attribute = find_first(
+					ast,
+					(node) => node.type === 'JSXAttribute' && node.value?.type === 'JSXExpressionContainer',
+				);
+				expect(attribute, source).toMatchObject({
+					value: { expression: { type: 'JSXEmptyExpression' } },
+				});
+			}
+		},
+	);
+});
+
 // A `<` in markup child position only opens a tag when the next character can
 // begin one. Anything else — a digit, an operator, an emoji, whitespace — is a
 // literal `<` in the text, the same rule the HTML tokenizer uses. Every case
@@ -10715,6 +10757,55 @@ describe('a `<` in a file without JSX', () => {
 				[TS_ERRORS.RESERVED_TYPE_ASSERTION.code, 8],
 				[TS_ERRORS.RESERVED_TYPE_ASSERTION.code, 12],
 			]);
+		}
+	});
+
+	// TypeScript's checker reports an assertion's TS7059 before it checks the
+	// operand (#1326).
+	it('reports an outer type assertion before the errors in its operand, as tsc does', () => {
+		for (const filename of ['a.mts', 'a.cts']) {
+			for (const source of [
+				'const v = <A>(<B>x);',
+				'const v = <A><B>x;',
+				'const v = <A>(<B>(<C>x));',
+				'const h = <Handler>((e) => <number>e.x);',
+				'const v = <A>((a, a) => <B>a);',
+				'const v = <A>{ m() { return <B>x; } };',
+				'const v = <A>(<B>x); const w = <C>y;',
+				// The parenthesized operand is tried as an arrow function's parameters
+				// first, which threw TS1012 in a strict parse.
+				'const v = <A>((x ? <B>y : z));',
+			]) {
+				const label = `${filename}: ${source}`;
+				const path = `/${filename}`;
+				const host = ts.createCompilerHost({});
+				const get_source_file = host.getSourceFile;
+				host.getSourceFile = (name, version) =>
+					name === path
+						? ts.createSourceFile(name, source, version)
+						: get_source_file(name, version);
+				const program = ts.createProgram(
+					[path],
+					{ noLib: true, types: [], module: ts.ModuleKind.NodeNext },
+					host,
+				);
+				const file = /** @type {ts.SourceFile} */ (program.getSourceFile(path));
+				const expected = ts
+					.sortAndDeduplicateDiagnostics([...program.getSemanticDiagnostics(file)])
+					.filter((diagnostic) => [7059, 2300].includes(diagnostic.code))
+					.map((diagnostic) => [`TS${diagnostic.code}`, diagnostic.start]);
+				expect(expected.length, label).toBeGreaterThan(1);
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, filename, { collect: true, errors, comments: [] });
+				expect(
+					errors.map((error) => [error.code, error.pos]),
+					label,
+				).toEqual(expected);
+				expect(() => parseModule(source, filename), label).toThrow(
+					expect.objectContaining({ code: expected[0][0], pos: expected[0][1] }),
+				);
+			}
 		}
 	});
 
