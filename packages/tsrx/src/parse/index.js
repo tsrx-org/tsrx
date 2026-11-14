@@ -226,6 +226,8 @@ export function createParser(...plugins) {
 		const { onComment, add_comments } = get_comment_handlers(source, comments);
 		/** @type {Array<[number, number]>} */
 		const text_comments = [];
+		/** @type {Array<[number, number]>} */
+		const text_read_as_code = [];
 		/** @type {AST.Program} */
 		let ast;
 
@@ -275,14 +277,15 @@ export function createParser(...plugins) {
 					errors: collect ? (options?.errors ?? []) : undefined,
 					loose: options?.loose || false,
 					textComments: text_comments,
+					textReadAsCode: text_read_as_code,
 				},
 			});
 		} catch (e) {
 			throw e;
 		}
 
-		if (text_comments.length > 0) {
-			drop_text_comments(comments, text_comments);
+		if (text_comments.length > 0 || text_read_as_code.length > 0) {
+			drop_text_comments(ast, comments, text_comments, text_read_as_code);
 		}
 
 		if (output_comments) {
@@ -305,23 +308,49 @@ export function createParser(...plugins) {
 /**
  * Drop the line comments the tokenizer recorded where template text reads
  * text (`/* c *\/// c` after a directive, see `#readSkippedTemplateText` in
- * the plugin), and the second copy of each comment the template read again,
- * keeping the comments in source order.
+ * the plugin), and the second copy of each comment read again, by the template
+ * there or as code in the text of an element left open (see
+ * `#rereadTrailingCodeOfUnclosedElement`). There, what the text read as a
+ * comment where the code has none goes too: in a string, a template literal or
+ * a regular expression (`'a // b'`), or in a comment (`/* b *\/` in
+ * `a;// /* b *\/`). The comments stay in source order.
+ * @param {AST.Program} ast
  * @param {AST.CommentWithLocation[]} comments
  * @param {Array<[number, number]>} text_comments
+ * @param {Array<[number, number]>} text_read_as_code
  */
-function drop_text_comments(comments, text_comments) {
+function drop_text_comments(ast, comments, text_comments, text_read_as_code) {
 	const text = new Set(text_comments.map(([start, end]) => `${start}:${end}`));
-	/** @type {Set<number>} */
-	const seen = new Set();
-	const kept = comments.filter((comment) => {
-		if (text.has(`${comment.start}:${comment.end}`) || seen.has(comment.start)) return false;
-		seen.add(comment.start);
-		return true;
-	});
+	/** @param {number} position */
+	const read_as_code = (position) =>
+		text_read_as_code.some(([start, end]) => position >= start && position < end);
+	/** @type {Array<[number, number]>} */
+	const literals = [];
+	if (comments.some((comment) => read_as_code(comment.start))) {
+		walk(/** @type {AST.Node} */ (ast), null, {
+			_(node, { next }) {
+				const { start, end } = /** @type {AST.NodeWithLocation} */ (node);
+				if ((node.type === 'Literal' || node.type === 'TemplateElement') && read_as_code(start)) {
+					literals.push([start, end]);
+				}
+				next();
+			},
+		});
+	}
+	const kept = comments.filter(
+		(comment) =>
+			!text.has(`${comment.start}:${comment.end}`) &&
+			!literals.some(([start, end]) => start <= comment.start && comment.start < end),
+	);
 	kept.sort((a, b) => a.start - b.start);
 	comments.length = 0;
-	comments.push(...kept);
+	let end = -1;
+	for (const comment of kept) {
+		// A second copy, or what the text read as a comment inside one
+		if (comment.start < end) continue;
+		comments.push(comment);
+		end = comment.end;
+	}
 }
 
 /**

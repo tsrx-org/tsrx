@@ -1448,6 +1448,81 @@ function skip_whitespace_from(input, i) {
 }
 
 /**
+ * The index of the first `}` in a `<style>` or `<script>` body that closes no
+ * `{` in it, or -1. Braces in strings and comments, and in a script's template
+ * literals (but not their `${…}`) and line comments, don't count; a regular
+ * expression's do.
+ * @param {string} text
+ * @param {boolean} script
+ * @returns {number}
+ */
+function unmatched_closing_brace(text, script) {
+	// The brace depth outside each template literal `${…}` that is open
+	/** @type {number[]} */
+	const substitutions = [];
+	let depth = 0;
+	for (let i = 0; i < text.length; i++) {
+		const ch = text[i];
+		let template_part = -1;
+		if (ch === '"' || ch === "'") {
+			i = string_end(text, i);
+		} else if (script && ch === '`') {
+			template_part = i + 1;
+		} else if (text.startsWith('/*', i)) {
+			const end = text.indexOf('*/', i + 2);
+			if (end === -1) return -1;
+			i = end + 1;
+		} else if (script && text.startsWith('//', i)) {
+			while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i++;
+		} else if (ch === '{') {
+			depth++;
+		} else if (ch === '}') {
+			if (depth > 0) {
+				depth--;
+			} else if (substitutions.length > 0) {
+				depth = /** @type {number} */ (substitutions.pop());
+				template_part = i + 1;
+			} else {
+				return i;
+			}
+		}
+		if (template_part !== -1) {
+			// To the end of the literal, or into its next `${…}`
+			i = template_part;
+			while (i < text.length && text[i] !== '`' && !text.startsWith('${', i)) {
+				i += text[i] === '\\' ? 2 : 1;
+			}
+			if (text.startsWith('${', i)) {
+				substitutions.push(depth);
+				depth = 0;
+				i++;
+			}
+		}
+	}
+	return -1;
+}
+
+/**
+ * The index of the quote that ends the string starting at `start`, past
+ * escaped characters and escaped line breaks, or of the line break that ends
+ * it unclosed.
+ * @param {string} text
+ * @param {number} start
+ */
+function string_end(text, start) {
+	let i = start + 1;
+	for (; i < text.length && text[i] !== text[start]; i++) {
+		if (text[i] === '\\') {
+			i++;
+			if (text[i] === '\r' && text[i + 1] === '\n') i++;
+		} else if (text[i] === '\n' || text[i] === '\r') {
+			break;
+		}
+	}
+	return i;
+}
+
+/**
  * Skip whitespace and comments starting at `i`. Returns -1 when a block
  * comment is left open at the end of the input.
  * @param {string} input
@@ -1619,6 +1694,11 @@ export function TSRXPlugin(config) {
 			// `#readSkippedTemplateText`).
 			/** @type {Array<[number, number]> | undefined} */
 			#textComments;
+			// Where the caller collects the template text read again as code, whose
+			// comments it keeps as the code reads them (see
+			// `#rereadTrailingCodeOfUnclosedElement`).
+			/** @type {Array<[number, number]> | undefined} */
+			#textReadAsCode;
 			// Set while `parseVarStatement` or `parseVar` lets `const` declarators omit
 			// the initializer (see `#parseConstWithoutInitializer`).
 			#readingConstWithoutInitializer = false;
@@ -1962,6 +2042,7 @@ export function TSRXPlugin(config) {
 				this.#filename = tsrx_options?.filename || null;
 				this.#jsxFile = !regex_file_without_jsx.test(this.#filename ?? '');
 				this.#textComments = tsrx_options?.textComments;
+				this.#textReadAsCode = tsrx_options?.textReadAsCode;
 				if (this.#collect) {
 					// With private-field checks on, acorn rejects `#x in obj` outside a class
 					// with `Unexpected token`. TypeScript parses it and reports TS18016 from
@@ -4509,13 +4590,14 @@ export function TSRXPlugin(config) {
 			 * whitespace, then `>`, as a closing tag can be written in JSX; a
 			 * `<script>` body ends where HTML ends it (see `#findScriptBodyEnd`).
 			 *
-			 * Without a closing tag the element is unclosed and the rest of the input
-			 * is its body, except that in loose mode inside a template the body stops
-			 * at the next tag start (`<x`, `</x>`, `</>`): while `<style>` is being
-			 * typed, partial CSS reaches the loose CSS parser, and the tokenizer
-			 * resumes at the following sibling or closing tag so the rest of the file
-			 * keeps its mappings. Outside a template only JS follows, with no marker to
-			 * resume at, so the body runs to the end of the input.
+			 * Without a closing tag the element is unclosed (TSRX1001, which a strict
+			 * parse throws). A collecting or loose parse then ends the body where what
+			 * is around the element goes on: inside a template at the next tag start
+			 * (`<x`, `</x>`, `</>`), and anywhere at a `}` that closes the block the
+			 * element is in (`@{ <style>.a {} }`), so the tokenizer resumes there and
+			 * the rest of the file keeps its mappings (#1305). While `<style>` is being
+			 * typed, partial CSS reaches the loose CSS parser. Without either, the
+			 * body runs to the end of the input.
 			 *
 			 * @param {ESTreeJSX.TSRXJSXOpeningElement & AST.NodeWithLocation} open
 			 * @param {AST.JSXStyleElement | AST.TSRXJSXElement} node
@@ -4556,14 +4638,6 @@ export function TSRXPlugin(config) {
 					]);
 					node.unclosed = true;
 					relativeCloseStart = input.length;
-					if (!this.#loose) {
-						const newLines = input.match(regex_newline_characters)?.length;
-						if (newLines) {
-							this.curLine = open.loc.end.line + newLines;
-							this.lineStart = contentStart + input.lastIndexOf('\n') + 1;
-						}
-						return input;
-					}
 					if (insideTemplate) {
 						// A `<` inside CSS text (`content: "<"`, `<!--`) is not a tag start.
 						let lt = input.indexOf('<');
@@ -4572,6 +4646,8 @@ export function TSRXPlugin(config) {
 						}
 						if (lt !== -1) relativeCloseStart = lt;
 					}
+					const brace = unmatched_closing_brace(input, tagName === 'script');
+					if (brace !== -1 && brace < relativeCloseStart) relativeCloseStart = brace;
 				}
 
 				const content = input.slice(0, relativeCloseStart);
@@ -4756,12 +4832,12 @@ export function TSRXPlugin(config) {
 						throw error;
 					}
 					const reported = { code: css_error.code, message: css_error.message };
-					if (!this.#loose) {
+					// An unclosed `<style>`'s body is partial CSS (see `#parseRawTextElement`):
+					// it gets its TSRX1001 alone, in every mode. A loose parse, the
+					// editor's, reports the error and keeps the rules before it.
+					if (!this.#loose && !node.unclosed) {
 						this.#throwError(css_error.pos, reported);
 					}
-					// A loose parse, the editor's, reports it and keeps the rules before
-					// it. An unclosed `<style>`, whose body is still being typed, gets
-					// its TSRX1001 alone.
 					if (!node.unclosed) {
 						this.#report_recoverable_error(css_error.pos, reported);
 					}
@@ -5155,6 +5231,121 @@ export function TSRXPlugin(config) {
 				} else {
 					this.#report_recoverable_error(position, message);
 				}
+			}
+
+			/**
+			 * An element left open in code, outside any template, in a collecting
+			 * parse, after TSRX1001: when the text after its last child starts with
+			 * what the code around it goes on with, that text is the code after the
+			 * element (`(<div>)`, `c ? <b> : d`, `[<div>]`), which the children read
+			 * to the end of the template. Drop it from the children and read it again
+			 * as code, so that the code around the element still parses and TSRX1001
+			 * is the error the tools report (#1305). The code goes on with `)` or `,`
+			 * in parentheses, `]` or `,` after an element right after `[` or `,`, `:`
+			 * after a conditional's `?`, and `}` in a template literal's `${…}`; other
+			 * text stays the element's (`@{ <div>: label }`). The code records its
+			 * comments again, and the parser keeps them as the code reads them,
+			 * dropping those the text read where the code has none, in a string, for
+			 * one (see `drop_text_comments`).
+			 * @param {AST.NativeTSRXTemplateNode} node
+			 * @param {number} context_depth The tokenizer context depth where the
+			 *   element began
+			 */
+			#rereadTrailingCodeOfUnclosedElement(node, context_depth) {
+				let closers = '';
+				const context = this.context[context_depth - 1]?.token;
+				if (context === '(') closers += '),';
+				else if (context === '${') closers += '}';
+				// The code right before the element, past whitespace and block comments
+				let before = /** @type {number} */ (node.start) - 1;
+				for (;;) {
+					while (before >= 0 && regex_whitespace_character.test(this.input[before])) before--;
+					if (this.input[before] !== '/' || this.input[before - 1] !== '*') break;
+					before = this.input.lastIndexOf('/*', before - 2) - 1;
+				}
+				const previous = this.input[before];
+				if (previous === '[' || previous === ',') closers += '],';
+				if (previous === '?' && this.input[before - 1] !== '?') closers += ':';
+				/** @param {number} start */
+				const goes_on_at = (start) => {
+					const code_start = skip_whitespace_from(this.input, start);
+					return closers.includes(this.input[code_start] || '\0') ? code_start : -1;
+				};
+				// The code goes on right after the opening tag (`f(<div>, x)`), and
+				// what the children read is code, or after the last child: in the last
+				// text child, in what a container's element read before its body and
+				// left out of its children, or, where a comment splits the text after
+				// the last child into pieces, where that text starts, past whitespace
+				// and comments (`<b />);` and a comment after it). The element now ends
+				// at its opening tag.
+				const children = /** @type {any[]} */ (node.children);
+				const last = children.at(-1);
+				let keep = 0;
+				let code_start = goes_on_at(/** @type {number} */ (node.end));
+				if (code_start === -1 && last) {
+					keep = last.type === 'JSXText' ? children.length - 1 : children.length;
+					code_start = goes_on_at(last.type === 'JSXText' ? last.start : last.end);
+				}
+				if (code_start === -1 && last) {
+					keep = children.length;
+					while (
+						keep > 0 &&
+						(children[keep - 1].type === 'JSXText' ||
+							children[keep - 1].expression?.type === 'JSXEmptyExpression')
+					) {
+						keep--;
+					}
+					while (
+						keep < children.length &&
+						!(children[keep].type === 'JSXText' && /\S/.test(children[keep].raw))
+					) {
+						keep++;
+					}
+					if (keep < children.length) code_start = goes_on_at(children[keep].start);
+				}
+				if (code_start === -1) return;
+				// What the dropped children recorded is reported again as the code is
+				// read again.
+				const errors = this.#errors;
+				if (errors) {
+					const kept = errors.filter(
+						(error) =>
+							!(
+								/** @type {number} */ (error.pos) >= code_start &&
+								/** @type {number} */ (error.pos) < this.start
+							),
+					);
+					if (kept.length < errors.length) {
+						// Through the undo log, which an enclosing speculative parse rolls
+						// back (see `#truncateContext`).
+						if (this.parseEffects) this.parseEffects.truncate(errors, 0);
+						else errors.length = 0;
+						this.parseEffects?.willAppend(errors);
+						errors.push(...kept);
+					}
+				}
+				// And so are the comments in it, which the caller keeps as the code
+				// reads them.
+				if (this.#textReadAsCode) {
+					this.parseEffects?.willAppend(this.#textReadAsCode);
+					this.#textReadAsCode.push([code_start, this.start]);
+				}
+				const text = children[keep];
+				// The whitespace before the code stays the element's text.
+				children.length = keep;
+				if (text?.type === 'JSXText' && text.start < code_start) {
+					text.value = text.raw = this.input.slice(text.start, code_start);
+					text.end = code_start;
+					/** @type {AST.SourceLocation} */ (text.loc).end = get_line_info(this, code_start);
+					children.push(text);
+				}
+				this.#truncateContext(context_depth);
+				const loc = get_line_info(this, code_start);
+				this.pos = code_start;
+				this.curLine = loc.line;
+				this.lineStart = code_start - loc.column;
+				this.exprAllowed = false;
+				this.nextToken();
 			}
 
 			/**
@@ -13939,6 +14130,22 @@ export function TSRXPlugin(config) {
 							? /** @type {ESTreeJSX.JSXFragment} */ (node).openingFragment.end
 							: /** @type {ESTreeJSX.JSXElement} */ (node).openingElement.end;
 						this.#path.pop();
+						// In code: no template parent, none opened in the `{ … }` container
+						// the element is in, or code that started after the parent opened (a
+						// `@{ … }` body's setup statement).
+						const parent_index = this.#path.length - 1;
+						const parent = this.#path[parent_index];
+						if (
+							type_parameter === null &&
+							(parent_index < this.#containerPathBaseline() ||
+								!this.#isNativeTemplateNode(parent) ||
+								this.#templateScriptParsingDepth > this.#elementStart(parent).scriptDepth)
+						) {
+							this.#rereadTrailingCodeOfUnclosedElement(
+								/** @type {AST.NativeTSRXTemplateNode} */ (node),
+								pre_element_context_depth,
+							);
+						}
 					}
 
 					// A balanced element must leave the tokenizer context exactly where it

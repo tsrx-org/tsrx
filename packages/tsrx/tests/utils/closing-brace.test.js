@@ -232,9 +232,8 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 
 	it('throws an unclosed tag first when not collecting, and keeps its recovery', async () => {
 		// Collect and loose mode record the unclosed tag and keep parsing, as before,
-		// and then stop at the missing `}`. Only loose mode recovers the body of an
-		// unclosed `<style>`; collect mode reads it as markup, where `{ color` is an
-		// expression container that the `:` doesn't close.
+		// and then stop at the missing `}`. Both recover the body of an unclosed
+		// `<style>`, which runs to the end of the input here (#1305).
 		const style = 'export function App() @{\n  <>\n    <style>\n      .a { color: red; }\n';
 		const section = 'export function App() @{\n  @if (ok) {\n    <section>\n';
 		const div = '{ <div>';
@@ -246,7 +245,7 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 
 		expect(outcomes).toEqual([
 			thrown(TSRX_ERRORS.UNCLOSED_TAG, style.indexOf('\n      .a')),
-			thrown(TS_ERRORS.TOKEN_EXPECTED, style.indexOf(': red')),
+			thrown(TS_ERRORS.TOKEN_EXPECTED, style.length),
 			thrown(TS_ERRORS.TOKEN_EXPECTED, style.length),
 			thrown(TSRX_ERRORS.UNCLOSED_TAG, section.length),
 			thrown(TS_ERRORS.TOKEN_EXPECTED, section.length),

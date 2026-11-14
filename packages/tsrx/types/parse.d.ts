@@ -205,6 +205,12 @@ export namespace Parse {
 			 * after the parse.
 			 */
 			textComments?: Array<[number, number]>;
+			/**
+			 * Collects the `[start, end]` of the template text an element left
+			 * open read that the parser reads again as code, whose comments the
+			 * caller keeps as the code reads them.
+			 */
+			textReadAsCode?: Array<[number, number]>;
 		};
 		// The type has "latest" but it's converted to 1e8 at runtime
 		// and if (ecmaVersion >= 2015) { ecmaVersion -= 2009 }
