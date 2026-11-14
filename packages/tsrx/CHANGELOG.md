@@ -1,5 +1,271 @@
 # @tsrx/core
 
+## 0.6.1
+
+### Patch Changes
+
+- [#1357](https://github.com/tsrx-org/tsrx/pull/1357)
+  [`1668091`](https://github.com/tsrx-org/tsrx/commit/1668091afe1eb8e59bdca59621b11aee3ce40e5c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A name exported twice,
+  by two blocks of one namespace or ambient module or by the module itself
+  (`export default 1; … export default 2;`), is now reported by position among the
+  other errors, as tsc sorts them: a collecting parse records those errors at
+  their positions, and a strict parse throws the first, where it threw an error
+  that comes later. Before, they came after every error found while the module was
+  read, such as a redeclaration later in a namespace's second block
+  (`namespace N { export const a = 2; export const a = 3; }`) or a duplicate
+  parameter (`function f(x, x) {}`).
+
+- [#1344](https://github.com/tsrx-org/tsrx/pull/1344)
+  [`760f9fe`](https://github.com/tsrx-org/tsrx/commit/760f9fe5bc5bf51b8eec56743da154f88160a08a)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A CSS syntax error in a
+  `<style>` block (TSRX3013) now has a position: where the CSS parser stopped,
+  such as a stray `}` or the end of a rule left without its `}`. A build throws it
+  with its line and column, as other syntax errors, and Prettier reports it there.
+  The editor's compile, which used to drop it and keep the rules before it, now
+  reports it too; an unclosed `<style>`, still being typed, gets only its
+  TSRX1001. `parseStyle` gives such an error `pos`, and `loc` for a sheet with a
+  `body` origin.
+
+- [#1354](https://github.com/tsrx-org/tsrx/pull/1354)
+  [`7e4aaf0`](https://github.com/tsrx-org/tsrx/commit/7e4aaf007deda3af77f24a7daf38ba196802c5d1)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A directive's clause
+  that no directive takes in element children is now an error, TSRX1012, at its
+  keyword, in every mode: `@else` before `{` or `if`, `@empty` or `@pending`
+  before `{`, `@catch` before `{` or `(`, `@case …:` and `@default:`, written
+  after text, an element or an expression container
+  (`@if (ok) { <i /> } note @else { <b /> }`), in the wrong order
+  (`@try { … } @catch (e) { … } @pending { … }`), or with no directive before it.
+  It compiled before as text, and its `{ … }` rendered whatever the directive did.
+  A clause right after its block, with only comments between, is unchanged, and
+  `&[#64](https://github.com/tsrx-org/tsrx/issues/64);else` writes the text.
+
+  `@tsrx/eslint-parser` reports TSRX1012 as a parse error, as it does a clause
+  written without its `@` (TSRX1009).
+
+- [#1332](https://github.com/tsrx-org/tsrx/pull/1332)
+  [`3376fa2`](https://github.com/tsrx-org/tsrx/commit/3376fa2ad40d6ba7cf43845c17e0a10dd130dd89)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An attribute with an
+  empty value, such as `title={}` or `title={/* c */}`, is now an error: TS17000,
+  at its braces, where TypeScript reports it, in acorn-typescript's words
+  (`JSX attributes must only be assigned a non-empty expression`). A strict
+  compile throws it, and a collecting or loose compile records it and keeps the
+  attribute. It compiled before with no error, and the next tool rejected
+  `title={}` in the output.
+
+- [#1342](https://github.com/tsrx-org/tsrx/pull/1342)
+  [`440bd21`](https://github.com/tsrx-org/tsrx/commit/440bd21bedc3e32a939f7cd9130bc6e0728ab6cd)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An `@for` body can
+  declare the item's or the index's name again, as a `for...of` body can:
+  `@for (const { id } of rows) { const { id } = other; ... }` no longer compiles
+  to a duplicate declaration on React, Preact, Hono, Solid or Vue. The body runs
+  in a block of its own, and a key the head gives (`key id`, or the index an index
+  loop is keyed by) still reads the head's name.
+
+  A default in an `@for` item pattern can read the loop's index, as in
+  `@for (const [a = 'r' + i, b] of rows; index i)`. It no longer throws "Cannot
+  access 'i' before initialization" when a row needs the default, and on Solid a
+  keyed loop's default reads the index number instead of its accessor. The loop
+  callback takes the item whole and destructures it once the index is set.
+
+- [#1343](https://github.com/tsrx-org/tsrx/pull/1343)
+  [`1148a6e`](https://github.com/tsrx-org/tsrx/commit/1148a6e66512d73b21ae36c1497032f9fa6076d4)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - When a generic arrow
+  function's body has a syntax error
+  (`const f = <T,>(x: T) => { const z; return x +; };`), a collecting parse now
+  records the checker errors before it, such as TS1155 for `const z;`, and then
+  throws the syntax error, as it does for an arrow function without type
+  parameters. Before, it recorded nothing, where a strict parse threw TS1155. A
+  generic async arrow function keeps its body's errors only; its parameters'
+  errors come once it's read, as before. In a signature's parameter default, a
+  strict parse now throws that TS1155 too, as for an arrow function without type
+  parameters.
+
+- [#1341](https://github.com/tsrx-org/tsrx/pull/1341)
+  [`462cdbb`](https://github.com/tsrx-org/tsrx/commit/462cdbb17b8f5e2696fe59c02db26313331d7b5b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The arguments of a
+  `:not()`, `:is()`, `:where()` or `:has()` right after `:global(…)` in the same
+  compound are now kept as written: they are global like the rest of the compound,
+  so they are never commented out as unused or scoped. Before,
+  `:global(.x):not(.z) .y` compiled to `.x:not(/* (unused) .z*/) .y.<hash>`, an
+  empty `:not()` that lightningcss rejects (`Invalid empty selector`), so a
+  production build failed; `:is()`, `:where()` and `:has()` were emptied the same
+  way and then matched nothing, and an argument that matched an element of the
+  component got the hash (`.x:not(.y:where(.<hash>))`). Now they compile to
+  `.x:not(.z) .y.<hash>`, `.x:is(.z) .y.<hash>` and `.x:not(.y) .y.<hash>`. The
+  same holds in themes. Whether the rule as a whole can match an element of the
+  component is decided as before.
+
+- [#1334](https://github.com/tsrx-org/tsrx/pull/1334)
+  [`522adf4`](https://github.com/tsrx-org/tsrx/commit/522adf487da2e085cd72f4623934e53cde8b335c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The `/* (unused) … */`
+  comment over a pruned selector no longer loses its opening or closing marker
+  when it sits at the edge of a `:global(…)` or `:global` selector. Before,
+  removing the `:global(`, `)` or `:global` text also removed the marker, so in
+  `.y:is(.z,:global(.w))`, `.z,:global(.w)`, `:global(.x) .z, .y`,
+  `.y, .z:global(.k)` or `.y, .z:global` the comment ran to the end of the
+  stylesheet and swallowed the rules after it (a production build failed in
+  lightningcss with `Unexpected end of input`), or a stray `*/` was left behind.
+  `.y:is(.z,:global(.w))` now compiles to `.y.<hash>:is(/* (unused) .z,*/.w)`, as
+  `.y:is(.z, :global(.w))` with a space already did.
+
+- [#1347](https://github.com/tsrx-org/tsrx/pull/1347)
+  [`af56597`](https://github.com/tsrx-org/tsrx/commit/af56597e28b606a56a0864bb4401b50520e729fa)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Parsing a module with
+  many `let`, `const` or `using` declarations in one scope no longer spends time
+  quadratic in their number on TSRX's own redeclaration check: it looks a name up
+  in an index instead of scanning the scope's list of names. acorn's own
+  redeclaration check still scans arrays, so very large scopes still parse in more
+  than linear time.
+
+- [#1333](https://github.com/tsrx-org/tsrx/pull/1333)
+  [`ab88cd8`](https://github.com/tsrx-org/tsrx/commit/ab88cd80e8109ca8273383328ed40de180674dba)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - In a `.mts` or `.cts`
+  file, a type assertion that holds another (`<A>(<B>x)`) now reports its own
+  TS7059 first, as tsc does: a strict parse throws the outer assertion's TS7059,
+  and a collecting parse records it before the errors in the operand, by position.
+  Before, both reported the innermost assertion first.
+
+- [#1335](https://github.com/tsrx-org/tsrx/pull/1335)
+  [`dcf9704`](https://github.com/tsrx-org/tsrx/commit/dcf9704fd1c1e7ead0e608a1faaa4316ce4e462e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `pending` block on a
+  plain `try` (not `@try`) is now an error on the React, Preact, Solid, Vue and
+  Hono targets: TS1472 (`'catch' or 'finally' expected.`) at `pending`, where
+  TypeScript reports it. So is a reset parameter after a plain `catch` parameter,
+  `catch (e, reset)`: TS1005 (`')' expected.`) at the comma. Both compiled with no
+  error before, the `pending` block and the reset parameter left out, so a `try`
+  with only a `pending` block compiled to JavaScript that doesn't parse. A
+  collecting or loose compile records the error and keeps the `pending` block's
+  code in a `finally` block, so the editor reports TS1472 at `pending` instead of
+  failing to compile the file, and still checks that code. The parser still reads
+  both for `@tsrx/ripple`, which compiles them.
+
+  The Prettier plugin now prints a plain `try`'s `pending` block, which formatting
+  deleted before.
+
+- [#1358](https://github.com/tsrx-org/tsrx/pull/1358)
+  [`463bd99`](https://github.com/tsrx-org/tsrx/commit/463bd999b2ae1b9c686ad989ff0bd5298964773f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Sort Imports and
+  Organize Imports now sort the re-exports of a `.tsrx` file as in a `.tsx` file,
+  with the React, Preact, Solid, Vue and Hono targets, on TypeScript 5.9 and 6 and
+  on TypeScript 7. TypeScript sorts each block of imports and re-exports that no
+  blank line splits, and the editor code put a blank line between an import and a
+  re-export and between the two kinds of re-export, so each was sorted on its own.
+  The editor code now has the source's blocks: a blank line between imports and
+  re-exports where the source has one, and only there. It also writes a re-export
+  as it is in the source, not as `export *  from` with two spaces, and maps its
+  module string and `;` as an import's, which TypeScript 7 needs to apply the
+  edit.
+
+- [#1345](https://github.com/tsrx-org/tsrx/pull/1345)
+  [`1c472c2`](https://github.com/tsrx-org/tsrx/commit/1c472c26802cef015346b2a82d1f66863f1c3ca7)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - In the editor, a member
+  expression or call written right after a `{`, as in `function f() {user.a.b;` or
+  `<p>@{user.a.b}</p>`, now maps to its own text. It mapped from the line break
+  and indent the printer puts after the `{`, so a diagnostic on it started that
+  many characters late: TypeScript's `'user.a' is possibly 'undefined'` showed on
+  `er.a`, and `TSRX2035` on `a.b`.
+
+- [#1339](https://github.com/tsrx-org/tsrx/pull/1339)
+  [`55cb0b1`](https://github.com/tsrx-org/tsrx/commit/55cb0b1640918979802fff5eb053078d21eaf863)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Text right after a
+  directive's block that the tokenizer can't read as code, such as `1st prize`,
+  `10px`, `[#1](https://github.com/tsrx-org/tsrx/issues/1)`, `0x`, `'s` or an
+  unclosed quote, is now read as text, as after an element, in every mode: it
+  threw `Identifier directly after number` (TS1351) or a similar error. In an
+  element in a `{ … }` container, the same text after a later child
+  (`@if (ok) {<i />}<b /> 1st prize`) no longer throws either.
+
+- [#1356](https://github.com/tsrx-org/tsrx/pull/1356)
+  [`ba3db46`](https://github.com/tsrx-org/tsrx/commit/ba3db468c6b2bf067374ddcb6ded12381b8d9bf3)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - In a `.mts` or `.cts`
+  file, a collecting parse no longer records TS7060 for a generic arrow function
+  in a parameter default that TypeScript's checker doesn't check, as tsc reports
+  only TS2371 there: in a function or constructor type, a call, construct or
+  method signature, a `declare` function or class, or an abstract method. A
+  default keeps it where tsc needs the parameter's type: an overload's, a binding
+  pattern's, and without a type annotation, a rest parameter's or one whose
+  parameter a `typeof` in the signature names. The errors of a function's or
+  method's parameter list and return type now come in tsc's order, by position, so
+  an overload's or abstract method's TS2371 comes before the errors after it, and
+  a strict parse throws it.
+
+- [#1355](https://github.com/tsrx-org/tsrx/pull/1355)
+  [`a0e9a7a`](https://github.com/tsrx-org/tsrx/commit/a0e9a7a85a2f478fa63b05f085c9952a1fe317b4)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The editor shows an
+  unclosed `<>`'s TSRX1001 on the `<>`, as TypeScript 7 does, instead of on its
+  first child or on the function's name. The compile gives an error an anchor
+  mapping where the editor's code leaves its source out, but it skipped any error
+  whose position esrap's source map records, and a `<>` the editor's code prints
+  has no mapping of its own. Such an error now gets an anchor on that `<>`, or,
+  where esrap records the `<>` at code other than a `<>`, as for the inner one of
+  `<><><div>`, the anchor any such error gets, so each `<>` left open shows on
+  itself.
+
+- [#1353](https://github.com/tsrx-org/tsrx/pull/1353)
+  [`10059ac`](https://github.com/tsrx-org/tsrx/commit/10059ac90e00ab4dbeb6aa26dc96de5b2795672a)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A collecting or loose
+  parse reports an unclosed tag (TSRX1001) and goes on, instead of throwing a
+  later error caused by it, in these shapes:
+
+  - A tag left open in code, where the text right after it, or after its last
+    child, starts with what the code around it goes on with: `)` or `,` in
+    parentheses (`return (<div>);`, `f(<div>, x)`), `]` or `,` right after `[` or
+    `,` (`[<div>]`), `:` after a conditional's `?` (`c ? <b> : null`), or `}` in a
+    template literal's `${…}`. That text is read as code again, so Prettier,
+    ESLint and the editor show TSRX1001 instead of `Unexpected token`. Other text
+    stays the element's, as before (`@{ <div>: label }`).
+  - An unclosed `<style>` or `<script>`, whose body now ends at the next tag
+    inside a template, or at the `}` that closes the block it's in
+    (`@{ <style>.a {} }`; braces in strings and comments don't count), in a
+    collecting parse as in a loose one. A collecting parse no longer throws the
+    CSS error (`Expected identifier`) of the rest of the file, and the editor no
+    longer reports `'}' expected` at the end of the file.
+
+  The editor's code no longer moves an unclosed element or fragment to a
+  module-level constant, where it lost the closing tag that keeps the code valid.
+
+- [#1346](https://github.com/tsrx-org/tsrx/pull/1346)
+  [`2015571`](https://github.com/tsrx-org/tsrx/commit/20155718ffe8c8d445dd93729168d8a888a5e7bb)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An unclosed tag or `<>`
+  inside `{…}` no longer breaks a collecting or loose compile. On React, Preact
+  and Hono's server target, an element holding one was hoisted to a module-level
+  static before the compile closed the tag, so `<div>{<>}</div>` threw
+  `TypeError: Cannot read properties of null (reading 'type')`, which the editor
+  showed at the start of the file, and `<div>{<b>}</div>` left the editor's code
+  unclosed, so TypeScript added five errors to TSRX1001. Such an element is no
+  longer hoisted: the compile reports TSRX1001 alone and the editor's code closes
+  the tag. The closing tag the editor's code adds to an unclosed tag has no
+  mapping on Solid in braces and on every target for a dynamic tag (`<{Tag}>`), as
+  for other tags, and the mapping of the braces around it no longer covers it, so
+  TypeScript's error on it, such as TS2304 for an undefined `<Missing>`, isn't
+  shown a second time at the end of the braces. Compiled output of valid files
+  doesn't change.
+
+- [#1336](https://github.com/tsrx-org/tsrx/pull/1336)
+  [`fb920eb`](https://github.com/tsrx-org/tsrx/commit/fb920eb190d03ee81dc4b2b2ee57cddc93333429)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - TypeScript's errors on
+  an authored `return` of an element, such as TS7027 `Unreachable code detected.`
+  for `return; return <div></div>;`, now map back to the `.tsrx` file, in
+  `tsrx-tsc` and the editor. The `return` that the element lowers to keeps the
+  authored statement's location, so its keyword and its end map as for any other
+  `return`, also when the output hoists the element out of it or the `return` has
+  no `;`.
+
+- [#1359](https://github.com/tsrx-org/tsrx/pull/1359)
+  [`a0f7749`](https://github.com/tsrx-org/tsrx/commit/a0f77497f4370b2ff04412b35f8b3f0a0c0748a8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, a
+  keyed `@for` row whose body is a fragment no longer throws
+  `ReferenceError: __Fragment is not defined` when the loop doesn't render through
+  `VaporFor`: a loop with `@empty`, or a body with setup statements before the
+  fragment. The row is a `<Fragment key>` with `Fragment` imported from `vue`,
+  which vue-jsx-vapor renders as a keyed fragment in the browser and on the
+  server, and the editor no longer reports TS2304 for it. In a module that
+  declares something else named `Fragment`, the row is an unkeyed fragment
+  instead; such a loop recreates its rows when they move, so the key kept no row
+  state there. `@tsrx/core` exports `FRAGMENT_INTERNAL_NAME`, the name the Vue
+  target finds the generated rows by.
+
 ## 0.6.0
 
 ### Minor Changes

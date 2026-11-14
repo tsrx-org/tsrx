@@ -1,5 +1,24 @@
 # Changelog
 
+## 2.2.6
+
+### Patch Changes
+
+- [#1331](https://github.com/tsrx-org/tsrx/pull/1331)
+  [`0d54be3`](https://github.com/tsrx-org/tsrx/commit/0d54be38c680c410a8fe6ce08174d33e44157f53)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - With TypeScript 7
+  turned on and only the TypeScript 7 Nightly extension installed, the VS Code
+  extension now treats `.tsrx` files as served by VS Code's own TypeScript, which
+  is what happens: VS Code stands down only for the TypeScript 7 extension or a
+  build of it from source. The status item says "VS Code TypeScript" instead of
+  "No type checking", the notice that no TypeScript features work no longer
+  appears, TSRX: Restart Language Server and Go to Source Definition use VS Code's
+  TypeScript, and the TSRX language server no longer closes tags alongside it.
+- Updated dependencies
+  [[`f23ebb0`](https://github.com/tsrx-org/tsrx/commit/f23ebb0e1da477f396d6ea74a134d1c0a01531f5)]:
+  - @tsrx/typescript-plugin@0.7.1
+  - @tsrx/language-server@0.7.1
+
 ## 2.2.5
 
 ### Patch Changes
