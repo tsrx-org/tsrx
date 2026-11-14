@@ -30,7 +30,7 @@
  */
 
 import { analyze_css } from '../../analyze/css-analyze.js';
-import { prune_css } from '../../analyze/prune.js';
+import { keep_global_compound_arguments, prune_css } from '../../analyze/prune.js';
 import { DIAGNOSTIC_CODES } from '../../diagnostics.js';
 import { error } from '../../errors.js';
 import * as b from '../../utils/builders.js';
@@ -573,6 +573,9 @@ export function apply_css_definition_metadata(
 	};
 
 	prune();
+	// `prune_css` keeps the arguments of a global compound, and a scope without
+	// elements never calls it (#1314)
+	if (elements.length === 0) keep_global_compound_arguments(css);
 
 	if (export_top_scoped_classes) {
 		for (const [class_name, class_info] of top_scoped_classes) {
