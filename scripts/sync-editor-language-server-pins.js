@@ -24,7 +24,7 @@ export async function synchronizeEditorLanguageServerPins({
 	rootDir = default_root,
 	check = false,
 	logger = console,
-	updateLockfile = update_lockfile,
+	updateLockfile = updateSublimeLockfile,
 } = {}) {
 	const paths = {
 		server: join(rootDir, 'packages/language-server/package.json'),
@@ -126,11 +126,23 @@ function read_server_version(path) {
 	return server.version;
 }
 
-async function update_lockfile({ directory, version, logger }) {
+/**
+ * Waits until npm serves the server version, then rebuilds the lockfile against it.
+ * npm can serve the server before a dependency published with it, such as
+ * `@tsrx/core`, and the install then fails with ETARGET or E404: it runs again
+ * while it fails that way, for about five minutes too.
+ */
+export async function updateSublimeLockfile({
+	directory,
+	version,
+	logger,
+	runNpm = run_npm,
+	wait = sleep,
+}) {
 	const spec = `${package_name}@${version}`;
 	// npm can take a little while to serve a version it has just published.
 	for (let attempt = 1; ; attempt++) {
-		const result = run_npm(['view', spec, 'version', '--prefer-online'], directory);
+		const result = runNpm(['view', spec, 'version', '--prefer-online'], directory);
 		if (result.status === 0 && result.stdout.trim() === version) break;
 		if (attempt === npm_attempts) {
 			throw new Error(`npm does not serve ${spec}:\n${result.stderr}${result.stdout}`);
@@ -138,7 +150,7 @@ async function update_lockfile({ directory, version, logger }) {
 		logger.log(
 			`npm does not serve ${spec} yet (attempt ${attempt} of ${npm_attempts}); checking again in ${npm_retry_ms / 1000} seconds.`,
 		);
-		await sleep(npm_retry_ms);
+		await wait(npm_retry_ms);
 	}
 
 	const args = [
@@ -149,11 +161,17 @@ async function update_lockfile({ directory, version, logger }) {
 		'--no-audit',
 		'--no-fund',
 	];
-	const result = run_npm(args, directory);
-	if (result.status !== 0) {
-		throw new Error(
-			`npm ${args.join(' ')} failed with exit code ${result.status}:\n${result.stderr}${result.stdout}`,
+	for (let attempt = 1; ; attempt++) {
+		const result = runNpm(args, directory);
+		if (result.status === 0) return;
+		const output = `${result.stderr}${result.stdout}`;
+		if (attempt === npm_attempts || !/\b(?:ETARGET|E404)\b/.test(output)) {
+			throw new Error(`npm ${args.join(' ')} failed with exit code ${result.status}:\n${output}`);
+		}
+		logger.log(
+			`npm does not serve a package ${spec} needs yet (attempt ${attempt} of ${npm_attempts}); installing again in ${npm_retry_ms / 1000} seconds.`,
 		);
+		await wait(npm_retry_ms);
 	}
 }
 
