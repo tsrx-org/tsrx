@@ -2415,19 +2415,34 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Whether a `:` comes after `index` on the same line, past block comments,
-			 * before a `{`, `}` or `<`: the end of an `@case …:` label.
+			 * Whether a `:` comes after `index` on the same line, before a `{`, a `}`
+			 * or a tag: the end of an `@case …:` label. Strings and block comments on
+			 * the line are skipped; a `//`, which template text reads as a comment,
+			 * ends the line.
 			 * @param {number} index
 			 */
 			#caseLabelColonAhead(index) {
 				for (let i = index; i < this.input.length; i++) {
 					const ch = this.input[i];
 					if (ch === ':') return true;
-					if (ch === '{' || ch === '}' || ch === '<' || this.#isNewlineCharCode(i)) return false;
-					if (this.input.startsWith('/*', i)) {
-						const end = this.input.indexOf('*/', i + 2);
-						if (end === -1) return false;
-						i = end + 1;
+					if (
+						ch === '{' ||
+						ch === '}' ||
+						(ch === '<' && can_start_tag_after_lt(this.input, i)) ||
+						this.input.startsWith('//', i) ||
+						this.#isNewlineCharCode(i)
+					) {
+						return false;
+					}
+					const block_comment = this.input.startsWith('/*', i);
+					if (block_comment || ch === '"' || ch === "'" || ch === '`') {
+						const close = block_comment
+							? this.input.indexOf('*/', i + 2) + 1
+							: this.input.indexOf(ch, i + 1);
+						if (close <= 0 || /[\n\r\u2028\u2029]/.test(this.input.slice(i, close))) {
+							return false;
+						}
+						i = close;
 					}
 				}
 				return false;

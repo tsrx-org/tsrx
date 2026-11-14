@@ -11073,7 +11073,10 @@ describe('a clause that no directive takes', () => {
 		['@else {<b />}', '@else'],
 		['<i />@else {<b />}', '@else'],
 		['note @catch {<b />}', '@catch'],
-		// A comment in a `@case` label, even one with a `{` in it
+		// A `<` that starts no tag, and one in a string, in a `@case` label
+		['note @case x < 2: {<b />}', '@case'],
+		['note @case "<": {<b />}', '@case'],
+		// A block comment on the label's line, even with a `{` in it
 		['note @case value /* { */: {<b />}', '@case'],
 	];
 	/** @param {string} children */
@@ -11117,8 +11120,10 @@ describe('a clause that no directive takes', () => {
 			'@try {<i />} @pending {<u />} @catch (e) {<b />}',
 			"&#64;else {'literal'}",
 			'mail me@else.dev, or @else, @catch me, @casework, @default',
-			// No `:` on the label's line, past comments
+			// No `:` on the label's line, before a comment
 			'@case value /* note: prose */ text',
+			'@case value // note: prose\n\t\ttext',
+			'@case value /* note\n\t\t*/: prose',
 			'@case\n\t\tvalue: description',
 			// A keyword that goes on with a letter that isn't ASCII
 			'@caseé: prose, @else ifé prose, @elseé {x}',
