@@ -442,6 +442,26 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		]);
 	});
 
+	// Each of two in a row on its own `<>`.
+	it.each([
+		['StackedFragments', 'export function C() @{\n\t<><><div>\n}\n'],
+		['StackedFragmentsOutsideTemplate', 'export const a = <><><div>;\n'],
+	])('reports each unclosed fragment of %s on its `<>`', async (name, source) => {
+		const { document, diagnostics } = await editor_diagnostics_for(name, source);
+		const outer = source.indexOf('<>');
+
+		expect(
+			reported(document, diagnostics, TSRX_ERRORS.UNCLOSED_TAG.code).map(({ text, offset }) => ({
+				text,
+				offset,
+			})),
+		).toEqual([
+			{ text: '<>', offset: outer },
+			{ text: '<>', offset: outer + 2 },
+			{ text: 'div', offset: source.indexOf('div') },
+		]);
+	});
+
 	// At the first offset of a file as anywhere else.
 	it('reports an unclosed fragment at the start of the file on the `<>`', async () => {
 		const { document, diagnostics } = await editor_diagnostics_for(

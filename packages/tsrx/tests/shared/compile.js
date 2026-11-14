@@ -715,6 +715,28 @@ export const p = 1
 				),
 			).toHaveLength(1);
 		});
+
+		// Each of two in a row, though esrap records the inner one's position
+		// where the editor's code prints no `<>`.
+		it.each(['export function C() @{\n\t<><><div>\n}', 'export const a = <><><div>;'])(
+			'anchors the error of each unclosed `<>` of %j on it',
+			(source) => {
+				const { mappings } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const outer = source.indexOf('<>');
+
+				for (const start of [outer, outer + '<>'.length]) {
+					expect(
+						mappings.filter(
+							(mapping) =>
+								mapping.data.customData?.diagnosticAnchor &&
+								mapping.sourceOffsets[0] === start &&
+								mapping.lengths[0] === '<>'.length,
+						),
+						String(start),
+					).toHaveLength(1);
+				}
+			},
+		);
 	});
 
 	describe(`[${name}] type arguments on a tag in virtual code (#1260)`, () => {

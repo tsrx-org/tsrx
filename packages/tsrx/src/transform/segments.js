@@ -3450,16 +3450,19 @@ function add_diagnostic_mappings(
 		if (has_exact_source_map_position(error, src_to_gen_map)) {
 			// The mapping walker gives a fragment's `<>` no mapping, so an unclosed
 			// `<>` that the editor's code prints, where esrap records its position,
-			// gets an anchor on that `<>` (#1322).
+			// gets an anchor on that `<>`, and one it leaves out gets an anchor as
+			// any error does (#1322).
+			if (!is_unclosed_fragment_error(error, source)) continue;
 			const fragment = unclosed_fragment_anchor(
 				error,
-				source,
 				generated_code,
 				src_to_gen_map,
 				gen_line_offsets,
 			);
-			if (fragment) diagnostic_mappings.push(fragment);
-			continue;
+			if (fragment) {
+				diagnostic_mappings.push(fragment);
+				continue;
+			}
 		}
 
 		const length = end - start;
@@ -3492,20 +3495,32 @@ function add_diagnostic_mappings(
 }
 
 /**
+ * Whether `error` is an unclosed `<>`'s TSRX1001, recorded over the `<>`.
+ * @param {CompileError} error
+ * @param {string} source
+ * @returns {boolean}
+ */
+function is_unclosed_fragment_error(error, source) {
+	return (
+		error.code === DIAGNOSTIC_CODES.UNCLOSED_TAG &&
+		error.pos !== undefined &&
+		regex_opening_fragment.test(source.slice(error.pos, error.end ?? error.pos))
+	);
+}
+
+/**
  * An anchor from an unclosed `<>`'s TSRX1001 to the `<>` the editor's code
  * prints at the position esrap records for it, or `null`.
  * @param {CompileError} error
- * @param {string} source
  * @param {string} generated_code
  * @param {Map<string, Array<{ line: number, column: number }>>} src_to_gen_map
  * @param {LineOffsets} gen_line_offsets
  * @returns {CodeMapping | null}
  */
-function unclosed_fragment_anchor(error, source, generated_code, src_to_gen_map, gen_line_offsets) {
+function unclosed_fragment_anchor(error, generated_code, src_to_gen_map, gen_line_offsets) {
 	const loc = error.loc?.start;
-	if (error.code !== DIAGNOSTIC_CODES.UNCLOSED_TAG || !loc || error.pos === undefined) return null;
+	if (!loc || error.pos === undefined) return null;
 	const end = error.end ?? error.pos;
-	if (!regex_opening_fragment.test(source.slice(error.pos, end))) return null;
 	for (const position of src_to_gen_map.get(`${loc.line}:${loc.column}`) ?? []) {
 		const generated = loc_to_offset(position.line, position.column, gen_line_offsets);
 		if (generated_code.startsWith('<>', generated)) {
