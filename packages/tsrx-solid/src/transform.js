@@ -1222,6 +1222,7 @@ const FOR_KEYED_ROWS_INTERNAL_NAME = '__for_keyed_rows';
 const FOR_ROW_PARAM_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'row';
 const FOR_ITEM_PARAM_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'item';
 const FOR_BINDINGS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'bindings';
+const FOR_INDEX_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'index';
 /**
  * How many loops each compile has given a bindings memo, so each loop's memo
  * has its own name and a nested loop's can't capture the outer loop's names.
@@ -1304,7 +1305,12 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		const key_params = [clone_ast_node(loop_params[0]), clone_ast_node(loop_params[1])];
 		let key_callback;
 		if (pattern_reads_index) {
-			const item = destructure_for_of_item(key_params);
+			const item = destructure_for_of_item(
+				key_params,
+				/** @type {'const' | 'let' | 'var'} */ (
+					/** @type {AST.VariableDeclaration} */ (node.left).kind
+				),
+			);
 			key_callback = b.arrow(
 				item.params,
 				b.block([item.declaration, b.return(/** @type {AST.Expression} */ (node.key))]),
@@ -1318,21 +1324,13 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 			key_callback,
 		);
 		const row = create_generated_identifier(FOR_ROW_PARAM_NAME);
-		const index = /** @type {AST.Identifier} */ (node.index);
 		arrow = bind_loop_item(
 			arrow,
-			// The child callback gets the index as an accessor.
-			pattern_reads_index
-				? rewrite_binding_refs(
-						clone_ast_node(loop_params[0]),
-						new Map([[index.name, b.call(clone_identifier(index))]]),
-						[],
-						transform_context,
-					)
-				: loop_params[0],
+			loop_params[0],
 			row,
 			b.member(b.call(clone_ast_node(row)), create_generated_identifier('item')),
 			transform_context,
+			pattern_reads_index ? /** @type {AST.Identifier} */ (node.index) : null,
 		);
 	} else {
 		transform_context.needs_for_items = true;
@@ -1428,14 +1426,18 @@ function reads_identifier(expression, name) {
  * loops, and a pattern is destructured in a memo whose names the body reads,
  * so they follow the row when Solid reuses it.
  *
+ * A pattern whose default reads the index reads it as the key does, as the
+ * number: `index` names that index, which the callback gets as an accessor.
+ *
  * @param {AST.ArrowFunctionExpression} arrow
  * @param {AST.Pattern} item
  * @param {AST.Identifier} param
  * @param {AST.Expression} value
  * @param {TransformContext} transform_context
+ * @param {AST.Identifier | null} [index]
  * @returns {AST.ArrowFunctionExpression}
  */
-function bind_loop_item(arrow, item, param, value, transform_context) {
+function bind_loop_item(arrow, item, param, value, transform_context, index = null) {
 	/** @type {AST.Statement[]} */
 	let body =
 		arrow.body.type === 'BlockStatement'
@@ -1448,7 +1450,19 @@ function bind_loop_item(arrow, item, param, value, transform_context) {
 	} else if (transform_context.typeOnly) {
 		// The type view only needs the names and their types: it keeps the
 		// authored names, so `typeof id` and `<Icon />` stay as written.
-		declarations = [b.const(item, value)];
+		declarations = [
+			b.const(
+				index
+					? rewrite_binding_refs(
+							clone_ast_node(item),
+							new Map([[index.name, b.call(clone_identifier(index))]]),
+							[],
+							transform_context,
+						)
+					: item,
+				value,
+			),
+		];
 	} else {
 		transform_context.needs_for_memo = true;
 		const count = (for_bindings_counts.get(transform_context) ?? 0) + 1;
@@ -1472,7 +1486,19 @@ function bind_loop_item(arrow, item, param, value, transform_context) {
 			tag_declarations,
 			transform_context,
 		).body;
+		/** @type {AST.Statement[]} */
+		const index_declarations = [];
+		/** @type {AST.Statement[]} */
+		const memo_statements = [];
+		if (index) {
+			// The memo reads the number into a `let` of the index's name, so the
+			// pattern reads, and can assign, the index as a callback parameter.
+			const accessor = create_generated_identifier(`${FOR_INDEX_NAME}_${count}`);
+			index_declarations.push(b.const(accessor, b.id(index.name)));
+			memo_statements.push(b.let(b.id(index.name), b.call(clone_ast_node(accessor))));
+		}
 		declarations = [
+			...index_declarations,
 			b.const(
 				bindings,
 				b.call(
@@ -1480,6 +1506,7 @@ function bind_loop_item(arrow, item, param, value, transform_context) {
 					b.arrow(
 						[],
 						b.block([
+							...memo_statements,
 							b.const(item, value),
 							b.return(
 								b.object(names.map((name) => b.prop('init', b.id(name), b.id(name), false, true))),

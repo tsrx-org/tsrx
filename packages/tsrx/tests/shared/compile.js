@@ -1089,6 +1089,7 @@ export const p = 1
 				["const { [i]: a = 'r', 1: b } of rows; index i; key b", '<li>{a + b}</li>'],
 				["const [a = 'r' + i, b] of rows; index i; key b", '@if (b) { <li>{a + b}</li> }'],
 				["const [a = 'r' + i, b] of rows; index i; key b", "const b = 'body'; <li>{a + b}</li>"],
+				["let [a = 'r' + i, b] of rows; index i; key (a += b)", '<li>{a + b}</li>'],
 			]) {
 				const source = `export function App({ rows }: { rows: [string | undefined, string][] }) @{
 					<ul>
@@ -1102,7 +1103,7 @@ export const p = 1
 				expect(result.errors, head).toEqual([]);
 				expect(
 					virtual_semantic_diagnostics(result.code)
-						.filter((diagnostic) => [2300, 2373, 2448, 2451].includes(diagnostic.code))
+						.filter((diagnostic) => [2300, 2373, 2448, 2451, 2588].includes(diagnostic.code))
 						.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
 					result.code,
 				).toEqual([]);
@@ -4816,6 +4817,30 @@ export function App() @{
 
 			expect(code).toContain('(value: T) => value');
 			expect(code).toContain('{make}');
+		});
+	});
+
+	describe(`[${name}] @for item defaults that read the index (#1312)`, () => {
+		it('compiles a default that writes the index to an assignable index', () => {
+			const { code } = compile(
+				`export function App({ rows }: { rows: [string | undefined, string][] }) @{
+					<ul>
+						@for (const [a = 'r' + i++, b] of rows; index i; key b) {
+							<li>{a + b}</li>
+						}
+					</ul>
+				}`,
+				'App.tsrx',
+			);
+
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			// TS2357: `i++` on something other than a variable or a property.
+			expect(
+				virtual_semantic_diagnostics(code)
+					.filter((diagnostic) => diagnostic.code === 2357)
+					.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')),
+				code,
+			).toEqual([]);
 		});
 	});
 

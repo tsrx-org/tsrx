@@ -1830,7 +1830,12 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 	if (key_expression) {
 		let get_key;
 		if (pattern_reads_index) {
-			const item = destructure_for_of_item(loop_params.map((param) => clone_ast_node(param)));
+			const item = destructure_for_of_item(
+				loop_params.map((param) => clone_ast_node(param)),
+				/** @type {'const' | 'let' | 'var'} */ (
+					/** @type {AST.VariableDeclaration} */ (node.left).kind
+				),
+			);
 			get_key = b.arrow(item.params, b.block([item.declaration, b.return(key_expression)]));
 		} else {
 			get_key = create_loop_callback(loop_params, key_expression, true);
