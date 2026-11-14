@@ -5014,8 +5014,11 @@ export function TSRXPlugin(config) {
 							),
 					);
 					if (kept.length < errors.length) {
+						// Through the undo log, which an enclosing speculative parse rolls
+						// back (see `#truncateContext`).
+						if (this.parseEffects) this.parseEffects.truncate(errors, 0);
+						else errors.length = 0;
 						this.parseEffects?.willAppend(errors);
-						errors.length = 0;
 						errors.push(...kept);
 					}
 				}
