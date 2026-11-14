@@ -7973,8 +7973,9 @@ export function TSRXPlugin(config) {
 			 * acorn-typescript.
 			 * @param {number} position
 			 * @param {Diagnostic} error
+			 * @param {number} [end] Where a collected error ends
 			 */
-			#raiseCheckerError(position, error) {
+			#raiseCheckerError(position, error, end = position + 1) {
 				if (this.#throwsCheckerErrors()) {
 					try {
 						this.#throwError(position, error);
@@ -7983,7 +7984,7 @@ export function TSRXPlugin(config) {
 						throw thrown;
 					}
 				}
-				this.#recordCheckerLevelError(position, position + 1, error, true);
+				this.#recordCheckerLevelError(position, end, error, true);
 			}
 
 			/**
@@ -12429,6 +12430,13 @@ export function TSRXPlugin(config) {
 							const value = this.jsx_parseExpressionContainer();
 							if (value.type === 'JSXSpreadChild') {
 								this.raise(/** @type {number} */ (value.start), TSRX_ERRORS.ATTRIBUTE_VALUE_SPREAD);
+							} else if (value.expression.type === 'JSXEmptyExpression') {
+								// `a={}`, which TypeScript's checker reports at the braces.
+								this.#raiseCheckerError(
+									/** @type {number} */ (value.start),
+									TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION,
+									/** @type {number} */ (value.end),
+								);
 							}
 							return value;
 						} finally {

@@ -466,6 +466,8 @@ let E;`,
 			],
 			['TS2369', 'function f(private a) {}'],
 			['TS2858', "import a from 'a' with { type: 1 };"],
+			// An attribute's empty value (#1311)
+			['TS17000', 'const a = <div a={} />;'],
 			// A private name outside any class (#948)
 			['TS18016', 'const x = this.#y;'],
 			['TS18016', '#y in o;'],
@@ -511,6 +513,7 @@ let E;`,
 			TS_ERRORS.USE_STRICT_NON_SIMPLE_PARAMETERS,
 			// acorn-typescript's, for the code TSRX reads in its place
 			TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE,
+			TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION,
 			TS_ERRORS.ONLY_STRING_ATTRIBUTE_VALUE,
 			TS_ERRORS.TYPE_IMPORT_ARGUMENT,
 			TS_ERRORS.UNEXPECTED_LEADING_DECORATOR,
