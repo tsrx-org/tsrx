@@ -10621,16 +10621,22 @@ export function TSRXPlugin(config) {
 			 */
 			tsParseTypeParameters(parseModifiers) {
 				const start = this.start;
+				const arrow = this.#genericArrowFunction;
+				// Where the errors of the generic arrow function read from here go, from
+				// its type parameters on (see `parseArrowExpression`).
+				const errors =
+					arrow?.typeParametersStart === start
+						? (this.#hold.held ?? (this.#collect ? this.#errors : undefined))
+						: undefined;
+				const recorded = errors ? { errors, length: errors.length } : null;
 				const node = super.tsParseTypeParameters(parseModifiers);
 				this.#typeParametersEnd = this.lastTokEnd;
 				const own = this.#ownParameterList;
 				if (own?.start === -1 && own.typeParametersStart === start && this.type === tt.parenL) {
 					own.start = this.start;
 				}
-				const arrow = this.#genericArrowFunction;
 				if (arrow?.typeParametersStart === start) {
-					const errors = this.#hold.held ?? (this.#collect ? this.#errors : undefined);
-					arrow.recorded = errors ? { errors, length: errors.length } : null;
+					arrow.recorded = recorded;
 					arrow.parametersStart = this.start;
 					// Without `async`, the arrow function starts at its `(`.
 					if (arrow.arrowStart === -1) arrow.arrowStart = this.start;

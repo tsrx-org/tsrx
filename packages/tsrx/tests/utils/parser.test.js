@@ -14430,6 +14430,15 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			),
 			[
 				'a.ts',
+				'const f = <T extends (...q: any[], x: any) => void,>(x: T) => { const z; return x +; };',
+				[
+					[rest_not_last, '...q'],
+					[uninitialized, 'z;'],
+				],
+				[unexpected, '; }'],
+			],
+			[
+				'a.ts',
 				'const f = <T,>(...a?: T[]) => { const z; return a +; };',
 				[
 					[code_of(TS_ERRORS.OPTIONAL_REST_PARAMETER), '?:'],
