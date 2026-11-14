@@ -1309,15 +1309,34 @@ function skip_whitespace_from(input, i) {
 }
 
 /**
- * The index of the first `}` in `text` that closes no `{` in it, or -1.
+ * The index of the first `}` in a `<style>` or `<script>` body that closes no
+ * `{` in it, or -1. Braces in strings and comments, and in a script's template
+ * literals and line comments, don't count; a regular expression's do.
  * @param {string} text
+ * @param {boolean} script
  */
-function unmatched_closing_brace(text) {
+function unmatched_closing_brace(text, script) {
 	let depth = 0;
 	for (let i = 0; i < text.length; i++) {
-		const ch = text.charCodeAt(i);
-		if (ch === CharCode.openBrace) depth++;
-		else if (ch === CharCode.closeBrace && --depth < 0) return i;
+		const ch = text[i];
+		if (ch === '"' || ch === "'" || (script && ch === '`')) {
+			// To the closing quote, past escapes; a quote other than a backquote
+			// ends at the line too.
+			for (i++; i < text.length && text[i] !== ch; i++) {
+				if (text[i] === '\\') i++;
+				else if (ch !== '`' && (text[i] === '\n' || text[i] === '\r')) break;
+			}
+		} else if (text.startsWith('/*', i)) {
+			const end = text.indexOf('*/', i + 2);
+			if (end === -1) return -1;
+			i = end + 1;
+		} else if (script && text.startsWith('//', i)) {
+			while (i < text.length && text[i] !== '\n' && text[i] !== '\r') i++;
+		} else if (ch === '{') {
+			depth++;
+		} else if (ch === '}' && --depth < 0) {
+			return i;
+		}
 	}
 	return -1;
 }
@@ -4314,7 +4333,7 @@ export function TSRXPlugin(config) {
 						}
 						if (lt !== -1) relativeCloseStart = lt;
 					}
-					const brace = unmatched_closing_brace(input);
+					const brace = unmatched_closing_brace(input, tagName === 'script');
 					if (brace !== -1 && brace < relativeCloseStart) relativeCloseStart = brace;
 				}
 
@@ -4887,19 +4906,28 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * An element left open in code, outside any template, whose children end
-			 * with text that starts with `)`, `]`, `:`, `,` or `;`: in a collecting
-			 * parse, after TSRX1001, that text is the code after the element
-			 * (`(<div>)`, `c ? <b> : d`, `[<div>]`), which the children read to the
-			 * end of the template. Drop it from the children and read it again as
-			 * code, so that the code around the element still parses and TSRX1001 is
-			 * the error the tools report (#1305). Text with a comment in it stays: its
+			 * An element left open in code, outside any template, in a collecting
+			 * parse, after TSRX1001: when the text after its last child starts with
+			 * what the code around it goes on with, that text is the code after the
+			 * element (`(<div>)`, `c ? <b> : d`, `[<div>]`), which the children read
+			 * to the end of the template. Drop it from the children and read it again
+			 * as code, so that the code around the element still parses and TSRX1001
+			 * is the error the tools report (#1305). The code goes on with `)` or `,`
+			 * in parentheses, `]` or `,` in brackets opened in its statement, and `:`
+			 * after a conditional's `?`; other text stays the element's
+			 * (`@{ <div>: label }`), and so does text with a comment in it, whose
 			 * comments are recorded as it is read.
 			 * @param {AST.NativeTSRXTemplateNode} node
 			 * @param {number} context_depth The tokenizer context depth where the
 			 *   element began
 			 */
 			#rereadTrailingCodeOfUnclosedElement(node, context_depth) {
+				let closers = '';
+				if (this.context[context_depth - 1]?.token === '(') closers += '),';
+				if (this.#openBrackets > this.#statementOpenBrackets) closers += '],';
+				let before = /** @type {number} */ (node.start) - 1;
+				while (before >= 0 && regex_whitespace_character.test(this.input[before])) before--;
+				if (this.input[before] === '?' && this.input[before - 1] !== '?') closers += ':';
 				const last = node.children.at(-1);
 				// The element now ends at its opening tag. A container's element can
 				// leave its text out of its children, read before its body.
@@ -4908,7 +4936,7 @@ export function TSRXPlugin(config) {
 				);
 				const code_start = skip_whitespace_from(this.input, start);
 				if (
-					!')]:,;'.includes(this.input[code_start] ?? '') ||
+					!closers.includes(this.input[code_start] || '\0') ||
 					/\/[/*]/.test(this.input.slice(start, this.start))
 				) {
 					return;

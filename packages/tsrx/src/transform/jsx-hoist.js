@@ -51,9 +51,8 @@ export function is_hoist_safe_expression(node) {
 		case 'ParenthesizedExpression':
 			return is_hoist_safe_expression(node.expression);
 		case 'JSXElement':
-			return is_hoist_safe_jsx_node(node);
 		case 'JSXFragment':
-			return node.children.every(is_hoist_safe_jsx_child);
+			return is_hoist_safe_jsx_node(node);
 		default:
 			return false;
 	}
@@ -70,9 +69,8 @@ export function is_hoist_safe_jsx_child(node) {
 		case 'JSXText':
 			return true;
 		case 'JSXElement':
-			return is_hoist_safe_jsx_node(node);
 		case 'JSXFragment':
-			return node.children.every(is_hoist_safe_jsx_child);
+			return is_hoist_safe_jsx_node(node);
 		case 'JSXExpressionContainer':
 			return (
 				node.expression.type !== 'JSXEmptyExpression' && is_hoist_safe_expression(node.expression)

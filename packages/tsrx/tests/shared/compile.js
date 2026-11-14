@@ -91,7 +91,7 @@ const BROKEN_MARKUP = [
  * it is closed.
  * @type {Array<[label: string, source: string, codes?: string[]]>}
  */
-const UNCLOSED_BEFORE_CODE = [
+const UNCLOSED_TAG_RECOVERY = [
 	['in parentheses', 'function App() {\n\treturn (\n\t\t<div>\n\t);\n}'],
 	[
 		'in a conditional',
@@ -105,6 +105,16 @@ const UNCLOSED_BEFORE_CODE = [
 	],
 	['<style> in an element', 'function App() @{\n\t<div>\n\t\t<style>.a { color: red; }</div>\n}'],
 	['<script> in a block', 'function App() @{\n\t<script>const a = 1;\n}'],
+	// Its text, where nothing around it goes on with the punctuation
+	['with text that starts with `:`', 'function App() @{\n\t<div>: label\n}'],
+	['with text that starts with `,`', 'function App() @{\n\t<div>, hello\n}'],
+	// Braces in strings and comments don't close the block
+	['<script> with a `}` in a string', 'function App() @{\n\t<script>const s = "}";\n}'],
+	[
+		'<style> with a `}` in a string',
+		'function App() @{\n\t<style>.a::before { content: "}"; } /* } */\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG, DIAGNOSTIC_CODES.STYLE_STANDALONE_NEEDS_FRAGMENT],
+	],
 ];
 
 /**
@@ -685,7 +695,7 @@ export const p = 1
 			expect(errors.map((reported) => reported.code)).toEqual([error.code]);
 		});
 
-		it.each(UNCLOSED_BEFORE_CODE)(
+		it.each(UNCLOSED_TAG_RECOVERY)(
 			'reports a tag left open %s, and nothing after it (#1305)',
 			(_label, source, codes = [DIAGNOSTIC_CODES.UNCLOSED_TAG]) => {
 				const { code, errors } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
