@@ -881,6 +881,14 @@ const default_class_names = new WeakMap();
  */
 const block_scoped_redeclarations = new WeakMap();
 
+/**
+ * The errors for the exports declared twice, which a collecting parse records
+ * once the module is read (see `#reportDuplicateExports`), for a strict parse
+ * to tell them (see `parseTopLevel`).
+ * @type {WeakSet<CompileError>}
+ */
+const duplicate_export_errors = new WeakSet();
+
 /** @type {WeakMap<Parse.Parser, number[]>} */
 const parser_line_starts = new WeakMap();
 
@@ -1540,6 +1548,14 @@ export function TSRXPlugin(config) {
 			#localExportNamesByScope = new WeakMap();
 			/** @type {ModuleBodyExports[]} */
 			#moduleBodyExports = [];
+			// Whether an export or a namespace or module body, and the whole module,
+			// have been read, and what a collecting parse of the input records (see
+			// `parseTopLevel`).
+			#exportRead = false;
+			#moduleBodyRead = false;
+			#moduleRead = false;
+			/** @type {{ errors: CompileError[], threw: boolean } | null} */
+			#inputCollected = null;
 			#functionBodyDepth = 0;
 			#allowExpressionContainerTrailingSemicolon = false;
 			#jsxAttributeValueExpressionDepth = 0;
@@ -5627,10 +5643,77 @@ export function TSRXPlugin(config) {
 						a.position - b.position ||
 						Number(a.error.code?.slice(2)) - Number(b.error.code?.slice(2)),
 				);
+				this.#moduleRead = true;
 				for (const { position, error } of found) {
 					if (!this.#collect) this.#throwError(position, error);
+					const errors = this.#errors;
+					const length = errors?.length ?? 0;
 					this.#recordCheckerLevelError(position, position + 1, error);
+					if (!errors || errors.length === length) continue;
+					// Among the errors recorded as the module was read, by position, as
+					// tsc sorts them: not after a redeclaration that comes later in the
+					// second block of a namespace, say (#1263).
+					const recorded = errors[length];
+					duplicate_export_errors.add(recorded);
+					const at = errors.findIndex(
+						(other, index) => index < length && compare_errors(other, recorded) > 0,
+					);
+					if (at === -1) continue;
+					errors.pop();
+					errors.splice(at, 0, recorded);
 				}
+			}
+
+			/**
+			 * A strict parse throws a checker error as it reads it, before the module
+			 * is read and the exports declared twice are found (see
+			 * `#reportDuplicateExports`), such as by two blocks of one namespace.
+			 * When one of those comes before it, TypeScript reports that first: throw
+			 * it instead (#1263). Only a parse of the whole input can tell, as for
+			 * `#declaresFunctionLater`; it's made only once an export or a namespace
+			 * or module body has been read, which the first of two declarations of an
+			 * export is in, and when the error isn't a syntax error, which TypeScript
+			 * reports alone.
+			 * @type {Parse.Parser['parseTopLevel']}
+			 */
+			parseTopLevel(node) {
+				try {
+					return super.parseTopLevel(node);
+				} catch (error) {
+					if (
+						!this.#collect &&
+						!this.#moduleRead &&
+						(this.#exportRead || this.#moduleBodyRead) &&
+						!this.#isSyntaxError(error)
+					) {
+						const before = this.#duplicateExportErrorBefore(
+							/** @type {{ pos?: number }} */ (error)?.pos ?? Infinity,
+						);
+						if (before) {
+							this.#throwError(/** @type {number} */ (before.pos), {
+								code: before.code,
+								message: before.message,
+							});
+						}
+					}
+					throw error;
+				}
+			}
+
+			/**
+			 * The first error for an export declared twice
+			 * (`duplicate_export_errors`) that a collecting parse of the input
+			 * records before `position`, or `undefined`.
+			 * @param {number} position
+			 * @returns {CompileError | undefined}
+			 */
+			#duplicateExportErrorBefore(position) {
+				const { errors, threw } = this.#parseInputCollecting();
+				// A syntax error comes before the module is read, and before them.
+				if (threw) return undefined;
+				return errors
+					.filter((error) => duplicate_export_errors.has(error) && (error.pos ?? 0) < position)
+					.sort(compare_errors)[0];
 			}
 
 			/**
@@ -6007,7 +6090,22 @@ export function TSRXPlugin(config) {
 			 */
 			#declaresFunctionLater(position) {
 				if (!/\bfunction\b/.test(this.input.slice(position))) return false;
-				/** @type {import('../types/index').CompileError[]} */
+				// The errors recorded before a syntax error still tell.
+				const { errors } = this.#parseInputCollecting();
+				return (
+					errors.find((error) => error.pos === position)?.code === UPSTREAM_ERRORS.REDECLARED.code
+				);
+			}
+
+			/**
+			 * The errors a collecting parse of the input records, and whether it
+			 * throws, for a strict parse to tell what it throws (see
+			 * `#declaresFunctionLater` and `parseTopLevel`).
+			 * @returns {{ errors: CompileError[], threw: boolean }}
+			 */
+			#parseInputCollecting() {
+				if (this.#inputCollected) return this.#inputCollected;
+				/** @type {CompileError[]} */
 				const errors = [];
 				try {
 					/** @type {typeof acorn.Parser} */ (/** @type {unknown} */ (this.constructor)).parse(
@@ -6022,11 +6120,18 @@ export function TSRXPlugin(config) {
 						}),
 					);
 				} catch {
-					// The errors recorded before a syntax error still tell.
+					return (this.#inputCollected = { errors, threw: true });
 				}
-				return (
-					errors.find((error) => error.pos === position)?.code === UPSTREAM_ERRORS.REDECLARED.code
-				);
+				return (this.#inputCollected = { errors, threw: false });
+			}
+
+			/**
+			 * See `parseTopLevel`.
+			 * @type {Parse.Parser['parseExport']}
+			 */
+			parseExport(node, exports) {
+				this.#exportRead = true;
+				return super.parseExport(node, exports);
 			}
 
 			/**
@@ -11670,6 +11775,8 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['tsParseModuleBlock']}
 			 */
 			tsParseModuleBlock() {
+				// See `parseTopLevel`.
+				this.#moduleBodyRead = true;
 				/** @type {ModuleBodyExports} */
 				const body = { depth: this.scopeStack.length, scope: null, ids: [] };
 				this.#moduleBodyExports.push(body);
