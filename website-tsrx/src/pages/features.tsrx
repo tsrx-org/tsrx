@@ -1064,15 +1064,19 @@ export const FeaturesPage = () => @{
 								<code class="inline-code">:global(.theme-dark) .card</code> styles your own element
 								only when an ancestor carries the class, and a compound{' '}
 								<code class="inline-code">.card:global(.is-open)</code> styles your own element with
-								a class another library toggles on it. A <code class="inline-code">:global</code> in
-								the middle of a selector is the <code class="inline-code">TSRX3011</code> error: it
-								may only start or end a selector. A{' '}
-								<code class="inline-code">{':global { ... }'}</code> block drops its wrapper,
-								leaving a comment behind, and everything inside it is unscoped: at the top level it
-								is several page-wide rules at once, and nested under a scoped rule such as{' '}
-								<code class="inline-code">.card</code> it reaches only below that element, exactly
-								like the prefixed <code class="inline-code">.card :global(.footnote)</code>. Plain
-								nesting without <code class="inline-code">:global</code> scopes both parts.
+								a class another library toggles on it. Pseudo-classes right after a{' '}
+								<code class="inline-code">:global(...)</code> stay global with it: the arguments of
+								the <code class="inline-code">:not()</code> in{' '}
+								<code class="inline-code">:global(.theme-dark):not(.print) .card</code> are kept as
+								written, never scoped or pruned. A <code class="inline-code">:global</code> in the
+								middle of a selector is the <code class="inline-code">TSRX3011</code> error: it may
+								only start or end a selector. A <code class="inline-code">{':global { ... }'}</code>{' '}
+								block drops its wrapper, leaving a comment behind, and everything inside it is
+								unscoped: at the top level it is several page-wide rules at once, and nested under a
+								scoped rule such as <code class="inline-code">.card</code> it reaches only below
+								that element, exactly like the prefixed{' '}
+								<code class="inline-code">.card :global(.footnote)</code>. Plain nesting without{' '}
+								<code class="inline-code">:global</code> scopes both parts.
 							</p>
 							<h3 class="subsection-heading">Scoped rules beat bare global rules</h3>
 							<p class="section-body">

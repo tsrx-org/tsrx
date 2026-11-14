@@ -1390,4 +1390,44 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 	};
 
 	walk(css, null, visitors);
+	keep_global_compound_arguments(css);
+}
+
+/**
+ * Keep the arguments of the `:not()`, `:is()`, `:where()` and `:has()` in a
+ * compound that `:global(…)` makes global, as `:global(.x):not(.z)`, as
+ * written: they are global too, so none is pruned or scoped, whatever matching
+ * the compound against the component's elements found (#1314).
+ *
+ * @param {AST.CSS.Node} css
+ * @returns {void}
+ */
+export function keep_global_compound_arguments(css) {
+	walk(css, null, {
+		RelativeSelector(node, { next }) {
+			if (!is_outer_global(node)) return next();
+
+			for (const selector of node.selectors) {
+				if (
+					selector.type === 'PseudoClassSelector' &&
+					selector.args &&
+					(selector.name === 'not' ||
+						selector.name === 'is' ||
+						selector.name === 'where' ||
+						selector.name === 'has')
+				) {
+					walk(/** @type {AST.CSS.Node} */ (selector.args), null, {
+						ComplexSelector(complex_selector, context) {
+							complex_selector.metadata.used = true;
+							context.next();
+						},
+						RelativeSelector(relative_selector, context) {
+							relative_selector.metadata.scoped = false;
+							context.next();
+						},
+					});
+				}
+			}
+		},
+	});
 }

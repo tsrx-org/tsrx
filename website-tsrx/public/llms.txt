@@ -1217,6 +1217,10 @@ with CSS nesting:
   element, only when an ancestor carries the class.
 - Compound `.card:global(.is-open)` -> `.card.<hash>.is-open`: your own
   element, with a class another library toggles on it.
+- Pseudo-classes right after `:global(...)` stay in its compound, which stays
+  global: `:global(.theme-dark):not(.print) .card` ->
+  `.theme-dark:not(.print) .card.<hash>`. The arguments of that `:not()`,
+  `:is()`, `:where()` or `:has()` are kept as written, never scoped or pruned.
 - `:global` in the middle of a selector (`.card :global(.x) .title`) is the
   `TSRX3011` error: it may only start or end a selector.
 - Block `:global { .toast { ... } body { ... } }` -> `.toast { ... } body { ... }`:

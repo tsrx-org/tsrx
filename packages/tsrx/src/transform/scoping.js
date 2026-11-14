@@ -10,6 +10,7 @@
 /** @import { ScopeClassJoin, ScopeClassParts, SpreadClassOptions, StyleRenderMode, Visitors } from '../../types/index' */
 
 import { walk } from 'zimmerframe';
+import { keep_global_compound_arguments } from '../analyze/prune.js';
 import * as b from '../utils/builders.js';
 import { is_ast_node, is_style_element } from '../utils/ast.js';
 
@@ -18,7 +19,9 @@ export { is_style_element };
 /**
  * Mark selectors inside the stylesheet as "used" so `renderStylesheets` does
  * not comment them out, and mark every non-global relative selector as
- * scoped. Both render modes (D4) keep every selector:
+ * scoped, except in the arguments of a global compound (see
+ * `keep_global_compound_arguments`). Both render modes (D4) keep every
+ * selector:
  *
  * - `scope`: a standalone `<style>` block. Every selector is marked; we
  *   skip selector-pruning because component boundaries can be dynamic — any
@@ -52,6 +55,7 @@ export function prepare_stylesheet_for_render(stylesheet, mode = 'scope') {
 			},
 		}),
 	);
+	keep_global_compound_arguments(stylesheet);
 	return stylesheet;
 }
 
