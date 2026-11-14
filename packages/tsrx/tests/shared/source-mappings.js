@@ -2352,6 +2352,23 @@ function C() @{
 				"import { z } from './z';\n;\nimport { a } from './a';\nexport const x = [z, a];\n",
 				"import { z } from './z';\nimport { a } from './a';\n\nexport const x = [z, a];",
 			],
+			[
+				'on one line with a no-break space',
+				"export * from './z';\u00a0export * from './a';\nexport const x = 1;\n",
+				"export * from './z';\u00a0export * from './a';\n\nexport const x = 1;",
+			],
+			// A comment or an empty statement between two on one line has no mapping
+			// an edit could go through, so they go on two lines, as esrap prints them.
+			[
+				'on one line with a comment',
+				"export * from './z'; /* note */ export * from './a';\nexport const x = 1;\n",
+				"export * from './z';\nexport * from './a';\n\nexport const x = 1;",
+			],
+			[
+				'on one line with an empty statement',
+				"import { z } from './z';; import { a } from './a';\nexport const x = [z, a];\n",
+				"import { z } from './z';\nimport { a } from './a';\n\nexport const x = [z, a];",
+			],
 		])('prints them %s between them as written', (_label, source, expected) => {
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			expect(result.errors).toEqual([]);

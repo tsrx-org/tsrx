@@ -715,12 +715,12 @@ export function tsx_with_ts_locations(
 				const previous = node.body[index - 1];
 				if (previous && source !== undefined) {
 					// Statements on one line in the source stay on one line, with the
-					// same spaces between them.
+					// same whitespace between them.
 					const between = source.slice(
 						/** @type {number} */ (previous.end),
 						/** @type {number} */ (statement.start),
 					);
-					if (/^[ \t]*$/.test(between)) context.write(between);
+					if (regex_same_line_space.test(between)) context.write(between);
 					else context.newline();
 				}
 				context.visit(statement);
@@ -1104,6 +1104,8 @@ function line_breaks_between(from, next, source) {
 	return between.match(regex_line_breaks)?.length ?? 0;
 }
 
+/** Whitespace with no line break, or nothing. */
+const regex_same_line_space = /^[^\S\n\r\u2028\u2029]*$/;
 const regex_comment = /\/\*[\s\S]*?\*\/|\/\/[^\n\r\u2028\u2029]*/g;
 const regex_line_breaks = /\r\n?|[\n\u2028\u2029]/g;
 
