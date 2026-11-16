@@ -227,6 +227,76 @@ describe('native language server on a configured project', () => {
 		).toBeNull();
 	});
 
+	it('offers signature help in a template without interpolations', async () => {
+		const source =
+			'declare function tag(parts: TemplateStringsArray): string;\n' +
+			'export const a = tag`hello world`;\n';
+		client.open('PlainTemplate.tsrx', source);
+		try {
+			const help = await client.request('textDocument/signatureHelp', {
+				textDocument: { uri: client.uri('PlainTemplate.tsrx') },
+				position: position_of(source, 'world', 1),
+			});
+			expect(help).toMatchObject({
+				signatures: [{ label: 'tag(parts: TemplateStringsArray): string' }],
+				activeSignature: 0,
+				activeParameter: 0,
+			});
+		} finally {
+			client.close('PlainTemplate.tsrx');
+		}
+	});
+
+	it('offers literal completions in a template without interpolations', async () => {
+		const source =
+			'declare function greet(value: "hello world" | "hello there"): void;\n' +
+			'greet(`hello `);\n';
+		client.open('TemplateCompletion.tsrx', source);
+		try {
+			const completion = await client.request('textDocument/completion', {
+				textDocument: { uri: client.uri('TemplateCompletion.tsrx') },
+				position: position_of(source, '`hello ', '`hello '.length),
+				context: { triggerKind: 1 },
+			});
+			expect(completion?.items.map((/** @type {{ label: string }} */ item) => item.label)).toEqual(
+				expect.arrayContaining(['hello world', 'hello there']),
+			);
+			expect(
+				(await client.diagnostics('TemplateCompletion.tsrx')).map((diagnostic) => [
+					diagnostic.code,
+					range_text(source, diagnostic.range),
+				]),
+			).toEqual([[2345, '`hello `']]);
+		} finally {
+			client.close('TemplateCompletion.tsrx');
+		}
+	});
+
+	it('offers signature help in template text after a reformatted interpolation', async () => {
+		const source =
+			'declare function tag(parts: TemplateStringsArray, value: number): string;\n' +
+			'export const result = tag`before ${1+2} after`;\n';
+		client.open('Signature.tsrx', source);
+		try {
+			const help = await client.request('textDocument/signatureHelp', {
+				textDocument: { uri: client.uri('Signature.tsrx') },
+				position: position_of(source, 'after', 1),
+			});
+			expect(help).toMatchObject({
+				signatures: [
+					{
+						label: 'tag(parts: TemplateStringsArray, value: number): string',
+						parameters: [{ label: 'parts: TemplateStringsArray' }, { label: 'value: number' }],
+					},
+				],
+				activeSignature: 0,
+				activeParameter: 0,
+			});
+		} finally {
+			client.close('Signature.tsrx');
+		}
+	});
+
 	it('resolves a component tag to its declaration in another .tsrx file', async () => {
 		const definition = await client.request(
 			'textDocument/definition',
@@ -1311,6 +1381,31 @@ describe('editor preferences and file lifecycle on the native server', () => {
 				(/** @type {[unknown, string]} */ hint) => hint[1],
 			),
 		).toEqual([': Element', ': Element', ': Element']);
+	});
+
+	it.each([
+		['props.color', 1],
+		['props.color+props.size', 2],
+		['props.color    +    props.size', 2],
+	])('preserves native tagged-template hint behavior with %s', async (expression, count) => {
+		const source =
+			'export function Template(props: { color: string; size: number }) @{\n' +
+			'\tconst style = String.raw`color: ${' +
+			expression +
+			'}; padding: ${props.size}px;`;\n' +
+			'\t<span>{style}</span>\n}\n';
+		client.open('Template.tsrx', source);
+		// Reformatting splits the statement into distinct Verbatim runs. The
+		// pinned server returns its type hint twice even without literal-token
+		// mappings (microsoft/TypeScript#64050); allow the server to deduplicate them,
+		// but added coverage must not add more.
+		const hints = await inlay_hints('Template.tsrx', source);
+		expect(hints.length).toBeGreaterThan(0);
+		expect(hints.length).toBeLessThanOrEqual(count);
+		for (const hint of hints) {
+			expect(hint).toEqual([position_of(source, 'const style', 'const style'.length), ': string']);
+		}
+		client.close('Template.tsrx');
 	});
 
 	it('registers formatting for .tsrx and returns no edits, so TSRX must stay the default formatter', async () => {
