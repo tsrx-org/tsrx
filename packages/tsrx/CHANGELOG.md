@@ -1,5 +1,20 @@
 # @tsrx/core
 
+## 0.6.2
+
+### Patch Changes
+
+- [#1083](https://github.com/tsrx-org/tsrx/pull/1083)
+  [`d219afc`](https://github.com/tsrx-org/tsrx/commit/d219afc59b8a9dfe5c43d7a0dde75c14ff2a6049)
+  Thanks [@GabbeV](https://github.com/GabbeV)! - Map template literal text and
+  delimiters independently of interpolations in editor output, preserving accurate
+  source positions when expressions are reformatted or lowered. Keep authored CRLF
+  and escape spellings in template text so TypeScript 7 receives verbatim mappings
+  for each literal token.
+
+  Correct source positions after CR-only and Unicode line separators throughout
+  files, including separators inside ordinary strings.
+
 ## 0.6.1
 
 ### Patch Changes
