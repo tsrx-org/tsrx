@@ -62,6 +62,7 @@ import {
 import {
 	JsxTextCharactersApp,
 	JsxTextEdgeApp,
+	JsxTextOnlyApp,
 	JsxTextWhitespaceApp,
 	jsx_text_braced_value_cases,
 	jsx_text_character_cases,
@@ -622,6 +623,25 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 			});
 		}
 	}
+
+	// An element's only text, with edge whitespace, is one child (#1368)
+	it('gives a `<textarea>` its edge whitespace as one child', () => {
+		render(<JsxTextOnlyApp />, container);
+
+		expect(container.querySelector<HTMLTextAreaElement>('.only-text-textarea')?.value).toBe(' a ');
+	});
+
+	it('reads its character references as TypeScript does', () => {
+		render(<JsxTextOnlyApp />, container);
+
+		expect(container.querySelector('.only-text-references')?.textContent).toBe(' \u2329\n ');
+	});
+
+	it('gives a component its edge whitespace as one string', () => {
+		render(<JsxTextOnlyApp />, container);
+
+		expect(container.querySelector('.only-text-component')?.textContent).toBe(' A ');
+	});
 
 	// `@for` walks its source the way `for...of` does.
 	for (const [label, make, rows] of for_of_source_cases) {

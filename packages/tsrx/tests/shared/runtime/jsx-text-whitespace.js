@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	JsxTextCharactersApp,
 	JsxTextEdgeApp,
+	JsxTextOnlyApp,
 	JsxTextWhitespaceApp,
 	jsx_text_braced_value_cases,
 	jsx_text_character_cases,
@@ -15,12 +16,14 @@ import {
  * Shared runtime suite for JSX whitespace and characters in template text
  * across the JSX targets: each case renders what the same TSX renders.
  *
- * @param {{ nbsp: 'kept' | 'trimmed', anchors?: 'empty comments' }} options -
+ * @param {{ nbsp: 'kept' | 'trimmed', anchors?: 'empty comments', children?: 'slots' }} options -
  *   `nbsp` is what the target's JSX compiler does with a non-breaking space at
- *   the edge of a line, and `anchors` names a marker the target's runtime leaves
- *   in the DOM, which isn't part of what these cases compare
+ *   the edge of a line, `anchors` names a marker the target's runtime leaves
+ *   in the DOM, which isn't part of what these cases compare, and `children`
+ *   is `'slots'` where a component reads its children as slots, never as a
+ *   string
  */
-export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors }) {
+export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors, children }) {
 	async function settle() {
 		const flush = globalThis.flush;
 		if (flush) {
@@ -83,5 +86,34 @@ export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors }) {
 				});
 			}
 		}
+	});
+
+	describe("an element's only text at runtime (#1368)", () => {
+		it('gives a `<textarea>` its edge whitespace as one child', async () => {
+			await globalThis.render(JsxTextOnlyApp);
+			await settle();
+			expect(
+				/** @type {HTMLTextAreaElement | null} */ (
+					globalThis.container.querySelector('.only-text-textarea')
+				)?.value,
+			).toBe(' a ');
+		});
+
+		it('reads its character references as TypeScript does', async () => {
+			await globalThis.render(JsxTextOnlyApp);
+			await settle();
+			expect(globalThis.container.querySelector('.only-text-references')?.textContent).toBe(
+				' \u2329\n ',
+			);
+		});
+
+		it.skipIf(children === 'slots')(
+			'gives a component its edge whitespace as one string',
+			async () => {
+				await globalThis.render(JsxTextOnlyApp);
+				await settle();
+				expect(globalThis.container.querySelector('.only-text-component')?.textContent).toBe(' A ');
+			},
+		);
 	});
 }

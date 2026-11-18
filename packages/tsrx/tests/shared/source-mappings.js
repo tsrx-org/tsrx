@@ -3731,6 +3731,56 @@ export function A() @{
 		});
 	});
 
+	describe(`[${name}] an element's only text with edge whitespace (#1368)`, () => {
+		// The JSX types TypeScript checks children with
+		const jsx_types =
+			'\ndeclare global { namespace JSX { interface Element {} interface IntrinsicElements { [name: string]: any } interface ElementChildrenAttribute { children: {} } } }\n';
+
+		it('gives a component whose `children` is a string one string', () => {
+			// Three children were TS2322: Type 'string[]' is not assignable to type 'string'
+			const source = `function Upper(props: { children: string }) {
+	return null;
+}
+export function A() {
+	return <div><Upper> a </Upper></div>;
+}`;
+			const { code } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(output_type_errors(code + jsx_types)).toEqual([]);
+		});
+
+		// A template body's output starts where its `return` does, so the text's
+		// start maps there too
+		it.each([
+			['a function', 'export function A() {\n\treturn <div><Num> a </Num></div>;\n}'],
+			['a template body', 'export function A() @{<Num> a </Num>}'],
+		])(
+			'maps the text to its literal in %s, where TypeScript reports an error on it',
+			(_case, component) => {
+				const source = `function Num(props: { children: number }) {\n\treturn null;\n}\n${component}`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx');
+				expect(output_type_errors(result.code + jsx_types)).toEqual([
+					"TS2322 Type 'string' is not assignable to type 'number'.",
+				]);
+				const text = source.indexOf(' a ');
+				expect(
+					result.mappings
+						.filter(
+							(mapping) =>
+								mapping.sourceOffsets[0] === text &&
+								mapping.lengths[0] === ' a '.length &&
+								mapping.data.verification,
+						)
+						.map((mapping) =>
+							result.code.slice(
+								mapping.generatedOffsets[0],
+								mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+							),
+						),
+				).toEqual(["{' a '}"]);
+			},
+		);
+	});
+
 	describe(`[${name}] input AST immutability`, () => {
 		/**
 		 * Structural snapshot of an AST node graph. `metadata` is the sanctioned

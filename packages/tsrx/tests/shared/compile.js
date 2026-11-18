@@ -1825,6 +1825,15 @@ export const p = 1
 				name: 'a partially typed `@if` between spaces in an element in a container',
 				source: 'export function App() {\n\treturn <>{<div> @if </div>}</>;\n}',
 			},
+			// An element's only text prints as one literal (#1368)
+			{
+				name: 'a `@` after a space and a non-breaking space in an element',
+				source: 'export function App() {\n\t<div> \u00a0@</div>\n}',
+			},
+			{
+				name: 'a partially typed `@if` between tabs in an element',
+				source: 'export function App() {\n\t<div>\t@if\t</div>\n}',
+			},
 		]) {
 			it(`emits a well-formed completion-only mapping for ${name}`, () => {
 				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
@@ -1853,6 +1862,26 @@ export const p = 1
 				}
 			});
 		}
+
+		it('maps a `@` in the element a template body outputs into its literal (#1368)', () => {
+			// The text's start also maps to the `return` the body adds before its output
+			const source = 'export function App() @{<b> @ </b>}';
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const cursor = source.lastIndexOf('@') + 1;
+			expect(
+				result.mappings
+					.filter(
+						(m) =>
+							m.data?.completion &&
+							cursor >= m.sourceOffsets[0] &&
+							cursor <= m.sourceOffsets[0] + m.lengths[0],
+					)
+					.map((m) => [
+						source.slice(m.sourceOffsets[0], m.sourceOffsets[0] + m.lengths[0]),
+						result.code.slice(m.generatedOffsets[0], m.generatedOffsets[0] + m.generatedLengths[0]),
+					]),
+			).toEqual([['@ ', '@ ']]);
+		});
 
 		it('maps a `@`-leading child with a `>` after an `@switch` to its own text', () => {
 			// The text's start also maps into the `@switch`'s output, so the mapping is
@@ -7172,14 +7201,15 @@ export function App(props: { on: boolean; n: number; items: string[] }) {
 					);
 					if (hoistsStaticJsx) {
 						expect(statics(code)).toEqual([
-							"const B__static1 = <><div>{' '}1{' '}</div>{<><div>{' '}2{' '}</div><div>{' '}3{' '}</div></>}</>;",
+							"const B__static1 = <><div>{' 1 '}</div>{<><div>{' 2 '}</div><div>{' 3 '}</div></>}</>;",
 						]);
 						expect(code).toContain('return B__static1;');
 					} else {
 						expect(code).not.toContain('__static');
 					}
+					// Each `<div>`'s only text is one child (#1368)
 					/** @param {string} text */
-					const div = (text) => el('div', [' ', text, ' ']);
+					const div = (text) => el('div', [` ${text} `]);
 					expect(run_result(code)).toEqual([
 						hoistsStaticJsx,
 						el('Fragment', [div('1'), el('Fragment', [div('2'), div('3')])]),
@@ -7194,7 +7224,7 @@ export function App(props: { on: boolean; n: number; items: string[] }) {
 						`export function Contained(props: { t: string }) {\n\treturn <section title={props.t}>{<>${ten}</>}</section>;\n}`,
 					'App.tsrx',
 				);
-				const fragment = `<>${"<div>{' '}123{' '}</div>".repeat(10)}</>`;
+				const fragment = `<>${"<div>{' 123 '}</div>".repeat(10)}</>`;
 				if (hoistsStaticJsx) {
 					expect(statics(code)).toEqual([
 						`const App__static1 = ${fragment};`,
@@ -7468,54 +7498,55 @@ export const b2 = {
 
 	describe(`[${name}] edge whitespace in JSX in an expression container (#1351)`, () => {
 		// The spaces and tabs at the edges of an element's children print as
-		// `{' '}` (#1277). JSX that a `{…}` container holds prints the same as JSX
-		// in a children list, whether the target hoists it or not. Each source
-		// writes the element both ways, so each printed element is there twice.
+		// `{' '}` (#1277), and an element's only text as one literal (#1368). JSX
+		// that a `{…}` container holds prints the same as JSX in a children list,
+		// whether the target hoists it or not. Each source writes the element both
+		// ways, so each printed element is there twice.
 		it.each([
 			[
 				'a container in a returned fragment',
 				'export function A() {\n\treturn <><div> 123 </div>{<div> 123 </div>}</>;\n}',
-				["<div>{' '}123{' '}</div>"],
+				["<div>{' 123 '}</div>"],
 			],
 			[
 				'a container in a template body',
 				'export function A() @{\n\t<><div> 123 </div>{<div> 123 </div>}</>\n}',
-				["<div>{' '}123{' '}</div>"],
+				["<div>{' 123 '}</div>"],
 			],
 			[
 				'the branches of `?:` and `&&`',
 				'export function A(props: { on: boolean }) {\n\treturn <>{props.on ? <b> a </b> : <i> b </i>}{props.on && <u> c </u>}<b> a </b><i> b </i><u> c </u></>;\n}',
-				["<b>{' '}a{' '}</b>", "<i>{' '}b{' '}</i>", "<u>{' '}c{' '}</u>"],
+				["<b>{' a '}</b>", "<i>{' b '}</i>", "<u>{' c '}</u>"],
 			],
 			[
 				'an attribute value',
 				'function Slot(props: { content: unknown }) {\n\treturn null;\n}\nexport function A() {\n\treturn <><Slot content={<span> a </span>} /><span> a </span></>;\n}',
-				["<span>{' '}a{' '}</span>"],
+				["<span>{' a '}</span>"],
 			],
 			[
 				'a callback',
 				'export function A(props: { items: string[] }) {\n\treturn <><ul>{props.items.map(() => <li> a </li>)}</ul><li> a </li></>;\n}',
-				["<li>{' '}a{' '}</li>"],
+				["<li>{' a '}</li>"],
 			],
 			[
 				'a container in a static element',
 				'export function A() {\n\treturn <><div>{<span> a </span>}</div><div><span> a </span></div></>;\n}',
-				["<span>{' '}a{' '}</span>"],
+				["<span>{' a '}</span>"],
 			],
 			[
 				'module-level JSX',
 				'const header = <h1> a </h1>;\nexport function A() {\n\treturn <>{header}<h1> a </h1></>;\n}',
-				["<h1>{' '}a{' '}</h1>"],
+				["<h1>{' a '}</h1>"],
 			],
 			[
 				'a container, for an edge tab',
 				'export function A() {\n\treturn <><b>\t1\t</b>{<b>\t1\t</b>}</>;\n}',
-				["<b>{'\t'}1{'\t'}</b>"],
+				["<b>{'\t1\t'}</b>"],
 			],
 			[
 				'a container, for two spaces at an edge',
 				'export function A() {\n\treturn <><b>  1  </b>{<b>  1  </b>}</>;\n}',
-				["<b>{'  '}1{'  '}</b>"],
+				["<b>{'  1  '}</b>"],
 			],
 		])('prints the edge whitespace of %s as a children list does', (_case, source, printed) => {
 			const { code } = compile(source, 'A.tsrx');
@@ -7531,6 +7562,64 @@ export const b2 = {
 			);
 			expect(count_substring(code, '<p>\n\t\ta \n\t</p>')).toBe(2);
 			expect(code).not.toContain("{'");
+		});
+	});
+
+	describe(`[${name}] an element's only text with edge whitespace (#1368)`, () => {
+		// An element whose only child is text with a space or tab at an edge gets
+		// the text as one string: a `<textarea>` and a `<title>` take one, and so
+		// does a component whose `children` is a string. It prints as one literal.
+		const upper =
+			'function Upper(props: { children: string }) {\n\treturn <span>{props.children.toUpperCase()}</span>;\n}\n';
+
+		it.each([
+			['a `<textarea>`', '<textarea> a </textarea>', "<textarea>{' a '}</textarea>"],
+			['a `<title>`', '<title> My page </title>', "<title>{' My page '}</title>"],
+			['a component', '<Upper> a </Upper>', "<Upper>{' a '}</Upper>"],
+			['an element, for a leading space', '<b> a</b>', "<b>{' a'}</b>"],
+			['an element, for a trailing tab', '<b>a\t</b>', "<b>{'a\t'}</b>"],
+			['a `<pre>`, for a character reference', '<pre>&#10;x </pre>', "<pre>{'\\nx '}</pre>"],
+			[
+				'an element, for a quote and a backslash',
+				`<b> it's "q" \\ </b>`,
+				`<b>{' it\\'s "q" \\\\ '}</b>`,
+			],
+			['an element, for `&amp;`', '<b> R&amp;D </b>', "<b>{' R&D '}</b>"],
+			['an element, for `&#38;`', '<b> &#38;D </b>', "<b>{' &D '}</b>"],
+		])('prints the text of %s as one literal', (_case, element, printed) => {
+			for (const source of [
+				`${upper}export function A() {\n\treturn <div>${element}</div>;\n}`,
+				`${upper}export function A() @{\n\t<div>${element}</div>\n}`,
+			]) {
+				expect(compile(source, 'A.tsrx').code).toContain(printed);
+			}
+		});
+
+		it.each([
+			['text beside an element', '<b> a <i>x</i> b </b>', "<b>{' '}a <i>x</i> b{' '}</b>"],
+			["a fragment's only text", '<> a </>', "<>{' '}a{' '}</>"],
+			['text without edge whitespace', '<b>a</b>', '<b>a</b>'],
+			// The targets' JSX compilers read these differently from the literal
+			['text that spans lines', '<b> a\n\t\tb </b>', "<b>{' '}a\n\t\tb{' '}</b>"],
+			['text with a non-breaking space', '<b> a\u00a0b </b>', "<b>{' '}a\u00a0b{' '}</b>"],
+			[
+				'a reference longer than the parser reads',
+				'<b> &#0000000000000065; </b>',
+				"<b>{' '}&#0000000000000065;{' '}</b>",
+			],
+			['a signed reference', '<b> &#+65; </b>', "<b>{' '}&#+65;{' '}</b>"],
+			['a reference with `&#X`', '<b> &#X41; </b>', "<b>{' '}&#X41;{' '}</b>"],
+			['a reference to a control character', '<b> &#128; </b>', "<b>{' '}&#128;{' '}</b>"],
+			['a reference to a lone surrogate', '<b> &#xD800; </b>', "<b>{' '}&#xD800;{' '}</b>"],
+			['a reference without a semicolon', '<b> &copy </b>', "<b>{' '}&copy{' '}</b>"],
+			['an `&` before a name', '<b> a&b </b>', "<b>{' '}a&b{' '}</b>"],
+		])('prints %s as before', (_case, element, printed) => {
+			for (const source of [
+				`export function A() {\n\treturn <div>${element}</div>;\n}`,
+				`export function A() @{\n\t<div>${element}</div>\n}`,
+			]) {
+				expect(compile(source, 'A.tsrx').code).toContain(printed);
+			}
 		});
 	});
 
