@@ -1,5 +1,6 @@
 import type { MockInstance } from 'vitest';
-import { useState, use } from 'react';
+import { createElement, useState, use } from 'react';
+import { renderToString } from 'react-dom/server';
 import { create_ref_prop, mergeRefs } from '@tsrx/react/ref';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runForOfSourcesRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-sources';
@@ -14,7 +15,12 @@ import { runArrayRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-r
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
 import { runStaticContainersRuntimeTests } from '@tsrx/core/test-harness/runtime/static-containers';
-import { StaticContainers } from '@tsrx/core/test-harness/runtime/static-containers-components.tsrx';
+import {
+	StaticContainers,
+	counted,
+} from '@tsrx/core/test-harness/runtime/static-containers-components.tsrx';
+import { runStaticFragmentMarkupTests } from '@tsrx/core/test-harness/runtime/static-fragment-markup';
+import * as StaticFragmentMarkup from '@tsrx/core/test-harness/runtime/static-fragment-markup-components.tsrx';
 import { runAssignedImportMemberRuntimeTests } from '@tsrx/core/test-harness/runtime/assigned-import-member';
 import { AssignedImportMember } from '@tsrx/core/test-harness/runtime/assigned-import-member-components.tsrx';
 import { runGeneratedImportBindingsRuntimeTests } from '@tsrx/core/test-harness/runtime/generated-import-bindings';
@@ -2728,6 +2734,10 @@ runArraySpreadRefRuntimeTests();
 runArrayRefRuntimeTests();
 runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();
-runStaticContainersRuntimeTests({ Host: StaticContainersHost, click });
+runStaticContainersRuntimeTests({ Host: StaticContainersHost, click, counted });
+runStaticFragmentMarkupTests({
+	components: StaticFragmentMarkup,
+	renderToString: (component, props) => renderToString(createElement(component, props)),
+});
 runAssignedImportMemberRuntimeTests({ AssignedImportMember });
 runGeneratedImportBindingsRuntimeTests();

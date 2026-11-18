@@ -1176,10 +1176,10 @@ describe('@tsrx/react basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toContain("<h1>{'title'}</h1>");
-		expect(code).toContain('return <>');
-		expect(code).toContain('App__static1');
-		expect(code).toContain('App__static2');
+		// The fragment is static as a whole, so it is hoisted as one static (#1352)
+		expect(code).toContain("const App__static1 = <><h1>{'title'}</h1><p>{'content'}</p></>;");
+		expect(code).toContain('return App__static1;');
+		expect(code).not.toContain('App__static2');
 		expect(code).not.toContain('<tsx>');
 	});
 

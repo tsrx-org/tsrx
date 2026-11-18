@@ -5656,10 +5656,11 @@ export function App() @{
 
 			expect(code).not.toContain('return;');
 			if (hoistsStaticJsx) {
-				expect(code).toMatch(/function FragmentReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
-				expect(code).toMatch(/function TsxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
-				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
-				expect(code).toMatch(/function TsrxReturn\(\) {\s+return <>{App__static\d+}<\/>;/);
+				// Each fragment is static as a whole, so it is kept in one static (#1352)
+				expect(code).toMatch(/function FragmentReturn\(\) {\s+return App__static\d+;/);
+				expect(code).toMatch(/function TsxReturn\(\) {\s+return App__static\d+;/);
+				expect(code).toMatch(/const App__static\d+ = <><div[^>]*>tsrx<\/div><\/>;/);
+				expect(code).toMatch(/function TsrxReturn\(\) {\s+return App__static\d+;/);
 			} else {
 				expect(code).not.toContain('__static');
 				expect(code).toMatch(/function FragmentReturn\(\) {\s+return <><div>fragment<\/div><\/>;/);
@@ -5690,12 +5691,12 @@ export function App() @{
 
 			expect(code).not.toContain('return;');
 			if (hoistsStaticJsx) {
-				expect(code).toMatch(/const App__static\d+ = <div[^>]*>fragment<\/div>;/);
-				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsx<\/div>;/);
-				expect(code).toMatch(/const App__static\d+ = <div[^>]*>tsrx<\/div>;/);
-				expect(code).toMatch(/fragment={\(\) => {\s+return <>{App__static\d+}<\/>;/);
-				expect(code).toMatch(/tsx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
-				expect(code).toMatch(/tsrx={\(\) => {\s+return <>{App__static\d+}<\/>;/);
+				expect(code).toMatch(/const App__static\d+ = <><div[^>]*>fragment<\/div><\/>;/);
+				expect(code).toMatch(/const App__static\d+ = <><div[^>]*>tsx<\/div><\/>;/);
+				expect(code).toMatch(/const App__static\d+ = <><div[^>]*>tsrx<\/div><\/>;/);
+				expect(code).toMatch(/fragment={\(\) => {\s+return App__static\d+;/);
+				expect(code).toMatch(/tsx={\(\) => {\s+return App__static\d+;/);
+				expect(code).toMatch(/tsrx={\(\) => {\s+return App__static\d+;/);
 			} else {
 				expect(code).not.toContain('__static');
 				expect(code).toMatch(/fragment={\(\) => {\s+return <><div>fragment<\/div><\/>;/);
@@ -6915,22 +6916,23 @@ export function App() @{
 			const static_count = (code) => code.match(/^const App__static\d+ = /gm)?.length ?? 0;
 
 			it('hoists a static element in a container like the bare one beside it', () => {
+				// `{props.n}` keeps the fragment from being static as a whole (#1352)
 				const { code } = compile(
-					'export function App() {\n\treturn <>{<b>a</b>}<b>b</b></>;\n}\n' +
+					'export function App(props: { n: number }) {\n\treturn <>{<b>a</b>}<b>b</b>{props.n}</>;\n}\n' +
 						'export const result = () => {\n' +
-						'\tconst [first, second] = [App(), App()];\n' +
-						'\treturn [first.props.children.length, ...first.props.children.map((child: unknown, i: number) => child === second.props.children[i])];\n' +
+						'\tconst [first, second] = [App({ n: 1 }), App({ n: 1 })];\n' +
+						'\treturn [first.props.children.length, ...first.props.children.map((child: unknown, i: number) => typeof child === "object" && child === second.props.children[i])];\n' +
 						'};',
 					'App.tsrx',
 				);
 				if (hoistsStaticJsx) {
 					expect(code).toContain('const App__static1 = <b>a</b>;');
 					expect(code).toContain('const App__static2 = <b>b</b>;');
-					expect(code).toContain('return <>{App__static1}{App__static2}</>;');
-					expect(run_result(code)).toEqual([2, true, true]);
+					expect(code).toContain('return <>{App__static1}{App__static2}{props.n}</>;');
+					expect(run_result(code)).toEqual([3, true, true, false]);
 				} else {
 					expect(code).not.toContain('__static');
-					expect(run_result(code)).toEqual([2, false, false]);
+					expect(run_result(code)).toEqual([3, false, false, false]);
 				}
 			});
 
@@ -6962,9 +6964,10 @@ export const result = () => [App({ on: true, n: 1 }), App({ on: false, n: 2, lab
 					'App.tsrx',
 				);
 				if (hoistsStaticJsx) {
-					expect(static_count(code)).toBe(10);
+					expect(static_count(code)).toBe(9);
+					expect(code).toContain('const App__static9 = <><a>one</a><a>two</a></>;');
 					expect(code).toContain(
-						'return <div title={String(props.n)}>{App__static1}<Card header={App__static2} n={props.n}>{App__static3}</Card>{props.on ? App__static4 : App__static5}{props.on && App__static6}{props.label ?? App__static7}{<p title={String(props.n)}>{App__static8}</p>}{<>{App__static9}{App__static10}</>}</div>;',
+						'return <div title={String(props.n)}>{App__static1}<Card header={App__static2} n={props.n}>{App__static3}</Card>{props.on ? App__static4 : App__static5}{props.on && App__static6}{props.label ?? App__static7}{<p title={String(props.n)}>{App__static8}</p>}{App__static9}</div>;',
 					);
 				} else {
 					expect(code).not.toContain('__static');
@@ -7094,12 +7097,12 @@ export function App(props: { n: number }) {
 
 			it('hoists each of two static containers on its own instead of merging them', () => {
 				const { code } = compile(
-					'export function App() {\n\treturn <>{<b>a</b>}{<b>b</b>}</>;\n}',
+					'export function App(props: { n: number }) {\n\treturn <>{<b>a</b>}{<b>b</b>}{props.n}</>;\n}',
 					'App.tsrx',
 				);
 				if (hoistsStaticJsx) {
 					expect(static_count(code)).toBe(2);
-					expect(code).toContain('return <>{App__static1}{App__static2}</>;');
+					expect(code).toContain('return <>{App__static1}{App__static2}{props.n}</>;');
 				} else {
 					expect(code).not.toContain('__static');
 				}
@@ -7138,9 +7141,327 @@ export function App(props: { on: boolean; n: number; items: string[] }) {
 					'utf8',
 				);
 				const { code } = compile(source, 'StaticContainers.tsrx');
+				// The fragment in a container is one static (#1352)
 				expect(code.match(/^const StaticContainers__static\d+ = /gm)?.length ?? 0).toBe(
-					hoistsStaticJsx ? 10 : 0,
+					hoistsStaticJsx ? 9 : 0,
 				);
+			});
+		});
+
+		describe('a fragment that holds only statics (#1352)', () => {
+			/** @param {string} code */
+			const statics = (code) => code.match(/^const \S+__static\d+ = .*$/gm) ?? [];
+			/** @param {string} type @param {unknown[]} children */
+			const el = (type, children) => ({ type, props: { children } });
+
+			it.each([
+				[
+					'a function',
+					'export function B() {\n\treturn <><div> 1 </div>{<><div> 2 </div><div> 3 </div></>}</>;\n}',
+				],
+				[
+					'a template body',
+					'export function B() @{\n\t<>\n\t\t<div> 1 </div>\n\t\t{<><div> 2 </div><div> 3 </div></>}\n\t</>\n}',
+				],
+			])(
+				'hoists the fragment that %s returns, with the one in its container, as one static',
+				(_case, source) => {
+					const { code } = compile(
+						`${source}\nexport const result = () => [B() === B(), B()];`,
+						'B.tsrx',
+					);
+					if (hoistsStaticJsx) {
+						expect(statics(code)).toEqual([
+							"const B__static1 = <><div>{' '}1{' '}</div>{<><div>{' '}2{' '}</div><div>{' '}3{' '}</div></>}</>;",
+						]);
+						expect(code).toContain('return B__static1;');
+					} else {
+						expect(code).not.toContain('__static');
+					}
+					/** @param {string} text */
+					const div = (text) => el('div', [' ', text, ' ']);
+					expect(run_result(code)).toEqual([
+						hoistsStaticJsx,
+						el('Fragment', [div('1'), el('Fragment', [div('2'), div('3')])]),
+					]);
+				},
+			);
+
+			it('hoists ten static elements in one fragment as one static (#81)', () => {
+				const ten = '<div> 123 </div>'.repeat(10);
+				const { code } = compile(
+					`export function App() {\n\treturn <>${ten}</>;\n}\n` +
+						`export function Contained(props: { t: string }) {\n\treturn <section title={props.t}>{<>${ten}</>}</section>;\n}`,
+					'App.tsrx',
+				);
+				const fragment = `<>${"<div>{' '}123{' '}</div>".repeat(10)}</>`;
+				if (hoistsStaticJsx) {
+					expect(statics(code)).toEqual([
+						`const App__static1 = ${fragment};`,
+						`const Contained__static1 = ${fragment};`,
+					]);
+					expect(code).toContain('return App__static1;');
+					expect(code).toContain('return <section title={props.t}>{Contained__static1}</section>;');
+				} else {
+					expect(code).not.toContain('__static');
+					expect(count_substring(code, fragment)).toBe(2);
+				}
+			});
+
+			it('takes a fragment of statics in it into the static', () => {
+				const { code } = compile(
+					'export function App() {\n\treturn <>{<b>1</b>}<>{<i>2</i>}{<u>3</u>}</></>;\n}',
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(statics(code)).toEqual([
+						'const App__static1 = <>{<b>1</b>}<>{<i>2</i>}{<u>3</u>}</></>;',
+					]);
+					expect(code).toContain('return App__static1;');
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('leaves an element #1279 left in place where it is built', () => {
+				// Hoisting the fragment would build `<i>` when the module loads,
+				// where its attribute throws
+				const { code } = compile(
+					'export function App(props: { on: boolean }) {\n\treturn <div>{props.on && <>{<b>anchor</b>}<><i data-n={1n / 0n} /><u>end</u></></>}</div>;\n}\n' +
+						'export const result = () => App({ on: false });',
+					'App.tsrx',
+				);
+				expect(statics(code)).toEqual(
+					hoistsStaticJsx ? ['const App__static1 = <b>anchor</b>;'] : [],
+				);
+				expect(run_result(code)).toEqual({ type: 'div', props: { children: [false] } });
+			});
+
+			it('hoists the static parts of a fragment with a dynamic child, but not the fragment', () => {
+				const { code } = compile(
+					'export function App(props: { n: number }) {\n\treturn <><div>1</div><div>{props.n}</div>{<><a>3</a><b>4</b></>}</>;\n}\n' +
+						'export function Contained(props: { n: number }) {\n\treturn <p title={String(props.n)}>{<><i>1</i>{props.n}{<><a>3</a><b>4</b></>}</>}</p>;\n}\n' +
+						'export const result = () => [App({ n: 1 }), Contained({ n: 2 })];',
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(statics(code)).toEqual([
+						'const App__static1 = <div>1</div>;',
+						'const App__static2 = <><a>3</a><b>4</b></>;',
+						'const Contained__static1 = <i>1</i>;',
+						'const Contained__static2 = <><a>3</a><b>4</b></>;',
+					]);
+					expect(code).toContain('return <>{App__static1}<div>{props.n}</div>{App__static2}</>;');
+					expect(code).toContain(
+						'return <p title={String(props.n)}>{<>{Contained__static1}{props.n}{Contained__static2}</>}</p>;',
+					);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+				const pair = el('Fragment', [el('a', ['3']), el('b', ['4'])]);
+				expect(run_result(code)).toEqual([
+					el('Fragment', [el('div', ['1']), el('div', [1]), pair]),
+					{
+						type: 'p',
+						props: { title: '2', children: [el('Fragment', [el('i', ['1']), 2, pair])] },
+					},
+				]);
+			});
+
+			it('hoists a fragment around a keyed element or a component that is already a static', () => {
+				const { code } = compile(
+					'function Child(props: { a: string }) {\n\treturn null;\n}\n' +
+						'export function App() {\n\treturn <><b key="k">a</b><Child a="1" /><i>b</i></>;\n}',
+					'App.tsrx',
+				);
+				expect(statics(code)).toEqual(
+					hoistsStaticJsx
+						? ['const App__static1 = <><b key="k">a</b><Child a="1" /><i>b</i></>;']
+						: [],
+				);
+			});
+
+			it.each([
+				[
+					'a keyed element in a container',
+					'export function App(props: { t: string }) {\n\treturn <p title={props.t}>{<><b key="k">a</b><i>b</i></>}</p>;\n}',
+					['const App__static1 = <i>b</i>;'],
+				],
+				[
+					'a ref',
+					'export function App(props: { r: any }) {\n\treturn <><b ref={props.r}>a</b><i>b</i></>;\n}',
+					['const App__static1 = <i>b</i>;'],
+				],
+				[
+					'a spread',
+					'export function App(props: object) {\n\treturn <><b {...props}>a</b><i>b</i></>;\n}',
+					['const App__static1 = <i>b</i>;'],
+				],
+				[
+					'an event handler',
+					'export function App() {\n\treturn <><button onClick={() => {}}>a</button><i>b</i></>;\n}',
+					['const App__static1 = <i>b</i>;'],
+				],
+				[
+					'a bare component',
+					'function Helper() {\n\treturn null;\n}\nexport function App() {\n\treturn <><Helper /><i>b</i></>;\n}',
+					['const App__static1 = <i>b</i>;'],
+				],
+				[
+					'a component in a conditional container',
+					'function Icon(props: { size: number }) {\n\treturn null;\n}\nexport function App(props: { on: boolean }) {\n\treturn <p>{props.on && <><Icon size={1} /><i>b</i></>}</p>;\n}',
+					['const App__static1 = <i>b</i>;'],
+				],
+				[
+					'a component no static holds',
+					'function Child(props: { a: string }) {\n\treturn null;\n}\nexport function App() {\n\treturn <><><Child a="1" /><i>b</i></></>;\n}\nexport function Contained(props: { t: string }) {\n\treturn <p title={props.t}>{<><><Child a="1" /></><i>b</i></>}</p>;\n}',
+					['const Contained__static1 = <i>b</i>;'],
+				],
+				[
+					'an element #1279 left in a nested fragment',
+					'export function App() {\n\treturn <>{<><a>1</a><b>2</b></>}<><i>3</i><u>4</u></></>;\n}\nexport function Contained(props: { t: string }) {\n\treturn <section title={props.t}>{<><><a>1</a><b>2</b></><i>3</i></>}</section>;\n}',
+					['const App__static1 = <><a>1</a><b>2</b></>;', 'const Contained__static1 = <i>3</i>;'],
+				],
+				[
+					'form controls #1279 left in place',
+					'export function App(props: { x: string }) {\n\treturn <div title={props.x}><>{<b>1</b>}<input id="t" value="v" /><input id="c" type="checkbox" checked /></></div>;\n}',
+					['const App__static1 = <b>1</b>;'],
+				],
+				[
+					'an element whose tag a binding shares',
+					'export function App(props: { x: string }) {\n\tconst input = { current: null };\n\treturn <div title={props.x}>{<><b>1</b><input /></>}</div>;\n}',
+					['const App__static1 = <b>1</b>;'],
+				],
+				[
+					'no static',
+					'export function App() {\n\treturn <><><a>1</a><b>2</b></><><i>3</i><u>4</u></></>;\n}\nexport function Text(props: { t: string }) {\n\treturn <p title={props.t}>{<> hi </>}</p>;\n}',
+					[],
+				],
+			])('does not hoist a fragment with %s as one static', (_case, source, expected) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(statics(code)).toEqual(hoistsStaticJsx ? expected : []);
+			});
+
+			it('leaves a fragment in place where a keyed `@for` keys it', () => {
+				// The loop keys the fragment its body renders, through an `@if`
+				// branch, so the row is a keyed element
+				const { code } = compile(
+					`export function App(props: { items: { id: number }[]; on: boolean }) @{
+	<ul>
+		@for (const item of props.items; key item.id) {
+			<><li>a</li><li>b</li></>
+		}
+		@for (const item of props.items; key item.id) {
+			@if (props.on) {
+				<><li>c</li><li>d</li></>
+			}
+		}
+	</ul>
+}`,
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(statics(code)).toEqual([
+						'const App__static1 = <li>c</li>;',
+						'const App__static2 = <li>d</li>;',
+					]);
+					expect(code).toContain(
+						'return <__Fragment key={item.id}><li>a</li><li>b</li></__Fragment>;',
+					);
+					expect(code).toContain(
+						'? <__Fragment key={item.id}>{App__static1}{App__static2}</__Fragment>',
+					);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('prints the text of a hoisted fragment as the fragment in place does', () => {
+				const { code } = compile(
+					'export function App(props: { t: string }) {\n\treturn <><p title={props.t}>{<> hi <b>2</b> yo </>}</p><> hi <b>2</b> yo </></>;\n}\n' +
+						'export function Top() {\n\treturn <> hi <b>2</b> yo </>;\n}\n' +
+						'export function Lone() {\n\treturn <>{<> hi <b>2</b> yo </>}</>;\n}',
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(statics(code)).toEqual([
+						"const App__static1 = <>{' '}hi <b>2</b> yo{' '}</>;",
+						// A component's own fragment keeps its edge whitespace as written
+						// (#1351), and so does the one a lone container returns
+						'const Top__static1 = <> hi <b>2</b> yo </>;',
+						'const Lone__static1 = <> hi <b>2</b> yo </>;',
+					]);
+					expect(code).toContain(
+						"return <><p title={props.t}>{App__static1}</p><>{' '}hi <b>2</b> yo{' '}</></>;",
+					);
+				} else {
+					expect(code).not.toContain('__static');
+				}
+			});
+
+			it('keeps the names #1279 gives the statics, apart from the names the source uses', () => {
+				const { code } = compile(
+					'const App__static1 = "module";\nexport function App(props: { n: number }) {\n\tconst App__static2 = "local";\n\treturn <><b>1</b>{<><i>2</i><u>3</u></>}{props.n}{App__static1}{App__static2}</>;\n}',
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(statics(code).filter((line) => line.includes(' = <'))).toEqual([
+						'const App__static3 = <b>1</b>;',
+						'const App__static4 = <><i>2</i><u>3</u></>;',
+					]);
+					expect(code).toContain(
+						'return <>{App__static3}{App__static4}{props.n}{App__static1}{App__static2}</>;',
+					);
+				} else {
+					expect(code).not.toContain('= <');
+				}
+			});
+
+			it('tells a static from a name the source uses that is spelled like one', () => {
+				const { code } = compile(
+					'const App__static_fold1 = "mine";\nexport function App() {\n\treturn <>{<><b>a</b><i>b</i></>}{App__static_fold1}</>;\n}\n' +
+						'export const result = () => App().props.children.map((child: any) => (typeof child === "object" ? child.type : child));',
+					'App.tsrx',
+				);
+				if (hoistsStaticJsx) {
+					expect(statics(code)).toEqual(['const App__static1 = <><b>a</b><i>b</i></>;']);
+					expect(code).toContain('return <>{App__static1}{App__static_fold1}</>;');
+				} else {
+					expect(code).not.toContain('__static1');
+				}
+				expect(run_result(code)).toEqual(['Fragment', 'mine']);
+			});
+
+			it('keeps the statics of two components with one base name apart', () => {
+				// Both methods are named `Item`, so their statics share a prefix and
+				// keep the numbers #1279 gives them
+				const { code } = compile(
+					`export const a = {
+	Item(props: any) @{
+		const r = { current: null };
+		<>
+			<p {...props} {...props.more} ref={r}>x</p>
+			{<><i>2</i><u>3</u></>}
+		</>
+	},
+};
+export const b2 = {
+	Item(props: any) @{
+		<div title={props.x}>{<b>only</b>}</div>
+	},
+};`,
+					'App.tsrx',
+				);
+				const names = [...code.matchAll(/^const (\S+__static\d+) = /gm)].map((match) => match[1]);
+				expect(new Set(names).size).toBe(names.length);
+				if (hoistsStaticJsx) {
+					expect(statics(code)).toEqual([
+						'const TSRXTemplate__static3 = <><i>2</i><u>3</u></>;',
+						'const TSRXTemplate__static1 = <b>only</b>;',
+					]);
+				} else {
+					expect(names).toEqual([]);
+				}
 			});
 		});
 	});

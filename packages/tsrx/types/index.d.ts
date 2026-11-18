@@ -136,6 +136,11 @@ export type NameSpace = 'html' | 'svg' | 'mathml';
 export interface BaseNodeMetaData {
 	scoped?: boolean;
 	path: AST.Node[];
+	/**
+	 * On a reference to a static that a component's static JSX is hoisted to,
+	 * the declaration of the static.
+	 */
+	static_declaration?: AST.Statement;
 	has_template?: boolean;
 	source_name?: string;
 	source_length?: number;

@@ -464,8 +464,8 @@ export { rest };
 
 	it("never hides another component's errors when an error's element holds a <script> body", () => {
 		// The body is checked as a block at the end of the generated file, and the
-		// React target hoists the static <script> element above the component, so
-		// the fragment's generated code comes in three pieces with B in between.
+		// React target hoists the static fragment above the component (#1352), so
+		// the fragment's generated code comes in two pieces with B in between.
 		const mapper = create_tsrx_content_mapper();
 		mapper.openProject({
 			configFileName: path.join(consumer_fixture_dir, 'tsconfig.json'),
@@ -496,8 +496,7 @@ export function B() {
 				result.text.slice(generated_start, generated_end),
 			]),
 		).toEqual([
-			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), '<script></script>'],
-			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), "{'x'}"],
+			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), "{'x'}<script></script>"],
 			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), 'const s = 1;'],
 		]);
 		const wrong_at = result.text.indexOf('wrong: string');
