@@ -1,5 +1,17 @@
 # @tsrx/typescript-plugin
 
+## 0.7.3
+
+### Patch Changes
+
+- Updated dependencies
+  [[`f50dd3e`](https://github.com/tsrx-org/tsrx/commit/f50dd3ed94cc659ff733c82b66e148357d9b1a35)]:
+  - @tsrx/vue@0.4.3
+  - @tsrx/content-mapper@0.1.4
+  - @tsrx/preact@0.4.3
+  - @tsrx/react@0.5.3
+  - @tsrx/solid@0.4.3
+
 ## 0.7.2
 
 ### Patch Changes

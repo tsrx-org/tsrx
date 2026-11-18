@@ -1,14 +1,14 @@
 id = "tsrx"
 name = "TSRX"
 description = "TSRX language support with LSP and Tree-sitter syntax highlighting for Ripple, React, Preact, Solid, Vue, Octane, and additional compiler targets."
-version = "0.1.7"
+version = "0.1.8"
 schema_version = 1
 authors = ["Dominic Gannaway <trueadm@users.noreply.github.com>"]
 repository = "https://github.com/tsrx-org/tsrx"
 
 [grammars.tsrx]
 repository = "https://github.com/tsrx-org/tsrx"
-rev = "d219afc59b8a9dfe5c43d7a0dde75c14ff2a6049"
+rev = "f50dd3ed94cc659ff733c82b66e148357d9b1a35"
 path = "grammars/tree-sitter"
 
 [language_servers.tsrx-language-server]
