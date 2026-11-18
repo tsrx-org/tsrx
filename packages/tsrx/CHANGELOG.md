@@ -1,5 +1,77 @@
 # @tsrx/core
 
+## 0.6.4
+
+### Patch Changes
+
+- [#1367](https://github.com/tsrx-org/tsrx/pull/1367)
+  [`bd00fda`](https://github.com/tsrx-org/tsrx/commit/bd00fda786d00d3cd3d10208b8deba6139ac8dea)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - JSX inside an
+  expression container now prints the spaces and tabs at the edges of its children
+  as `{' '}`, as the same JSX in a children list does
+  ([#1351](https://github.com/tsrx-org/tsrx/issues/1351)).
+  `<>{<div> 123 </div>}<div> 123 </div></>` prints `<div>{' '}123{' '}</div>` for
+  both elements on every target.
+
+  - React, Preact and Hono: since `@tsrx/core` 0.6.0, an element hoisted out of a
+    container kept its text as written. It gets `{' '}` again, as in 0.5.x. A
+    container inside a hoisted element (`<div>{<span> a </span>}</div>`) now gets
+    it too, which no earlier version did.
+  - Solid: the rule only reached the elements a component's output lists directly.
+    JSX in a container, an attribute value, a callback, a `const` or a
+    module-level declaration, and an element nested in an `@if`, `@switch`, `@for`
+    or `@try` body, kept its text as written. All of these now get `{' '}`.
+  - Vue already printed both forms the same and is unchanged.
+
+  This changes what renders in those places, in the same way the same JSX in a
+  children list already rendered:
+
+  - On Solid, text with two or more whitespace characters or a tab at an edge now
+    renders as written. Solid's compiler reads a whitespace run in JSX text as one
+    space but keeps a `{'  '}` literal, so `{<b>  1  </b>}` rendered `" 1 "`; it
+    now renders `"  1  "`, and an edge tab stays a tab.
+  - On React, Preact, Hono and Solid, an element or component whose text has edge
+    whitespace gets three children instead of one string. A component that expects
+    `children` to be a string gets `[' ', 'a', ' ']`, React server rendering
+    writes `<!-- -->` between the parts, and React throws for
+    `<textarea> a </textarea>` and renders `<title> a </title>` empty.
+
+  In the editor, text whose edge whitespace prints as `{' '}` now maps from where
+  the text starts rather than from the whitespace before it, so a `@` typed after
+  a space at the start of an element's text, as in `<div> @</div>`, gets directive
+  completions.
+
+- [#1372](https://github.com/tsrx-org/tsrx/pull/1372)
+  [`2553f96`](https://github.com/tsrx-org/tsrx/commit/2553f968fecff3456ffbc7c5363a8847c7492417)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React, Preact and
+  Hono, a fragment whose elements are all hoisted already is now hoisted as one
+  module-level constant, instead of being built around one constant per element on
+  every render ([#1352](https://github.com/tsrx-org/tsrx/issues/1352)).
+  `export function B() { return <><div> 1 </div>{<><div> 2 </div><div> 3 </div></>}</>; }`
+  gave three constants and built both fragments again on every render; it now
+  gives one `const B__static1 = <>…</>;` and `return B__static1;`. A fragment is
+  hoisted when it holds at least one hoisted element, and each of its other
+  children is text, a literal, or a fragment of these. That covers a component's
+  output, the output of a render helper or of an `@if`, `@switch`, `@try` or
+  `@for` body, and a fragment in an expression container or an attribute value.
+  The fragment is hoisted as the component printed it in place, so its text
+  renders the same markup. It takes in no element that wasn't hoisted already, so
+  every element is built when it was before, and no component inside the fragment
+  renders less often. A memoized component that receives the fragment as a prop or
+  as children can skip a render, as it can for a single hoisted element since
+  0.6.0. A row of a keyed `@for` keeps its key and stays in place. Solid, Vue and
+  Hono DOM don't hoist, and their output is unchanged.
+
+- [#1369](https://github.com/tsrx-org/tsrx/pull/1369)
+  [`4500db9`](https://github.com/tsrx-org/tsrx/commit/4500db9b8b23a995f24390729632f11d759859df)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A tag left open after a
+  conditional's `?`, or after `[` or `,` in an array, with a line comment between
+  (`c ? // note`, a line break, then `<b> : null`) is reported as an unclosed tag
+  (TSRX1001) in a collecting or loose parse, as with a block comment there. The
+  parse no longer throws `Unexpected token`, so Prettier, ESLint and the editor
+  show TSRX1001. A comment whose text ends in `?`, `[` or `,` no longer makes the
+  text after an unclosed tag read as code (`// why?` before `<div>: label`).
+
 ## 0.6.3
 
 ### Patch Changes

@@ -1,5 +1,16 @@
 # @tsrx/rspack-plugin-preact
 
+## 0.0.108
+
+### Patch Changes
+
+- Updated dependencies
+  [[`bd00fda`](https://github.com/tsrx-org/tsrx/commit/bd00fda786d00d3cd3d10208b8deba6139ac8dea),
+  [`2553f96`](https://github.com/tsrx-org/tsrx/commit/2553f968fecff3456ffbc7c5363a8847c7492417),
+  [`4500db9`](https://github.com/tsrx-org/tsrx/commit/4500db9b8b23a995f24390729632f11d759859df)]:
+  - @tsrx/core@0.6.4
+  - @tsrx/preact@0.4.4
+
 ## 0.0.107
 
 ### Patch Changes

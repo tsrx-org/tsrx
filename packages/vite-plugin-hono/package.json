@@ -3,7 +3,7 @@
   "description": "Vite plugin for the TSRX Hono JSX targets",
   "license": "MIT",
   "author": "Dominic Gannaway",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "type": "module",
   "publishConfig": {
     "access": "public"
