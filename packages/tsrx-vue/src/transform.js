@@ -23,6 +23,8 @@ import {
 	insertAfterDirectives,
 	is_component_like_element,
 	JOIN_SCOPE_CLASS_INTERNAL_NAME,
+	MAP_ITERABLE_ASYNC_INTERNAL_NAME,
+	MAP_ITERABLE_INTERNAL_NAME,
 	MERGE_REFS_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
@@ -75,11 +77,13 @@ const vue_platform = {
 		errorBoundary: '@tsrx/vue/error-boundary',
 		mergeRefs: '@tsrx/vue/ref',
 		refProp: '@tsrx/vue/ref',
+		forOfIterableHelper: '@tsrx/vue/runtime/iterable',
 	},
 	directRuntimeImports: {
 		errorBoundary: '@tsrx/vue-runtime/error-boundary',
 		mergeRefs: '@tsrx/vue-runtime/ref',
 		refProp: '@tsrx/vue-runtime/ref',
+		forOfIterableHelper: '@tsrx/vue-runtime/iterable',
 	},
 	jsx: {
 		rewriteClassAttr: false,
@@ -1804,7 +1808,7 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 
 	const rendered = statement.argument;
 	if (expression_can_skip_rendering(rendered)) {
-		return render_for_of_as_flat_map(node, loop_params, rendered);
+		return render_for_of_as_map_iterable(node, loop_params, rendered, transform_context);
 	}
 
 	const key_expression = node.key
@@ -1857,12 +1861,17 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
  * @param {AST.ForOfStatement} node
  * @param {AST.Pattern[]} loop_params
  * @param {AST.Expression} rendered
+ * @param {TransformContext} transform_context
  * @returns {ESTreeJSX.JSXExpressionContainer}
  */
-function render_for_of_as_flat_map(node, loop_params, rendered) {
+function render_for_of_as_map_iterable(node, loop_params, rendered, transform_context) {
+	// `map_iterable` flattens a returned array the way `flatMap` does, and it
+	// takes any iterable, so a `Set`, `Map` or generator source works too.
+	transform_context.needs_for_of_iterable = true;
 	return to_jsx_expression_container(
 		b.call(
-			b.member(clone_ast_node(node.right), 'flatMap'),
+			b.id(MAP_ITERABLE_INTERNAL_NAME),
+			clone_ast_node(node.right),
 			b.arrow(loop_params, b.block([b.return(to_array_render_expression(rendered))])),
 		),
 	);
@@ -2930,6 +2939,24 @@ function inject_vue_imports(program, transform_context) {
 	// only declare it a second time.
 	if (transform_context.needs_define_vapor_component && !reported_define_vapor_component) {
 		ensure_named_import(program, 'vue-jsx-vapor', DEFINE_VAPOR_COMPONENT);
+	}
+
+	const iterable_source = transform_context.platform.imports.forOfIterableHelper;
+	if (iterable_source) {
+		if (transform_context.needs_for_of_iterable) {
+			ensure_named_import(program, iterable_source, 'map_iterable', MAP_ITERABLE_INTERNAL_NAME);
+		}
+		// A `@for` body that awaits is `await map_iterable_async(...)`. The
+		// shared pass sets this on its own, including for a plain async
+		// function, which Vue still compiles.
+		if (transform_context.needs_for_of_iterable_async) {
+			ensure_named_import(
+				program,
+				iterable_source,
+				'map_iterable_async',
+				MAP_ITERABLE_ASYNC_INTERNAL_NAME,
+			);
+		}
 	}
 
 	if (transform_context.needs_vapor_for) {

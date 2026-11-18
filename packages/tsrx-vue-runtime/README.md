@@ -24,3 +24,4 @@ Available subpaths:
 
 - `@tsrx/vue-runtime/error-boundary`
 - `@tsrx/vue-runtime/ref`
+- `@tsrx/vue-runtime/iterable`

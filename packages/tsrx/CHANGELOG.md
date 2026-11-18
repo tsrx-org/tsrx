@@ -1,5 +1,17 @@
 # @tsrx/core
 
+## 0.6.3
+
+### Patch Changes
+
+- [#1079](https://github.com/tsrx-org/tsrx/pull/1079)
+  [`f50dd3e`](https://github.com/tsrx-org/tsrx/commit/f50dd3ed94cc659ff733c82b66e148357d9b1a35)
+  Thanks [@cestercian](https://github.com/cestercian)! - Vue `@for` loops that
+  have `@empty`, can skip a row, or have statements in their body now go through
+  `map_iterable`, so a `Set`, `Map`, generator or any other iterable works instead
+  of throwing on `.map` / `.flatMap`. `@empty` reads that source once. A loop body
+  that awaits imports `map_iterable_async` from the same module.
+
 ## 0.6.2
 
 ### Patch Changes

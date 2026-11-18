@@ -3,7 +3,7 @@
   "description": "Runtime helpers for TSRX Vue compiled output",
   "license": "MIT",
   "author": "Dominic Gannaway",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -21,6 +21,10 @@
     "./ref": {
       "types": "./types/ref.d.ts",
       "default": "./src/ref.js"
+    },
+    "./iterable": {
+      "types": "./types/iterable.d.ts",
+      "default": "./src/iterable.js"
     }
   },
   "dependencies": {

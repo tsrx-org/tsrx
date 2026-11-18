@@ -22,6 +22,7 @@ import { runExpressionSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runt
 import { runArraySpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-spread-ref';
 import { runArrayRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-ref';
 import { runLocalHelperNamesRuntimeTests } from '@tsrx/core/test-harness/runtime/local-helper-names';
+import { runForOfSourcesRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-sources';
 
 const EXPECTED_ERROR_LOG_SNIPPETS = [
 	'sync boom',
@@ -2850,6 +2851,131 @@ describe('tsrx-vue keyed fragment rows (#179)', () => {
 	});
 });
 
+function SetEmptyApp(props: { items: Set<string> }) @{
+	<ul class="set-empty">
+		@for (const item of props.items) {
+			<li>{item}</li>
+		} @empty {
+			<li>{'empty'}</li>
+		}
+	</ul>
+}
+
+function SetSkipApp(props: { items: Set<string> }) @{
+	<ul class="set-skip">
+		@for (const item of props.items) {
+			@if (item.length > 1) {
+				<li>{item}</li>
+			}
+		}
+	</ul>
+}
+
+function SetStatementApp(props: { items: Set<string> }) @{
+	<ul class="set-statement">
+		@for (const item of props.items) {
+			const label = item.toUpperCase();
+			<li>{label}</li>
+		}
+	</ul>
+}
+
+function SetRefApp() @{
+	const items = ref(new Set<string>(['a', 'b']));
+	<>
+		<ul class="set-ref">
+			@for (const item of items.value) {
+				const label = item.toUpperCase();
+				<li>{label}</li>
+			} @empty {
+				<li>{'empty'}</li>
+			}
+		</ul>
+		<button
+			class="set-ref-add"
+			onClick={() => {
+				items.value.add('c');
+			}}
+		>
+			{'add'}
+		</button>
+		<button
+			class="set-ref-clear"
+			onClick={() => {
+				items.value.clear();
+			}}
+		>
+			{'clear'}
+		</button>
+	</>
+}
+
+let next_batch_calls = 0;
+
+function nextBatch(): string[] {
+	next_batch_calls += 1;
+	return next_batch_calls === 1 ? ['first', 'batch'] : ['second'];
+}
+
+function NextBatchApp() @{
+	<ul class="next-batch">
+		@for (const item of nextBatch()) {
+			<li>{item}</li>
+		} @empty {
+			<li>{'empty'}</li>
+		}
+	</ul>
+}
+
+describe('tsrx-vue @for over iterables', () => {
+	it('renders a non-empty Set through @empty', async () => {
+		await render(SetEmptyApp, { items: new Set(['a', 'b']) });
+		expect(texts('.set-empty li')).toEqual(['a', 'b']);
+	});
+
+	it('renders @empty for an empty Set', async () => {
+		await render(SetEmptyApp, { items: new Set<string>() });
+		expect(texts('.set-empty li')).toEqual(['empty']);
+	});
+
+	it('skips a row of a Set when the body does not render it', async () => {
+		await render(SetSkipApp, { items: new Set(['a', 'bb', 'c', 'dd']) });
+		expect(texts('.set-skip li')).toEqual(['bb', 'dd']);
+	});
+
+	it('renders a statement body over a Set', async () => {
+		await render(SetStatementApp, { items: new Set(['a', 'b']) });
+		expect(texts('.set-statement li')).toEqual(['A', 'B']);
+	});
+
+	it('updates a ref(Set) on add and clear', async () => {
+		await render(SetRefApp);
+		expect(texts('.set-ref li')).toEqual(['A', 'B']);
+
+		await click('.set-ref-add');
+		expect(texts('.set-ref li')).toEqual(['A', 'B', 'C']);
+
+		await click('.set-ref-clear');
+		expect(texts('.set-ref li')).toEqual(['empty']);
+	});
+
+	it('renders the first batch from @for (const item of nextBatch()) and calls nextBatch once (#863)', async () => {
+		next_batch_calls = 0;
+		await render(NextBatchApp);
+		expect(texts('.next-batch li')).toEqual(['first', 'batch']);
+		expect(next_batch_calls).toBe(1);
+	});
+});
+
+// Three single-element bodies still render through `<VaporFor>`, which walks
+// an array by index and reads a custom iterator twice (#1147).
+runForOfSourcesRuntimeTests({
+	skipItems: [
+		'an array with its own iterator',
+		'an empty array whose iterator yields',
+		'an iterable whose Symbol.iterator getter changes per read',
+	],
+});
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runForOfHeadScopeRuntimeTests();

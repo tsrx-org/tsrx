@@ -1885,6 +1885,10 @@ export function TSRXPlugin(config) {
 			// value without braces, for `parseElement` to keep: the host's opening
 			// tag contexts. -1 otherwise.
 			#tagValueContextDepth = -1;
+			// The end of the token before the `<` of an element that starts in an
+			// expression, for `parseElement` to take (see
+			// `#rereadTrailingCodeOfUnclosedElement`). -1 otherwise.
+			#tokenEndBeforeTag = -1;
 			// The elements that are attribute values without braces: each closes in
 			// its host's opening tag, not in a template.
 			/** @type {WeakSet<AST.Node>} */
@@ -5250,18 +5254,24 @@ export function TSRXPlugin(config) {
 			 * @param {AST.NativeTSRXTemplateNode} node
 			 * @param {number} context_depth The tokenizer context depth where the
 			 *   element began
+			 * @param {number} token_end_before The end of the token before the
+			 *   element's `<`, where the element started in an expression; -1
+			 *   otherwise
 			 */
-			#rereadTrailingCodeOfUnclosedElement(node, context_depth) {
+			#rereadTrailingCodeOfUnclosedElement(node, context_depth, token_end_before) {
 				let closers = '';
 				const context = this.context[context_depth - 1]?.token;
 				if (context === '(') closers += '),';
 				else if (context === '${') closers += '}';
-				// The code right before the element, past whitespace and block comments
-				let before = /** @type {number} */ (node.start) - 1;
-				for (;;) {
-					while (before >= 0 && regex_whitespace_character.test(this.input[before])) before--;
-					if (this.input[before] !== '/' || this.input[before - 1] !== '*') break;
-					before = this.input.lastIndexOf('/*', before - 2) - 1;
+				// The token right before the element, as the tokenizer read it: a scan
+				// back from the element can't tell a line comment from code
+				// (`c ? // note`, a line break, then `<b>`; #1366). Only whitespace and
+				// comments, as the tokenizer skips them, come between.
+				let before = -1;
+				if (token_end_before > 0) {
+					regex_space_and_comments.lastIndex = token_end_before;
+					regex_space_and_comments.exec(this.input);
+					if (regex_space_and_comments.lastIndex === node.start) before = token_end_before - 1;
 				}
 				const previous = this.input[before];
 				if (previous === '[' || previous === ',') closers += '],';
@@ -13823,10 +13833,13 @@ export function TSRXPlugin(config) {
 				// stack — the depth a balanced element parse must return to.
 				const enclosing_context_depth = this.context.length - 2;
 				const tag_start = this.start;
+				// The `<` is the current token, so this ends the one before it.
+				const token_end_before_tag = this.lastTokEnd;
 				this.next();
 				// A closing tag where an element starts (`x = (</>);`) is no expression.
 				// TypeScript reports it at the `<`.
 				if (this.type === tt.slash) this.unexpected(tag_start);
+				this.#tokenEndBeforeTag = token_end_before_tag;
 				const parsed = /** @type {import('estree-jsx').JSXElement} */ (
 					/** @type {unknown} */ (this.parseElement())
 				);
@@ -13945,6 +13958,8 @@ export function TSRXPlugin(config) {
 				// contexts below it (see `jsx_parseAttributeValue`).
 				const tag_value_context_depth = this.#tagValueContextDepth;
 				this.#tagValueContextDepth = -1;
+				const token_end_before_tag = this.#tokenEndBeforeTag;
+				this.#tokenEndBeforeTag = -1;
 				let pre_element_context_depth = this.context.length - this.#currentTokenContextCount();
 				while (pre_element_context_depth > Math.max(0, tag_value_context_depth)) {
 					const ctx = this.context[pre_element_context_depth - 1];
@@ -14144,6 +14159,7 @@ export function TSRXPlugin(config) {
 							this.#rereadTrailingCodeOfUnclosedElement(
 								/** @type {AST.NativeTSRXTemplateNode} */ (node),
 								pre_element_context_depth,
+								token_end_before_tag,
 							);
 						}
 					}

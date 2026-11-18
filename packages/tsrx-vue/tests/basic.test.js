@@ -1956,9 +1956,227 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('.map(({ [keyName]: label }) => {');
+		expect(code).toContain('__map_iterable(items, ({ [keyName]: label }) => {');
 		expect(code).toContain('<div key={label}>{label}</div>');
 		expect(code).not.toContain('VaporFor');
+	});
+
+	describe('@for over a non-array iterable', () => {
+		it('uses map_iterable instead of array methods when the loop has @empty', () => {
+			const { code } = compile(
+				`export function L(props: { items: Set<string> }) @{
+					<ul>
+						@for (const item of props.items) {
+							<li>{item}</li>
+						} @empty {
+							<li>none</li>
+						}
+					</ul>
+				}`,
+				'L.tsrx',
+			);
+
+			expect(code).toContain(
+				"import { map_iterable as __map_iterable } from '@tsrx/vue/runtime/iterable';",
+			);
+			expect(code).toContain('__map_iterable(');
+			expect(code).not.toContain('props.items.length');
+			expect(code).not.toContain('props.items.map(');
+		});
+
+		it('uses map_iterable when the loop body can skip a row', () => {
+			const { code } = compile(
+				`export function C(props: { items: Set<string> }) @{
+					<ul>
+						@for (const item of props.items) {
+							@if (item.length > 1) {
+								<li>{item}</li>
+							}
+						}
+					</ul>
+				}`,
+				'C.tsrx',
+			);
+
+			expect(code).toContain('__map_iterable(props.items, (item) => {');
+			expect(code).not.toContain('flatMap');
+		});
+
+		it('uses map_iterable when the loop body has statements', () => {
+			const { code } = compile(
+				`export function W(props: { items: Set<string> }) @{
+					<ul>
+						@for (const item of props.items) {
+							const label = item.toUpperCase();
+							<li>{label}</li>
+						}
+					</ul>
+				}`,
+				'W.tsrx',
+			);
+
+			expect(code).toContain('__map_iterable(props.items, (item) => {');
+			expect(code).not.toContain('props.items.map(');
+		});
+
+		it('keeps VaporFor for a single-element body', () => {
+			const { code } = compile(
+				`export function S(props: { items: Set<string> }) @{
+					<ul>
+						@for (const item of props.items) {
+							<li>{item}</li>
+						}
+					</ul>
+				}`,
+				'S.tsrx',
+			);
+
+			expect(code).toContain('<__VaporFor in={props.items}>');
+			expect(code).not.toContain('__map_iterable');
+		});
+
+		it('imports map_iterable from @tsrx/vue-runtime with direct runtime imports', () => {
+			const { code } = compile(
+				`export function W(props: { items: Set<string> }) @{
+					@for (const item of props.items) {
+						const label = item.toUpperCase();
+						<li>{label}</li>
+					}
+				}`,
+				'W.tsrx',
+				{ runtimeImports: 'direct' },
+			);
+
+			expect(code).toContain(
+				"import { map_iterable as __map_iterable } from '@tsrx/vue-runtime/iterable';",
+			);
+		});
+
+		it('imports map_iterable_async when a plain async function awaits inside @for', () => {
+			const { code } = compile(
+				`async function rows(items: Set<string>) {
+					const out = @{
+						@for (const item of items) {
+							const v = await Promise.resolve(item.toUpperCase());
+							<li>{v}</li>
+						}
+					};
+					return out;
+				}`,
+				'rows.tsrx',
+			);
+
+			expect(code).toContain(
+				"import { map_iterable_async as __map_iterable_async } from '@tsrx/vue/runtime/iterable';",
+			);
+			expect(code).toContain('await __map_iterable_async(');
+			expect(code).not.toContain('map_iterable as __map_iterable');
+		});
+
+		it('imports map_iterable_async from @tsrx/vue-runtime with direct runtime imports', () => {
+			const { code } = compile(
+				`async function rows(items: Set<string>) {
+					const out = @{
+						@for (const item of items) {
+							const v = await Promise.resolve(item.toUpperCase());
+							<li>{v}</li>
+						}
+					};
+					return out;
+				}`,
+				'rows.tsrx',
+				{ runtimeImports: 'direct' },
+			);
+
+			expect(code).toContain(
+				"import { map_iterable_async as __map_iterable_async } from '@tsrx/vue-runtime/iterable';",
+			);
+			expect(code).toContain('await __map_iterable_async(');
+		});
+
+		it('imports both iterable helpers when one @for awaits and another does not', () => {
+			const { code } = compile(
+				`async function rows(items: Set<string>, extra: Set<string>) {
+					const sync = @{
+						@for (const item of extra) {
+							const label = item.toUpperCase();
+							<li>{label}</li>
+						}
+					};
+					const out = @{
+						@for (const item of items) {
+							const v = await Promise.resolve(item.toUpperCase());
+							<li>{v}</li>
+						}
+					};
+					return [sync, out];
+				}`,
+				'rows.tsrx',
+			);
+
+			expect(code).toContain('map_iterable as __map_iterable');
+			expect(code).toContain('map_iterable_async as __map_iterable_async');
+			expect(code).toContain("} from '@tsrx/vue/runtime/iterable';");
+			expect(code).toContain('__map_iterable(extra,');
+			expect(code).toContain('await __map_iterable_async(items,');
+		});
+
+		for (const [label, existing] of [
+			['a namespace import', "import * as iterable from '@tsrx/vue/runtime/iterable';"],
+			['a type-only import', "import type { IterationValue } from '@tsrx/vue/runtime/iterable';"],
+		]) {
+			it(`imports map_iterable on its own beside ${label} of the same module`, () => {
+				const { code } = compile(
+					`${existing}
+
+					export function W(props: { items: Set<string> }) @{
+						@for (const item of props.items) {
+							const label = item.toUpperCase();
+							<li>{label}</li>
+						}
+					}`,
+					'W.tsrx',
+				);
+
+				expect(code).toContain(existing);
+				expect(code).toContain(
+					"import { map_iterable as __map_iterable } from '@tsrx/vue/runtime/iterable';",
+				);
+			});
+
+			it(`imports map_iterable_async on its own beside ${label} of the same module`, () => {
+				const { code } = compile(
+					`${existing}
+
+					async function rows(items: Set<string>) {
+						const out = @{
+							@for (const item of items) {
+								const v = await Promise.resolve(item.toUpperCase());
+								<li>{v}</li>
+							}
+						};
+						return out;
+					}`,
+					'rows.tsrx',
+				);
+
+				expect(code).toContain(existing);
+				expect(code).toContain(
+					"import { map_iterable_async as __map_iterable_async } from '@tsrx/vue/runtime/iterable';",
+				);
+			});
+		}
+
+		it('re-exports map_iterable_async from the vue runtime packages', async () => {
+			const from_vue = await import('@tsrx/vue/runtime/iterable');
+			const from_runtime = await import('@tsrx/vue-runtime/iterable');
+			const from_core = await import('@tsrx/core/runtime/iterable');
+			expect(from_vue.map_iterable_async).toBe(from_core.map_iterable_async);
+			expect(from_runtime.map_iterable_async).toBe(from_core.map_iterable_async);
+			expect(
+				await from_vue.map_iterable_async(new Set(['a', 'b']), (item) => item.toUpperCase()),
+			).toEqual(['A', 'B']);
+		});
 	});
 
 	it('compiles switch statements in component bodies', () => {
