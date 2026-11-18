@@ -23,6 +23,7 @@ import {
 	insertAfterDirectives,
 	is_component_like_element,
 	JOIN_SCOPE_CLASS_INTERNAL_NAME,
+	MAP_ITERABLE_ASYNC_INTERNAL_NAME,
 	MAP_ITERABLE_INTERNAL_NAME,
 	MERGE_REFS_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
@@ -1807,7 +1808,7 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 
 	const rendered = statement.argument;
 	if (expression_can_skip_rendering(rendered)) {
-		return render_for_of_as_flat_map(node, loop_params, rendered, transform_context);
+		return render_for_of_as_map_iterable(node, loop_params, rendered, transform_context);
 	}
 
 	const key_expression = node.key
@@ -1863,7 +1864,7 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
  * @param {TransformContext} transform_context
  * @returns {ESTreeJSX.JSXExpressionContainer}
  */
-function render_for_of_as_flat_map(node, loop_params, rendered, transform_context) {
+function render_for_of_as_map_iterable(node, loop_params, rendered, transform_context) {
 	// `map_iterable` flattens a returned array the way `flatMap` does, and it
 	// takes any iterable, so a `Set`, `Map` or generator source works too.
 	transform_context.needs_for_of_iterable = true;
@@ -2941,8 +2942,21 @@ function inject_vue_imports(program, transform_context) {
 	}
 
 	const iterable_source = transform_context.platform.imports.forOfIterableHelper;
-	if (transform_context.needs_for_of_iterable && iterable_source) {
-		ensure_named_import(program, iterable_source, 'map_iterable', MAP_ITERABLE_INTERNAL_NAME);
+	if (iterable_source) {
+		if (transform_context.needs_for_of_iterable) {
+			ensure_named_import(program, iterable_source, 'map_iterable', MAP_ITERABLE_INTERNAL_NAME);
+		}
+		// A `@for` body that awaits is `await map_iterable_async(...)`. The
+		// shared pass sets this on its own, including for a plain async
+		// function, which Vue still compiles.
+		if (transform_context.needs_for_of_iterable_async) {
+			ensure_named_import(
+				program,
+				iterable_source,
+				'map_iterable_async',
+				MAP_ITERABLE_ASYNC_INTERNAL_NAME,
+			);
+		}
 	}
 
 	if (transform_context.needs_vapor_for) {

@@ -188,6 +188,7 @@ export {
 	is_svg_tag_name as isSvgTagName,
 	is_mathml_tag_name as isMathmlTagName,
 	lower_spread_ref_bags as lowerSpreadRefBags,
+	MAP_ITERABLE_ASYNC_INTERNAL_NAME,
 	MAP_ITERABLE_INTERNAL_NAME,
 	MERGE_REFS_INTERNAL_NAME,
 	merge_duplicate_refs as mergeDuplicateRefs,
