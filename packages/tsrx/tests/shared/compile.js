@@ -161,6 +161,54 @@ const UNCLOSED_TAG_RECOVERY = [
 		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
 		['/* c */'],
 	],
+	// The token before it is read past comments as the tokenizer reads them (#1366)
+	[
+		'after a line comment after `?`',
+		'function App(props: { x: boolean }) {\n\treturn <div>{props.x ? // c\n\t\t<b> : null}</div>;\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// c'],
+	],
+	[
+		'after comments after `?`, with CRLF line endings',
+		'function App(props: { x: boolean }) {\r\n\treturn props.x ? /* a */ // b\r\n\t\t/* c */ <b> : null;\r\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['/* a */', '// b', '/* c */'],
+	],
+	[
+		'after a block comment with `/*` in it after `?`',
+		'function App(props: { x: boolean }) {\n\treturn props.x ? /* a /* b */ <b> : null;\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['/* a /* b */'],
+	],
+	[
+		'after a line comment after `[`',
+		'function App() {\n\treturn [ // c\n\t\t<div>, 1];\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// c'],
+	],
+	[
+		'after a line comment after `,` in an array',
+		'function App() {\n\treturn [1, // c\n\t\t<div>];\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// c'],
+	],
+	// And past whitespace the tokenizer skips beyond spaces, tabs and line breaks
+	[
+		'after a line comment after `?`, with a no-break space after it',
+		'function App(props: { x: boolean }) {\n\treturn props.x ? // c\n\t <b> : null;\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// c'],
+	],
+	[
+		'after a no-break space after `?`',
+		'function App(props: { x: boolean }) {\n\treturn props.x ? <b> : null;\n}',
+	],
+	[
+		'after a byte order mark after `?`',
+		'function App(props: { x: boolean }) {\n\treturn props.x ?﻿<b> : null;\n}',
+	],
+	['after a no-break space after `[`', 'function App() {\n\treturn [ <div>, 1];\n}'],
+	['after a form feed after `[`', 'function App() {\n\treturn [\f<div>, 1];\n}'],
 	['in a template literal', 'function App() {\n\treturn `${<div>}`;\n}'],
 	// With comments in the code after it, which the text read too
 	[
@@ -261,6 +309,19 @@ const UNCLOSED_TAG_RECOVERY = [
 	// Its text, where nothing around it goes on with the punctuation
 	['with text that starts with `:`', 'function App() @{\n\t<div>: label\n}'],
 	['with text that starts with `,`', 'function App() @{\n\t<div>, hello\n}'],
+	// A comment's text is no token before it
+	[
+		'with text that starts with `:`, after a line comment that ends in `?`',
+		'function App() @{\n\t// why?\n\t<div>: label\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// why?'],
+	],
+	[
+		'in code, with text that starts with `:`, after a line comment that ends in `?`',
+		'function App() {\n\tconst a = // ok?\n\t\t<b>: label;\n\treturn a;\n}',
+		[DIAGNOSTIC_CODES.UNCLOSED_TAG],
+		['// ok?'],
+	],
 	[
 		'in a directive body in brackets',
 		'function App(props: { c: boolean }) {\n\treturn [@if (props.c) { <div>, label }];\n}',
