@@ -67,6 +67,7 @@ import {
 	isTemplateTryNode as is_template_try_node,
 	isFunctionOrClassNode as is_function_or_class_boundary,
 	IDENTIFIER_OBFUSCATION_PREFIX,
+	wrapEdgeWhitespace as wrap_edge_whitespace,
 } from '@tsrx/core';
 
 import { builders as b } from '@tsrx/core';
@@ -2885,7 +2886,11 @@ function create_element_children(children, transform_context) {
 		return [jsx_child_wrap(iife_if_arrow(body_jsx))];
 	}
 
-	return visible_children.map((child) => to_jsx_child(child, transform_context)).filter(Boolean);
+	return wrap_edge_whitespace(
+		/** @type {ESTreeJSX.JSXTransformChild[]} */ (
+			visible_children.map((child) => to_jsx_child(child, transform_context)).filter(Boolean)
+		),
+	);
 }
 
 /**

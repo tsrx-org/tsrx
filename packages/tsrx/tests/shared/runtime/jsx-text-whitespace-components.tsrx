@@ -519,3 +519,60 @@ export const jsx_text_character_cases = [
 	['a component whose text is only a character reference', '.ch-only-reference', '\u00a0'],
 	['an @if body whose text is only a character reference', '.ch-only-reference-if', ' '],
 ] as const;
+
+/**
+ * Spaces and tabs at the edges of an element's text, written in a children
+ * list and in each place where a `{…}` holds the element (#1351). Solid's
+ * compiler reads a run of whitespace in JSX text as one space, so the output
+ * writes each edge run as a `{' '}` literal, which every target renders as
+ * written.
+ */
+export function JsxTextEdgeApp() @{
+	// prettier-ignore
+	const spaceArrow = () => <span class="edge-space-arrow"> 1 </span>;
+	// prettier-ignore
+	const twoSpacesArrow = () => <span class="edge-two-spaces-arrow">  1  </span>;
+	// prettier-ignore
+	const tabArrow = () => <span class="edge-tab-arrow">	1	</span>;
+
+	// prettier-ignore
+	<div>
+		<span class="edge-space-child"> 1 </span>
+		{<span class="edge-space-container"> 1 </span>}
+		{<p>{<span class="edge-space-nested"> 1 </span>}</p>}
+		<Slot content={<span class="edge-space-attr"> 1 </span>} />
+		{spaceArrow()}
+		<span class="edge-two-spaces-child">  1  </span>
+		{<span class="edge-two-spaces-container">  1  </span>}
+		{<p>{<span class="edge-two-spaces-nested">  1  </span>}</p>}
+		<Slot content={<span class="edge-two-spaces-attr">  1  </span>} />
+		{twoSpacesArrow()}
+		<span class="edge-tab-child">	1	</span>
+		{<span class="edge-tab-container">	1	</span>}
+		{<p>{<span class="edge-tab-nested">	1	</span>}</p>}
+		<Slot content={<span class="edge-tab-attr">	1	</span>} />
+		{tabArrow()}
+	</div>
+}
+
+/**
+ * Each run of edge whitespace in `JsxTextEdgeApp`, by the class it gives its
+ * elements, and the text each element renders.
+ */
+export const jsx_text_edge_cases = [
+	['a space', 'edge-space', ' 1 '],
+	['two spaces', 'edge-two-spaces', '  1  '],
+	['a tab', 'edge-tab', '\t1\t'],
+] as const;
+
+/**
+ * Each place `JsxTextEdgeApp` writes an element, by the class suffix it gives
+ * the element there.
+ */
+export const jsx_text_edge_places = [
+	['a child element', 'child'],
+	['an element in a container', 'container'],
+	['an element in a container in a static element', 'nested'],
+	['an element in an attribute value', 'attr'],
+	['an element an arrow returns', 'arrow'],
+] as const;

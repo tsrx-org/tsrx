@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
 	JsxTextCharactersApp,
+	JsxTextEdgeApp,
 	JsxTextWhitespaceApp,
 	jsx_text_braced_value_cases,
 	jsx_text_character_cases,
+	jsx_text_edge_cases,
+	jsx_text_edge_places,
 	jsx_text_nbsp_cases,
 	jsx_text_whitespace_cases,
 } from './jsx-text-whitespace-components.tsrx';
@@ -67,6 +70,18 @@ export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors }) {
 			it(`renders ${label} like TSX`, async () => {
 				expect(await render_text(selector)).toBe(text);
 			});
+		}
+	});
+
+	describe('edge whitespace in JSX in an expression container at runtime (#1351)', () => {
+		for (const [label, name, text] of jsx_text_edge_cases) {
+			for (const [place, suffix] of jsx_text_edge_places) {
+				it(`renders ${label} at the edges of ${place} as written`, async () => {
+					await globalThis.render(JsxTextEdgeApp);
+					await settle();
+					expect(globalThis.container.querySelector(`.${name}-${suffix}`)?.textContent).toBe(text);
+				});
+			}
 		}
 	});
 }

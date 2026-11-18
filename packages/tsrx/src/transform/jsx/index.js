@@ -2844,7 +2844,7 @@ function hoist_static_jsx(node, transform_context) {
 		name = create_helper_name(helper_state, 'static');
 	} while (source_mentions_identifier(transform_context.source, name));
 	const id = create_generated_identifier(name);
-	helper_state.statics.push(b.const(id, lower_static_script_bodies(node, transform_context)));
+	helper_state.statics.push(b.const(id, lower_static_jsx(node, transform_context)));
 	return clone_identifier(id);
 }
 
@@ -3459,16 +3459,17 @@ function holds_unclosed_tag(node) {
 }
 
 /**
- * A static with its raw `<script>` bodies lowered. The walk lowers the
- * elements an expression container or attribute value holds in the render
- * output it returns, which a static has already left.
+ * A static with its raw `<script>` bodies lowered and the whitespace at the
+ * edges of each element's and fragment's children wrapped. The walk does both
+ * for the elements an expression container or attribute value holds in the
+ * render output it returns, which a static has already left.
  *
  * @template {AST.Node} T
  * @param {T} node
  * @param {TransformContext} transform_context
  * @returns {T}
  */
-function lower_static_script_bodies(node, transform_context) {
+function lower_static_jsx(node, transform_context) {
 	if (is_raw_script_element(node)) {
 		const hook = transform_context.platform.hooks?.transformElement;
 		return /** @type {T} */ (
@@ -3485,11 +3486,14 @@ function lower_static_script_bodies(node, transform_context) {
 		let next = value;
 		if (Array.isArray(value)) {
 			const lowered = value.map((child) =>
-				is_ast_node(child) ? lower_static_script_bodies(child, transform_context) : child,
+				is_ast_node(child) ? lower_static_jsx(child, transform_context) : child,
 			);
 			if (lowered.some((child, index) => child !== value[index])) next = lowered;
+			if (key === 'children' && (node.type === 'JSXElement' || node.type === 'JSXFragment')) {
+				next = wrap_edge_whitespace(/** @type {ESTreeJSX.JSXElement['children']} */ (next));
+			}
 		} else if (is_ast_node(value)) {
-			next = lower_static_script_bodies(value, transform_context);
+			next = lower_static_jsx(value, transform_context);
 		}
 		if (next !== value) {
 			if (out === node) out = { ...out };
@@ -5136,7 +5140,8 @@ function is_try_control_node(node) {
  * and is trimmed away, dropping a significant space. Whitespace BETWEEN siblings
  * stays bare text — it is not at an edge and is preserved as-is. Only spaces/tabs
  * are pulled out; whitespace runs containing a newline are layout indentation and
- * are left for the host compiler to collapse.
+ * are left for the host compiler to collapse. Returns `nodes` itself when there is
+ * nothing to wrap.
  *
  */
 /**
@@ -5172,6 +5177,7 @@ export function wrap_edge_whitespace(nodes) {
 
 	/** @type {ESTreeJSX.JSXTransformChild[]} */
 	const out = [];
+	let wrapped = false;
 	for (let i = 0; i < length; i++) {
 		const node = nodes[i];
 		const at_start = i === 0;
@@ -5185,34 +5191,66 @@ export function wrap_edge_whitespace(nodes) {
 		// same in each.
 		let value = /** @type {string} */ (node.value);
 		let raw = node.raw;
+		let lead_length = 0;
 		if (at_start) {
 			const lead = LEADING_INLINE_WHITESPACE.exec(raw);
 			if (lead && !is_newline_char(raw[lead[0].length])) {
 				out.push(to_jsx_expression_container(b.literal(lead[0]), node));
-				value = value.slice(lead[0].length);
-				raw = raw.slice(lead[0].length);
+				lead_length = lead[0].length;
+				value = value.slice(lead_length);
+				raw = raw.slice(lead_length);
 			}
 		}
 		/** @type {ESTreeJSX.JSXExpressionContainer | null} */
 		let trailing = null;
+		let trail_length = 0;
 		if (at_end) {
 			const trail = TRAILING_INLINE_WHITESPACE.exec(raw);
 			if (trail && !is_newline_char(raw[raw.length - trail[0].length - 1])) {
 				trailing = to_jsx_expression_container(b.literal(trail[0]), node);
-				value = value.slice(0, value.length - trail[0].length);
-				raw = raw.slice(0, raw.length - trail[0].length);
+				trail_length = trail[0].length;
+				value = value.slice(0, value.length - trail_length);
+				raw = raw.slice(0, raw.length - trail_length);
 			}
 		}
+		if (lead_length || trail_length) wrapped = true;
 		if (raw !== '') {
-			// keep the location as we need it for @ autocomplete
-			// and perhaps other things in the future
-			out.push(b.jsx_text(value, raw, has_location(node) ? node : undefined));
+			// The text keeps the location of what is left of it, which `@`
+			// completions map from (`segments.js`)
+			out.push(
+				b.jsx_text(
+					value,
+					raw,
+					has_location(node) ? inner_text_location(node, lead_length, trail_length) : undefined,
+				),
+			);
 		}
 		if (trailing) {
 			out.push(trailing);
 		}
 	}
-	return out;
+	return wrapped ? out : nodes;
+}
+
+/**
+ * The location of a text from `lead` characters after its start to `trail`
+ * characters before its end, where neither run holds a line break.
+ *
+ * @param {AST.NodeWithLocation} node
+ * @param {number} lead
+ * @param {number} trail
+ * @returns {AST.NodeWithLocation}
+ */
+function inner_text_location(node, lead, trail) {
+	const { start, end } = node.loc;
+	return {
+		start: node.start + lead,
+		end: node.end - trail,
+		loc: {
+			start: { line: start.line, column: start.column + lead },
+			end: { line: end.line, column: end.column - trail },
+		},
+	};
 }
 
 /**

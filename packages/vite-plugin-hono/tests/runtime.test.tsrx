@@ -61,9 +61,12 @@ import {
 } from '@tsrx/core/test-harness/runtime/array-ref-components.tsrx';
 import {
 	JsxTextCharactersApp,
+	JsxTextEdgeApp,
 	JsxTextWhitespaceApp,
 	jsx_text_braced_value_cases,
 	jsx_text_character_cases,
+	jsx_text_edge_cases,
+	jsx_text_edge_places,
 	jsx_text_nbsp_cases,
 	jsx_text_whitespace_cases,
 } from '@tsrx/core/test-harness/runtime/jsx-text-whitespace-components.tsrx';
@@ -606,6 +609,18 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 
 			expect(container.querySelector(selector)?.textContent).toBe(text);
 		});
+	}
+
+	// Edge whitespace renders as written in a children list and in each place
+	// a `{…}` holds the element (#1351)
+	for (const [label, name, text] of jsx_text_edge_cases) {
+		for (const [place, suffix] of jsx_text_edge_places) {
+			it(`renders ${label} at the edges of ${place} as written`, () => {
+				render(<JsxTextEdgeApp />, container);
+
+				expect(container.querySelector(`.${name}-${suffix}`)?.textContent).toBe(text);
+			});
+		}
 	}
 
 	// `@for` walks its source the way `for...of` does.

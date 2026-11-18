@@ -1750,6 +1750,20 @@ export const p = 1
 	<div>@if < x</div>
 }`,
 			},
+			// The spaces at an element's edges print as `{' '}`, in a children list
+			// and in a container (#1351)
+			{
+				name: 'a `@` after a space in an element',
+				source: 'export function App() {\n\t<div> @</div>\n}',
+			},
+			{
+				name: 'a `@` after a space in an element in a container',
+				source: 'export function App() {\n\treturn <>{<div> @</div>}</>;\n}',
+			},
+			{
+				name: 'a partially typed `@if` between spaces in an element in a container',
+				source: 'export function App() {\n\treturn <>{<div> @if </div>}</>;\n}',
+			},
 		]) {
 			it(`emits a well-formed completion-only mapping for ${name}`, () => {
 				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
@@ -1769,6 +1783,10 @@ export const p = 1
 					// …with equal source/generated lengths so the textEdit round-trips (the bug
 					// produced a 9-char source -> 1-char generated mapping here)…
 					expect(m.lengths[0]).toBe(m.generatedLengths[0]);
+					// …from the text it prints…
+					expect(
+						result.code.slice(m.generatedOffsets[0], m.generatedOffsets[0] + m.generatedLengths[0]),
+					).toBe(source.slice(m.sourceOffsets[0], m.sourceOffsets[0] + m.lengths[0]));
 					// …and completion only — the `@` text must not be type-checked.
 					expect(m.data?.verification).toBeFalsy();
 				}
@@ -7063,6 +7081,74 @@ export function App(props: { on: boolean; n: number; items: string[] }) {
 					hoistsStaticJsx ? 10 : 0,
 				);
 			});
+		});
+	});
+
+	describe(`[${name}] edge whitespace in JSX in an expression container (#1351)`, () => {
+		// The spaces and tabs at the edges of an element's children print as
+		// `{' '}` (#1277). JSX that a `{…}` container holds prints the same as JSX
+		// in a children list, whether the target hoists it or not. Each source
+		// writes the element both ways, so each printed element is there twice.
+		it.each([
+			[
+				'a container in a returned fragment',
+				'export function A() {\n\treturn <><div> 123 </div>{<div> 123 </div>}</>;\n}',
+				["<div>{' '}123{' '}</div>"],
+			],
+			[
+				'a container in a template body',
+				'export function A() @{\n\t<><div> 123 </div>{<div> 123 </div>}</>\n}',
+				["<div>{' '}123{' '}</div>"],
+			],
+			[
+				'the branches of `?:` and `&&`',
+				'export function A(props: { on: boolean }) {\n\treturn <>{props.on ? <b> a </b> : <i> b </i>}{props.on && <u> c </u>}<b> a </b><i> b </i><u> c </u></>;\n}',
+				["<b>{' '}a{' '}</b>", "<i>{' '}b{' '}</i>", "<u>{' '}c{' '}</u>"],
+			],
+			[
+				'an attribute value',
+				'function Slot(props: { content: unknown }) {\n\treturn null;\n}\nexport function A() {\n\treturn <><Slot content={<span> a </span>} /><span> a </span></>;\n}',
+				["<span>{' '}a{' '}</span>"],
+			],
+			[
+				'a callback',
+				'export function A(props: { items: string[] }) {\n\treturn <><ul>{props.items.map(() => <li> a </li>)}</ul><li> a </li></>;\n}',
+				["<li>{' '}a{' '}</li>"],
+			],
+			[
+				'a container in a static element',
+				'export function A() {\n\treturn <><div>{<span> a </span>}</div><div><span> a </span></div></>;\n}',
+				["<span>{' '}a{' '}</span>"],
+			],
+			[
+				'module-level JSX',
+				'const header = <h1> a </h1>;\nexport function A() {\n\treturn <>{header}<h1> a </h1></>;\n}',
+				["<h1>{' '}a{' '}</h1>"],
+			],
+			[
+				'a container, for an edge tab',
+				'export function A() {\n\treturn <><b>\t1\t</b>{<b>\t1\t</b>}</>;\n}',
+				["<b>{'\t'}1{'\t'}</b>"],
+			],
+			[
+				'a container, for two spaces at an edge',
+				'export function A() {\n\treturn <><b>  1  </b>{<b>  1  </b>}</>;\n}',
+				["<b>{'  '}1{'  '}</b>"],
+			],
+		])('prints the edge whitespace of %s as a children list does', (_case, source, printed) => {
+			const { code } = compile(source, 'A.tsrx');
+			for (const element of printed) {
+				expect(count_substring(code, element)).toBe(2);
+			}
+		});
+
+		it('leaves whitespace that touches a line break as written in both', () => {
+			const { code } = compile(
+				'export function A() {\n\treturn <>{<p>\n\t\ta \n\t</p>}<p>\n\t\ta \n\t</p></>;\n}',
+				'A.tsrx',
+			);
+			expect(count_substring(code, '<p>\n\t\ta \n\t</p>')).toBe(2);
+			expect(code).not.toContain("{'");
 		});
 	});
 
