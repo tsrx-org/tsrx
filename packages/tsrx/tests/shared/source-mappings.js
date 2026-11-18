@@ -3911,6 +3911,21 @@ export function App(props: { items: { id: string; name: string }[] }) @{
 	return res.json();
 }
 export const config = { retries: [1, 2, 3] };`,
+			'fragments that are static as a whole': `export function App(props: { n: number; items: string[] }) @{
+	<>
+		<h1>title</h1>
+		<div title={String(props.n)}>
+			{<><a>one</a><b>two</b></>}
+		</div>
+		<><i>three</i><u>four</u></>
+		@for (const item of props.items) {
+			<><li>a</li><li>b</li></>
+		}
+	</>
+}
+export function Static() {
+	return <><p> one </p>{<><p>two</p><p>three</p></>}</>;
+}`,
 		};
 
 		for (const [label, source] of Object.entries(SOURCES)) {

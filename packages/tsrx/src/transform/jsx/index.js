@@ -63,7 +63,7 @@ import {
 	is_capturable_jsx_child,
 	capture_jsx_child as captureJsxChild,
 } from '../jsx-interleave.js';
-import { is_hoist_safe_jsx_node } from '../jsx-hoist.js';
+import { is_hoist_safe_jsx_node, is_static_literal } from '../jsx-hoist.js';
 import { lower_server_module_for_types } from './server-module.js';
 import { get_hashbang } from '../../comment-utils.js';
 import { get_source_tokens } from '../../parse/source-tokens.js';
@@ -1865,14 +1865,191 @@ function transform_native_tsrx_function(node, { next, state, path }, { nativeBod
 	state.helper_state = saved_helper_state;
 	state.available_bindings = saved_bindings;
 
-	inner.metadata = {
-		...strip_function_transform_metadata(inner.metadata),
+	const result =
+		!saved_helper_state && !helper_state.local && helper_state.statics.length > 0
+			? fold_static_fragments(inner, helper_state)
+			: inner;
+	result.metadata = {
+		...strip_function_transform_metadata(result.metadata),
 		native_tsrx_function: true,
 		...(nativeBody ? { native_tsrx_body: true } : {}),
 		...(!saved_helper_state ? create_generated_helper_metadata(helper_state) || {} : {}),
 	};
 
-	return inner;
+	return result;
+}
+
+/**
+ * Hoists, as one static, each fragment in a component's lowered output that
+ * holds a static and otherwise only text, literals, and fragments of these,
+ * instead of building it around its statics on every render (#1352). It reads
+ * the output as the walk printed it, so the static prints each text as the
+ * fragment in place did, and it takes in only elements that are already in a
+ * static, so each element is built when it was before and keeps the identity
+ * it had. The new static replaces the statics it takes in, with the name and
+ * place of the first of them. It knows a static's reference by the
+ * declaration it points to (see `static_reference`), not by its name, and
+ * takes in only a static with one reference. A keyed `@for` row is a keyed
+ * element by now, so it stays in place.
+ *
+ * @template {AST.Function} T
+ * @param {T} fn
+ * @param {JsxHelperState} helper_state
+ * @returns {T}
+ */
+function fold_static_fragments(fn, helper_state) {
+	/** @param {AST.Statement} statement */
+	const declarator = (statement) =>
+		/** @type {AST.VariableDeclaration} */ (statement).declarations[0];
+	/** The component's statics, with how many references each has */
+	/** @type {Map<AST.Statement, number>} */
+	const references = new Map(helper_state.statics.map((statement) => [statement, 0]));
+	/** @param {AST.Node} node */
+	const count = (node) => {
+		const statement = node.type === 'Identifier' ? node.metadata?.static_declaration : undefined;
+		const counted = statement && references.get(statement);
+		if (statement && counted !== undefined) references.set(statement, counted + 1);
+		return node;
+	};
+	map_ast_nodes(fn, count);
+	for (const helper of helper_state.helpers) map_ast_nodes(helper, count);
+
+	let order = helper_state.statics;
+	// Fragments that hold no static but only text, literals and fragments of
+	// these, which a fragment around them takes in
+	/** @type {WeakSet<AST.Node>} */
+	const static_fragments = new WeakSet();
+
+	/**
+	 * @param {AST.Node} child
+	 * @returns {AST.Statement | undefined}
+	 */
+	const static_of = (child) => {
+		if (child.type !== 'JSXExpressionContainer' || child.expression.type !== 'Identifier') {
+			return undefined;
+		}
+		const statement = child.expression.metadata?.static_declaration;
+		return statement && references.get(statement) === 1 ? statement : undefined;
+	};
+
+	/**
+	 * @param {AST.Node} child
+	 * @returns {boolean}
+	 */
+	const is_static_child = (child) => {
+		switch (child.type) {
+			case 'JSXText':
+				return true;
+			case 'JSXExpressionContainer':
+				return (
+					!!static_of(child) ||
+					(child.expression.type === 'Literal' && is_static_literal(child.expression))
+				);
+			case 'JSXFragment':
+				return static_fragments.has(child);
+			default:
+				return false;
+		}
+	};
+
+	/**
+	 * @param {AST.TSRXJSXFragment} fragment
+	 * @returns {AST.Node}
+	 */
+	const fold_fragment = (fragment) => {
+		if (!fragment.children.every(is_static_child)) return fragment;
+		/** @type {AST.Statement[]} */
+		const taken = [];
+		const children = fragment.children.map((child) => {
+			const statement = static_of(child);
+			if (!statement) return child;
+			taken.push(statement);
+			const value = /** @type {AST.Expression} */ (declarator(statement).init);
+			// A static that took an element's place takes it again; one that took
+			// the value of a container in the source goes back into the container
+			return has_location(child) ? { ...child, expression: value } : value;
+		});
+		if (taken.length === 0) {
+			static_fragments.add(fragment);
+			return fragment;
+		}
+		const first = /** @type {AST.Statement} */ (
+			order.find((statement) => taken.includes(statement))
+		);
+		const id = create_generated_identifier(
+			/** @type {AST.Identifier} */ (declarator(first).id).name,
+		);
+		const statement = b.const(id, /** @type {AST.Expression} */ ({ ...fragment, children }));
+		order = order.flatMap((static_) =>
+			static_ === first ? [statement] : taken.includes(static_) ? [] : [static_],
+		);
+		for (const static_ of taken) references.delete(static_);
+		references.set(statement, 1);
+		return static_reference(id, statement);
+	};
+
+	const folded = map_ast_nodes(fn, (node) =>
+		node.type === 'JSXFragment' ? fold_fragment(node) : node,
+	);
+	if (order === helper_state.statics) return fn;
+	helper_state.statics = order;
+	return folded;
+}
+
+/**
+ * A reference to the static that `statement` declares as `id`, which
+ * `fold_static_fragments` knows by the declaration it points to.
+ *
+ * @param {AST.Identifier} id
+ * @param {AST.Statement} statement
+ * @returns {AST.Identifier}
+ */
+function static_reference(id, statement) {
+	const reference = clone_identifier(id);
+	reference.metadata = { ...reference.metadata, static_declaration: statement };
+	return reference;
+}
+
+/**
+ * `node` with `map` applied to each node in it, children first, copying each
+ * node on the way to a changed one instead of changing it. An identifier that
+ * takes the place of a JSX child or an attribute value goes in a container.
+ *
+ * @template {AST.Node} T
+ * @param {T} node
+ * @param {(node: AST.Node) => AST.Node} map
+ * @returns {T}
+ */
+function map_ast_nodes(node, map) {
+	/** @type {AST.TraversableAstNode} */
+	let out = /** @type {AST.TraversableAstNode} */ (node);
+	for (const key of Object.keys(node)) {
+		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') continue;
+		const value = /** @type {AST.TraversableAstNode} */ (node)[key];
+		/** @type {unknown} */
+		let next = value;
+		if (Array.isArray(value)) {
+			const mapped = value.map((child) => {
+				if (!is_ast_node(child)) return child;
+				const result = map_ast_nodes(child, map);
+				return key === 'children' && result !== child && result.type === 'Identifier'
+					? to_jsx_expression_container(result, child)
+					: result;
+			});
+			if (mapped.some((child, index) => child !== value[index])) next = mapped;
+		} else if (is_ast_node(value)) {
+			const result = map_ast_nodes(value, map);
+			next =
+				node.type === 'JSXAttribute' && result !== value && result.type === 'Identifier'
+					? to_jsx_expression_container(result, value)
+					: result;
+		}
+		if (next !== value) {
+			if (out === node) out = { ...out };
+			out[key] = next;
+		}
+	}
+	return /** @type {T} */ (map(out));
 }
 
 /**
@@ -2844,8 +3021,9 @@ function hoist_static_jsx(node, transform_context) {
 		name = create_helper_name(helper_state, 'static');
 	} while (source_mentions_identifier(transform_context.source, name));
 	const id = create_generated_identifier(name);
-	helper_state.statics.push(b.const(id, lower_static_jsx(node, transform_context)));
-	return clone_identifier(id);
+	const statement = b.const(id, lower_static_jsx(node, transform_context));
+	helper_state.statics.push(statement);
+	return static_reference(id, statement);
 }
 
 /**

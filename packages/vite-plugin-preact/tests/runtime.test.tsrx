@@ -16,7 +16,10 @@ import { runArrayRefRuntimeTests } from '@tsrx/core/test-harness/runtime/array-r
 import { runGeneratorSpreadRefRuntimeTests } from '@tsrx/core/test-harness/runtime/generator-spread-ref';
 import { runSpreadRefOrderRuntimeTests } from '@tsrx/core/test-harness/runtime/spread-ref-order';
 import { runStaticContainersRuntimeTests } from '@tsrx/core/test-harness/runtime/static-containers';
-import { StaticContainers } from '@tsrx/core/test-harness/runtime/static-containers-components.tsrx';
+import {
+	StaticContainers,
+	counted,
+} from '@tsrx/core/test-harness/runtime/static-containers-components.tsrx';
 import { runAssignedImportMemberRuntimeTests } from '@tsrx/core/test-harness/runtime/assigned-import-member';
 import { AssignedImportMember } from '@tsrx/core/test-harness/runtime/assigned-import-member-components.tsrx';
 import { runGeneratedImportBindingsRuntimeTests } from '@tsrx/core/test-harness/runtime/generated-import-bindings';
@@ -1191,6 +1194,7 @@ runGeneratorSpreadRefRuntimeTests();
 runSpreadRefOrderRuntimeTests();
 runStaticContainersRuntimeTests({
 	Host: StaticContainersHost,
+	counted,
 	click: async (selector) => {
 		await act(async () => {
 			(container.querySelector(selector) as HTMLButtonElement).click();
