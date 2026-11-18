@@ -38,6 +38,10 @@ describe('eslint-parser', () => {
 		for (const [code, line] of [
 			['export function App() {\n\treturn (\n\t\t<div>\n\t);\n}\n', '3'],
 			['export function App(props: any) {\n\treturn <div>{props.x ? <b> : null}</div>;\n}\n', '2'],
+			[
+				'export function App(props: any) {\n\treturn <div>{props.x ? // c\n\t\t<b> : null}</div>;\n}\n',
+				'3',
+			],
 			['export function App() {\n\treturn [<div>];\n}\n', '2'],
 			// With a comment in the code after it
 			['export function App() {\n\treturn (\n\t\t<div>\n\t);\n\t// later\n}\n', '3'],
