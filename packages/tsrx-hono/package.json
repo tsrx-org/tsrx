@@ -3,7 +3,7 @@
   "description": "Hono JSX compiler target for TSRX",
   "license": "MIT",
   "author": "Dominic Gannaway",
-  "version": "0.2.5",
+  "version": "0.3.2",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -32,6 +32,10 @@
     "./dom/error-boundary": {
       "types": "./types/dom/error-boundary.d.ts",
       "default": "./src/dom/error-boundary.js"
+    },
+    "./try-body": {
+      "types": "./types/try-body.d.ts",
+      "default": "./src/try-body.js"
     },
     "./ref": {
       "types": "./types/ref.d.ts",

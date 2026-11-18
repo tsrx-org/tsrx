@@ -114,9 +114,9 @@ export const IndexPage = () => @{
 					</p>
 					<p class="section-body what-is-copy">
 						TSRX is framework-agnostic and interoperable. Today it compiles to Hono, Octane, React,
-						Preact, Ripple, Solid, and Vue, with room for more targets over time. You can import
-						<code class="inline-code">.tsrx</code>
-						modules from JS, TS, and TSX files and it just works.
+						Preact, Ripple, Solid, and Vue, with room for more targets over time. You can import{' '}
+						<code class="inline-code">.tsrx</code> modules from JS, TS, and TSX files and it just
+						works.
 					</p>
 					<div class="hero-actions">
 						<a class="cta-link" href="/getting-started">
@@ -132,7 +132,7 @@ export const IndexPage = () => @{
 						</a>
 					</div>
 					<p class="section-body what-is-copy compact-link-copy">
-						Looking for the formal grammar and AST shape? Read the
+						Looking for the formal grammar and AST shape? Read the{' '}
 						<a class="supporting-link" href="/specification">
 							specification →
 						</a>
@@ -245,16 +245,14 @@ export const IndexPage = () => @{
 					<h2 class="section-heading">TSRX compiles to multiple framework runtime outputs.</h2>
 					<p class="section-body">
 						The TSRX compiler parses component source into an AST and hands it off to
-						framework-specific plugins for code generation. Plugins such as
-						<code class="inline-code">@tsrx/react</code>,
-						<code class="inline-code">@tsrx/preact</code>,
-						<code class="inline-code">@tsrx/ripple</code>,
-						<code class="inline-code">@tsrx/solid</code>,<code class="inline-code">@tsrx/vue</code>,
-						and
-						<code class="inline-code">octane/compiler</code>
-						transform the same AST into idiomatic output for their target runtimes, including scoped
-						CSS. New targets can be added as standalone compiler plugins without changing the
-						language itself.
+						framework-specific plugins for code generation. Plugins such as{' '}
+						<code class="inline-code">@tsrx/react</code>,{' '}
+						<code class="inline-code">@tsrx/preact</code>,{' '}
+						<code class="inline-code">@tsrx/ripple</code>,{' '}
+						<code class="inline-code">@tsrx/solid</code>, <code class="inline-code">@tsrx/vue</code>
+						, and <code class="inline-code">octane/compiler</code> transform the same AST into
+						idiomatic output for their target runtimes, including scoped CSS. New targets can be
+						added as standalone compiler plugins without changing the language itself.
 					</p>
 					<p class="section-body">
 						<a class="cta-link" href="/playground">

@@ -1,17 +1,8 @@
 /** @import { LoaderContext } from '@rspack/core' */
+/** @import { VaporOptions, VueJsxVapor } from './vue-jsx-vapor.js' */
 
-import { createRequire } from 'node:module';
 import { SourceMapConsumer, SourceMapGenerator } from 'source-map';
-
-const require = createRequire(import.meta.url);
-const { transformVueJsxVapor } = require('vue-jsx-vapor/api');
-
-const DEFAULT_VAPOR_OPTIONS = {
-	macros: true,
-	compiler: {
-		runtimeModuleName: 'vue-jsx-vapor',
-	},
-};
+import { create_vue_jsx_vapor } from './vue-jsx-vapor.js';
 
 /**
  * @param {any} inputMap
@@ -63,10 +54,12 @@ async function composeSourceMaps(inputMap, outputMap) {
 }
 
 /**
- * Runs the compiled TSX through `vue-jsx-vapor`'s public transform API, then
- * composes its sourcemap with the upstream tsrx compile map when available.
+ * Runs the compiled TSX through `vue-jsx-vapor`'s macros and Vapor transform,
+ * then composes their sourcemaps with the upstream tsrx compile map when
+ * available. The plugin passes the `vueJsxVapor` it serves the macros' helper
+ * modules from.
  *
- * @this {LoaderContext<{ vapor?: { macros?: boolean | object, compiler?: { runtimeModuleName?: string } } }>}
+ * @this {LoaderContext<{ vapor?: VaporOptions, vueJsxVapor?: VueJsxVapor }>}
  * @param {string} source
  * @param {unknown} inputMap
  * @returns {void}
@@ -74,28 +67,17 @@ async function composeSourceMaps(inputMap, outputMap) {
 export default function vaporLoader(source, inputMap) {
 	const callback = this.async();
 	const options = this.getOptions?.() ?? {};
-	const { interop: _interop, ...vapor_options } =
-		/** @type {{ interop?: boolean, macros?: boolean | object, compiler?: { runtimeModuleName?: string } }} */ (
-			options.vapor ?? {}
-		);
-	const vapor = {
-		...DEFAULT_VAPOR_OPTIONS,
-		...vapor_options,
-		compiler: {
-			...DEFAULT_VAPOR_OPTIONS.compiler,
-			...vapor_options.compiler,
-		},
-	};
-
-	const vaporId = this.resourcePath.replace(/\.tsrx$/, '.tsx');
+	const vue_jsx_vapor = options.vueJsxVapor ?? create_vue_jsx_vapor(options.vapor);
+	const resourcePath = this.resourcePath;
 
 	Promise.resolve()
 		.then(async () => {
-			const result = transformVueJsxVapor(source, vaporId, vapor, true, false, false);
-			const normalized_input_map =
+			const result = await vue_jsx_vapor.transform(source, resourcePath);
+			let output_map =
 				typeof inputMap === 'string' ? JSON.parse(inputMap) : /** @type {any} */ (inputMap ?? null);
-			const normalized_output_map = result.map ? JSON.parse(result.map) : null;
-			const output_map = await composeSourceMaps(normalized_input_map, normalized_output_map);
+			for (const map of result.maps) {
+				output_map = await composeSourceMaps(output_map, map ?? null);
+			}
 
 			callback(null, result.code, /** @type {any} */ (output_map ?? undefined));
 		})

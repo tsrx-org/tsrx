@@ -261,7 +261,7 @@ export function BlogRethinkingTsrxPage() @{
 							to scale across teams, tooling, and AI-assisted development.
 						</p>
 						<p>
-							The previous post,
+							The previous post,{' '}
 							<a href="/blog/simplifying-tsrx-after-feedback">Simplifying TSRX after feedback</a>,
 							covered the first big correction: components became ordinary functions, returns became
 							ordinary returns, and TSRX values became easier to store, pass, and type. That change
@@ -272,22 +272,20 @@ export function BlogRethinkingTsrxPage() @{
 						<p>
 							The feedback was consistent. People could not always tell the difference between
 							JavaScript that ran as normal component logic and JavaScript-shaped syntax that meant
-							"create this UI." Earlier control flow looked too much like native
-							<code>if</code>,<code>switch</code>,<code>try</code>, and
-							<code>for</code>. That made code harder for humans to scan and harder for LLMs to
-							explain or edit safely, because custom template semantics were masquerading as real
-							JavaScript with unclear indicators of what they were producing.
+							"create this UI." Earlier control flow looked too much like native <code>if</code>,{' '}
+							<code>switch</code>, <code>try</code>, and <code>for</code>. That made code harder for
+							humans to scan and harder for LLMs to explain or edit safely, because custom template
+							semantics were masquerading as real JavaScript with unclear indicators of what they
+							were producing.
 						</p>
 						<p>
-							We also heard loud and clear that forcing static text through
-							<code>""</code>
-							or
-							<code>{"{''}"}</code>
-							was annoying and unintuitive. JSX text is one of JSX's most useful affordances, and
-							TSRX should preserve backwards compatibility with JSX instead of asking people to
-							relearn something that already works. The same applies to composition: teams want to
-							return a single element, a fragment with multiple elements, or a JSX control flow
-							value without each case feeling like a separate language feature.
+							We also heard loud and clear that forcing static text through <code>""</code> or{' '}
+							<code>{"{''}"}</code> was annoying and unintuitive. JSX text is one of JSX's most
+							useful affordances, and TSRX should preserve backwards compatibility with JSX instead
+							of asking people to relearn something that already works. The same applies to
+							composition: teams want to return a single element, a fragment with multiple elements,
+							or a JSX control flow value without each case feeling like a separate language
+							feature.
 						</p>
 						<p>
 							That is the spirit behind this update. TSRX keeps the parts that make templates
@@ -314,11 +312,11 @@ export function BlogRethinkingTsrxPage() @{
 							<code innerHTML={REGULAR_TEXT_HTML} />
 						</pre>
 						<p>
-							That removes a small but persistent source of friction.
-							<code>{'<div>Hello there!</div>'}</code>
-							now means what JSX users expect it to mean. Inside
-							<code>{'{}'}</code>, write JavaScript expression syntax the same way you would in JSX
-							or React: call a formatter, read a property, choose a value, or pass a computed prop.
+							That removes a small but persistent source of friction.{' '}
+							<code>{'<div>Hello there!</div>'}</code> now means what JSX users expect it to mean.
+							Inside <code>{'{}'}</code>, write JavaScript expression syntax the same way you would
+							in JSX or React: call a formatter, read a property, choose a value, or pass a computed
+							prop.
 						</p>
 						<h2>Comments stay comments</h2>
 						<p>
@@ -331,12 +329,12 @@ export function BlogRethinkingTsrxPage() @{
 						</pre>
 						<h2>JSX statement containers</h2>
 						<p>
-							JSX already has expression containers:
-							<code>{'{value}'}</code>. TSRX adds the statement version:
-							<code>{'@{...}'}</code>. It is still an expression, so it can appear anywhere JSX can
-							appear: as a component body, as an assigned value, as a returned value, or as a child
-							inside another element. The only difference is that it can now also contain JavaScript
-							statements and yield JSX template when placed at the end.
+							JSX already has expression containers: <code>{'{value}'}</code>. TSRX adds the
+							statement version: <code>{'@{...}'}</code>. It is still an expression, so it can
+							appear anywhere JSX can appear: as a component body, as an assigned value, as a
+							returned value, or as a child inside another element. The only difference is that it
+							can now also contain JavaScript statements and yield JSX template when placed at the
+							end.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={JSX_STATEMENT_CONTAINER_HTML} />
@@ -350,21 +348,15 @@ export function BlogRethinkingTsrxPage() @{
 						</pre>
 						<p>
 							A statement container ends with exactly one output node: a JSX element, a JSX
-							fragment, or JSX control flow like
-							<code>@if</code>. Multiple elements need a fragment, and plain JSX text needs one too.
-							Once that output appears, the container is done: no JavaScript logic can come after
-							it.
+							fragment, or JSX control flow like <code>@if</code>. Multiple elements need a
+							fragment, and plain JSX text needs one too. Once that output appears, the container is
+							done: no JavaScript logic can come after it.
 						</p>
 						<p>
-							The
-							<code>@</code>
-							is the important boundary. If you write setup statements followed by a bare JSX
-							element in a normal
-							<code>{'{}'}</code>
-							function body, the compiler will tell you to add the missing
-							<code>@</code>
-							so the body becomes
-							<code>{'@{...}'}</code>.
+							The <code>@</code> is the important boundary. If you write setup statements followed
+							by a bare JSX element in a normal <code>{'{}'}</code> function body, the compiler will
+							tell you to add the missing <code>@</code> so the body becomes <code>{'@{...}'}</code>
+							.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={JSX_STATEMENT_CONTAINER_RULES_HTML} />
@@ -387,11 +379,10 @@ export function BlogRethinkingTsrxPage() @{
 							<code innerHTML={FUNCTION_STATEMENT_CONTAINER_BODY_HTML} />
 						</pre>
 						<p>
-							Top-level early returns are permitted when
-							<code>{'@{...}'}</code>
-							is the body of the component function. They behave like ordinary component guard
-							returns: leave early when you need to, otherwise finish the statement container with
-							one final template output.
+							Top-level early returns are permitted when <code>{'@{...}'}</code> is the body of the
+							component function. They behave like ordinary component guard returns: leave early
+							when you need to, otherwise finish the statement container with one final template
+							output.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={TOP_LEVEL_EARLY_RETURN_HTML} />
@@ -408,33 +399,25 @@ export function BlogRethinkingTsrxPage() @{
 						</pre>
 						<h2>JSX control flow</h2>
 						<p>
-							Control flow is now explicit JSX syntax. Use
-							<code>@if</code>,<code>@for</code>,<code>@switch</code>, and
-							<code>@try</code>
-							when the control flow itself should produce template output. Each branch or block
-							follows the same structural boundary as
+							Control flow is now explicit JSX syntax. Use <code>@if</code>, <code>@for</code>,{' '}
+							<code>@switch</code>, and <code>@try</code> when the control flow itself should
+							produce template output. Each branch or block follows the same structural boundary as{' '}
 							<code>{'@{...}'}</code>: optional TypeScript setup first, then a single rendered
 							template output.
 						</p>
 						<p>
-							The
-							<code>@</code>
-							is doing real work here. A bare
-							<code>for</code>
-							looks like JavaScript control flow, so both humans and AI agents naturally reach for
-							JavaScript rules:
-							<code>break</code>,<code>continue</code>, fallthrough, or branch-local returns.
-							Template control flow is different: it is JSX that chooses what to render. The prefix
-							makes that boundary visible before anyone has to infer it from context.
+							The <code>@</code> is doing real work here. A bare <code>for</code> looks like
+							JavaScript control flow, so both humans and AI agents naturally reach for JavaScript
+							rules: <code>break</code>, <code>continue</code>, fallthrough, or branch-local
+							returns. Template control flow is different: it is JSX that chooses what to render.
+							The prefix makes that boundary visible before anyone has to infer it from context.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={JSX_CONTROL_FLOW_SCOPE_HTML} />
 						</pre>
 						<p>
 							Here is what that looked like — the same list written with a bare loop, where reaching
-							for a JavaScript-style
-							<code>continue</code>
-							to skip an item seems perfectly natural:
+							for a JavaScript-style <code>continue</code> to skip an item seems perfectly natural:
 						</p>
 						<pre class="code-block">
 							<code innerHTML={OLD_CONTROL_FLOW_LOOP_HTML} />
@@ -443,12 +426,8 @@ export function BlogRethinkingTsrxPage() @{
 							The prefixed loop removes that ambiguity and uses the same shape: setup can happen at
 							the top of each iteration, then the loop body produces one output node. If some items
 							should not render, filter the iterable before the loop. If the list is empty, use the
-							loop's
-							<code>@empty</code>
-							branch instead of smuggling a<code>continue</code>
-							or
-							<code>return</code>
-							into template control flow.
+							loop's <code>@empty</code> branch instead of smuggling a <code>continue</code> or{' '}
+							<code>return</code> into template control flow.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={JSX_CONTROL_FLOW_LOOP_HTML} />
@@ -462,16 +441,15 @@ export function BlogRethinkingTsrxPage() @{
 						</pre>
 						<p>
 							Because JSX control flow is explicitly template syntax, it can also be assigned
-							directly to variables. You no longer need to wrap a<code>switch</code>
-							branch in a helper just to store it.
+							directly to variables. You no longer need to wrap a <code>switch</code> branch in a
+							helper just to store it.
 						</p>
 						<pre class="code-block">
 							<code innerHTML={ASSIGNED_JSX_CONTROL_FLOW_HTML} />
 						</pre>
 						<p>
 							This is also where precise types become more useful. A stored element can be annotated
-							as
-							<code>JSX.Element</code>, and a component arrow can declare that it returns
+							as <code>JSX.Element</code>, and a component arrow can declare that it returns{' '}
 							<code>JSX.Element</code>. The type describes the value you are producing instead of
 							depending on a special component declaration form.
 						</p>
@@ -480,8 +458,8 @@ export function BlogRethinkingTsrxPage() @{
 							The result is easier to scan, easier to type, and easier for tools to understand.
 							Templates still have lexical scopes. Logic can still be colocated. JSX control flow
 							still reads in the order the UI is produced. But the special parts are now marked as
-							special with
-							<code>@</code>, and ordinary JavaScript gets to remain ordinary JavaScript.
+							special with <code>@</code>, and ordinary JavaScript gets to remain ordinary
+							JavaScript.
 						</p>
 						<p>
 							Thank you for bearing with us while TSRX found this shape. From now, we're ready to

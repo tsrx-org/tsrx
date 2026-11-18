@@ -121,7 +121,9 @@ export function createCompiler(transform, settings = {}) {
 			mappings: dedupeMappings(result.mappings),
 		};
 
-		return uses_platform_flags ? withPlatformTypes(deduped, options?.platform) : deduped;
+		return uses_platform_flags
+			? withPlatformTypes(deduped, options?.platform, transformed.ast)
+			: deduped;
 	}
 
 	return { parse, compile, compile_to_volar_mappings };

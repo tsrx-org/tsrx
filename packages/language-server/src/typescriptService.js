@@ -4,6 +4,7 @@
  */
 
 import { createRequire } from 'node:module';
+import { with_tsrx_module_format_in_registry } from '@tsrx/typescript-plugin/src/module-format.js';
 
 // Monkey-patch getUserPreferences to inject TSRX-specific defaults.
 // We use createRequire to get the raw CJS module.exports object, bypassing
@@ -62,5 +63,23 @@ function load_typescript_service() {
  * @returns {ReturnType<typeof import('volar-service-typescript').create>}
  */
 export function createTypeScriptServices(ts) {
-	return load_typescript_service().create(ts);
+	return load_typescript_service().create(with_tsrx_document_registries(ts));
+}
+
+/**
+ * `ts` for `volar-service-typescript`, whose language services get each `.tsrx`
+ * document's module format from their document registry
+ * (`with_tsrx_module_format_in_registry`). The service creates the registries
+ * itself, and the module's exports are read-only getters, so the override sits
+ * on an object that inherits everything else from `ts`.
+ * @param {typeof import('typescript')} ts
+ * @returns {typeof import('typescript')}
+ */
+function with_tsrx_document_registries(ts) {
+	return Object.create(ts, {
+		createDocumentRegistry: {
+			value: (/** @type {Parameters<typeof ts.createDocumentRegistry>} */ ...args) =>
+				with_tsrx_module_format_in_registry(ts, ts.createDocumentRegistry(...args)),
+		},
+	});
 }

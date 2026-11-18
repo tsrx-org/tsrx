@@ -4,6 +4,11 @@ import { EditorView } from '@codemirror/view';
 import { afterEach, expect, it, vi } from 'vitest';
 import { shiki_highlight } from '../src/lib/shiki-codemirror.ts';
 
+// Shiki loads its grammars and themes asynchronously. While the rest of the suite
+// competes for workers that can take far longer than `vi.waitFor`'s 1s default.
+const highlight_timeout = 20_000;
+vi.setConfig({ testTimeout: highlight_timeout + 10_000 });
+
 const editors: EditorView[] = [];
 
 afterEach(() => {
@@ -26,5 +31,5 @@ it.each([
 		expect(highlighted.some((span) => span.style.color && span.textContent?.includes(token))).toBe(
 			true,
 		);
-	});
+	}, highlight_timeout);
 });

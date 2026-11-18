@@ -15,7 +15,9 @@
  * mapper has been seen reporting in this session: from then on TypeScript 7
  * serves the workspace (VS Code restarts the extension host when TypeScript 7
  * is switched on or off, which resets this). Nothing else has to know which
- * TypeScript VS Code runs, and no setting is read.
+ * TypeScript VS Code runs, and no setting is read. The mapper sends errors only
+ * (TypeScript 7 would show a warning as an error), so the server's warnings,
+ * such as TSRX2035, stay.
  *
  * A mistake can also reach VS Code twice on TypeScript 5.9 or 6: the parser
  * collects some mistakes that TypeScript's parser accepts (a rest element's
@@ -36,7 +38,11 @@ import { DIAGNOSTIC_SOURCE } from '@tsrx/core/diagnostics';
  * @property {string | number | { value: string | number }} [code]
  * @property {string} [message]
  * @property {{ start: { line: number, character: number } }} [range]
+ * @property {number} [severity] VS Code's `DiagnosticSeverity`, where `0` is an error
  */
+
+/** `vscode.DiagnosticSeverity.Error`: VS Code numbers severities from 0, LSP from 1. */
+const ERROR_SEVERITY = 0;
 
 /** `source` of the diagnostics VS Code's own TypeScript reports. */
 export const TYPESCRIPT_DIAGNOSTIC_SOURCE = 'ts';
@@ -66,6 +72,15 @@ export function has_server_compile_errors(diagnostics) {
  */
 function is_server_compile_error(diagnostic) {
 	return diagnostic.source === DIAGNOSTIC_SOURCE && typeof code_value(diagnostic.code) !== 'number';
+}
+
+/**
+ * A diagnostic without a severity is an error, as VS Code makes one.
+ * @param {DiagnosticLike} diagnostic
+ * @returns {boolean}
+ */
+function is_error(diagnostic) {
+	return (diagnostic.severity ?? ERROR_SEVERITY) === ERROR_SEVERITY;
 }
 
 /**
@@ -158,7 +173,8 @@ export class CompileErrorDedupe {
 	 * The server's diagnostics for a file, minus its compile errors while the
 	 * mapper serves the workspace (or already reports for this very file), and
 	 * minus each compile error that VS Code's TypeScript shows itself
-	 * ({@link reported_by_typescript}).
+	 * ({@link reported_by_typescript}). A warning stays while the mapper serves
+	 * the workspace, as the mapper doesn't send one.
 	 * @template {DiagnosticLike} T
 	 * @param {readonly T[]} server_diagnostics
 	 * @param {readonly DiagnosticLike[]} all_diagnostics Every diagnostic VS Code holds for the file.
@@ -169,7 +185,8 @@ export class CompileErrorDedupe {
 		return server_diagnostics.filter(
 			(diagnostic) =>
 				!is_server_compile_error(diagnostic) ||
-				(!this.mapper_seen && !reported_by_typescript(diagnostic, all_diagnostics)),
+				((!this.mapper_seen || !is_error(diagnostic)) &&
+					!reported_by_typescript(diagnostic, all_diagnostics)),
 		);
 	}
 

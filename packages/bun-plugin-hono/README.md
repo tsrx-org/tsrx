@@ -28,6 +28,13 @@ The default `server` mode targets `hono/jsx`. Use `tsrxHono({ mode: 'dom' })` fo
 browser builds targeting `hono/jsx/dom`. The plugin runs Bun's automatic JSX
 transform and emits TSRX `<style>` blocks as virtual CSS modules.
 
+Bun selects the development or production JSX runtime for each build, as it does
+for `.tsx` files. The production runtime needs an automatic JSX setting such as
+`"jsx": "react-jsx"` in the tsconfig Bun applies: the nearest one for `Bun.build`,
+the working directory's for `Bun.plugin()`. Under the classic `"jsx": "react"`,
+the plugin keeps the automatic runtime, but Bun then always uses the Hono
+`jsx-dev-runtime`.
+
 To build server and browser entrypoints from one script, run two Bun builds and
 share only the options that are independent of the Hono runtime:
 

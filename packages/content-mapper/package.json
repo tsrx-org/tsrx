@@ -1,7 +1,7 @@
 {
   "name": "@tsrx/content-mapper",
   "description": "TypeScript 7 content mapper for .tsrx files",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "license": "MIT",
   "author": "Dominic Gannaway",
   "type": "module",
@@ -16,6 +16,7 @@
   },
   "files": [
     "dist",
+    "platform-globals",
     "src"
   ],
   "exports": {
@@ -58,7 +59,7 @@
     "solid-js": "catalog:default",
     "tsdown": "catalog:default",
     "typescript": "catalog:default",
-    "vue": "3.6.0-beta.12"
+    "vue": "3.6.0-rc.14"
   },
   "publishConfig": {
     "access": "public"

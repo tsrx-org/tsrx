@@ -1,5 +1,6 @@
 /** @import { Platform, RuntimeImportMode } from '@tsrx/react' */
 
+import path from 'node:path';
 import { compile } from '@tsrx/react';
 
 const CSS_QUERY = '?tsrx-css&lang.css';
@@ -9,14 +10,16 @@ const CSS_QUERY = '?tsrx-css&lang.css';
  * module's own imports so the stylesheets of imported themes are added to the
  * graph first and a rule in the applying module wins at equal specificity.
  * Top-level directives such as `'use client'` stay first, and nothing above
- * the import moves, so the compiler's source map still applies.
+ * the import moves, so the compiler's source map still applies. The specifier
+ * is relative because Turbopack does not resolve absolute import paths.
  *
  * @param {string} code
  * @param {string} resource_path
  * @returns {string}
  */
 function append_css_import(code, resource_path) {
-	return `${code}\nimport ${JSON.stringify(resource_path + CSS_QUERY)};\n`;
+	const specifier = `./${path.basename(resource_path)}${CSS_QUERY}`;
+	return `${code}\nimport ${JSON.stringify(specifier)};\n`;
 }
 
 /**

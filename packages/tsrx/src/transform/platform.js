@@ -5,7 +5,7 @@ import MagicString from 'magic-string';
 import { decode, encode } from '@jridgewell/sourcemap-codec';
 import { TSRX_ERRORS } from '../diagnostics.js';
 import { error } from '../errors.js';
-import { parse_module } from '../parse/parse-module.js';
+import { parse_ordinary_module } from '../parse/parse-module.js';
 import { child_nodes, extract_identifiers, is_ast_node } from '../utils/ast.js';
 import * as b from '../utils/builders.js';
 
@@ -116,7 +116,7 @@ function is_platform_namespace(node) {
  * @param {AST.Node} node
  * @returns {AST.Node | null}
  */
-function find_platform_flag(node) {
+export function find_platform_flag(node) {
 	if (get_platform_flag(node) !== null) return node;
 
 	for (const child of child_nodes(node)) {
@@ -344,8 +344,8 @@ export function create_platform_definitions(platform_value) {
 }
 
 /**
- * Merge platform constants into a builder's native definition map and reject
- * an existing exact definition that selects a different value.
+ * Merge platform constants and compatible JSON environment defaults, rejecting
+ * conflicting exact flags or incomplete reserved platform namespaces.
  *
  * @param {Record<string, unknown> | undefined} definitions
  * @param {unknown} platform_value
@@ -355,13 +355,61 @@ export function create_platform_definitions(platform_value) {
 export function merge_platform_definitions(definitions, platform_value, options = {}) {
 	const platform_definitions = create_platform_definitions(platform_value);
 	const merged = { ...(definitions ?? {}) };
+	const flags = Object.fromEntries(
+		PLATFORMS.map((name) => [name, platform_definitions[`import.meta.env.platform.${name}`]]),
+	);
 	const integration = options.integration ?? 'build integration';
 	for (const parent of ['import.meta', 'import.meta.env', 'import.meta.env.platform']) {
 		if (Object.prototype.hasOwnProperty.call(merged, parent)) {
+			const definition = merged[parent];
+			const is_environment = parent === 'import.meta.env';
+			if (
+				platform_value !== undefined &&
+				typeof definition === 'string' &&
+				(is_environment ||
+					(parent === 'import.meta.env.platform' &&
+						Object.prototype.hasOwnProperty.call(merged, 'import.meta.env')))
+			) {
+				try {
+					const value = JSON.parse(definition);
+					const namespace = is_environment ? value?.platform : value;
+					if (
+						value !== null &&
+						typeof value === 'object' &&
+						!Array.isArray(value) &&
+						((is_environment && !Object.prototype.hasOwnProperty.call(value, 'platform')) ||
+							(namespace !== null &&
+								typeof namespace === 'object' &&
+								PLATFORMS.every(
+									(name) =>
+										Object.prototype.hasOwnProperty.call(namespace, name) &&
+										namespace[name] === flags[name],
+								)))
+					) {
+						if (is_environment) {
+							merged[parent] = JSON.stringify({
+								...value,
+								platform: { ...namespace, ...flags },
+							});
+						}
+						continue;
+					}
+				} catch {
+					// Non-JSON definitions cannot be checked without evaluating code.
+				}
+			}
 			throw new Error(
 				`Conflicting ${integration} definition for ${parent}: TSRX defines the three exact import.meta.env.platform.* paths for platform ${render_value(platform_value)}.`,
 			);
 		}
+	}
+	const environment = merged['import.meta.env'];
+	if (
+		typeof environment === 'string' &&
+		!Object.prototype.hasOwnProperty.call(merged, 'import.meta.env.platform')
+	) {
+		// Vite dev turns dotted env definitions into flat keys, so it also needs the namespace.
+		merged['import.meta.env.platform'] = JSON.stringify(JSON.parse(environment).platform);
 	}
 
 	for (const [key, expected] of Object.entries(platform_definitions)) {
@@ -381,22 +429,46 @@ export function merge_platform_definitions(definitions, platform_value, options 
 }
 
 /**
+ * Whether the generated program has a top-level import or export, which makes
+ * its printed code a module without a marker of its own. It must be the
+ * generated program, not the source: a transform can lower an authored import
+ * to something that is not one (`import { value } from 'server'` becomes
+ * `import value = server.value` under a `serverModule` platform).
+ *
+ * @param {AST.Program | null | undefined} program
+ * @returns {boolean}
+ */
+function has_module_syntax(program) {
+	return !!program?.body.some(
+		(statement) =>
+			statement.type === 'ImportDeclaration' ||
+			statement.type === 'ExportNamedDeclaration' ||
+			statement.type === 'ExportDefaultDeclaration' ||
+			statement.type === 'ExportAllDeclaration',
+	);
+}
+
+/**
  * Add editor-only ambient types for flags retained in virtual TSX (for example
  * a runtime `@if`). The original source is an external module by virtue of
  * using `import.meta`; `export {}` preserves that status if early pruning
- * removed its final import-meta expression.
+ * removed its final import-meta expression. A generated program that already
+ * has an import or export gets no marker: Organize Imports and Sort Imports
+ * also rewrite export declarations, and TypeScript 7 drops the whole action
+ * when one of its edits is in generated code. Without `generated_program` the
+ * marker is always added.
  *
  * @param {import('../../types/index').VolarMappingsResult} result
  * @param {unknown} platform_value
+ * @param {AST.Program | null} [generated_program] The program `result.code` was printed from.
  * @returns {import('../../types/index').VolarMappingsResult}
  */
-export function with_platform_types(result, platform_value) {
+export function with_platform_types(result, platform_value, generated_program) {
 	const platform = validate_platform(platform_value);
 	const value_type = (/** @type {Platform} */ name) =>
 		platform === undefined ? 'boolean' : name === platform ? 'true' : 'false';
 	const declarations = `
-export {};
-declare global {
+${has_module_syntax(generated_program) ? '' : 'export {};\n'}declare global {
 	interface ImportMetaEnv {
 		readonly platform: string & {
 			readonly web: ${value_type('web')};
@@ -531,7 +603,7 @@ export function replace_platform_flags(source, filename, platform_value, input_m
 	}
 
 	const incoming = normalize_source_map(input_map);
-	const ast = parse_module(source, filename);
+	const ast = parse_ordinary_module(source, filename);
 	const output = new MagicString(source);
 
 	/** @param {AST.Node} node */

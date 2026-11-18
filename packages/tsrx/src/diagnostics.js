@@ -41,6 +41,8 @@ export const DIAGNOSTIC_CODES = {
 	TRY_HANDLER_MISSING: 'TSRX1010',
 	/** An `@for`'s `index` or `key` clause is incomplete or out of order. */
 	FOR_CLAUSE: 'TSRX1011',
+	/** A directive's clause (`@else {`, `@catch (e) {`, `@case 1:`) in element children, where no directive takes it. */
+	DETACHED_DIRECTIVE_CLAUSE: 'TSRX1012',
 
 	/** A `return` in a template. */
 	TEMPLATE_RETURN_STATEMENT: 'TSRX2001',
@@ -94,6 +96,28 @@ export const DIAGNOSTIC_CODES = {
 	TOP_LEVEL_AWAIT_USE_SERVER: 'TSRX2025',
 	/** An `@catch` reset parameter on a target whose error boundary has none. */
 	TARGET_CATCH_RESET_UNSUPPORTED: 'TSRX2026',
+	/** An `@for` head that assigns to existing variables, or declares its loop variable with `var` or `using`. */
+	FOR_HEAD: 'TSRX2027',
+	/** A component read above its declaration on a target that compiles it to a constant, where moving the declaration up would change what it reads. */
+	TARGET_COMPONENT_READ_BEFORE_DECLARATION: 'TSRX2028',
+	/** A destructured prop default the target's component compiler drops. */
+	TARGET_PROP_DEFAULT_UNSUPPORTED: 'TSRX2029',
+	/** A `var` declared in a nested `@{ … }` block or an `@if`, `@for`, `@switch` or `@try` body, outside any function or class in it. */
+	DIRECTIVE_BODY_VAR: 'TSRX2030',
+	/** A destructured prop key the target's component compiler reads as another prop, or leaves out. */
+	TARGET_PROP_KEY_UNSUPPORTED: 'TSRX2031',
+	/** A binding of a name the target's toolchain finds by name: Vue's `defineVaporComponent`. */
+	TARGET_RESERVED_NAME: 'TSRX2032',
+	/** Type arguments after a dynamic tag (`<{Tag}<T> />`). */
+	DYNAMIC_TAG_TYPE_ARGUMENTS: 'TSRX2033',
+	/** A `yield` in a template value the target's JSX compiler moves into an effect, getter or callback. */
+	TARGET_TEMPLATE_YIELD_UNSUPPORTED: 'TSRX2034',
+	/**
+	 * A warning: a `@{ … }` with no output whose only statement is an
+	 * expression there only for its value, such as `<p>@{user.name}</p>`, so
+	 * it renders nothing.
+	 */
+	CODE_BLOCK_EXPRESSION_ONLY: 'TSRX2035',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -121,6 +145,8 @@ export const DIAGNOSTIC_CODES = {
 	CSS_IMPORT: 'TSRX3012',
 	/** CSS in a `<style>` block that doesn't parse. */
 	CSS_SYNTAX: 'TSRX3013',
+	/** A `<style>` block in a child expression container (`{<style>…</style>}`), which renders its class map. */
+	STYLE_IN_EXPRESSION_CONTAINER: 'TSRX3014',
 
 	/** A recognized `import.meta.env.platform.*` flag is used without a selected platform. */
 	PLATFORM_REQUIRED: 'TSRX4001',
@@ -137,6 +163,55 @@ export const DIAGNOSTIC_CODES = {
  * errors with it.
  */
 export const DIAGNOSTIC_SOURCE = 'TSRX';
+
+/**
+ * The TypeScript codes in this module that TypeScript reports as syntax errors,
+ * from its scanner or parser (`getSyntacticDiagnostics`). It reports every
+ * other TypeScript code here from its binder or checker, as a grammar or
+ * semantic error, with its other checker errors, and none of them for a file
+ * with a syntax error (see `#isSyntaxError` in `plugin.js`). A test derives
+ * this from where TypeScript raises each code.
+ * @type {string[]}
+ */
+export const TS_SYNTAX_ERROR_CODES = [
+	'TS1002',
+	'TS1003',
+	'TS1005',
+	'TS1010',
+	'TS1012',
+	'TS1109',
+	'TS1124',
+	'TS1125',
+	'TS1127',
+	'TS1128',
+	'TS1134',
+	'TS1136',
+	'TS1145',
+	'TS1146',
+	'TS1160',
+	'TS1161',
+	'TS1177',
+	'TS1178',
+	'TS1198',
+	'TS1209',
+	'TS1260',
+	'TS1351',
+	'TS1359',
+	'TS1381',
+	'TS1434',
+	'TS1435',
+	'TS1438',
+	'TS1440',
+	'TS1472',
+	'TS1477',
+	'TS1478',
+	'TS1487',
+	'TS1488',
+	'TS17002',
+	'TS2657',
+	'TS6188',
+	'TS6189',
+];
 
 /**
  * TypeScript 7's content-mapper protocol takes a number as an error's code, and
@@ -236,6 +311,16 @@ function tsrx_with_values(key, message) {
 }
 
 /**
+ * The advice that ends Vue's destructured-props errors: read the prop where it
+ * is used, so it stays reactive, as `example` does when there is one.
+ * @param {string} example
+ * @returns {string}
+ */
+function read_prop_where_used(example) {
+	return `Take the props as a \`props\` parameter and read the prop where you use it instead${example ? `, for example \`${example}\`` : ''}, or derive it in a \`computed\`.`;
+}
+
+/**
  * The errors only TSRX reports, each with its code from
  * {@link DIAGNOSTIC_CODES}, named by its key.
  * A code can have several messages, one for each form of the mistake.
@@ -245,6 +330,15 @@ export const TSRX_ERRORS = {
 	UNCLOSED_TAG: tsrx_with_values(
 		'UNCLOSED_TAG',
 		(tag) => `Unclosed tag '<${tag}>'. Expected '</${tag}>' before end of template.`,
+	),
+	/**
+	 * An unclosed tag that is a lone type parameter before a `(`, as in
+	 * `<T>(x) => x`. `parameter` is the type parameter, with its `const`.
+	 */
+	UNCLOSED_TAG_GENERIC_ARROW: tsrx_with_values(
+		'UNCLOSED_TAG',
+		(tag, parameter) =>
+			`Unclosed tag '<${tag}>'. Expected '</${tag}>' before end of template. To write a generic arrow function, add a trailing comma, as in \`<${parameter},>() => ...\`.`,
 	),
 	MISMATCHED_CLOSING_TAG: tsrx_with_values(
 		'MISMATCHED_CLOSING_TAG',
@@ -285,6 +379,12 @@ export const TSRX_ERRORS = {
 	),
 	FOR_INDEX_NAME_EXPECTED: tsrx('FOR_CLAUSE', 'Expected identifier after "index" keyword'),
 	FOR_INDEX_AFTER_KEY: tsrx('FOR_CLAUSE', '"index" must come before "key" in for-of loop'),
+	/** `clause` is the clause's keyword, such as `else`, and `place` where it belongs. */
+	DETACHED_DIRECTIVE_CLAUSE: tsrx_with_values(
+		'DETACHED_DIRECTIVE_CLAUSE',
+		(clause, place) =>
+			`\`@${clause}\` must come ${place}. To write it as text, write \`&#64;${clause}\`.`,
+	),
 
 	// TSRX2xxx
 	TEMPLATE_RETURN_STATEMENT: tsrx(
@@ -343,6 +443,10 @@ export const TSRX_ERRORS = {
 		'DYNAMIC_TAG_EXPRESSION',
 		'A dynamic tag expression must be an identifier, a member access such as `props.as` or `registry[name]`, or a string literal. Compute anything else before the element: `const Tag = c ? Child : Fallback;`, then `<{Tag} />`.',
 	),
+	DYNAMIC_TAG_TYPE_ARGUMENTS: tsrx(
+		'DYNAMIC_TAG_TYPE_ARGUMENTS',
+		'A dynamic tag takes no type arguments. Declare a typed alias before the element: `const Typed = Tag<T>;`, then `<{Typed} />`.',
+	),
 	FOR_OF_ONLY: tsrx(
 		'FOR_OF_ONLY',
 		'TSRX `@for` currently supports `for...of` loops in template output.',
@@ -363,9 +467,27 @@ export const TSRX_ERRORS = {
 		'FOR_OF_ONLY',
 		'Do...while loops are not supported in TSRX templates. Move the do...while loop into a function.',
 	),
+	FOR_HEAD_ASSIGNMENT: tsrx(
+		'FOR_HEAD',
+		'TSRX `@for` must declare its loop variable, as in `@for (const item of items)`, not assign to an existing variable or property.',
+	),
+	FOR_HEAD_VAR: tsrx(
+		'FOR_HEAD',
+		"TSRX `@for` does not support `var` loop variables, since its loop variable can't be read after the loop. Declare it with `const` or `let`, as in `@for (const item of items)`.",
+	),
+	/** `kind` is `using` or `await using`. */
+	FOR_HEAD_USING: tsrx_with_values(
+		'FOR_HEAD',
+		(kind) =>
+			`TSRX \`@for\` does not support \`${kind}\` loop variables. Declare the resource in the loop body instead: \`@for (const item of items) { ${kind} resource = item; ... }\`.`,
+	),
+	DIRECTIVE_BODY_VAR: tsrx(
+		'DIRECTIVE_BODY_VAR',
+		"TSRX does not support `var` declarations in a nested `@{ … }` block or an `@if`, `@for`, `@switch` or `@try` body, since the variable can't be read outside it. Declare it with `const` or `let`.",
+	),
 	MULTIPLE_REFS: tsrx(
 		'MULTIPLE_REFS',
-		'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single array-valued ref such as `ref={[a, b]}` where the target framework supports multiple refs.',
+		'Element has multiple `ref={...}` attributes; an element may have at most one. Use a single ref list such as `ref={[a, b]}`, which applies every ref in it.',
 	),
 	INVALID_HTML_NESTING: tsrx_with_values(
 		'INVALID_HTML_NESTING',
@@ -387,11 +509,31 @@ export const TSRX_ERRORS = {
 		(target) =>
 			`${target} TSRX does not support \`await\` here: this part of the template renders through a callback the target calls, so its result cannot be awaited. Await the value in the component body, or move it into an async child component.`,
 	),
+	/** `target` is the target's name. For a target whose components can't be async. */
+	TARGET_COMPONENT_AWAIT_UNSUPPORTED: tsrx_with_values(
+		'TARGET_AWAIT_UNSUPPORTED',
+		(target) => `${target} TSRX components do not support \`await\`.`,
+	),
+	HONO_DOM_COMPONENT_AWAIT_UNSUPPORTED: tsrx(
+		'TARGET_AWAIT_UNSUPPORTED',
+		'Hono JSX DOM does not support top-level `await` in components. Use `use(promise)` with `<Suspense>` instead.',
+	),
+	/** For an `async` component that a Hono DOM module renders. */
+	HONO_DOM_ASYNC_COMPONENT_UNSUPPORTED: tsrx(
+		'TARGET_AWAIT_UNSUPPORTED',
+		'Hono JSX DOM does not support async components. Use `use(promise)` with `<Suspense>` instead.',
+	),
 	/** `target` is the target's name. */
 	TARGET_YIELD_UNSUPPORTED: tsrx_with_values(
 		'TARGET_YIELD_UNSUPPORTED',
 		(target) =>
 			`${target} TSRX does not support \`yield\` here: this part of the template runs in a callback, which cannot yield from the enclosing generator. Yield the value in the function body first.`,
+	),
+	/** `target` is the target's name. For Solid and Vue, whose JSX compilers move some template values into effects. */
+	TARGET_TEMPLATE_YIELD_UNSUPPORTED: tsrx_with_values(
+		'TARGET_TEMPLATE_YIELD_UNSUPPORTED',
+		(target) =>
+			`${target} TSRX does not support \`yield\` in this part of the template: ${target}'s JSX compiler evaluates it in an effect, a getter or a callback, which cannot yield from the enclosing generator. Yield the value before the template, as in \`const value = yield …;\`, and use \`value\` in it.`,
 	),
 	/** `target` is the target's name. */
 	TARGET_SUPER_UNSUPPORTED: tsrx_with_values(
@@ -407,6 +549,90 @@ export const TSRX_ERRORS = {
 	TOP_LEVEL_AWAIT_USE_SERVER: tsrx(
 		'TOP_LEVEL_AWAIT_USE_SERVER',
 		'Top-level `await` in TSRX functions requires a module-level `"use server"` directive.',
+	),
+	/** Hono's ErrorBoundary calls its fallback with the error only. */
+	TARGET_CATCH_RESET_UNSUPPORTED: tsrx(
+		'TARGET_CATCH_RESET_UNSUPPORTED',
+		'Hono JSX ErrorBoundary does not provide a reset callback. Use `@catch (error)` without a reset parameter.',
+	),
+	/** `target` is the target's name, and `name` the component's. */
+	TARGET_COMPONENT_READ_BEFORE_DECLARATION: tsrx_with_values(
+		'TARGET_COMPONENT_READ_BEFORE_DECLARATION',
+		(target, name) =>
+			`'${name}' is read here before its declaration. ${target} TSRX compiles the component to a constant, which is not hoisted like a function, and moving its declaration above this read would change what its prop defaults read. Move the declaration of '${name}' above this read.`,
+	),
+	/**
+	 * `target` is the target's name, `name` the prop's, and `example`, which can
+	 * be empty, an expression that reads the prop where it is used. Only Vue's
+	 * vue-jsx-vapor drops defaults.
+	 */
+	TARGET_PROP_DEFAULT_UNSUPPORTED: tsrx_with_values(
+		'TARGET_PROP_DEFAULT_UNSUPPORTED',
+		(target, name, example) =>
+			`${target} TSRX cannot keep this default for '${name}': vue-jsx-vapor turns destructured prop defaults into prop options and drops any default that is not a literal, an identifier, an object or array literal, or a function, so '${name}' would be undefined. ${read_prop_where_used(example)}`,
+	),
+	/**
+	 * `target` is the target's name, `path` the value's path in the props (such
+	 * as `s.a`), and `example`, which can be empty, an expression that reads the
+	 * value where it is used.
+	 */
+	TARGET_PROP_NESTED_DEFAULT_UNSUPPORTED: tsrx_with_values(
+		'TARGET_PROP_DEFAULT_UNSUPPORTED',
+		(target, path, example) =>
+			`${target} TSRX cannot keep this default for '${path}': vue-jsx-vapor applies a default inside a destructured prop only when the whole prop is missing, so it is lost whenever the prop is passed without this value. ${read_prop_where_used(example)}`,
+	),
+	/**
+	 * `target` is the target's name, and `fallback` the parameter's default as
+	 * written. Only Vue's vue-jsx-vapor skips a props parameter with a default.
+	 */
+	TARGET_PROPS_PARAM_DEFAULT: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, fallback) =>
+			`${target} TSRX cannot read a props parameter with a default: vue-jsx-vapor skips it, so this component gets no props. Remove \`= ${fallback}\`; Vue always passes a props object.`,
+	),
+	/**
+	 * `target` is the target's name, and `path` the path in the props of the
+	 * value the rest element destructures (such as `t`).
+	 */
+	TARGET_PROP_NESTED_REST: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, path) =>
+			`${target} TSRX cannot read this rest element inside '${path}': vue-jsx-vapor doesn't keep it as the rest of '${path}'. It gives the last rest element in the props pattern the component's attrs, an array's rest element the whole array, and any other the rest of '${path}' only as it was at setup. ${read_prop_where_used('')}`,
+	),
+	/**
+	 * `target` is the target's name, `name` the computed key, and `example`,
+	 * which can be empty, an expression that reads the prop where it is used.
+	 * Only Vue's vue-jsx-vapor reads a destructured prop by its key's name.
+	 */
+	TARGET_PROP_KEY_COMPUTED: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, name, example) =>
+			`${target} TSRX cannot read this computed prop key: vue-jsx-vapor reads \`[${name}]\` as the prop '${name}', whatever '${name}' holds. ${read_prop_where_used(example)}`,
+	),
+	/**
+	 * `target` is the target's name, `key` the key as written, and `example`,
+	 * which can be empty, an expression that reads the prop where it is used.
+	 */
+	TARGET_PROP_KEY_UNSUPPORTED: tsrx_with_values(
+		'TARGET_PROP_KEY_UNSUPPORTED',
+		(target, key, example) =>
+			`${target} TSRX cannot read the prop at \`${key}\`: vue-jsx-vapor reads a destructured prop only by a key that is a name, so this binding never gets the prop. ${read_prop_where_used(example)}`,
+	),
+	DEFINE_VAPOR_COMPONENT_BINDING: tsrx(
+		'TARGET_RESERVED_NAME',
+		"Vue TSRX does not allow a binding named `defineVaporComponent`. vue-jsx-vapor finds components by calls to that exact name, and the compiler wraps each component in the one from 'vue-jsx-vapor', so the name can't be declared again or shadowed. Rename this binding.",
+	),
+	// A warning. This one is for a child of an element or fragment, where the
+	// `@` may have been meant as text.
+	CODE_BLOCK_EXPRESSION_CHILD: tsrx(
+		'CODE_BLOCK_EXPRESSION_ONLY',
+		"This @{…} is a code block, not '@' text and an expression: it runs the expression as a statement and renders nothing. To render '@' and the value, write {`@${value}`} or {'@' + value}; for the value alone, write {value}.",
+	),
+	// A warning. This one is for anywhere else: a function body, a value, or
+	// the output of another `@{ … }` or a directive body.
+	CODE_BLOCK_EXPRESSION_ONLY: tsrx(
+		'CODE_BLOCK_EXPRESSION_ONLY',
+		'This @{…} code block holds only an expression statement, so it renders nothing. To render the value, end the block with output, such as @{ <>{value}</> }.',
 	),
 
 	// TSRX3xxx
@@ -464,6 +690,10 @@ export const TSRX_ERRORS = {
 		'CSS_IMPORT',
 		"@import is not supported in <style> blocks: the imported rules would not be scoped. Share scoped styles with an assigned block (const theme = <style>…</style>) and apply={theme}. For global CSS, use :global in the block, or import the stylesheet in JavaScript: import './global.css'.",
 	),
+	STYLE_IN_EXPRESSION_CONTAINER: tsrx(
+		'STYLE_IN_EXPRESSION_CONTAINER',
+		'A <style> block inside an expression container, such as {<style>…</style>}, evaluates to its class map, so as a child it styles nothing. Remove the braces to write a standalone block in the element or fragment it styles: <><style>…</style><div>…</div></>. To reuse the block, assign it: const theme = <style>…</style>.',
+	),
 
 	// TSRX4xxx
 	PLATFORM_REQUIRED: tsrx(
@@ -507,8 +737,56 @@ export const TS_ERRORS = {
 		code: 'TS1478',
 		message: 'Identifier or string literal expected.',
 	},
+	// After a plain `try` block, a `pending` block, which only `@try` has
+	CATCH_OR_FINALLY_EXPECTED: { code: 'TS1472', message: "'catch' or 'finally' expected." },
+	// A word reserved only in strict mode (`let`, `static`, `yield`, …) used as a
+	// name, which TypeScript's parser reads and its binder reports: TSRX's input
+	// is a module, and inside a class TypeScript says so instead
+	/** `word` is the word. */
+	STRICT_MODE_RESERVED_WORD: with_values(
+		'TS1214',
+		(word) =>
+			`Identifier expected. '${word}' is a reserved word in strict mode. Modules are automatically in strict mode.`,
+	),
+	/** `word` is the word. */
+	STRICT_MODE_RESERVED_WORD_IN_CLASS: with_values(
+		'TS1213',
+		(word) =>
+			`Identifier expected. '${word}' is a reserved word in strict mode. Class definitions are automatically in strict mode.`,
+	),
+	LET_DECLARATION_NAME: {
+		code: 'TS2480',
+		message: "'let' is not allowed to be used as a name in 'let' or 'const' declarations.",
+	},
 	DECLARATION_EXPECTED: { code: 'TS1146', message: 'Declaration expected.' },
+	// A name followed by another token where a statement ends (`a b;`), which
+	// TypeScript's parser takes for a misspelled keyword when it can
+	UNEXPECTED_KEYWORD_OR_IDENTIFIER: {
+		code: 'TS1434',
+		message: 'Unexpected keyword or identifier.',
+	},
+	/** `suggestion` is the keyword, or the keyword and the rest of the name. */
+	UNKNOWN_KEYWORD_OR_IDENTIFIER: with_values(
+		'TS1435',
+		(suggestion) => `Unknown keyword or identifier. Did you mean '${suggestion}'?`,
+	),
+	/** `kind` is `let`, `const`, `using` or `await using`. */
+	BLOCK_SCOPED_DECLARATION_OUTSIDE_BLOCK: with_values(
+		'TS1156',
+		(kind) => `'${kind}' declarations can only be declared inside a block.`,
+	),
+	// A label before a `let`, `const` or `using` declaration. TypeScript's
+	// message starts with a stray quote.
+	LABEL_NOT_ALLOWED: { code: 'TS1344', message: "'A label is not allowed here." },
+	VARIABLE_DECLARATION_NOT_ALLOWED: {
+		code: 'TS1440',
+		message: 'Variable declaration not allowed at this location.',
+	},
 	EXPRESSION_EXPECTED: { code: 'TS1109', message: 'Expression expected.' },
+	OPTIONAL_CHAIN_TAGGED_TEMPLATE: {
+		code: 'TS1358',
+		message: 'Tagged template expressions are not permitted in an optional chain.',
+	},
 	DECLARATION_OR_STATEMENT_EXPECTED: {
 		code: 'TS1128',
 		message: 'Declaration or statement expected.',
@@ -556,6 +834,10 @@ export const TS_ERRORS = {
 		(modifier) => `'${modifier}' modifier cannot appear on an 'await using' declaration.`,
 	),
 	MODIFIERS_CANNOT_APPEAR_HERE: { code: 'TS1184', message: 'Modifiers cannot appear here.' },
+	MODIFIER_ON_CONSTRUCTOR: with_values(
+		'TS1089',
+		(modifier) => `'${modifier}' modifier cannot appear on a constructor declaration.`,
+	),
 	ACCESSIBILITY_MODIFIER_ALREADY_SEEN: {
 		code: 'TS1028',
 		message: 'Accessibility modifier already seen.',
@@ -576,6 +858,8 @@ export const TS_ERRORS = {
 		code: 'TS1038',
 		message: "A 'declare' modifier cannot be used in an already ambient context.",
 	},
+	/** Decorators on a class `static` block. */
+	DECORATORS_NOT_VALID_HERE: { code: 'TS1206', message: 'Decorators are not valid here.' },
 	MODIFIER_ON_IMPORT: with_values(
 		'TS1079',
 		(modifier) => `A '${modifier}' modifier cannot be used with an import declaration.`,
@@ -652,6 +936,15 @@ export const TS_ERRORS = {
 		code: 'TS18112',
 		message: 'Named and namespace imports are not allowed in a source phase import.',
 	},
+	// A call of `import.<name>`, which TypeScript reports from the checker
+	// (`checkGrammarMetaProperty`). Without a call, it's TS17012
+	// (`UPSTREAM_ERRORS.IMPORT_META_PROPERTY`).
+	/** `name` is the name after `import.`. */
+	IMPORT_META_PROPERTY_CALL: with_values(
+		'TS18061',
+		(name) =>
+			`'${name}' is not a valid meta-property for keyword 'import'. Did you mean 'meta' or 'defer'?`,
+	),
 	// A module specifier that isn't a string, or a phase import from an inline
 	// module (`import source m from server`)
 	STRING_LITERAL_EXPECTED: {
@@ -660,6 +953,7 @@ export const TS_ERRORS = {
 	},
 
 	// Declarations
+	VARIABLE_DECLARATION_EXPECTED: { code: 'TS1134', message: 'Variable declaration expected.' },
 	VARIABLE_DECLARATION_LIST_EMPTY: {
 		code: 'TS1123',
 		message: 'Variable declaration list cannot be empty.',
@@ -702,11 +996,22 @@ export const TS_ERRORS = {
 		code: 'TS2567',
 		message: 'Enum declarations can only merge with namespace or other enum declarations.',
 	},
-	// TSRX's wording of a name redeclared in a module's or function's scope
-	DECLARED_IN_SCOPE: with_values(
-		'TS2300',
-		(name) => `'${name}' has already been declared in the current scope`,
-	),
+	/** `name` is the name, or a string name in its quotes. */
+	DUPLICATE_IDENTIFIER: with_values('TS2300', (name) => `Duplicate identifier '${name}'.`),
+	// A second default export that TypeScript's binder can't merge with the first
+	MULTIPLE_DEFAULT_EXPORTS: {
+		code: 'TS2528',
+		message: 'A module cannot have multiple default exports.',
+	},
+	AMBIENT_IMPLEMENTATION: {
+		code: 'TS1183',
+		message: 'An implementation cannot be declared in ambient contexts.',
+	},
+	IMPORT_ALIAS_IMPORT_TYPE: { code: 'TS1392', message: "An import alias cannot use 'import type'" },
+	TYPE_IMPORT_DEFAULT_AND_NAMED: {
+		code: 'TS1363',
+		message: 'A type-only import can specify a default import or named bindings, but not both.',
+	},
 
 	// Parameters
 	SIGNATURE_PARAMETER_INITIALIZER: {
@@ -741,6 +1046,14 @@ export const TS_ERRORS = {
 
 	// acorn's wording, for the code TSRX reads in acorn's place
 	UNEXPECTED_TOKEN: { code: 'TS1012', message: 'Unexpected token' },
+	REST_PARAMETER_NOT_LAST: {
+		code: 'TS1014',
+		message: 'A rest parameter must be last in a parameter list.',
+	},
+	REST_ELEMENT_NOT_LAST: {
+		code: 'TS2462',
+		message: 'A rest element must be last in a destructuring pattern.',
+	},
 	REST_ELEMENT_TRAILING_COMMA: {
 		code: 'TS1013',
 		message: 'Comma is not permitted after the rest element',
@@ -753,10 +1066,6 @@ export const TS_ERRORS = {
 	AWAIT_USING_OUTSIDE_ASYNC: {
 		code: 'TS2852',
 		message: 'Await using cannot appear outside of async function',
-	},
-	FOR_OF_LET: {
-		code: 'TS1134',
-		message: "The left-hand side of a for-of loop may not start with 'let'.",
 	},
 	FOR_IN_INITIALIZER: {
 		code: 'TS1189',
@@ -773,16 +1082,15 @@ export const TS_ERRORS = {
 		message: "Illegal 'use strict' directive in function with non-simple parameter list",
 	},
 
-	// acorn-typescript's wording, for the code TSRX reads in acorn-typescript's
-	// place
-	UNTERMINATED_JSX_CONTENTS: { code: 'TS17008', message: 'Unterminated JSX contents' },
-	JSX_UNESCAPED_GREATER_THAN: {
-		code: 'TS1382',
-		message: 'Unexpected token `>`. Did you mean `&gt;` or `{">"}`?',
-	},
+	// acorn-typescript's wording, for a `}` in JSX text
 	JSX_UNESCAPED_CLOSING_BRACE: {
 		code: 'TS1381',
 		message: 'Unexpected token `}`. Did you mean `&rbrace;` or `{"}"}`?',
+	},
+	// acorn-typescript's wording, for an attribute's empty `{}` value
+	JSX_ATTRIBUTE_EMPTY_EXPRESSION: {
+		code: 'TS17000',
+		message: 'JSX attributes must only be assigned a non-empty expression',
 	},
 	// TSRX's shorter wording of acorn-typescript's `JSX value should be either
 	// an expression or a quoted JSX text`
@@ -807,16 +1115,16 @@ export const TS_ERRORS = {
 		message: 'Unexpected type cast in parameter position.',
 	},
 	UNEXPECTED_TYPE_ANNOTATION: { code: 'TS1005', message: 'Did not expect a type annotation here.' },
-	/** `type` is the type of the node read as the parameter. */
-	SIGNATURE_PARAMETER_NAME: with_values(
-		'TS2371',
-		(type) =>
-			`Name in a signature must be an Identifier, ObjectPattern or ArrayPattern, instead got ${type}.`,
-	),
 	RESERVED_ARROW_TYPE_PARAMETER: {
 		code: 'TS7060',
 		message:
 			'This syntax is reserved in files with the .mts or .cts extension. Add a trailing comma, as in `<T,>() => ...`.',
+	},
+	/** A type assertion written `<T>x` in a `.mts` or `.cts` file. */
+	RESERVED_TYPE_ASSERTION: {
+		code: 'TS7059',
+		message:
+			'This syntax is reserved in files with the .mts or .cts extension. Use an `as` expression instead.',
 	},
 };
 
@@ -825,8 +1133,11 @@ export const TS_ERRORS = {
  * doesn't write: the pattern of its message, and TypeScript's code for the
  * same mistake. The code is TypeScript's diagnostic with the same wording, or
  * the one TypeScript reports for an input that raises the message (checked for
- * each), and `TSRX4003` where TypeScript accepts the code.
- * @typedef {{ pattern: RegExp, code: string }} UpstreamError
+ * each), and `TSRX4003` where TypeScript accepts the code. `checker` marks one
+ * that TypeScript reports from its checker though its parser reports the code
+ * too, which `TS_SYNTAX_ERROR_CODES` lists: a regular expression's mistake,
+ * `await` as a name in an async function (#1264).
+ * @typedef {{ pattern: RegExp, code: string, checker?: boolean }} UpstreamError
  */
 
 /**
@@ -866,16 +1177,6 @@ export const UPSTREAM_ERRORS = {
 	SUPER_CALL_OUTSIDE_CONSTRUCTOR: {
 		pattern: /^super\(\) call outside constructor of a subclass$/,
 		code: 'TS2337',
-	},
-	// acorn: checkUnreserved
-	LET_RESERVED: { pattern: /^The keyword 'let' is reserved$/, code: 'TS1212' },
-	// `let` as a binding name or an assignment target, which acorn reports after
-	// `LET_RESERVED` at the same position, so only that one is recorded.
-	// acorn: checkLValSimple
-	LET_BINDING: {
-		pattern:
-			/^(?:(?:Binding|Assigning to) let in strict mode|let is disallowed as a lexically bound name)$/,
-		code: 'TS2480',
 	},
 	// acorn-typescript: callParseClassMemberWithIsStatic
 	ABSTRACT_METHOD_IN_CLASS: {
@@ -926,11 +1227,12 @@ export const UPSTREAM_ERRORS = {
 /**
  * acorn's and acorn-typescript's errors, which they raise as bare messages:
  * the lookup that gives each its code. A row is an {@link UpstreamError}, a
- * `[pattern, code]` pair, or the entry of a message TSRX raises too in the same
- * words, whose pattern is the entry's message with any value in it. A comment
- * names the upstream functions that raise each. The first row that matches
- * wins.
- * @returns {Array<UpstreamError | [RegExp, string] | Diagnostic | DiagnosticWithValues>}
+ * `[pattern, code]` pair, a `[pattern, code, 'checker']` triple for a checker
+ * error with a code in `TS_SYNTAX_ERROR_CODES`, or the entry of a message TSRX
+ * raises too in the same words, whose pattern is the entry's message with any
+ * value in it. A comment names the upstream functions that raise each. The
+ * first row that matches wins.
+ * @returns {Array<UpstreamError | [RegExp, string] | [RegExp, string, 'checker'] | Diagnostic | DiagnosticWithValues>}
  */
 function upstream_lookup_rows() {
 	return [
@@ -941,7 +1243,7 @@ function upstream_lookup_rows() {
 		// acorn: checkPatternErrors, toAssignable
 		[/^Assigning to rvalue$/, 'TS2364'],
 		// acorn: checkPatternErrors
-		[/^Parenthesized pattern$/, 'TS1005'],
+		[/^Parenthesized pattern$/, 'TS1005', 'checker'],
 		// acorn: checkExpressionErrors
 		[/^Shorthand property assignments are valid only in destructuring patterns$/, 'TS1312'],
 		// acorn: checkExpressionErrors, checkPropClash
@@ -965,8 +1267,6 @@ function upstream_lookup_rows() {
 		[/^Unsyntactic break$/, 'TS1105'],
 		// acorn: parseBreakContinueStatement
 		[/^Unsyntactic continue$/, 'TS1104'],
-		// acorn: parseForStatement
-		TS_ERRORS.FOR_OF_LET,
 		// acorn: parseForAfterInit
 		[/^Using declaration is not allowed in for-in loops$/, 'TS1493'],
 		// acorn: parseReturnStatement
@@ -1024,9 +1324,9 @@ function upstream_lookup_rows() {
 		// acorn: parseModuleExportName
 		[/^An export name cannot include a lone surrogate\.$/, 'TSRX4003'],
 		// acorn: toAssignable, parseSubscript, checkUnreserved
-		[/^Cannot use 'await' as identifier inside an async function$/, 'TS1359'],
+		[/^Cannot use 'await' as identifier inside an async function$/, 'TS1359', 'checker'],
 		// acorn: toAssignable
-		[/^Object pattern can't contain getter or setter$/, 'TS1136'],
+		[/^Object pattern can't contain getter or setter$/, 'TS1136', 'checker'],
 		// acorn: toAssignable
 		[/^Rest elements cannot have a default value$/, 'TS1186'],
 		// acorn: toAssignable
@@ -1037,8 +1337,14 @@ function upstream_lookup_rows() {
 		[/^Binding (?:eval|arguments) in strict mode$/, 'TS1100'],
 		// acorn: checkLValSimple
 		[/^Assigning to (?:eval|arguments) in strict mode$/, 'TS1100'],
-		// acorn: checkLValSimple
-		UPSTREAM_ERRORS.LET_BINDING,
+		// acorn: checkLValSimple, for a word that TSRX reports as
+		// `TS_ERRORS.STRICT_MODE_RESERVED_WORD` (see `raiseRecoverable` in `plugin.js`)
+		[
+			/^(?:Binding|Assigning to) (?:implements|interface|let|package|private|protected|public|static|yield) in strict mode$/,
+			'TS1214',
+		],
+		// acorn: checkLValSimple, which TSRX reports as `TS_ERRORS.LET_DECLARATION_NAME`
+		[/^let is disallowed as a lexically bound name$/, 'TS2480'],
 		// acorn: checkLValSimple
 		TS_ERRORS.ARGUMENT_NAME_CLASH,
 		// acorn: checkLValSimple
@@ -1096,8 +1402,12 @@ function upstream_lookup_rows() {
 		[/^Unexpected keyword '[^']+'$/, 'TS1359'],
 		// acorn: checkUnreserved
 		[/^Cannot use keyword 'await' outside an async function$/, 'TS1262'],
-		// acorn: checkUnreserved
-		UPSTREAM_ERRORS.LET_RESERVED,
+		// acorn: checkUnreserved, for a word that TSRX reports as
+		// `TS_ERRORS.STRICT_MODE_RESERVED_WORD` (see `raiseRecoverable` in `plugin.js`)
+		[
+			/^The keyword '(?:implements|interface|let|package|private|protected|public|static|yield)' is reserved$/,
+			'TS1214',
+		],
 		// acorn: checkUnreserved
 		[/^The keyword '[^']+' is reserved$/, 'TS1212'],
 		// acorn: validateRegExpFlags
@@ -1163,23 +1473,23 @@ function upstream_lookup_rows() {
 		// acorn: regexp_eatTerm
 		[/^Invalid regular expression: \/.*\/: Invalid quantifier$/, 'TS1507'],
 		// acorn: regexp_eatAssertion, regexp_eatCapturingGroup, regexp_eatUncapturingGroup
-		[/^Invalid regular expression: \/.*\/: Unterminated group$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Unterminated group$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatBracedQuantifier
 		[/^Invalid regular expression: \/.*\/: numbers out of order in \{\} quantifier$/, 'TS1506'],
 		// acorn: regexp_eatBracedQuantifier
-		[/^Invalid regular expression: \/.*\/: Incomplete quantifier$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Incomplete quantifier$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatUncapturingGroup
 		[/^Invalid regular expression: \/.*\/: Duplicate regular expression modifiers$/, 'TS1500'],
 		// acorn: regexp_eatUncapturingGroup
 		[/^Invalid regular expression: \/.*\/: Invalid regular expression modifiers$/, 'TS1504'],
 		// acorn: regexp_eatCapturingGroup, regexp_groupSpecifier
-		[/^Invalid regular expression: \/.*\/: Invalid group$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Invalid group$/, 'TS1005', 'checker'],
 		// acorn: regexp_groupSpecifier
 		[/^Invalid regular expression: \/.*\/: Duplicate capture group name$/, 'TS1515'],
 		// acorn: regexp_eatGroupName
 		[/^Invalid regular expression: \/.*\/: Invalid capture group name$/, 'TS1514'],
 		// acorn: regexp_eatAtomEscape, regexp_eatRegExpUnicodeEscapeSequence
-		[/^Invalid regular expression: \/.*\/: Invalid unicode escape$/, 'TS1198'],
+		[/^Invalid regular expression: \/.*\/: Invalid unicode escape$/, 'TS1198', 'checker'],
 		// acorn: regexp_eatKGroupName
 		[/^Invalid regular expression: \/.*\/: Invalid named reference$/, 'TS1510'],
 		// acorn: regexp_eatCharacterClassEscape, regexp_validateUnicodePropertyNameAndValue, regexp_validateUnicodePropertyNameOrValue
@@ -1187,7 +1497,7 @@ function upstream_lookup_rows() {
 		// acorn: regexp_validateUnicodePropertyNameAndValue
 		[/^Invalid regular expression: \/.*\/: Invalid property value$/, 'TS1526'],
 		// acorn: regexp_eatCharacterClass
-		[/^Invalid regular expression: \/.*\/: Unterminated character class$/, 'TS1005'],
+		[/^Invalid regular expression: \/.*\/: Unterminated character class$/, 'TS1005', 'checker'],
 		// acorn: regexp_eatCharacterClass, regexp_eatNestedClass
 		[/^Invalid regular expression: \/.*\/: Negated character class may contain strings$/, 'TS1518'],
 		// acorn: regexp_nonEmptyClassRanges
@@ -1198,14 +1508,8 @@ function upstream_lookup_rows() {
 		[/^Invalid regular expression: \/.*\/: Invalid class escape$/, 'TS1512'],
 		// acorn: regexp_classSetExpression
 		[/^Invalid regular expression: \/.*\/: Invalid character in character class$/, 'TS1508'],
-		// acorn-typescript: jsx_readToken
-		TS_ERRORS.UNTERMINATED_JSX_CONTENTS,
-		// acorn-typescript: jsx_readToken
-		TS_ERRORS.JSX_UNESCAPED_GREATER_THAN,
-		// acorn-typescript: jsx_readToken
-		TS_ERRORS.JSX_UNESCAPED_CLOSING_BRACE,
 		// acorn-typescript: jsx_parseAttributeValue
-		[/^JSX attributes must only be assigned a non-empty expression$/, 'TS17000'],
+		TS_ERRORS.JSX_ATTRIBUTE_EMPTY_EXPRESSION,
 		// acorn-typescript: jsx_parseAttributeValue
 		[/^JSX value should be either an expression or a quoted JSX text$/, 'TS1145'],
 		// acorn-typescript: jsx_parseElementAt
@@ -1248,7 +1552,7 @@ function upstream_lookup_rows() {
 		// acorn-typescript: parseVarStatement, parseClassField
 		UPSTREAM_ERRORS.AMBIENT_INITIALIZER,
 		// acorn-typescript: parseFunctionBody
-		[/^An implementation cannot be declared in ambient contexts\.$/, 'TS1183'],
+		TS_ERRORS.AMBIENT_IMPLEMENTATION,
 		// acorn-typescript: tsParseModifiers
 		TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
 		// acorn-typescript: tsParseModifiers
@@ -1312,10 +1616,7 @@ function upstream_lookup_rows() {
 		// acorn-typescript: tsParseTypeAssertion
 		TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER,
 		// acorn-typescript: tsParseTypeAssertion
-		[
-			/^This syntax is reserved in files with the \.mts or \.cts extension\. Use an `as` expression instead\.$/,
-			'TS7059',
-		],
+		TS_ERRORS.RESERVED_TYPE_ASSERTION,
 		// acorn-typescript: tsParsePropertyOrMethodSignature
 		[/^A 'set' accessor cannot have an optional parameter\.$/, 'TS1051'],
 		// acorn-typescript: tsParsePropertyOrMethodSignature
@@ -1330,10 +1631,7 @@ function upstream_lookup_rows() {
 			'TS1005',
 		],
 		// acorn-typescript: parseImport
-		[
-			/^A type-only import can specify a default import or named bindings, but not both\.$/,
-			'TS1363',
-		],
+		TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED,
 		// acorn-typescript: parseTypeOnlyImportExportSpecifier
 		[
 			/^The 'type' modifier cannot be used on a named export when 'export type' is used on its export statement\.$/,
@@ -1356,8 +1654,6 @@ function upstream_lookup_rows() {
 		TS_ERRORS.TYPE_IMPORT_ARGUMENT,
 		// acorn-typescript: parseAssignableListItem
 		TS_ERRORS.PATTERN_PARAMETER_PROPERTY,
-		// acorn-typescript: tsParseBindingListForSignature
-		TS_ERRORS.SIGNATURE_PARAMETER_NAME,
 		// acorn-typescript: parseDecorators
 		TS_ERRORS.UNEXPECTED_LEADING_DECORATOR,
 		// acorn-typescript: parseClass
@@ -1402,7 +1698,12 @@ let upstream_lookup;
  */
 export function get_upstream_error(message) {
 	upstream_lookup ??= upstream_lookup_rows().map((row) => {
-		if (Array.isArray(row)) return { pattern: row[0], error: { pattern: row[0], code: row[1] } };
+		if (Array.isArray(row)) {
+			/** @type {UpstreamError} */
+			const error = { pattern: row[0], code: row[1] };
+			if (row[2] === 'checker') error.checker = true;
+			return { pattern: row[0], error };
+		}
 		if ('pattern' in row) return { pattern: row.pattern, error: row };
 		return { pattern: message_pattern(row), error: row };
 	});

@@ -22,7 +22,7 @@ import {
 import { walk } from 'zimmerframe';
 import { is_reserved } from './utils.js';
 import { error } from './errors.js';
-import { TS_ERRORS, TSRX_ERRORS } from './diagnostics.js';
+import { TSRX_ERRORS } from './diagnostics.js';
 import { IDENTIFIER_OBFUSCATION_PREFIX } from './identifier-utils.js';
 import * as b from './utils/builders.js';
 
@@ -395,16 +395,6 @@ export class Scope {
 		if (node.name.startsWith(IDENTIFIER_OBFUSCATION_PREFIX)) {
 			error(
 				TSRX_ERRORS.RESERVED_IDENTIFIER_PREFIX(node.name, IDENTIFIER_OBFUSCATION_PREFIX),
-				this.#error_options.filename,
-				node,
-				this.#error_options.collect ? this.#error_options.errors : undefined,
-				this.#error_options.comments,
-			);
-		}
-
-		if (this.declarations.has(node.name)) {
-			error(
-				TS_ERRORS.DECLARED_IN_SCOPE(node.name),
 				this.#error_options.filename,
 				node,
 				this.#error_options.collect ? this.#error_options.errors : undefined,

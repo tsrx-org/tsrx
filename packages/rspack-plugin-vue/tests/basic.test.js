@@ -1,3 +1,4 @@
+import { SourceMapConsumer } from 'source-map';
 import { describe, expect, it } from 'vitest';
 import { compile } from '@tsrx/vue';
 import jsLoader from '../src/js-loader.js';
@@ -101,6 +102,52 @@ describe('@tsrx/rspack-plugin-vue vapor-loader', () => {
 	});
 });
 
+describe("@tsrx/rspack-plugin-vue vapor-loader with vue-jsx-vapor's macros", () => {
+	it('expands the macros and maps the output back to the source', async () => {
+		const id = '/virtual/Greeting.tsrx';
+		const source = `export function Greeting({ name, greeting = 'Hello' }: { name: string; greeting?: string }) @{
+	<p>{greeting}{', '}{name}</p>
+}`;
+		const compiled = compile(source, id);
+
+		const { context, promise } = createLoaderContext(id);
+		vaporLoader.call(context, compiled.code, compiled.map);
+		const { err, output, map } = await promise;
+
+		expect(err).toBeNull();
+		expect(output).toContain('"name": null');
+		expect(output).toContain('default: "Hello"');
+		const lines = String(output).split('\n');
+		const line = lines.findIndex((text) => text.includes('() => __props.name')) + 1;
+		const column = lines[line - 1].indexOf('__props.name');
+		const original = await SourceMapConsumer.with(/** @type {any} */ (map), null, (consumer) =>
+			consumer.originalPositionFor({ line, column }),
+		);
+		expect(original).toMatchObject({ line: 2, column: source.split('\n')[1].indexOf('name') });
+	});
+});
+
+describe("@tsrx/rspack-plugin-vue vapor-loader with the macros' filters", () => {
+	it("applies the macros' include and exclude options", async () => {
+		const source = `export function Greeting({ name }: { name: string }) @{
+			<p>{name}</p>
+		}`;
+		const expands = async (/** @type {string} */ id, /** @type {any} */ vapor) => {
+			const compiled = compile(source, id);
+			const { context, promise } = createLoaderContext(id, { vapor });
+			vaporLoader.call(context, compiled.code, compiled.map);
+			return String((await promise).output).includes('"name": null');
+		};
+
+		// By default, as in the Vite plugin, modules in node_modules are left out.
+		expect(await expands('/project/src/Greeting.tsrx', undefined)).toBe(true);
+		expect(await expands('/project/node_modules/lib/Greeting.tsrx', undefined)).toBe(false);
+		const vapor = { macros: { exclude: [/[/\\]legacy[/\\]/] } };
+		expect(await expands('/project/src/Greeting.tsrx', vapor)).toBe(true);
+		expect(await expands('/project/src/legacy/Greeting.tsrx', vapor)).toBe(false);
+	});
+});
+
 describe('@tsrx/rspack-plugin-vue css-loader', () => {
 	it('returns the compiled scoped css text', async () => {
 		const id = '/virtual/App.tsrx';
@@ -166,25 +213,41 @@ createVaporApp(App).use(vaporInteropPlugin).mount('#root');`;
 	});
 });
 
+/**
+ * A stand-in for the compiler, with the parts `apply()` touches.
+ *
+ * @param {{ resolve: { extensions: string[] }, experiments: Record<string, boolean> }} options
+ */
+function create_compiler(options) {
+	return {
+		context: '/project',
+		options: { module: { rules: [] }, ...options },
+		webpack: {
+			experiments: {
+				VirtualModulesPlugin: class {
+					apply() {}
+				},
+			},
+		},
+		hooks: { compilation: { tap() {} } },
+	};
+}
+
 describe('@tsrx/rspack-plugin-vue plugin', () => {
 	it('registers module rules for .tsrx and sibling css query', () => {
 		const plugin = new TsrxVueRspackPlugin({ runtimeImports: 'direct' });
-		const compiler = {
-			options: {
-				module: { rules: [] },
-				resolve: { extensions: ['.js', '.ts'] },
-				experiments: {},
-			},
-		};
+		const compiler = create_compiler({ resolve: { extensions: ['.js', '.ts'] }, experiments: {} });
 
 		plugin.apply(/** @type {any} */ (compiler));
 
 		expect(compiler.options.resolve.extensions).toContain('.tsrx');
 		expect(compiler.options.experiments.css).toBe(true);
 		expect(compiler.options.experiments.deferImport).toBe(true);
-		expect(compiler.options.module.rules).toHaveLength(3);
+		expect(compiler.options.module.rules).toHaveLength(5);
 
-		const [interopRule, jsRule, cssRule] = compiler.options.module.rules;
+		const [interopRule, jsRule, cssRule, stylesheetRule, cssModuleRule] = /** @type {any[]} */ (
+			compiler.options.module.rules
+		);
 		expect(interopRule.test.toString()).toContain('[jt]sx');
 		expect(interopRule.exclude.toString()).toContain('node_modules');
 		expect(interopRule.use[0].loader).toContain('interop-loader');
@@ -202,6 +265,12 @@ describe('@tsrx/rspack-plugin-vue plugin', () => {
 		expect(cssRule.resourceQuery.toString()).toContain('tsrx-css');
 		expect(cssRule.type).toBe('css/auto');
 		expect(cssRule.use[0].options.runtimeImports).toBe('direct');
+		const helper_dir = '/project/node_modules/.tsrx-vue-jsx-vapor/';
+		expect(stylesheetRule).toMatchObject({ type: 'css' });
+		expect(stylesheetRule.test.test(`${helper_dir}define-style.vapor-css`)).toBe(true);
+		expect(stylesheetRule.test.test(`${helper_dir}define-style.vapor-module-css`)).toBe(false);
+		expect(cssModuleRule).toMatchObject({ type: 'css/module', parser: { namedExports: false } });
+		expect(cssModuleRule.test.test(`${helper_dir}define-style.vapor-module-css`)).toBe(true);
 	});
 
 	it('passes custom vapor options to the loader', () => {
@@ -212,13 +281,7 @@ describe('@tsrx/rspack-plugin-vue plugin', () => {
 				},
 			},
 		});
-		const compiler = {
-			options: {
-				module: { rules: [] },
-				resolve: { extensions: [] },
-				experiments: {},
-			},
-		};
+		const compiler = create_compiler({ resolve: { extensions: [] }, experiments: {} });
 
 		plugin.apply(/** @type {any} */ (compiler));
 
@@ -228,13 +291,10 @@ describe('@tsrx/rspack-plugin-vue plugin', () => {
 
 	it('does not override explicitly disabled experiment flags', () => {
 		const plugin = new TsrxVueRspackPlugin();
-		const compiler = {
-			options: {
-				module: { rules: [] },
-				resolve: { extensions: [] },
-				experiments: { css: false, deferImport: false },
-			},
-		};
+		const compiler = create_compiler({
+			resolve: { extensions: [] },
+			experiments: { css: false, deferImport: false },
+		});
 
 		plugin.apply(/** @type {any} */ (compiler));
 

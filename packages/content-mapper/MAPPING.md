@@ -33,6 +33,8 @@ diagnostic text shows the authored name.
 | `JSXIdentifier` token                                                    | `mapping_data` (or `verification: false`)                                                                                                                                       | may differ                       | Capitalized dynamic component names → `Atom`                                                                                                                                                              |
 | Extra source-mapping tokens (`add_extra_source_mapping_tokens`)          | `mapping_data`                                                                                                                                                                  | may differ                       | Synthesized identifiers borrowing an authored span                                                                                                                                                        |
 | `Literal` token (`handle_literal`)                                       | `mapping_data_verify_only`                                                                                                                                                      | equal                            | `Verbatim`                                                                                                                                                                                                |
+| `TemplateLiteral` quasi tokens (including delimiters)                    | `mapping_data`                                                                                                                                                                  | equal                            | `Verbatim` only when generated text matches the authored token; includes no-substitution templates. Other-printer text mismatches are skipped.                                                            |
+| Whole `TemplateLiteral`                                                  | `mapping_data_verify_only`                                                                                                                                                      | may differ                       | Diagnostic fallback, including when another printer changes the text. Omitted only when an exact no-substitution token mapping supplies diagnostics and editor features.                                  |
 | Preserved comment (`add_preserved_comment_mappings`)                     | `mapping_data_verify_only`                                                                                                                                                      | equal                            | `Verbatim`                                                                                                                                                                                                |
 | Declaration/export anchors (`declaration_mapping`, `add_export_mapping`) | `mapping_data_verify_only`                                                                                                                                                      | may differ                       | Statement ranges; `Atom`                                                                                                                                                                                  |
 | `ImportDeclaration` `import` keyword and last character                  | `mapping_data_verify_only`                                                                                                                                                      | equal                            | `Verbatim`                                                                                                                                                                                                |
@@ -44,7 +46,7 @@ diagnostic text shows the authored name.
 | JSXElement closing tag / self-closing tag                                | `mapping_data_verify_only` / `mapping_data_verify_complete`                                                                                                                     | differs (+1 for the emitted `;`) | `Atom`                                                                                                                                                                                                    |
 | `@if` / `@for` / `@switch` / `@try` / `@else` control-flow nodes         | `mapping_data_verify_only`                                                                                                                                                      | may differ                       | Keyword and body ranges; `Atom`                                                                                                                                                                           |
 | File-start anchor (offset 0, length 1)                                   | `mapping_data`                                                                                                                                                                  | equal                            | Enables import insertion; `Verbatim` when the first character matches                                                                                                                                     |
-| Diagnostic anchors (`add_diagnostic_mappings`)                           | `mapping_data_verify_only`                                                                                                                                                      | may differ                       | Narrow spans for compile errors that point at source-only tokens; `Atom`                                                                                                                                  |
+| Diagnostic anchors (`add_diagnostic_mappings`)                           | `mapping_data_verify_only`                                                                                                                                                      | may differ                       | Narrow spans for compile errors that point at source-only tokens or at a `<>` the code prints (#1322); `Atom`                                                                                             |
 | `cssMappings` (`<style>` bodies)                                         | `mapping_data`                                                                                                                                                                  | equal                            | Not part of the TypeScript output; stay in the TSRX language server                                                                                                                                       |
 | `scriptMappings` (`<script>` bodies)                                     | `mapping_data`                                                                                                                                                                  | equal                            | Become `supplemental` outputs (`.ts`) with a single `Verbatim` span                                                                                                                                       |
 
@@ -53,14 +55,37 @@ diagnostic text shows the authored name.
 - `hover` and `definition`: CSS class spans, consumed by the TSRX language server
   (`hoverPlugin.js`, `definitionPlugin.js`). Not TypeScript's concern.
 - `wordHighlight`: keyword highlights (`documentHighlightPlugin.js`).
+- `diagnosticAnchor`: the diagnostic anchors above. `diagnostic-directives.js`
+  doesn't count one as a node's own code, and one ends a node's range.
 - `suppressedDiagnostics`: removed in Phase 0. No transform ever produced it.
 
 ## Post-processing in `span-mappings.js`
+
+Everything below applies to `mappings`, the spans TypeScript 7 reads. The opt-in
+`verificationMappings` output (`to_verification_mappings`) skips all of it: it
+keeps every mapping with `verification` whole (zero-length points included) and in
+the transform's order, which is what Volar, and so `tsrx-tsc`, maps diagnostics
+through.
 
 - Container spans lose to the token spans they enclose (Verbatim first, then
   shorter before longer, disjoint in generated space).
 - Neighbouring Verbatim spans with equal feature bits whose gap is identical text
   in both files are coalesced, so whole statements such as import declarations
-  become one edit-safe span.
+  become one edit-safe span. A span from a mapping with no Volar feature at all,
+  not even `verification` (the brackets of a respaced literal), joins either
+  neighbour and takes its features, as unmapped text between them would.
+- A Verbatim span extends over the identical whitespace that follows it. The rest
+  of the identical text before the next span gets a Verbatim span with no feature
+  bits: TypeScript 7 offers no auto-import completion at the end of a span that
+  unmapped text separates from the next span.
 - Atom candidates that are fragments of an identifier (the one-character
   file-start anchor) are dropped.
+- A container that lost keeps its uncovered edges, from its start to its first
+  span and from its last span to its end, without feature bits, so an error
+  TypeScript reports over the whole container (TS1340 on an import type printed
+  without its inner spaces) starts and ends where the container does in the
+  source. An edge is split into Verbatim runs of the text it shares with the
+  source, matched from the container's boundary across whitespace that only one
+  side has, and one Atom for the rest, so a node inside it without a span of its
+  own (the `{}` of `Record< {}, 1 >`) keeps its position. Gaps between a
+  container's spans get no edge; identical text there maps as described above.

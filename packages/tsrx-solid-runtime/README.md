@@ -20,6 +20,7 @@ or on `@tsrx/solid` installing the runtime transitively. Published component
 libraries can keep the compiler and build integration in `devDependencies` while
 declaring this package in `dependencies`.
 
-Available subpath:
+Available subpaths:
 
 - `@tsrx/solid-runtime/ref`
+- `@tsrx/solid-runtime/iterable`

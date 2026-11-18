@@ -1,6 +1,6 @@
 {
   "name": "@tsrx/eslint-parser",
-  "version": "0.6.3",
+  "version": "0.7.2",
   "description": "ESLint parser for TSRX (.tsrx files)",
   "type": "module",
   "main": "src/index.ts",
@@ -39,12 +39,14 @@
     "eslint": "catalog:peer"
   },
   "dependencies": {
-    "@tsrx/core": "workspace:*"
+    "@tsrx/core": "workspace:*",
+    "eslint-scope": "^9.1.2"
   },
   "devDependencies": {
     "@types/eslint": "catalog:default",
     "@types/estree": "catalog:default",
     "@types/node": "catalog:default",
+    "eslint-9": "npm:eslint@9.39.5",
     "tsdown": "catalog:default",
     "typescript": "catalog:default"
   },

@@ -15,6 +15,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { joined_class_value } from './scoped-styles.js';
 
 const FIXTURE_DIR = fileURLToPath(new URL('../fixtures/scoped-styles/', import.meta.url));
 const HASH = 'tsrx-[0-9a-f]+';
@@ -159,14 +160,16 @@ function hash_of(label, hashes) {
  * The class attribute the compiler must give an element, as it appears in the
  * generated code. Static hashes fold into the authored literal; a runtime
  * theme or an expression-valued authored class turns it into a template
- * literal with `${…}` parts.
+ * literal with `${…}` parts. An authored expression that may not be a string
+ * joins the scope classes as the target's `class_join` says.
  *
  * @param {string} key
  * @param {string[]} chain
  * @param {Map<string, string>} hashes
+ * @param {'text' | 'text-true' | 'text-both' | 'list' | null} class_join
  * @returns {string} the text after `class=` / `className=`
  */
-function expected_class_attribute(key, chain, hashes) {
+function expected_class_attribute(key, chain, hashes, class_join) {
 	const is_expression = key.startsWith('{') && key.endsWith('}');
 	const has_runtime = chain.some(is_runtime);
 	const parts = chain.map((label) =>
@@ -178,7 +181,24 @@ function expected_class_attribute(key, chain, hashes) {
 	}
 	const expression = key.slice(1, -1);
 	if (parts.length === 0) return `{${expression}}`;
-	return `{\`\${${expression}} ${parts.join(' ')}\`}`;
+	const scope = has_runtime ? `\`${parts.join(' ')}\`` : `"${parts.join(' ')}"`;
+	return joined_class_value(is_string_class(expression) ? null : class_join, expression, scope);
+}
+
+/**
+ * Whether the compiler keeps an authored class expression as text: a
+ * template literal, a choice between string literals, or a `$class` read is
+ * always a string.
+ *
+ * @param {string} expression
+ * @returns {boolean}
+ */
+function is_string_class(expression) {
+	return (
+		expression.startsWith('`') ||
+		expression.endsWith('.$class') ||
+		/^[^?]+\?\s*'[^']*'\s*:\s*'[^']*'$/.test(expression)
+	);
 }
 
 /**
@@ -220,7 +240,7 @@ function expected_class_expression(name, chain, hashes) {
 /**
  * @param {CompileHarness} harness
  */
-export function runSharedScopedStyleConformanceTests({ compile, name }) {
+export function runSharedScopedStyleConformanceTests({ compile, name, classJoin = null }) {
 	const fixtures = load_fixtures();
 	const passing = fixtures.filter((fixture) => !fixture.expected.knownFailure);
 	const failing = fixtures.filter((fixture) => fixture.expected.knownFailure);
@@ -246,7 +266,7 @@ export function runSharedScopedStyleConformanceTests({ compile, name }) {
 
 		// Every element carries its scope chain outer → inner, then the themes.
 		for (const [key, chain] of Object.entries(expected.elements)) {
-			const attribute = expected_class_attribute(key, chain, hashes);
+			const attribute = expected_class_attribute(key, chain, hashes, classJoin);
 			expect(code).toMatch(new RegExp(`class(?:Name)?=${escape_regexp(attribute)}`));
 		}
 

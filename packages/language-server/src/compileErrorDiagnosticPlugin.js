@@ -176,7 +176,7 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 	/** @type {Position | null} */
 	let end = null;
 
-	if (error.pos) {
+	if (error.pos !== undefined) {
 		const start_offset = get_start_offset_from_error(error);
 		const end_offset = get_end_offset_from_error(error, start_offset);
 		// try to find exact mapping
@@ -209,6 +209,20 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 				}
 			}
 		}
+
+		if (!start || !end) {
+			// No mapping covers the error, such as a repeated modifier the
+			// editor's code leaves out (`public public`), or a `<>` left open,
+			// which has none in a template. The editor shows a diagnostic only
+			// where the generated code maps back, so show it on the code the error
+			// reaches, such as a `<>`'s first child, or else the nearest code before
+			// it that does, not at the start of the file.
+			const nearest = nearest_reported_range(virtualCode, start_offset, error.raisedAt);
+			if (nearest) {
+				start = document.positionAt(nearest[0]);
+				end = document.positionAt(nearest[1]);
+			}
+		}
 	}
 
 	if (!start || !end) {
@@ -217,7 +231,10 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 	}
 
 	return {
-		severity: DiagnosticSeverity.Error,
+		// Collected diagnostics may declare `severity: 'warning'` (consumer
+		// compilers push warnings into `errors` alongside errors); surface those
+		// as real editor warnings instead of silently upgrading them.
+		severity: error.severity === 'warning' ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
 		range: { start, end },
 		message: error.message,
 		source: DIAGNOSTIC_SOURCE,
@@ -226,6 +243,68 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 		// to the generic marker.
 		code: error.code ?? 'tsrx-usage-error',
 	};
+}
+
+/**
+ * The generated range of the source token that reports diagnostics and starts
+ * nearest after `offset`, when it starts before `reach`. Otherwise the one that
+ * ends nearest before `offset`, or starts nearest after it when none ends
+ * before it. Of tokens the same distance away, the shortest. A mapping over
+ * whitespace only, such as the indentation before a template's output, is not
+ * code to show the error on.
+ * @param {TSRXVirtualCodeInstance} virtualCode
+ * @param {number} offset
+ * @param {number} [reach] Where the error's parser stopped, such as the token that ended a template
+ * @returns {[number, number] | null}
+ */
+function nearest_reported_range(virtualCode, offset, reach = offset) {
+	/** @type {{ range: [number, number], distance: number, length: number } | null} */
+	let before = null;
+	/** @type {{ range: [number, number], distance: number, length: number, start: number } | null} */
+	let after = null;
+	for (const mapping of virtualCode.mappings ?? []) {
+		if (!mapping.data?.verification) continue;
+		for (let i = 0; i < mapping.sourceOffsets.length; i++) {
+			const source_start = mapping.sourceOffsets[i];
+			const length = mapping.lengths[i];
+			const generated_length = mapping.generatedLengths?.[i] ?? length;
+			// A hoisted sibling can leave a token a mapping that runs backwards in
+			// the generated code, and Volar drops a diagnostic on such a range.
+			if (length === 0 || generated_length <= 0) continue;
+			if (!/\S/.test(virtualCode.originalCode.slice(source_start, source_start + length))) {
+				continue;
+			}
+			const generated_start = mapping.generatedOffsets[i];
+			const ends_before = source_start + length <= offset;
+			if (!ends_before && source_start < offset) continue;
+			const candidate = {
+				/** @type {[number, number]} */
+				range: [generated_start, generated_start + generated_length],
+				distance: ends_before ? offset - (source_start + length) : source_start - offset,
+				length,
+				start: source_start,
+			};
+			if (ends_before) {
+				if (is_nearer(candidate, before)) before = candidate;
+			} else if (is_nearer(candidate, after)) {
+				after = candidate;
+			}
+		}
+	}
+	if (after && after.start < reach) return after.range;
+	return (before ?? after)?.range ?? null;
+}
+
+/**
+ * @param {{ distance: number, length: number }} candidate
+ * @param {{ distance: number, length: number } | null} best
+ */
+function is_nearer(candidate, best) {
+	return (
+		!best ||
+		candidate.distance < best.distance ||
+		(candidate.distance === best.distance && candidate.length < best.length)
+	);
 }
 
 /**

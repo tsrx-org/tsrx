@@ -3,10 +3,12 @@
 import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { resolve as path_resolve, isAbsolute } from 'node:path';
+import { normalizePath, parseSync } from 'vite';
 import { compile } from '@tsrx/solid';
 import { mergePlatformDefinitions, validatePlatform } from '@tsrx/core';
 import { resolveBuildPlatform } from '@tsrx/core/config';
 import { createDepScanLoadPlugin } from '@tsrx/core/vite/dep-scan';
+import { findUnconfiguredPlatformFlag, restartOnPlatformChange } from '@tsrx/core/vite/platform';
 import { createWorkerEntryMiddleware, stripWorkerEntryQuery } from '@tsrx/core/vite/worker';
 
 const DEFAULT_TSRX_PATTERN = /\.tsrx$/;
@@ -15,6 +17,22 @@ const VIRTUAL_TSX_SUFFIX = '.tsx';
 // Vite resolves relative `@import` and `url()` references in the extracted
 // CSS from the component's directory.
 const CSS_QUERY = '?tsrx-solid-css&lang.css';
+
+/**
+ * Whether Vite runs a hook for a server build. Vite 6+ names the environment;
+ * older versions only pass the `ssr` flag, which vite-plugin-solid reads and
+ * Vite 6+ still passes.
+ *
+ * @param {unknown} context the hook's `this`
+ * @param {{ ssr?: boolean } | undefined} options the hook's options
+ * @returns {boolean}
+ */
+function is_server_build(context, options) {
+	const consumer = /** @type {{ environment?: { config?: { consumer?: string } } } | undefined} */ (
+		context
+	)?.environment?.config?.consumer;
+	return consumer ? consumer === 'server' : !!options?.ssr;
+}
 
 /**
  * Vite plugin that compiles `.tsrx` files to Solid-flavoured TSX via
@@ -38,16 +56,20 @@ export function tsrxSolid(options = {}) {
 	const include_pattern = options.include ?? DEFAULT_TSRX_PATTERN;
 	const compile_options = { runtimeImports: options.runtimeImports, platform };
 
+	/** @type {import('@tsrx/core/config').BuildPlatformResolutionOptions} */
+	let platform_resolution = {};
+
 	/** @param {import('vite').UserConfig} config */
 	function resolve_platform(config) {
-		platform = resolveBuildPlatform({
+		platform_resolution = {
 			root: config.root ?? process.cwd(),
 			tsconfig:
 				options.tsconfig ??
 				/** @type {{ tsconfig?: string }} */ (/** @type {unknown} */ (config)).tsconfig,
 			platform: explicit_platform,
 			integration: '@tsrx/vite-plugin-solid',
-		});
+		};
+		platform = resolveBuildPlatform(platform_resolution);
 		compile_options.platform = platform;
 	}
 
@@ -97,37 +119,40 @@ export function tsrxSolid(options = {}) {
 		name: '@tsrx/vite-plugin-solid',
 		enforce: 'pre',
 
-		config(config = /** @type {import('vite').UserConfig} */ ({})) {
-			resolve_platform(config);
-			return {
-				...(platform === undefined
-					? {}
-					: {
-							define: mergePlatformDefinitions(config.define, platform, {
-								integration: 'Vite',
+		config: {
+			order: 'post',
+			handler(config = /** @type {import('vite').UserConfig} */ ({})) {
+				resolve_platform(config);
+				return {
+					...(platform === undefined
+						? {}
+						: {
+								define: mergePlatformDefinitions(config.define, platform, {
+									integration: 'Vite',
+								}),
 							}),
-						}),
-				optimizeDeps: {
-					rolldownOptions: {
-						// The scan runs its own jsx transform over the tsx the
-						// dep-scan plugin hands back, and it defaults to react's
-						// automatic runtime — which no Solid project has installed,
-						// so the scan would fail on an unresolvable
-						// `react/jsx-dev-runtime`. Solid's own jsx handling belongs
-						// to `vite-plugin-solid` downstream; the scan only needs the
-						// imports, so leave the jsx alone.
-						transform: { jsx: 'preserve' },
-						plugins: [
-							createDepScanLoadPlugin({
-								name: '@tsrx/vite-plugin-solid:dep-scan',
-								isVirtual: is_virtual,
-								toRealPath: to_real_path,
-								compile: (code, id) => compile(code, id, compile_options),
-							}),
-						],
+					optimizeDeps: {
+						rolldownOptions: {
+							// The scan runs its own jsx transform over the tsx the
+							// dep-scan plugin hands back, and it defaults to react's
+							// automatic runtime — which no Solid project has installed,
+							// so the scan would fail on an unresolvable
+							// `react/jsx-dev-runtime`. Solid's own jsx handling belongs
+							// to `vite-plugin-solid` downstream; the scan only needs the
+							// imports, so leave the jsx alone.
+							transform: { jsx: 'preserve' },
+							plugins: [
+								createDepScanLoadPlugin({
+									name: '@tsrx/vite-plugin-solid:dep-scan',
+									isVirtual: is_virtual,
+									toRealPath: to_real_path,
+									compile: (code, id) => compile(code, id, compile_options),
+								}),
+							],
+						},
 					},
-				},
-			};
+				};
+			},
 		},
 
 		configEnvironment(name, config = /** @type {import('vite').EnvironmentOptions} */ ({})) {
@@ -144,6 +169,7 @@ export function tsrxSolid(options = {}) {
 		},
 
 		configureServer(server) {
+			restartOnPlatformChange(server, platform_resolution, () => platform);
 			server.middlewares.use(createWorkerEntryMiddleware(is_tsrx_source));
 		},
 
@@ -155,7 +181,17 @@ export function tsrxSolid(options = {}) {
 			// worker plugin reads it back to set the entry up as a worker.
 			const path = stripWorkerEntryQuery(source);
 			const worker_query = source.slice(path.length);
-			if (is_virtual(path)) return source;
+			if (is_virtual(path)) {
+				// Vitest can ask for a module by its root-relative URL. Anchor the id
+				// to the file, or imports from the module resolve against the root.
+				// Vite's resolver spells it (real path, `/` separators), so the file
+				// has one module id however it is reached.
+				const real_path = to_real_path(path);
+				if (real_path === path.slice(0, -VIRTUAL_TSX_SUFFIX.length)) return source;
+				const resolved = await this.resolve(real_path, importer, { ...options, skipSelf: true });
+				const id = resolved && !resolved.external ? resolved.id : real_path;
+				return normalizePath(id) + VIRTUAL_TSX_SUFFIX + worker_query;
+			}
 
 			// Rewrite tsrx source imports to their virtual `<path>.tsx` form
 			// so downstream extension-based plugins pick the module up as TSX.
@@ -178,10 +214,24 @@ export function tsrxSolid(options = {}) {
 					: path_resolve(root_dir, path.replace(/^\/+/, ''));
 				return absolute_source + VIRTUAL_TSX_SUFFIX + worker_query;
 			}
-			return null;
+
+			// A package export or an extensionless import can still resolve to
+			// a `.tsrx` file.
+			if (source.startsWith('\0') || source.includes('?')) return null;
+			const resolved = await this.resolve(source, importer, { ...options, skipSelf: true });
+			if (
+				resolved &&
+				!resolved.id.startsWith('\0') &&
+				!resolved.id.includes('?') &&
+				is_tsrx_source(resolved.id)
+			) {
+				return { ...resolved, id: resolved.id + VIRTUAL_TSX_SUFFIX };
+			}
+			// Hand the resolution over, so Vite does not resolve the import again.
+			return resolved;
 		},
 
-		async load(id) {
+		async load(id, load_options) {
 			if (id.includes(CSS_QUERY)) {
 				const key = id.split('?')[0];
 				return css_cache.get(key) ?? '';
@@ -191,7 +241,12 @@ export function tsrxSolid(options = {}) {
 
 			const real_path = to_real_path(path);
 			const source = await readFile(real_path, 'utf-8');
-			let { code, css, map } = compile(source, real_path, compile_options);
+			let { code, css, map } = compile(source, real_path, {
+				...compile_options,
+				// With `ssr` on, as for `solid({ ssr: true })`, vite-plugin-solid
+				// compiles a server build to babel-preset-solid's SSR output.
+				ssr: options.ssr === true && is_server_build(this, load_options),
+			});
 
 			if (css) {
 				css_cache.set(real_path, css);
@@ -205,8 +260,28 @@ export function tsrxSolid(options = {}) {
 			return { code, map };
 		},
 
-		handleHotUpdate(ctx) {
+		transform(code, id) {
+			if (platform !== undefined) return null;
+			const flag = findUnconfiguredPlatformFlag(code, id, parseSync);
+			if (flag) this.error(flag, flag.pos);
+			return null;
+		},
+
+		async handleHotUpdate(ctx) {
 			if (!is_tsrx_source(ctx.file)) return;
+			// CSS can reload before the virtual JS, so refresh its selector hash first.
+			// A file that doesn't compile keeps its last good CSS, and the reloaded
+			// module's `load` reports the error, as before this refresh.
+			try {
+				const { css } = compile(await ctx.read(), ctx.file, compile_options);
+				if (css) {
+					css_cache.set(ctx.file, css);
+				} else {
+					css_cache.delete(ctx.file);
+				}
+			} catch {
+				// Keep the last good CSS.
+			}
 			// Invalidate the virtual `<path>.tsx` modules so Vite re-runs `load`,
 			// looked up by file to include a worker entry's query-suffixed id.
 			// Also invalidate the virtual CSS module — Vite doesn't cascade

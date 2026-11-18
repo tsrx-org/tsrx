@@ -11,8 +11,19 @@ const __dirname = path.dirname(__filename);
 const TURBOPACK_JS_LOADER = path.join(__dirname, 'loader.js');
 const TURBOPACK_CSS_LOADER = path.join(__dirname, 'css-loader.js');
 const TURBOPACK_PLATFORM_LOADER = path.join(__dirname, 'platform-loader.js');
+const TURBOPACK_CLIENT_BOUNDARY_LOADER = path.join(__dirname, 'client-boundary-loader.js');
 const DEFAULT_RESOLVE_EXTENSIONS = ['.tsrx', '.tsx', '.ts', '.jsx', '.js', '.mjs', '.json'];
 const CSS_QUERY = '?tsrx-css&lang.css';
+const CLIENT_QUERY = '?tsrx-client&lang.tsx';
+// Whitespace and comments between the tokens of a directive prologue.
+const PROLOGUE_GAP = String.raw`(?:\s|\/\/[^\n]*(?:\n|$)|\/\*[\s\S]*?\*\/)*`;
+// A directive string, which may contain escapes.
+const DIRECTIVE_STRING = String.raw`(?:'(?:[^'\\\n]|\\[\s\S])*'|"(?:[^"\\\n]|\\[\s\S])*")`;
+// A `'use client'` directive in the directive prologue, after any comments
+// and other directives. The client boundary loader checks the parsed module.
+const CLIENT_DIRECTIVE = new RegExp(
+	`^${PROLOGUE_GAP}(?:${DIRECTIVE_STRING}${PROLOGUE_GAP}(?:;${PROLOGUE_GAP})?)*(?:'use client'|"use client")`,
+);
 const PLATFORM_SOURCE_GLOBS = [
 	'*.js',
 	'*.jsx',
@@ -69,8 +80,34 @@ export function create_tsrx_react_turbopack_rule(options = {}) {
 }
 
 /**
+ * Next turns a `'use client'` module into a client reference that imports
+ * `./<file name>`, and for a renamed module that is the renamed name, such as
+ * `./App.tsrx.tsx`, which does not exist. This rule renames the module to
+ * `App.tsrx?tsrx-client&lang.tsx` instead, so the client reference resolves
+ * to `App.tsrx` with the client query. The renamed module re-exports that
+ * compiled module, so the client reference and direct imports from client
+ * modules share one module instance.
+ *
+ * @returns {{ condition: { all: any[] }, loaders: string[], as: string }}
+ */
+export function create_tsrx_react_turbopack_client_rule() {
+	return {
+		condition: {
+			all: [
+				{ not: 'foreign' },
+				{ not: { query: CSS_QUERY } },
+				{ not: { query: CLIENT_QUERY } },
+				{ content: CLIENT_DIRECTIVE },
+			],
+		},
+		loaders: [TURBOPACK_CLIENT_BOUNDARY_LOADER],
+		as: `*${CLIENT_QUERY}`,
+	};
+}
+
+/**
  * @param {TsrxReactTurbopackOptions} [options]
- * @returns {{ condition: { all: any[] }, loaders: Array<string | { loader: string, options: TsrxReactTurbopackOptions }>, type: string }}
+ * @returns {{ condition: { all: any[] }, loaders: Array<string | { loader: string, options: TsrxReactTurbopackOptions }>, as: string }}
  */
 export function create_tsrx_react_turbopack_css_rule(options = {}) {
 	options = normalize_options(options);
@@ -79,7 +116,10 @@ export function create_tsrx_react_turbopack_css_rule(options = {}) {
 			all: [{ not: 'foreign' }, { query: CSS_QUERY }],
 		},
 		loaders: [with_loader_options(TURBOPACK_CSS_LOADER, options)],
-		type: 'css',
+		// Renaming the module to `*.css` (instead of setting `type: 'css'`) routes
+		// it through Next's own CSS rule, which links the stylesheet into the page
+		// when a server component imports it.
+		as: '*.css',
 	};
 }
 
@@ -124,6 +164,8 @@ function merge_resolve_extensions(resolve_extensions) {
  */
 function merge_tsrx_rule(existing_rule, options) {
 	const rules = [
+		// Renames the module, so it must run before the compile rule.
+		create_tsrx_react_turbopack_client_rule(),
 		create_tsrx_react_turbopack_rule(options),
 		create_tsrx_react_turbopack_css_rule(options),
 	];
@@ -137,6 +179,7 @@ function merge_tsrx_rule(existing_rule, options) {
  *
  * The helper installs loader-backed `*.tsrx` rules that compile TSRX to TSX,
  * route component-local `<style>` blocks through a sibling virtual CSS import,
+ * give `'use client'` modules a client boundary module Next can reference,
  * and then hand the TSX output back to Turbopack so Next's React pipeline can
  * finish the JSX transform.
  *

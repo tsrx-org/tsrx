@@ -60,6 +60,17 @@ describe('TSRX compile errors are shown once', () => {
 		expect(fresh.filter([compile_error], [compile_error, mapper])).toEqual([]);
 		expect(fresh.mapper_seen).toBe(true);
 	});
+
+	it("keeps the server's warnings once the mapper has reported, as the mapper sends errors only", () => {
+		const { code, message } = TSRX_ERRORS.CODE_BLOCK_EXPRESSION_CHILD;
+		// VS Code's `DiagnosticSeverity`: 0 is an error, 1 a warning.
+		const warning = { source: 'TSRX', code, message, severity: 1 };
+		const error = { ...compile_error, severity: 0 };
+		const dedupe = new CompileErrorDedupe();
+		expect(dedupe.filter([warning, error], [warning, error, mapper])).toEqual([warning]);
+		expect(dedupe.mapper_seen).toBe(true);
+		expect(dedupe.filter([warning, error], [warning, error])).toEqual([warning]);
+	});
 });
 
 /**

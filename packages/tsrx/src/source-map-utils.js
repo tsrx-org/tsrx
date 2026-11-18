@@ -216,6 +216,34 @@ function maybe_get_generated_position(src_line, src_column, src_to_gen_map) {
 }
 
 /**
+ * The generated position where a node that starts at a source position starts.
+ * esrap prints a block's `{` with a segment for the source position right after
+ * it, then a line break and an indent. A statement written right after the `{`
+ * (`{user.a.b;`) starts at that same source position, so the position after the
+ * generated `{`, at the end of its line, comes first. A node's text never starts
+ * with a line break, so take the first position that isn't at the end of a line.
+ * @param {number} src_line - 1-based line number in source
+ * @param {number} src_column - 0-based column number in source
+ * @param {SourceToGeneratedMap} src_to_gen_map - Lookup map
+ * @param {number[]} gen_line_offsets - Generated line start offsets
+ * @returns {GeneratedPosition | Error} Generated position
+ */
+function maybe_get_node_start_position(src_line, src_column, src_to_gen_map, gen_line_offsets) {
+	const positions = src_to_gen_map.get(`${src_line}:${src_column}`);
+	if (!positions || positions.length === 0) {
+		return maybe_get_generated_position(src_line, src_column, src_to_gen_map);
+	}
+	return (
+		positions.find(
+			(position) =>
+				position.line >= gen_line_offsets.length ||
+				loc_to_offset(position.line, position.column, gen_line_offsets) !==
+					gen_line_offsets[position.line] - 1,
+		) ?? positions[0]
+	);
+}
+
+/**
  * Look up generated position for a given source position
  * @param {number} src_line - 1-based line number in source
  * @param {number} src_column - 0-based column number in source
@@ -250,7 +278,8 @@ export function loc_to_offset(line, column, line_offsets) {
 }
 
 /**
- * Converts line/column positions to byte offsets
+ * Line starts for esrap's generated source-map coordinates, which count LF only.
+ * Offsets are UTF-16 code units.
  * @param {string} text
  * @returns {number[]}
  */
@@ -260,6 +289,20 @@ export function build_line_offsets(text) {
 		if (text[i] === '\n') {
 			offsets.push(i + 1);
 		}
+	}
+	return offsets;
+}
+
+/**
+ * Line starts for parser locations in authored JavaScript/TypeScript. Unlike
+ * esrap's generated coordinates, these count every ECMAScript line terminator.
+ * @param {string} source
+ * @returns {number[]}
+ */
+export function build_source_line_offsets(source) {
+	const offsets = [0];
+	for (const match of source.matchAll(/\r\n|[\r\n\u2028\u2029]/g)) {
+		offsets.push(match.index + match[0].length);
 	}
 	return offsets;
 }
@@ -307,7 +350,12 @@ function __maybe_get_mapping_from_node(
 	const src_length = src_max_len || src_end_offset - src_start_offset;
 	const loc = /** @type {AST.SourceLocation} */ (node.loc);
 
-	const gen_loc = maybe_get_generated_position(loc.start.line, loc.start.column, src_to_gen_map);
+	const gen_loc = maybe_get_node_start_position(
+		loc.start.line,
+		loc.start.column,
+		src_to_gen_map,
+		gen_line_offsets,
+	);
 	if (gen_loc instanceof Error) {
 		return gen_loc;
 	}
@@ -317,7 +365,22 @@ function __maybe_get_mapping_from_node(
 	if (gen_end_loc instanceof Error) {
 		return gen_end_loc;
 	}
-	const gen_end_offset = loc_to_offset(gen_end_loc.line, gen_end_loc.column, gen_line_offsets);
+	let gen_end_offset = loc_to_offset(gen_end_loc.line, gen_end_loc.column, gen_line_offsets);
+	// When the start is a later position than the first (see
+	// `maybe_get_node_start_position`), a node that ends where it starts, as an
+	// empty one does, ends at that start too, not before it.
+	if (
+		gen_end_offset < gen_start_offset &&
+		gen_loc !== src_to_gen_map.get(`${loc.start.line}:${loc.start.column}`)?.[0]
+	) {
+		for (const position of src_to_gen_map.get(`${loc.end.line}:${loc.end.column}`) ?? []) {
+			const offset = loc_to_offset(position.line, position.column, gen_line_offsets);
+			if (offset >= gen_start_offset) {
+				gen_end_offset = offset;
+				break;
+			}
+		}
+	}
 
 	const gen_length = gen_max_len || gen_end_offset - gen_start_offset;
 	return {

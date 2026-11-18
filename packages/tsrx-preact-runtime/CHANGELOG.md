@@ -1,5 +1,64 @@
 # @tsrx/preact-runtime
 
+## 0.2.0
+
+### Minor Changes
+
+- [#1116](https://github.com/tsrx-org/tsrx/pull/1116)
+  [`334af09`](https://github.com/tsrx-org/tsrx/commit/334af09f6686dcc619796c0911debacbe6ab307f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React, Preact and
+  Hono, the editor now types the `@catch` binding as `unknown` instead of `Error`,
+  as Vue already does ([#1076](https://github.com/tsrx-org/tsrx/issues/1076)). The
+  binding is the thrown value as it is, which can be a string, `null` or anything
+  else. On Hono, `@tsrx/hono/error-boundary` and `@tsrx/hono/dom/error-boundary`
+  now declare their own `TsrxErrorBoundary` type over Hono's `ErrorBoundary`,
+  whose `fallbackRender` is typed `(error: Error)`.
+
+  Code that type-checked before can now fail: `@catch (e) { <p>{e.message}</p> }`
+  reports TS18046 (`'e' is of type 'unknown'`), and an annotation such as
+  `@catch (e: Error)` reports TS2322. To migrate, drop the annotation and check
+  the value before reading its properties, for example
+  `e instanceof Error ? e.message : String(e)`.
+
+### Patch Changes
+
+- [#1114](https://github.com/tsrx-org/tsrx/pull/1114)
+  [`c49216e`](https://github.com/tsrx-org/tsrx/commit/c49216e86d15b68c4d84f8763691418d74ad8744)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On React, Preact and
+  Hono, a `@try` body's setup statements now run inside its boundary, as they
+  already do on Solid and Vue. A synchronous throw in the body, such as
+  `const data = load();`, renders the `@catch` fallback instead of escaping the
+  boundary, and `use(promise)` called in the body shows the `@pending` fallback
+  instead of leaving the root blank
+  ([#510](https://github.com/tsrx-org/tsrx/issues/510)). The compiled body renders
+  through a new `TsrxTryBody` component from the new `try-body` runtime modules
+  (`@tsrx/react/try-body`, `@tsrx/preact/try-body`, `@tsrx/hono/try-body` and the
+  matching `-runtime` packages). These modules import nothing, so a `@try` with
+  only `@pending` still works in React Server Components. Each `@try` site is
+  keyed, so two `@try` blocks rendered in the same place, such as the arms of an
+  `@if`, no longer share boundary state or body hooks. A body that uses `await` or
+  `yield` still runs inline in the enclosing function, which has to settle it.
+
+  `@catch` now also catches a thrown `null` on React and Preact
+  ([#847](https://github.com/tsrx-org/tsrx/issues/847)). Preact itself turns a
+  `null` or `undefined` thrown while rendering into a `TypeError`, so on Preact
+  the value arrives unchanged only when it is thrown from an effect.
+
+- Updated dependencies
+  [[`2bc4f1f`](https://github.com/tsrx-org/tsrx/commit/2bc4f1fc5fcb9863c926ab3d01b0407e89bbf639),
+  [`bf6d334`](https://github.com/tsrx-org/tsrx/commit/bf6d3349a59f8ec1769d5a2f789801af7cd74ff7),
+  [`2b465b4`](https://github.com/tsrx-org/tsrx/commit/2b465b432b515c07047e3eadeb66ff34df95de2d),
+  [`ced2603`](https://github.com/tsrx-org/tsrx/commit/ced260375637359686e521cce628be3057d455df),
+  [`9ff7b5d`](https://github.com/tsrx-org/tsrx/commit/9ff7b5d5f80e7697896d91d5674ccccb389a890d),
+  [`6b207b6`](https://github.com/tsrx-org/tsrx/commit/6b207b65e8a339d5fe301c60e72db271ffb9a572),
+  [`2473538`](https://github.com/tsrx-org/tsrx/commit/247353854e918f119dafe88f6474a2738cb82ed8),
+  [`0ca1023`](https://github.com/tsrx-org/tsrx/commit/0ca10232569e9beaad7d1d0d53d209e6520385fa),
+  [`153b526`](https://github.com/tsrx-org/tsrx/commit/153b5267ad6445abdb81f85d5ad32409d6101d7e),
+  [`384972f`](https://github.com/tsrx-org/tsrx/commit/384972fcdd5eaeb09b92a852bb3d9ee186689286),
+  [`0ee439a`](https://github.com/tsrx-org/tsrx/commit/0ee439a5d94e071ecae594229f61e9b5ee022296),
+  [`56dd6f5`](https://github.com/tsrx-org/tsrx/commit/56dd6f573f9c7c822db9d33313317bed16f7fa45)]:
+  - @tsrx/runtime@0.2.5
+
 ## 0.1.12
 
 ### Patch Changes

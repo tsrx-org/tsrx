@@ -1,4 +1,9 @@
+import { resolveConfig } from 'vite';
 import { tsrxReact } from '../src/index.js';
+import { tsrxPreact } from '../../vite-plugin-preact/src/index.js';
+import { tsrxSolid } from '../../vite-plugin-solid/src/index.js';
+import { tsrxVue } from '../../vite-plugin-vue/src/index.js';
+import { tsrxHono } from '../../vite-plugin-hono/src/index.js';
 
 describe('@tsrx/vite-plugin-react basic', () => {
 	it('forwards direct runtime imports to the compiler', async () => {
@@ -141,4 +146,102 @@ describe('@tsrx/vite-plugin-react basic', () => {
 		expect(invalidated).toEqual([css_module]);
 		expect(modules).toContain(css_module);
 	});
+
+	it('does not compile a file imported only as `?raw` during hot updates', async () => {
+		const plugin = tsrxReact();
+		const id = '/virtual/Example.tsrx';
+		const raw_module = { id: `${id}?raw` };
+		const handle_hot_update = /** @type {(ctx: any) => Promise<any[]>} */ (plugin.handleHotUpdate);
+		const modules = await handle_hot_update({
+			file: id,
+			modules: [raw_module],
+			read: async () => 'export function Example() @{ <section>',
+			server: { moduleGraph: { getModuleById: () => undefined } },
+		});
+
+		expect(modules).toEqual([raw_module]);
+	});
+
+	it('keeps the stylesheet when a styled file imported only as `?raw` stops compiling', async () => {
+		const plugin = tsrxReact();
+		const id = '/virtual/Example.tsrx';
+		const css_module = { id: `${id}?tsrx-css&lang.css` };
+		/** @type {unknown[]} */
+		const invalidated = [];
+		await plugin.transform(
+			`export function Example() @{
+				<>
+					<style>.a { color: red; }</style>
+					<p class="a">hi</p>
+				</>
+			}`,
+			id,
+		);
+
+		// Vite keeps the stylesheet module of the earlier component import after
+		// the file's importers switch to `?raw`.
+		const broken_source = 'export function Example() @{ <section>';
+		const ctx = {
+			file: id,
+			modules: [{ id }, { id: `${id}?raw` }, css_module],
+			read: async () => broken_source,
+			server: {
+				moduleGraph: {
+					/** @param {string} module_id */
+					getModuleById: (module_id) => (module_id === css_module.id ? css_module : undefined),
+					/** @param {unknown} module */
+					invalidateModule: (module) => invalidated.push(module),
+				},
+			},
+		};
+		const handle_hot_update = /** @type {(ctx: any) => Promise<any[]>} */ (plugin.handleHotUpdate);
+
+		await expect(handle_hot_update(ctx)).resolves.toBe(ctx.modules);
+		expect(invalidated).toEqual([]);
+		expect(plugin.load(css_module.id)).toContain('color: red;');
+		// A component import still reports the error when Vite transforms it again.
+		await expect(plugin.transform(broken_source, id)).rejects.toThrow("Unclosed tag '<section>'");
+	});
+});
+
+describe('Vite platform environment composition', () => {
+	it.each([
+		['React', () => tsrxReact({ platform: 'web' })],
+		['Preact', () => tsrxPreact({ platform: 'web' })],
+		['Solid', () => tsrxSolid({ platform: 'web' })],
+		['Vue', () => tsrxVue({ platform: 'web' })],
+		['Hono', () => tsrxHono({ platform: 'web' })],
+	])(
+		'composes late environment defaults before root resolution for %s',
+		async (_, create_plugin) => {
+			const resolved = await resolveConfig(
+				{
+					configFile: false,
+					envFile: false,
+					plugins: [
+						create_plugin(),
+						{
+							name: 'late-environment-defaults',
+							config: () => ({
+								define: {
+									'import.meta.env': JSON.stringify({ STORYBOOK: '"true"' }),
+									'import.meta.env.STORYBOOK': '"true"',
+								},
+							}),
+						},
+					],
+				},
+				'serve',
+			);
+			const flags = { web: true, ios: false, android: false };
+			expect(resolved.define['import.meta.env']).toBe(
+				JSON.stringify({ STORYBOOK: '"true"', platform: flags }),
+			);
+			expect(resolved.define['import.meta.env.platform']).toBe(JSON.stringify(flags));
+			expect(resolved.define['import.meta.env.platform.web']).toBe(true);
+			expect(resolved.environments.client.define['import.meta.env.platform']).toBe(
+				JSON.stringify(flags),
+			);
+		},
+	);
 });

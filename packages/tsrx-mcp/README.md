@@ -84,7 +84,8 @@ Add the generic config above to your Codex MCP configuration.
 - `inspect-project` - inspect target signals, TSRX packages, tooling, scripts, and
   likely project commands.
 - `compile-tsrx` - compile TSRX code with the inferred or explicit target compiler
-  and return diagnostics.
+  and return diagnostics. Platform flags use the `tsrx.platform` from the nearest
+  `tsconfig.json` (the hosted endpoint does not read one).
 - `format-tsrx` - format TSRX code using the official Prettier plugin.
 - `analyze-tsrx` - compile TSRX code and convert common diagnostics into
   target-neutral authoring advice with linked docs resources.

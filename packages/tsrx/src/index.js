@@ -165,6 +165,7 @@ export {
 	with_platform_types as withPlatformTypes,
 } from './transform/platform.js';
 export { with_deferred_imports as withDeferredImports } from './transform/imports.js';
+export { is_reference as isReference } from './utils/is-reference.js';
 export {
 	add_jsx_setup_declaration as addJsxSetupDeclaration,
 	collect_param_bindings as collectParamBindings,
@@ -175,16 +176,27 @@ export {
 	create_script_body as createScriptBody,
 	build_return_expression as buildReturnExpression,
 	createJsxTransform,
+	DYNAMIC_FACTORY_LOCAL,
+	DYNAMIC_IMPORT_LOCAL,
+	ERROR_BOUNDARY_INTERNAL_NAME,
 	extract_jsx_setup_declarations as extractJsxSetupDeclarations,
+	FRAGMENT_INTERNAL_NAME,
+	for_of_pattern_reads_index as forOfPatternReadsIndex,
+	get_for_of_shadowed_names as getForOfShadowedNames,
+	insert_after_directives as insertAfterDirectives,
 	is_component_like_element,
 	is_svg_tag_name as isSvgTagName,
 	is_mathml_tag_name as isMathmlTagName,
+	lower_spread_ref_bags as lowerSpreadRefBags,
 	MAP_ITERABLE_INTERNAL_NAME,
 	MERGE_REFS_INTERNAL_NAME,
 	merge_duplicate_refs as mergeDuplicateRefs,
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	return_value_body_to_expression as returnValueBodyToExpression,
+	source_mentions_identifier as sourceMentionsIdentifier,
+	SPREAD_REF_BAGS_INTERNAL_NAME,
+	SUSPENSE_INTERNAL_NAME,
 	validate_at_most_one_ref_attribute as validateAtMostOneRefAttribute,
 	wrap_edge_whitespace as wrapEdgeWhitespace,
 } from './transform/jsx/index.js';
@@ -214,6 +226,7 @@ export {
 	create_compile_error,
 	create_generated_identifier,
 	create_null_literal,
+	destructure_for_of_item,
 	flatten_switch_consequent,
 	get_for_of_iteration_params,
 	identifier_to_jsx_name,
@@ -234,6 +247,8 @@ export {
 	annotate_with_hash as annotateWithHash,
 	annotate_component_with_hash as annotateComponentWithHash,
 	add_hash_class as addHashClass,
+	MERGE_SPREAD_CLASS_INTERNAL_NAME,
+	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 } from './transform/scoping.js';
 export {
 	convert_source_map_to_mappings as convertSourceMapToMappings,

@@ -232,9 +232,8 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 
 	it('throws an unclosed tag first when not collecting, and keeps its recovery', async () => {
 		// Collect and loose mode record the unclosed tag and keep parsing, as before,
-		// and then stop at the missing `}`. Only loose mode recovers the body of an
-		// unclosed `<style>`; collect mode reads it as markup, where `{ color` is an
-		// expression container that the `:` doesn't close.
+		// and then stop at the missing `}`. Both recover the body of an unclosed
+		// `<style>`, which runs to the end of the input here (#1305).
 		const style = 'export function App() @{\n  <>\n    <style>\n      .a { color: red; }\n';
 		const section = 'export function App() @{\n  @if (ok) {\n    <section>\n';
 		const div = '{ <div>';
@@ -246,7 +245,7 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 
 		expect(outcomes).toEqual([
 			thrown(TSRX_ERRORS.UNCLOSED_TAG, style.indexOf('\n      .a')),
-			thrown(TS_ERRORS.TOKEN_EXPECTED, style.indexOf(': red')),
+			thrown(TS_ERRORS.TOKEN_EXPECTED, style.length),
 			thrown(TS_ERRORS.TOKEN_EXPECTED, style.length),
 			thrown(TSRX_ERRORS.UNCLOSED_TAG, section.length),
 			thrown(TS_ERRORS.TOKEN_EXPECTED, section.length),
@@ -292,12 +291,12 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 			['x = [{ a: 1 ];', TS_ERRORS.UNEXPECTED_TOKEN, '1:12'],
 			['foo(() => {\n  a();\n);\n', TS_ERRORS.UNEXPECTED_TOKEN, '3:0'],
 			['const o = {\n  a: 1\nconst b = 2;\n', TS_ERRORS.UNEXPECTED_TOKEN, '3:0'],
-			['class A {\n  m() {\n    a();\n\n  n() {}\n}\n', TS_ERRORS.UNEXPECTED_TOKEN, '5:6'],
+			['class A {\n  m() {\n    a();\n\n  n() {}\n}\n', TS_ERRORS.TOKEN_EXPECTED, '5:6'],
 			['enum E { A B }', TS_ERRORS.UNEXPECTED_TOKEN, '1:11'],
 			['import { a b } from "x";', TS_ERRORS.UNEXPECTED_TOKEN, '1:11'],
 			["import a from './a.json' with { type: 'json' x };", TS_ERRORS.UNEXPECTED_TOKEN, '1:45'],
 			['type M = { [K in T]: X; Y };', TS_ERRORS.UNEXPECTED_TOKEN, '1:24'],
-			['type M = { [K in T]: X Y };', TS_ERRORS.UNEXPECTED_TOKEN, '1:23'],
+			['type M = { [K in T]: X Y };', TS_ERRORS.TOKEN_EXPECTED, '1:23'],
 			["x = 'abc", 'TS1002', '1:4'],
 			[
 				'export function App() @{\n  @try {\n    <b />\n  } @catch (e) {\n    <p />\n  } finally {\n  }\n}',
@@ -330,8 +329,8 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
 				'3:0',
 			],
-			['{ const', TS_ERRORS.UNEXPECTED_TOKEN, '1:7'],
-			['{ let', UPSTREAM_ERRORS.LET_RESERVED, '1:2'],
+			['{ const', TS_ERRORS.VARIABLE_DECLARATION_LIST_EMPTY, '1:7'],
+			['{ let', TS_ERRORS.STRICT_MODE_RESERVED_WORD, '1:2'],
 		];
 		const outcomes = await parse_in_worker(
 			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),

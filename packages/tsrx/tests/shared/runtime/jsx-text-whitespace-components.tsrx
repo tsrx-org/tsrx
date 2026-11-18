@@ -200,6 +200,13 @@ export function JsxTextWhitespaceApp() @{
 			 
 			<i />
 		</span>}</div>
+		// A container adds no text of its own around the element it renders.
+		// prettier-ignore
+		<div class="ws-container-last-child">{show && <span>a</span>}</div>
+		// prettier-ignore
+		<div class="ws-container-last-child-empty">{show && <span />}</div>
+		// prettier-ignore
+		<div class="ws-container-before-sibling">{show && <span />}<b /></div>
 		<SwitchText kind="a" />
 		<SwitchText kind="z" />
 		<div>{pickBySwitch('a')}</div>
@@ -285,6 +292,21 @@ export const jsx_text_whitespace_cases = [
 		'a space after a container in an element in a directive body in a container',
 		'.ws-container-directive',
 		'1 2',
+	],
+	[
+		'an element a container renders as the last child',
+		'.ws-container-last-child',
+		'<span>a</span>',
+	],
+	[
+		'an empty element a container renders as the last child',
+		'.ws-container-last-child-empty',
+		'<span></span>',
+	],
+	[
+		'an element a container renders before a sibling',
+		'.ws-container-before-sibling',
+		'<span></span><b></b>',
 	],
 	['a space after an opening tag in an @switch case', '.ws-switch-after-open', ' 1'],
 	['a space after a closing tag in an @switch case', '.ws-switch-after-close', '<b>2</b> 3'],

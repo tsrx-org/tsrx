@@ -1,9 +1,11 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import ts from 'typescript';
 import { afterEach, describe, expect, it } from 'vitest';
+import { ignore_directives } from '../src/diagnostic-directives.js';
 import { create_tsrx_content_mapper, to_diagnostic, validate_options } from '../src/mapper.js';
-import { DiagnosticDirectivePolicy, SpanMapKind } from '../src/protocol.js';
+import { DiagnosticDirectivePolicy, SpanMapFeature, SpanMapKind } from '../src/protocol.js';
 import { blank_script_bodies } from '@tsrx/typescript-plugin/src/transform.js';
 import { MAPPER_CODES, TS_ERRORS, TSRX_ERRORS } from '@tsrx/core/diagnostics';
 import { fileURLToPath } from 'node:url';
@@ -31,9 +33,19 @@ function fixture(name) {
 describe('validate_options', () => {
 	it('accepts the documented options', () => {
 		expect(
-			validate_options({ compiler: '@tsrx/react', platform: 'ios', languageFeatures: false }),
+			validate_options({
+				compiler: '@tsrx/react',
+				platform: 'ios',
+				languageFeatures: false,
+				verificationMappings: true,
+			}),
 		).toEqual({
-			options: { compiler: '@tsrx/react', platform: 'ios', languageFeatures: false },
+			options: {
+				compiler: '@tsrx/react',
+				platform: 'ios',
+				languageFeatures: false,
+				verificationMappings: true,
+			},
 			optionDiagnostics: [],
 		});
 		expect(validate_options(undefined).optionDiagnostics).toEqual([]);
@@ -44,6 +56,7 @@ describe('validate_options', () => {
 			compiler: './local.js',
 			platform: 'tv',
 			languageFeatures: 'yes',
+			verificationMappings: 1,
 			bogus: 1,
 		});
 		expect(options).toEqual({});
@@ -51,8 +64,10 @@ describe('validate_options', () => {
 			['compiler'],
 			['platform'],
 			['languageFeatures'],
+			['verificationMappings'],
 			['bogus'],
 		]);
+		expect(optionDiagnostics[3].messageText).toBe('"verificationMappings" must be a boolean.');
 		expect(optionDiagnostics.every((d) => d.code === MAPPER_CODES.INVALID_CONFIG)).toBe(true);
 		expect(validate_options([]).optionDiagnostics[0].path).toEqual([]);
 	});
@@ -108,6 +123,102 @@ describe('to_diagnostic', () => {
 });
 
 describe('create_tsrx_content_mapper', () => {
+	const template_features = SpanMapFeature.SignatureHelp | SpanMapFeature.Completion;
+	it.each([
+		'const style = css`color: red`; const empty = css``;',
+		'const style = css`same${css`same${x+y}same`}same${x}same`; const empty = css`${x}${y}`;',
+		'const é = "😀";\r\nconst style = css`😀\r\n${x+y}\rnext${z}\u2028\\n\\`\\${literal}\u2029end`;',
+	])('maps complete generated template tokens to their authored positions in %s', (content) => {
+		const result = create_tsrx_content_mapper().transform({
+			fileName: path.join(consumer_fixture_dir, 'Template.tsrx'),
+			content,
+		});
+		expect(result.diagnostics).toBeUndefined();
+		/** @param {string} text */
+		function template_tokens(text) {
+			const file = ts.createSourceFile(
+				'Template.tsx',
+				text,
+				ts.ScriptTarget.Latest,
+				true,
+				ts.ScriptKind.TSX,
+			);
+			/** @type {Array<[number, number]>} */
+			const tokens = [];
+			/** @param {ts.Node} node */
+			function visit(node) {
+				if (
+					ts.isNoSubstitutionTemplateLiteral(node) ||
+					ts.isTemplateHead(node) ||
+					ts.isTemplateMiddle(node) ||
+					ts.isTemplateTail(node)
+				) {
+					tokens.push([node.getStart(file), node.end]);
+				}
+				ts.forEachChild(node, visit);
+			}
+			visit(file);
+			return tokens;
+		}
+		const original = template_tokens(content);
+		const generated = template_tokens(result.text);
+		expect(generated).toHaveLength(original.length);
+		for (let index = 0; index < generated.length; index++) {
+			const [start, end] = generated[index];
+			const [original_start, original_end] = original[index];
+			expect(result.text.slice(start, end)).toBe(content.slice(original_start, original_end));
+			const span = result.mappings.find(
+				([offset, length, , , kind]) =>
+					kind === SpanMapKind.Verbatim && offset <= start && end <= offset + length,
+			);
+			expect(span, `mapping for literal token ${index}`).toBeDefined();
+			if (span) {
+				expect(span[2] + start - span[0]).toBe(original_start);
+				expect(span[5] & template_features).toBe(template_features);
+			}
+		}
+	});
+
+	it.each(['theme', 'theme+size', 'theme    +    size', '@{ const x = theme; <span>{x}</span> }'])(
+		'maps template text before, between and after the interpolation %s',
+		(expression) => {
+			const mapper = create_tsrx_content_mapper();
+			const content = 'const style = css`color: ${' + expression + '}; padding: ${size}px;`;';
+			const result = mapper.transform({
+				fileName: path.join(consumer_fixture_dir, 'Template.tsrx'),
+				content,
+			});
+			expect(result.diagnostics).toBeUndefined();
+			for (const text of ['color: ', '; padding: ', 'px;']) {
+				const start = result.text.indexOf(text);
+				expect(start).toBeGreaterThanOrEqual(0);
+				const span = result.mappings.find(
+					([offset, length, , , kind]) =>
+						kind === SpanMapKind.Verbatim &&
+						offset <= start &&
+						start + text.length <= offset + length,
+				);
+				expect(span, `mapping for ${JSON.stringify(text)}`).toBeDefined();
+				if (span) {
+					expect(span[2] + start - span[0]).toBe(content.indexOf(text));
+					expect(span[5] & template_features).toBe(template_features);
+				}
+			}
+			for (let index = 1; index < result.mappings.length; index++) {
+				const previous = result.mappings[index - 1];
+				expect(result.mappings[index][0]).toBeGreaterThanOrEqual(previous[0] + previous[1]);
+			}
+			for (const [start, length, original, original_length, kind] of result.mappings) {
+				if (kind === SpanMapKind.Verbatim) {
+					expect(length).toBe(original_length);
+					expect(result.text.slice(start, start + length)).toBe(
+						content.slice(original, original + original_length),
+					);
+				}
+			}
+		},
+	);
+
 	it('negotiates UTF-16 and refuses hosts that cannot speak it', () => {
 		const mapper = create_tsrx_content_mapper();
 		expect(mapper.initialize({ positionEncodings: ['utf-8', 'utf-16'] })).toEqual({
@@ -262,6 +373,95 @@ export { rest };
 		expect(generated_start <= default_at && default_at < generated_end).toBe(true);
 	});
 
+	it("holds an unclosed tag's directive where the parser stopped, and only that error's", () => {
+		const first = { type: 'ExpressionStatement', start: 0, end: 6 };
+		const second = { type: 'ExpressionStatement', start: 7, end: 20 };
+		const source_ast = /** @type {any} */ ({
+			type: 'Program',
+			start: 0,
+			end: 20,
+			body: [first, second],
+		});
+		const mappings = /** @type {any} */ ([
+			{ sourceOffsets: [0], generatedOffsets: [0], lengths: [6], generatedLengths: [6] },
+			{ sourceOffsets: [7], generatedOffsets: [7], lengths: [13], generatedLengths: [13] },
+		]);
+		/** @param {string} code */
+		const directive_for = (code) =>
+			ignore_directives(
+				/** @type {any} */ ([{ code, pos: 1, end: 3, raisedAt: 12 }]),
+				source_ast,
+				mappings,
+				20,
+				' '.repeat(20),
+			)?.directives.map(([start, length]) => [start, length]);
+
+		expect(directive_for(TSRX_ERRORS.UNCLOSED_TAG.code)).toEqual([[7, 13]]);
+		// Only an unclosed tag's `raisedAt` says where the parser stopped.
+		expect(directive_for('OTHER1')).toEqual([[0, 6]]);
+	});
+
+	it("doesn't join a tag's ranges across an anchor", () => {
+		const source_ast = /** @type {any} */ ({ type: 'Program', start: 0, end: 20, body: [] });
+		/**
+		 * @param {number} source
+		 * @param {number} generated
+		 * @param {Record<string, unknown>} [customData]
+		 */
+		const mapping = (source, generated, customData = {}) => ({
+			sourceOffsets: [source],
+			generatedOffsets: [generated],
+			lengths: [3],
+			generatedLengths: [3],
+			data: { customData },
+		});
+		const directives = ignore_directives(
+			/** @type {any} */ ([
+				{ code: TSRX_ERRORS.UNCLOSED_TAG.code, pos: 10, end: 13, raisedAt: 21 },
+			]),
+			source_ast,
+			/** @type {any} */ ([
+				mapping(10, 0),
+				mapping(10, 8),
+				mapping(15, 4, { diagnosticAnchor: true }),
+			]),
+			20,
+			' '.repeat(20),
+		)?.directives;
+
+		expect(directives?.map(([, , start, end]) => [start, end])).toEqual([
+			[0, 3],
+			[8, 11],
+		]);
+	});
+
+	it("keeps an older compiler's range when nothing holds its unclosed tag", () => {
+		const source_ast = /** @type {any} */ ({ type: 'Program', start: 0, end: 20, body: [] });
+		// A mapping of the whole file, the same length on both sides by chance.
+		const mappings = /** @type {any} */ ([
+			{
+				sourceOffsets: [0],
+				generatedOffsets: [0],
+				lengths: [20],
+				generatedLengths: [20],
+				data: { customData: {} },
+			},
+		]);
+		/** @param {number} raisedAt */
+		const directive_for = (raisedAt) =>
+			ignore_directives(
+				/** @type {any} */ ([{ code: TSRX_ERRORS.UNCLOSED_TAG.code, pos: 10, end: 12, raisedAt }]),
+				source_ast,
+				mappings,
+				20,
+				' '.repeat(20),
+			)?.directives.map(([start, length]) => [start, length]);
+
+		expect(directive_for(12)).toEqual([[10, 2]]);
+		// Reported on its tag, it covers the tag's own code, which that mapping isn't.
+		expect(directive_for(21)).toBeUndefined();
+	});
+
 	it("never hides another component's errors when an error's element holds a <script> body", () => {
 		// The body is checked as a block at the end of the generated file, and the
 		// React target hoists the static <script> element above the component, so
@@ -296,11 +496,38 @@ export function B() {
 				result.text.slice(generated_start, generated_end),
 			]),
 		).toEqual([
-			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), '<script></script>;'],
+			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), '<script></script>'],
 			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), "{'x'}"],
 			[content.slice(content.indexOf('<>'), content.indexOf('</>') + 3), 'const s = 1;'],
 		]);
 		const wrong_at = result.text.indexOf('wrong: string');
+		expect(directives.some(([, , start, end]) => start <= wrong_at && wrong_at < end)).toBe(false);
+	});
+
+	it("never hides another component's errors when the first component is unclosed", () => {
+		const mapper = create_tsrx_content_mapper();
+		mapper.openProject({
+			configFileName: path.join(consumer_fixture_dir, 'tsconfig.json'),
+			projectHandle: 'p1',
+			compilerOptions: {},
+		});
+		const content = `export const A = () => <div>
+export function B() @{
+	const wrong: string = 1;
+	<span />
+}
+`;
+		const result = mapper.transform({
+			fileName: path.join(consumer_fixture_dir, 'Unclosed.tsrx'),
+			content,
+			projectHandle: 'p1',
+		});
+		const directives = result.diagnosticDirectives?.directives ?? [];
+		expect(directives.map(([start, length]) => content.slice(start, start + length))).toEqual([
+			'div',
+		]);
+		const wrong_at = result.text.indexOf('wrong: string');
+		expect(wrong_at).toBeGreaterThan(-1);
 		expect(directives.some(([, , start, end]) => start <= wrong_at && wrong_at < end)).toBe(false);
 	});
 

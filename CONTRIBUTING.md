@@ -70,6 +70,11 @@ pnpm copy-tree-sitter-queries
 pnpm rules:generate
 ```
 
+`pnpm copy-tree-sitter-queries` updates the Neovim copy of the tree-sitter
+queries. The Zed copy stays matched to the grammar commit that Zed builds (`rev`
+in `packages/zed-plugin/extension.toml`): Version Packages moves that rev and
+copies the queries together (`pnpm sync-zed-grammar-rev`).
+
 ## Code and documentation
 
 - Treat `.tsrx` as the canonical component extension.

@@ -1,6 +1,7 @@
 # @tsrx/turbopack-plugin-react
 
-Turbopack integration for compiling `@tsrx/react` `.tsrx` files in Next.js.
+Turbopack integration for compiling `@tsrx/react` `.tsrx` files in Next.js 16.2 or
+later.
 
 ## Installation
 
@@ -21,7 +22,18 @@ The helper installs Turbopack rules that compile `.tsrx` modules with
 `@tsrx/react` and return the result as `*.tsx` so Next's React pipeline can finish
 the JSX transform. Sibling-scoped `<style>` blocks (each styles its siblings and
 everything below them) are emitted through a sibling `?tsrx-css&lang.css` import
-and handed back to Turbopack as a CSS module.
+and handed back to Turbopack as a `*.css` module, so Next links the stylesheet
+into App Router pages. In the Pages Router, Next rejects this import with "Global
+CSS cannot be imported from files other than your Custom <App>".
+
+A module that starts with `'use client'` is imported through a small module that
+keeps the directive and re-exports the compiled component, so Next can create the
+client reference for it.
+
+A `'use server'` `.tsrx` module imported by a client component fails when the
+action runs, with "Could not parse module '…/actions.tsrx.tsx', file not found".
+Import the actions in a server component and pass them down, define them inline in
+a server component, or write the actions file as `.ts`.
 
 It also adds `.tsrx` to `turbopack.resolveExtensions`.
 

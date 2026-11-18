@@ -58,6 +58,23 @@ export const DiagnosticDirectivePolicy = /** @type {const} */ ({ Ignore: 0, Expe
  */
 
 /**
+ * Not part of the TypeScript 7 protocol: what the `verificationMappings` mapper
+ * option adds to a transform result for command-line checkers. Every compiler
+ * mapping marked for diagnostics, in Volar's `CodeMapping` shape and in the
+ * transform's order, so `new SourceMap(verificationMappings).toSourceRange(start,
+ * end, true)` from `@volar/source-map` maps a diagnostic as `tsrx-tsc` does.
+ * Points (offsets with zero length) belong to the mapping they are listed in.
+ * Empty when the transform has a mapping whose verification is a `shouldReport`
+ * callback, which can't be serialized.
+ * @typedef {object} VerificationMapping
+ * @property {number[]} sourceOffsets
+ * @property {number[]} generatedOffsets
+ * @property {number[]} lengths
+ * @property {number[]} generatedLengths
+ * @property {{ verification: true }} data
+ */
+
+/**
  * @typedef {object} MapperDiagnostic
  * @property {number} start Offset into the original text (UTF-16 code units).
  * @property {number} length
@@ -94,6 +111,7 @@ export const DiagnosticDirectivePolicy = /** @type {const} */ ({ Ignore: 0, Expe
  * 	diagnostics?: MapperDiagnostic[],
  * 	diagnosticDirectives?: DiagnosticDirectives,
  * 	supplemental?: MappedOutput[],
+ * 	verificationMappings?: VerificationMapping[],
  * }} TransformResult
  */
 

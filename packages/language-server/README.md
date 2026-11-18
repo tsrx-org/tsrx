@@ -5,8 +5,8 @@
 
 Language Server Protocol implementation for `.tsrx` files. It uses Volar and
 TypeScript to provide diagnostics, completions, hover information, navigation,
-document symbols, highlighting, and automatic closing tags. It formats `.tsrx`
-files with the project's Prettier (see [Formatting](#formatting)).
+document symbols, code folding, highlighting, and automatic closing tags. It
+formats `.tsrx` files with the project's Prettier (see [Formatting](#formatting)).
 
 The language server resolves the compiler selected by the active TypeScript
 project, so the same tooling works with React, Preact, Solid, Vue, Ripple, Octane,
@@ -69,7 +69,7 @@ pnpm add -D typescript
 When the server does not find `typescript`, or finds TypeScript 7, it still starts
 and shows one warning that says what it found and what to do. `.tsrx` files then
 do not get type checking, hover or completions. TSRX compile errors, CSS in
-`<style>`, the outline, formatting and closing tags still work.
+`<style>`, the outline, code folding, formatting and closing tags still work.
 
 To use another TypeScript than the one it finds, pass that TypeScript's `lib`
 folder:
@@ -105,8 +105,8 @@ the `classic` backend cannot run it. For `.tsrx` files on TypeScript 7:
    `.tsrx` files, with the initialization option `runExternalCode: true`. It
    serves types, hover, completions and errors, TSRX compile errors included.
 3. Run this server next to it with `--typescript-backend=native`, for what
-   TypeScript 7 does not do: CSS in `<style>`, the outline, formatting and closing
-   tags. It loads no TypeScript in that mode.
+   TypeScript 7 does not do: CSS in `<style>`, the outline, code folding,
+   formatting and closing tags. It loads no TypeScript in that mode.
 
 ## TypeScript backends
 
@@ -262,8 +262,23 @@ Code's TypeScript closes the tags, or on TypeScript 7 the extension sends
 ## Restarts after package changes
 
 When a `package.json` or a lockfile changes (`pnpm install`, for example), the
-server must restart to load the TSRX compiler again. By default it exits with code
-0, and the editor must start it again.
+server must restart to load the TSRX compiler again. It waits until these files
+have stopped changing for a second, and at most ten seconds.
+
+Dev servers and builds write files under `node_modules` and framework build
+directories (`.next`, `.nuxt`, `.output`, `.svelte-kit`, `.turbo`, `.vercel`) all
+the time, so a file there restarts the server only when it shows that an install
+finished: the file a package manager writes at the end of an install
+(`node_modules/.modules.yaml`, `.package-lock.json`, `.yarn-state.yml` or
+`.yarn-integrity`), or the `package.json` of a package installed directly in a
+`node_modules` folder. A lockfile alone is not enough: `git pull` can change it
+before the install that changes the compiler. Paths are read relative to the
+workspace folder. By default the server exits with code 0, and the editor must
+start it again.
+
+On the `plugin` and `native` backends, the server watches only `.tsrx` files, JSON
+files, lockfiles and these install files: the editor's TypeScript reads the
+TypeScript and JavaScript sources.
 
 An editor that can restart the server itself sets the `restartNotification`
 initialization option. The server then sends a `tsrx/restartServer` notification

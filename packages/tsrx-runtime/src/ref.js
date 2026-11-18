@@ -1,6 +1,7 @@
-/** @import { MergeableRef, RefProp, RefValue, SpreadFalsy, SpreadProps } from '../types/ref' */
+/** @import { ClassValueKind, MergeableRef, MergeableRefValue, RefProp, RefValue, SpreadFalsy, SpreadProps } from '../types/ref' */
 
 import {
+	define_property,
 	has_own_property,
 	has_prototype_accessor,
 	is_array,
@@ -15,16 +16,32 @@ const EMPTY_SPREAD_PROPS = Object.freeze({});
 /**
  * Merge multiple refs (function refs and ref objects) into a single
  * callback ref. Used by React, Preact, and Vue targets when an element has
- * more than one `ref` attribute.
+ * more than one `ref` attribute, or a ref list such as `ref={[a, b]}`.
  * This is a public method and also used by the compiler to unite any refs with
  * any of the supported syntaxes.  It does not process spreads, that is delegated to
  * `normalize_spread_props`.
  *
+ * A ref list counts as the refs in it, and a value that is not a ref, such as
+ * the `false` of `cond && cb`, is left out.
+ *
  * @template [T=Element]
- * @param {...MergeableRef<T>} refs
+ * @param {...MergeableRefValue<T>} values
  * @returns {(node: T | null) => (() => void)}
  */
-export function mergeRefs(...refs) {
+export function mergeRefs(...values) {
+	/** @type {MergeableRef<T>[]} */
+	let refs = /** @type {MergeableRef<T>[]} */ (values);
+	for (const value of values) {
+		if (
+			value != null &&
+			typeof value !== 'function' &&
+			(typeof value !== 'object' || is_array(value))
+		) {
+			refs = [];
+			collect_live_refs(/** @type {RefValue<T>[]} */ (values), /** @type {RefValue<T>[]} */ (refs));
+			break;
+		}
+	}
 	if (refs.length === 2) {
 		return (node) => {
 			const first = refs[0];
@@ -290,9 +307,20 @@ export function merge_ref_props(...refs) {
  *
  * @template [T=Element]
  * @param {RefValue<T>[]} refs
+ * @param {boolean} [flatten] read ref lists as the refs in them, leave out
+ *   values that are not refs, and merge a lone ref object that sat in a list;
+ *   see `keeps_lone_ref`
  * @returns {RefValue<T>} the single surviving ref, or a callback applying all
  */
-function merge_ref_list(refs) {
+function merge_ref_list(refs, flatten = false) {
+	if (flatten) {
+		/** @type {RefValue<T>[]} */
+		const live = [];
+		collect_live_refs(refs, live);
+		return live.length === 1 && !keeps_lone_ref(live[0], refs)
+			? create_merged_ref(live)
+			: merge_ref_list(live);
+	}
 	if (refs.length <= 2) {
 		const first = refs[0];
 		const second = refs[1];
@@ -324,6 +352,18 @@ function merge_ref_list(refs) {
 		}
 	}
 
+	return create_merged_ref(refs);
+}
+
+/**
+ * A callback that applies each ref of a compacted list and returns a cleanup
+ * that clears them in the same order. It captures the list.
+ *
+ * @template [T=Element]
+ * @param {RefValue<T>[]} refs
+ * @returns {(node: T | null) => void | (() => void)}
+ */
+function create_merged_ref(refs) {
 	/**
 	 * @param {T | null} node
 	 * @returns {void | (() => void)}
@@ -359,6 +399,104 @@ function merge_ref_list(refs) {
 	}
 
 	return merged_ref_prop;
+}
+
+/**
+ * @typedef {{
+ *   next: WeakMap<object, MergedRefEntry> | undefined,
+ *   ref: RefValue<any> | undefined,
+ * }} MergedRefEntry
+ */
+
+/**
+ * `merge_element_refs` callbacks by their refs, one level per ref.
+ * @type {MergedRefEntry}
+ */
+const merged_element_refs = { next: undefined, ref: undefined };
+
+/**
+ * Merge the refs of one compiled element into its `ref`. A single ref comes back
+ * as itself, and the same refs give back the same callback, so a JSX runtime
+ * that applies a `ref` again whenever its identity changes applies them once
+ * rather than on every render. A ref list counts as the refs in it, so an
+ * inline `[a, b]` written each render gives back the same callback too, and a
+ * lone ref object in a list is merged rather than given back.
+ *
+ * Every element given the same refs shares the callback, so only a runtime
+ * that keeps a ref's cleanup per element can use it (React, Hono): Preact
+ * stores the cleanup on the function, where another element's would replace
+ * it. Solid ignores what a ref returns, so its spread bags share it too, through
+ * `normalize_spread_props_sharing_refs`.
+ *
+ * @template [T=Element]
+ * @param {...RefValue<T>} refs
+ * @returns {RefValue<T>}
+ */
+export function merge_element_refs(...refs) {
+	return merge_shared_ref_list(refs);
+}
+
+/**
+ * `merge_element_refs` for a ref list the caller has already collected.
+ *
+ * @template [T=Element]
+ * @param {RefValue<T>[]} refs
+ * @returns {RefValue<T>}
+ */
+function merge_shared_ref_list(refs) {
+	/** @type {RefValue<T>[]} */
+	const live = [];
+	collect_live_refs(refs, live);
+	if (live.length === 0 || (live.length === 1 && keeps_lone_ref(live[0], refs))) {
+		return live[0];
+	}
+
+	let entry = merged_element_refs;
+	for (const ref of live) {
+		const next = (entry.next ??= new WeakMap());
+		let child = next.get(/** @type {object} */ (ref));
+		if (child === undefined) {
+			child = { next: undefined, ref: undefined };
+			next.set(/** @type {object} */ (ref), child);
+		}
+		entry = child;
+	}
+	return (entry.ref ??= create_merged_ref(live));
+}
+
+/**
+ * Whether a merge that leaves one ref can give back that ref as itself: a
+ * callback, or a ref object passed as itself. A ref object from a ref list is
+ * merged instead, because a JSX runtime reads a bare ref object as its own
+ * kind: React sets `current` on a `{ value }` ref, and Vue ignores a plain one.
+ *
+ * @template T
+ * @param {RefValue<T>} ref
+ * @param {readonly RefValue<T>[]} refs the refs as the merge was given them
+ * @returns {boolean}
+ */
+function keeps_lone_ref(ref, refs) {
+	return typeof ref === 'function' || refs.includes(ref);
+}
+
+/**
+ * Collect the refs of a list, and of the lists in it, so the cache keys an
+ * inline `ref: [a, b]` by `a` and `b` rather than by a new array each render.
+ * Only a function or an object is a ref; `ref={cond && cb}` may be `false`.
+ *
+ * @template T
+ * @param {readonly RefValue<T>[]} refs
+ * @param {RefValue<T>[]} live
+ * @returns {void}
+ */
+function collect_live_refs(refs, live) {
+	for (const ref of refs) {
+		if (is_array(ref)) {
+			collect_live_refs(ref, live);
+		} else if (typeof ref === 'function' || (typeof ref === 'object' && ref !== null)) {
+			live.push(ref);
+		}
+	}
 }
 
 /**
@@ -406,6 +544,11 @@ function collect_ref_cleanups(ref_value, node, cleanups) {
 }
 
 /**
+ * Collect a spread's refs into one `ref`. A bag with no refs to merge comes back
+ * as itself, so a JSX runtime that reads a spread lazily, property by property
+ * (Solid's), keeps reading the original bag. That includes a bag whose only ref
+ * is a ref list, which Solid applies itself.
+ *
  * @param {object | SpreadFalsy} props a props bag, or the falsy value of a
  *   conditional spread such as `{...(enabled && { disabled: true })}`; `object`
  *   rather than an index signature so an interface-typed bag is accepted
@@ -413,6 +556,62 @@ function collect_ref_cleanups(ref_value, node, cleanups) {
  * @returns {SpreadProps | SpreadFalsy}
  */
 export function normalize_spread_props(props, ...outer_refs) {
+	return normalize_spread(props, outer_refs, false, merge_ref_list, false);
+}
+
+/**
+ * `normalize_spread_props` that merges a bag's refs with
+ * `merge_element_refs`, so a new bag carrying the same refs gets the same
+ * `ref`. Solid's `spread_ref_bags` compares each bag's `ref` with the one it
+ * applied last.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {...RefValue<Element>} outer_refs
+ * @returns {SpreadProps | SpreadFalsy}
+ */
+export function normalize_spread_props_sharing_refs(props, ...outer_refs) {
+	return normalize_spread(props, outer_refs, false, merge_shared_ref_list, false);
+}
+
+/**
+ * `normalize_spread_props` for a JSX runtime that copies the result where it is
+ * spread, as `jsx()` and `createElement` do. It returns the normalized copy even
+ * when the bag has no refs to merge, so the bag's getters are read once.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {...RefValue<Element>} outer_refs
+ * @returns {SpreadProps | SpreadFalsy}
+ */
+export function copy_spread_props(props, ...outer_refs) {
+	return normalize_spread(props, outer_refs, true, merge_ref_list, true);
+}
+
+/**
+ * `copy_spread_props` that merges a bag's refs as `merge_element_refs` does, so
+ * a new bag with the same refs gets the same `ref` and a JSX runtime that
+ * applies a `ref` again whenever its identity changes leaves it applied. As
+ * with `merge_element_refs`, only a runtime that keeps a ref's cleanup per
+ * element can use it (React, Hono).
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {...RefValue<Element>} outer_refs
+ * @returns {SpreadProps | SpreadFalsy}
+ */
+export function copy_spread_props_sharing_refs(props, ...outer_refs) {
+	return normalize_spread(props, outer_refs, true, merge_shared_ref_list, true);
+}
+
+/**
+ * @param {object | SpreadFalsy} props
+ * @param {Array<RefValue<Element>>} outer_refs a rest array owned by the caller
+ * @param {boolean} copy return the normalized copy even with nothing to merge
+ * @param {(refs: RefValue<Element>[], flatten?: boolean) => RefValue<Element>} merge
+ *   merges an owned list of the bag's refs into one
+ * @param {boolean} merge_ref_lists merge a `ref` that is a ref list even when
+ *   it is the bag's only ref, for a JSX runtime that takes a single ref
+ * @returns {SpreadProps | SpreadFalsy}
+ */
+function normalize_spread(props, outer_refs, copy, merge, merge_ref_lists) {
 	// A non-object carries no refs to collect. Returning it unchanged leaves the
 	// spread to treat it exactly as a native JSX spread would.
 	if (props === null || (typeof props !== 'object' && typeof props !== 'function')) {
@@ -425,11 +624,24 @@ export function normalize_spread_props(props, ...outer_refs) {
 	/** @type {SpreadProps} */
 	const next = {};
 	let existing_ref;
+	let has_existing_ref = false;
 
 	const keys = Reflect.ownKeys(source);
 	for (let i = 0; i < keys.length; i++) {
 		const key = keys[i];
 		if (!property_is_enumerable.call(source, key)) {
+			continue;
+		}
+
+		// Solid's `children` getter creates the children each time it is read,
+		// and children are never a ref, so the copy reads them through `source`
+		// only when the JSX runtime does.
+		if (key === 'children') {
+			Object.defineProperty(next, key, {
+				get: () => source.children,
+				enumerable: true,
+				configurable: true,
+			});
 			continue;
 		}
 
@@ -444,6 +656,7 @@ export function normalize_spread_props(props, ...outer_refs) {
 				}
 			} else {
 				existing_ref = /** @type {RefValue<Element>} */ (value);
+				has_existing_ref = true;
 			}
 			continue;
 		}
@@ -460,24 +673,33 @@ export function normalize_spread_props(props, ...outer_refs) {
 		next[key] = value;
 	}
 
-	if (refs === undefined && outer_refs.length === 0) {
-		return source;
+	const merges_ref_list = merge_ref_lists && is_array(existing_ref);
+	if (refs === undefined && outer_refs.length === 0 && !merges_ref_list) {
+		if (!copy) {
+			return source;
+		}
+		// Even `ref: undefined` is kept: a later spread's own `ref` key replaces
+		// an earlier spread's ref, as in native JSX.
+		if (has_existing_ref) {
+			next.ref = existing_ref;
+		}
+		return next;
 	}
 
 	let merged_ref;
 	if (refs === undefined) {
-		// `outer_refs` is a fresh rest array owned by this call; unshifting
+		// `outer_refs` is a fresh rest array owned by the caller; unshifting
 		// `existing_ref` into place avoids a second concatenated array.
 		if (existing_ref != null) {
 			outer_refs.unshift(existing_ref);
 		}
-		merged_ref = merge_ref_list(outer_refs);
+		merged_ref = merge(outer_refs, merges_ref_list);
 	} else if (existing_ref == null && outer_refs.length === 0) {
 		// A single collected ref survives unchanged without merge machinery.
 		// `refs` holds only `is_ref_prop`-verified non-null entries, so a lone
 		// entry can be returned directly instead of routing through
-		// `merge_ref_list`'s nullish filtering.
-		merged_ref = refs.length === 1 ? refs[0] : merge_ref_list(refs);
+		// `merge`'s filtering.
+		merged_ref = refs.length === 1 ? refs[0] : merge(refs);
 	} else {
 		if (existing_ref != null) {
 			refs.unshift(existing_ref);
@@ -485,9 +707,11 @@ export function normalize_spread_props(props, ...outer_refs) {
 		if (outer_refs.length !== 0) {
 			refs.push(...outer_refs);
 		}
-		merged_ref = merge_ref_list(refs);
+		merged_ref = merge(refs);
 	}
-	if (merged_ref !== undefined) {
+	// An empty list still replaces an earlier spread's ref, as its `ref` key
+	// would in native JSX.
+	if (merged_ref !== undefined || merges_ref_list) {
 		next.ref = merged_ref;
 	}
 
@@ -505,7 +729,38 @@ export function normalize_spread_props(props, ...outer_refs) {
  * @returns {SpreadProps | Exclude<SpreadFalsy, null | undefined | void>}
  */
 export function normalize_spread_props_for_ref_attr(props, ...outer_refs) {
-	const next = normalize_spread_props(props, ...outer_refs);
+	return hide_spread_ref(normalize_spread(props, outer_refs, false, merge_ref_list, true));
+}
+
+/**
+ * `normalize_spread_props_for_ref_attr` for a JSX runtime that copies the
+ * result where it is spread; see `copy_spread_props`.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {...RefValue<Element>} outer_refs
+ * @returns {SpreadProps | Exclude<SpreadFalsy, null | undefined | void>}
+ */
+export function copy_spread_props_for_ref_attr(props, ...outer_refs) {
+	return hide_spread_ref(normalize_spread(props, outer_refs, true, merge_ref_list, true));
+}
+
+/**
+ * `copy_spread_props_for_ref_attr` that merges a bag's refs as
+ * `merge_element_refs` does; see `copy_spread_props_sharing_refs`.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {...RefValue<Element>} outer_refs
+ * @returns {SpreadProps | Exclude<SpreadFalsy, null | undefined | void>}
+ */
+export function copy_spread_props_for_ref_attr_sharing_refs(props, ...outer_refs) {
+	return hide_spread_ref(normalize_spread(props, outer_refs, true, merge_shared_ref_list, true));
+}
+
+/**
+ * @param {SpreadProps | SpreadFalsy} next
+ * @returns {SpreadProps | Exclude<SpreadFalsy, null | undefined | void>}
+ */
+function hide_spread_ref(next) {
 	// The compiler reads `normalized.ref` for the ref attribute, which throws on
 	// a nullish spread; an empty bag spreads to nothing just the same. Other
 	// primitives read `ref` as `undefined` and pass through.
@@ -566,4 +821,169 @@ function is_dom_node(value) {
 			'nodeName' in value &&
 			typeof (/** @type {{ nodeName?: unknown }} */ (value).nodeName) === 'string')
 	);
+}
+
+/**
+ * Join the class a host spread passes an element with the scope classes TSRX
+ * adds to it. The compiler wraps each spread written after the element's
+ * class attribute, so the spread's class replaces the authored one, as in
+ * plain JSX, and the scope classes stay. A bag without a class comes back as
+ * itself, leaving the class attribute to apply. Otherwise the copy reads the
+ * bag through getters, so a JSX runtime that reads a spread lazily (Solid's)
+ * still tracks each prop, and the bag is never written to. The copy's class
+ * prop comes after the bag's other props.
+ *
+ * @param {object | SpreadFalsy} props
+ * @param {unknown} scope_class the element's scope hashes and applied classes,
+ *   or `null` for a spread written before the class attribute: the copy then
+ *   leaves out the bag's class so that the attribute applies
+ * @param {string} key the class prop the copy carries
+ * @param {string} [alias] another prop the target reads a class from, such as
+ *   `className` beside Preact's `class`; its class moves to `key` so the
+ *   element keeps one class prop
+ * @param {ClassValueKind} [kind='text'] how the target renders a class value;
+ *   see `join_scope_class`
+ * @returns {object | SpreadFalsy}
+ */
+export function merge_spread_class(props, scope_class, key, alias, kind = 'text') {
+	if (props === null || (typeof props !== 'object' && typeof props !== 'function')) {
+		return props;
+	}
+
+	const source = /** @type {SpreadProps} */ (props);
+	const keys = Reflect.ownKeys(source);
+	/** @type {PropertyKey[]} */
+	const class_keys = [];
+	for (let i = 0; i < keys.length; i++) {
+		const name = keys[i];
+		if ((name === key || name === alias) && property_is_enumerable.call(source, name)) {
+			class_keys.push(name);
+		}
+	}
+	if (class_keys.length === 0) {
+		return props;
+	}
+
+	/** @type {SpreadProps} */
+	const next = {};
+	for (let i = 0; i < keys.length; i++) {
+		const name = keys[i];
+		if (name === key || name === alias || !property_is_enumerable.call(source, name)) {
+			continue;
+		}
+		define_property(next, name, {
+			enumerable: true,
+			configurable: true,
+			get: () => source[name],
+		});
+	}
+	if (scope_class !== null) {
+		define_property(next, key, {
+			enumerable: true,
+			configurable: true,
+			get: () => join_class(read_class(source, class_keys), scope_class, kind),
+		});
+	}
+	return next;
+}
+
+/**
+ * Join an element's authored class with the scope classes TSRX adds to it, the
+ * way the runtime renders that class. A class the runtime would leave out
+ * gives just the scope classes. `kind` names how the runtime renders it:
+ *
+ * - `'text'` (React, Hono DOM): `null`, `undefined`, `false`, `true` and an
+ *   empty class are left out; any other value renders as text.
+ * - `'text-true'` (Preact): as `'text'`, except that `true` renders as text.
+ * - `'text-both'` (Hono's server): as `'text'`, except that `true` and
+ *   `false` render as text.
+ * - `'list'` (Solid, Vue): the class also takes an object or a list, which
+ *   joins as `[class, scope_class]`; any other value that is not a string is
+ *   left out.
+ *
+ * On Hono's server, a promise class (its `css` helper's) joins once it settles.
+ *
+ * @param {unknown} value the authored class
+ * @param {unknown} scope_class the element's scope hashes and applied classes
+ * @param {ClassValueKind} [kind='text']
+ * @returns {unknown}
+ */
+export function join_scope_class(value, scope_class, kind = 'text') {
+	return join_class(value, scope_class, kind);
+}
+
+/**
+ * Of a bag's class props, the last one with a value, as a runtime that reads
+ * either renders it.
+ *
+ * @param {SpreadProps} source
+ * @param {PropertyKey[]} class_keys
+ * @returns {unknown}
+ */
+function read_class(source, class_keys) {
+	for (let i = class_keys.length - 1; i >= 0; i--) {
+		const value = source[class_keys[i]];
+		if (value != null) {
+			return value;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * @param {unknown} value
+ * @param {unknown} scope_class
+ * @param {ClassValueKind} kind
+ * @returns {unknown}
+ */
+function join_class(value, scope_class, kind) {
+	if (value == null || value === '') {
+		return scope_class;
+	}
+	if (typeof value === 'boolean') {
+		return kind === 'text-both' || (value && kind === 'text-true')
+			? `${value} ${scope_class}`
+			: scope_class;
+	}
+	if (kind === 'list' && typeof value !== 'string') {
+		return typeof value === 'object' ? [value, scope_class] : scope_class;
+	}
+	// Hono's server renderer awaits a promise class, such as the one its `css`
+	// helper returns, so that one joins the scope classes once it settles.
+	// Anywhere else a class joins as text, as it would in the class attribute;
+	// Hono DOM's `css` promise then turns into its class name and inserts its
+	// rule.
+	if (kind === 'text-both' && value instanceof Promise) {
+		return value.then((settled) => join_settled_class(settled, scope_class, kind));
+	}
+	return `${value} ${scope_class}`;
+}
+
+/** @type {Record<string, string>} */
+const HTML_ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+/**
+ * Join the value a thenable class settles to. Hono's server `css` settles to
+ * an escaped `String` whose `callbacks` add its rule to `<Style />`; the
+ * joined class stays escaped and keeps those callbacks, so Hono still prints
+ * it as written and adds the rule.
+ *
+ * @param {unknown} settled
+ * @param {unknown} scope_class
+ * @param {ClassValueKind} kind
+ * @returns {unknown}
+ */
+function join_settled_class(settled, scope_class, kind) {
+	const escaped = /** @type {{ isEscaped?: unknown, callbacks?: unknown } | null} */ (settled);
+	if (typeof settled !== 'object' || escaped === null || !escaped.isEscaped) {
+		return join_class(settled, scope_class, kind);
+	}
+	const scope = String(scope_class).replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
+	const text = String(settled);
+	const joined = /** @type {String & { isEscaped?: boolean, callbacks?: unknown }} */ (
+		new String(text ? `${text} ${scope}` : scope)
+	);
+	joined.isEscaped = true;
+	joined.callbacks = escaped.callbacks;
+	return joined;
 }

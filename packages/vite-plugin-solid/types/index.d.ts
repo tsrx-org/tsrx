@@ -16,6 +16,15 @@ export interface TsrxSolidOptions {
 	 * set of `.tsrx` files that should go through this plugin.
 	 */
 	include?: RegExp;
+	/**
+	 * Set this as you set `vite-plugin-solid`'s own `ssr` option. With it on,
+	 * vite-plugin-solid compiles a server build to babel-preset-solid's SSR
+	 * output (`generate: 'ssr'`, `hydratable: true`), and TSRX2034 then also
+	 * reports a `yield` in a template value that output moves into an arrow.
+	 * A client build, and any build with it off, keeps the DOM output's rules.
+	 * Defaults to `false`.
+	 */
+	ssr?: boolean;
 }
 
 export function tsrxSolid(options?: TsrxSolidOptions): Plugin;

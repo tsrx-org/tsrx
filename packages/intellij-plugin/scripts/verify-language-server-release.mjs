@@ -21,16 +21,18 @@ export async function verifyPublishedLanguageServer({ rootDir = package_dir } = 
 	const installRoot = mkdtempSync(join(tmpdir(), 'tsrx-language-server-release-'));
 
 	try {
-		const result = run_npm([
-			'install',
-			`${package_name}@${expectedVersion}`,
-			'--prefix',
-			installRoot,
-			'--prefer-online',
-			'--no-audit',
-			'--no-fund',
-			'--ignore-scripts',
-		]);
+		const result = await installPublishedPackages({
+			args: [
+				'install',
+				`${package_name}@${expectedVersion}`,
+				'--prefix',
+				installRoot,
+				'--prefer-online',
+				'--no-audit',
+				'--no-fund',
+				'--ignore-scripts',
+			],
+		});
 		if (result.status !== 0) {
 			process.stderr.write(result.stderr);
 			process.stdout.write(result.stdout);
@@ -83,6 +85,35 @@ export async function waitForPublishedLanguageServer({
 		);
 		await wait(npm_retry_ms);
 	}
+}
+
+/**
+ * npm can serve the language server before a dependency published with it, such as
+ * `@tsrx/core`, and the install then fails with ETARGET or E404. This runs `npm`
+ * with `args` again while it fails that way, for about five minutes, and returns
+ * the last result.
+ */
+export async function installPublishedPackages({
+	args,
+	runNpm = run_npm,
+	wait = sleep,
+	logger = console,
+}) {
+	for (let attempt = 1; ; attempt++) {
+		const result = runNpm(args);
+		if (result.status === 0 || attempt === npm_attempts || !is_not_served_yet(result)) {
+			return result;
+		}
+		logger.log(
+			`npm does not serve a package the install needs yet (attempt ${attempt} of ${npm_attempts}); installing again in ${npm_retry_ms / 1000} seconds.`,
+		);
+		await wait(npm_retry_ms);
+	}
+}
+
+/** Whether npm failed because the registry doesn't serve a version or package yet. */
+function is_not_served_yet(result) {
+	return /\b(?:ETARGET|E404)\b/.test(`${result.stderr}${result.stdout}`);
 }
 
 export function readLanguageServerVersion(packageMetadata) {

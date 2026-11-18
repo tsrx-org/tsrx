@@ -49,3 +49,17 @@ Dynamic({
 	// @ts-expect-error Intrinsic element attributes keep their target-specific value types.
 	type: 'checkbox',
 });
+
+// The editor's type view writes a dynamic tag, `<{props.tag} id="d" />`, as a
+// `<Dynamic … />` element, which Hono must accept as a JSX component.
+declare const tag: 'div' | 'span';
+export const intrinsic_element = <Dynamic is={tag} id="d" />;
+export const component_element = <Dynamic is={Card} title="dynamic card" />;
+
+// @ts-expect-error A component's required props remain required on a dynamic tag.
+export const missing_card_element = <Dynamic is={Card} />;
+
+export const invalid_button_element = (
+	// @ts-expect-error Intrinsic element attributes keep their target-specific value types.
+	<Dynamic is="button" type="checkbox" />
+);

@@ -7,8 +7,8 @@
  *
  * The TSRX language server runs alongside it in `plugin` mode for snippets, CSS,
  * document symbols, CSS-class navigation, keyword highlights and formatting (with the
- * project's Prettier and `@tsrx/prettier-plugin`), and closes tags while
- * TypeScript 7 does not (`closing-tags.js`). A status item on `.tsrx` files names the
+ * project's Prettier and `@tsrx/prettier-plugin`), and closes tags on
+ * TypeScript 7 (`closing-tags.js`). A status item on `.tsrx` files names the
  * TypeScript that serves them, and a notice says what to do when none can
  * (`typescript-guidance.js`).
  * It also reports compile errors; `diagnostics.js` removes that copy once the native
@@ -30,6 +30,7 @@ import { register_source_definition_command } from './source-definition.js';
 import { register_project_config_command } from './project-config.js';
 import { register_import_commands } from './import-commands.js';
 import { CompileErrorDedupe } from './diagnostics.js';
+import { forward_needed_file_events } from './file-events.js';
 import { activate_typescript } from './typescript.js';
 import { activate_typescript_guidance } from './typescript-guidance.js';
 
@@ -145,6 +146,11 @@ export async function activate(context) {
 			closeTagsOnType: false,
 		},
 		middleware: {
+			workspace: {
+				didChangeWatchedFile: forward_needed_file_events((uri) =>
+					vscode.workspace.asRelativePath(vscode.Uri.parse(uri), false),
+				),
+			},
 			handleDiagnostics(uri, diagnostics, next) {
 				const all = vscode.languages.getDiagnostics(uri);
 				next(uri, dedupe.receive(uri.toString(), diagnostics, all, true));

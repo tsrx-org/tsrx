@@ -224,6 +224,10 @@ export function createParser(...plugins) {
 		const output_comments = collect ? options?.comments : undefined;
 
 		const { onComment, add_comments } = get_comment_handlers(source, comments);
+		/** @type {Array<[number, number]>} */
+		const text_comments = [];
+		/** @type {Array<[number, number]>} */
+		const text_read_as_code = [];
 		/** @type {AST.Program} */
 		let ast;
 
@@ -234,9 +238,14 @@ export function createParser(...plugins) {
 		// comments (`async /* function */ function`).
 		/** @type {Parse.KeywordToken[] | undefined} */
 		const keyword_tokens = options?.keywordTokens ? [] : undefined;
+		// Every token, for esrap's `tokens` print option: the editor output maps
+		// the keywords and punctuation it writes back to these source spans.
+		/** @type {Parse.Token[] | undefined} */
+		const tokens = keyword_tokens ? [] : undefined;
 		/** @type {Parse.Options['onToken'] | undefined} */
 		const onToken = keyword_tokens
 			? (token) => {
+					tokens?.push(token);
 					const is_function_keyword = token.type.keyword === 'function';
 					const is_async_name = token.type.label === 'name' && token.value === 'async';
 					if ((is_function_keyword || is_async_name) && token.loc) {
@@ -267,10 +276,16 @@ export function createParser(...plugins) {
 					collect,
 					errors: collect ? (options?.errors ?? []) : undefined,
 					loose: options?.loose || false,
+					textComments: text_comments,
+					textReadAsCode: text_read_as_code,
 				},
 			});
 		} catch (e) {
 			throw e;
+		}
+
+		if (text_comments.length > 0 || text_read_as_code.length > 0) {
+			drop_text_comments(ast, comments, text_comments, text_read_as_code);
 		}
 
 		if (output_comments) {
@@ -283,10 +298,59 @@ export function createParser(...plugins) {
 
 		if (keyword_tokens) {
 			ast.tsrx_keyword_tokens = keyword_tokens;
+			ast.tsrx_tokens = tokens;
 		}
 
 		return ast;
 	};
+}
+
+/**
+ * Drop the line comments the tokenizer recorded where template text reads
+ * text (`/* c *\/// c` after a directive, see `#readSkippedTemplateText` in
+ * the plugin), and the second copy of each comment read again, by the template
+ * there or as code in the text of an element left open (see
+ * `#rereadTrailingCodeOfUnclosedElement`). There, what the text read as a
+ * comment where the code has none goes too: in a string, a template literal or
+ * a regular expression (`'a // b'`), or in a comment (`/* b *\/` in
+ * `a;// /* b *\/`). The comments stay in source order.
+ * @param {AST.Program} ast
+ * @param {AST.CommentWithLocation[]} comments
+ * @param {Array<[number, number]>} text_comments
+ * @param {Array<[number, number]>} text_read_as_code
+ */
+function drop_text_comments(ast, comments, text_comments, text_read_as_code) {
+	const text = new Set(text_comments.map(([start, end]) => `${start}:${end}`));
+	/** @param {number} position */
+	const read_as_code = (position) =>
+		text_read_as_code.some(([start, end]) => position >= start && position < end);
+	/** @type {Array<[number, number]>} */
+	const literals = [];
+	if (comments.some((comment) => read_as_code(comment.start))) {
+		walk(/** @type {AST.Node} */ (ast), null, {
+			_(node, { next }) {
+				const { start, end } = /** @type {AST.NodeWithLocation} */ (node);
+				if ((node.type === 'Literal' || node.type === 'TemplateElement') && read_as_code(start)) {
+					literals.push([start, end]);
+				}
+				next();
+			},
+		});
+	}
+	const kept = comments.filter(
+		(comment) =>
+			!text.has(`${comment.start}:${comment.end}`) &&
+			!literals.some(([start, end]) => start <= comment.start && comment.start < end),
+	);
+	kept.sort((a, b) => a.start - b.start);
+	comments.length = 0;
+	let end = -1;
+	for (const comment of kept) {
+		// A second copy, or what the text read as a comment inside one
+		if (comment.start < end) continue;
+		comments.push(comment);
+		end = comment.end;
+	}
 }
 
 /**
@@ -1736,6 +1800,78 @@ export function get_comment_handlers(source, comments, index = 0) {
 	}
 
 	/**
+	 * The index of each entry of each list asked about, so that finding every
+	 * entry of a long list in it takes one pass over the list, not one each
+	 * @type {WeakMap<readonly unknown[], Map<unknown, number>>}
+	 */
+	const listIndexCache = new WeakMap();
+
+	/**
+	 * Where `entry` is in `list`, as `list.indexOf(entry)` finds it
+	 * @param {readonly unknown[]} list
+	 * @param {unknown} entry
+	 * @returns {number}
+	 */
+	function indexInList(list, entry) {
+		let indexes = listIndexCache.get(list);
+		if (!indexes) {
+			indexes = new Map();
+			for (let i = list.length - 1; i >= 0; i--) {
+				indexes.set(list[i], i);
+			}
+			listIndexCache.set(list, indexes);
+		}
+		return indexes.get(entry) ?? -1;
+	}
+
+	/**
+	 * The children of each code block asked about as one list: its setup
+	 * statements, then its render output
+	 * @type {WeakMap<AST.Node, AST.Node[]>}
+	 */
+	const codeBlockChildrenCache = new WeakMap();
+
+	/**
+	 * The empty `{}` children of each element or fragment asked about, in
+	 * source order
+	 * @type {WeakMap<AST.Node, (AST.Node & AST.NodeWithLocation)[]>}
+	 */
+	const emptyContainersCache = new WeakMap();
+
+	/**
+	 * Whether a comment lies in an empty `{}` child of an element or fragment
+	 * (see {@link isCommentInEmptyContainer}). Children don't overlap, so only
+	 * the last of those that starts before the comment can hold it.
+	 * @param {AST.CommentWithLocation} comment
+	 * @param {AST.Node & { children: AST.Node[] }} parent
+	 * @returns {boolean}
+	 */
+	function isCommentInEmptyChildContainer(comment, parent) {
+		let containers = emptyContainersCache.get(parent);
+		if (!containers) {
+			containers = /** @type {(AST.Node & AST.NodeWithLocation)[]} */ (
+				parent.children.filter(
+					(child) =>
+						child?.type === 'JSXExpressionContainer' &&
+						child.expression.type === 'JSXEmptyExpression',
+				)
+			).sort((a, b) => a.start - b.start);
+			emptyContainersCache.set(parent, containers);
+		}
+		let low = 0;
+		let high = containers.length;
+		while (low < high) {
+			const middle = (low + high) >> 1;
+			if (containers[middle].start <= comment.start) {
+				low = middle + 1;
+			} else {
+				high = middle;
+			}
+		}
+		return low > 0 && isCommentInEmptyContainer(comment, containers[low - 1]);
+	}
+
+	/**
 	 * Where a node starts for the comments before it, like Prettier's
 	 * `locStart`: a node whose decorators come before it starts at the first
 	 * of them, so that the comments after them lie in the node. That's an
@@ -2976,8 +3112,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 						const comment = comments[0];
 						if (
 							(jsxParent?.type === 'JSXElement' || jsxParent?.type === 'JSXFragment') &&
-							/** @type {AST.Node[]} */ (jsxParent.children).some((sibling) =>
-								isCommentInEmptyContainer(comment, sibling),
+							isCommentInEmptyChildContainer(
+								/** @type {AST.CommentWithLocation} */ (comment),
+								/** @type {AST.Node & { children: AST.Node[] }} */ (jsxParent),
 							)
 						) {
 							return;
@@ -3091,7 +3228,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 						// (`findExpressionIndexForComment` checks `TemplateLiteral` only), an
 						// own-line one leads the next type instead, if there is one.
 						if (parent?.type === 'TemplateLiteral') {
-							const index = parent.expressions.indexOf(/** @type {any} */ (node));
+							const index = indexInList(parent.expressions, node);
 							if (index >= 0) {
 								const nextQuasi = /** @type {AST.NodeWithLocation} */ (parent.quasis[index + 1]);
 								const nextType =
@@ -3220,7 +3357,12 @@ export function get_comment_handlers(source, comments, index = 0) {
 									// The render output is the sibling after the setup statements.
 									// Comments after the last node stay for the code block, which
 									// keeps them as inner comments.
-									node_array = parent.render ? [...parent.body, parent.render] : parent.body;
+									let children = codeBlockChildrenCache.get(parent);
+									if (!children) {
+										children = parent.render ? [...parent.body, parent.render] : parent.body;
+										codeBlockChildrenCache.set(parent, children);
+									}
+									node_array = children;
 									isCodeBlockChild = true;
 								} else if (parent.type === 'SwitchStatement') {
 									// The discriminant isn't a case. With no cases, it would count
@@ -3253,13 +3395,13 @@ export function get_comment_handlers(source, comments, index = 0) {
 									// aren't parameters. Like Prettier, a comment after the name
 									// trails it.
 									const params = /** @type {AST.Node[]} */ (getSignatureParameters(parent));
-									if (params.includes(node)) {
+									if (indexInList(params, node) >= 0) {
 										node_array = params;
 										isParam = true;
 									}
 								} else if (
 									parent.type === 'JSXOpeningElement' &&
-									parent.attributes.includes(/** @type {any} */ (node))
+									indexInList(parent.attributes, node) >= 0
 								) {
 									// A comment after the last attribute, before `>`, trails it
 									node_array = parent.attributes;
@@ -3269,7 +3411,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 								} else if (
 									(parent.type === 'ImportDeclaration' ||
 										parent.type === 'ExportNamedDeclaration') &&
-									parent.specifiers.includes(/** @type {any} */ (node))
+									indexInList(parent.specifiers, node) >= 0
 								) {
 									// A comment after the last specifier, before `}` or `from`,
 									// trails that specifier, as it does after the last element
@@ -3286,7 +3428,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 								// Empty statements take no comments, so look past them: the next
 								// sibling is the next real one, and the `;` of any before the
 								// comment ends this node, as in `a; ; // comment`
-								next_index = node_array.indexOf(node) + 1;
+								next_index = indexInList(node_array, node) + 1;
 								while (next_index > 0 && node_array[next_index]?.type === 'EmptyStatement') {
 									const empty = /** @type {AST.NodeWithLocation} */ (node_array[next_index]);
 									if (empty.end <= comments[0].start) {
@@ -3402,8 +3544,9 @@ export function get_comment_handlers(source, comments, index = 0) {
 								// ends the header: like Prettier, a comment after it leads the body,
 								// unless another `)` follows it (`if ((a) /* c */) b();`)
 								const isAfterStatementHeader =
-									slice.includes(')') &&
+									!!parent &&
 									endsStatementHeader(node, parent) &&
+									slice.includes(')') &&
 									getNextNonSpaceNonCommentCharacter(comments[0].end) !== ')';
 								// A comment after the `)` that ends the parent, as in
 								// `const x = (a >> 6) // c` without a `;`, lies outside the
@@ -3422,7 +3565,7 @@ export function get_comment_handlers(source, comments, index = 0) {
 									!isAfterParent &&
 									(opensNamedSpecifiers ? /^[,{ \t]*$/ : /^[,) \t]*$/).test(slice);
 								const onlyWhitespace = /^\s*$/.test(slice);
-								const hasBlankLine = includesBlankLine(slice);
+								const hasBlankLine = onlyWhitespace && includesBlankLine(slice);
 								const nodeEndLine = end_node.loc?.end?.line ?? null;
 								const commentStartLine = comments[0].loc?.start?.line ?? null;
 								const commentOnSameLine =

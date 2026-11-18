@@ -17,8 +17,9 @@ export interface TsrxErrorBoundaryComponent {
 	 * `content`, or the `fallback` once an error is caught. Typed as Vue's
 	 * `Block` so the component is a valid element under `vue-jsx-vapor`'s JSX.
 	 */
-	(props: TsrxErrorBoundaryProps): Block;
-	__setup(): void;
+	(props: TsrxErrorBoundaryProps, ctx?: unknown): Block;
+	props: string[];
+	__setup(props?: unknown, ctx?: unknown): void;
 }
 
 export const TsrxErrorBoundary: TsrxErrorBoundaryComponent;

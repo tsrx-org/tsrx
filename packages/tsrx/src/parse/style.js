@@ -127,7 +127,8 @@ class Parser {
  * }} location position of the `<style>` tag in the source file, and optionally
  * `body`, the file offset and 1-based line / 0-based column of the style body's
  * first character. With `body`, the sheet records `sourceStart` and a
- * file-relative `loc`, and diagnostics on its nodes carry file positions.
+ * file-relative `loc`, and diagnostics on its nodes carry file positions, as
+ * does a syntax error it throws.
  * @param {{ loose?: boolean }} options
  * @returns {AST.CSS.StyleSheet}
  */
@@ -145,7 +146,7 @@ export function parse_style(content, location, options) {
 		source: content,
 		hash: `tsrx-${strong_hash(hash_source)}`,
 		type: 'StyleSheet',
-		children: read_css_body(parser),
+		children: [],
 		start: 0,
 		end: content.length,
 		filename: location.filename,
@@ -159,21 +160,33 @@ export function parse_style(content, location, options) {
 		};
 	}
 
+	sheet.children = read_css_body(parser, sheet);
+
 	return sheet;
 }
 
 /**
  * The rules of a style body. A CSS syntax error gets its code
- * (`DIAGNOSTIC_CODES.CSS_SYNTAX`).
+ * (`DIAGNOSTIC_CODES.CSS_SYNTAX`) and the position where the parser stopped:
+ * `pos`, its offset in the file, and `loc`, its line and column, for a sheet
+ * with a `body` origin, and `pos` in the body for one without.
  * @param {Parser} parser
+ * @param {AST.CSS.StyleSheet} sheet
  * @returns {Array<AST.CSS.Rule | AST.CSS.Atrule>}
  */
-function read_css_body(parser) {
+function read_css_body(parser, sheet) {
 	try {
 		return read_body(parser);
 	} catch (error) {
 		if (error instanceof Error && !(/** @type {{ code?: string }} */ (error).code)) {
-			/** @type {{ code?: string }} */ (error).code = DIAGNOSTIC_CODES.CSS_SYNTAX;
+			const css_error = /** @type {Error & {
+				code?: string,
+				pos?: number,
+				loc?: { line: number, column: number },
+			}} */ (error);
+			css_error.code = DIAGNOSTIC_CODES.CSS_SYNTAX;
+			css_error.pos = (sheet.sourceStart ?? 0) + parser.index;
+			if (sheet.loc) css_error.loc = css_position(sheet, parser.index, sheet.loc.start);
 		}
 		throw error;
 	}

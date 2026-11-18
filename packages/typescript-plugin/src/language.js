@@ -35,8 +35,6 @@ const require = createRequire(import.meta.url);
 const root_dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const { log, logWarning, logError } = createLogging('[TSRX Language]');
-/** @type {Set<string>} */
-const loggedCompilationFailures = new Set();
 export const TSRX_EXTENSIONS = ['.tsrx'];
 /**
  * `[package name, package directory parts, supported extensions, package hints, entry candidates?]`.
@@ -362,6 +360,12 @@ export class TSRXVirtualCode {
 	originalCode = '';
 	/** @type {AST.Program | null} */
 	sourceAst = null;
+	/**
+	 * The `<script>` bodies of code (not data blocks) the transform appends to the
+	 * generated TSX as blocks; empty while the file has a fatal compile error.
+	 * @type {EmbeddedRegion[]}
+	 */
+	scriptRegions = [];
 	/** @type {boolean} */
 	isDotCompletionMode = false;
 	/** @type {unknown[]} */
@@ -414,6 +418,7 @@ export class TSRXVirtualCode {
 		this.fatalErrors = [];
 		this.usageErrors = [];
 		this.sourceAst = null;
+		this.scriptRegions = [];
 		this.isDotCompletionMode = false;
 
 		// Check if a single "." was typed using changeRange
@@ -497,9 +502,6 @@ export class TSRXVirtualCode {
 
 		if (result.fatalError) {
 			logError('TSRX compilation failed for', this.fileName, ':', result.fatalError);
-			if (process.env.TSRX_TSC === 'true') {
-				logTSRXErrors(this.fileName, [result.fatalError]);
-			}
 			this.fatalErrors.push(result.fatalError);
 			files_with_fatal_compile_error.add(normalize_file_name_key(this.fileName));
 		} else {
@@ -511,14 +513,11 @@ export class TSRXVirtualCode {
 
 		if (!result.fatalError && result.text) {
 			// Successful compilation - update everything
-			this.generatedCode = result.text;
+			this.generatedCode = hashbang_as_comment(result.text);
 			this.mappings = result.mappings;
 			this.usageErrors = result.errors;
 			this.sourceAst = result.sourceAst;
-
-			if (process.env.TSRX_TSC === 'true' && result.errors.length > 0) {
-				logTSRXErrors(this.fileName, result.errors);
-			}
+			this.scriptRegions = result.scriptRegions;
 
 			if (result.cssRegions.length > 0) {
 				log('Creating', result.cssRegions.length, 'CSS embedded codes');
@@ -557,7 +556,7 @@ export class TSRXVirtualCode {
 			// (or an unreliable one), since the dedicated diagnostic plugin would
 			// otherwise pin the error to offset 0 (top of file, off-screen) and the
 			// user would have no signal pointing at the actual problem.
-			this.generatedCode = newCode;
+			this.generatedCode = hashbang_as_comment(newCode);
 
 			// Create 1:1 mappings for the entire content.
 			//
@@ -702,6 +701,20 @@ export class TSRXVirtualCode {
 }
 
 /**
+ * Volar puts the generated code after blank lines as long as the source in the
+ * file TypeScript reads (in tsserver and `tsrx-tsc`), so a `#!` line there is no
+ * longer at the start of the file and TypeScript reads it as code: two
+ * expression statements without `;`. They count when TypeScript infers the
+ * semicolon style of an edit, so an import added to a file whose own statements
+ * have no `;` lost its `;`. A line comment of the same length keeps every offset.
+ * @param {string} code
+ * @returns {string}
+ */
+function hashbang_as_comment(code) {
+	return code.startsWith('#!') ? `//${code.slice(2)}` : code;
+}
+
+/**
  * Clamp an intra-token offset into `[0, length]`.
  * @param {number} offset
  * @param {number} length
@@ -709,25 +722,6 @@ export class TSRXVirtualCode {
  */
 function clamp_offset(offset, length) {
 	return Math.min(Math.max(offset, 0), length);
-}
-
-/**
- * @param {string} file_name
- * @param {ReadonlyArray<unknown>} errors
- */
-function logTSRXErrors(file_name, errors) {
-	for (const error of errors) {
-		const message =
-			error && typeof error === 'object' && 'message' in error
-				? String(/** @type {{ message: unknown }} */ (error).message)
-				: String(error);
-		const key = `${file_name}\0${message}`;
-		if (loggedCompilationFailures.has(key)) {
-			continue;
-		}
-		loggedCompilationFailures.add(key);
-		console.error(`[tsrx-tsc] ${file_name}: ${message}`);
-	}
 }
 
 /**
@@ -1335,7 +1329,6 @@ export function invalidateCompilerResolutionCaches() {
 	path2TsrxCompilerPathMap.clear();
 	pathToPackageManifestCache.clear();
 	reset_consumer_compiler_resolution_caches();
-	loggedCompilationFailures.clear();
 }
 
 /**

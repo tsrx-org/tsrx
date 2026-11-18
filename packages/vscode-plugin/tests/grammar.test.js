@@ -200,6 +200,55 @@ describe('TSRX TextMate grammar: <style> blocks', () => {
 		);
 		expect(find(tokens, '</').scopes).toContain('style.tag.js');
 	});
+
+	it('closes a <style> block at a closing tag with whitespace before its >, as the compiler does', () => {
+		const tokens = tokenize(
+			[
+				'export function App() @{',
+				'  <div>',
+				'    <style>.a { color: red; }</style >',
+				'    <p class="a">{text}</p>',
+				'  </div>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'color').scopes).toContain('source.css');
+		expect(find(tokens, 'style', 1).scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, '>', 2).scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'punctuation.definition.tag.end.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('style.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'text').scopes).not.toContain('style.tag.js');
+	});
+
+	it('closes a <style> block whose closing tag has a line break before its >', () => {
+		const tokens = tokenize(
+			[
+				'export function App() @{',
+				'  <div>',
+				'    <style>',
+				'      .a { color: red; }',
+				'    </style',
+				'    >',
+				'    <p class="a">{text}</p>',
+				'  </div>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'style', 1).scopes).toEqual(
+			expect.arrayContaining(['style.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('style.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'text').scopes).not.toContain('style.tag.js');
+	});
 });
 
 describe('TSRX TextMate grammar: without the CSS and TypeScript grammars', () => {
@@ -313,6 +362,175 @@ describe('TSRX TextMate grammar: without the CSS and TypeScript grammars', () =>
 		expect(find(tokens, 'p').scopes).not.toContain('script.tag.js');
 		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
 		expect(invalid(tokens)).toEqual([]);
+	});
+});
+
+describe('TSRX TextMate grammar: <script> closing tags', () => {
+	it('closes a <script> block at a closing tag with whitespace before its >, as the compiler does', () => {
+		const tokens = tokenize(
+			[
+				'export function App() @{',
+				'  <div>',
+				'    <script>go();</script >',
+				'    <p>{text}</p>',
+				'  </div>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'go').scopes).toContain('source.ts');
+		expect(find(tokens, 'script', 1).scopes).toEqual(
+			expect.arrayContaining(['script.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, '>', 2).scopes).toEqual(
+			expect.arrayContaining(['script.tag.js', 'punctuation.definition.tag.end.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('script.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'text').scopes).not.toContain('script.tag.js');
+	});
+
+	it('closes a <script> block whose closing tag has a line break before its >', () => {
+		const tokens = tokenize(
+			[
+				'export function App() @{',
+				'  <div>',
+				'    <script>',
+				'      go();',
+				'    </script',
+				'    >',
+				'    <p>{text}</p>',
+				'  </div>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'script', 1).scopes).toEqual(
+			expect.arrayContaining(['script.tag.js', 'entity.name.tag.js']),
+		);
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain('script.tag.js');
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'text').scopes).not.toContain('script.tag.js');
+	});
+});
+
+describe('TSRX TextMate grammar: whitespace in <style> and <script> closing tags', () => {
+	/**
+	 * The compiler ends a raw-text body at `</style` or `</script`, then HTML
+	 * whitespace (tab, line feed, form feed, carriage return, space), then `>`.
+	 * Oniguruma's `\s` also matches a non-breaking space and a vertical tab.
+	 */
+	const bodies = {
+		style: {
+			first: '.a { color: red; }',
+			next: '.b { color: blue; }',
+			word: 'blue',
+			scope: 'source.css',
+		},
+		script: { first: 'go();', next: 'stop();', word: 'stop', scope: 'source.ts' },
+	};
+
+	it.each([
+		['style', 'a tab', '\t'],
+		['style', 'a form feed', '\f'],
+		['script', 'a tab', '\t'],
+		['script', 'a form feed', '\f'],
+	])('ends a <%s> body at a closing tag with %s before its >', (tag, _name, space) => {
+		const body = bodies[/** @type {keyof typeof bodies} */ (tag)];
+		const tokens = tokenize(
+			[
+				'export function App() @{',
+				'  <div>',
+				`    <${tag}>${body.first}</${tag}${space}>`,
+				'    <p>{text}</p>',
+				'  </div>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+		expect(find(tokens, 'p').scopes).not.toContain(`${tag}.tag.js`);
+		expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+	});
+
+	it.each([
+		['style', 'a non-breaking space before its >', '\u00a0>'],
+		['style', 'a vertical tab before its >', '\v>'],
+		['style', 'a non-breaking space at the end of the line', '\u00a0'],
+		['script', 'a non-breaking space before its >', '\u00a0>'],
+		['script', 'a vertical tab before its >', '\v>'],
+		['script', 'a non-breaking space at the end of the line', '\u00a0'],
+	])(
+		'keeps a <%s> body open past a closing tag with %s, as the compiler does',
+		(tag, _name, closer) => {
+			const body = bodies[/** @type {keyof typeof bodies} */ (tag)];
+			const tokens = tokenize(
+				[
+					'export function App() @{',
+					'  <div>',
+					`    <${tag}>${body.first}</${tag}${closer}`,
+					`    ${body.next}`,
+					`    </${tag}>`,
+					'    <p>{text}</p>',
+					'  </div>',
+					'}',
+				].join('\n'),
+			);
+
+			expect(find(tokens, body.word).scopes).toContain(body.scope);
+			expect(find(tokens, 'p').scopes).toContain('entity.name.tag.js');
+			expect(find(tokens, 'p').scopes).not.toContain(`${tag}.tag.js`);
+			expect(find(tokens, 'text').scopes).toContain('variable.other.readwrite.js');
+		},
+	);
+});
+
+describe('TSRX TextMate grammar: using declarations', () => {
+	it('highlights using and await using in an @for head as declaration keywords', () => {
+		const tokens = tokenize(
+			[
+				'function List() @{',
+				'  <ul>',
+				'    @for (using item of items) {',
+				'      <li>{item}</li>',
+				'    }',
+				'    @for (await using conn of conns; index i) {',
+				'      <li>{i}</li>',
+				'    }',
+				'    @for (using of items) {',
+				'      <li />',
+				'    }',
+				'  </ul>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'using').scopes).toContain('storage.type.js');
+		expect(find(tokens, 'await using').scopes).toContain('storage.type.js');
+		// `using` followed by `of` is the loop variable, not a declaration keyword.
+		expect(find(tokens, 'using', 1).scopes).toContain('variable.other.readwrite.js');
+	});
+
+	it('keeps using a variable in a directive head that is not a for…of declaration', () => {
+		const tokens = tokenize(
+			[
+				'function List() @{',
+				'  <ul>',
+				'    @for (using item in items) {',
+				'      <li />',
+				'    }',
+				'    @if (using instanceof Foo) {',
+				'      <li />',
+				'    }',
+				'  </ul>',
+				'}',
+			].join('\n'),
+		);
+
+		expect(find(tokens, 'using').scopes).toContain('variable.other.readwrite.js');
+		expect(find(tokens, 'using', 1).scopes).toContain('variable.other.readwrite.js');
 	});
 });
 

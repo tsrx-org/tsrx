@@ -3,7 +3,7 @@
   "description": "Bun plugin for @tsrx/react (.tsrx modules)",
   "license": "MIT",
   "author": "Dominic Gannaway",
-  "version": "0.1.110",
+  "version": "0.1.113",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -20,7 +20,8 @@
     }
   },
   "scripts": {
-    "test": "pnpm -w test --project bun-plugin-react"
+    "test": "pnpm -w test --project bun-plugin-react",
+    "test:native": "bun test tests/native.test.ts"
   },
   "dependencies": {
     "@tsrx/core": "workspace:*",

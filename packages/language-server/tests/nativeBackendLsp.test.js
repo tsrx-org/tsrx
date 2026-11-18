@@ -134,17 +134,22 @@ describe.each(/** @type {const} */ (['native', 'plugin', 'classic']))(
 			},
 		);
 
-		it('lists CSS rules and components as document symbols', async () => {
+		it('lists CSS rules, components and `<script>` declarations as document symbols', async () => {
+			/** @type {Array<{ name: string, range: { start: { line: number } }, children?: any[] }>} */
 			const symbols = await session.client.request('textDocument/documentSymbol', {
 				textDocument: { uri: session.client.uri('Panel.tsrx') },
 			});
-			const names = symbols.map((/** @type {{ name: string }} */ s) => s.name);
+			const names = symbols.map((s) => s.name);
 			for (const name of ['.panel', '.heading', 'PanelProps', 'Panel']) {
 				expect(names).toContain(name);
 			}
 			// The `<script>` body is a bare block in the generated TSX, which TypeScript's
-			// navigation tree skips, so its declarations are not document symbols on any path.
-			expect(names.includes('analyticsEnabled')).toBe(false);
+			// navigation tree skips; the server lists its declarations under a `<script>` symbol.
+			const script = symbols.find((s) => s.name === '<script>');
+			expect(script?.children?.map((s) => s.name)).toEqual(['analyticsEnabled']);
+			expect(script?.range.start).toEqual(
+				position_of(session.files['Panel.tsrx'], 'script type="text/typescript"'),
+			);
 		});
 
 		it(

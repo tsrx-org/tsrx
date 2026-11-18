@@ -13,10 +13,74 @@ import { EffectScope, getCurrentInstance, onErrorCaptured, shallowRef } from 'vu
  */
 const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
 
-/** @typedef {{ error: ShallowRef<unknown>, reset: () => void }} BoundaryState */
+/**
+ * @typedef {object} BoundaryState
+ * @property {ShallowRef<number>} version bumped to render the boundary again
+ * @property {{ error: unknown } | null} caught the error the fallback shows
+ * @property {() => void} reset
+ */
+
+/** @typedef {{ asyncDep?: Promise<unknown> | null, asyncResolved?: boolean }} AsyncSetupState */
+
+/** @typedef {{ parent?: InstanceLink | null, $?: InstanceLink }} InstanceLink */
+
+/**
+ * @typedef {object} RenderFrame
+ * @property {unknown} instance the instance current while the boundary renders
+ * @property {unknown[]} errors what its content threw, first one first
+ */
 
 /** @type {WeakMap<ComponentInternalInstance, BoundaryState>} */
 const boundary_states = new WeakMap();
+
+/**
+ * The boundaries rendering their content right now, innermost last. Vue hands
+ * an error to the nearest `onErrorCaptured` hook, which can belong to an outer
+ * boundary (a boundary called as a plain function has no instance of its
+ * own), so the hook passes the error on to the innermost rendering boundary
+ * that contains the component that threw.
+ *
+ * @type {RenderFrame[]}
+ */
+const rendering = [];
+
+/**
+ * The instance of a boundary rendered as a component. Vapor calls a
+ * component's setup with its instance as the second argument. A plain-function
+ * call, which earlier compilers emitted inside element children, runs under
+ * the enclosing component's instance and must not take over its state.
+ * `getCurrentInstance()` returns null for a Vapor instance.
+ *
+ * @param {unknown} ctx
+ * @returns {ComponentInternalInstance | null}
+ */
+function own_instance(ctx) {
+	const instance = vapor.currentInstance ?? getCurrentInstance();
+	return instance && ctx === instance ? instance : null;
+}
+
+/**
+ * The innermost rendering boundary whose content contains `source`, the
+ * component an error came from.
+ *
+ * @param {unknown} source a Vapor instance, or a VDOM component's public proxy
+ * @returns {RenderFrame | undefined}
+ */
+function find_render_frame(source) {
+	if (rendering.length === 0) return undefined;
+	const link = /** @type {InstanceLink | null} */ (source);
+	/** @type {Set<unknown>} */
+	const ancestors = new Set();
+	/** @type {InstanceLink | null | undefined} */
+	let current = link?.$ ?? link;
+	for (; current; current = current.parent) {
+		ancestors.add(current);
+	}
+	for (let i = rendering.length - 1; i >= 0; i--) {
+		if (ancestors.has(rendering[i].instance)) return rendering[i];
+	}
+	return undefined;
+}
 
 /**
  * @param {VaporBlock} nodes
@@ -138,61 +202,107 @@ function create_boundary_nodes(render) {
  * that clears the error state to re-render the children.
  *
  * @param {TsrxErrorBoundaryProps} props
+ * @param {unknown} [ctx] the instance, when Vapor renders it as a component
  * @returns {Array<VaporRenderedBlock | undefined>}
  */
-export function TsrxErrorBoundary(props) {
-	const instance = getCurrentInstance();
-	if (instance) {
-		initialize_boundary_state(instance);
-	}
-	const state = instance ? boundary_states.get(instance) : undefined;
-	const error = state?.error ?? shallowRef(/** @type {unknown} */ (null));
-	const reset =
-		state?.reset ??
-		(() => {
-			error.value = null;
-		});
+export function TsrxErrorBoundary(props, ctx) {
+	const instance = own_instance(ctx);
+	const state = instance ? initialize_boundary_state(instance) : create_boundary_state();
 
 	return create_boundary_nodes(() => {
-		if (error.value !== null) {
-			return props.fallback(error.value, reset);
+		// Read so a reset, or an error caught after rendering, renders again.
+		void state.version.value;
+		if (state.caught) {
+			return props.fallback(state.caught.error, state.reset);
 		}
 
+		/** @type {RenderFrame} */
+		const frame = { instance: vapor.currentInstance, errors: [] };
+		/** @type {unknown} */
+		let content;
+		rendering.push(frame);
 		try {
-			return props.content();
+			content = props.content();
 		} catch (caught_error) {
-			error.value = caught_error;
-			return props.fallback(caught_error, reset);
+			frame.errors.push(caught_error);
+		} finally {
+			rendering.pop();
 		}
+		if (frame.errors.length === 0) {
+			return content;
+		}
+		// Not a reactive write: this render already shows the fallback.
+		state.caught = { error: frame.errors[0] };
+		return props.fallback(state.caught.error, state.reset);
 	});
 }
 
-/** @returns {void} */
-TsrxErrorBoundary.__setup = function setup() {
-	const instance = getCurrentInstance();
+// Declared, so they are props rather than attributes: Vue passes a
+// component's attributes down to a component or element at the root of what
+// it renders, which put them on the DOM and handed a nested boundary this
+// one's `content`.
+TsrxErrorBoundary.props = ['fallback', 'content'];
+
+/**
+ * @param {unknown} _props
+ * @param {unknown} [ctx]
+ * @returns {void}
+ */
+TsrxErrorBoundary.__setup = function setup(_props, ctx) {
+	const instance = own_instance(ctx);
 	if (instance) {
 		initialize_boundary_state(instance);
 	}
 };
 
+/** @returns {BoundaryState} */
+function create_boundary_state() {
+	/** @type {BoundaryState} */
+	const state = {
+		version: shallowRef(0),
+		caught: null,
+		reset() {
+			state.caught = null;
+			state.version.value++;
+		},
+	};
+	return state;
+}
+
 /**
  * @param {ComponentInternalInstance} instance
- * @returns {void}
+ * @returns {BoundaryState}
  */
 function initialize_boundary_state(instance) {
-	if (!instance || boundary_states.has(instance)) {
-		return;
+	const existing = boundary_states.get(instance);
+	if (existing) {
+		return existing;
 	}
 
-	const error = shallowRef(/** @type {unknown} */ (null));
-	const reset = () => {
-		error.value = null;
-	};
+	const state = create_boundary_state();
+	boundary_states.set(instance, state);
 
-	boundary_states.set(instance, { error, reset });
-
-	onErrorCaptured((captured_error) => {
-		error.value = captured_error;
+	onErrorCaptured((captured_error, source) => {
+		const frame = find_render_frame(source);
+		if (frame) {
+			frame.errors.push(captured_error);
+			return false;
+		}
+		// Thrown outside a render. An async component whose loader rejected
+		// still has its setup pending, and Vapor cannot unmount it until its
+		// Suspense has mounted it, so swap in the fallback after that.
+		const show = () => {
+			state.caught = { error: captured_error };
+			state.version.value++;
+		};
+		const pending = /** @type {AsyncSetupState | null} */ (source);
+		if (pending?.asyncDep && !pending.asyncResolved) {
+			pending.asyncDep.then(show, show);
+		} else {
+			show();
+		}
 		return false;
 	});
+
+	return state;
 }

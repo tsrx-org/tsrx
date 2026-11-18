@@ -1,6 +1,7 @@
 /** @import * as AST from 'estree' */
 /** @import { BaseCompileOptions, CompileError, CompileResult, ParseOptions, VolarMappingsResult } from '@tsrx/core/types' */
 /** @import { NonEmptyString } from '@tsrx/core/types/helpers' */
+/** @import { CompileOptions } from '../types/index' */
 
 import {
 	analyzeTsrx,
@@ -11,7 +12,7 @@ import {
 	specializePlatform,
 	withPlatformTypes,
 } from '@tsrx/core';
-import { transform } from './transform.js';
+import { transform, transform_for_server } from './transform.js';
 
 export { isRefProp } from './ref.js';
 
@@ -34,7 +35,7 @@ export function parse(source, filename, options) {
  * @template {string} T
  * @param {string} source
  * @param {NonEmptyString<T>} filename
- * @param {BaseCompileOptions} [options]
+ * @param {CompileOptions & BaseCompileOptions} [options]
  * @returns {CompileResult}
  */
 export function compile(source, filename, options) {
@@ -57,7 +58,7 @@ export function compile(source, filename, options) {
 		filename,
 		collect ? { collect: true, loose: !!options?.loose, errors, comments } : undefined,
 	);
-	const { ast: _ast, ...result } = transform(
+	const { ast: _ast, ...result } = (options?.ssr ? transform_for_server : transform)(
 		ast,
 		source,
 		filename,
@@ -117,5 +118,7 @@ export function compile_to_volar_mappings(source, filename, options) {
 		...result,
 		mappings: dedupeMappings(result.mappings),
 	};
-	return uses_platform_flags ? withPlatformTypes(deduped, options?.platform) : deduped;
+	return uses_platform_flags
+		? withPlatformTypes(deduped, options?.platform, transformed.ast)
+		: deduped;
 }

@@ -1,15 +1,16 @@
 import { Component, type ReactNode } from 'react';
 
 export interface TsrxErrorBoundaryProps {
-	fallback: (error: Error, reset: () => void) => ReactNode;
+	fallback: (error: unknown, reset: () => void) => ReactNode;
 	children?: ReactNode;
 }
 
 export interface TsrxErrorBoundaryState {
-	error: Error | null;
+	hasError: boolean;
+	error: unknown;
 }
 
 export class TsrxErrorBoundary extends Component<TsrxErrorBoundaryProps, TsrxErrorBoundaryState> {
-	static getDerivedStateFromError(error: Error): TsrxErrorBoundaryState;
+	static getDerivedStateFromError(error: unknown): TsrxErrorBoundaryState;
 	render(): ReactNode;
 }

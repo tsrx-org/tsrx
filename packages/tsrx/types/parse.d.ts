@@ -199,6 +199,18 @@ export namespace Parse {
 			loose: boolean;
 			errors: CoreCompiler.CompileError[] | undefined;
 			filename: string | undefined;
+			/**
+			 * Collects the `[start, end]` of each line comment the tokenizer
+			 * recorded that template text reads as text, which the caller drops
+			 * after the parse.
+			 */
+			textComments?: Array<[number, number]>;
+			/**
+			 * Collects the `[start, end]` of the template text an element left
+			 * open read that the parser reads again as code, whose comments the
+			 * caller keeps as the code reads them.
+			 */
+			textReadAsCode?: Array<[number, number]>;
 		};
 		// The type has "latest" but it's converted to 1e8 at runtime
 		// and if (ecmaVersion >= 2015) { ecmaVersion -= 2009 }
@@ -587,6 +599,8 @@ export namespace Parse {
 		 * changes, undone when the parse is abandoned
 		 */
 		parseEffects?: {
+			/** Whether a speculative parse is being read */
+			readonly active: boolean;
 			/** Record `target`'s length, to restore if the current speculative parse is abandoned */
 			willAppend(target: unknown[]): void;
 			/** Record `target[key]`, to restore if the current speculative parse is abandoned */
@@ -1403,6 +1417,28 @@ export namespace Parse {
 		tsMatchLeftRelational(): boolean;
 
 		/**
+		 * Read the `const` of a const assertion written `<const>x`, after its `<`,
+		 * or `null` when another type follows (@sveltejs/acorn-typescript)
+		 */
+		tsTryNextParseConstantContext(): AST.TypeNode | null;
+
+		/**
+		 * Read the next token, then a type (@sveltejs/acorn-typescript)
+		 */
+		tsNextThenParseType(): AST.TypeNode;
+
+		/**
+		 * acorn's own `parseMaybeAssign`, without the attempts that
+		 * acorn-typescript's makes at an expression that starts with `<`: an
+		 * element, then a generic arrow function (@sveltejs/acorn-typescript)
+		 */
+		parseMaybeAssignOrigin(
+			forInit?: ForInit,
+			refDestructuringErrors?: DestructuringErrors,
+			afterLeftParse?: (node: AST.Node, startPos: number, startLoc: AST.Position) => AST.Node,
+		): AST.Expression;
+
+		/**
 		 * Parse type arguments in an expression position, rescanning the `<` that was
 		 * tokenized outside a type context (@sveltejs/acorn-typescript). `undefined`
 		 * when the rescan does not yield a `<`.
@@ -1567,6 +1603,12 @@ export namespace Parse {
 		tsParseModuleOrNamespaceDeclaration(node: AST.Node, nested?: boolean): AST.TSModuleDeclaration;
 
 		/**
+		 * Parse the `{ … }` body of a namespace or module, in a scope of its own
+		 * (@sveltejs/acorn-typescript).
+		 */
+		tsParseModuleBlock(): AST.TSModuleBlock;
+
+		/**
 		 * Parse a global augmentation from `global`, or a module named by the
 		 * string after `module`, which has been read (@sveltejs/acorn-typescript).
 		 */
@@ -1583,6 +1625,15 @@ export namespace Parse {
 		 * `undefined` when no `is` follows (@sveltejs/acorn-typescript).
 		 */
 		tsParseTypePredicatePrefix(): AST.Identifier | undefined;
+
+		/** Read `asserts` before a type predicate's name or `this`, or return `false`. */
+		tsParseTypePredicateAsserts(): boolean;
+
+		/**
+		 * Read a signature's type parameters, parameters and return type into
+		 * `signature`, its return type after `returnToken` (@sveltejs/acorn-typescript).
+		 */
+		tsFillSignature(returnToken: TokenType, signature: AST.Node): void;
 
 		/** Parse `this` in a type, or a `this is T` predicate (@sveltejs/acorn-typescript). */
 		tsParseThisTypeOrThisTypePredicate(): AST.TSThisType | AST.TSTypePredicate;
@@ -1933,11 +1984,15 @@ export namespace Parse {
 		 * @param isGenerator Whether generator method
 		 * @param isAsync Whether async method
 		 * @param allowDirectSuper Whether super() allowed
+		 * @param inClassScope Whether a class member (@sveltejs/acorn-typescript)
+		 * @param method The class member, for a class method (@sveltejs/acorn-typescript)
 		 */
 		parseMethod(
 			isGenerator: boolean,
 			isAsync?: boolean,
 			allowDirectSuper?: boolean,
+			inClassScope?: boolean,
+			method?: AST.MethodDefinition,
 		): AST.FunctionExpression;
 
 		// ============================================================
@@ -2250,7 +2305,8 @@ export namespace Parse {
 		/**
 		 * Record the source spans of `async`/`function` keywords on the program as
 		 * `tsrx_keyword_tokens` — the mapping collector needs them and no AST node
-		 * carries them.
+		 * carries them — and every token as `tsrx_tokens`, for esrap's `tokens`
+		 * print option.
 		 */
 		keywordTokens?: boolean;
 	}
@@ -2262,6 +2318,9 @@ export namespace Parse {
 		end: number;
 		loc: AST.SourceLocation;
 	}
+
+	/** A token recorded by the `keywordTokens` parse option. */
+	export type Token = acorn.Token;
 
 	/**
 	 * The constructor/class type for the extended TSRX parser.

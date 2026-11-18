@@ -35,9 +35,11 @@ function run_tsrx_tsc() {
 }
 
 describe('tsrx-react fixtures: react-router typecheck', () => {
+	// A full `tsrx-tsc` run over the fixture and its third-party types takes most
+	// of 30s on its own while the rest of the suite is competing for workers.
 	it('typechecks TSX, TSRX, and third-party React Router types together', async () => {
 		const result = await run_tsrx_tsc();
 
 		expect(result, result.stdout + result.stderr).toMatchObject({ code: 0 });
-	}, 30000);
+	}, 120_000);
 });

@@ -41,3 +41,10 @@ if (previousRev === currentRev) {
 
 	console.log(`Zed grammar rev: ${previousRev} -> ${currentRev}`);
 }
+
+// The rev is HEAD, so the checked-out queries are the ones that match the
+// grammar Zed now builds.
+execFileSync(process.execPath, [path.join(root, 'scripts/copy-tree-sitter-queries.js'), '--zed'], {
+	cwd: root,
+	stdio: 'inherit',
+});

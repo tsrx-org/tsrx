@@ -14,3 +14,16 @@ export interface BuildPlatformResolutionOptions {
 export function resolveBuildPlatform(
 	options?: BuildPlatformResolutionOptions,
 ): Platform | undefined;
+
+/**
+ * The tsconfig files `resolveBuildPlatform` reads for these options: the
+ * selected tsconfig, its `extends` chain, and its project references with
+ * theirs.
+ */
+export function getBuildPlatformConfigFiles(options?: BuildPlatformResolutionOptions): string[];
+
+/** Effective `compilerOptions.jsx` of the nearest tsconfig above a file or directory, including `extends`. */
+export function resolveTsconfigJsx(
+	searchPath: string,
+	cache?: Map<string, unknown>,
+): string | undefined;

@@ -3,7 +3,7 @@
   "description": "Vue compiler built on @tsrx/core",
   "license": "MIT",
   "author": "Dominic Gannaway",
-  "version": "0.3.5",
+  "version": "0.4.2",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -46,14 +46,15 @@
     "zimmerframe": "catalog:default"
   },
   "peerDependencies": {
-    "vue": ">=3.5",
-    "vue-jsx-vapor": ">=3.2.14"
+    "vue": ">=3.6.0-0",
+    "vue-jsx-vapor": ">=3.2.27"
   },
   "devDependencies": {
     "@types/estree": "catalog:default",
     "@types/estree-jsx": "catalog:default",
     "typescript": "catalog:default",
-    "vue": "3.6.0-beta.12"
+    "vue": "3.6.0-rc.14",
+    "vue-jsx-vapor": "^3.2.29"
   },
   "files": [
     "src",

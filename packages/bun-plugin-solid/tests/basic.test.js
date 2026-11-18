@@ -1,8 +1,13 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { tsrxSolid } from '../src/index.js';
+
+// Bun.plugin() registrations share state across instances; start each test clean.
+afterEach(() => {
+	Reflect.deleteProperty(globalThis, Symbol.for('@tsrx/bun-plugin.runtime.v1'));
+});
 
 /**
  * @typedef {{
@@ -13,18 +18,14 @@ import { tsrxSolid } from '../src/index.js';
 
 /**
  * @param {import('../types/index.js').TsrxSolidBunPluginOptions} [options]
- * @param {{ target?: import('bun').Target, root?: string }} [config]
+ * @param {{ target?: import('bun').Target, root?: string, entrypoints?: string[], files?: Record<string, string> } | null} [config]
+ * @param {Hooks} [hooks] hooks shared with other instances in the same build
  */
-function setup_plugin(options, config = {}) {
-	/** @type {Hooks} */
-	const hooks = { onResolve: [], onLoad: [] };
+function setup_plugin(options, config = {}, hooks = { onResolve: [], onLoad: [] }) {
 	const plugin = tsrxSolid(options);
 	const build = {
-		config: {
-			entrypoints: [],
-			plugins: [],
-			...config,
-		},
+		// `null` stands for Bun.plugin() registration, which has no build config.
+		config: config === null ? undefined : { entrypoints: [], plugins: [], ...config },
 		/**
 		 * @param {{ filter: RegExp, namespace?: string }} hook_options
 		 * @param {Function} callback
@@ -68,6 +69,41 @@ function load_css(hooks, id) {
 	const load_hook = hooks.onLoad.find(({ options }) => options.namespace === resolved.namespace);
 	if (!load_hook) throw new Error('missing CSS onLoad hook');
 	return load_hook.callback({ path: resolved.path, namespace: resolved.namespace });
+}
+
+/**
+ * Run hooks the way Bun does: the first one whose namespace and filter match
+ * and that returns a result handles the request.
+ *
+ * @param {Hooks['onLoad']} hooks
+ * @param {{ path: string, namespace: string }} args
+ */
+async function dispatch(hooks, args) {
+	for (const { options, callback } of hooks) {
+		if (options.namespace !== undefined && options.namespace !== args.namespace) continue;
+		if (!options.filter.test(args.path)) continue;
+		const result = await callback({ importer: '', kind: 'import-statement', ...args });
+		if (result !== undefined) return result;
+	}
+	return undefined;
+}
+
+/**
+ * Run hooks the way Bun.plugin() registration does: only the first hook whose
+ * namespace and filter match is called, and it has to return an object.
+ *
+ * @param {Hooks['onLoad']} hooks
+ * @param {{ path: string, namespace: string }} args
+ */
+async function runtime_dispatch(hooks, args) {
+	const hook = hooks.find(
+		({ options }) =>
+			(options.namespace ?? 'file') === args.namespace && options.filter.test(args.path),
+	);
+	if (!hook) throw new Error(`no onLoad hook for ${args.path}`);
+	const result = await hook.callback({ importer: '', kind: 'import-statement', ...args });
+	if (result === undefined) throw new Error(`onLoad() expects an object returned for ${args.path}`);
+	return result;
 }
 
 describe('@tsrx/bun-plugin-solid', () => {
@@ -180,9 +216,167 @@ describe('@tsrx/bun-plugin-solid', () => {
 		}
 	});
 
+	it('reads the platform from the tsconfig nearest the entrypoints when root is omitted', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-solid-root-'));
+		try {
+			await mkdir(path.join(dir, 'src/pages'), { recursive: true });
+			await mkdir(path.join(dir, 'src/widgets'), { recursive: true });
+			for (const [config_dir, platform] of [
+				['', 'web'],
+				['src', 'ios'],
+				['src/pages', 'android'],
+			]) {
+				await writeFile(
+					path.join(dir, config_dir, 'tsconfig.json'),
+					JSON.stringify({ tsrx: { platform } }),
+				);
+			}
+			const file_path = path.join(dir, 'src/widgets/Platform.tsrx');
+			await writeFile(
+				file_path,
+				`if (import.meta.env.platform.ios) {
+					const selected_ios = 'selected_ios';
+				} else {
+					const selected_other = 'selected_other';
+				}`,
+			);
+			// Bun's default root is the entrypoints' common ancestor, here src/.
+			const hooks = setup_plugin(undefined, {
+				entrypoints: [path.join(dir, 'src/pages/Page.tsrx'), file_path],
+			});
+			const transformed = await load_tsrx(hooks, file_path);
+
+			expect(transformed?.contents).toContain('selected_ios');
+			expect(transformed?.contents).not.toContain('selected_other');
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('writes platform flag values into the output for Bun.plugin() registration', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-solid-runtime-'));
+		try {
+			const file_path = path.join(dir, 'Platform.tsrx');
+			await writeFile(
+				file_path,
+				`export function flags() {
+					return [import.meta.env.platform.web, import.meta.env.platform.ios, import.meta.env.platform.android];
+				}`,
+			);
+			const hooks = setup_plugin({ platform: 'ios' }, null);
+			const transformed = await load_tsrx(hooks, file_path);
+
+			expect(transformed?.contents).toMatch(/\[\s*false,\s*true,\s*false\s*\]/);
+			expect(transformed?.contents).not.toContain('import.meta.env.platform');
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('reads the platform from the working directory when every entrypoint is an in-memory file', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-solid-files-'));
+		const cwd = vi.spyOn(process, 'cwd').mockReturnValue(dir);
+		try {
+			await writeFile(
+				path.join(dir, 'tsconfig.json'),
+				JSON.stringify({ tsrx: { platform: 'ios' } }),
+			);
+			const file_path = path.join(dir, 'Platform.tsrx');
+			await writeFile(
+				file_path,
+				`if (import.meta.env.platform.ios) {
+					const selected_ios = 'selected_ios';
+				} else {
+					const selected_other = 'selected_other';
+				}`,
+			);
+			// Bun builds from the working directory when every entrypoint is a `files` key.
+			const hooks = setup_plugin(undefined, {
+				entrypoints: ['/virtual/main.ts'],
+				files: { '/virtual/main.ts': `import ${JSON.stringify(file_path)};` },
+			});
+			const transformed = await load_tsrx(hooks, file_path);
+
+			expect(transformed?.contents).toContain('selected_ios');
+			expect(transformed?.contents).not.toContain('selected_other');
+		} finally {
+			cwd.mockRestore();
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
 	it('honors exclude filters', async () => {
 		const hooks = setup_plugin({ exclude: /ignored\.tsrx$/ }, { target: 'browser' });
 		const transformed = await load_tsrx(hooks, '/project/ignored.tsrx');
 		expect(transformed).toBeUndefined();
+	});
+
+	// Bun.plugin() registration calls only the first matching onLoad hook.
+	it('splits the source files between instances under Bun.plugin() registration', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-solid-runtime-'));
+		try {
+			const hooks = setup_plugin({ exclude: /b\.tsrx$/ }, null);
+			setup_plugin({ include: /b\.tsrx$/ }, null, hooks);
+			for (const name of ['a', 'b']) {
+				const file_path = path.join(dir, `${name}.tsrx`);
+				await writeFile(
+					file_path,
+					`export function App() @{ <><style>div { --marker-${name}: 1; }</style><div /></> }`,
+				);
+				const result = await runtime_dispatch(hooks.onLoad, { path: file_path, namespace: 'file' });
+				expect(result.contents).toContain(`${file_path}?tsrx-css&lang.css`);
+			}
+
+			for (const name of ['a', 'b']) {
+				const css_id = `${path.join(dir, `${name}.tsrx`)}?tsrx-css&lang.css`;
+				const resolved = await dispatch(hooks.onResolve, { path: css_id, namespace: 'file' });
+				const css = await runtime_dispatch(hooks.onLoad, {
+					path: resolved.path,
+					namespace: resolved.namespace ?? 'file',
+				});
+				expect(css).toEqual({
+					contents: expect.stringContaining(`--marker-${name}`),
+					loader: 'css',
+				});
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
+	});
+
+	it('loads a file every instance leaves out the way Bun does without a plugin', async () => {
+		const hooks = setup_plugin({ exclude: /ignored\.tsrx$/ }, null);
+
+		expect(
+			await runtime_dispatch(hooks.onLoad, { path: '/project/ignored.tsrx', namespace: 'file' }),
+		).toEqual({ exports: { default: '/project/ignored.tsrx' }, loader: 'object' });
+	});
+
+	it('serves each instance its own CSS when instances split the source files', async () => {
+		const dir = await mkdtemp(path.join(os.tmpdir(), 'tsrx-bun-plugin-solid-instances-'));
+		try {
+			const hooks = setup_plugin({ include: /a\.tsrx$/ }, { target: 'browser', root: dir });
+			setup_plugin({ include: /b\.tsrx$/ }, { target: 'browser', root: dir }, hooks);
+			for (const name of ['a', 'b']) {
+				const file_path = path.join(dir, `${name}.tsrx`);
+				await writeFile(
+					file_path,
+					`export function App() @{ <><style>div { --marker-${name}: 1; }</style><div /></> }`,
+				);
+				expect(await dispatch(hooks.onLoad, { path: file_path, namespace: 'file' })).toBeDefined();
+			}
+
+			for (const name of ['a', 'b']) {
+				const css_id = `${path.join(dir, `${name}.tsrx`)}?tsrx-css&lang.css`;
+				const resolved = await dispatch(hooks.onResolve, { path: css_id, namespace: 'file' });
+				const css = await dispatch(hooks.onLoad, {
+					path: resolved.path,
+					namespace: resolved.namespace ?? 'file',
+				});
+				expect(css?.contents).toContain(`--marker-${name}`);
+			}
+		} finally {
+			await rm(dir, { recursive: true, force: true });
+		}
 	});
 });

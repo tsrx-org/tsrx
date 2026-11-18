@@ -69,14 +69,45 @@ script therefore serves every supported TypeScript
 
 The mapper entry accepts an `options` object:
 
-| Option             | Type                          | Meaning                                                                                |
-| ------------------ | ----------------------------- | -------------------------------------------------------------------------------------- |
-| `compiler`         | bare package specifier        | The TSRX target compiler to use, for example `@tsrx/react` or a third-party compiler.  |
-| `platform`         | `"web"`, `"ios"`, `"android"` | Platform for `import.meta.env.platform` flags.                                         |
-| `languageFeatures` | boolean, default `true`       | `false` keeps spans for diagnostics but drops editor feature bits (CLI-only projects). |
+| Option                 | Type                          | Meaning                                                                                                               |
+| ---------------------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `compiler`             | bare package specifier        | The TSRX target compiler to use, for example `@tsrx/react` or a third-party compiler.                                 |
+| `platform`             | `"web"`, `"ios"`, `"android"` | Platform for `import.meta.env.platform` flags.                                                                        |
+| `languageFeatures`     | boolean, default `true`       | `false` keeps spans for diagnostics but drops editor feature bits (CLI-only projects).                                |
+| `verificationMappings` | boolean, default `false`      | `true` adds the transform's own diagnostics mappings to each transform result, for command-line checkers (see below). |
 
 Invalid options are reported by TypeScript as option diagnostics on the mapper
 entry.
+
+With `verificationMappings: true`, each transform result also has
+`verificationMappings`: every compiler mapping marked for diagnostics, in Volar's
+`CodeMapping` shape (`sourceOffsets`, `generatedOffsets`, `lengths`,
+`generatedLengths`) and in the transform's order. It is for a checker that runs
+TypeScript (or another checker) on the generated text itself, through
+`create_tsrx_content_mapper` from `@tsrx/content-mapper/mapper`. Mapped with
+`@volar/source-map`, each diagnostic lands where `tsrx-tsc` puts it:
+
+```js
+import { SourceMap } from '@volar/source-map';
+
+const map = new SourceMap(result.verificationMappings);
+const [range] = map.toSourceRange(start, start + length, true);
+```
+
+`@tsrx/content-mapper` doesn't depend on `@volar/source-map`; a checker that uses
+it installs it itself (`npm install @volar/source-map`, version 2).
+
+Unlike `mappings`, nothing is selected, coalesced or extended over whitespace, and
+each mapping keeps its offsets together: Volar maps a range only through one
+mapping that holds both of its ends, such as the two zero-length points of a
+literal's start and end, and tries mappings in this order. When any mapping of a
+file has a `verification` that is a `shouldReport` callback, the file's
+`verificationMappings` is empty: the callback depends on the diagnostic and can't
+be serialized, and leaving out only that mapping could let an overlapping one move
+a diagnostic. The TSRX compilers in this repository emit none. The field is
+outside the TypeScript 7 protocol (`VerificationMapping` in
+`@tsrx/content-mapper/protocol`); TypeScript ignores it, and `mappings` is the
+same with or without the option.
 
 ### Compiler selection
 
@@ -123,14 +154,25 @@ mapper then sends that error alone, and a stub of the file's exports.
   `Verbatim` spans with the same feature bits whose gap is identical text in both
   files are coalesced into one span, so a statement such as
   `import { a } from './x';` is one edit-safe span and TypeScript can place an
-  auto-import edit inside it. Fragments of identifiers (the transform's
-  one-character file-start anchor) are dropped.
+  auto-import edit inside it. A span from a mapping with no feature at all joins
+  either neighbour. Fragments of identifiers (the transform's one-character
+  file-start anchor) are dropped.
 - Each embedded `<script>` body as a block statement appended to the generated
   TSX, with a verbatim span back to the source (the shared transform does this on
   every path). A block keeps one body's declarations from colliding with another's
   or with the component's, and contributes nothing to declaration output. `import`
   declarations of a `<script type="module">` body are hoisted to module level in
   front of the block, where TypeScript resolves them like any other import.
+- For a module that keeps an `import.meta.env.platform` flag, a
+  `/// <reference path>` directive to the shared file in `platform-globals/` that
+  types the flags for the project's platform, in place of the `declare global`
+  block the compiler appends to each such module. The file is in the program once,
+  so two modules don't repeat the `ImportMeta` index signature (TS2374), and
+  declaration output drops the directive, so `Component.d.tsrx.ts` carries no
+  generated globals. A directive is not an import, so organize imports and
+  auto-import see only the module's own imports. Under `noResolve: true`
+  TypeScript doesn't follow the directive, and every flag read reports TS2339
+  (`Property 'env' does not exist on type 'ImportMeta'`).
 - Every TSRX compile error as a mapper diagnostic in the original file, printed as
   `error TSRX<number>`, in capitals like TypeScript's `TS2322`, so a TSRX error
   shows with its own code (`TSRX2002`). An error with a TypeScript code is `11`
@@ -148,6 +190,13 @@ mapper then sends that error alone, and a stub of the file's exports.
   `@tsrx/core/diagnostics`, and `tests/error-examples.test.js` checks that each
   shows exactly once on TypeScript 7, or that its known problem (with the issue
   that tracks it) still stands.
+- No warning (`severity: 'warning'`, such as TSRX2035). TypeScript 7 shows every
+  mapper diagnostic as an error, so a warning would fail `tsc` on code that
+  compiles, and its directive would hide TypeScript's own errors in the same
+  statement. The classic `tsrx-tsc` and the TSRX language server on its classic
+  and plugin backends still show warnings, so VS Code shows them on TypeScript 7
+  too. With `--typescript-backend=native` the server reports no compile
+  diagnostics, so nothing shows a warning there yet.
 - While a file cannot be compiled, a stub that re-declares its exports as `any`
   (values and types), so importers keep resolving and the author sees exactly one
   error at the failing construct. `<style>` bodies are never TypeScript's concern

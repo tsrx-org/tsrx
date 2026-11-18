@@ -2,12 +2,14 @@
 /** @import { CompileError, TSRXAnalysisOptions } from '../../types/index' */
 
 import { describe, expect, it } from 'vitest';
+import { walk } from 'zimmerframe';
 import {
 	analyzeCss,
 	analyzeTsrx,
 	DIAGNOSTIC_CODES,
 	parseModule,
 	parseStyle,
+	renderStylesheets,
 } from '../../src/index.js';
 import {
 	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
@@ -16,6 +18,7 @@ import {
 	TSRX_STYLE_APPLY_DUPLICATE_ERROR,
 	TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR,
 	TSRX_STYLE_APPLY_VALUE_ERROR,
+	TSRX_STYLE_IN_EXPRESSION_CONTAINER_ERROR,
 	TSRX_STYLE_RESERVED_CLASS_KEY_ERROR,
 	TSRX_STYLE_STANDALONE_AT_MODULE_SCOPE_ERROR,
 	TSRX_STYLE_STANDALONE_NEEDS_FRAGMENT_ERROR,
@@ -314,6 +317,39 @@ describe('scoped style analysis', () => {
 			const result = analyze(`${theme}\nfunction App() @{ <><style apply={t} /><div /></> }`);
 
 			expect(style_errors(result)).toEqual([]);
+		});
+
+		it('reports a block that applies itself', () => {
+			for (const [source, name] of [
+				['export const theme = <style apply={theme} />;', 'theme'],
+				['export const theme = <style apply={[theme]}>.a {}</style>;', 'theme'],
+				['export const t = { a: <style apply={t.a}>.a {}</style> };', 't.a'],
+			]) {
+				const result = analyze(source);
+
+				expect_single_error(
+					result,
+					DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
+					tsrx_style_apply_before_declaration_error(name),
+					loc_of(source, name, name === 'theme' ? 1 : 0),
+				);
+				expect(result.styles.assigned[0].metadata.styleApplies).toEqual([]);
+			}
+		});
+
+		it('reports a member applied before its place in the same object', () => {
+			const source =
+				'export const t = { a: <style apply={t.b}>.a {}</style>, b: <style apply={t.a}>.b {}</style> };';
+			const result = analyze(source);
+
+			expect_single_error(
+				result,
+				DIAGNOSTIC_CODES.STYLE_APPLY_BEFORE_DECLARATION,
+				tsrx_style_apply_before_declaration_error('t.b'),
+				apply_target_loc(source, 't.b'),
+			);
+			const [a, b] = result.styles.assigned;
+			expect(b.metadata.styleApplies?.[0].target).toBe(a);
 		});
 
 		it('resolves a name reused across @switch cases to its own case', () => {
@@ -724,6 +760,45 @@ describe('scoped style analysis', () => {
 		});
 	});
 
+	describe('block in a child expression container', () => {
+		// `{<style>…</style>}` is an expression, so the block is a value: its
+		// class map, rendered as a child, styling nothing.
+		const CSS = '.a { color: red; }';
+
+		/** @type {Array<[string, string]>} */
+		const rejected = [
+			['block as the expression', `function C() @{ <div>{<style>${CSS}</style>}<p /></div> }`],
+			['parenthesized block', `function C() @{ <>{(<style>${CSS}</style>)}<p /></> }`],
+			['conditional branch', `function C(x) @{ <div>{x ? <style>${CSS}</style> : null}</div> }`],
+			['logical operand', `function C(x) @{ <div>{x && <style>${CSS}</style>}</div> }`],
+		];
+
+		it.each(rejected)('reports a %s at the block', (_name, source) => {
+			const errors = errors_with_code(
+				analyze(source),
+				DIAGNOSTIC_CODES.STYLE_IN_EXPRESSION_CONTAINER,
+			);
+
+			expect(errors).toHaveLength(1);
+			expect(errors[0].message).toBe(TSRX_STYLE_IN_EXPRESSION_CONTAINER_ERROR);
+			expect(errors[0].loc?.start).toEqual(loc_of(source, '<style'));
+		});
+
+		it('accepts a block whose value is used, not rendered', () => {
+			const result = analyze(
+				`function C(x) @{
+					<>
+						<Button theme={<style>${CSS}</style>} />
+						<p class={(<style>${CSS}</style>).a} />
+						{x ? (<style>.b {}</style>).$class : null}
+					</>
+				}`,
+			);
+
+			expect(errors_with_code(result, DIAGNOSTIC_CODES.STYLE_IN_EXPRESSION_CONTAINER)).toEqual([]);
+		});
+	});
+
 	describe('unknown attributes', () => {
 		it('reports attributes other than ref and apply', () => {
 			const source = 'function App() @{ <><style data-x="1" ref={r}>.a {}</style><div /></> }';
@@ -945,6 +1020,45 @@ describe('scoped style analysis', () => {
 				'.a:not(:global(.b)) { color: red; }',
 			]) {
 				expect(() => analyzeCss(parse_stylesheet(css)), css).not.toThrow();
+			}
+		});
+	});
+
+	describe('pruned selectors beside :global', () => {
+		/**
+		 * Render `css` with the complex selectors written as `pruned` unused, as
+		 * the pruner leaves the selectors no element matches.
+		 *
+		 * @param {string} css
+		 * @param {string[]} pruned
+		 * @param {boolean} minify
+		 */
+		function render(css, pruned, minify) {
+			const sheet = parseStyle(css, { filename, line: 1, column: 0 }, {});
+			analyzeCss(sheet);
+			walk(/** @type {AST.CSS.Node} */ (sheet), null, {
+				ComplexSelector(node, { next }) {
+					node.metadata.used ||= !pruned.includes(css.slice(node.start, node.end));
+					next();
+				},
+			});
+			return renderStylesheets([sheet], minify);
+		}
+
+		it('keeps the comment markers at the edges of a :global selector, and minifies them away', () => {
+			/** @type {Array<[string, string, string, string]>} */
+			const cases = [
+				['.y:is(.z,:global(.w))', '.z', '.y:is(/* (unused) .z,*/.w)', '.y:is(.w)'],
+				['.z,:global(.w)', '.z', '/* (unused) .z,*/.w', '.w'],
+				[':global(.x) .z,.y', ':global(.x) .z', '/* (unused) .x .z,*/.y', '.y'],
+				['.y,.z:global(.k)', '.z:global(.k)', '.y /* (unused) .z.k*/', '.y'],
+				['.y,.z:global', '.z:global', '.y /* (unused) .z*/', '.y'],
+			];
+
+			for (const [selector, pruned, expected, minified] of cases) {
+				const css = `${selector} { color: red; }`;
+				expect(render(css, [pruned], false), selector).toBe(`${expected} { color: red; }`);
+				expect(render(css, [pruned], true), selector).toBe(`${minified} { color: red; }`);
 			}
 		});
 	});
@@ -1424,6 +1538,10 @@ describe('scoped style analysis', () => {
 				[
 					'function App() @{ <><style media="print">.a {}</style><div /></> }',
 					DIAGNOSTIC_CODES.STYLE_UNKNOWN_ATTRIBUTE,
+				],
+				[
+					'function App() @{ <div>{<style>.a {}</style>}</div> }',
+					DIAGNOSTIC_CODES.STYLE_IN_EXPRESSION_CONTAINER,
 				],
 			]) {
 				const ast = parseModule(source, filename);

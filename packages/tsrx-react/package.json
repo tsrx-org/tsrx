@@ -3,7 +3,7 @@
   "description": "React compiler built on @tsrx/core",
   "license": "MIT",
   "author": "Dominic Gannaway",
-  "version": "0.4.5",
+  "version": "0.5.2",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -24,6 +24,10 @@
     },
     "./dynamic": {
       "types": "./types/dynamic.d.ts"
+    },
+    "./try-body": {
+      "types": "./types/try-body.d.ts",
+      "default": "./src/try-body.js"
     },
     "./ref": {
       "types": "./types/ref.d.ts",

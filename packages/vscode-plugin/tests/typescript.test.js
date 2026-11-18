@@ -70,6 +70,98 @@ describe('TypeScript activation for .tsrx documents', () => {
 		expect(state.registration.dispose).toHaveBeenCalledOnce();
 	});
 
+	it("follows the compiler a TypeScript 7 extension's server runs, and stops on dispose", async () => {
+		const state = setup();
+		const subscription = { dispose: vi.fn() };
+		const follow = vi.fn(() => subscription);
+		Object.assign(state.api, { onLanguageServerInitialized: follow });
+		await activate_typescript(state.context);
+		expect(follow).toHaveBeenCalledOnce();
+		state.dispose();
+		expect(subscription.dispose).toHaveBeenCalledOnce();
+	});
+
+	/** A second TypeScript 7 server extension, a build from source, and what it subscribes. */
+	function source_build() {
+		const subscription = { dispose: vi.fn() };
+		const follow = vi.fn(() => subscription);
+		const extension = {
+			id: 'TypeScriptTeam.vscode-typescript',
+			activate: vi.fn(async () => ({ onLanguageServerInitialized: follow })),
+		};
+		return { extension, follow, subscription };
+	}
+
+	it('follows only the first TypeScript 7 extension, with two installed', async () => {
+		const state = setup();
+		const follow_native = vi.fn(() => ({ dispose() {} }));
+		Object.assign(state.api, { onLanguageServerInitialized: follow_native });
+		const build = source_build();
+		state.extensions.set(build.extension.id, build.extension);
+		await activate_typescript(state.context);
+		expect(follow_native).toHaveBeenCalledOnce();
+		expect(build.follow).not.toHaveBeenCalled();
+		state.dispose();
+	});
+
+	it('moves to the other TypeScript 7 extension when the one it follows goes', async () => {
+		const state = setup();
+		const subscription = { dispose: vi.fn() };
+		Object.assign(state.api, { onLanguageServerInitialized: vi.fn(() => subscription) });
+		const build = source_build();
+		state.extensions.set(build.extension.id, build.extension);
+		await activate_typescript(state.context);
+		state.extensions.delete(state.native.id);
+		await state.change_extensions();
+		expect(subscription.dispose).toHaveBeenCalledOnce();
+		expect(build.follow).toHaveBeenCalledOnce();
+		state.dispose();
+	});
+
+	it('moves to the first TypeScript 7 extension when it arrives later', async () => {
+		const state = setup();
+		const follow_native = vi.fn(() => ({ dispose() {} }));
+		Object.assign(state.api, { onLanguageServerInitialized: follow_native });
+		const build = source_build();
+		state.extensions.delete(state.native.id);
+		state.extensions.set(build.extension.id, build.extension);
+		await activate_typescript(state.context);
+		expect(build.follow).toHaveBeenCalledOnce();
+		state.extensions.set(state.native.id, state.native);
+		await state.change_extensions();
+		expect(build.subscription.dispose).toHaveBeenCalledOnce();
+		expect(follow_native).toHaveBeenCalledOnce();
+		state.dispose();
+	});
+
+	it("follows the TypeScript 7 extension and not VS Code's own TypeScript", async () => {
+		const state = setup();
+		const follow_native = vi.fn(() => ({ dispose() {} }));
+		const follow_builtin = vi.fn(() => ({ dispose() {} }));
+		Object.assign(state.api, { onLanguageServerInitialized: follow_native });
+		state.builtin.activate = vi.fn(async () => ({ onLanguageServerInitialized: follow_builtin }));
+		await activate_typescript(state.context);
+		expect(follow_native).toHaveBeenCalledOnce();
+		expect(follow_builtin).not.toHaveBeenCalled();
+		state.dispose();
+	});
+
+	it('keeps the mapper registration when following the compiler throws, and does not register twice', async () => {
+		const state = setup();
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		Object.assign(state.api, {
+			onLanguageServerInitialized: () => {
+				throw new Error('package.json is gone');
+			},
+		});
+		await activate_typescript(state.context);
+		await state.change_extensions();
+		expect(state.api.registerContentMappers).toHaveBeenCalledOnce();
+		state.dispose();
+		expect(state.registration.dispose).toHaveBeenCalledOnce();
+		warn.mockRestore();
+	});
+
 	it('activates classic TypeScript when the native extension is absent', async () => {
 		const state = setup();
 		state.extensions.delete(state.native.id);

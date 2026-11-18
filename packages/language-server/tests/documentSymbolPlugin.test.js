@@ -328,6 +328,135 @@ const withComponent = () => {
 		expect(find_symbol(symbols, 'quoted')?.kind).toBe(SymbolKind.Method);
 		expect(find_symbol(symbols, 'computed')?.kind).toBe(SymbolKind.Method);
 	});
+
+	it('lists the top-level declarations of each `<script>` body under a `<script>` symbol', async () => {
+		const source = `export function App() @{
+	const count = 1;
+	<>
+		<head>
+			<script type="module">
+				import { track } from './analytics';
+				export const enabled: boolean = 1 < 2;
+				let visits = 0;
+				function record(name: string) {
+					const event = { name };
+					track(event);
+				}
+				class Session {
+					start() {}
+				}
+				interface Options {
+					debug: boolean;
+				}
+				type Mode = 'a' | 'b';
+				enum Level {
+					Low,
+				}
+				record('load');
+			</script>
+			<script type="application/json">
+				{ "ignored": true }
+			</script>
+		</head>
+		<p>{count}</p>
+		<script>
+			var late = true;
+		</script>
+	</>
+}
+`;
+
+		const { document, service, uri } = create_symbol_harness(source, 'react/script-symbols.tsrx');
+		const symbols = await service.getDocumentSymbols(uri);
+
+		// Top-level, after the component that renders them. The JSON data block is not code, so
+		// it has no symbol.
+		expect(symbol_name_kinds(symbols)).toEqual([
+			['App', SymbolKind.Function],
+			['<script>', SymbolKind.Module],
+			['<script>', SymbolKind.Module],
+		]);
+		expect(child_names(symbols, 'App')).toEqual(['count']);
+		const [, module_script, classic_script] = symbols ?? [];
+		expect(symbol_name_kinds(module_script.children)).toEqual([
+			['enabled', SymbolKind.Constant],
+			['visits', SymbolKind.Variable],
+			['record', SymbolKind.Function],
+			['Session', SymbolKind.Class],
+			['Options', SymbolKind.Interface],
+			['Mode', SymbolKind.TypeParameter],
+			['Level', SymbolKind.Enum],
+		]);
+		expect(child_names(module_script.children, 'record')).toEqual(['event']);
+		expect(child_names(module_script.children, 'Session')).toEqual(['start']);
+		expect(symbol_name_kinds(classic_script.children)).toEqual([['late', SymbolKind.Variable]]);
+
+		// Source ranges: the tag name selects a `<script>` symbol, which spans the element from
+		// its tag name to its closing tag name.
+		expect(get_range_text(document, module_script.selectionRange)).toBe('script');
+		expect(get_range_text(document, module_script.range)).toMatch(
+			/^script type="module">[\s\S]*record\('load'\);\s*<\/script$/,
+		);
+		expect(get_range_text(document, classic_script.range)).toMatch(
+			/^script>\s*var late = true;\s*<\/script$/,
+		);
+		const record = find_symbol(module_script.children, 'record');
+		expect(record && get_range_text(document, record.selectionRange)).toBe('record');
+		expect(record && get_range_text(document, record.range)).toMatch(
+			/^function record\(name: string\) \{[\s\S]*\}$/,
+		);
+		for (const child of module_script.children ?? []) {
+			expect(range_contains(module_script.range, child.range), child.name).toBe(true);
+		}
+	});
+
+	it('takes each `<script>` symbol from its element, whatever the text around the tags', async () => {
+		// `</script >` closes an element too, and `<script` can appear in an attribute value or
+		// in the body.
+		const source = `export function App() @{
+	<>
+		<script type="module" data-note="<script>">
+			const first = '<script';
+		</script >
+		<script>
+			const second = 2;
+		</script>
+		<script>
+			const third = 3;
+		</script >
+	</>
+}
+`;
+
+		const { document, service, uri } = create_symbol_harness(source, 'react/script-tags.tsrx');
+		const symbols = await service.getDocumentSymbols(uri);
+		const scripts = symbols?.filter((symbol) => symbol.name === '<script>') ?? [];
+
+		expect(scripts.map((script) => script.children?.map((child) => child.name))).toEqual([
+			['first'],
+			['second'],
+			['third'],
+		]);
+		// From the tag name to the closing tag name, each within its own element.
+		expect(scripts.map((script) => get_range_text(document, script.range))).toEqual([
+			'script type="module" data-note="<script>">\n\t\t\tconst first = \'<script\';\n\t\t</script',
+			'script>\n\t\t\tconst second = 2;\n\t\t</script',
+			'script>\n\t\t\tconst third = 3;\n\t\t</script',
+		]);
+		// The opening tag's name selects each one.
+		const lines = source.split('\n');
+		expect(
+			scripts.map(({ selectionRange }) => [
+				selectionRange.start.line,
+				lines[selectionRange.start.line].slice(0, selectionRange.start.character).trim(),
+				get_range_text(document, selectionRange),
+			]),
+		).toEqual([
+			[2, '<', 'script'],
+			[5, '<', 'script'],
+			[8, '<', 'script'],
+		]);
+	});
 });
 
 /**

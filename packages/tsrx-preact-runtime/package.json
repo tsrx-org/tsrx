@@ -3,7 +3,7 @@
   "description": "Runtime helpers for TSRX Preact compiled output",
   "license": "MIT",
   "author": "Dominic Gannaway",
-  "version": "0.1.12",
+  "version": "0.2.0",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -17,6 +17,10 @@
     "./error-boundary": {
       "types": "./types/error-boundary.d.ts",
       "default": "./src/error-boundary.js"
+    },
+    "./try-body": {
+      "types": "./types/try-body.d.ts",
+      "default": "./src/try-body.js"
     },
     "./ref": {
       "types": "./types/ref.d.ts",

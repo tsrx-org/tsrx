@@ -8,7 +8,7 @@
  * an eager one, and a source phase import into an ordinary default import.
  * UPSTREAM(sveltejs/esrap#249): remove once a release prints `phase`
  *
- * @template {ESRap.Visitors} T
+ * @template {ESRap.Visitors<any>} T
  * @param {T} visitors
  * @returns {T}
  */

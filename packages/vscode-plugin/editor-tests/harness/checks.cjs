@@ -96,6 +96,33 @@ async function poll_symbols(document) {
 }
 
 /**
+ * The folds VS Code shows in `document`, merged from every folding provider, as
+ * `<first line>-<last folded line> [kind]` with lines numbered from 1, polled until there
+ * are some or 20 seconds have passed: right after a start, the TSRX server may not answer
+ * yet. TypeScript answers none for `.tsrx` files, on TypeScript 7 and through the tsserver
+ * plugin, and VS Code then folds nothing by indentation either.
+ * @param {vscode.TextDocument} document
+ */
+async function poll_folds(document) {
+	/** @type {vscode.FoldingRange[]} */
+	let folds = [];
+	const deadline = Date.now() + 20000;
+	while (folds.length === 0 && Date.now() < deadline) {
+		folds =
+			(await within(
+				vscode.commands.executeCommand('vscode.executeFoldingRangeProvider', document.uri),
+				5000,
+				undefined,
+			)) ?? [];
+		if (folds.length === 0) await sleep(500);
+	}
+	return folds.map(
+		(fold) =>
+			`${fold.start + 1}-${fold.end + 1}${fold.kind ? ` ${vscode.FoldingRangeKind[fold.kind].toLowerCase()}` : ''}`,
+	);
+}
+
+/**
  * The text of `document` with `edits` applied to a copy: a changed document would make
  * VS Code ask to save it when the instance closes, and that dialog brings the hidden
  * window to the front.
@@ -112,6 +139,22 @@ function applied(document, edits) {
 			text.slice(0, offset(edit.range.start)) + edit.newText + text.slice(offset(edit.range.end));
 	}
 	return text;
+}
+
+/**
+ * Accept the TypeScript 7 extension's prompt to use the project's TypeScript, as clicking
+ * Use Workspace Version would: the command runs the first button of the newest
+ * notification. That is the prompt, which comes once the extension's server runs, after
+ * TSRX's notice about the file. In a window with no test run, TSRX then restarts the
+ * extension host, because the setting changed in the workspace. A test run holds the
+ * extension host, so that restart stays pending here and these checks carry on.
+ */
+async function accept_workspace_prompt() {
+	await sleep(config.actionWaitMs);
+	await vscode.commands.executeCommand('notification.acceptPrimaryAction');
+	await sleep(config.actionWaitMs);
+	const tsdk = vscode.workspace.getConfiguration('js/ts').inspect('tsdk.path');
+	return { user: tsdk?.globalValue, workspace: tsdk?.workspaceValue };
 }
 
 /** @param {vscode.Uri} uri */
@@ -139,9 +182,12 @@ exports.run = async () => {
 		await vscode.window.showTextDocument(document);
 		result.languageId = document.languageId;
 		result.useTsgoAtStart = use_tsgo('experimental.useTsgo');
+		if (config.workspacePrompt) result.workspacePrompt = await accept_workspace_prompt();
 
 		const text = document.getText();
 		result.hover = await hover_on_count(document, config.hoverTimeoutMs);
+		// Before the edits below, which move the lines.
+		result.folding = await poll_folds(document);
 		// Without a TypeScript that answers, the import checks below only look once.
 		const answering = /number/.test(result.hover);
 

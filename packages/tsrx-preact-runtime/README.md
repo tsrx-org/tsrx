@@ -23,5 +23,6 @@ declaring this package in `dependencies`.
 Available subpaths:
 
 - `@tsrx/preact-runtime/error-boundary`
+- `@tsrx/preact-runtime/try-body`
 - `@tsrx/preact-runtime/ref`
 - `@tsrx/preact-runtime/iterable`

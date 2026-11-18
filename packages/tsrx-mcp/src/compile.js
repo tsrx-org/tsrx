@@ -2,6 +2,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { DIAGNOSTIC_CODES } from '@tsrx/core';
+import { resolveBuildPlatform } from '@tsrx/core/config';
 import { detect_target, TARGET_CANDIDATES } from './target.js';
 
 const VALID_TARGETS = new Set(TARGET_CANDIDATES.map((candidate) => candidate.target));
@@ -10,6 +11,7 @@ const VALID_TARGETS = new Set(TARGET_CANDIDATES.map((candidate) => candidate.tar
  * @typedef {{
  *   message: string,
  *   code: string | null,
+ *   severity: 'error' | 'warning',
  *   type: string | null,
  *   fileName: string | null,
  *   pos: number | null,
@@ -58,11 +60,15 @@ const LEGACY_CODES = {
 };
 
 /**
+ * A collected diagnostic keeps its severity. One the compiler threw stopped
+ * the compile, so it is an error whatever it says, as the language server and
+ * `tsrx-tsc` show it.
  * @param {unknown} error
  * @param {string} filename
+ * @param {boolean} [thrown]
  * @returns {NormalizedCompileError}
  */
-function normalize_error(error, filename) {
+function normalize_error(error, filename, thrown = false) {
 	if (error && typeof error === 'object') {
 		const candidate = /** @type {Record<string, unknown>} */ (error);
 		return {
@@ -70,6 +76,7 @@ function normalize_error(error, filename) {
 			code: candidate.code
 				? (LEGACY_CODES[String(candidate.code)] ?? String(candidate.code))
 				: null,
+			severity: !thrown && candidate.severity === 'warning' ? 'warning' : 'error',
 			type: candidate.type ? String(candidate.type) : null,
 			fileName: candidate.fileName ? String(candidate.fileName) : filename,
 			pos: typeof candidate.pos === 'number' ? candidate.pos : null,
@@ -81,6 +88,7 @@ function normalize_error(error, filename) {
 	return {
 		message: String(error),
 		code: null,
+		severity: 'error',
 		type: null,
 		fileName: filename,
 		pos: null,
@@ -142,8 +150,10 @@ function get_generated_css(result) {
  *   collect?: boolean,
  *   loose?: boolean,
  *   includeCode?: boolean,
- *   mode?: 'client' | 'server'
- * }} input
+ *   mode?: 'client' | 'server',
+ *   resolvePlatform?: boolean
+ * }} input `resolvePlatform: false` skips reading `tsrx.platform` from the
+ *   tsconfig nearest the file, as the hosted server does.
  */
 export async function compile_tsrx(input) {
 	const filename = input.filename ?? 'Component.tsrx';
@@ -165,6 +175,7 @@ export async function compile_tsrx(input) {
 							? detection.message
 							: `Could not infer a TSRX target. Pass target explicitly. ${detection.message}`,
 					code: null,
+					severity: /** @type {const} */ ('error'),
 					type: null,
 					fileName: filename,
 					pos: null,
@@ -189,6 +200,7 @@ export async function compile_tsrx(input) {
 				{
 					message: `Unknown TSRX target "${target}".`,
 					code: null,
+					severity: /** @type {const} */ ('error'),
 					type: null,
 					fileName: filename,
 					pos: null,
@@ -209,6 +221,32 @@ export async function compile_tsrx(input) {
 	const compiler_package =
 		target === 'hono' && input.mode === 'client' ? '@tsrx/hono/dom' : candidate.compilerPackage;
 
+	// A file without platform flags compiles the same for every platform, so a
+	// tsconfig graph that does not resolve one is only reported once the
+	// compiler asks for a platform.
+	/** @type {import('@tsrx/core/types').Platform | undefined} */
+	let platform;
+	/** @type {unknown} */
+	let platform_error = null;
+	if (input.resolvePlatform !== false) {
+		try {
+			platform = resolveBuildPlatform({
+				root: path.dirname(path.resolve(cwd, filename)),
+				integration: '@tsrx/mcp',
+			});
+		} catch (error) {
+			platform_error = error;
+		}
+	}
+	/** @param {NormalizedCompileError} error */
+	const explain_platform = (error) =>
+		platform_error !== null && error.code === DIAGNOSTIC_CODES.PLATFORM_REQUIRED
+			? {
+					...error,
+					message: `${error.message} The project's tsconfig did not resolve a platform: ${platform_error instanceof Error ? platform_error.message : String(platform_error)}`,
+				}
+			: error;
+
 	try {
 		const compiler = await import_compiler(compiler_package, cwd, detection.packageJsonPath);
 		if (typeof compiler.compile !== 'function') {
@@ -219,13 +257,15 @@ export async function compile_tsrx(input) {
 			collect: input.collect ?? true,
 			loose: input.loose,
 			mode: input.mode,
+			platform,
 		});
-		const errors = normalize_errors(result?.errors, filename);
+		const errors = normalize_errors(result?.errors, filename).map(explain_platform);
 		const code = get_generated_code(result);
 		const css = get_generated_css(result);
 
 		return {
-			ok: errors.length === 0,
+			// A warning doesn't fail the compile.
+			ok: errors.every((error) => error.severity === 'warning'),
 			target,
 			compilerPackage: compiler_package,
 			filename,
@@ -241,7 +281,7 @@ export async function compile_tsrx(input) {
 			compilerPackage: compiler_package,
 			filename,
 			cwd,
-			errors: [normalize_error(error, filename)],
+			errors: [explain_platform(normalize_error(error, filename, true))],
 			code: null,
 			css: null,
 		};

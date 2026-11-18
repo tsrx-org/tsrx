@@ -117,5 +117,7 @@ export function compile_to_volar_mappings(source, filename, options) {
 		...result,
 		mappings: dedupeMappings(result.mappings),
 	};
-	return uses_platform_flags ? withPlatformTypes(deduped, options?.platform) : deduped;
+	return uses_platform_flags
+		? withPlatformTypes(deduped, options?.platform, transformed.ast)
+		: deduped;
 }

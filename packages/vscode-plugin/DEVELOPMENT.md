@@ -38,7 +38,7 @@ that the restarted server writes to the output.
 ```sh
 pnpm --filter @tsrx/vscode-plugin build-and-package
 pnpm --filter @tsrx/vscode-plugin test:editor
-pnpm --filter @tsrx/vscode-plugin test:editor -- --scenario ts7-project-nightly --verbose
+pnpm --filter @tsrx/vscode-plugin test:editor -- --scenario ts7-workspace-prompt --verbose
 ```
 
 `--list` prints the scenarios, `--build` builds the VSIX first, `--keep` keeps the

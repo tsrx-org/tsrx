@@ -94,7 +94,8 @@ const rule: Rule.RuleModule = {
 					return;
 				}
 
-				const body = (node as any).body;
+				// The ESLint parser keeps the loop itself, with its body, in `loop`.
+				const body = (node as any).loop?.body;
 				if (!body || containsTemplateOutput(body)) {
 					return;
 				}

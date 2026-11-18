@@ -65,3 +65,68 @@ describe.each(Object.keys(target_dependencies))('%s target', (target) => {
 		expect(native.status).toBe(2);
 	});
 });
+
+// Solid and Vue compile an authored `className` on a host element to `class`,
+// and so does the type-only output, which neither target's JSX types would
+// otherwise accept. A component's `className` prop stays as written, also
+// through a dynamic tag, and `class` and `className` around a spread don't
+// report two `class` attributes.
+/** @param {string} target */
+const class_name_source = (target) => `export function Inner(props: { className: string }) @{
+	<span class={props.className} />
+}
+
+export function Classes(props: { c?: string; bag?: { id?: string } }) @{
+	const Tag = Inner;
+	<>
+		<div className="x" />
+		<div className={props.c} />
+		<div class="a" className={props.c} />
+		<div class="a" {...props.bag} className={props.c} />
+		<Inner className="kept" />
+		<{Tag} className="dynamic" />${target === 'solid' ? "\n\t\t<p className={Symbol('no')} />" : ''}
+	</>
+}
+`;
+
+describe.each(['solid', 'vue'])('%s target', (target) => {
+	it('type-checks an authored className on a host element as class', () => {
+		const files = fixture_files_with_native_config(path.join(targets_dir, target));
+		files['Classes.tsrx'] = class_name_source(target);
+		files['main.ts'] =
+			"import { Classes } from './Classes.tsrx';\n\nexport const classes = Classes;\n";
+		const created = create_native_workspace(files, {
+			dependencies: target_dependencies[target],
+		});
+		cleanups.push(created.cleanup);
+
+		const classic = run_classic_tsc(created.dir, [
+			'--noEmit',
+			'-p',
+			'tsconfig.json',
+			'--pretty',
+			'false',
+		]);
+		const native = run_native_tsc(created.dir, [
+			'--noEmit',
+			'-p',
+			'tsconfig.native.json',
+			'--pretty',
+			'false',
+		]);
+
+		const classic_diagnostics = parse_tsc_output(classic.output);
+		// Solid's `class` takes no symbol: the error lands on the authored
+		// `className`. Vue's `class` takes any value.
+		expect(classic_diagnostics).toEqual(
+			target === 'solid'
+				? [expect.objectContaining({ file: 'Classes.tsrx', line: 14, column: 6, code: 'TS2322' })]
+				: [],
+		);
+		// TypeScript 7 orders the union in the message differently.
+		/** @param {Array<{ file: string, line: number, column: number, code: string }>} list */
+		const positions = (list) =>
+			list.map(({ file, line, column, code }) => ({ file, line, column, code }));
+		expect(positions(parse_tsc_output(native.output))).toEqual(positions(classic_diagnostics));
+	});
+});

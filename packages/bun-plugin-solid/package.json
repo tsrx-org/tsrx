@@ -3,7 +3,7 @@
   "description": "Bun plugin for @tsrx/solid (.tsrx modules)",
   "license": "MIT",
   "author": "Dominic Gannaway",
-  "version": "0.0.81",
+  "version": "0.0.84",
   "type": "module",
   "publishConfig": {
     "access": "public"
@@ -20,7 +20,8 @@
     }
   },
   "scripts": {
-    "test": "pnpm -w test --project bun-plugin-solid"
+    "test": "pnpm -w test --project bun-plugin-solid",
+    "test:native": "bun test tests/native.test.ts"
   },
   "dependencies": {
     "@babel/core": "catalog:default",

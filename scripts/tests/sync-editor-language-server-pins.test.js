@@ -11,7 +11,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
-import { synchronizeEditorLanguageServerPins } from '../sync-editor-language-server-pins.js';
+import {
+	synchronizeEditorLanguageServerPins,
+	updateSublimeLockfile,
+} from '../sync-editor-language-server-pins.js';
 
 const repository_dir = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const nvim_path = 'packages/nvim-plugin/package.json';
@@ -154,6 +157,79 @@ describe('editor @tsrx/language-server pins', () => {
 				updateLockfile: fake_npm(fixture, []),
 			}),
 		).rejects.toThrow(/x\.y\.z version/);
+	});
+
+	// npm served @tsrx/language-server 0.7.1 before @tsrx/core 0.6.1, which it
+	// depends on, so the release's lockfile install failed with ETARGET.
+	it('installs again while npm does not serve a dependency of the server yet', async () => {
+		const served = { status: 0, stdout: '1.2.3\n', stderr: '' };
+		const not_served = {
+			status: 1,
+			stdout: '',
+			stderr:
+				'npm error code ETARGET\nnpm error notarget No matching version found for @tsrx/core@0.6.1.\n',
+		};
+		const installed = { status: 0, stdout: '', stderr: '' };
+		const responses = [served, not_served, not_served, installed];
+		const calls = [];
+		const waits = [];
+
+		await updateSublimeLockfile({
+			directory: '/lockfile',
+			version: '1.2.3',
+			logger: quiet,
+			runNpm: (args, cwd) => {
+				calls.push([args, cwd]);
+				return responses.shift();
+			},
+			wait: async (ms) => {
+				waits.push(ms);
+			},
+		});
+
+		const install = [
+			'install',
+			'--package-lock-only',
+			'--prefer-online',
+			'--ignore-scripts',
+			'--no-audit',
+			'--no-fund',
+		];
+		expect(calls).toEqual([
+			[['view', '@tsrx/language-server@1.2.3', 'version', '--prefer-online'], '/lockfile'],
+			[install, '/lockfile'],
+			[install, '/lockfile'],
+			[install, '/lockfile'],
+		]);
+		expect(waits).toEqual([30_000, 30_000]);
+	});
+
+	it('fails on any other install error at once, and on a package npm does not serve after ten attempts', async () => {
+		const served = { status: 0, stdout: '1.2.3\n', stderr: '' };
+		let installs = 0;
+		const update = (failure) =>
+			updateSublimeLockfile({
+				directory: '/lockfile',
+				version: '1.2.3',
+				logger: quiet,
+				runNpm: (args) => {
+					if (args[0] === 'view') return served;
+					installs++;
+					return failure;
+				},
+				wait: async () => {},
+			});
+
+		await expect(
+			update({ status: 1, stdout: '', stderr: 'npm error code EACCES\n' }),
+		).rejects.toThrow(/failed with exit code 1:\nnpm error code EACCES/);
+		expect(installs).toBe(1);
+
+		installs = 0;
+		await expect(
+			update({ status: 1, stdout: '', stderr: 'npm error code E404\n' }),
+		).rejects.toThrow(/failed with exit code 1:\nnpm error code E404/);
+		expect(installs).toBe(10);
 	});
 });
 

@@ -112,15 +112,21 @@ describe('TSRX closing tags', () => {
 		);
 	});
 
-	it.each([
-		'TypeScriptTeam.vscode-typescript',
-		'TypeScriptTeam.vscode-typescript-nightly',
-		'TypeScriptTeam.native-preview',
-	])('count %s as a TypeScript 7 extension, as VS Code does', (id) => {
-		install(id);
+	it.each(['TypeScriptTeam.vscode-typescript', 'TypeScriptTeam.native-preview'])(
+		'count %s as a TypeScript 7 extension, as VS Code does',
+		(id) => {
+			install(id);
+			set_use_tsgo('js/ts', true);
+			activate();
+			expect(host.activateAutoInsertion).toHaveBeenCalledOnce();
+		},
+	);
+
+	it("stay off with only the TypeScript 7 Nightly extension, which leaves VS Code's own TypeScript on", () => {
+		install('TypeScriptTeam.vscode-typescript-nightly');
 		set_use_tsgo('js/ts', true);
 		activate();
-		expect(host.activateAutoInsertion).toHaveBeenCalledOnce();
+		expect(host.activateAutoInsertion).not.toHaveBeenCalled();
 	});
 
 	it('stay off when TypeScript 7 is on but no TypeScript 7 extension is installed', () => {
