@@ -5,15 +5,18 @@ import {
 	defineComponent,
 	defineVaporAsyncComponent,
 	inject,
+	onBeforeUnmount,
 	onMounted,
 	onUnmounted,
 	provide,
 	reactive,
 	ref,
+	Suspense,
 	watch,
 	VaporKeepAlive,
 	watchEffect,
 } from 'vue';
+import * as Vue from 'vue';
 import { mergeRefs } from '@tsrx/vue/ref';
 import { for_items } from '@tsrx/vue/runtime/iterable';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
@@ -4264,6 +4267,253 @@ function CatchClickThrows() @{
 	}
 }
 
+const nested_broken = ref(false);
+
+function nested_label(): string {
+	if (nested_broken.value) throw new Error('nested body');
+	return 'ok';
+}
+
+// A @try inside the @catch, whose inline body code throws on an update.
+function NestedInlineInCatch() @{
+	@try {
+		<ThrowsInSetup />
+	} @catch (_initial) {
+		@try {
+			<p class="nested-body">{nested_label()}</p>
+		} @catch (err) {
+			<b class="nested-caught">{String(err)}</b>
+		}
+	}
+}
+
+// The same inside an outer @try.
+function NestedInlineInCatchOuter() @{
+	@try {
+		@try {
+			<ThrowsInSetup />
+		} @catch (_initial) {
+			@try {
+				<p class="nested-body">{nested_label()}</p>
+			} @catch (err) {
+				<b class="nested-caught">{String(err)}</b>
+			}
+		}
+	} @catch (err) {
+		<p class="outer-caught">{String(err)}</p>
+	}
+}
+
+function ResetThenThrowButton(props: { error: unknown; reset: () => void }) @{
+	catch_runs++;
+	<button
+		class="reset-then-throw"
+		onClick={() => {
+			props.reset();
+			throw_content(new Error('catch after reset'));
+		}}
+	>
+		{String(props.error)}
+	</button>
+}
+
+// A component of the @catch calls reset and then throws, from a click.
+function ResetThenThrowClick() @{
+	@try {
+		@try {
+			<ThrowsInSetup />
+		} @pending {
+			<p class="catch-pending">{'loading'}</p>
+		} @catch (err, reset) {
+			<ResetThenThrowButton error={err} reset={reset} />
+		}
+	} @catch (err) {
+		<p class="outer-caught">{String(err)}</p>
+	}
+}
+
+function ResetThenThrowSetup(props: { reset: () => void }) @{
+	catch_runs++;
+	props.reset();
+	throw_content(new Error('catch after reset'));
+	<b />
+}
+
+// A component of the @catch calls reset and then throws as it renders.
+function ResetThenThrowRender() @{
+	@try {
+		@try {
+			<ThrowsInSetup />
+		} @pending {
+			<p class="catch-pending">{'loading'}</p>
+		} @catch (_err, reset) {
+			<ResetThenThrowSetup reset={reset} />
+		}
+	} @catch (err) {
+		<p class="outer-caught">{String(err)}</p>
+	}
+}
+
+function reset_then_throw(reset: () => void): never {
+	catch_runs++;
+	reset();
+	throw new Error('catch after reset');
+}
+
+// The @catch's own inline code calls reset and then throws, from a click.
+function InlineResetThenThrowClick() @{
+	@try {
+		@try {
+			<ThrowsInSetup />
+		} @catch (err, reset) {
+			<button class="reset-then-throw" onClick={() => reset_then_throw(reset)}>
+				{String(err)}
+			</button>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{String(err)}</p>
+	}
+}
+
+// The same as the @catch renders.
+function InlineResetThenThrowRender() @{
+	@try {
+		@try {
+			<ThrowsInSetup />
+		} @catch (_err, reset) {
+			<b>{reset_then_throw(reset)}</b>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{String(err)}</p>
+	}
+}
+
+// The same, from a @try inside the @catch of another @try.
+function InlineResetThenThrowInCatch() @{
+	@try {
+		<ThrowsInSetup />
+	} @catch (_initial) {
+		@try {
+			<ThrowsInSetup />
+		} @catch (err, reset) {
+			<button class="reset-then-throw" onClick={() => reset_then_throw(reset)}>
+				{String(err)}
+			</button>
+		}
+	}
+}
+
+let finish_hidden: () => void = () => {};
+
+function SuspendedTry() @{
+	const AsyncChild = defineVaporAsyncComponent(
+		() =>
+			new Promise<typeof CatchResolved>(
+				(resolve) => (finish_hidden = () => resolve(CatchResolved)),
+			),
+	);
+	@try {
+		<>
+			<AsyncChild value="loaded" />
+			<span>{nested_label()}</span>
+		</>
+	} @catch (err) {
+		<b class="nested-caught">{String(err)}</b>
+	}
+}
+
+// A @try inside an authored Suspense in the @catch; its inline body code
+// throws while the Suspense is still pending.
+function SuspendedTryInCatch() @{
+	@try {
+		<ThrowsInSetup />
+	} @catch (_initial) {
+		<Suspense
+			v-slots={{
+				default: () => <SuspendedTry />,
+				fallback: () => <small class="hidden-loading">{'loading'}</small>,
+			}}
+		/>
+	}
+}
+
+const nested_shown = ref(true);
+
+function throw_before_unmount() {
+	onBeforeUnmount(() => {
+		throw new Error('before unmount');
+	});
+}
+
+// A @try inside the @catch, whose body throws as it unmounts.
+function NestedTeardownInCatch() @{
+	@try {
+		<ThrowsInSetup />
+	} @catch (_initial) {
+		<div class="catch-region">
+			@if (nested_shown.value) {
+				@try {
+					throw_before_unmount();
+					<span class="nested-body">{'body'}</span>
+				} @catch (err) {
+					<b class="nested-caught">{String(err)}</b>
+				}
+			}
+		</div>
+	}
+}
+
+const late_shown = ref(true);
+let release_late: () => void = () => {};
+
+// A @try whose inline click handler throws after the @try is gone.
+function LateInlineAfterUnmount() @{
+	@try {
+		@if (late_shown.value) {
+			@try {
+				<button
+					class="late"
+					onClick={async () => {
+						await new Promise<void>((resolve) => (release_late = resolve));
+						throw new Error('late inline');
+					}}
+				>
+					{'late'}
+				</button>
+			} @catch (err) {
+				<b class="nested-caught">{String(err)}</b>
+			}
+		}
+	} @catch (err) {
+		<p class="outer-caught">{String(err)}</p>
+	}
+}
+
+// The same inside the @catch of another @try.
+function LateInlineInCatchAfterUnmount() @{
+	@try {
+		<ThrowsInSetup />
+	} @catch (_initial) {
+		<div class="catch-region">
+			@if (late_shown.value) {
+				@try {
+					<button
+						class="late"
+						onClick={async () => {
+							await new Promise<void>((resolve) => (release_late = resolve));
+							throw new Error('late inline');
+						}}
+					>
+						{'late'}
+					</button>
+				} @catch (err) {
+					<b class="nested-caught">{String(err)}</b>
+				}
+			}
+		</div>
+	}
+}
+
 // The body throws from a click, and the @catch resets it.
 function ResetAndFailAgain() @{
 	@try {
@@ -4282,6 +4532,9 @@ describe('tsrx-vue a @catch that throws', () => {
 		handled = [];
 		catch_runs = 0;
 		catch_signal = ref(0);
+		nested_broken.value = false;
+		late_shown.value = true;
+		nested_shown.value = true;
 		const app = createVaporApp(component as Parameters<typeof createVaporApp>[0], props);
 		app.config.errorHandler = (error) => {
 			handled.push((error as Error).message);
@@ -4397,6 +4650,119 @@ describe('tsrx-vue a @catch that throws', () => {
 		expect(text('.reset')).toBe('b');
 		expect(handled).toEqual([]);
 		app.unmount();
+	});
+
+	it.each([
+		['inside the @catch', NestedInlineInCatch],
+		['inside the @catch, inside an outer @try', NestedInlineInCatchOuter],
+	])('shows an update error of a @try %s in that @try', async (_name, component) => {
+		const app = await mount(component, {});
+		expect(text('.nested-body')).toBe('ok');
+		nested_broken.value = true;
+		await flush();
+		expect(text('.nested-caught')).toBe('Error: nested body');
+		expect(container.querySelector('.nested-body')).toBeNull();
+		expect(container.querySelector('.outer-caught')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('passes on what the @catch throws right after its reset, from a click', async () => {
+		const app = await mount(ResetThenThrowClick, {});
+		(container.querySelector('.reset-then-throw') as HTMLElement).click();
+		await flush();
+		expect(text('.outer-caught')).toBe('Error: catch after reset');
+		expect(catch_runs).toBe(1);
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('passes on what the @catch throws right after its reset, as it renders', async () => {
+		const app = await mount(ResetThenThrowRender, {});
+		expect(text('.outer-caught')).toBe('Error: catch after reset');
+		expect(catch_runs).toBe(1);
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('passes on what the inline code of the @catch throws right after its reset', async () => {
+		const app = await mount(InlineResetThenThrowClick, {});
+		(container.querySelector('.reset-then-throw') as HTMLElement).click();
+		await flush();
+		expect(text('.outer-caught')).toBe('Error: catch after reset');
+		expect(catch_runs).toBe(1);
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('passes on what the inline code of the @catch throws right after its reset, as it renders', async () => {
+		const app = await mount(InlineResetThenThrowRender, {});
+		expect(text('.outer-caught')).toBe('Error: catch after reset');
+		expect(catch_runs).toBeLessThan(3);
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('passes on what the inline code of a @catch inside a @catch throws right after its reset', async () => {
+		const app = await mount(InlineResetThenThrowInCatch, {});
+		(container.querySelector('.reset-then-throw') as HTMLElement).click();
+		await flush();
+		expect(handled).toEqual(['catch after reset']);
+		expect(catch_runs).toBe(1);
+		app.unmount();
+	});
+
+	it('lets a Suspense in the @catch resolve after a @try inside it throws while pending', async () => {
+		const app = await mount(SuspendedTryInCatch, {});
+		expect(text('.hidden-loading')).toBe('loading');
+		nested_broken.value = true;
+		await flush();
+		finish_hidden();
+		await flush();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await flush();
+		expect(container.querySelector('.hidden-loading')).toBeNull();
+		expect(handled).toEqual(['nested body']);
+		app.unmount();
+	});
+
+	it('passes on what a @try inside the @catch throws as it unmounts', async () => {
+		const app = await mount(NestedTeardownInCatch, {});
+		expect(text('.nested-body')).toBe('body');
+		nested_shown.value = false;
+		await flush();
+		expect(handled).toEqual(['before unmount']);
+		expect(container.querySelector('.nested-caught')).toBeNull();
+		app.unmount();
+	});
+
+	it('passes on an error from a @try that is gone', async () => {
+		const app = await mount(LateInlineAfterUnmount, {});
+		(container.querySelector('.late') as HTMLElement).click();
+		late_shown.value = false;
+		await flush();
+		release_late();
+		await flush();
+		expect(text('.outer-caught')).toBe('Error: late inline');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('passes on an error from a @try inside the @catch that is gone', async () => {
+		const app = await mount(LateInlineInCatchAfterUnmount, {});
+		(container.querySelector('.late') as HTMLElement).click();
+		late_shown.value = false;
+		await flush();
+		release_late();
+		await flush();
+		expect(handled).toEqual(['late inline']);
+		app.unmount();
+	});
+
+	// The boundary needs this Vapor internal to tell its @catch's components
+	// from its body's; without it, it falls back to showing both.
+	it('finds nextUid in the installed Vue', () => {
+		expect(typeof (Vue as unknown as { nextUid?: unknown }).nextUid).toBe('function');
 	});
 
 	it('passes on what an event handler of the @catch throws', async () => {

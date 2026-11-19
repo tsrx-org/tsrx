@@ -8,8 +8,10 @@ import {
 	ErrorCodes,
 	getCurrentInstance,
 	handleError,
+	onBeforeUnmount,
 	onErrorCaptured,
 	shallowRef,
+	warn,
 } from 'vue';
 
 /**
@@ -28,6 +30,10 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
  * component uid taken as it first rendered: Vue numbers components in the
  * order it creates them, so the fallback's have later uids, and the content's
  * earlier ones
+ * @property {boolean} shows_content whether the boundary last rendered its
+ * content rather than its fallback; `reset` doesn't change it, the render
+ * after it does
+ * @property {boolean} unmounting whether the boundary's teardown has begun
  * @property {() => void} reset
  */
 
@@ -175,6 +181,31 @@ function thrown_by_twin_fallback(source, boundary) {
 		return !!props_of(inner)?.sharesCatch && thrown_by_fallback(source, inner);
 	}
 	return false;
+}
+
+/**
+ * The state of `source` when it is a mounted boundary, other than the one
+ * `own` belongs to, whose last render showed its content: an error it is the
+ * source of came from its content's inline code. A boundary that renders the
+ * same `@catch` as the one around it (`sharesCatch`) is left to that one,
+ * which shows the same `@catch` and can replace a pending `Suspense`. So is
+ * one inside a `Suspense` that is still pending: its fallback would render in
+ * the hidden branch, and the `Suspense` would never resolve.
+ *
+ * @param {unknown} source
+ * @param {BoundaryState} own
+ * @returns {BoundaryState | undefined}
+ */
+function shows_content_of(source, own) {
+	const instance = /** @type {ComponentInternalInstance} */ (source);
+	const inner = boundary_states.get(instance);
+	if (!inner || inner === own || !inner.shows_content || inner.unmounting) return undefined;
+	if (/** @type {{ isUnmounted?: boolean }} */ (source).isUnmounted) return undefined;
+	if (props_of(instance)?.sharesCatch) return undefined;
+	const suspense = /** @type {{ suspense?: { pendingBranch?: unknown } | null }} */ (source)
+		.suspense;
+	if (suspense?.pendingBranch) return undefined;
+	return inner;
 }
 
 /**
@@ -357,6 +388,11 @@ export function TsrxErrorBoundary(props, ctx) {
 		if (state.caught) {
 			return render_fallback(state, props);
 		}
+		// The content renders again, after a reset: what the fallback created
+		// before is gone. Until now, what it throws still goes on, also right
+		// after its own call to `reset`.
+		state.fallback_from = null;
+		state.shows_content = true;
 
 		/** @type {RenderFrame} */
 		const frame = { instance: vapor.currentInstance, errors: [] };
@@ -390,8 +426,30 @@ export function TsrxErrorBoundary(props, ctx) {
  */
 function render_fallback(state, props) {
 	const caught = /** @type {{ error: unknown }} */ (state.caught);
-	if (state.fallback_from === null) state.fallback_from = vapor.nextUid();
+	state.shows_content = false;
+	if (state.fallback_from === null) state.fallback_from = take_uid();
 	return props.fallback(caught.error, state.reset);
+}
+
+let warned_no_uid = false;
+
+/**
+ * The next component uid, or null when this Vue doesn't export `nextUid`,
+ * an internal of its Vapor renderer. Without it, a boundary can't tell its
+ * fallback's components from its content's, so it shows what either throws,
+ * as it did before it could.
+ *
+ * @returns {number | null}
+ */
+function take_uid() {
+	if (typeof vapor.nextUid === 'function') return vapor.nextUid();
+	if (!warned_no_uid) {
+		warned_no_uid = true;
+		warn(
+			'[tsrx] This Vue version has no `nextUid` export, so an error a @catch throws is shown by the same @catch instead of going on to the next one out.',
+		);
+	}
+	return null;
 }
 
 // Declared, so they are props rather than attributes: Vue passes a
@@ -419,9 +477,10 @@ function create_boundary_state() {
 		version: shallowRef(0),
 		caught: null,
 		fallback_from: null,
+		shows_content: false,
+		unmounting: false,
 		reset() {
 			state.caught = null;
-			state.fallback_from = null;
 			state.version.value++;
 		},
 	};
@@ -440,6 +499,10 @@ function initialize_boundary_state(instance) {
 
 	const state = create_boundary_state();
 	boundary_states.set(instance, state);
+	// Registered before anything the content registers, so it runs first.
+	onBeforeUnmount(() => {
+		state.unmounting = true;
+	});
 
 	onErrorCaptured((captured_error, source) => {
 		// The boundary inside this one that renders the same `@catch` let this
@@ -454,11 +517,22 @@ function initialize_boundary_state(instance) {
 			return false;
 		}
 		// Thrown by the fallback, with no boundary rendering around it: it goes
-		// on to the next boundary out, or to `app.config.errorHandler`, as on
-		// React. Showing the fallback again would throw again, until Vue
+		// on to the next boundary out, or to `app.config.errorHandler`, as React
+		// does with a render error. Showing the fallback again would throw again, until Vue
 		// stopped the loop. An error from the content, which can still come
 		// while or after the fallback shows, is the boundary's own, as before.
-		if (from_fallback) return;
+		if (from_fallback) {
+			// Unless a `@try` the fallback rendered is the source and shows its
+			// content: its content's inline code threw, on an update or from a
+			// handler. Vue starts at the parent of the instance that threw, which
+			// skipped that boundary's own hook, so show the error there, as the
+			// fallback rendering again used to.
+			const inner = shows_content_of(source, state);
+			if (!inner) return;
+			inner.caught = { error: captured_error };
+			inner.version.value++;
+			return false;
+		}
 		// Thrown outside a render. An async component whose loader rejected
 		// still has its setup pending, and Vapor cannot unmount it until its
 		// Suspense has mounted it, so swap in the fallback after that.
