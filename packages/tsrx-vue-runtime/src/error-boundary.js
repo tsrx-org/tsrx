@@ -164,8 +164,12 @@ function resolve_value(current, value, anchor) {
 	if (current) {
 		if (vapor.isFragment(current)) {
 			if (current.anchor && current.anchor.parentNode) {
-				vapor.remove(current.nodes, current.anchor.parentNode);
-				vapor.insert(node, current.anchor.parentNode, current.anchor);
+				const parent = current.anchor.parentNode;
+				vapor.remove(current.nodes, parent);
+				vapor.insert(node, parent, current.anchor);
+				// The new block has its own anchor; the old one would stay
+				// behind, outside every block, also after unmount.
+				if (node !== current) parent.removeChild(current.anchor);
 				if (current.scope) current.scope.stop();
 			}
 		} else if (current instanceof Node) {

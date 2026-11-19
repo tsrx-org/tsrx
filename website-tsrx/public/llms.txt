@@ -1626,12 +1626,14 @@ option off, and the Rspack plugin follow the DOM output only.
 
 Vue output targets `vue-jsx-vapor` and `defineVaporComponent(...)`. It supports
 directive-prefixed template control flow, scoped styles, host `innerHTML`, and
-`@try/pending` lowering through Vue suspense APIs. A `@pending` body renders
-through a `TsrxPendingBody` component in the `Suspense` fallback, so it runs
-only while the `@try` body suspends, and a throw in it reaches the nearest
-`@catch`. Component-level `await` is not supported for Vue TSRX. vue-jsx-vapor finds components by calls to
+`@try/pending` lowering through Vue suspense APIs. Component-level `await` is
+not supported for Vue TSRX. vue-jsx-vapor finds components by calls to
 `defineVaporComponent`, so a Vue module can't declare its own binding of that
 name (TSRX2032); importing it from `vue-jsx-vapor` is fine.
+
+A `@pending` body renders through a `TsrxPendingBody` component in the
+`Suspense` fallback, so it runs only while the `@try` body suspends, and a
+throw in it reaches the nearest `@catch`.
 
 ### Octane
 

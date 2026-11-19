@@ -157,6 +157,31 @@ function ResetPendingApp(props: { promise: Loader }) @{
 	}
 }
 
+function RetryPendingApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		const label = boom_label();
+		<p class="pending">{label}</p>
+	} @catch (err, reset) {
+		<button class="retry" onClick={reset}>
+			{(err as Error).message}
+		</button>
+	}
+}
+
+function RejectApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		<p class="pending">{'loading'}</p>
+	} @catch (err) {
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
 function html() {
 	return container.innerHTML;
 }
@@ -245,6 +270,45 @@ describe('tsrx-vue @pending', () => {
 			app.unmount();
 			await nextTick();
 		}
+	});
+
+	it('leaves no extra DOM nodes behind after each reset, nor after unmount', async () => {
+		const app = createVaporApp(RetryPendingApp, { promise: never() });
+		try {
+			app.mount(container);
+			await flush();
+			expect(html()).toBe('<button class="retry">pending boom</button>');
+			const nodes = container.childNodes.length;
+
+			for (let i = 0; i < 3; i++) {
+				(container.querySelector('.retry') as HTMLElement).click();
+				await flush();
+				expect(html()).toBe('<button class="retry">pending boom</button>');
+			}
+			expect(pending_runs).toBe(4);
+			expect(container.childNodes.length).toBe(nodes);
+		} finally {
+			app.unmount();
+			await nextTick();
+		}
+		expect(container.childNodes.length).toBe(0);
+	});
+
+	it('leaves no DOM nodes behind after a rejected async component is caught and unmounted', async () => {
+		let reject!: (error: Error) => void;
+		const promise: Loader = new Promise((_resolve, r) => (reject = r));
+		const app = createVaporApp(RejectApp, { promise });
+		try {
+			app.mount(container);
+			await flush();
+			reject(new Error('async reject boom'));
+			await flush();
+			expect(html()).toBe('<p class="caught">async reject boom</p>');
+		} finally {
+			app.unmount();
+			await nextTick();
+		}
+		expect(container.childNodes.length).toBe(0);
 	});
 
 	it('renders the @try again on reset, with the @pending body while it suspends', async () => {
