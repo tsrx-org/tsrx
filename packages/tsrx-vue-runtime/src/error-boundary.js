@@ -75,7 +75,8 @@ function own_instance(ctx) {
  * outer boundary is still rendering.
  *
  * @param {unknown} source a Vapor instance, or a VDOM component's public proxy
- * @param {unknown} owner the instance of the boundary whose hook caught it
+ * @param {unknown} owner the instance of the boundary whose hook caught it,
+ * or null to look at every boundary rendering around `source`
  * @returns {RenderFrame | undefined}
  */
 function find_render_frame(source, owner) {
@@ -343,7 +344,9 @@ function initialize_boundary_state(instance) {
 	boundary_states.set(instance, state);
 
 	onErrorCaptured((captured_error, source) => {
-		const frame = find_render_frame(source, instance);
+		// While the boundary shows its fallback, the error came from that
+		// fallback, which a boundary rendering further out has to take.
+		const frame = find_render_frame(source, state.caught ? null : instance);
 		if (frame) {
 			frame.errors.push(captured_error);
 			return false;

@@ -492,6 +492,32 @@ async function mount_and_unmount(
 	expect(container.childNodes.length).toBe(0);
 }
 
+// An inner @try without @pending inside an element: its @catch renders a
+// component that throws, which the outer @catch shows.
+function ThrowingBody() @{
+	throw new Error('body boom');
+	<p>{'unreachable'}</p>
+}
+
+function ThrowingFallback() @{
+	throw new Error('fallback boom');
+	<p>{'unreachable'}</p>
+}
+
+function ThrowingCatchInElementApp() @{
+	@try {
+		<div class="outer">
+			@try {
+				<ThrowingBody />
+			} @catch (err) {
+				<ThrowingFallback />
+			}
+		</div>
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
 function row_texts() {
 	return Array.from(
 		container.querySelectorAll('li'),
@@ -575,6 +601,12 @@ describe('tsrx-vue @pending', () => {
 		await render(NestedCatchComponentApp, { promise: never() });
 		await flush();
 		expect(html()).toBe('<section><p class="inner-caught">pending boom</p></section>');
+	});
+
+	it('shows the outer @catch when an inner @catch inside an element throws', async () => {
+		await render(ThrowingCatchInElementApp);
+		await flush();
+		expect(html()).toBe('<p class="outer-caught">fallback boom</p>');
 	});
 
 	it.each([
