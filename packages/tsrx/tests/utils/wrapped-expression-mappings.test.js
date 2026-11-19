@@ -44,8 +44,9 @@ const WRAPPED_TYPES = new Set([
  * after wrapping each expression container's member expression or call in
  * `read(…)` with the expression's location.
  * @param {string} source
+ * @param {string} [wrapper] the wrapping call's callee
  */
-function compile_wrapped(source) {
+function compile_wrapped(source, wrapper = 'read') {
 	/** @type {CompileError[]} */
 	const errors = [];
 	/** @type {AST.CommentWithLocation[]} */
@@ -70,7 +71,7 @@ function compile_wrapped(source) {
 			const inner = node.expression;
 			node.expression = {
 				type: 'CallExpression',
-				callee: { type: 'Identifier', name: 'read', metadata: { path: [] } },
+				callee: { type: 'Identifier', name: wrapper, metadata: { path: [] } },
 				arguments: [inner],
 				optional: false,
 				start: inner.start,
@@ -106,9 +107,10 @@ function compile_wrapped(source) {
  * The generated text of each mapping of exactly the last `text` in the source.
  * @param {string} source
  * @param {string} text
+ * @param {string} [wrapper]
  */
-function mapped_texts(source, text) {
-	const { code, mappings } = compile_wrapped(source);
+function mapped_texts(source, text, wrapper) {
+	const { code, mappings } = compile_wrapped(source, wrapper);
 	const start = source.lastIndexOf(text);
 	return mappings
 		.filter((mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === text.length)
@@ -149,7 +151,7 @@ export function App() @{ <p>{value.list[0]}</p> }
 		for (const text of texts) expect(mapped_texts(source, text), text).toEqual([text]);
 	});
 
-	it('maps `this .y` and `super .x`, printed without the space, from `this` and `super`', () => {
+	it('maps `this .y` and `super .x`, printed without the space, from their own text', () => {
 		const source = `class Base { get x() { return 1; } }
 export class C extends Base {
 	y = 2;
@@ -162,12 +164,27 @@ export class C extends Base {
 		expect(mapped_texts(source, 'super .x')).toEqual(['super.x']);
 	});
 
-	it('maps a member expression the printer writes differently from its leftmost name', () => {
-		// `re .x` prints as `re.x`, and the wrapper's callee, `read`, starts with
-		// `re`.
-		const source = `${DECLARATIONS}export function App() @{ <p>{re .x}</p> }\n`;
-		expect(mapped_texts(source, 're .x')).toEqual(['re.x']);
-	});
+	it.each([
+		// The wrapper's callee, `read`, starts with `re`.
+		['re .x', 're.x', 'read'],
+		// The wrapper's callee is the same name.
+		['read .x', 'read.x', 'read'],
+		// The wrapper's callee is `re` and a character outside the BMP.
+		['re .x', 're.x', 're𐐀'],
+		['(a as {k:number}).k', '(a as { k: number }).k', 'read'],
+		['`t` .length', '`t`.length', 'read'],
+		['read /* c */ .x', 'read.x', 'read'],
+		['read // c\n.x', 'read.x', 'read'],
+		// The printer writes the escaped name as `a`, so only the name matches.
+		['\\u0061.z', 'a.z', 'read'],
+		['\\u0061.z', 'a.z', 'a'],
+	])(
+		'maps `%s`, printed `%s`, from its own text in a `%s(…)` call',
+		(expression, printed, wrapper) => {
+			const source = `${DECLARATIONS}export function App() @{ <p>{${expression}}</p> }\n`;
+			expect(mapped_texts(source, expression, wrapper)).toEqual([printed]);
+		},
+	);
 
 	it('keeps the parentheses the printer puts around a regular expression in the mapping', () => {
 		const source = `${DECLARATIONS}export function App() @{\n\tconst r = /x/.test('s');\n\t<p>{r}</p>\n}\n`;

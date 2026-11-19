@@ -42,15 +42,15 @@ import {
 	get_line_comments_after,
 } from '../comment-utils.js';
 import { child_nodes, has_location, is_organized_import } from '../utils/ast.js';
-import { regex_whitespaces_strict } from '../utils/patterns.js';
+import { regex_whitespace, regex_whitespaces_strict } from '../utils/patterns.js';
 import { get_source_tokens } from '../parse/source-tokens.js';
 import { regex_jsx_text_escaped } from './jsx/helpers.js';
 import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 
 const RETURN_KEYWORD = 'return';
+const regex_line_terminator = /[\n\r\u2028\u2029]/;
 /** A fragment's `<>`, with any whitespace or comments between its `<` and `>`. */
 const regex_opening_fragment = /^<(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*>$/;
-const regex_word_char = /[\p{ID_Continue}$\u200c\u200d]/u;
 const EXPORT_KEYWORD = 'export';
 const BLOCK_DECLARATION_TYPES = new Set([
 	'FunctionDeclaration',
@@ -505,10 +505,11 @@ export function convert_source_map_to_mappings(
 	 * the call's callee, and the mapping covered `read(` too (#1392).
 	 *
 	 * Of the generated positions for the node's start inside the mapping, take
-	 * the first where the printed code has the node's source text, or else its
-	 * leftmost name, which the printer never puts in parentheses. A node printed
-	 * otherwise keeps its mapping: its printed text can start with parentheses
-	 * of its own (`/x/.test(s)` prints `(/x/).test(s)`).
+	 * the first where the printed code has the node's source text, apart from
+	 * whitespace and comments, or else its leftmost identifier, as the printer
+	 * spells it (`\u0061` as `a`), followed by the same character as in the
+	 * source. A node printed otherwise keeps its mapping: its printed text can
+	 * start with parentheses of its own (`/x/.test(s)` prints `(/x/).test(s)`).
 	 * @param {CodeMapping} mapping
 	 * @param {AST.Node} node
 	 * @returns {CodeMapping}
@@ -522,22 +523,55 @@ export function convert_source_map_to_mappings(
 		const offsets = positions
 			.map((position) => loc_to_offset(position.line, position.column, gen_line_offsets))
 			.filter((offset) => offset >= generated_start && offset < generated_end);
-		const text = source.slice(/** @type {number} */ (node.start), /** @type {number} */ (node.end));
+		const node_start = /** @type {number} */ (node.start);
+		const node_end = /** @type {number} */ (node.end);
 		const name = leftmost_name(node);
 		const start =
-			offsets.find((offset) => generated_code.startsWith(text, offset)) ??
-			(name === undefined
-				? undefined
-				: offsets.find(
-						(offset) =>
-							generated_code.startsWith(name, offset) &&
-							!regex_word_char.test(generated_code[offset + name.length] ?? ''),
-					));
+			offsets.find((offset) => prints_text(offset, node_start, node_end)) ??
+			(name &&
+				offsets.find(
+					(offset) =>
+						generated_code.startsWith(name.text, offset) &&
+						prints_text(offset + name.text.length, name.end, node_end, 1),
+				));
 		if (start !== undefined && start > generated_start) {
 			mapping.generatedOffsets = [start];
 			mapping.generatedLengths = [generated_end - start];
 		}
 		return mapping;
+	}
+
+	/**
+	 * Whether the printed code at `offset` has the source text from `start` to
+	 * `end`, apart from whitespace and comments, up to `limit` other characters.
+	 * The limit keeps a long member chain from comparing its whole text for each
+	 * of its members; a wrapper differs from the node within its callee's name.
+	 * @param {number} offset
+	 * @param {number} start
+	 * @param {number} end
+	 * @param {number} [limit]
+	 * @returns {boolean}
+	 */
+	function prints_text(offset, start, end, limit = 256) {
+		let generated = offset;
+		for (let index = start; index < end && limit > 0; index++) {
+			const char = source[index];
+			if (regex_whitespace.test(char)) continue;
+			if (char === '/' && source[index + 1] === '*') {
+				const close = source.indexOf('*/', index + 2);
+				index = close < 0 ? end : close + 1;
+				continue;
+			}
+			if (char === '/' && source[index + 1] === '/') {
+				while (index + 1 < end && !regex_line_terminator.test(source[index + 1])) index++;
+				continue;
+			}
+			while (regex_whitespace.test(generated_code[generated] ?? '')) generated++;
+			if (generated_code[generated] !== char) return false;
+			generated++;
+			limit--;
+		}
+		return true;
 	}
 
 	/** @type {Map<string, number>} */
@@ -3788,24 +3822,18 @@ function has_source_map_boundaries(node, src_to_gen_map) {
 }
 
 /**
- * The name a member expression or call starts with, as the printer writes it:
- * its leftmost identifier, `this`, `super` or the `import` of `import.meta`,
- * through objects, callees, tags and `!`. Undefined for one that starts with
- * other code, such as parentheses, a literal or a `new`.
+ * The identifier a member expression or call starts with, through objects,
+ * callees, tags and `!`: its name, as the printer writes it, and where it ends
+ * in the source. Undefined for one that starts with other code, such as
+ * `this`, parentheses, a literal or a `new`.
  * @param {AST.Node} node
- * @returns {string | undefined}
+ * @returns {{ text: string, end: number } | undefined}
  */
 function leftmost_name(node) {
 	while (true) {
 		switch (node.type) {
 			case 'Identifier':
-				return node.name;
-			case 'ThisExpression':
-				return 'this';
-			case 'Super':
-				return 'super';
-			case 'MetaProperty':
-				return node.meta.name;
+				return typeof node.end === 'number' ? { text: node.name, end: node.end } : undefined;
 			case 'MemberExpression':
 				node = node.object;
 				break;
