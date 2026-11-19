@@ -2586,6 +2586,55 @@ export function Card(${params}: any) @{
 		expect(code).toContain("{level === 1 ? <b>{'one'}</b> : level === 2 ? <Item /> : null}");
 	});
 
+	it("gives an element's @if / @else v-if and v-else branches", () => {
+		// Alone, \`v-if\` / \`v-else\` is the same \`createIf\` as the ternary; beside
+		// another expression child, the ternary would run in that child's
+		// \`setNodes\` effect and render its branch again (#1402).
+		const { code } = compile(
+			`function App({ on, name, Item, Wrap }: { on: boolean; name: string; Item: any; Wrap: any }) @{
+				<div>
+					@if (on) {
+						<b>{'on'}</b>
+					} @else {
+						<Item />
+					}
+					{name}
+					@if (on) {
+						<b>{'on'}</b>
+					} @else {
+						<Item v-slot={{ x }}><b>{x}</b></Item>
+					}
+					<strong v-if={on}>{'authored'}</strong>
+					@if (on) {
+						<b>{'before else'}</b>
+					} @else {
+						<i>{'off'}</i>
+					}
+					<i v-else>{'authored else'}</i>
+					<Wrap>
+						@if (on) {
+							<b>{'in wrap'}</b>
+						} @else {
+							<i>{'off'}</i>
+						}
+					</Wrap>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain("<b v-if={on}>{'on'}</b><Item v-else />{name}");
+		// A component's child stays one choice: vue-jsx-vapor's server build
+		// would pass \`v-if\` / \`v-else\` to it as two children.
+		expect(code).toContain("<Wrap>{on ? <b>{'in wrap'}</b> : <i>{'off'}</i>}</Wrap>");
+		// A \`v-\` attribute of either branch's own keeps the ternary.
+		expect(code).toMatch(
+			/\{on\s*\? <b>\{'on'\}<\/b>\s*: <Item v-slot=\{\{ x \}\}><b>\{x\}<\/b><\/Item>\}/,
+		);
+		// An authored \`v-else\` after the choice would join it.
+		expect(code).toContain("{on ? <b>{'before else'}</b> : <i>{'off'}</i>}");
+	});
+
 	it('keeps the shared lowering for other element @if children', () => {
 		const { code } = compile(
 			`function App({ on, kind, Item, Wrap }: { on: boolean; kind: string; Item: any; Wrap: any }) @{
@@ -2606,7 +2655,8 @@ export function Card(${params}: any) @{
 					@if (on) {
 						<b>{'on'}</b>
 					} @else {
-						<i>{'off'}</i>
+						const off = 'off';
+						<i>{off}</i>
 					}
 					@if (on) {
 						const label = 'setup';
@@ -2638,8 +2688,8 @@ export function Card(${params}: any) @{
 		expect(code).toContain('{on ? <Item v-slot={{ x }}><b>{x}</b></Item> : null}');
 		expect(code).toContain('{on ? <Item v-slot:header={{ x }}><b>{x}</b></Item> : null}');
 		expect(code).toContain('{on ? <input v-focus /> : null}');
-		// With \`@else\`, the \`createIf\` hydrates as it is.
-		expect(code).toContain("{on ? <b>{'on'}</b> : <i>{'off'}</i>}");
+		// An \`@else\` branch with setup statements can't take \`v-else\`.
+		expect(code).toMatch(/\{on\s*\? <b>\{'on'\}<\/b>\s*: \(\(\) => \{/);
 		// A branch with setup statements, and a \`<template>\`, can't take \`v-if\`.
 		expect(code).toMatch(/\{on\s*\? \(\(\) => \{/);
 		expect(code).toContain("{on ? <template><b>{'tpl'}</b></template> : null}");

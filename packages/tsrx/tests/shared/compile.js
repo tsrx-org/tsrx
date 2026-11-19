@@ -1270,6 +1270,28 @@ export const p = 1
 			}
 		});
 
+		it('reports a reused label in a parenthesized returned block in the editor too (TS1114)', () => {
+			// The editor keeps parentheses, where the compile inlines the block
+			// before the `return` and gets a duplicate label.
+			for (const returned of [
+				'(<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>)',
+				'(@{ outer: for (const y of items) { console.log(y); } })',
+			]) {
+				const source = `export function App({ items }: { items: string[] }) {
+					outer: for (const x of items) {
+						if (x) return ${returned};
+					}
+					return null;
+				}`;
+				expect(
+					() => compile_to_volar_mappings(source, 'App.tsrx', { loose: true }),
+					returned,
+				).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: source.indexOf('outer: for (const y') }),
+				);
+			}
+		});
+
 		it('keeps nested loop-target defaults in type-only output', () => {
 			const result = compile_to_volar_mappings(
 				`export function read(items, fallback) {
@@ -2263,8 +2285,9 @@ export function runSharedTsxExpressionTsrxTests({ compile, name, classAttrName }
 				'App.tsrx',
 			);
 			expect(code).toContain('prop={<h1>');
-			expect(code).toContain('<div>1</div>');
-			expect(code).toContain('<div>2</div>');
+			// Vue gives the branches \`v-if\` / \`v-else\`.
+			expect(code).toContain('>1</div>');
+			expect(code).toContain('>2</div>');
 			expect(code).not.toContain('@if');
 		});
 
@@ -3170,6 +3193,202 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 
 			expect(() => compile(source, 'App.tsrx')).toThrow(expected);
 			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([expected]);
+		});
+
+		it('lets a label in a template body reuse the name of one outside it', () => {
+			// Every target runs these bodies in functions of their own, where the
+			// outer label isn't around them, as TypeScript reads the output.
+			const inner = 'outer: for (const y of items) { if (y) break outer; console.log(y); }';
+			const plain = 'outer: for (const y of items) { console.log(y); }';
+			for (const template of [
+				`<div>@try { ${inner} <b /> } @catch (e) { <i /> }</div>`,
+				`<div>@try { <b /> } @pending { ${inner} <p /> } @catch (e) { <i /> }</div>`,
+				`<div>@try { <b /> } @catch (e) { ${inner} <i /> }</div>`,
+				`<ul>@for (const z of items) { ${inner} <li /> } @empty { ${inner} <p /> }</ul>`,
+				`<div>@switch (log) { @case 1: { ${inner} <b /> } @default: { <i /> } }</div>`,
+				// The `@if` rules reject any jump in these bodies, so these labels have none.
+				`<div>@if (log) { ${plain} <b /> } @else if (item) { ${plain} <i /> } @else { ${plain} <p /> }</div>`,
+				`<div>{@{ ${inner} <b /> }}</div>`,
+				`@{ ${inner} <b /> }`,
+			]) {
+				const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
+					outer: for (const item of items) {
+						const view = ${template};
+						console.log(item, view);
+					}
+					<p />
+				}`;
+
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([]);
+			}
+		});
+
+		it('still reports a label that reuses one around it in the same body or function (TS1114)', () => {
+			for (const block of [
+				'@try { a: for (const y of items) { a: for (const z of items) { console.log(z); } } <b /> } @catch (e) { <i /> }',
+				'@try { const f = () => { a: for (const y of items) { a: for (const z of items) { console.log(z); } } }; f(); <b /> } @catch (e) { <i /> }',
+			]) {
+				const source = `export function App({ items }: { items: string[] }) @{
+					outer: for (const item of items) {
+						const view = <div>${block}</div>;
+						console.log(item, view);
+					}
+					<p />
+				}`;
+				const second = source.indexOf('a: for (const z');
+				const expected = expect.objectContaining({ code: 'TS1114', pos: second });
+
+				expect(() => compile(source, 'App.tsrx'), block).toThrow(expected);
+			}
+		});
+
+		it('keeps a label in a code-only `@{ … }` of a returned fragment from reusing an outer one (TS1114)', () => {
+			// Every target inlines the block before the `return`, in the same function.
+			const source = `export function App({ items }: { items: string[] }) {
+				outer: for (const x of items) {
+					if (x) return <>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>;
+				}
+				return null;
+			}`;
+			const expected = expect.objectContaining({
+				code: 'TS1114',
+				pos: source.indexOf('outer: for (const y'),
+			});
+
+			expect(() => compile(source, 'App.tsrx')).toThrow(expected);
+			expect(() => compile(source, 'App.tsrx', { collect: true })).toThrow(expected);
+
+			// Nor in a returned code-only block, which is inlined the same way.
+			for (const returned of [
+				'@{ outer: for (const y of items) { console.log(y); } }',
+				'(@{ outer: for (const y of items) { console.log(y); } })',
+				'@{ console.log(x); @{ outer: for (const y of items) { console.log(y); } } }',
+			]) {
+				const direct = source.replace(
+					'<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>',
+					returned,
+				);
+				expect(() => compile(direct, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: direct.indexOf('outer: for (const y') }),
+				);
+			}
+
+			// Nor in one reached through a `{ … }` or a render-only block, whose value
+			// the lowering returns in the same way.
+			for (const returned of [
+				'<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>',
+				'<>{(<>@{ outer: for (const y of items) { console.log(y); } }</>)}</>',
+				'(<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>)',
+				'<>{<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>}</>',
+				'<><>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</></>',
+				'<>@{ console.log(x); }{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>',
+				'@{ <>{@{ outer: for (const y of items) { console.log(y); } }}</> }',
+				'@{ <>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</> }',
+				'@{ @{ <>{@{ outer: for (const y of items) { console.log(y); } }}</> } }',
+				'@{ for (const z of items) { return <>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>; } }',
+			]) {
+				const contained = source.replace(
+					'<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>',
+					returned,
+				);
+				expect(() => compile(contained, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({
+						code: 'TS1114',
+						pos: contained.indexOf('outer: for (const y'),
+					}),
+				);
+			}
+
+			// Nor in a code-only block chained in one's output position.
+			const chained = source.replace(
+				'@{ outer: for (const y of items) { console.log(y); } }',
+				'@{ console.log(x); @{ outer: for (const y of items) { console.log(y); } } }',
+			);
+			expect(() => compile(chained, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS1114', pos: chained.indexOf('outer: for (const y') }),
+			);
+
+			// Nor in one returned inside a returned code-only block, which is
+			// inlined in the same function too.
+			for (const returned of [
+				'@{ for (const y of items) { return @{ outer: for (const z of items) { console.log(z); } }; } }',
+				'<>@{ for (const y of items) { return <>@{ outer: for (const z of items) { console.log(z); } }<i /></>; } }<i /></>',
+				'@{ for (const y of items) { return @{ for (const w of items) { return @{ outer: for (const z of items) { console.log(z); } }; } }; } }',
+			]) {
+				const nested = source.replace(
+					'<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>',
+					returned,
+				);
+				expect(() => compile(nested, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: nested.indexOf('outer: for (const z') }),
+				);
+			}
+
+			// Nor in one returned inside a template body, from a label in that body.
+			for (const returned of [
+				'@{ outer: for (const y of items) { console.log(y); } }',
+				'<>@{ outer: for (const y of items) { console.log(y); } }<i /></>',
+				'<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>',
+			]) {
+				const in_body = `export function App({ items }: { items: string[] }) {
+					const view = @{ outer: for (const x of items) { if (x) return ${returned}; } <b /> };
+					return view;
+				}`;
+				expect(() => compile(in_body, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: in_body.indexOf('outer: for (const y') }),
+				);
+			}
+
+			// A block with output, and a function in a code-only block, aren't inlined.
+			for (const block of [
+				'@{ outer: for (const y of items) { console.log(y); } <b /> }',
+				'@{ const f = () => { outer: for (const y of items) { console.log(y); } }; f(); }',
+				'@{ const v = <div>@try { outer: for (const y of items) { console.log(y); } <b /> } @catch (e) { <i /> }</div>; console.log(v); }',
+				'@{ const v = <div>{@{ outer: for (const y of items) { console.log(y); } <b /> }}</div>; console.log(v); }',
+				'@{ const v = @{ outer: for (const y of items) { console.log(y); } <b /> }; console.log(v); }',
+			]) {
+				const allowed = `export function App({ items }: { items: string[] }) {
+					outer: for (const x of items) {
+						if (x) return <>${block}<b>{x}</b></>;
+					}
+					return null;
+				}`;
+				expect(compile(allowed, 'App.tsrx', { collect: true }).errors, block).toEqual([]);
+			}
+
+			// Nor is a code-only block in a fragment nested in the returned one, in
+			// a render-only block's output, or reached through the output of a block
+			// with statements.
+			for (const returned of [
+				'<><>@{ outer: for (const y of items) { console.log(y); } }</></>',
+				'@{ console.log(x); <>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</> }',
+				'@{ <>@{ outer: for (const y of items) { console.log(y); } }<b /></> }',
+				'@{ <>@{ outer: for (const y of items) { console.log(y); } }</> }',
+			]) {
+				const allowed = `export function App({ items }: { items: string[] }) {
+					outer: for (const x of items) {
+						if (x) return ${returned};
+					}
+					return null;
+				}`;
+				expect(compile(allowed, 'App.tsrx', { collect: true }).errors, returned).toEqual([]);
+			}
+
+			// A returned code-only block in a template body is inlined into that
+			// body's function, apart from the label outside the template.
+			for (const block of [
+				'@{ for (const y of items) { return @{ outer: for (const z of items) { console.log(z); } }; } <b /> }',
+				'@{ for (const y of items) { return <>@{ outer: for (const z of items) { console.log(z); } }<i /></>; } <b /> }',
+			]) {
+				const allowed = `export function App({ items }: { items: string[] }) {
+					outer: for (const x of items) {
+						const view = ${block};
+						console.log(x, view);
+					}
+					return null;
+				}`;
+				expect(compile(allowed, 'App.tsrx', { collect: true }).errors, block).toEqual([]);
+			}
 		});
 
 		it('allows a jump to a loop, `switch` or label inside the `@try` body or block it is in', () => {
@@ -6705,6 +6924,71 @@ export function App() @{
 		});
 	});
 
+	describe(`[${name}] getters and setters with an \`@{ … }\` body`, () => {
+		it.each([
+			[
+				'an object',
+				'export const target = { get R() @{ <b /> }, set R(v: unknown) @{ <i /> }, get S() @{ <u /> } };',
+			],
+			[
+				'an object, with string keys',
+				"export const target = { get 'R'() @{ <b /> }, set 'R'(v: unknown) @{ <i /> }, get 'S'() @{ <u /> } };",
+			],
+			[
+				'an object, with computed keys',
+				"const R = 'R';\nconst S = 'S';\nexport const target = { get [R]() @{ <b /> }, set [R](v: unknown) @{ <i /> }, get [S]() @{ <u /> } };",
+			],
+			[
+				// The Vue target also wraps a function that returns a local JSX binding.
+				'an object, with plain bodies that return an element',
+				'export const target = { get R() { const b = <b />; return b; }, set R(v: unknown) { console.log(v); }, get S() { const u = <u />; return u; } };',
+			],
+			[
+				'an object in a function',
+				'export const target = (() => ({ get R() @{ <b /> }, set R(v: unknown) @{ <i /> }, get S() @{ <u /> } }))();',
+			],
+			[
+				'a class',
+				'export class C { get R() @{ <b /> } set R(v: unknown) @{ <i /> } get S() @{ <u /> } }\nexport const target = C.prototype;',
+			],
+			[
+				'a class, static',
+				'export class C { static get R() @{ <b /> } static set R(v: unknown) @{ <i /> } static get S() @{ <u /> } }\nexport const target = C;',
+			],
+			[
+				'a class, static, with computed keys',
+				"const R = 'R';\nconst S = 'S';\nexport class C { static get [R]() @{ <b /> } static set [R](v: unknown) @{ <i /> } static get [S]() @{ <u /> } }\nexport const target = C;",
+			],
+		])('keeps the getters and setters of %s', (_case, source) => {
+			const { code } = compile(source, 'App.tsrx');
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+
+			const module = { exports: /** @type {Record<string, any>} */ ({}) };
+			const commonjs = ts.transpileModule(code, {
+				compilerOptions: {
+					jsx: ts.JsxEmit.React,
+					jsxFactory: 'h',
+					module: ts.ModuleKind.CommonJS,
+					target: ts.ScriptTarget.ES2022,
+				},
+			}).outputText;
+			new Function('module', 'exports', 'h', commonjs)(
+				module,
+				module.exports,
+				(/** @type {string} */ type) => ({ type }),
+			);
+			const { target } = module.exports;
+			const r = /** @type {PropertyDescriptor} */ (Object.getOwnPropertyDescriptor(target, 'R'));
+			const s = /** @type {PropertyDescriptor} */ (Object.getOwnPropertyDescriptor(target, 'S'));
+
+			expect([r.get?.call(target).type, typeof r.set, s.get?.call(target).type], code).toEqual([
+				'b',
+				'function',
+				'u',
+			]);
+		});
+	});
+
 	describe(`[${name}] static JSX hoisting`, () => {
 		/**
 		 * Runs compiled output with JSX elements as `{ type, props }` objects
@@ -7215,6 +7499,69 @@ export function App() @{
 					[...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]),
 				).toEqual(hoistsStaticJsx ? statics : []);
 				expect(run_result(code)).toEqual(expected);
+			},
+		);
+
+		it.each([
+			[
+				'methods of an object',
+				'export const o = { a() @{ <b /> }, b() @{ <i /> } };\nexport const result = () => [o.a().type, o.b().type];',
+			],
+			[
+				'methods with the same name in two objects',
+				'export const o = { f() @{ <b /> } };\nexport const p = { f() @{ <i /> } };\nexport const result = () => [o.f().type, p.f().type];',
+			],
+			[
+				'methods with the same name in two classes',
+				'class A { f() @{ <b /> } }\nclass B { f() @{ <i /> } }\nexport const result = () => [new A().f().type, new B().f().type];',
+			],
+			[
+				'two getters',
+				'export const o = { get a() @{ <b /> }, get b() @{ <i /> } };\nexport const result = () => [o.a.type, o.b.type];',
+			],
+			[
+				'arrow functions with no name',
+				'export const list = [() => @{ <b /> }, () => @{ <i /> }];\nexport const result = () => list.map((f) => f().type);',
+			],
+		])('gives each static of %s a name of its own', (_case, source) => {
+			const { code } = compile(source, 'App.tsrx');
+			const names = [...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]);
+			expect(new Set(names).size, code).toBe(hoistsStaticJsx ? 2 : 0);
+			expect(names.length).toBe(hoistsStaticJsx ? 2 : 0);
+			expect(run_result(code)).toEqual(['b', 'i']);
+		});
+
+		it.each([
+			[
+				'an earlier function',
+				// The first arrow's two statics fold into one. The second spends an id
+				// on its spread props, and its static takes the name the fold left.
+				`export const list = [
+	() => @{ <><b /><i /></> },
+	(p: any) => @{ <><input {...p} ref={p.ref} /><u /></> },
+];`,
+				['TSRXTemplate__static1', 'TSRXTemplate__static2'],
+			],
+			[
+				'a later function',
+				// The second function's `<i />` has the first one's name until the
+				// fold takes it in, which leaves the names as they were.
+				`export const list = [
+	(p: any) => @{ <><input {...p} ref={p.ref} /><u /></> },
+	(p: any) => {
+		if (p) return <><b /><i /></>;
+		return <em />;
+	},
+];`,
+				['TSRXTemplate__static2', 'TSRXTemplate__static1', 'TSRXTemplate__static3'],
+			],
+		])(
+			'keeps the names when a fold in %s takes in the static that collided',
+			(_case, source, statics) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(
+					[...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]),
+				).toEqual(hoistsStaticJsx ? statics : []);
 			},
 		);
 

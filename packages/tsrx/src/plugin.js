@@ -433,6 +433,125 @@ function get_error_message(message) {
 }
 
 /**
+ * Whether a `@{ … }` block renders anything, through any chain of blocks in
+ * its render position.
+ * @param {AST.JSXCodeBlock} block
+ * @returns {boolean}
+ */
+function has_code_block_render(block) {
+	const render = block.render;
+	if (render == null) return false;
+	return render.type === 'JSXCodeBlock' ? has_code_block_render(render) : true;
+}
+
+/**
+ * The `@{ … }` blocks every target inlines before a `return` of `argument`, in
+ * the same function: a returned code-only block, and each code-only child of a
+ * returned fragment. The lowering returns what a fragment's `{ … }` holds, and
+ * a render-only block's output, the same way (`build_return_expression`), so
+ * this follows `{ … }` containers and render-only blocks too. It follows every
+ * container, so it also takes in a few blocks that the lowering runs in a
+ * function of their own, such as `<>{@{ … }}<b /></>`, which TS1114 was
+ * reported for before too.
+ * @param {AST.Node | null | undefined} argument
+ * @returns {AST.JSXCodeBlock[]}
+ */
+function get_inlined_code_blocks(argument) {
+	/** @type {AST.JSXCodeBlock[]} */
+	const blocks = [];
+	collect_returned_code_blocks(argument, true, blocks);
+	return blocks;
+}
+
+/**
+ * Add to `blocks` the code-only blocks inlined from `node`, a returned value or
+ * a part of one (see `get_inlined_code_blocks`). A fragment's code-only
+ * children are inlined when the fragment is returned or in a `{ … }`
+ * container, and not when it is a child of another fragment or a render-only
+ * block's output, whose containers are still followed.
+ * @param {AST.Node | null | undefined} node
+ * @param {boolean} inline whether a code-only block here is inlined
+ * @param {AST.JSXCodeBlock[]} blocks
+ * @returns {void}
+ */
+function collect_returned_code_blocks(node, inline, blocks) {
+	let value = node;
+	while (value?.type === 'ParenthesizedExpression') value = value.expression;
+	if (value?.type === 'JSXExpressionContainer') {
+		collect_returned_code_blocks(value.expression, true, blocks);
+	} else if (value?.type === 'JSXFragment') {
+		for (const child of value.children) {
+			if (child.type === 'JSXExpressionContainer') {
+				collect_returned_code_blocks(child, true, blocks);
+			} else if (child.type === 'JSXFragment') {
+				collect_returned_code_blocks(child, false, blocks);
+			} else if (child.type === 'JSXCodeBlock') {
+				collect_returned_code_blocks(child, inline, blocks);
+			}
+		}
+	} else if (value?.type === 'JSXCodeBlock') {
+		if (!has_code_block_render(value)) {
+			if (inline) blocks.push(/** @type {AST.JSXCodeBlock} */ (value));
+		} else if ((value.body ?? []).length === 0) {
+			collect_returned_code_blocks(value.render, false, blocks);
+		}
+	}
+}
+
+/**
+ * The labeled statements a code-only `@{ … }` block runs in its own function's
+ * code once inlined: those in its statements and in the blocks chained in its
+ * render position.
+ * @param {AST.JSXCodeBlock} block
+ * @param {AST.Node[]} labels
+ * @returns {void}
+ */
+function collect_inlined_labels(block, labels) {
+	collect_statement_labels(block.body, labels);
+	if (block.render?.type === 'JSXCodeBlock') collect_inlined_labels(block.render, labels);
+}
+
+/**
+ * The labeled statements in `node`, leaving out functions, classes and
+ * template output (elements, fragments, `@{ … }` blocks and directives), which
+ * run in functions of their own, but taking in the blocks a `return` inlines.
+ * @param {unknown} node
+ * @param {AST.Node[]} labels
+ * @returns {void}
+ */
+function collect_statement_labels(node, labels) {
+	if (!node || typeof node !== 'object') return;
+	if (Array.isArray(node)) {
+		for (const child of node) collect_statement_labels(child, labels);
+		return;
+	}
+	const type = /** @type {{ type?: unknown }} */ (node).type;
+	if (typeof type !== 'string') return;
+	if (type === 'ReturnStatement') {
+		const argument = /** @type {AST.ReturnStatement} */ (node).argument;
+		for (const block of get_inlined_code_blocks(argument)) {
+			collect_inlined_labels(block, labels);
+		}
+		return;
+	}
+	if (
+		type === 'FunctionDeclaration' ||
+		type === 'FunctionExpression' ||
+		type === 'ArrowFunctionExpression' ||
+		type === 'ClassDeclaration' ||
+		type === 'ClassExpression' ||
+		type.startsWith('JSX')
+	) {
+		return;
+	}
+	if (type === 'LabeledStatement') labels.push(/** @type {AST.Node} */ (node));
+	for (const [key, value] of Object.entries(node)) {
+		if (key === 'metadata' || key === 'loc' || key === 'range') continue;
+		collect_statement_labels(value, labels);
+	}
+}
+
+/**
  * Mark `node`, a `@{ … }` body's output, as one that a later output or
  * statement displaced, whose mistake TSRX2011 or TSRX2012 reports. The
  * analysis doesn't report it again as unused output (TSRX2010, #981).
@@ -2083,6 +2202,11 @@ export function TSRXPlugin(config) {
 			// Where the labels around the statement being read start, innermost last.
 			/** @type {number[]} */
 			#labelStarts = [];
+			// The labels outside the template body being read: `this.labels` then,
+			// and how many it held (see `#parseCodeBlockBody`). A function body
+			// starts a new `this.labels`, where none are outside.
+			/** @type {{ labels: Parse.Parser['labels'], length: number } | null} */
+			#labelFloor = null;
 
 			/**
 			 * @type {Parse.Parser['finishNode']}
@@ -3825,6 +3949,25 @@ export function TSRXPlugin(config) {
 			 * @param {AST.Node[]} flat
 			 */
 			#parseCodeBlockBody(flat) {
+				// Every target runs a template body in a function of its own, apart
+				// from a returned code-only block or a code-only block in a returned
+				// fragment (see `#checkInlinedCodeBlockLabels`), so a label in it may
+				// reuse the name of one outside it, as in a nested function. A `break`
+				// or `continue` can still name a label outside, for the transform to
+				// report.
+				const outer_label_floor = this.#labelFloor;
+				this.#labelFloor = { labels: this.labels, length: this.labels.length };
+				try {
+					this.#parseCodeBlockBodyStatements(flat);
+				} finally {
+					this.#labelFloor = outer_label_floor;
+				}
+			}
+
+			/**
+			 * @param {AST.Node[]} flat
+			 */
+			#parseCodeBlockBodyStatements(flat) {
 				/** @type {AST.Node | null} */
 				let last_render = null;
 				while (this.type !== tt.braceR && this.type !== tt.eof) {
@@ -4477,8 +4620,16 @@ export function TSRXPlugin(config) {
 							// Stop at the end of the input too, like a code block body, so an
 							// unterminated arm reaches the `expect(tt.braceR)` below and reports
 							// the missing `}` instead of reading nothing forever.
-							while (this.type !== tt.braceR && this.type !== tt.eof) {
-								this.#parseJSXSwitchCaseConsequent(body.body);
+							// A label in the arm may reuse an outer one's name, as in a
+							// template body (see `#parseCodeBlockBody`).
+							const outer_label_floor = this.#labelFloor;
+							this.#labelFloor = { labels: this.labels, length: this.labels.length };
+							try {
+								while (this.type !== tt.braceR && this.type !== tt.eof) {
+									this.#parseJSXSwitchCaseConsequent(body.body);
+								}
+							} finally {
+								this.#labelFloor = outer_label_floor;
 							}
 							this.exitScope();
 						} finally {
@@ -15231,15 +15382,81 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * @type {Parse.Parser['parseReturnStatement']}
+			 */
+			parseReturnStatement(node) {
+				const statement = super.parseReturnStatement(node);
+				this.#checkInlinedCodeBlockLabels(/** @type {AST.ReturnStatement} */ (statement).argument);
+				return statement;
+			}
+
+			/**
+			 * Every target inlines a returned code-only `@{ … }`, and a code-only
+			 * `@{ … }` child of a returned fragment, before the `return`, in the same
+			 * function, so a label in it can't reuse the name of a label around the
+			 * `return`, as in any block (TS1114). In every other template body it can
+			 * (see `#parseCodeBlockBody`).
+			 * @param {AST.Node | null | undefined} argument
+			 */
+			#checkInlinedCodeBlockLabels(argument) {
+				// Only the labels in the same template body as the `return` share its
+				// function once lowered. A `return` inlined in turn takes in this one's
+				// blocks, and checks them against the labels around it.
+				const outer = new Set(
+					this.labels
+						.slice(this.#outerLabelCount())
+						.map((label) => label.name)
+						.filter(Boolean),
+				);
+				if (outer.size === 0) return;
+				/** @type {AST.Node[]} */
+				const labels = [];
+				for (const block of get_inlined_code_blocks(argument)) {
+					collect_inlined_labels(block, labels);
+				}
+				for (const label of labels) {
+					const name = /** @type {AST.LabeledStatement} */ (label).label.name;
+					if (outer.has(name)) {
+						this.raise(
+							/** @type {number} */ (/** @type {AST.LabeledStatement} */ (label).label.start),
+							`Label '${name}' is already declared`,
+						);
+					}
+				}
+			}
+
+			/**
+			 * How many of `this.labels` are outside the template body being read.
+			 * @returns {number}
+			 */
+			#outerLabelCount() {
+				return this.#labelFloor?.labels === this.labels ? this.#labelFloor.length : 0;
+			}
+
+			/**
 			 * Records where the label starts, for the statement it labels (see
 			 * `#parseStatement`).
 			 * @type {Parse.Parser['parseLabeledStatement']}
 			 */
 			parseLabeledStatement(node, maybeName, expr, context) {
 				this.#labelStarts.push(/** @type {number} */ (expr.start));
+				// acorn reports a label that one around it already has; a label outside
+				// the template body being read isn't around it once lowered, so it
+				// can't see that one while it checks.
+				/** @type {Array<{ name: string }>} */
+				const hidden = [];
+				const floor = this.#outerLabelCount();
+				for (let i = 0; i < floor; i++) {
+					const label = /** @type {{ name: string }} */ (this.labels[i]);
+					if (label.name === maybeName) {
+						hidden.push(label);
+						label.name = '';
+					}
+				}
 				try {
 					return super.parseLabeledStatement(node, maybeName, expr, context);
 				} finally {
+					for (const label of hidden) label.name = maybeName;
 					this.#labelStarts.pop();
 				}
 			}

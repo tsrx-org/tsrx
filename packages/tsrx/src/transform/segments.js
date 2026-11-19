@@ -42,12 +42,14 @@ import {
 	get_line_comments_after,
 } from '../comment-utils.js';
 import { child_nodes, has_location, is_organized_import } from '../utils/ast.js';
-import { regex_whitespaces_strict } from '../utils/patterns.js';
+import { regex_whitespace, regex_whitespaces_strict } from '../utils/patterns.js';
 import { get_source_tokens } from '../parse/source-tokens.js';
 import { regex_jsx_text_escaped } from './jsx/helpers.js';
 import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 
 const RETURN_KEYWORD = 'return';
+/** The longest node whose whole text `start_at_own_text` compares. */
+const OWN_TEXT_MAX_LENGTH = 1000;
 /** A fragment's `<>`, with any whitespace or comments between its `<` and `>`. */
 const regex_opening_fragment = /^<(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*>$/;
 const EXPORT_KEYWORD = 'export';
@@ -488,8 +490,90 @@ export function convert_source_map_to_mappings(
 			return;
 		}
 		mappings.push(
-			get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+			start_at_own_text(
+				get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+				node,
+			),
 		);
+	}
+
+	/**
+	 * The leftmost names `start_at_own_text` looked up in this conversion.
+	 * @type {Map<AST.Node, string | undefined>}
+	 */
+	const leftmost_names = new Map();
+
+	/**
+	 * Start a node's mapping where the node's own text is printed. A platform's
+	 * AST pass can wrap a node in a call that has the node's location, so that
+	 * hover and diagnostics on the call land on the authored text (Octane wraps
+	 * a template read in a type-only helper). The call starts at the same source
+	 * position and is printed first, so the node's first generated position is
+	 * the call's callee, and the mapping covered `read(` too (#1392). Used for
+	 * member expressions, `new` expressions, and authored calls and parentheses.
+	 *
+	 * Of the generated positions for the node's start inside the mapping, take
+	 * the last where the printed code has the node's whole source text, apart
+	 * from whitespace, or else the last where it has the node's leftmost
+	 * identifier as the printer spells it (`\u0061` as `a`). The last, since a
+	 * wrapper comes before the node, even one whose callee starts with the node's
+	 * text (`a.b(a.b)`), and the positions after the node's own are those of its
+	 * leftmost parts, whose text is shorter and doesn't start with the name
+	 * either, since the printer never puts an identifier there in parentheses.
+	 * A node printed otherwise keeps its mapping: its printed text can start with
+	 * parentheses of its own (`/x/.test(s)` prints `(/x/).test(s)`), and only the
+	 * whole text tells them from a wrapper's. A node longer than
+	 * `OWN_TEXT_MAX_LENGTH` isn't compared, so a long member chain doesn't
+	 * compare its whole text for each of its members.
+	 * @param {CodeMapping} mapping
+	 * @param {AST.Node} node
+	 * @returns {CodeMapping}
+	 */
+	function start_at_own_text(mapping, node) {
+		const positions =
+			node.loc && src_to_gen_map.get(`${node.loc.start.line}:${node.loc.start.column}`);
+		if (!positions || positions.length < 2) return mapping;
+		const generated_start = mapping.generatedOffsets[0];
+		const generated_end = generated_start + mapping.generatedLengths[0];
+		const offsets = positions
+			.map((position) => loc_to_offset(position.line, position.column, gen_line_offsets))
+			.filter((offset) => offset >= generated_start && offset < generated_end);
+		const node_start = /** @type {number} */ (node.start);
+		const node_end = /** @type {number} */ (node.end);
+		let start =
+			node_end - node_start <= OWN_TEXT_MAX_LENGTH
+				? offsets.findLast((offset) => prints_source(offset, node_start, node_end))
+				: undefined;
+		if (start === undefined) {
+			const name = leftmost_name(node, leftmost_names);
+			if (name !== undefined) {
+				start = offsets.findLast((offset) => generated_code.startsWith(name, offset));
+			}
+		}
+		if (start !== undefined && start > generated_start) {
+			mapping.generatedOffsets = [start];
+			mapping.generatedLengths = [generated_end - start];
+		}
+		return mapping;
+	}
+
+	/**
+	 * Whether the printed code at `offset` has the source text from `start` to
+	 * `end`, apart from whitespace.
+	 * @param {number} offset
+	 * @param {number} start
+	 * @param {number} end
+	 * @returns {boolean}
+	 */
+	function prints_source(offset, start, end) {
+		let generated = offset;
+		for (let index = start; index < end; index++) {
+			if (regex_whitespace.test(source[index])) continue;
+			while (regex_whitespace.test(generated_code[generated] ?? '')) generated++;
+			if (generated_code[generated] !== source[index]) return false;
+			generated++;
+		}
+		return true;
 	}
 
 	/** @type {Map<string, number>} */
@@ -2176,7 +2260,15 @@ export function convert_source_map_to_mappings(
 			} else if (node.type === 'CallExpression' || node.type === 'NewExpression') {
 				if (node.type === 'NewExpression' && has_location(node)) {
 					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+						start_at_own_text(
+							get_mapping_from_node(
+								node,
+								src_to_gen_map,
+								gen_line_offsets,
+								mapping_data_verify_only,
+							),
+							node,
+						),
 					);
 					push_statement_keyword_token(node, 'new');
 				}
@@ -2217,7 +2309,7 @@ export function convert_source_map_to_mappings(
 						mapping_data_verify_only,
 					);
 
-					mappings.push(mapping);
+					mappings.push(start_at_own_text(mapping, node));
 				}
 
 				if (node.object) {
@@ -3747,6 +3839,50 @@ function has_source_map_boundaries(node, src_to_gen_map) {
 		src_to_gen_map.has(`${start.line}:${start.column}`) &&
 		src_to_gen_map.has(`${end.line}:${end.column}`)
 	);
+}
+
+/**
+ * The name of the authored identifier a member expression or call starts
+ * with, through objects, callees, tags and `!`, as the printer writes it.
+ * Undefined for one that starts with other code, such as `this`, parentheses,
+ * a literal, a `new` or a call a pass added. Each node's name is kept in
+ * `names`, so the members of a long chain don't each walk the whole chain.
+ * @param {AST.Node} node
+ * @param {Map<AST.Node, string | undefined>} names the names found so far in
+ * one mapping conversion; a node's name can change between conversions
+ * @returns {string | undefined}
+ */
+function leftmost_name(node, names) {
+	/** @type {AST.Node[]} */
+	const chain = [];
+	/** @type {AST.Node | undefined} */
+	let current = node;
+	/** @type {string | undefined} */
+	let name;
+	while (current) {
+		if (names.has(current)) {
+			name = names.get(current);
+			break;
+		}
+		chain.push(current);
+		if (current.type === 'Identifier') {
+			// A name a pass added, such as a wrapper's callee, isn't the node's.
+			name = current.loc ? current.name : undefined;
+			break;
+		}
+		current =
+			current.type === 'MemberExpression'
+				? current.object
+				: current.type === 'CallExpression'
+					? current.callee
+					: current.type === 'TaggedTemplateExpression'
+						? current.tag
+						: current.type === 'TSNonNullExpression'
+							? current.expression
+							: undefined;
+	}
+	for (const part of chain) names.set(part, name);
+	return name;
 }
 
 /**

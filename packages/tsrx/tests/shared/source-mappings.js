@@ -1,3 +1,4 @@
+import { decode } from '@jridgewell/sourcemap-codec';
 import { isCodeActionsEnabled, isDiagnosticsEnabled } from '@volar/language-core';
 import { SourceMap } from '@volar/source-map';
 import ts from 'typescript';
@@ -927,6 +928,130 @@ export async function App() @{
 				const generated = mapping.generatedOffsets[0];
 				expect(result.code.slice(generated, generated + mapping.generatedLengths[0])).toBe(text);
 			}
+		});
+	});
+
+	describe(`[${name}] a keyword the compiler prints from other source text (#1391)`, () => {
+		// esrap maps the end of a statement's keyword to the node's start plus the
+		// keyword's length. The `return` around a template's output, a `const`
+		// with a component function's location and a `switch`, `case`, `default`
+		// or `{` from `@switch`, `@case`, `@default` or `@{` don't start with that
+		// keyword in the source, so that end landed in other text.
+
+		/**
+		 * The segments of each line of a compiled module's source map, with their
+		 * generated column and their source offset.
+		 * @param {{ map: { mappings: string } }} result
+		 * @param {string} source
+		 * @returns {Array<Array<{ column: number, offset: number }>>}
+		 */
+		const source_map_lines = (result, source) => {
+			const line_offsets = build_source_line_offsets(source);
+			return decode(result.map.mappings).map((segments) =>
+				segments.flatMap((segment) =>
+					segment.length === 1
+						? []
+						: [{ column: segment[0], offset: line_offsets[segment[2]] + segment[3] }],
+				),
+			);
+		};
+
+		it.each([
+			['a `@{ … }` body with a string', 'export function App() @{ <p>{"hi"}</p> }\n'],
+			['a `@{ … }` body with an empty element', 'export function App() @{ <a /> }\n'],
+			[
+				'an `@for` in the root element',
+				'export function App({ items }) @{ <ul>@for (const item of items; key item.id) { <li>{item.text}</li> }</ul> }\n',
+			],
+			[
+				'an `@if` output',
+				'export function App({ ok }) @{ @if (ok) { <b>yes</b> } @else { <i>no</i> } }\n',
+			],
+			[
+				'an `@switch` output',
+				"export const App = ({ s }) => @switch (s) { @case 'a': { <p>A</p> } @default: { <p>?</p> } };\n",
+			],
+			[
+				'an `@try` with `@catch`',
+				'export function App() @{ <div>@try { <User /> } @catch (e) { <p>Err</p> }</div> }\n',
+			],
+		])('maps no keyword end into other text in %s', (_, source) => {
+			const result = compile(source, 'App.tsrx');
+			const lines = result.code.split('\n');
+			/** @type {string[]} */
+			const misplaced = [];
+			source_map_lines(result, source).forEach((segments, line) => {
+				segments.forEach(({ column, offset }, index) => {
+					const describe_segment = () =>
+						`${JSON.stringify(lines[line].slice(column, column + 8))} <- ${JSON.stringify(source.slice(offset, offset + 8))}`;
+					// No segment points into the middle of a word, such as a keyword or a
+					// string.
+					if (/\w/.test(source[offset - 1] ?? '') && /\w/.test(source[offset] ?? '')) {
+						misplaced.push(`inside a word: ${describe_segment()}`);
+					}
+					// A keyword that a segment ends after maps from where the source has
+					// it, after the `@` of a directive, and a keyword or block `{` ends
+					// where it does there. A keyword the source doesn't have there maps
+					// no end. (The printer also writes the `{` of an expression container
+					// from the expression's start.)
+					const next = segments[index + 1];
+					const text = lines[line].slice(column, next?.column);
+					if (!next || !/^(?:[a-z]+|\{)$/.test(text)) return;
+					const keyword_start = source[offset] === '@' ? offset + 1 : offset;
+					if (
+						(text !== '{' && !source.startsWith(text, keyword_start)) ||
+						(next.offset === offset + text.length && next.offset !== keyword_start + text.length)
+					) {
+						misplaced.push(`keyword end: ${describe_segment()}`);
+					}
+				});
+			});
+			expect(misplaced).toEqual([]);
+		});
+
+		it('maps the end of a keyword printed from a directive to the end of the directive', () => {
+			const source =
+				"export function App({ s }) @{ <div>@switch (s) { @case 'a': { <p>A</p> } @default: { <p>?</p> } }</div> }\n";
+			const result = compile(source, 'App.tsrx');
+			const lines = result.code.split('\n');
+			/** @type {Set<string>} */
+			const keywords = new Set();
+			source_map_lines(result, source).forEach((segments, line) => {
+				segments.forEach(({ column, offset }, index) => {
+					const next = segments[index + 1];
+					if (!next) return;
+					const text = lines[line].slice(column, next.column);
+					if (source[offset] !== '@' || !/^(?:[a-z]+|\{)$/.test(text)) return;
+					keywords.add(`${text} <- ${source.slice(offset, next.offset)}`);
+				});
+			});
+			// Solid prints `@switch` as components, without these keywords.
+			const expected = result.code.includes('switch (')
+				? ['{ <- @{', 'switch <- @switch', 'case <- @case', 'default <- @default']
+				: ['{ <- @{'];
+			expect([...keywords]).toEqual(expect.arrayContaining(expected));
+		});
+
+		it.each([
+			[
+				'an expression 6 characters into the output',
+				'export function App(props) @{ <div>{props.label}</div> }\n',
+				'props.label',
+			],
+			[
+				'a child after statements without a `;`',
+				'export function App({ a }) @{\n\tconst x = a\n\t<p>{x}</p>\n}\n',
+				'{x}',
+			],
+		])('maps %s from its own text, not from after a `return`', (_, source, text) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const start = source.indexOf(text);
+			const mapping = result.mappings.find(
+				(mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === text.length,
+			);
+			assert(mapping, text);
+			const generated = mapping.generatedOffsets[0];
+			expect(result.code.slice(generated, generated + mapping.generatedLengths[0])).toBe(text);
 		});
 	});
 
@@ -2373,6 +2498,43 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 						mapping.sourceOffsets[0] === start && mapping.lengths[0] === expression.length,
 				),
 			).toEqual([]);
+		});
+	});
+
+	describe(`[${name}] a member expression where other code starts at the same position (#1392)`, () => {
+		// The printer can write other code that starts at the same source position
+		// before a member expression: the `(` of a parenthesized sequence, or a key
+		// function the compiler makes from a `@for` key. The member expression maps
+		// from its own text.
+		it.each([
+			[
+				'the first expression of a sequence',
+				'export function App(props: { counts: { a: number } }) @{\n\tconst k = () => 1;\n\tconst value = (props.counts.a++, k());\n\t<p>{value}</p>\n}\n',
+				'props.counts.a',
+				[],
+			],
+			[
+				'a `@for` key',
+				'export function App(props: { items: { id: number }[] }) @{\n\t<ul>\n\t\t@for (const item of props.items; key item.id) {\n\t\t\t<li />\n\t\t}\n\t</ul>\n}\n',
+				'item.id',
+				// Solid also maps the key function it makes from the key, as a whole
+				// arrow function, from the `{` before it.
+				name === 'solid' ? ['{(item) => item.id'] : [],
+			],
+		])('maps %s from its own text', (_, source, text, others) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const start = source.indexOf(text);
+			const texts = result.mappings
+				.filter(
+					(mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === text.length,
+				)
+				.map((mapping) =>
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + mapping.generatedLengths[0],
+					),
+				);
+			expect(texts).toEqual([...others, text]);
 		});
 	});
 

@@ -1,5 +1,40 @@
 # @tsrx/solid
 
+## 0.4.7
+
+### Patch Changes
+
+- [#1398](https://github.com/tsrx-org/tsrx/pull/1398)
+  [`1c05e13`](https://github.com/tsrx-org/tsrx/commit/1c05e13519bb63260ab00e385222c3a4ad5ade11)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Report a `break` or
+  `continue` that would jump out of an `@try`, `@pending`, `@catch` or `@empty`
+  body, or out of a nested `@{ … }` block, as TSRX2036 or TSRX2037, and a
+  `continue` that would leave an `@switch` case as TSRX2037. Every target runs
+  those bodies inside functions, so the jump couldn't reach the loop, `switch` or
+  label outside, and the compiled output didn't parse; a `break` to a loop,
+  `switch` or label inside the body, or a `continue` to a loop inside it, still
+  works. A `break` nested in an `@switch` case, such as `if (done) break;`, is now
+  TSRX2008, as a `break` right in the case already was; Solid's output didn't
+  parse, and the other targets rendered nothing for the `@switch` when the `break`
+  ran. A code-only `@{ … }` child of a returned fragment, as in
+  `return <>@{ if (x) continue; }<b /></>` in a loop, is now held to the same
+  rule: every target inlined it before the `return`, so the jump reached the loop,
+  but it is now TSRX2036 or TSRX2037, as a `var` there already was TSRX2030. A
+  `break` or `continue` in a loop in an `@for` body that leaves the body, such as
+  `break outer`, is now TSRX2006 or TSRX2007, and a jump that leaves an `@else if`
+  body, or the `@else` after one, is now TSRX2003 or TSRX2004 on React, Preact,
+  Vue and Hono too, as on Solid; both compiled to output that didn't parse. A jump
+  in an `@if` or `@for` nested in an `@if` is now reported once, with the nested
+  one's error. A `break` or `continue` in a function's `@{ … }` body that targets
+  a loop or label outside the function is now TS1105 or TS1104, as in a `{ … }`
+  body.
+- Updated dependencies
+  [[`1c05e13`](https://github.com/tsrx-org/tsrx/commit/1c05e13519bb63260ab00e385222c3a4ad5ade11),
+  [`c610ad5`](https://github.com/tsrx-org/tsrx/commit/c610ad5133602eaf2e73b038dca6dc77def29bb1),
+  [`cc100ea`](https://github.com/tsrx-org/tsrx/commit/cc100ea1da0b5ec9746af40184da8c0778d1036b),
+  [`d9c2a14`](https://github.com/tsrx-org/tsrx/commit/d9c2a14eb0211dc932b164380509d21e1e4dff8b)]:
+  - @tsrx/core@0.6.7
+
 ## 0.4.6
 
 ### Patch Changes
