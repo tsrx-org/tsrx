@@ -596,9 +596,16 @@ function initialize_boundary_state(instance) {
 		// the one around it show the `@catch`, as React's error boundary
 		// around a `Suspense` does. It replaces the whole `Suspense`; swapping
 		// here would unmount part of the branch the `Suspense` waits for.
+		// One that is gone, after a reset rendered a new pair, keeps its error,
+		// as before: the `@catch` around it now shows the new body.
+		const twin_suspense =
+			/** @type {{ suspense?: (PendingSuspense & { isUnmounted?: boolean }) | null }} */ (instance)
+				.suspense;
 		if (
 			props_of(instance)?.sharesCatch &&
-			/** @type {{ suspense?: PendingSuspense | null }} */ (instance).suspense?.pendingBranch
+			twin_suspense?.pendingBranch &&
+			!twin_suspense.isUnmounted &&
+			!(/** @type {{ isUnmounted?: boolean }} */ (instance).isUnmounted)
 		) {
 			return;
 		}

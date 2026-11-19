@@ -5168,6 +5168,44 @@ function SuspendedReject() @{
 	/>
 }
 
+const retry_pending_failed = ref(true);
+const retry_resolve: Array<(component: unknown) => void> = [];
+const retry_reject: Array<(error: unknown) => void> = [];
+let retry_reset: () => void = () => {};
+
+function RetryLoading() @{
+	const AsyncChild = defineVaporAsyncComponent(
+		() =>
+			new Promise<any>((resolve, reject) => {
+				retry_resolve.push(resolve);
+				retry_reject.push(reject);
+			}),
+	);
+	<AsyncChild />
+}
+
+function retry_label(): string {
+	if (retry_pending_failed.value) throw new Error('pending failed');
+	return 'loading';
+}
+
+function keep_retry(reset: () => void): string {
+	retry_reset = reset;
+	return '';
+}
+
+// The @pending body throws; the @catch resets, and the first loader rejects
+// after the reset rendered a new one.
+function RetryAfterReset() @{
+	@try {
+		<RetryLoading />
+	} @pending {
+		<i class="pending-loading">{retry_label()}</i>
+	} @catch (err, reset) {
+		<b class="pending-caught">{keep_retry(reset) + String(err)}</b>
+	}
+}
+
 const late_async_shown = ref(false);
 let finish_late: (component: unknown) => void = () => {};
 
@@ -5298,6 +5336,28 @@ describe('tsrx-vue a @try whose body throws while its Suspense is pending', () =
 		await settle();
 		expect(text('.pending-caught')).toBe('Error: rejected');
 		expect(container.querySelector('.pending-loading')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('keeps a rejection of a loader the @try reset away from the new body', async () => {
+		retry_pending_failed.value = true;
+		retry_resolve.length = 0;
+		retry_reject.length = 0;
+		const { app, handled } = await mount(RetryAfterReset);
+		expect(text('.pending-caught')).toBe('Error: pending failed');
+		retry_pending_failed.value = false;
+		retry_reset();
+		await flush();
+		expect(retry_resolve).toHaveLength(2);
+		expect(text('.pending-loading')).toBe('loading');
+		retry_reject[0](new Error('old rejection'));
+		await settle();
+		expect(text('.pending-loading')).toBe('loading');
+		retry_resolve[1](ResolvedFine);
+		await settle();
+		expect(text('.pending-resolved')).toBe('resolved');
+		expect(container.querySelector('.pending-caught')).toBeNull();
 		expect(handled).toEqual([]);
 		app.unmount();
 	});
