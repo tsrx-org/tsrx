@@ -14307,6 +14307,21 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {
+		// `global` is a global augmentation only before `{`, so TS1184, as on main.
+		for (const source of [
+			'let global: any;\n{\n\texport global;\n}',
+			'let global: any;\n{\n\texport global.x;\n}',
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({
+					code: TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE.code,
+					pos: source.indexOf('export'),
+				}),
+			);
+		}
+	});
+
 	it('throws a syntax error in a misplaced namespace before its place, as TypeScript reports it', () => {
 		const source = '{\n\tnamespace N {\n\t\treadonly r = 1;\n\t}\n}';
 		const expected = expect.objectContaining({ code: 'TS1128', pos: source.indexOf('readonly') });

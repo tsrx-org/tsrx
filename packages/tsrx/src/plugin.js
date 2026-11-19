@@ -713,7 +713,10 @@ function nested_import_export_error(input, position) {
 	// there only for its place.
 	let declared = 1;
 	while (tokens[declared] === 'declare' || tokens[declared] === 'abstract') declared++;
-	if (tokens[declared] === 'global') return TS_ERRORS.NESTED_AMBIENT_MODULE;
+	// `global` is a global augmentation only before `{`.
+	if (tokens[declared] === 'global' && tokens[declared + 1] === '{') {
+		return TS_ERRORS.NESTED_AMBIENT_MODULE;
+	}
 	if (tokens[declared] === 'namespace' || tokens[declared] === 'module') {
 		const name = tokens[declared + 1];
 		return name === '"' || name === "'"
