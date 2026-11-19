@@ -1509,29 +1509,6 @@ function read_children_from_default_slot(fn, name, ctx) {
 		return fn;
 	}
 
-	/**
-	 * @param {AST.Node} node
-	 * @param {import('zimmerframe').Context<AST.Node, ChildrenReadState>} context
-	 */
-	const shadow_head = (node, { state, next }) => {
-		/** @type {AST.Node[]} */
-		const bindings = [];
-		if (node.type === 'CatchClause' && node.param) bindings.push(node.param);
-		const head =
-			node.type === 'ForStatement'
-				? node.init
-				: node.type === 'ForInStatement' || node.type === 'ForOfStatement'
-					? node.left
-					: null;
-		if (head?.type === 'VariableDeclaration') {
-			for (const declarator of head.declarations) bindings.push(declarator.id);
-		}
-		if (bindings.length === 0) return next();
-		const shadowed_names = new Set(state.shadowed_names);
-		for (const binding of bindings) collect_pattern_names(binding, shadowed_names);
-		return next({ ...state, shadowed_names });
-	};
-
 	const body = /** @type {AST.BlockStatement | AST.Expression} */ (
 		walk(/** @type {AST.Node} */ (fn.body), state, {
 			ChainExpression(node, { path, state, next }) {
@@ -1581,10 +1558,10 @@ function read_children_from_default_slot(fn, name, ctx) {
 			FunctionDeclaration: rewrite_function_shadowed_refs,
 			FunctionExpression: rewrite_function_shadowed_refs,
 			ArrowFunctionExpression: rewrite_function_shadowed_refs,
-			CatchClause: shadow_head,
-			ForStatement: shadow_head,
-			ForInStatement: shadow_head,
-			ForOfStatement: shadow_head,
+			CatchClause: rewrite_head_shadowed_refs,
+			ForStatement: rewrite_head_shadowed_refs,
+			ForInStatement: rewrite_head_shadowed_refs,
+			ForOfStatement: rewrite_head_shadowed_refs,
 			BlockStatement(node, context) {
 				// The component body declares the destructured `children` binding;
 				// it cannot redeclare the props parameter or its bindings.
@@ -2742,6 +2719,13 @@ function rewrite_vapor_for_keyed_slot_refs(node, loop_params, replacements = new
 				FunctionExpression: rewrite_function_shadowed_refs,
 				ArrowFunctionExpression: rewrite_function_shadowed_refs,
 				BlockStatement: rewrite_block_shadowed_refs,
+				StaticBlock: rewrite_static_block_shadowed_refs,
+				CatchClause: rewrite_head_shadowed_refs,
+				ForStatement: rewrite_head_shadowed_refs,
+				ForInStatement: rewrite_head_shadowed_refs,
+				ForOfStatement: rewrite_head_shadowed_refs,
+				SwitchStatement: rewrite_switch_shadowed_refs,
+				ClassExpression: rewrite_class_shadowed_refs,
 			},
 		)
 	);
@@ -2878,6 +2862,88 @@ function rewrite_block_shadowed_refs(node, { state, next }) {
 }
 
 /**
+ * A class `static` block is a function body: its `var`s are its own too.
+ *
+ * @template {{ shadowed_names: Set<string> }} S
+ * @param {AST.StaticBlock} node
+ * @param {import('zimmerframe').Context<AST.Node, S>} context
+ * @returns {AST.Node | void}
+ */
+function rewrite_static_block_shadowed_refs(node, { state, next }) {
+	const shadowed_names = new Set(state.shadowed_names);
+	collect_block_lexical_names(node.body, shadowed_names);
+	collect_function_var_names(node.body, shadowed_names);
+	return next({ ...state, shadowed_names });
+}
+
+/**
+ * The names a `catch` clause's parameter or a `for` head declares, which
+ * shadow the outer ones in the whole statement.
+ *
+ * @template {{ shadowed_names: Set<string> }} S
+ * @param {AST.CatchClause | AST.ForStatement | AST.ForInStatement | AST.ForOfStatement} node
+ * @param {import('zimmerframe').Context<AST.Node, S>} context
+ * @returns {AST.Node | void}
+ */
+function rewrite_head_shadowed_refs(node, { state, next }) {
+	/** @type {AST.Node[]} */
+	const bindings = [];
+	if (node.type === 'CatchClause' && node.param) bindings.push(node.param);
+	const head =
+		node.type === 'ForStatement'
+			? node.init
+			: node.type === 'ForInStatement' || node.type === 'ForOfStatement'
+				? node.left
+				: null;
+	if (head?.type === 'VariableDeclaration') {
+		for (const declarator of head.declarations) bindings.push(declarator.id);
+	}
+	if (bindings.length === 0) return next();
+	const shadowed_names = new Set(state.shadowed_names);
+	for (const binding of bindings) collect_pattern_names(binding, shadowed_names);
+	return next({ ...state, shadowed_names });
+}
+
+/**
+ * A `switch`'s cases share one block, which its discriminant is read outside of.
+ *
+ * @template {{ shadowed_names: Set<string> }} S
+ * @param {AST.SwitchStatement} node
+ * @param {import('zimmerframe').Context<AST.Node, S>} context
+ * @returns {AST.SwitchStatement}
+ */
+function rewrite_switch_shadowed_refs(node, { state, visit }) {
+	const shadowed_names = new Set(state.shadowed_names);
+	collect_block_lexical_names(
+		node.cases.flatMap((switch_case) => switch_case.consequent),
+		shadowed_names,
+	);
+	const inner = { ...state, shadowed_names };
+	return {
+		...node,
+		discriminant: /** @type {AST.Expression} */ (visit(node.discriminant, state)),
+		cases: node.cases.map(
+			(switch_case) => /** @type {AST.SwitchCase} */ (visit(switch_case, inner)),
+		),
+	};
+}
+
+/**
+ * A class expression's name is bound inside it, its heritage included.
+ *
+ * @template {{ shadowed_names: Set<string> }} S
+ * @param {AST.ClassExpression} node
+ * @param {import('zimmerframe').Context<AST.Node, S>} context
+ * @returns {AST.Node | void}
+ */
+function rewrite_class_shadowed_refs(node, { state, next }) {
+	if (!node.id) return next();
+	const shadowed_names = new Set(state.shadowed_names);
+	collect_pattern_names(node.id, shadowed_names);
+	return next({ ...state, shadowed_names });
+}
+
+/**
  * @param {AST.Statement[]} statements
  * @param {Set<string>} names
  * @returns {void}
@@ -2896,6 +2962,16 @@ function collect_block_lexical_names(statements, names) {
 			statement.id
 		) {
 			collect_pattern_names(statement.id, names);
+			continue;
+		}
+
+		// An `enum` or a namespace, which the statement types leave out.
+		const declaration = /** @type {AST.Node} */ (statement);
+		if (
+			(declaration.type === 'TSEnumDeclaration' || declaration.type === 'TSModuleDeclaration') &&
+			declaration.id.type === 'Identifier'
+		) {
+			collect_pattern_names(declaration.id, names);
 		}
 	}
 }

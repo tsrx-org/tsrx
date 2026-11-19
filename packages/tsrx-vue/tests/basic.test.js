@@ -1683,6 +1683,66 @@ export function Card(${params}: any) @{
 		expect(code).not.toContain('use(item.value)');
 	});
 
+	it('leaves a keyed slot binding alone wherever a catch, loop, switch or class declares its name again', () => {
+		const { code, errors } = compile(
+			`function App({ items, use }: { items: { id: string }[], use: (value: unknown) => void }) @{
+				@for (const item of items; index i; key item.id) {
+					<button onClick={() => {
+						try { use(item); } catch (item) { use(item); }
+						try { use(i); } catch ({ i }) { use(i); }
+						for (const item of [1]) use(item);
+						for (let item = 0; item < 1; item++) { use(item); }
+						for (const item in { a: 1 }) { use(item); }
+						switch (item.id) { case 'a': const item = 2; use(item); }
+						const C = class item { read() { return item; } };
+						{ enum item { A } use(item.A); }
+						class D { static { const item = 3; use(item); } }
+						use(new C());
+						use(item.id + i);
+					}}>{item.id}</button>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toMatch(/try \{\s*use\(item\.value\);\s*\} catch\(item\) \{\s*use\(item\);/);
+		expect(code).toMatch(/try \{\s*use\(i\.value\);\s*\} catch\(\{ i \}\) \{\s*use\(i\);/);
+		expect(code).toContain('for (const item of [1]) use(item);');
+		expect(code).toContain('for (let item = 0; item < 1; item++) {');
+		expect(code).toContain('for (const item in { a: 1 }) {');
+		expect(code).toContain('switch (item.value.id) {');
+		expect(code).toContain('const item = 2;');
+		expect(code).toContain('class item {');
+		expect(code).toContain('enum item {');
+		expect(code).toContain('const item = 3;');
+		expect(code).toContain('use(item.value.id + i.value);');
+		expect(code).not.toContain('item.value =');
+		expect(code).not.toContain('catch(item.value)');
+	});
+
+	it('leaves a destructured keyed slot binding alone where a catch or loop declares its name again', () => {
+		const { code, errors } = compile(
+			`function App({ items, use }: { items: { id: string }[], use: (value: unknown) => void }) @{
+				@for (const { id } of items; key id) {
+					<button onClick={() => {
+						try { use(id); } catch (id) { use(id); }
+						for (const id of [1]) use(id);
+						use(id);
+					}}>{id}</button>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain('catch(id) {');
+		expect(code).toContain('for (const id of [1]) use(id);');
+		expect(code).toContain('use(__vapor_item.value.id);');
+		expect(code).not.toContain('catch(__vapor_item');
+		expect(code).not.toContain('const __vapor_item');
+	});
+
 	it('compiles indexed keyed for...of statements in component bodies', () => {
 		const { code } = compile(
 			`function App({ items }: { items: { id: string, text: string }[] }) @{
