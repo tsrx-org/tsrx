@@ -1270,6 +1270,28 @@ export const p = 1
 			}
 		});
 
+		it('reports a reused label in a parenthesized returned block in the editor too (TS1114)', () => {
+			// The editor keeps parentheses, where the compile inlines the block
+			// before the `return` and gets a duplicate label.
+			for (const returned of [
+				'(<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>)',
+				'(@{ outer: for (const y of items) { console.log(y); } })',
+			]) {
+				const source = `export function App({ items }: { items: string[] }) {
+					outer: for (const x of items) {
+						if (x) return ${returned};
+					}
+					return null;
+				}`;
+				expect(
+					() => compile_to_volar_mappings(source, 'App.tsrx', { loose: true }),
+					returned,
+				).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: source.indexOf('outer: for (const y') }),
+				);
+			}
+		});
+
 		it('keeps nested loop-target defaults in type-only output', () => {
 			const result = compile_to_volar_mappings(
 				`export function read(items, fallback) {
