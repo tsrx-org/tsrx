@@ -3060,6 +3060,82 @@ describe('a global augmentation after `export` (sveltejs/acorn-typescript#146)',
 	});
 });
 
+// #601
+describe('a named export of a `declare global` declaration (sveltejs/acorn-typescript#110)', () => {
+	// What a `declare global` block declares merges into the global scope, so
+	// the file can name it in an export list, as TypeScript allows. Each source
+	// is parsed as the compilers, the formatter and the editor parse it.
+	const modes = [
+		undefined,
+		{ collect: true, comments: [], preserveParens: true },
+		{ loose: true, comments: [] },
+	];
+	/** @param {string[]} sources */
+	const in_every_mode = (sources) =>
+		sources.flatMap((source) => modes.map((options) => ({ source, options })));
+
+	it('reads an export list that names a declaration in the block', async () => {
+		const sources = [
+			'declare global { class Model {} }\nexport { Model };',
+			'declare global { function report(): void; }\nexport { report };',
+			'declare global { var v: number; let l: number; const c: number; }\nexport { v, l, c };',
+			'declare global { var { a, b: [c] }: { a: 1; b: [2] }; }\nexport { a, c };',
+			'declare global { interface Settings { theme: string } }\nexport type { Settings };',
+			'declare global { type Theme = string; }\nexport type { Theme };',
+			'declare global { enum Level { Low } }\nexport { Level };',
+			'declare global { namespace Backbone { const VERSION: string; } }\nexport { Backbone };',
+			'declare global { export class Model {} }\nexport { Model };',
+			'export { Model };\ndeclare global { class Model {} }',
+			'declare global { namespace Q { class R {} } export import Alias = Q.R; }\nexport { Alias };',
+			'declare global { class Hidden {} export class Shown {} export {}; }\nexport { Shown };',
+		];
+
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+
+		expect(outcomes).toEqual(
+			sources.flatMap(() => [
+				{ ok: true, errors: undefined },
+				{ ok: true, errors: [] },
+				{ ok: true, errors: [] },
+			]),
+		);
+	});
+
+	// As in TypeScript: an `import … =` alias stays in the block unless exported
+	// (and an import of a module isn't allowed there), an export list or
+	// `export =` in the block keeps the rest of it there, and a block that
+	// isn't at the top level, a `global` inside one and `export as namespace` add
+	// no globals. An export list in the block, which TypeScript doesn't allow
+	// (TS2666), adds none either, and its names stay undefined.
+	it('still rejects a name that no scope in view declares', async () => {
+		const sources = [
+			['declare global { class Model {} }\nexport { Missing };', 'Missing'],
+			['declare module "m" { class Model {} }\nexport { Model };', 'Model'],
+			[
+				'declare global { namespace Q { class R {} } import Alias = Q.R; }\nexport { Alias };',
+				'Alias',
+			],
+			['declare global { class Hidden {} export {}; }\nexport { Hidden };', 'Hidden'],
+			['namespace N { declare global { class Model {} } export { Model }; }', 'Model'],
+			['declare global { global {} }\nexport { global };', 'global'],
+			['declare global { export as namespace Thing; }\nexport { Thing };', 'Thing'],
+			['declare global { export { Missing }; }\nexport {};', 'Missing'],
+			['declare global { class Hidden {} export = Hidden; }\nexport { Hidden };', 'Hidden'],
+			['declare global { export import Alias = require("m"); }\nexport { Alias };', 'Alias'],
+		];
+
+		const outcomes = await parse_in_worker(in_every_mode(sources.map(([source]) => source)));
+
+		expect(outcomes).toEqual(
+			sources.flatMap(([source, name]) => [
+				thrown(UPSTREAM_ERRORS.EXPORT_NOT_DEFINED, source.lastIndexOf(name)),
+				{ ok: true, errors: [UPSTREAM_ERRORS.EXPORT_NOT_DEFINED.code] },
+				{ ok: true, errors: [UPSTREAM_ERRORS.EXPORT_NOT_DEFINED.code] },
+			]),
+		);
+	});
+});
+
 // #709
 describe('a TypeScript keyword written with an escape (sveltejs/acorn-typescript#147)', () => {
 	it('reports TS1260 where TypeScript reads the keyword', async () => {

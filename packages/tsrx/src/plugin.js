@@ -1098,6 +1098,58 @@ function is_function_declaration(node) {
 	return node.type === 'FunctionDeclaration' || node.type === 'TSDeclareFunction';
 }
 
+// The declarations whose name a `declare global` block adds to the global
+// scope (see `global_augmentation_names`)
+const GLOBAL_DECLARATION_TYPES = new Set([
+	'ClassDeclaration',
+	'FunctionDeclaration',
+	'TSDeclareFunction',
+	'TSInterfaceDeclaration',
+	'TSTypeAliasDeclaration',
+	'TSEnumDeclaration',
+	'TSModuleDeclaration',
+	'TSImportEqualsDeclaration',
+]);
+
+/**
+ * The names a statement of a `declare global` block adds to the global scope,
+ * as TypeScript's binder reads it: a declaration's name, the names a `var`
+ * declares (a destructuring one too, which upstream's fix leaves out), and an
+ * `import … =` alias of a name only when exported. In a block with an export list or
+ * `export =` (`exported_only`), only exported declarations add theirs. A nested
+ * `global {}` and `export as namespace` add none, and neither does an export
+ * list, which TypeScript doesn't allow in the block (TS2666): its names could
+ * otherwise settle an export of a name nothing declares.
+ * @param {AST.Node} statement
+ * @param {boolean} exported_only
+ * @returns {Array<AST.Node | null | undefined>}
+ */
+function global_augmentation_names(statement, exported_only) {
+	/** @type {AST.Node | null | undefined} */
+	let declaration = statement;
+	let exported = /** @type {{ isExport?: boolean }} */ (statement).isExport === true;
+	if (statement.type === 'ExportNamedDeclaration') {
+		declaration = statement.declaration;
+		exported = true;
+	}
+	if (!declaration || (exported_only && !exported)) return [];
+	if (declaration.type === 'VariableDeclaration') {
+		return declaration.declarations.flatMap((declarator) => extract_identifiers(declarator.id));
+	}
+	const named = /** @type {{ type: string, id?: AST.Node | null, kind?: string }} */ (declaration);
+	if (!GLOBAL_DECLARATION_TYPES.has(named.type) || named.kind === 'global') return [];
+	// TypeScript doesn't allow an import of a module there (TS2667)
+	if (
+		named.type === 'TSImportEqualsDeclaration' &&
+		(!exported ||
+			/** @type {{ moduleReference?: AST.Node }} */ (declaration).moduleReference?.type ===
+				'TSExternalModuleReference')
+	) {
+		return [];
+	}
+	return [named.id];
+}
+
 /**
  * Whether `statement` is an export declaration or an export assignment to
  * TypeScript (`hasExportDeclarations`): `export { … }`, `export * from`,
@@ -8884,7 +8936,36 @@ export function TSRXPlugin(config) {
 					// acorn-typescript takes `global` only without an escape.
 					/** @type {Parse.Parser} */ (this).containsEsc = false;
 				}
-				return super.tsParseAmbientExternalModuleDeclaration(node);
+				const declaration = super.tsParseAmbientExternalModuleDeclaration(node);
+				// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix
+				// What a `declare global` block declares merges into the global scope,
+				// so the file can export it: `declare global { class Model {} }` then
+				// `export { Model };`. acorn-typescript declared none of its names
+				// outside the block, so the export failed as undefined (#601). Declare
+				// each one in the enclosing scope, where only an export specifier sees
+				// it, as upstream's fix does. Only a block at the top level adds
+				// globals; see `global_augmentation_names` for the names.
+				if (
+					declaration.kind === 'global' &&
+					declaration.body?.type === 'TSModuleBlock' &&
+					this.currentScope().flags & SCOPE_TOP
+				) {
+					const body = /** @type {AST.Node[]} */ (declaration.body.body);
+					const exported_only = body.some(is_export_declaration);
+					for (const statement of body) {
+						for (const id of global_augmentation_names(statement, exported_only)) {
+							if (id?.type !== 'Identifier') continue;
+							this.declareName(
+								id.name,
+								/** @type {Parse.BindingType[keyof Parse.BindingType]} */ (
+									BIND_FLAGS_TS_EXPORT_ONLY
+								),
+								/** @type {number} */ (id.start),
+							);
+						}
+					}
+				}
+				return declaration;
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#144): remove once a release includes the fix
