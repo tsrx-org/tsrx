@@ -186,8 +186,16 @@ export class C extends Base {
 		},
 	);
 
-	it('keeps the parentheses the printer puts around a regular expression in the mapping', () => {
-		const source = `${DECLARATIONS}export function App() @{\n\tconst r = /x/.test('s');\n\t<p>{r}</p>\n}\n`;
-		expect(mapped_texts(source, '/x/.test')).toEqual(['(/x/).test']);
+	const long_string = JSON.stringify('a'.repeat(300));
+	it.each([
+		['/x/.test', '(/x/).test'],
+		// A `//` or `/*` in a literal, and a text longer than any limit on the
+		// comparison, don't make a later position look like the start.
+		['"http://x"()', '("http://x")'],
+		['/a[/*]b/()', '(/a[/*]b/)'],
+		[`${long_string}()`, `(${long_string})`],
+	])('keeps the parentheses the printer puts around the start of `%s`', (expression, printed) => {
+		const source = `${DECLARATIONS}export function App() @{\n\tconst r = ${expression};\n\t<p>{r}</p>\n}\n`;
+		expect(mapped_texts(source, expression)).toEqual([printed]);
 	});
 });

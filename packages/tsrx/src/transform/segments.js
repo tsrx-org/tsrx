@@ -49,6 +49,8 @@ import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 
 const RETURN_KEYWORD = 'return';
 const regex_line_terminator = /[\n\r\u2028\u2029]/;
+/** The longest node whose whole text `start_at_own_text` compares. */
+const OWN_TEXT_MAX_LENGTH = 1000;
 /** A fragment's `<>`, with any whitespace or comments between its `<` and `>`. */
 const regex_opening_fragment = /^<(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*>$/;
 const EXPORT_KEYWORD = 'export';
@@ -505,11 +507,14 @@ export function convert_source_map_to_mappings(
 	 * the call's callee, and the mapping covered `read(` too (#1392).
 	 *
 	 * Of the generated positions for the node's start inside the mapping, take
-	 * the first where the printed code has the node's source text, apart from
-	 * whitespace and comments, or else its leftmost identifier, as the printer
-	 * spells it (`\u0061` as `a`), followed by the same character as in the
-	 * source. A node printed otherwise keeps its mapping: its printed text can
-	 * start with parentheses of its own (`/x/.test(s)` prints `(/x/).test(s)`).
+	 * the first where the printed code has the node's whole source text, apart
+	 * from whitespace, or else its leftmost identifier, as the printer spells it
+	 * (`\u0061` as `a`), followed by the same character as in the source. A node
+	 * printed otherwise keeps its mapping: its printed text can start with
+	 * parentheses of its own (`/x/.test(s)` prints `(/x/).test(s)`), and only the
+	 * whole text tells them from a wrapper's. A node longer than
+	 * `OWN_TEXT_MAX_LENGTH` isn't compared, so a long member chain doesn't
+	 * compare its whole text for each of its members.
 	 * @param {CodeMapping} mapping
 	 * @param {AST.Node} node
 	 * @returns {CodeMapping}
@@ -527,13 +532,26 @@ export function convert_source_map_to_mappings(
 		const node_end = /** @type {number} */ (node.end);
 		const name = leftmost_name(node);
 		const start =
-			offsets.find((offset) => prints_text(offset, node_start, node_end)) ??
+			(node_end - node_start <= OWN_TEXT_MAX_LENGTH
+				? offsets.find((offset) => prints_source(offset, node_start, node_end))
+				: undefined) ??
 			(name &&
-				offsets.find(
-					(offset) =>
-						generated_code.startsWith(name.text, offset) &&
-						prints_text(offset + name.text.length, name.end, node_end, 1),
-				));
+				offsets.find((offset) => {
+					if (!generated_code.startsWith(name.text, offset)) return false;
+					// The character after the name, past spaces and comments, which
+					// are all that can come between a name and the next token.
+					let next = name.end;
+					while (next < node_end) {
+						if (regex_whitespace.test(source[next])) next++;
+						else if (source.startsWith('/*', next)) {
+							const close = source.indexOf('*/', next + 2);
+							next = close < 0 ? node_end : close + 2;
+						} else if (source.startsWith('//', next)) {
+							while (next < node_end && !regex_line_terminator.test(source[next])) next++;
+						} else break;
+					}
+					return next >= node_end || prints_source(offset + name.text.length, next, next + 1);
+				}));
 		if (start !== undefined && start > generated_start) {
 			mapping.generatedOffsets = [start];
 			mapping.generatedLengths = [generated_end - start];
@@ -543,33 +561,19 @@ export function convert_source_map_to_mappings(
 
 	/**
 	 * Whether the printed code at `offset` has the source text from `start` to
-	 * `end`, apart from whitespace and comments, up to `limit` other characters.
-	 * The limit keeps a long member chain from comparing its whole text for each
-	 * of its members; a wrapper differs from the node within its callee's name.
+	 * `end`, apart from whitespace.
 	 * @param {number} offset
 	 * @param {number} start
 	 * @param {number} end
-	 * @param {number} [limit]
 	 * @returns {boolean}
 	 */
-	function prints_text(offset, start, end, limit = 256) {
+	function prints_source(offset, start, end) {
 		let generated = offset;
-		for (let index = start; index < end && limit > 0; index++) {
-			const char = source[index];
-			if (regex_whitespace.test(char)) continue;
-			if (char === '/' && source[index + 1] === '*') {
-				const close = source.indexOf('*/', index + 2);
-				index = close < 0 ? end : close + 1;
-				continue;
-			}
-			if (char === '/' && source[index + 1] === '/') {
-				while (index + 1 < end && !regex_line_terminator.test(source[index + 1])) index++;
-				continue;
-			}
+		for (let index = start; index < end; index++) {
+			if (regex_whitespace.test(source[index])) continue;
 			while (regex_whitespace.test(generated_code[generated] ?? '')) generated++;
-			if (generated_code[generated] !== char) return false;
+			if (generated_code[generated] !== source[index]) return false;
 			generated++;
-			limit--;
 		}
 		return true;
 	}
