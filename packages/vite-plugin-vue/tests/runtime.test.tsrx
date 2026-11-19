@@ -3026,6 +3026,20 @@ function KeyedBranchApp() @{
 	</ul>
 }
 
+function KeyedSkipSwitchApp() @{
+	<ul class="keyed-skip-switch">
+		@for (const item of toggle_rows.value; key item.id) {
+			@if (item.visible) {
+				@switch (item.label) {
+					@case 'Beta': {
+						<li>{'beta ' + item.id}</li>
+					}
+				}
+			}
+		}
+	</ul>
+}
+
 function UnkeyedBranchApp() @{
 	<ul class="unkeyed-branch">
 		@for (const item of toggle_rows.value) {
@@ -3177,6 +3191,20 @@ describe('tsrx-vue keyed @for that can skip rows or has @empty (#178)', () => {
 		toggle_rows.value[0].visible = false;
 		await flush();
 		expect(texts('.keyed-branch li')).toEqual(['hidden a', 'hidden b', 'shown c']);
+	});
+
+	it('renders a @switch in a row that can be skipped, as its value changes', async () => {
+		await render(KeyedSkipSwitchApp);
+		expect(texts('.keyed-skip-switch li')).toEqual(['beta b']);
+
+		toggle_rows.value[0].label = 'Beta';
+		await flush();
+		expect(texts('.keyed-skip-switch li')).toEqual(['beta a', 'beta b']);
+
+		toggle_rows.value[1].label = 'Bravo';
+		toggle_rows.value[0].visible = false;
+		await flush();
+		expect(texts('.keyed-skip-switch li')).toEqual([]);
 	});
 
 	it('switches a row of a loop without a key between @if and @else in place', async () => {

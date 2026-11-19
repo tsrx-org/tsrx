@@ -55,8 +55,12 @@ const vapor_bindings_counts = new WeakMap();
  */
 const VAPOR_FOR_INTERNAL_NAME = '__VaporFor';
 
-/** Local name for the runtime helper that hands `VaporFor` the source's items. */
-const FOR_ITEMS_INTERNAL_NAME = '__for_items';
+/**
+ * Local name for the runtime helper that hands `VaporFor` the source's items.
+ * It has the reserved prefix, so no authored name, such as an outer loop's item
+ * that a keyed row reads through `.value`, can take it.
+ */
+const FOR_ITEMS_INTERNAL_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'for_items';
 /** The `computed` that walks the source of a `VaporFor` loop with `@empty`. */
 const VAPOR_ITEMS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'vapor_items';
 
@@ -1815,12 +1819,18 @@ function render_for_of_as_vapor_for(
 	const pattern_reads_index = for_of_pattern_reads_index(loop_params[0], node.index);
 
 	// A keyed loop renders through `VaporFor` even when its body can skip a row
-	// or it has `@empty`, so its rows move with their keys (#178). Without a
-	// key, those keep the shared lowering, and so does a loop that awaits or
-	// yields, which the shared lowering suspends the template's closures for.
+	// or it has `@empty`, so its rows move with their keys (#178). The shared
+	// lowering keeps such a loop without a key; one that awaits or yields, which
+	// it suspends the template's closures for; one whose head destructures in a
+	// way that runs code, which `getKey` and the row would each run; and one
+	// whose row renders through an IIFE (`@switch`), which a row slot runs once
+	// and which can return `null`.
 	if (
 		(node.empty || expression_can_skip_rendering(rendered)) &&
-		(!key_expression || suspends([node.right, node.body, ...(node.empty ? [node.empty] : [])]))
+		(!key_expression ||
+			suspends(node) ||
+			destructuring_runs_code(loop_params[0]) ||
+			!is_vapor_for_row(rendered))
 	) {
 		// A default in the head's pattern that reads the index can't be read in
 		// the parameters, where the index comes second. The shared lowering
@@ -1937,11 +1947,54 @@ function render_for_of_as_vapor_for(
 /**
  * Whether `node` awaits or yields outside a nested function.
  *
- * @param {AST.Node[]} node
+ * @param {AST.Node} node
  * @returns {boolean}
  */
 function suspends(node) {
 	return !!findFirstTopLevelAwait(node, false) || yields(node);
+}
+
+/**
+ * Whether destructuring `pattern` can run code or read the value more than
+ * once in a way that shows: an array pattern walks an iterator, and a default
+ * or a computed key evaluates an expression.
+ *
+ * @param {AST.Pattern | AST.Property['value'] | null | undefined} pattern
+ * @returns {boolean}
+ */
+function destructuring_runs_code(pattern) {
+	switch (pattern?.type) {
+		case 'ArrayPattern':
+		case 'AssignmentPattern':
+			return true;
+		case 'ObjectPattern':
+			return pattern.properties.some((property) =>
+				property.type === 'RestElement'
+					? destructuring_runs_code(property.argument)
+					: property.computed || destructuring_runs_code(property.value),
+			);
+		case 'RestElement':
+			return destructuring_runs_code(pattern.argument);
+		default:
+			return false;
+	}
+}
+
+/**
+ * Whether a row can render through `VaporFor`: an element or fragment, or a
+ * choice of them that `to_vapor_for_row` puts in a fragment.
+ *
+ * @param {AST.Expression} node
+ * @returns {boolean}
+ */
+function is_vapor_for_row(node) {
+	return (
+		node.type === 'JSXElement' ||
+		node.type === 'JSXFragment' ||
+		node.type === 'ConditionalExpression' ||
+		(node.type === 'LogicalExpression' && node.operator === '&&') ||
+		(node.type === 'Literal' && node.value === null)
+	);
 }
 
 /**
