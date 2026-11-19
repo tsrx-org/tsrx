@@ -142,6 +142,7 @@ catalogs:
     '@tsrx/ripple': ^0.2.0
     '@typescript-eslint/parser': *ts_eslint_parser
     '@typescript-eslint/types': ^8.40.0
+    '@typescript-eslint/visitor-keys': *ts_eslint_parser
     '@vercel/nft': ^1.3.2
     '@volar/language-core': ~2.4.28
     '@volar/language-service': ~2.4.28
