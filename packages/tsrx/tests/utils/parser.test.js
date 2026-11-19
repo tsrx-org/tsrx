@@ -12199,28 +12199,13 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		},
 		// Nor acorn-typescript's errors of the modifiers that it raises at the
 		// member's start, after them: TS1244 for `abstract` in a class that isn't
-		// abstract, TS1031 for `declare` on a method.
+		// abstract.
 		{
 			source: 'class A { async static abstract m(): void; }',
 			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static abstract']],
 			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:16'],
 			pick: first_member,
 			match: { static: true, abstract: true, value: { async: true } },
-		},
-		{
-			source: 'class A { async declare m(): Promise<void>; }',
-			errors: [[TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT, 'declare m']],
-			throws: [TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT, '1:16'],
-			pick: first_member,
-			match: { key: { name: 'm' }, value: { async: true } },
-		},
-		// `async` with `abstract` comes before the private name (TS18019).
-		{
-			source: 'abstract class A { async abstract #m(): Promise<void>; }',
-			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'async abstract']],
-			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:19'],
-			pick: first_member,
-			match: { abstract: true, value: { async: true } },
 		},
 		{
 			source: 'class A { async async m() {} }',
@@ -14590,7 +14575,6 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'abstract class A { abstract async #m(): Promise<void>; }',
 			// TS1040, which Prettier's `typescript` parser accepts.
 			'declare class A { async m(): Promise<void>; }',
-			'declare class A { async static m(): Promise<void>; }',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) =>
@@ -14603,12 +14587,23 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	});
 
 	it('reports a syntax error in a method with a leading `async` first (#235)', async () => {
-		const [outcome] = await parse_in_worker([
-			{ source: 'abstract class A { async abstract m(,): void; }' },
-		]);
-		expect(outcome.ok ? 'parsed' : outcome.code).not.toBe(
-			code_of(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH),
+		const source = 'abstract class A { async abstract m(,): void; }';
+		const [outcome] = await parse_in_worker([{ source }]);
+		expect(outcome).toMatchObject({ ok: false, pos: source.indexOf(',') });
+	});
+
+	it('keeps TS1368 for an async generator constructor, which TypeScript reports first (#235)', async () => {
+		const source = 'class A { async *constructor() {} }';
+		const outcomes = await parse_in_worker(
+			[undefined, ...collect_modes].map((options) => ({ source, options })),
 		);
+		for (const outcome of outcomes) {
+			expect(outcome).toMatchObject({
+				ok: false,
+				code: 'TS1368',
+				pos: source.indexOf('constructor'),
+			});
+		}
 	});
 
 	it('reads an `async` that no modifier follows on its line as the name (#235)', () => {

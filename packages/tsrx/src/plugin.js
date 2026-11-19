@@ -1155,6 +1155,16 @@ const duplicate_export_errors = new WeakSet();
  */
 const leading_async_modifiers = new WeakMap();
 
+/** The modifiers that a method takes. */
+const METHOD_MODIFIERS = new Set([
+	'public',
+	'protected',
+	'private',
+	'static',
+	'override',
+	'abstract',
+]);
+
 /** The codes of the errors of a combination of modifiers. */
 const MODIFIER_ERROR_CODES = new Set(['TS1028', 'TS1029', 'TS1030', 'TS1243']);
 
@@ -7931,15 +7941,20 @@ export function TSRXPlugin(config) {
 			 * Whether the token is an `async` that TypeScript reads as a modifier
 			 * before another modifier of a method: one on its line that is a
 			 * modifier there, or another `async`, with the method's name and
-			 * parameters after the modifiers. A property, an accessor, an index
-			 * signature, a constructor and a method with a computed name, or with
-			 * decorators, whose errors TypeScript reports first when it has no body,
-			 * keep acorn's syntax error.
+			 * parameters after the modifiers. Only for the modifiers a method takes
+			 * (an access modifier, `static`, `override`, `abstract`), outside an
+			 * ambient context, and for a method without decorators whose name is a
+			 * plain one, where TypeScript's first error of the modifiers is known
+			 * from them (see `#asyncModifierError`). A property, an accessor, an
+			 * index signature, a constructor and any other method keep acorn's
+			 * syntax error.
 			 * @param {readonly string[]} allowed The modifiers of a class member.
 			 * @returns {boolean}
 			 */
 			#atAsyncBeforeModifier(allowed) {
-				if (!this.isContextual('async') || this.#memberDecorated) return false;
+				if (!this.isContextual('async') || this.#memberDecorated || this.isAmbientContext) {
+					return false;
+				}
 				return this.tsLookAhead(() => {
 					this.next();
 					if (this.hasPrecedingLineBreak()) return false;
@@ -7947,9 +7962,11 @@ export function TSRXPlugin(config) {
 					while (
 						Parser.acornTypeScript.tokenIsIdentifier(this.type) &&
 						!this.containsEsc &&
-						allowed.includes(/** @type {string} */ (this.value)) &&
-						this.tsParseModifier(allowed, true) !== undefined
+						allowed.includes(/** @type {string} */ (this.value))
 					) {
+						const modifier = this.tsParseModifier(allowed, true);
+						if (modifier === undefined) break;
+						if (!METHOD_MODIFIERS.has(modifier)) return false;
 						modifiers++;
 					}
 					// An `async` that acorn reads, before the name, or the name.
@@ -7961,12 +7978,7 @@ export function TSRXPlugin(config) {
 						return false;
 					}
 					if (this.type === tt.star) this.next();
-					if (
-						!(this.type === tt.privateId || this.isLiteralPropertyName()) ||
-						this.value === 'constructor'
-					) {
-						return false;
-					}
+					if (!this.isLiteralPropertyName() || this.value === 'constructor') return false;
 					this.next();
 					if (this.type === tt.question) this.next();
 					return this.type === tt.parenL || this.tsMatchLeftRelational();
@@ -8084,8 +8096,9 @@ export function TSRXPlugin(config) {
 					return result;
 				}
 				const member = /** @type {AST.MethodDefinition} */ (method);
+				// TS1368 for a generator constructor comes first.
 				const found =
-					isAsync && member.kind === 'constructor' && !this.#memberDecorated
+					isAsync && !isGenerator && member.kind === 'constructor' && !this.#memberDecorated
 						? this.#asyncModifierError(
 								member,
 								/** @type {number} */ (member.key.start),
