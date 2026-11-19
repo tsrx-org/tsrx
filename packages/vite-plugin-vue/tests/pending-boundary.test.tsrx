@@ -1,4 +1,4 @@
-import { createVaporApp, defineVaporAsyncComponent, nextTick, ref } from 'vue';
+import { createVaporApp, defineComponent, defineVaporAsyncComponent, h, nextTick, ref } from 'vue';
 import { TsrxErrorBoundary } from '@tsrx/vue/error-boundary';
 
 // A `@pending` body runs only while the `@try` body suspends, and a throw in
@@ -223,6 +223,38 @@ function EmptyCatchApp() @{
 	}
 }
 
+function EmptyPendingApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		@if (pending_runs < 0) {
+			<p class="pending">{'loading'}</p>
+		}
+	}
+}
+
+// A VDOM component with its own state, rendered by the same block on every
+// render of the boundary.
+const Counter = defineComponent({
+	setup() {
+		const count = ref(0);
+		return () => h('button', { class: 'count', onClick: () => count.value++ }, String(count.value));
+	},
+});
+const refresh = ref(0);
+
+function CachedBlockApp() @{
+	const cached = <Counter />;
+	<TsrxErrorBoundary
+		content={() => {
+			void refresh.value;
+			return cached;
+		}}
+		fallback={() => null}
+	/>
+}
+
 function html() {
 	return container.innerHTML;
 }
@@ -374,6 +406,36 @@ describe('tsrx-vue @pending', () => {
 				await flush();
 			}
 			expect(container.querySelector('.fail')).not.toBeNull();
+		} finally {
+			app.unmount();
+			await nextTick();
+		}
+		expect(container.childNodes.length).toBe(0);
+	});
+
+	it('renders an empty @pending body without a Vue warning', async () => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			await render(EmptyPendingApp, { promise: never() });
+			expect(html()).toBe('');
+			expect(warn.mock.calls.map((args) => String(args[0]))).toEqual([]);
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	it('keeps a block the content renders again in place, with its state', async () => {
+		const app = createVaporApp(CachedBlockApp);
+		try {
+			app.mount(container);
+			await flush();
+			(container.querySelector('.count') as HTMLElement).click();
+			await flush();
+			expect(html()).toBe('<button class="count">1</button>');
+
+			refresh.value++;
+			await flush();
+			expect(html()).toBe('<button class="count">1</button>');
 		} finally {
 			app.unmount();
 			await nextTick();

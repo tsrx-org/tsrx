@@ -119,6 +119,13 @@ function track_dynamic_values(value) {
 }
 
 /**
+ * The wrapper `normalize_block` gave each fragment that had no anchor.
+ *
+ * @type {WeakMap<VaporFragment, VaporFragment>}
+ */
+const anchored_fragments = new WeakMap();
+
+/**
  * @param {unknown} node
  * @param {Node | undefined} anchor
  * @returns {VaporRenderedBlock}
@@ -126,10 +133,17 @@ function track_dynamic_values(value) {
 function normalize_block(node, anchor) {
 	if (node instanceof Node) return node;
 	if (vapor.isFragment(node)) {
+		if (node.anchor) return node;
 		// A fragment with no anchor of its own, such as the one Vapor makes for
 		// a VDOM component like `Suspense`, gets one, so that a later render can
-		// find where it is to replace it.
-		return node.anchor ? node : create_fragment(node, anchor);
+		// find where it is to replace it. The same fragment keeps the same
+		// wrapper, so rendering it again leaves it in place.
+		let wrapper = anchored_fragments.get(node);
+		if (!wrapper) {
+			wrapper = create_fragment(node, anchor);
+			anchored_fragments.set(node, wrapper);
+		}
+		return wrapper;
 	}
 	if (vapor.isVaporComponent(node)) {
 		if (!(node.rawProps && 'content' in node.rawProps && 'fallback' in node.rawProps)) {
@@ -177,6 +191,8 @@ function uses_node(block, node) {
 function resolve_value(current, value, anchor) {
 	anchor = anchor || (current instanceof Node && current.nodeType === 3 ? current : undefined);
 	const node = normalize_block(value, anchor);
+	// The same block again is already in place.
+	if (node === current) return node;
 
 	if (current) {
 		if (vapor.isFragment(current)) {
@@ -363,12 +379,17 @@ function initialize_boundary_state(instance) {
 export function TsrxPendingBody(props, ctx) {
 	const instance = own_instance(ctx);
 	if (!instance) return props.content();
+	/** @type {unknown} */
+	let content;
 	try {
-		return props.content();
+		content = props.content();
 	} catch (error) {
 		handleError(error, instance, ErrorCodes.RENDER_FUNCTION);
-		return document.createTextNode('');
+		content = null;
 	}
+	// A component must return a block: an empty body, such as an `@if` that
+	// renders nothing, gives an empty text node.
+	return content == null || typeof content === 'boolean' ? document.createTextNode('') : content;
 }
 
 TsrxPendingBody.props = ['content'];
