@@ -68,12 +68,17 @@ function own_instance(ctx) {
 
 /**
  * The innermost rendering boundary whose content contains `source`, the
- * component an error came from.
+ * component an error came from, up to `owner`, the boundary whose hook
+ * caught it. A boundary rendering further out isn't the error's: a
+ * `Suspense` mounts its content, and calls its fallback, after the boundary
+ * around it has rendered, so a boundary inside it can catch an error while an
+ * outer boundary is still rendering.
  *
  * @param {unknown} source a Vapor instance, or a VDOM component's public proxy
+ * @param {unknown} owner the instance of the boundary whose hook caught it
  * @returns {RenderFrame | undefined}
  */
-function find_render_frame(source) {
+function find_render_frame(source, owner) {
 	if (rendering.length === 0) return undefined;
 	const link = /** @type {InstanceLink | null} */ (source);
 	/** @type {Set<unknown>} */
@@ -82,6 +87,7 @@ function find_render_frame(source) {
 	let current = link?.$ ?? link;
 	for (; current; current = current.parent) {
 		ancestors.add(current);
+		if (current === owner) break;
 	}
 	for (let i = rendering.length - 1; i >= 0; i--) {
 		if (ancestors.has(rendering[i].instance)) return rendering[i];
@@ -337,7 +343,7 @@ function initialize_boundary_state(instance) {
 	boundary_states.set(instance, state);
 
 	onErrorCaptured((captured_error, source) => {
-		const frame = find_render_frame(source);
+		const frame = find_render_frame(source, instance);
 		if (frame) {
 			frame.errors.push(captured_error);
 			return false;

@@ -4,6 +4,7 @@ import {
 	defineVaporAsyncComponent,
 	h,
 	nextTick,
+	onMounted,
 	ref,
 	shallowRef,
 	Suspense,
@@ -288,6 +289,216 @@ function AsyncContentApp() @{
 	/>
 }
 
+// Both @try's have a @catch: the inner one's @pending throws while an outer
+// boundary is still rendering, so the inner @catch must take it.
+function NestedCatchElementApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<div class="outer">
+			@try {
+				<AsyncChild value="hello" />
+			} @pending {
+				const label = boom_label();
+				<p class="pending">{label}</p>
+			} @catch (err) {
+				<p class="inner-caught">{(err as Error).message}</p>
+			}
+		</div>
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+function Section(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	<section>
+		@try {
+			<AsyncChild value="hello" />
+		} @pending {
+			const label = boom_label();
+			<p class="pending">{label}</p>
+		} @catch (err) {
+			<p class="inner-caught">{(err as Error).message}</p>
+		}
+	</section>
+}
+
+function NestedCatchComponentApp(props: { promise: Loader }) @{
+	@try {
+		<Section promise={props.promise} />
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+// Keyed rows, each with its own @try, inside an outer @try. Row 2's @pending
+// throws.
+const row_loaders = new Map<number, ReturnType<typeof deferred>>();
+
+function row_loader(id: number) {
+	let entry = row_loaders.get(id);
+	if (!entry) {
+		entry = deferred();
+		row_loaders.set(id, entry);
+	}
+	return entry.promise;
+}
+
+function row_label(id: number) {
+	if (id === 2) throw new Error('row boom ' + id);
+	return 'loading ' + id;
+}
+
+function PendingRow(props: { id: number }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => row_loader(props.id));
+	<li class={'row-' + props.id}>
+		@try {
+			<AsyncChild value={'row ' + props.id} />
+		} @pending {
+			const label = row_label(props.id);
+			<span class="pending">{label}</span>
+		} @catch (err) {
+			<span class="row-caught">{(err as Error).message}</span>
+		}
+	</li>
+}
+
+function RowComponentsApp(props: { ids: number[] }) @{
+	@try {
+		<ul>
+			@for (const id of props.ids; key id) {
+				<PendingRow id={id} />
+			}
+		</ul>
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+function InlineRowsApp(props: { ids: number[] }) @{
+	@try {
+		<ul>
+			@for (const id of props.ids; key id) {
+				const AsyncChild = defineVaporAsyncComponent(() => row_loader(id));
+				<li class={'row-' + id}>
+					@try {
+						<AsyncChild value={'row ' + id} />
+					} @pending {
+						const label = row_label(id);
+						<span class="pending">{label}</span>
+					} @catch (err) {
+						<span class="row-caught">{(err as Error).message}</span>
+					}
+				</li>
+			}
+		</ul>
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+// Errors a showing @pending body raises after its render: a reactive
+// expression on an update, an event handler, and onMounted.
+const reactive_n = ref(0);
+
+function check_n(n: number) {
+	if (n === 1) throw new Error('reactive boom');
+	return 'n=' + n;
+}
+
+function ReactivePendingApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		<p class="pending">{check_n(reactive_n.value)}</p>
+	} @catch (err) {
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
+function HandlerPendingApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		<button
+			class="pending-btn"
+			onClick={() => {
+				throw new Error('handler boom');
+			}}
+		>
+			{'x'}
+		</button>
+	} @catch (err) {
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
+function MountedBoom() @{
+	onMounted(() => {
+		throw new Error('mounted boom');
+	});
+	<p class="pending">{'loading'}</p>
+}
+
+function MountedPendingApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		<MountedBoom />
+	} @catch (err) {
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
+// A @try whose body is only a keyed @for, with a row that throws on click.
+function ThrowOnClick(props: { id: number }) @{
+	<button
+		class={'b' + props.id}
+		onClick={() => {
+			throw new Error('click ' + props.id);
+		}}
+	>
+		{String(props.id)}
+	</button>
+}
+
+function BareForApp(props: { ids: number[] }) @{
+	@try {
+		@for (const id of props.ids; key id) {
+			<ThrowOnClick id={id} />
+		}
+	} @catch (err) {
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
+async function mount_and_unmount(
+	App: unknown,
+	props: Record<string, unknown>,
+	steps: () => Promise<void>,
+) {
+	const app = createVaporApp(App as typeof BareForApp, props as { ids: number[] });
+	try {
+		app.mount(container);
+		await flush();
+		await steps();
+	} finally {
+		app.unmount();
+		await nextTick();
+	}
+	expect(container.childNodes.length).toBe(0);
+}
+
+function row_texts() {
+	return Array.from(
+		container.querySelectorAll('li'),
+		(row) => `${row.className}: ${row.textContent}`,
+	);
+}
+
 function html() {
 	return container.innerHTML;
 }
@@ -352,6 +563,65 @@ describe('tsrx-vue @pending', () => {
 		await flush();
 		expect(pending_runs).toBe(1);
 		expect(html()).toBe('<p class="outer-caught">pending boom</p>');
+	});
+
+	it('shows the inner @catch, not the outer one, when the inner @try is inside an element', async () => {
+		await render(NestedCatchElementApp, { promise: never() });
+		await flush();
+		expect(html()).toBe('<div class="outer"><p class="inner-caught">pending boom</p></div>');
+	});
+
+	it('shows the inner @catch when the inner @try is inside a child component', async () => {
+		await render(NestedCatchComponentApp, { promise: never() });
+		await flush();
+		expect(html()).toBe('<section><p class="inner-caught">pending boom</p></section>');
+	});
+
+	it.each([
+		['row components', RowComponentsApp],
+		['inline rows', InlineRowsApp],
+	])('keeps the list when one keyed row’s @pending throws (%s)', async (_name, App) => {
+		row_loaders.clear();
+		await render(App as typeof RowComponentsApp, { ids: [1, 2, 3] });
+		await flush();
+		expect(container.querySelector('.outer-caught')).toBeNull();
+		expect(row_texts()).toEqual(['row-1: loading 1', 'row-2: row boom 2', 'row-3: loading 3']);
+
+		row_loaders.get(1)!.resolve(Resolved);
+		await flush();
+		expect(row_texts()).toEqual(['row-1: row 1', 'row-2: row boom 2', 'row-3: loading 3']);
+	});
+
+	it('shows the @catch when a reactive expression in the @pending body throws on an update', async () => {
+		reactive_n.value = 0;
+		await mount_and_unmount(ReactivePendingApp, { promise: never() }, async () => {
+			expect(html()).toBe('<p class="pending">n=0</p>');
+			reactive_n.value = 1;
+			await flush();
+			expect(html()).toBe('<p class="caught">reactive boom</p>');
+		});
+	});
+
+	it('shows the @catch when an event handler in the @pending body throws', async () => {
+		await mount_and_unmount(HandlerPendingApp, { promise: never() }, async () => {
+			(container.querySelector('.pending-btn') as HTMLElement).click();
+			await flush();
+			expect(html()).toBe('<p class="caught">handler boom</p>');
+		});
+	});
+
+	it('shows the @catch when onMounted throws in a component in the @pending body', async () => {
+		await mount_and_unmount(MountedPendingApp, { promise: never() }, async () => {
+			expect(html()).toBe('<p class="caught">mounted boom</p>');
+		});
+	});
+
+	it('leaves no DOM nodes behind after a row of a bare keyed @for throws and unmounts', async () => {
+		await mount_and_unmount(BareForApp, { ids: [1, 2, 3] }, async () => {
+			(container.querySelector('.b2') as HTMLElement).click();
+			await flush();
+			expect(html()).toBe('<p class="caught">click 2</p>');
+		});
 	});
 
 	it('shows the @catch when a component in the @pending body throws in setup', async () => {
