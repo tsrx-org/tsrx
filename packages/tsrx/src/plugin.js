@@ -8937,7 +8937,14 @@ export function TSRXPlugin(config) {
 					/** @type {Parse.Parser} */ (this).containsEsc = false;
 				}
 				const declaration = super.tsParseAmbientExternalModuleDeclaration(node);
-				// UPSTREAM(sveltejs/acorn-typescript#110): remove once a release includes the fix
+				// UPSTREAM(sveltejs/acorn-typescript#110): this port differs from the
+				// upstream fix on purpose, to follow TypeScript (see
+				// `global_augmentation_names`), so don't just delete it once a release
+				// includes that fix. Upstream then declares every name the block
+				// declares itself, and its `maybeExportDefined` also clears the pending
+				// undefined exports, before this runs. Either keep upstream from
+				// declaring them here (and restore the exports it clears) or send these
+				// rules upstream first.
 				// What a `declare global` block declares merges into the global scope,
 				// so the file can export it: `declare global { class Model {} }` then
 				// `export { Model };`. acorn-typescript declared none of its names
