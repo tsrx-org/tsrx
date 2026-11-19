@@ -1543,8 +1543,8 @@ export namespace Parse {
 		/**
 		 * Whether a declaration can follow the TypeScript word just checked: with
 		 * `next`, read the current token and require the next one on the same line;
-		 * without it, require no line terminator here, eating a `;`
-		 * (@sveltejs/acorn-typescript).
+		 * without it, require no line terminator here, without reading a `;`
+		 * (@sveltejs/acorn-typescript, which reads one; see the override).
 		 */
 		tsCheckLineTerminator(next: boolean): boolean;
 
