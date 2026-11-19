@@ -200,6 +200,11 @@ export interface BaseNodeMetaData {
 	/** A merged text run produced by normalize_children - renders through the text path. */
 	tsrx_text?: boolean;
 	/**
+	 * On the container that an element's only text prints as one literal in,
+	 * which has the text's location (see wrap_edge_whitespace).
+	 */
+	text_literal?: boolean;
+	/**
 	 * On a `yield*` the compiler added for a generated closure it made a
 	 * generator: that generator, whose authored `yield`s the `yield*` stands for.
 	 */
