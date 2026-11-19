@@ -217,6 +217,9 @@ function shows_content_of(source, own) {
 	return inner;
 }
 
+/** How often a waiting swap checks whether its `Suspense` stopped waiting. */
+const ROUND_RECHECK_MS = 50;
+
 /**
  * Whether `suspense`, while pending, counts `component`'s setup: it is still
  * pending, and the component was created under that `Suspense` in its current
@@ -688,12 +691,27 @@ function initialize_boundary_state(instance) {
 			const at = state.epoch;
 			/** @param {Promise<unknown>[]} setups */
 			const wait = (setups) => {
-				Promise.allSettled(setups).then(() => {
+				const suspense = /** @type {{ suspense?: PendingSuspense | null }} */ (instance).suspense;
+				const round = suspense?.pendingId;
+				let settled = false;
+				const next = () => {
+					if (settled) return;
+					settled = true;
 					if (state.epoch !== at) return;
 					const more = loading();
 					if (more.length > 0) wait(more);
 					else show();
-				});
+				};
+				Promise.allSettled(setups).then(next);
+				// A `Suspense` that goes back to the branch it was showing, or
+				// starts a new round, stops counting these setups, and one of them
+				// may never settle: look again then.
+				const recheck = () => {
+					if (settled) return;
+					if (!suspense?.pendingBranch || suspense.pendingId !== round) next();
+					else setTimeout(recheck, ROUND_RECHECK_MS);
+				};
+				setTimeout(recheck, ROUND_RECHECK_MS);
 			};
 			wait(first);
 		}

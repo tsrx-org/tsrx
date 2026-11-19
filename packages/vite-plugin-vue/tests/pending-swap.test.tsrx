@@ -56,6 +56,27 @@ function ActiveTryWithLate() @{
 	}
 }
 
+const counted_shown = ref(false);
+let finish_counted: (component: unknown) => void = () => {};
+
+// The same, where the async component appears while the new branch loads, so
+// the Suspense counts it.
+function ActiveTryWithCounted() @{
+	const Counted = defineVaporAsyncComponent(
+		() => new Promise<any>((resolve) => (finish_counted = resolve)),
+	);
+	@try {
+		<>
+			<ActiveThrower />
+			@if (counted_shown.value) {
+				<Counted />
+			}
+		</>
+	} @catch (err) {
+		<b class="active-caught">{String(err)}</b>
+	}
+}
+
 /**
  * Mounts `component` as the first branch of a keyed `Suspense` that keeps it
  * on screen while a second branch loads, and switches to that branch.
@@ -114,6 +135,25 @@ describe('tsrx-vue a @try in the branch a pending Suspense still shows', () => {
 		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: active body');
 		expect(handled).toEqual([]);
 		finish_late(LateFine);
+		finish();
+		app.unmount();
+	});
+
+	it('shows its @catch once the Suspense goes back to it, though a counted component still loads', async () => {
+		active_broken.value = false;
+		counted_shown.value = false;
+		const { app, handled, key, finish } = await mount_kept(ActiveTryWithCounted);
+		counted_shown.value = true;
+		await flush();
+		active_broken.value = true;
+		await flush();
+		key.value = 'old';
+		await flush();
+		await new Promise((resolve) => setTimeout(resolve, 120));
+		await flush();
+		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: active body');
+		expect(handled).toEqual([]);
+		finish_counted(LateFine);
 		finish();
 		app.unmount();
 	});
