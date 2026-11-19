@@ -12175,6 +12175,15 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: first_member,
 			match: { accessor: true, declare: true },
 		},
+		// Not also acorn-typescript's TS18019 for the private name, which
+		// TypeScript checks after the modifiers.
+		{
+			source: 'abstract class A { accessor abstract #x: number; }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'abstract #x']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:28'],
+			pick: first_member,
+			match: { accessor: true, abstract: true },
+		},
 		{
 			source: 'abstract class A { private accessor abstract x: number; }',
 			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'abstract x']],
@@ -14656,6 +14665,12 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		expect(
 			outcomes.map((outcome) => (outcome.ok ? (outcome.errors ?? []) : outcome.message)),
 		).toEqual(outcomes.map(() => []));
+	});
+
+	it("reports a syntax error in an accessor property before its modifiers' error (#235)", async () => {
+		const source = 'class A { accessor static x = ; }';
+		const [outcome] = await parse_in_worker([{ source }]);
+		expect(outcome).toMatchObject({ ok: false, code: 'TS1012', pos: source.indexOf('; }') });
 	});
 
 	it('reports a syntax error in a method with a leading `async` first (#235)', async () => {

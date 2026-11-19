@@ -1202,6 +1202,14 @@ const leading_async_modifiers = new WeakMap();
  */
 const members_with_modifier_errors = new WeakSet();
 
+/**
+ * The codes of the errors of a field that TypeScript reports only when its
+ * modifiers have none: a private name with an access modifier (TS18010) or
+ * with `abstract` or `declare` (TS18019), and an initializer in an ambient
+ * context (TS1039).
+ */
+const FIELD_ERRORS_AFTER_MODIFIERS = new Set(['TS18010', 'TS18019', 'TS1039']);
+
 /** The access modifiers. */
 const ACCESSIBILITY_MODIFIERS = new Set(['public', 'protected', 'private']);
 
@@ -8235,15 +8243,31 @@ export function TSRXPlugin(config) {
 			 * `member_modifiers` in `transform/jsx/helpers.js`), which esbuild and
 			 * Babel reject there, where esrap's order compiled: a strict parse throws
 			 * it at the source instead.
+			 *
+			 * On a decorated `declare` or `abstract` property, TypeScript reports the
+			 * decorators first (TS1206) unless `experimentalDecorators` is on, which
+			 * the parser can't tell: it reports the modifiers' error, TypeScript's
+			 * first with `experimentalDecorators`.
 			 * @type {Parse.Parser['parseClassField']}
 			 */
 			parseClassField(field) {
 				const member = /** @type {AST.PropertyDefinition} */ (field);
-				if (member.accessor && !members_with_modifier_errors.has(field)) {
-					const found = this.#accessorModifierError(member);
-					if (found) this.#raiseCheckerError(found.start, found.error);
-				}
-				return super.parseClassField(field);
+				const found =
+					member.accessor && !members_with_modifier_errors.has(field)
+						? this.#accessorModifierError(member)
+						: null;
+				if (!found) return super.parseClassField(field);
+				// Once the field is read, so that a syntax error in it comes first, as
+				// in TypeScript, which then reports none of the field's errors that it
+				// checks after the modifiers' (TS18010, TS18019, TS1039).
+				/** @type {CompileError[]} */
+				const held = [];
+				const result = this.#holdingErrors(held, () => super.parseClassField(field));
+				this.#raiseCheckerError(found.start, found.error);
+				this.#releaseErrors(
+					held.filter((error) => !FIELD_ERRORS_AFTER_MODIFIERS.has(error.code ?? '')),
+				);
+				return result;
 			}
 
 			/**
