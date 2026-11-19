@@ -989,7 +989,9 @@ Every target runs the body, `@pending` and `@catch` inside functions, so a
 `break` or `continue` in one of them can only reach a loop, a `switch` (`break`
 only) or a label inside that block, and a `return` there is the template
 `return` error. The same holds for a `break` or `continue` in `@empty` or in a
-nested `@{ ... }` block, even a code-only one in a returned fragment.
+nested `@{ ... }` block. A code-only block that is a child of a returned
+fragment is inlined before the `return`, but it keeps the same rule, as it keeps
+the `var` rule.
 
 ### Guard returns
 

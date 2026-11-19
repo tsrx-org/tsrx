@@ -1139,7 +1139,10 @@ export function SpecificationPage() @{
 								<code class="inline-code">break</code> or <code class="inline-code">continue</code>{' '}
 								there can only reach a loop, a <code class="inline-code">switch</code> (
 								<code class="inline-code">break</code> only) or a label inside it (TSRX2036,
-								TSRX2037), even in a code-only block in a returned fragment.
+								TSRX2037). A code-only block that is a child of a returned fragment is inlined
+								before the <code class="inline-code">return</code> rather than put in a function,
+								but it keeps the same rule, as it keeps the <code class="inline-code">var</code>{' '}
+								rule (TSRX2030).
 							</p>
 							<p class="section-body">
 								Plain JSX children are the default. When an expression position, function body,
