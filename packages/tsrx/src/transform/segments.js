@@ -509,7 +509,8 @@ export function convert_source_map_to_mappings(
 	 * hover and diagnostics on the call land on the authored text (Octane wraps
 	 * a template read in a type-only helper). The call starts at the same source
 	 * position and is printed first, so the node's first generated position is
-	 * the call's callee, and the mapping covered `read(` too (#1392).
+	 * the call's callee, and the mapping covered `read(` too (#1392). Used for
+	 * member expressions, `new` expressions, and authored calls and parentheses.
 	 *
 	 * Of the generated positions for the node's start inside the mapping, take
 	 * the last where the printed code has the node's whole source text, apart
@@ -2259,7 +2260,15 @@ export function convert_source_map_to_mappings(
 			} else if (node.type === 'CallExpression' || node.type === 'NewExpression') {
 				if (node.type === 'NewExpression' && has_location(node)) {
 					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+						start_at_own_text(
+							get_mapping_from_node(
+								node,
+								src_to_gen_map,
+								gen_line_offsets,
+								mapping_data_verify_only,
+							),
+							node,
+						),
 					);
 					push_statement_keyword_token(node, 'new');
 				}

@@ -179,6 +179,7 @@ export function App() @{ <p>{value.list[0]}</p> }
 		['a[b].c', ['a[b].c', 'a[b]']],
 		['f().x', ['f().x', 'f()']],
 		['a!.z', ['a!.z']],
+		['new Date().getTime()', ['new Date().getTime()', 'new Date().getTime', 'new Date()']],
 		['(a as { k: number }).k', ['(a as { k: number }).k', '(a as { k: number })']],
 		['`t`.length', ['`t`.length']],
 		// The wrapper's callee is the same name.
