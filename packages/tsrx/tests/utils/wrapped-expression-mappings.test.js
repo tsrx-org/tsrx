@@ -44,7 +44,7 @@ const WRAPPED_TYPES = new Set([
  * after wrapping each expression container's member expression or call in
  * `read(…)` with the expression's location.
  * @param {string} source
- * @param {string} [wrapper] the wrapping call's callee
+ * @param {string} [wrapper] the wrapping call's callee, a name or a dotted path
  */
 function compile_wrapped(source, wrapper = 'read') {
 	/** @type {CompileError[]} */
@@ -71,7 +71,17 @@ function compile_wrapped(source, wrapper = 'read') {
 			const inner = node.expression;
 			node.expression = {
 				type: 'CallExpression',
-				callee: { type: 'Identifier', name: wrapper, metadata: { path: [] } },
+				callee: wrapper
+					.split('.')
+					.map((name) => /** @type {any} */ ({ type: 'Identifier', name, metadata: { path: [] } }))
+					.reduce((object, property) => ({
+						type: 'MemberExpression',
+						object,
+						property,
+						computed: false,
+						optional: false,
+						metadata: { path: [] },
+					})),
 				arguments: [inner],
 				optional: false,
 				start: inner.start,
@@ -178,6 +188,8 @@ export class C extends Base {
 		// The printer writes the escaped name as `a`, so only the name matches.
 		['\\u0061.z', 'a.z', 'read'],
 		['\\u0061.z', 'a.z', 'a'],
+		// The wrapper's callee starts with the whole member expression.
+		['a.re', 'a.re', 'a.read'],
 	])(
 		'maps `%s`, printed `%s`, from its own text in a `%s(…)` call',
 		(expression, printed, wrapper) => {

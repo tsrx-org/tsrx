@@ -49,6 +49,7 @@ import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 
 const RETURN_KEYWORD = 'return';
 const regex_line_terminator = /[\n\r\u2028\u2029]/;
+const regex_word_char = /[\p{ID_Continue}$\u200c\u200d]/u;
 /** The longest node whose whole text `start_at_own_text` compares. */
 const OWN_TEXT_MAX_LENGTH = 1000;
 /** A fragment's `<>`, with any whitespace or comments between its `<` and `>`. */
@@ -561,7 +562,8 @@ export function convert_source_map_to_mappings(
 
 	/**
 	 * Whether the printed code at `offset` has the source text from `start` to
-	 * `end`, apart from whitespace.
+	 * `end`, apart from whitespace, and doesn't continue a name it ends with
+	 * (`runtime.re` is not the start of `runtime.read(`).
 	 * @param {number} offset
 	 * @param {number} start
 	 * @param {number} end
@@ -569,13 +571,20 @@ export function convert_source_map_to_mappings(
 	 */
 	function prints_source(offset, start, end) {
 		let generated = offset;
+		let last = '';
 		for (let index = start; index < end; index++) {
 			if (regex_whitespace.test(source[index])) continue;
 			while (regex_whitespace.test(generated_code[generated] ?? '')) generated++;
 			if (generated_code[generated] !== source[index]) return false;
+			last = source[index];
 			generated++;
 		}
-		return true;
+		const next = generated_code.codePointAt(generated);
+		return !(
+			regex_word_char.test(last) &&
+			next !== undefined &&
+			regex_word_char.test(String.fromCodePoint(next))
+		);
 	}
 
 	/** @type {Map<string, number>} */
