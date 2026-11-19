@@ -209,6 +209,11 @@ export interface BaseNodeMetaData {
 	 * generator: that generator, whose authored `yield`s the `yield*` stands for.
 	 */
 	generated_delegation?: AST.FunctionExpression;
+	/**
+	 * On an `await` the compiler added for a generated closure it made async:
+	 * that closure, whose authored `await`s the `await` stands for.
+	 */
+	generated_await?: AST.Function;
 	/** Control-flow node renders as the sole child of its parent (controlled anchor). */
 	is_controlled?: boolean;
 	/** Control-flow node is the root of a render body - anchors on `__anchor`. */
@@ -2560,6 +2565,14 @@ export interface SourceMappingHarness {
 	 * target's own tests. Default: `false`.
 	 */
 	rejectsTemplateYield?: boolean;
+	/**
+	 * Does the platform report an `await` in a plain async function's template
+	 * (TSRX2021)? Solid and Vue do, where their JSX compilers evaluate the
+	 * value in an effect, a getter or a callback. The shared tests then expect
+	 * TSRX2021 for the shapes both report, and leave the rest to the target's
+	 * own tests. Default: `false`.
+	 */
+	rejectsTemplateAwait?: boolean;
 }
 
 /** The per-target entry point the shared editor-diagnostics tests run against. */

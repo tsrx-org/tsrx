@@ -23,3 +23,19 @@ export interface TsrxErrorBoundaryComponent {
 }
 
 export const TsrxErrorBoundary: TsrxErrorBoundaryComponent;
+
+export interface TsrxPendingBodyProps {
+	/** Renders the `@pending` body. See {@link TsrxErrorBoundaryProps.content}. */
+	content: () => unknown;
+}
+
+export interface TsrxPendingBodyComponent {
+	/**
+	 * Returns what `content` rendered, or an empty text node when it threw and
+	 * the error went to Vue's error handling.
+	 */
+	(props: TsrxPendingBodyProps, ctx?: unknown): Block;
+	props: string[];
+}
+
+export const TsrxPendingBody: TsrxPendingBodyComponent;

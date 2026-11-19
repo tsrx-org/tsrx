@@ -1,9 +1,16 @@
 /** @import { ComponentInternalInstance, ShallowRef } from 'vue' */
-/** @import { TsrxErrorBoundaryProps } from '../types/error-boundary' */
+/** @import { TsrxErrorBoundaryProps, TsrxPendingBodyProps } from '../types/error-boundary' */
 /** @import { VaporBlock, VaporFragment, VaporRenderedBlock, VaporRuntime } from '../types/vapor-runtime' */
 
 import * as Vue from 'vue';
-import { EffectScope, getCurrentInstance, onErrorCaptured, shallowRef } from 'vue';
+import {
+	EffectScope,
+	ErrorCodes,
+	getCurrentInstance,
+	handleError,
+	onErrorCaptured,
+	shallowRef,
+} from 'vue';
 
 /**
  * The Vapor renderer's fragment/component helpers are runtime-internal, so
@@ -61,12 +68,18 @@ function own_instance(ctx) {
 
 /**
  * The innermost rendering boundary whose content contains `source`, the
- * component an error came from.
+ * component an error came from, up to `owner`, the boundary whose hook
+ * caught it. A boundary rendering further out isn't the error's: a
+ * `Suspense` mounts its content, and calls its fallback, after the boundary
+ * around it has rendered, so a boundary inside it can catch an error while an
+ * outer boundary is still rendering.
  *
  * @param {unknown} source a Vapor instance, or a VDOM component's public proxy
+ * @param {unknown} owner the instance of the boundary whose hook caught it,
+ * or null to look at every boundary rendering around `source`
  * @returns {RenderFrame | undefined}
  */
-function find_render_frame(source) {
+function find_render_frame(source, owner) {
 	if (rendering.length === 0) return undefined;
 	const link = /** @type {InstanceLink | null} */ (source);
 	/** @type {Set<unknown>} */
@@ -75,6 +88,7 @@ function find_render_frame(source) {
 	let current = link?.$ ?? link;
 	for (; current; current = current.parent) {
 		ancestors.add(current);
+		if (current === owner) break;
 	}
 	for (let i = rendering.length - 1; i >= 0; i--) {
 		if (ancestors.has(rendering[i].instance)) return rendering[i];
@@ -112,12 +126,32 @@ function track_dynamic_values(value) {
 }
 
 /**
+ * The wrapper `normalize_block` gave each fragment that had no anchor.
+ *
+ * @type {WeakMap<VaporFragment, VaporFragment>}
+ */
+const anchored_fragments = new WeakMap();
+
+/**
  * @param {unknown} node
  * @param {Node | undefined} anchor
  * @returns {VaporRenderedBlock}
  */
 function normalize_block(node, anchor) {
-	if (node instanceof Node || vapor.isFragment(node)) return node;
+	if (node instanceof Node) return node;
+	if (vapor.isFragment(node)) {
+		if (node.anchor) return node;
+		// A fragment with no anchor of its own, such as the one Vapor makes for
+		// a VDOM component like `Suspense`, gets one, so that a later render can
+		// find where it is to replace it. The same fragment keeps the same
+		// wrapper, so rendering it again leaves it in place.
+		let wrapper = anchored_fragments.get(node);
+		if (!wrapper) {
+			wrapper = create_fragment(node, anchor);
+			anchored_fragments.set(node, wrapper);
+		}
+		return wrapper;
+	}
 	if (vapor.isVaporComponent(node)) {
 		if (!(node.rawProps && 'content' in node.rawProps && 'fallback' in node.rawProps)) {
 			track_dynamic_values(node.rawProps);
@@ -139,6 +173,23 @@ function normalize_block(node, anchor) {
 }
 
 /**
+ * Whether `node` is part of `block`: the block itself, an anchor in it, or
+ * anything it holds.
+ *
+ * @param {VaporBlock | undefined} block
+ * @param {Node} node
+ * @returns {boolean}
+ */
+function uses_node(block, node) {
+	if (block === node) return true;
+	if (!block || block instanceof Node) return false;
+	if (Array.isArray(block)) return block.some((item) => uses_node(item, node));
+	if (vapor.isFragment(block)) return block.anchor === node || uses_node(block.nodes, node);
+	if (vapor.isVaporComponent(block)) return uses_node(block.block, node);
+	return false;
+}
+
+/**
  * @param {VaporRenderedBlock | undefined} current
  * @param {unknown} value
  * @param {Node | undefined} anchor
@@ -147,12 +198,19 @@ function normalize_block(node, anchor) {
 function resolve_value(current, value, anchor) {
 	anchor = anchor || (current instanceof Node && current.nodeType === 3 ? current : undefined);
 	const node = normalize_block(value, anchor);
+	// The same block again is already in place.
+	if (node === current) return node;
 
 	if (current) {
 		if (vapor.isFragment(current)) {
-			if (current.anchor && current.anchor.parentNode) {
-				vapor.remove(current.nodes, current.anchor.parentNode);
-				vapor.insert(node, current.anchor.parentNode, current.anchor);
+			const old_anchor = current.anchor;
+			if (old_anchor && old_anchor.parentNode) {
+				const parent = old_anchor.parentNode;
+				vapor.remove(current.nodes, parent);
+				vapor.insert(node, parent, old_anchor);
+				// Unless the new block holds that node, the old anchor would stay
+				// behind outside every block, also after unmount.
+				if (!uses_node(node, old_anchor)) parent.removeChild(old_anchor);
 				if (current.scope) current.scope.stop();
 			}
 		} else if (current instanceof Node) {
@@ -161,7 +219,10 @@ function resolve_value(current, value, anchor) {
 			}
 			if (vapor.isFragment(node) && current.parentNode) {
 				vapor.insert(node, current.parentNode, current);
-				if (current.nodeType !== 3) current.parentNode.removeChild(current);
+				// A text node becomes the anchor of a fragment made around the new
+				// value. A fragment with an anchor of its own, such as a `v-if`
+				// root, doesn't take it.
+				if (!uses_node(node, current)) current.parentNode.removeChild(current);
 			} else if (node instanceof Node) {
 				if (current.nodeType === 3 && node.nodeType === 3) {
 					current.textContent = node.textContent;
@@ -283,7 +344,9 @@ function initialize_boundary_state(instance) {
 	boundary_states.set(instance, state);
 
 	onErrorCaptured((captured_error, source) => {
-		const frame = find_render_frame(source);
+		// While the boundary shows its fallback, the error came from that
+		// fallback, which a boundary rendering further out has to take.
+		const frame = find_render_frame(source, state.caught ? null : instance);
 		if (frame) {
 			frame.errors.push(captured_error);
 			return false;
@@ -306,3 +369,41 @@ function initialize_boundary_state(instance) {
 
 	return state;
 }
+
+/**
+ * Renders a `@pending` body as its own component, which `Suspense` creates
+ * only while it shows its fallback.
+ *
+ * Vapor renders a `Suspense` fallback slot without Vue's error handling, so a
+ * throw there would end the mount without reaching any `onErrorCaptured` hook
+ * or `app.config.errorHandler`. This component catches what the body throws
+ * and hands it to Vue's error handling as its own render error, so the
+ * nearest enclosing boundary shows it: the same `@try`'s `@catch`, or an
+ * outer one.
+ *
+ * @param {TsrxPendingBodyProps} props
+ * @param {unknown} [ctx] the instance, when Vapor renders it as a component
+ * @returns {unknown}
+ */
+export function TsrxPendingBody(props, ctx) {
+	const instance = own_instance(ctx);
+	if (!instance) return props.content();
+	/** @type {unknown} */
+	let content;
+	try {
+		content = props.content();
+	} catch (error) {
+		handleError(error, instance, ErrorCodes.RENDER_FUNCTION);
+		content = null;
+	}
+	// A component must return a block, so a primitive, such as the `null` of
+	// an `@if` that renders nothing or a string, becomes a text node. Anything
+	// else is returned as is: compiled JSX updates an array in place, and Vue
+	// waits for a promise as async setup.
+	if (content === null || (typeof content !== 'object' && typeof content !== 'function')) {
+		return normalize_block(content, undefined);
+	}
+	return content;
+}
+
+TsrxPendingBody.props = ['content'];

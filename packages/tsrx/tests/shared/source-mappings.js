@@ -71,6 +71,7 @@ export function runSharedSourceMappingTests({
 	name,
 	rejectsComponentAwait,
 	rejectsTemplateYield = false,
+	rejectsTemplateAwait = false,
 }) {
 	describe(`[${name}] source line endings outside templates`, () => {
 		it.each([
@@ -786,6 +787,89 @@ export async function App() @{
 		});
 	});
 
+	describe(`[${name}] await in a plain async function's template (#1370)`, () => {
+		/** @param {string} output */
+		const block = (
+			output,
+		) => `export async function label(load: () => Promise<string>, ok: boolean, items: string[]) {
+	const out = @{
+		${output}
+	};
+	return out;
+}`;
+
+		/** @type {Record<string, string>} */
+		const SOURCES = {
+			child: block('<p>{await load()}</p>'),
+			'attribute value': block('<p title={await load()} />'),
+			'fragment child': block('<>{await load()}</>'),
+			'@if body in an element': block(`<div>
+			@if (ok) {
+				<p>{await load()}</p>
+			}
+		</div>`),
+			'setup statements of an @if body in an element': block(`<div>
+			@if (ok) {
+				const text = await load();
+				<p>{text}</p>
+			}
+		</div>`),
+			'@switch case in an element': block(`<div>
+			@switch (ok) {
+				@case true: {
+					<p>{await load()}</p>
+				}
+			}
+		</div>`),
+			'@for body in an element': block(`<ul>
+			@for (const item of items) {
+				const text = await load();
+				<li>{text}</li>
+			}
+		</ul>`),
+		};
+
+		/** @type {Record<string, string>} */
+		const ALLOWED = {
+			'the setup statements before the output': block(`const text = await load();
+		<p>{text}</p>`),
+			'a nested async function': block('<button onClick={async () => { await load(); }} />'),
+		};
+
+		// Solid's and Vue's compilers evaluate these in effects, getters or
+		// callbacks.
+		if (rejectsTemplateAwait) {
+			it.each(Object.keys(SOURCES))('reports the await in the %s', (label) => {
+				const source = SOURCES[label];
+				for (const { errors } of [
+					compile(source, 'App.tsrx', { collect: true }),
+					compile_to_volar_mappings(source, 'App.tsrx'),
+				]) {
+					expect(errors.map((error) => [error.code, error.pos])).toEqual([
+						[DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED, source.indexOf('await')],
+					]);
+				}
+			});
+		} else {
+			it.each(Object.keys(SOURCES))('accepts the await in the %s', (label) => {
+				const source = SOURCES[label];
+				const result = compile(source, 'App.tsrx', { collect: true });
+				expect(result.errors).toEqual([]);
+				expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
+				expect(result.code).toContain('await load()');
+				expect(() =>
+					parseModule(result.code, 'App.tsx', { preserveParens: true, errors: [], comments: [] }),
+				).not.toThrow();
+			});
+		}
+
+		it.each(Object.keys(ALLOWED))('allows an await in %s', (label) => {
+			const source = ALLOWED[label];
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
+			expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
+		});
+	});
+
 	describe(`[${name}] multiline spread attributes`, () => {
 		it.each([
 			['LF', '\n'],
@@ -952,6 +1036,7 @@ export async function App() @{
 			['class A { [ k ]() {} }', '[ k ]'],
 			['class A { [/* c */ k]() {} }', '[/* c */ k]'],
 			['const o = { [\n\tk\n]: 1 };', '[\n\tk\n]'],
+			["const merge = (current: object) => ({ ...current, [k]: '' });", '[k]'],
 			// The decorator's argument holds the first `[` inside the member.
 			[
 				'function dec(...args: unknown[]) { return () => {}; }\nclass A { @dec([1]) [k]() {} }',
@@ -982,6 +1067,29 @@ export async function App() @{
 		const expect_maps = (source) => {
 			expect(() => compile_to_volar_mappings(source, 'App.tsrx', { loose: true })).not.toThrow();
 		};
+		/**
+		 * One mapping covers `span`, the first in `source`, reports diagnostics there,
+		 * and prints it as written.
+		 * @param {string} source
+		 * @param {string} span
+		 */
+		const expect_span_mapped = (source, span) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const offset = source.indexOf(span);
+			const mapping = result.mappings.find(
+				(candidate) =>
+					candidate.sourceOffsets[0] === offset && candidate.lengths[0] === span.length,
+			);
+			assert(mapping, `no mapping covers ${JSON.stringify(span)}`);
+			expect(isDiagnosticsEnabled(mapping.data)).toBe(true);
+			const generated_start = mapping.generatedOffsets[0];
+			expect(
+				result.code.slice(
+					generated_start,
+					generated_start + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+				),
+			).toBe(span);
+		};
 
 		// JS nodes whose esrap printer emits leading/trailing literal tokens
 		// (like `new`, `return`, backticks, `[...]`) without location markers;
@@ -995,15 +1103,17 @@ export async function App() @{
 	const x = foo[bar];
 }`));
 		// The index expression's acorn location starts at the `(` of its
-		// parenthesized left operand — a position the printer emits no marker
-		// for; the verify mapping is skipped instead of failing the file.
+		// parenthesized left operand, which the printer maps from its token.
 		it('computed MemberExpression with parenthesized binary index', () =>
-			expect_maps(`const C = ['a', 'b'];
+			expect_span_mapped(
+				`const C = ['a', 'b'];
 function F(props: { n: number }) @{
 	const x = { fill: C[(props.n - 1) % C.length] };
-}`));
-		// The synthesized `[key]` bracket span starts one column before the key —
-		// unmarked in some object-literal contexts; skipped, not fatal.
+}`,
+				'(props.n - 1) % C.length',
+			));
+		// The `[key]` span maps from its source brackets ("computed key brackets"
+		// above checks it).
 		it('computed object key', () =>
 			expect_maps(`function F(props: { k: string }) @{
 	const merge = (current: object) => ({ ...current, [props.k]: '' });
@@ -1013,19 +1123,27 @@ function F(props: { n: number }) @{
 function C() @{
 	const value = { [method]() { return 'ok'; } };
 }`));
-		// AssignmentPattern spans reaching into marker-less literal tokens.
+		// AssignmentPattern spans ending at a literal's bracket, at a call's
+		// closing paren, and a span ending at a computed member's closing bracket.
 		it('parameter default array literal', () =>
-			expect_maps(`function parse(points = []) {
+			expect_span_mapped(
+				`function parse(points = []) {
 	return points.length;
-}`));
-		// The pattern's span ends at a call's closing paren.
+}`,
+				'points = []',
+			));
 		it('parameter default ending in a call', () =>
-			expect_maps(`const use = ({ dir = getDocumentDirection() } = {}) => dir;`));
-		// A statement/property span ending at a computed member's closing bracket.
+			expect_span_mapped(
+				`const use = ({ dir = getDocumentDirection() } = {}) => dir;`,
+				'dir = getDocumentDirection()',
+			));
 		it('computed member access at span end', () =>
-			expect_maps(`function next(items: string[], index: number) {
+			expect_span_mapped(
+				`function next(items: string[], index: number) {
 	return { value: items[index++], done: false };
-}`));
+}`,
+				'items[index++]',
+			));
 		it('destructured parameter defaults', () =>
 			expect_maps(`const use = ({ a = 1 } = {}) => a;
 export function usePos(

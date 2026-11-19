@@ -32,6 +32,10 @@ describe('a yield in a template Solid evaluates in an effect, getter or callback
 		],
 		['a dynamic @if test', template('<div>\n\t\t@if (yield bag.ok) { <p>a</p> }\n\t</div>')],
 		[
+			"a static child in an @if body, which is a component's children",
+			template('@if (t) {\n\t\t<p>{yield t}</p>\n\t}'),
+		],
+		[
 			'a dynamic @for iterable',
 			template('<ul>\n\t\t@for (const x of yield bag.items) { <li>{x}</li> }\n\t</ul>'),
 		],

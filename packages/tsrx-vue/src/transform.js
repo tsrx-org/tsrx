@@ -4,7 +4,7 @@
 
 import { walk } from 'zimmerframe';
 import is_reference from 'is-reference';
-import { find_deferred_template_yields } from './template-yield.js';
+import { find_deferred_template_awaits, find_deferred_template_yields } from './template-yield.js';
 import {
 	builders as b,
 	addJsxSetupDeclaration,
@@ -16,12 +16,14 @@ import {
 	destructure_for_of_item,
 	ERROR_BOUNDARY_INTERNAL_NAME,
 	error,
+	findFirstTopLevelAwait,
 	FRAGMENT_INTERNAL_NAME,
 	forOfPatternReadsIndex as for_of_pattern_reads_index,
 	has_location,
 	IDENTIFIER_OBFUSCATION_PREFIX,
 	insertAfterDirectives,
 	is_component_like_element,
+	isFunctionNode,
 	JOIN_SCOPE_CLASS_INTERNAL_NAME,
 	MAP_ITERABLE_ASYNC_INTERNAL_NAME,
 	MAP_ITERABLE_INTERNAL_NAME,
@@ -52,6 +54,15 @@ const vapor_bindings_counts = new WeakMap();
  * SSR and interop output.
  */
 const VAPOR_FOR_INTERNAL_NAME = '__VaporFor';
+
+/**
+ * Local name for the runtime helper that hands `VaporFor` the source's items.
+ * It has the reserved prefix, so no authored name, such as an outer loop's item
+ * that a keyed row reads through `.value`, can take it.
+ */
+const FOR_ITEMS_INTERNAL_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'for_items';
+/** The `computed` that walks the source of a `VaporFor` loop with `@empty`. */
+const VAPOR_ITEMS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'vapor_items';
 
 const DEFINE_VAPOR_COMPONENT = 'defineVaporComponent';
 
@@ -113,6 +124,7 @@ const vue_platform = {
 			needs_define_vapor_component: false,
 			needs_vapor_for: false,
 			needs_use_slots: false,
+			needs_pending_body: false,
 		}),
 		wrapHelperComponent(helper_fn, helper_id, ctx, source_node) {
 			ctx.needs_define_vapor_component = true;
@@ -133,8 +145,8 @@ const vue_platform = {
 			}
 			return attrs.map(mark_type_only_host_ref_attribute);
 		},
-		renderForOf: (node, loop_params, body_statements, ctx) =>
-			render_for_of_as_vapor_for(node, loop_params, body_statements, ctx),
+		renderForOf: (node, loop_params, body_statements, ctx, get_empty_statements) =>
+			render_for_of_as_vapor_for(node, loop_params, body_statements, ctx, get_empty_statements),
 		createPendingBoundary(try_content, fallback_content, ctx) {
 			return create_vapor_pending_boundary(try_content, fallback_content, ctx);
 		},
@@ -179,6 +191,7 @@ const vue_platform = {
 			return rewrite_host_text_children(node, walked_children, raw_children, attributes);
 		},
 		findDeferredTemplateYields: find_deferred_template_yields,
+		findDeferredTemplateAwaits: find_deferred_template_awaits,
 		validateComponentAwait(await_expression, _component, ctx) {
 			error(
 				TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED(ctx.platform.name),
@@ -196,6 +209,9 @@ const vue_platform = {
 };
 
 export const transform = createJsxTransform(vue_platform);
+
+/** Local name for the `TsrxPendingBody` that renders a `@pending` body. */
+const PENDING_BODY_INTERNAL_NAME = '__TsrxPendingBody';
 
 /**
  * @param {ESTreeJSX.JSXRenderNode} try_content
@@ -225,7 +241,15 @@ function create_vapor_pending_boundary_from_default_slot(default_slot, fallback_
 	if (!ctx.typeOnly) slots_properties.unshift(b.init('_', b.literal(1)));
 
 	if (fallback_expression.type !== 'Literal' || fallback_expression.value !== null) {
-		slots_properties.push(b.init('fallback', b.arrow([], fallback_expression)));
+		slots_properties.push(
+			b.init(
+				'fallback',
+				b.arrow(
+					[],
+					ctx.typeOnly ? fallback_expression : create_pending_body(fallback_expression, ctx),
+				),
+			),
+		);
 	}
 
 	const slots = b.object(slots_properties);
@@ -274,6 +298,33 @@ function create_error_boundary_slot(content, fallback_fn, source_try) {
 	return b.arrow(
 		[],
 		setLocation(boundary, has_location(source_try) ? source_try : undefined, true),
+	);
+}
+
+/**
+ * Render a `@pending` body through `TsrxPendingBody`. `Suspense` then creates
+ * it only while it shows its fallback, and a throw in it reaches the nearest
+ * `@catch` instead of ending the mount.
+ *
+ * @param {AST.Expression} fallback_expression
+ * @param {TransformContext} ctx
+ * @returns {AST.TSRXJSXElement}
+ */
+function create_pending_body(fallback_expression, ctx) {
+	ctx.needs_pending_body = true;
+	return b.jsx_element_fresh(
+		b.jsx_opening_element(
+			b.jsx_id(PENDING_BODY_INTERNAL_NAME),
+			[
+				b.jsx_attribute(
+					b.jsx_id('content'),
+					to_jsx_expression_container(b.arrow([], fallback_expression)),
+				),
+			],
+			true,
+		),
+		null,
+		[],
 	);
 }
 
@@ -1782,13 +1833,16 @@ function create_define_vapor_component_call(fn_expression, generated_helpers, ge
  * @param {AST.Pattern[]} loop_params
  * @param {AST.Statement[]} body_statements
  * @param {TransformContext} transform_context
+ * @param {(() => AST.Statement[]) | null} get_empty_statements
  * @returns {ESTreeJSX.JSXExpressionContainer | null}
  */
-function render_for_of_as_vapor_for(node, loop_params, body_statements, transform_context) {
-	if (node.empty) {
-		return null;
-	}
-
+function render_for_of_as_vapor_for(
+	node,
+	loop_params,
+	body_statements,
+	transform_context,
+	get_empty_statements,
+) {
 	if (body_statements.length !== 1) {
 		return null;
 	}
@@ -1798,38 +1852,62 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 		return null;
 	}
 
-	// A default in the head's pattern that reads the index can't be read in
-	// the parameters, where the index comes second. The shared lowering
-	// destructures the item in the callback for a body that can skip a row.
-	const pattern_reads_index = for_of_pattern_reads_index(loop_params[0], node.index);
-	if (pattern_reads_index && expression_can_skip_rendering(statement.argument)) {
-		return null;
-	}
-
 	const rendered = statement.argument;
-	if (expression_can_skip_rendering(rendered)) {
-		return render_for_of_as_map_iterable(node, loop_params, rendered, transform_context);
-	}
-
 	const key_expression = node.key
 		? clone_ast_node(node.key)
 		: (find_jsx_key_expression(rendered) ?? (node.index ? clone_ast_node(node.index) : null));
+	const pattern_reads_index = for_of_pattern_reads_index(loop_params[0], node.index);
 
+	// A keyed loop renders through `VaporFor` even when its body can skip a row
+	// or it has `@empty`, so its rows move with their keys (#178). The shared
+	// lowering keeps such a loop without a key; one that awaits or yields, which
+	// it suspends the template's closures for; one whose head destructures in a
+	// way that runs code, which `getKey` and the row would each run; and one
+	// whose row renders through an IIFE (`@switch`), which a row slot runs once
+	// and which can return `null`.
+	if (
+		(node.empty || expression_can_skip_rendering(rendered)) &&
+		(!key_expression ||
+			suspends(node) ||
+			destructuring_runs_code(loop_params[0]) ||
+			!is_vapor_for_row(rendered))
+	) {
+		// A default in the head's pattern that reads the index can't be read in
+		// the parameters, where the index comes second. The shared lowering
+		// destructures the item in the callback.
+		if (node.empty || pattern_reads_index) {
+			return null;
+		}
+		return render_for_of_as_map_iterable(node, loop_params, rendered, transform_context);
+	}
+
+	const row = to_vapor_for_row(rendered);
 	const slot = key_expression
-		? create_keyed_vapor_for_slot(loop_params, rendered, transform_context)
-		: { params: loop_params, body: rendered, expression: true };
+		? create_keyed_vapor_for_slot(loop_params, row, transform_context)
+		: { params: loop_params, body: row, expression: true };
 	if (!slot) {
 		return null;
 	}
 
 	transform_context.needs_vapor_for = true;
+	transform_context.needs_for_items = true;
 
 	if (key_expression) {
 		strip_top_level_jsx_keys(slot.rendered ?? slot.body);
 	}
 
+	// `VaporFor` reads an array by index and walks other iterables its own way,
+	// so it gets the source's items as `for...of` walks them (#1147). With
+	// `@empty`, one `computed` walks the source for both the check and the rows.
+	const source_items = b.call(FOR_ITEMS_INTERNAL_NAME, clone_ast_node(node.right));
+	const items_ref = get_empty_statements ? create_generated_identifier(VAPOR_ITEMS_NAME) : null;
 	const attributes = [
-		b.jsx_attribute(b.jsx_id('in'), to_jsx_expression_container(clone_ast_node(node.right))),
+		b.jsx_attribute(
+			b.jsx_id('in'),
+			to_jsx_expression_container(
+				items_ref ? create_value_member_expression(items_ref) : source_items,
+			),
+		),
 	];
 
 	if (key_expression) {
@@ -1848,13 +1926,182 @@ function render_for_of_as_vapor_for(node, loop_params, body_statements, transfor
 		attributes.push(b.jsx_attribute(b.jsx_id('getKey'), to_jsx_expression_container(get_key)));
 	}
 
+	const vapor_for = b.jsx_element_fresh(
+		b.jsx_opening_element(b.jsx_id(VAPOR_FOR_INTERNAL_NAME), attributes),
+		b.jsx_closing_element(b.jsx_id(VAPOR_FOR_INTERNAL_NAME)),
+		[to_jsx_expression_container(create_loop_callback(slot.params, slot.body, slot.expression))],
+	);
+
+	if (!items_ref || !get_empty_statements) {
+		return to_jsx_expression_container(vapor_for);
+	}
+
+	transform_context.needs_vapor_computed = true;
+	const empty_statements = get_empty_statements();
+	const empty_return = empty_statements.length === 1 ? empty_statements[0] : null;
+	const empty =
+		empty_return?.type === 'ReturnStatement' && empty_return.argument
+			? to_vapor_branch(empty_return.argument)
+			: b.call(
+					b.arrow(
+						[],
+						b.block(empty_statements),
+						false,
+						undefined,
+						has_location(node.empty) ? node.empty : undefined,
+					),
+				);
+
+	// The choice sits in a fragment, so vue-jsx-vapor makes it a `createIf`:
+	// `VaporFor` and its rows stay mounted while the source has items.
 	return to_jsx_expression_container(
-		b.jsx_element_fresh(
-			b.jsx_opening_element(b.jsx_id(VAPOR_FOR_INTERNAL_NAME), attributes),
-			b.jsx_closing_element(b.jsx_id(VAPOR_FOR_INTERNAL_NAME)),
-			[to_jsx_expression_container(create_loop_callback(slot.params, slot.body, slot.expression))],
+		b.call(
+			b.arrow(
+				[],
+				b.block([
+					b.const(items_ref, b.call(VUE_COMPUTED_INTERNAL_NAME, b.arrow([], source_items))),
+					b.return(
+						b.jsx_fragment([
+							to_jsx_expression_container(
+								b.conditional(
+									b.binary(
+										'===',
+										b.member(
+											create_value_member_expression(items_ref),
+											create_generated_identifier('length'),
+										),
+										b.literal(0),
+									),
+									empty,
+									vapor_for,
+								),
+							),
+						]),
+					),
+				]),
+			),
 		),
 	);
+}
+
+/**
+ * Whether `node` awaits or yields outside a nested function.
+ *
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function suspends(node) {
+	return !!findFirstTopLevelAwait(node, false) || yields(node);
+}
+
+/**
+ * Whether destructuring `pattern` can run code or read the value more than
+ * once in a way that shows: an array pattern walks an iterator, and a default
+ * or a computed key evaluates an expression.
+ *
+ * @param {AST.Pattern | AST.Property['value'] | null | undefined} pattern
+ * @returns {boolean}
+ */
+function destructuring_runs_code(pattern) {
+	switch (pattern?.type) {
+		case 'ArrayPattern':
+		case 'AssignmentPattern':
+			return true;
+		case 'ObjectPattern':
+			return pattern.properties.some((property) =>
+				property.type === 'RestElement'
+					? destructuring_runs_code(property.argument)
+					: property.computed || destructuring_runs_code(property.value),
+			);
+		case 'RestElement':
+			return destructuring_runs_code(pattern.argument);
+		default:
+			return false;
+	}
+}
+
+/**
+ * Whether a row can render through `VaporFor`: an element or fragment, or a
+ * choice of them that `to_vapor_for_row` puts in a fragment.
+ *
+ * @param {AST.Expression} node
+ * @returns {boolean}
+ */
+function is_vapor_for_row(node) {
+	return (
+		node.type === 'JSXElement' ||
+		node.type === 'JSXFragment' ||
+		node.type === 'ConditionalExpression' ||
+		(node.type === 'LogicalExpression' && node.operator === '&&') ||
+		(node.type === 'Literal' && node.value === null)
+	);
+}
+
+/**
+ * @param {unknown} node
+ * @returns {boolean}
+ */
+function yields(node) {
+	if (Array.isArray(node)) return node.some(yields);
+	if (!node || typeof node !== 'object' || isFunctionNode(/** @type {AST.Node} */ (node))) {
+		return false;
+	}
+	if (/** @type {AST.Node} */ (node).type === 'YieldExpression') return true;
+	return Object.entries(node).some(
+		([key, value]) => key !== 'loc' && key !== 'metadata' && yields(value),
+	);
+}
+
+/**
+ * The row a `VaporFor` slot returns. The slot runs once per row, so a ternary
+ * it returns would keep the branch it picked first: a row that picks a branch,
+ * or can skip itself, is a fragment around the choice, which vue-jsx-vapor
+ * makes a `createIf` that follows its condition.
+ *
+ * @param {AST.Expression} node
+ * @returns {AST.Expression}
+ */
+function to_vapor_for_row(node) {
+	if (
+		node.type === 'ConditionalExpression' ||
+		(node.type === 'LogicalExpression' && node.operator === '&&')
+	) {
+		return /** @type {AST.Expression} */ (
+			/** @type {unknown} */ (b.jsx_fragment([to_jsx_expression_container(to_vapor_branch(node))]))
+		);
+	}
+	return to_vapor_branch(node);
+}
+
+/**
+ * A branch of a `VaporFor` row or of its `@empty`, where Vapor can't mount
+ * `null`: a skipped branch renders an empty fragment.
+ *
+ * @param {AST.Expression} node
+ * @returns {AST.Expression}
+ */
+function to_vapor_branch(node) {
+	if (node.type === 'Literal' && node.value === null) {
+		return /** @type {AST.Expression} */ (/** @type {unknown} */ (b.jsx_fragment()));
+	}
+
+	if (node.type === 'ConditionalExpression') {
+		return {
+			...node,
+			consequent: to_vapor_branch(node.consequent),
+			alternate: to_vapor_branch(node.alternate),
+		};
+	}
+
+	if (node.type === 'LogicalExpression' && node.operator === '&&') {
+		return b.conditional(
+			node.left,
+			to_vapor_branch(node.right),
+			/** @type {AST.Expression} */ (/** @type {unknown} */ (b.jsx_fragment())),
+		);
+	}
+
+	return node;
 }
 
 /**
@@ -2943,6 +3190,9 @@ function inject_vue_imports(program, transform_context) {
 
 	const iterable_source = transform_context.platform.imports.forOfIterableHelper;
 	if (iterable_source) {
+		if (transform_context.needs_for_items) {
+			ensure_named_import(program, iterable_source, 'for_items', FOR_ITEMS_INTERNAL_NAME);
+		}
 		if (transform_context.needs_for_of_iterable) {
 			ensure_named_import(program, iterable_source, 'map_iterable', MAP_ITERABLE_INTERNAL_NAME);
 		}
@@ -2997,6 +3247,15 @@ function inject_vue_imports(program, transform_context) {
 			transform_context.platform.imports.errorBoundary,
 			'TsrxErrorBoundary',
 			ERROR_BOUNDARY_INTERNAL_NAME,
+		);
+	}
+
+	if (transform_context.needs_pending_body) {
+		ensure_named_import(
+			program,
+			transform_context.platform.imports.errorBoundary,
+			'TsrxPendingBody',
+			PENDING_BODY_INTERNAL_NAME,
 		);
 	}
 

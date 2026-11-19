@@ -890,6 +890,7 @@ export function createJsxTransform(platform) {
 			transform_context,
 		);
 		report_deferred_template_yields(final_program, transform_context);
+		report_deferred_template_awaits(final_program, transform_context);
 		inject_dynamic_import(final_program, transform_context);
 		if (platform.hooks?.injectImports) {
 			platform.hooks.injectImports(final_program, transform_context, suspense_source);
@@ -3998,8 +3999,65 @@ function report_deferred_template_yields(program, transform_context) {
 	// A `yield` with an error of its own already, or one inside it, needs no
 	// second: TSRX2022 for a callback the target calls itself, TSRX2023 for a
 	// `super` that the lowering for the `yield` can't read.
+	report_unreported(
+		authored.values(),
+		TSRX_ERRORS.TARGET_TEMPLATE_YIELD_UNSUPPORTED(transform_context.platform.name),
+		transform_context,
+	);
+}
+
+/**
+ * Reports the `await`s a target's own JSX compiler would move out of their
+ * async function (TSRX2021), as `report_deferred_template_yields` does for
+ * `yield`s: the target's `findDeferredTemplateAwaits` hook finds them in the
+ * final output. An `await` the compiler added for a generated closure it made
+ * async stands for the authored `await`s inside that closure.
+ *
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function report_deferred_template_awaits(program, transform_context) {
+	const find = transform_context.platform.hooks?.findDeferredTemplateAwaits;
+	if (!find || (transform_context.source && !transform_context.source.includes('await'))) {
+		return;
+	}
+
+	/** @type {Map<number, AST.Node>} */
+	const authored = new Map();
+	/** @param {AST.Node} node */
+	const add = (node) => {
+		const closure = /** @type {AST.Function | undefined} */ (node.metadata?.generated_await);
+		if (closure) {
+			for (const inner of find_top_level_awaits(closure.body)) add(inner);
+		} else if (typeof node.start === 'number') {
+			authored.set(node.start, node);
+		}
+	};
+	for (const node of find(program, transform_context)) add(node);
+
+	// An `await` with an error of its own already, or one inside it, needs no
+	// second: TSRX2021 for an `await` in a component or in a callback the
+	// target calls itself.
+	report_unreported(
+		authored.values(),
+		TSRX_ERRORS.TARGET_TEMPLATE_AWAIT_UNSUPPORTED(transform_context.platform.name),
+		transform_context,
+	);
+}
+
+/**
+ * Reports `diagnostic` at each of `nodes`, in source order, except a node that
+ * has an error at or inside it already.
+ *
+ * @param {Iterable<AST.Node>} nodes
+ * @param {{ code: string | undefined, message: string }} diagnostic
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function report_unreported(nodes, diagnostic, transform_context) {
 	const reported = (transform_context.errors ?? []).map((error) => error.pos ?? -1);
-	for (const node of [...authored.values()]
+	for (const node of [...nodes]
 		.filter(
 			(node) =>
 				!reported.some(
@@ -4009,7 +4067,7 @@ function report_deferred_template_yields(program, transform_context) {
 		)
 		.sort((a, b) => /** @type {number} */ (a.start) - /** @type {number} */ (b.start))) {
 		error(
-			TSRX_ERRORS.TARGET_TEMPLATE_YIELD_UNSUPPORTED(transform_context.platform.name),
+			diagnostic,
 			transform_context.filename,
 			node,
 			transform_context.errors,
@@ -4242,19 +4300,22 @@ function suspend_generated_closures(program, transform_context) {
 				};
 			} else if (made_async.has(call.callee)) {
 				result = {
-					node: b.await(call),
+					node: await_generated_closure(call, /** @type {AST.Function} */ (call.callee)),
 					first_await: made_async.get(call.callee) ?? null,
 					first_yield,
 				};
 			} else if (async_callback) {
 				result = {
-					node: b.await({
-						...call,
-						callee: {
-							.../** @type {AST.Identifier} */ (call.callee),
-							name: MAP_ITERABLE_ASYNC_INTERNAL_NAME,
+					node: await_generated_closure(
+						{
+							...call,
+							callee: {
+								.../** @type {AST.Identifier} */ (call.callee),
+								name: MAP_ITERABLE_ASYNC_INTERNAL_NAME,
+							},
 						},
-					}),
+						/** @type {AST.Function} */ (async_callback),
+					),
 					first_await: made_async.get(async_callback) ?? null,
 					first_yield,
 				};
@@ -4274,6 +4335,21 @@ function suspend_generated_closures(program, transform_context) {
 		transform_context.needs_for_of_iterable_async = true;
 	}
 	return lowered;
+}
+
+/**
+ * The `await` the compiler adds where `call` calls `closure`, a generated
+ * closure it made async. It stands for the authored `await`s in that closure,
+ * which is where a later check reports them (`report_deferred_template_awaits`).
+ *
+ * @param {AST.CallExpression} call
+ * @param {AST.Function} closure
+ * @returns {AST.AwaitExpression}
+ */
+function await_generated_closure(call, closure) {
+	const node = b.await(call);
+	node.metadata = { ...node.metadata, generated_await: closure };
+	return node;
 }
 
 /**
@@ -6203,11 +6279,31 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 
 	let body_statements = build_render_statements(loop_body, true, transform_context);
 
+	// `@empty` renders outside the loop, so the head's names aren't bound in it.
+	// Its statements are built once, for the platform hook or the lowering below.
+	/** @type {AST.Statement[] | undefined} */
+	let empty_statements;
+	const get_empty_statements = () => {
+		if (!empty_statements) {
+			const empty = /** @type {AST.Statement} */ (node.empty);
+			const loop_bindings = transform_context.available_bindings;
+			transform_context.available_bindings = saved_bindings;
+			empty_statements = build_render_statements(
+				empty.type === 'BlockStatement' ? empty.body : [empty],
+				true,
+				transform_context,
+			);
+			transform_context.available_bindings = loop_bindings;
+		}
+		return empty_statements;
+	};
+
 	const platform_for_of = transform_context.platform.hooks?.renderForOf?.(
 		node,
 		loop_params,
 		body_statements,
 		transform_context,
+		node.empty ? get_empty_statements : null,
 	);
 	if (platform_for_of) {
 		transform_context.available_bindings = saved_bindings;
@@ -6268,13 +6364,7 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		? b.call(
 				b.arrow(
 					[],
-					b.block(
-						build_render_statements(
-							node.empty.type === 'BlockStatement' ? node.empty.body : [node.empty],
-							true,
-							transform_context,
-						),
-					),
+					b.block(get_empty_statements()),
 					false,
 					undefined,
 					has_location(node.empty) ? node.empty : undefined,
@@ -7486,7 +7576,7 @@ function normalize_host_ref_spreads(attrs, is_host, transform_context) {
 				);
 				// Bound in place, the bag is evaluated between the attributes around
 				// it, as in native JSX; the setup declaration only declares the name.
-				const in_place = bind_in_place && !yields_in_deferred_spread(attr, transform_context);
+				const in_place = bind_in_place && !suspends_in_deferred_spread(attr, transform_context);
 				const spread = {
 					...attr,
 					argument: in_place
@@ -7954,21 +8044,25 @@ function binds_host_spread_in_place(transform_context) {
 }
 
 /**
- * Whether a host spread's bag yields on a target whose JSX compiler evaluates
- * a spread in a render effect, which is one that reports the `yield`s it moves
- * (`findDeferredTemplateYields`, TSRX2034). A `yield` can't run in that
- * effect, so such a bag isn't bound in place: it is evaluated once, in its
- * setup declaration before the element, where its generator runs it. A
- * generator yields a value once, so the effect could never read it again.
+ * Whether a host spread's bag yields or awaits on a target whose JSX compiler
+ * evaluates a spread in a render effect, which is one that reports the
+ * `yield`s and `await`s it moves (`findDeferredTemplateYields`, TSRX2034;
+ * `findDeferredTemplateAwaits`, TSRX2021). A `yield` or `await` can't run in
+ * that effect, so such a bag isn't bound in place: it is evaluated once, in
+ * its setup declaration before the element, where its generator or async
+ * function runs it. A generator yields a value once, and an `await` settles
+ * once, so the effect could never read it again.
  *
  * @param {ESTreeJSX.JSXSpreadAttribute} attr
  * @param {TransformContext} transform_context
  * @returns {boolean}
  */
-function yields_in_deferred_spread(attr, transform_context) {
+function suspends_in_deferred_spread(attr, transform_context) {
+	const hooks = transform_context.platform.hooks;
+	const argument = /** @type {AST.Node} */ (attr.argument);
 	return (
-		!!transform_context.platform.hooks?.findDeferredTemplateYields &&
-		find_own_yields(/** @type {AST.Node} */ (attr.argument)).length > 0
+		(!!hooks?.findDeferredTemplateYields && find_own_yields(argument).length > 0) ||
+		(!!hooks?.findDeferredTemplateAwaits && find_top_level_awaits(argument).length > 0)
 	);
 }
 
