@@ -229,7 +229,10 @@ const vue_platform = {
 			);
 		},
 		injectImports(program, ctx) {
-			if (!ctx.typeOnly) render_element_ifs_as_directives(program);
+			if (!ctx.typeOnly) {
+				render_element_ifs_as_directives(program);
+				place_boundaries_as_children(program);
+			}
 			wrap_native_function_components(program, ctx);
 			inject_vue_imports(program, ctx);
 		},
@@ -2256,6 +2259,62 @@ function render_element_ifs_as_directives(program) {
 				});
 				return changed
 					? /** @type {AST.Node} */ (/** @type {unknown} */ ({ ...element, children }))
+					: undefined;
+			},
+		})
+	);
+	program.body = walked.body;
+}
+
+/**
+ * Puts the boundary a `@try` renders among an element's or fragment's
+ * children as a child element, where the shared lowering puts it in an
+ * expression container (`{<__TsrxErrorBoundary … />}`). vue-jsx-vapor renders
+ * an expression child through a text placeholder, which can't hydrate a
+ * component: Vue stops with "No current hydration node was found", and the
+ * body no longer updates. A child component hydrates.
+ *
+ * @param {AST.Program} program
+ */
+function place_boundaries_as_children(program) {
+	/**
+	 * @param {ESTreeJSX.JSXElement['children']} children
+	 * @returns {ESTreeJSX.JSXElement['children'] | null}
+	 */
+	const place = (children) => {
+		let changed = false;
+		const placed = children.map((child) => {
+			if (
+				child.type === 'JSXExpressionContainer' &&
+				child.expression.type === 'JSXElement' &&
+				child.expression.openingElement.name.type === 'JSXIdentifier' &&
+				child.expression.openingElement.name.name === ERROR_BOUNDARY_INTERNAL_NAME
+			) {
+				changed = true;
+				return /** @type {ESTreeJSX.JSXElement} */ (child.expression);
+			}
+			return child;
+		});
+		return changed ? placed : null;
+	};
+	const walked = /** @type {AST.Program} */ (
+		walk(/** @type {AST.Node} */ (program), null, {
+			JSXElement(node, { next }) {
+				const element = /** @type {ESTreeJSX.JSXElement} */ (
+					/** @type {unknown} */ (next() ?? node)
+				);
+				const children = place(element.children);
+				return children
+					? /** @type {AST.Node} */ (/** @type {unknown} */ ({ ...element, children }))
+					: undefined;
+			},
+			JSXFragment(node, { next }) {
+				const fragment = /** @type {ESTreeJSX.JSXFragment} */ (
+					/** @type {unknown} */ (next() ?? node)
+				);
+				const children = place(fragment.children);
+				return children
+					? /** @type {AST.Node} */ (/** @type {unknown} */ ({ ...fragment, children }))
 					: undefined;
 			},
 		})

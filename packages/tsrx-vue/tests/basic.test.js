@@ -2782,9 +2782,30 @@ export function Card(${params}: any) @{
 		);
 
 		// A component instance registers the boundary's error hook; a plain call
-		// has none.
-		expect(code).toContain('{<__TsrxErrorBoundary fallback=');
+		// has none. It is a child element, not an expression child, so that it
+		// hydrates.
+		expect(code).toContain('<div class="wrap"><__TsrxErrorBoundary fallback=');
+		expect(code).not.toContain('{<__TsrxErrorBoundary');
 		expect(code).not.toContain('TsrxErrorBoundary({');
+	});
+
+	it('renders a @try among fragment children as a child element', () => {
+		const { code } = compile(
+			`function App() @{
+				<>
+					@try {
+						<Child />
+					} @catch (error) {
+						<p>{'Failed'}</p>
+					}
+					<i />
+				</>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('<><__TsrxErrorBoundary fallback=');
+		expect(code).not.toContain('{<__TsrxErrorBoundary');
 	});
 
 	it('does not generate a catch fallback component without @pending', () => {

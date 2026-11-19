@@ -376,9 +376,11 @@ function create_boundary_nodes(render) {
  *
  * @param {TsrxErrorBoundaryProps} props
  * @param {unknown} [ctx] the instance, when Vapor renders it as a component
- * @returns {Array<VaporRenderedBlock | undefined>}
+ * @returns {unknown} the boundary's blocks, or on the server what the content
+ * or the fallback rendered
  */
 export function TsrxErrorBoundary(props, ctx) {
+	if (typeof vapor.renderEffect !== 'function') return render_on_server(props);
 	const instance = own_instance(ctx);
 	const state = instance ? initialize_boundary_state(instance) : create_boundary_state();
 
@@ -473,6 +475,26 @@ TsrxErrorBoundary.__setup = function setup(_props, ctx) {
 		initialize_boundary_state(instance);
 	}
 };
+
+/**
+ * Renders the boundary on the server. Vue's server build has no Vapor
+ * renderer: vue-jsx-vapor compiles a component for the server to VDOM, and the
+ * server renderer calls the boundary as a functional component. It renders
+ * the content, or the fallback when the content throws as it renders. An
+ * error from a component in the content comes later, as the server renders
+ * that component, and goes to `app.config.errorHandler` as it does without a
+ * boundary.
+ *
+ * @param {TsrxErrorBoundaryProps} props
+ * @returns {unknown}
+ */
+function render_on_server(props) {
+	try {
+		return props.content();
+	} catch (error) {
+		return props.fallback(error, () => {});
+	}
+}
 
 /** @returns {BoundaryState} */
 function create_boundary_state() {
