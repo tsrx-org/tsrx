@@ -5007,6 +5007,301 @@ describe('tsrx-vue hydrating a @try', () => {
 	});
 });
 
+let pending_finish: (component: unknown) => void = () => {};
+const pending_sibling_broken = ref(false);
+
+function pending_loader(): Promise<any> {
+	return new Promise((resolve) => (pending_finish = resolve));
+}
+
+function ResolvedThrows() @{
+	throw new Error('resolved body');
+	<p />
+}
+
+function ResolvedFine() @{
+	<p class="pending-resolved">{'resolved'}</p>
+}
+
+// An async component under @pending resolves to one that throws in setup.
+function PendingResolvesToThrower() @{
+	const AsyncChild = defineVaporAsyncComponent(pending_loader);
+	@try {
+		<AsyncChild />
+	} @pending {
+		<i class="pending-loading">{'loading'}</i>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
+// The same inside an element, where the boundary's blocks don't hold it.
+function PendingResolvesToThrowerInElement() @{
+	const AsyncChild = defineVaporAsyncComponent(pending_loader);
+	@try {
+		<section>
+			<AsyncChild />
+		</section>
+	} @pending {
+		<i class="pending-loading">{'loading'}</i>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
+function pending_sibling_label(): string {
+	if (pending_sibling_broken.value) throw new Error('sibling');
+	return 'ok';
+}
+
+function PendingSibling() @{
+	<span class="pending-sibling">{pending_sibling_label()}</span>
+}
+
+// A component beside a loading async component throws on an update.
+function PendingSiblingThrows() @{
+	const AsyncChild = defineVaporAsyncComponent(pending_loader);
+	@try {
+		<>
+			<AsyncChild />
+			<PendingSibling />
+		</>
+	} @pending {
+		<i class="pending-loading">{'loading'}</i>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
+let reject_first: (error: unknown) => void = () => {};
+
+// One async component rejects while another is still loading.
+function PendingRejectBeside() @{
+	const Rejects = defineVaporAsyncComponent(
+		() => new Promise<any>((_resolve, reject) => (reject_first = reject)),
+	);
+	const AsyncChild = defineVaporAsyncComponent(pending_loader);
+	@try {
+		<>
+			<Rejects />
+			<AsyncChild />
+		</>
+	} @pending {
+		<i class="pending-loading">{'loading'}</i>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
+let finish_inner: (component: unknown) => void = () => {};
+
+function NestedLoader() @{
+	const Inner = defineVaporAsyncComponent(
+		() => new Promise<any>((resolve) => (finish_inner = resolve)),
+	);
+	<Inner />
+}
+
+const late_async_shown = ref(false);
+let finish_late: (component: unknown) => void = () => {};
+
+// A @try in a resolved Suspense whose body later shows an async component
+// that never loads; the Suspense doesn't wait for it.
+function ResolvedSuspenseTry() @{
+	const LateAsync = defineVaporAsyncComponent(
+		() => new Promise<any>((resolve) => (finish_late = resolve)),
+	);
+	@try {
+		<>
+			@if (late_async_shown.value) {
+				<LateAsync />
+			}
+			<PendingSibling />
+		</>
+	} @pending {
+		<i class="pending-loading">{'loading'}</i>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
+const stale_broken = ref(false);
+let stale_failed: boolean | string = true;
+let stale_reset: () => void = () => {};
+
+function stale_label(): string {
+	if (stale_broken.value) throw new Error('late');
+	return 'ok';
+}
+
+function StaleChild() @{
+	if (stale_failed) throw new Error(stale_failed === true ? 'initial' : stale_failed);
+	<p class="stale-body">{stale_label()}</p>
+}
+
+function stale_keep_reset(reset: () => void): string {
+	stale_reset = reset;
+	return '';
+}
+
+function StaleTry() @{
+	@try {
+		<StaleChild />
+	} @catch (err, reset) {
+		<b class="stale-caught">{stale_keep_reset(reset) + String(err)}</b>
+	}
+}
+
+// A @try beside an async component in an authored Suspense.
+function StaleApp() @{
+	const AsyncChild = defineVaporAsyncComponent(pending_loader);
+	<Suspense
+		v-slots={{
+			default: () => (
+				<div>
+					<AsyncChild />
+					<StaleTry />
+				</div>
+			),
+			fallback: () => <i class="stale-loading">{'loading'}</i>,
+		}}
+	/>
+}
+
+function stale_recover(failed: boolean | string) {
+	stale_failed = failed;
+	stale_broken.value = false;
+	stale_reset();
+}
+
+describe('tsrx-vue a @try whose body throws while its Suspense is pending', () => {
+	async function settle() {
+		await flush();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await flush();
+	}
+
+	async function mount(component: unknown) {
+		const handled: string[] = [];
+		const app = createVaporApp(component as Parameters<typeof createVaporApp>[0]);
+		app.config.errorHandler = (error) => {
+			handled.push(String(error));
+		};
+		app.mount(container);
+		await flush();
+		return { app, handled };
+	}
+
+	it.each([
+		['', PendingResolvesToThrower],
+		[' inside an element', PendingResolvesToThrowerInElement],
+	])(
+		'shows the @catch once an async component%s resolves to one that throws',
+		async (_name, component) => {
+			const { app, handled } = await mount(component);
+			expect(text('.pending-loading')).toBe('loading');
+			pending_finish(ResolvedThrows);
+			await settle();
+			expect(text('.pending-caught')).toBe('Error: resolved body');
+			expect(container.querySelector('.pending-loading')).toBeNull();
+			expect(handled).toEqual([]);
+			app.unmount();
+		},
+	);
+
+	it('shows the @catch for a sibling that threw, once the async component resolves', async () => {
+		pending_sibling_broken.value = false;
+		const { app, handled } = await mount(PendingSiblingThrows);
+		expect(text('.pending-loading')).toBe('loading');
+		pending_sibling_broken.value = true;
+		await flush();
+		pending_finish(ResolvedFine);
+		await settle();
+		expect(text('.pending-caught')).toBe('Error: sibling');
+		expect(container.querySelector('.pending-loading')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('shows the @catch for a rejected async component once the other one resolves', async () => {
+		const { app, handled } = await mount(PendingRejectBeside);
+		reject_first(new Error('rejected'));
+		await settle();
+		expect(text('.pending-loading')).toBe('loading');
+		pending_finish(ResolvedFine);
+		await settle();
+		expect(text('.pending-caught')).toBe('Error: rejected');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('waits for an async component that a loading one renders once it resolves', async () => {
+		pending_sibling_broken.value = false;
+		const { app, handled } = await mount(PendingSiblingThrows);
+		pending_sibling_broken.value = true;
+		await flush();
+		pending_finish(NestedLoader);
+		await settle();
+		expect(text('.pending-loading')).toBe('loading');
+		finish_inner(ResolvedFine);
+		await settle();
+		expect(text('.pending-caught')).toBe('Error: sibling');
+		expect(container.querySelector('.pending-loading')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('shows the @catch at once in a Suspense that has resolved', async () => {
+		pending_sibling_broken.value = false;
+		late_async_shown.value = false;
+		const { app, handled } = await mount(ResolvedSuspenseTry);
+		expect(text('.pending-sibling')).toBe('ok');
+		late_async_shown.value = true;
+		await flush();
+		pending_sibling_broken.value = true;
+		await flush();
+		expect(text('.pending-caught')).toBe('Error: sibling');
+		expect(handled).toEqual([]);
+		finish_late(ResolvedFine);
+		app.unmount();
+	});
+
+	it("keeps a reset @try's body while an async component beside it loads", async () => {
+		stale_failed = true;
+		stale_broken.value = false;
+		const { app, handled } = await mount(StaleApp);
+		stale_recover(false);
+		await flush();
+		stale_broken.value = true;
+		await flush();
+		stale_recover(false);
+		await flush();
+		pending_finish(ResolvedFine);
+		await settle();
+		expect(container.querySelector('.stale-caught')).toBeNull();
+		expect(text('.stale-body')).toBe('ok');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it("shows a @try's newer error while an async component beside it loads", async () => {
+		stale_failed = true;
+		stale_broken.value = false;
+		const { app, handled } = await mount(StaleApp);
+		stale_recover(false);
+		await flush();
+		stale_broken.value = true;
+		await flush();
+		stale_recover('newer');
+		await flush();
+		pending_finish(ResolvedFine);
+		await settle();
+		expect(text('.stale-caught')).toBe('Error: newer');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+});
+
 runForOfSourcesRuntimeTests();
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();

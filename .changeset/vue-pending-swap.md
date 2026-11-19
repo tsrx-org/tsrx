@@ -1,0 +1,5 @@
+---
+'@tsrx/vue-runtime': patch
+---
+
+On the Vue target, a `@try` whose body throws while an async component in it is still loading under a pending `Suspense` now shows the `@catch` once that component has settled. Before, the boundary swapped in the `@catch` at once, which unmounted the async component the `Suspense` was waiting for, and the `Suspense` stayed on its fallback (the `@pending` body) for good: when an async component resolved to one that throws in setup, when a component beside a loading async component threw, or when one async component rejected while another was still loading. The boundary waits for an async component that the error came through, or that sits at the top of its body (through fragments, but not inside an element), and for what those render once they resolve; one inside an element beside the component that threw is still missed. A waiting `@catch` is dropped if the `@try` resets or shows another error first. A `@try` with no such component loading, or in a `Suspense` that has resolved or isn't waiting for it, still shows its `@catch` at once.

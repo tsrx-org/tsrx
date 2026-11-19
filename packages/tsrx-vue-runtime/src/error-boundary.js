@@ -34,10 +34,19 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
  * content rather than its fallback; `reset` doesn't change it, the render
  * after it does
  * @property {boolean} unmounting whether the boundary's teardown has begun
+ * @property {number} epoch bumped when the boundary resets or shows an error:
+ * a swap still waiting from before then no longer applies
+ * @property {unknown} rendered the blocks the boundary renders into
  * @property {() => void} reset
  */
 
 /** @typedef {{ asyncDep?: Promise<unknown> | null, asyncResolved?: boolean }} AsyncSetupState */
+
+/**
+ * @typedef {{ asyncDep?: Promise<unknown> | null, asyncResolved?: boolean, suspense?: unknown, suspenseId?: number, block?: VaporBlock, parent?: unknown }} AsyncInstance
+ */
+
+/** @typedef {{ pendingBranch?: unknown, pendingId?: number }} PendingSuspense */
 
 /** @typedef {{ parent?: InstanceLink | null, $?: InstanceLink }} InstanceLink */
 
@@ -206,6 +215,51 @@ function shows_content_of(source, own) {
 		.suspense;
 	if (suspense?.pendingBranch) return undefined;
 	return inner;
+}
+
+/**
+ * Whether `suspense`, while pending, counts `component`'s setup: it is still
+ * pending, and the component was created under that `Suspense` in its current
+ * pending round. Vue's `Suspense` counts each such setup, and its
+ * `registerDep` callback skips the count for a component that was unmounted,
+ * so unmounting one before it settles leaves the `Suspense` pending for good.
+ *
+ * @param {AsyncInstance} component
+ * @param {PendingSuspense} suspense
+ * @returns {boolean}
+ */
+function counted_setup(component, suspense) {
+	return (
+		!!component.asyncDep &&
+		!component.asyncResolved &&
+		component.suspense === suspense &&
+		component.suspenseId === suspense.pendingId
+	);
+}
+
+/**
+ * The counted setups (see {@link counted_setup}) of the async components in
+ * `block`: the components it holds and what they render, through fragments,
+ * but not the children of an element.
+ *
+ * @param {VaporBlock | undefined} block
+ * @param {PendingSuspense} suspense
+ * @param {Promise<unknown>[]} [found]
+ * @returns {Promise<unknown>[]}
+ */
+function pending_setups(block, suspense, found = []) {
+	if (!block || block instanceof Node) return found;
+	if (Array.isArray(block)) {
+		for (const item of block) pending_setups(item, suspense, found);
+	} else if (vapor.isVaporComponent(block)) {
+		const component = /** @type {AsyncInstance} */ (/** @type {unknown} */ (block));
+		if (counted_setup(component, suspense))
+			found.push(/** @type {Promise<unknown>} */ (component.asyncDep));
+		pending_setups(component.block, suspense, found);
+	} else if (vapor.isFragment(block)) {
+		pending_setups(block.nodes, suspense, found);
+	}
+	return found;
 }
 
 /**
@@ -384,7 +438,7 @@ export function TsrxErrorBoundary(props, ctx) {
 	const instance = own_instance(ctx);
 	const state = instance ? initialize_boundary_state(instance) : create_boundary_state();
 
-	return create_boundary_nodes(() => {
+	const nodes = create_boundary_nodes(() => {
 		// Read so a reset, or an error caught after rendering, renders again.
 		void state.version.value;
 		if (state.caught) {
@@ -413,8 +467,11 @@ export function TsrxErrorBoundary(props, ctx) {
 		}
 		// Not a reactive write: this render already shows the fallback.
 		state.caught = { error: frame.errors[0] };
+		state.epoch++;
 		return render_fallback(state, props);
 	});
+	state.rendered = nodes;
+	return nodes;
 }
 
 /**
@@ -505,8 +562,11 @@ function create_boundary_state() {
 		fallback_from: null,
 		shows_content: false,
 		unmounting: false,
+		epoch: 0,
+		rendered: undefined,
 		reset() {
 			state.caught = null;
+			state.epoch++;
 			state.version.value++;
 		},
 	};
@@ -561,21 +621,63 @@ function initialize_boundary_state(instance) {
 			const inner = shows_content_of(source, state);
 			if (!inner) return;
 			inner.caught = { error: captured_error };
+			inner.epoch++;
 			inner.version.value++;
 			return false;
 		}
-		// Thrown outside a render. An async component whose loader rejected
-		// still has its setup pending, and Vapor cannot unmount it until its
-		// Suspense has mounted it, so swap in the fallback after that.
+		// Thrown outside a render: swap in the fallback.
 		const show = () => {
 			state.caught = { error: captured_error };
 			state.version.value++;
 		};
+		// Swapping unmounts the content. An async component in it that its
+		// `Suspense` still waits for has to settle first, or the `Suspense`
+		// stays pending for good: one the boundary's blocks hold, one the
+		// error came from or passed through, and what those render once they
+		// have settled. Swap after that, unless the boundary has reset or
+		// shown another error since.
+		/** @type {Set<Promise<unknown>>} */
+		const awaited = new Set();
+		const loading = () => {
+			const suspense = /** @type {{ suspense?: PendingSuspense | null }} */ (instance).suspense;
+			/** @type {Promise<unknown>[]} */
+			const found = [];
+			if (suspense?.pendingBranch) {
+				pending_setups(/** @type {VaporBlock | undefined} */ (state.rendered), suspense, found);
+				for (const current of chain_to(source, instance)) {
+					// A VDOM component on the path is left alone, as before: Vue
+					// counts its setup down when it unmounts.
+					if (!vapor.isVaporComponent(current)) continue;
+					const component = /** @type {AsyncInstance} */ (current);
+					if (counted_setup(component, suspense))
+						found.push(/** @type {Promise<unknown>} */ (component.asyncDep));
+				}
+			}
+			const fresh = found.filter((setup) => !awaited.has(setup));
+			for (const setup of fresh) awaited.add(setup);
+			return fresh;
+		};
+		const first = loading();
 		const pending = /** @type {AsyncSetupState | null} */ (source);
-		if (pending?.asyncDep && !pending.asyncResolved) {
-			pending.asyncDep.then(show, show);
-		} else {
+		if (pending?.asyncDep && !pending.asyncResolved && !awaited.has(pending.asyncDep)) {
+			awaited.add(pending.asyncDep);
+			first.push(pending.asyncDep);
+		}
+		if (first.length === 0) {
+			state.epoch++;
 			show();
+		} else {
+			const at = state.epoch;
+			/** @param {Promise<unknown>[]} setups */
+			const wait = (setups) => {
+				Promise.allSettled(setups).then(() => {
+					if (state.epoch !== at) return;
+					const more = loading();
+					if (more.length > 0) wait(more);
+					else show();
+				});
+			};
+			wait(first);
 		}
 		return false;
 	});
