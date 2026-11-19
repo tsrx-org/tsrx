@@ -2,6 +2,7 @@ import type { MockInstance } from 'vitest';
 import {
 	createVaporApp,
 	createVaporSSRApp,
+	defineComponent,
 	defineVaporAsyncComponent,
 	inject,
 	onMounted,
@@ -4038,6 +4039,373 @@ describe('tsrx-vue an element whose child is an @if without @else, on the client
 		sibling_user.value = { ...sibling_user.value };
 		await flush();
 		expect(text('.sibling-counter')).toBe('a:1');
+	});
+});
+
+let catch_runs = 0;
+
+function throw_from_catch(error: unknown): string {
+	catch_runs++;
+	throw new Error('catch boom after ' + (error as Error).message);
+}
+
+function throw_pending_label(): string {
+	throw new Error('pending boom');
+}
+
+type CatchLoader = Promise<typeof CatchResolved>;
+
+function CatchResolved(props: { value: string }) @{
+	<p class="catch-resolved">{props.value}</p>
+}
+
+function never_loads(): CatchLoader {
+	return new Promise(() => {});
+}
+
+// The async child rejects, and the inner @catch throws.
+function RejectedCatchThrows(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		@try {
+			<AsyncChild value="hello" />
+		} @pending {
+			<p class="catch-pending">{'loading'}</p>
+		} @catch (err) {
+			const message = throw_from_catch(err);
+			<p class="inner-caught">{message}</p>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+// The same, without an outer @try.
+function RejectedCatchThrowsAlone(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		<p class="catch-pending">{'loading'}</p>
+	} @catch (err) {
+		const message = throw_from_catch(err);
+		<p class="inner-caught">{message}</p>
+	}
+}
+
+// The @pending body throws, and the inner @catch throws.
+function PendingCatchThrows(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		@try {
+			<AsyncChild value="hello" />
+		} @pending {
+			const label = throw_pending_label();
+			<p class="catch-pending">{label}</p>
+		} @catch (err) {
+			<p class="inner-caught">{throw_from_catch(err)}</p>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+// The same, without an outer @try.
+function PendingCatchThrowsAlone(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		const label = throw_pending_label();
+		<p class="catch-pending">{label}</p>
+	} @catch (err) {
+		const message = throw_from_catch(err);
+		<p class="inner-caught">{message}</p>
+	}
+}
+
+function throw_content(error: unknown): never {
+	throw error;
+}
+
+function TwoFailingButtons() @{
+	<>
+		<button class="fail-a" onClick={() => throw_content('a')}>
+			{'a'}
+		</button>
+		<button class="fail-b" onClick={() => throw_content('b')}>
+			{'b'}
+		</button>
+	</>
+}
+
+// Two content errors before the update that shows the @catch.
+function ContentBurst() @{
+	@try {
+		@try {
+			<TwoFailingButtons />
+		} @catch (err) {
+			<b class="inner-caught">{String(err)}</b>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{String(err)}</p>
+	}
+}
+
+function ThrowsInSetup() @{
+	throw_content('sync body');
+	<p />
+}
+
+// An async child that rejects after a sibling's error shows the @catch.
+function LateRejection(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		@try {
+			<>
+				<AsyncChild value="hello" />
+				<ThrowsInSetup />
+			</>
+		} @pending {
+			<p class="catch-pending">{'loading'}</p>
+		} @catch (err) {
+			<b class="inner-caught">{String(err)}</b>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{String(err)}</p>
+	}
+}
+
+let catch_signal = ref(0);
+
+function bump_signal_once(error: unknown): string {
+	if (catch_runs++ === 0) catch_signal.value++;
+	return String(error);
+}
+
+function WatchesSignal() @{
+	watch(catch_signal, () => throw_content('content watcher'), { flush: 'sync' });
+	<p />
+}
+
+// A component of the content that never mounts, because its sibling throws,
+// throws from a watcher while the @catch renders.
+function ContentWatcher() @{
+	@try {
+		@try {
+			<>
+				<WatchesSignal />
+				<ThrowsInSetup />
+			</>
+		} @catch (err) {
+			<b class="inner-caught">{bump_signal_once(err)}</b>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{String(err)}</p>
+	}
+}
+
+const VdomThrows = defineComponent({
+	setup() {
+		throw new Error('vdom catch');
+	},
+});
+
+// The @catch renders a VDOM component, which Vue creates after the @catch
+// has rendered.
+function VdomCatchThrows(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		<p class="catch-pending">{'loading'}</p>
+	} @catch (err) {
+		catch_runs++;
+		<VdomThrows />
+	}
+}
+
+function FallbackWatcher() @{
+	watch(catch_signal, () => throw_content(new Error('fallback watcher')), { flush: 'sync' });
+	<p class="fallback-child">{'fallback child'}</p>
+}
+
+function BumpsSignal() @{
+	catch_signal.value++;
+	<i />
+}
+
+// A component of the @catch, mounted before the @catch has rendered, throws
+// from a watcher that the next one sets off.
+function MountedFallbackWatcher() @{
+	@try {
+		<ThrowsInSetup />
+	} @catch (err) {
+		catch_runs++;
+		<div>
+			<FallbackWatcher />
+			<BumpsSignal />
+		</div>
+	}
+}
+
+function CatchButton(props: { error: unknown }) @{
+	<button class="catch-button" onClick={() => throw_content(new Error('catch click'))}>
+		{String(props.error)}
+	</button>
+}
+
+// A component of the @catch throws from a click handler.
+function CatchClickThrows() @{
+	@try {
+		<ThrowsInSetup />
+	} @catch (err) {
+		<CatchButton error={err} />
+	}
+}
+
+// The body throws from a click, and the @catch resets it.
+function ResetAndFailAgain() @{
+	@try {
+		<TwoFailingButtons />
+	} @catch (err, reset) {
+		<button class="reset" onClick={reset}>
+			{String(err)}
+		</button>
+	}
+}
+
+describe('tsrx-vue a @catch that throws', () => {
+	let handled: string[] = [];
+
+	async function mount(component: unknown, props: Record<string, unknown>) {
+		handled = [];
+		catch_runs = 0;
+		catch_signal = ref(0);
+		const app = createVaporApp(component as Parameters<typeof createVaporApp>[0], props);
+		app.config.errorHandler = (error) => {
+			handled.push((error as Error).message);
+		};
+		app.mount(container);
+		await flush();
+		return app;
+	}
+
+	it('passes what it throws after a rejection to the next @catch out', async () => {
+		let reject!: (error: Error) => void;
+		const promise: CatchLoader = new Promise((_resolve, fail) => (reject = fail));
+		const app = await mount(RejectedCatchThrows, { promise });
+		expect(text('.catch-pending')).toBe('loading');
+		reject(new Error('rejected'));
+		await flush();
+		expect(text('.outer-caught')).toBe('catch boom after rejected');
+		// The @catch ran once: the boundary around the Suspense, which renders
+		// the same @catch, let the error go on too.
+		expect(catch_runs).toBe(1);
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('passes what it throws after a rejection to app.config.errorHandler', async () => {
+		let reject!: (error: Error) => void;
+		const promise: CatchLoader = new Promise((_resolve, fail) => (reject = fail));
+		const app = await mount(RejectedCatchThrowsAlone, { promise });
+		reject(new Error('rejected'));
+		await flush();
+		expect(handled).toEqual(['catch boom after rejected']);
+		expect(catch_runs).toBe(1);
+		expect(container.querySelector('.inner-caught')).toBeNull();
+		app.unmount();
+	});
+
+	it('passes what it throws after a @pending throw to the next @catch out', async () => {
+		const app = await mount(PendingCatchThrows, { promise: never_loads() });
+		expect(text('.outer-caught')).toBe('catch boom after pending boom');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('keeps a second error from the content in its own @catch', async () => {
+		// The content is still mounted when the second one comes, before the
+		// update that shows the @catch.
+		const app = await mount(ContentBurst, {});
+		(container.querySelector('.fail-a') as HTMLElement).click();
+		(container.querySelector('.fail-b') as HTMLElement).click();
+		await flush();
+		expect(text('.inner-caught')).toBe('b');
+		expect(container.querySelector('.outer-caught')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('keeps a late rejection from the content in its own @catch', async () => {
+		let reject!: (error: unknown) => void;
+		const promise: CatchLoader = new Promise((_resolve, fail) => (reject = fail));
+		const app = await mount(LateRejection, { promise });
+		expect(text('.inner-caught')).toBe('sync body');
+		reject('late');
+		await flush();
+		expect(text('.inner-caught')).toBe('Error: late');
+		expect(container.querySelector('.outer-caught')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('passes what it throws after a @pending throw to app.config.errorHandler', async () => {
+		const app = await mount(PendingCatchThrowsAlone, { promise: never_loads() });
+		expect(handled).toEqual(['catch boom after pending boom']);
+		expect(container.querySelector('.inner-caught')).toBeNull();
+		app.unmount();
+	});
+
+	it('keeps an error from a content component that never mounted in its own @catch', async () => {
+		const app = await mount(ContentWatcher, {});
+		expect(text('.inner-caught')).toBe('content watcher');
+		expect(container.querySelector('.outer-caught')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('passes on what a VDOM component of the @catch throws', async () => {
+		let reject!: (error: Error) => void;
+		const promise: CatchLoader = new Promise((_resolve, fail) => (reject = fail));
+		const app = await mount(VdomCatchThrows, { promise });
+		reject(new Error('rejected'));
+		await flush();
+		expect(handled).toEqual(['vdom catch']);
+		expect(catch_runs).toBe(1);
+		app.unmount();
+	});
+
+	it('passes on what a component of the @catch throws after it mounted', async () => {
+		const app = await mount(MountedFallbackWatcher, {});
+		expect(handled).toEqual(['fallback watcher']);
+		expect(text('.fallback-child')).toBe('fallback child');
+		expect(catch_runs).toBe(1);
+		app.unmount();
+	});
+
+	it('keeps an error from the body rendered again by reset in its own @catch', async () => {
+		const app = await mount(ResetAndFailAgain, {});
+		(container.querySelector('.fail-a') as HTMLElement).click();
+		await flush();
+		expect(text('.reset')).toBe('a');
+		(container.querySelector('.reset') as HTMLElement).click();
+		await flush();
+		(container.querySelector('.fail-b') as HTMLElement).click();
+		await flush();
+		expect(text('.reset')).toBe('b');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('passes on what an event handler of the @catch throws', async () => {
+		const app = await mount(CatchClickThrows, {});
+		(container.querySelector('.catch-button') as HTMLElement).click();
+		await flush();
+		expect(handled).toEqual(['catch click']);
+		expect(text('.catch-button')).toBe('sync body');
+		app.unmount();
 	});
 });
 

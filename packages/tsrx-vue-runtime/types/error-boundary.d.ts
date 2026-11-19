@@ -9,6 +9,12 @@ export interface TsrxErrorBoundaryProps {
 	content: () => unknown;
 	/** Renders the `catch` body for a caught error. See {@link content}. */
 	fallback: (error: unknown, reset: () => void) => unknown;
+	/**
+	 * Whether the nearest boundary around this one renders the same `catch`
+	 * body: the boundary inside a `@pending` boundary's `Suspense`. An error
+	 * thrown by that body then goes past both.
+	 */
+	sharesCatch?: boolean;
 }
 
 export interface TsrxErrorBoundaryComponent {

@@ -322,7 +322,7 @@ function create_module_scoped_error_fallback_component(catch_body_nodes, catch_p
  * @returns {AST.ArrowFunctionExpression}
  */
 function create_error_boundary_slot(content, fallback_fn, source_try) {
-	const boundary = create_vapor_error_boundary(content, clone_ast_node(fallback_fn, false));
+	const boundary = create_vapor_error_boundary(content, clone_ast_node(fallback_fn, false), true);
 	return b.arrow(
 		[],
 		setLocation(boundary, has_location(source_try) ? source_try : undefined, true),
@@ -383,7 +383,7 @@ function jsx_child_to_expression(child) {
  * @param {AST.ArrowFunctionExpression} fallback_fn
  * @returns {AST.TSRXJSXElement}
  */
-function create_vapor_error_boundary(content, fallback_fn) {
+function create_vapor_error_boundary(content, fallback_fn, shares_catch = false) {
 	return b.jsx_element_fresh(
 		b.jsx_opening_element(
 			b.jsx_id(ERROR_BOUNDARY_INTERNAL_NAME),
@@ -393,6 +393,9 @@ function create_vapor_error_boundary(content, fallback_fn) {
 					b.jsx_id('content'),
 					to_jsx_expression_container(b.arrow([], jsx_child_to_expression(content))),
 				),
+				// The boundary around it renders the same `@catch`: an error that
+				// `@catch` throws goes past both.
+				...(shares_catch ? [b.jsx_attribute(b.jsx_id('sharesCatch'))] : []),
 			],
 			true,
 		),

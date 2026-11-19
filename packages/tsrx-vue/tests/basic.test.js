@@ -2651,6 +2651,27 @@ export function Card(${params}: any) @{
 		expect(code.match(/v-if/g)).toHaveLength(2);
 	});
 
+	it('marks the boundary inside a @pending Suspense as sharing its @catch', () => {
+		// A @try with @pending renders its @catch from a boundary around the
+		// Suspense and one inside it; an error that @catch throws goes past both.
+		const { code } = compile(
+			`export function App() @{
+				@try {
+					<p>{'x'}</p>
+				} @pending {
+					<i>{'wait'}</i>
+				} @catch (err) {
+					<b>{'caught'}</b>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.match(/<__TsrxErrorBoundary /g)).toHaveLength(2);
+		expect(code.match(/ sharesCatch \/>/g)).toHaveLength(1);
+		expect(code).toMatch(/default: \(\) => <__TsrxErrorBoundary [\s\S]*? sharesCatch \/>/);
+	});
+
 	it('compiles switch statements with inline case statements before JSX', () => {
 		const { code } = compile(
 			`function App({ value }) @{
