@@ -6099,6 +6099,11 @@ function validate_if_body_control_flow(node, transform_context) {
 		return;
 	}
 
+	// A nested `@if` or `@for` checks its own body.
+	if (is_template_if_node(node) || node.type === 'JSXForExpression') {
+		return;
+	}
+
 	if (node.type === 'ReturnStatement') {
 		error(
 			TSRX_ERRORS.IF_RETURN_STATEMENT,
@@ -6259,7 +6264,9 @@ function collect_directive_declarations(node, parent, in_body, found) {
  * for a `break` right in the case. A jump in an `@if` body, or in an `@for`
  * body outside a loop there, is the `@if` or `@for` check's to report; a
  * jump in a loop in an `@for` body that leaves the body, which that check
- * doesn't see, is reported here with the `@for` check's errors.
+ * doesn't see, is reported here with the `@for` check's errors, and so is
+ * one that leaves an `@else if` body, or the `@else` after one, with the
+ * `@if` check's.
  *
  * @param {AST.Program} program
  * @param {TransformContext} transform_context
@@ -6281,11 +6288,15 @@ function validate_directive_jumps(program, transform_context) {
 				? is_break
 					? TSRX_ERRORS.FOR_BREAK_STATEMENT
 					: TSRX_ERRORS.FOR_CONTINUE_STATEMENT
-				: !is_break
-					? TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE
-					: kind === 'case'
-						? TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT
-						: TSRX_ERRORS.DIRECTIVE_BODY_BREAK,
+				: kind === 'if'
+					? is_break
+						? TSRX_ERRORS.IF_BREAK_STATEMENT
+						: TSRX_ERRORS.IF_CONTINUE_STATEMENT
+					: !is_break
+						? TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE
+						: kind === 'case'
+							? TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT
+							: TSRX_ERRORS.DIRECTIVE_BODY_BREAK,
 			transform_context.filename,
 			get_statement_keyword_node(node, is_break ? 'break' : 'continue'),
 			transform_context.errors,
@@ -6298,12 +6309,14 @@ function validate_directive_jumps(program, transform_context) {
  * What a jump can reach from where it is: `kind` is the body that cuts it off
  * from the code around it (`'body'` for an `@try`, `@pending`, `@catch` or
  * `@empty` body or a nested `@{ … }` block, `'case'` for an `@switch` case,
- * `'for'` for an `@for` body), or `'none'` where JavaScript's own rules, or
- * the `@if` check, apply. `targets` are the loops, `switch` statements and
+ * `'for'` for an `@for` body, `'if'` for an `@else if` body or the `@else`
+ * after one, which the `@if` check doesn't see), `'chain'` for the
+ * `@else if` itself, or `'none'` where JavaScript's own rules, or the `@if`
+ * check, apply. `targets` are the loops, `switch` statements and
  * labels inside the body. `nested` is whether the jump is in a loop in the
  * body: the `@for` check reports a jump in an `@for` body outside such a
  * loop, and this one a jump in it that leaves the body.
- * @typedef {{ kind: 'none' | 'body' | 'case' | 'for', targets: Array<{ loop: boolean, label: string | null }>, nested?: boolean }} JumpScope
+ * @typedef {{ kind: 'none' | 'body' | 'case' | 'for' | 'if' | 'chain', targets: Array<{ loop: boolean, label: string | null }>, nested?: boolean }} JumpScope
  */
 
 /**
@@ -6320,7 +6333,12 @@ function collect_directive_jumps(node, parent, scope, found) {
 		const reaches = scope.targets.some((target) =>
 			label === null ? target.label === null && (is_break || target.loop) : target.label === label,
 		);
-		if (scope.kind !== 'none' && (scope.kind !== 'for' || scope.nested) && !reaches) {
+		const reported =
+			scope.kind === 'body' ||
+			scope.kind === 'case' ||
+			scope.kind === 'if' ||
+			(scope.kind === 'for' && scope.nested);
+		if (reported && !reaches) {
 			// The `@if` and `@for` checks, which see a jump in an `@try` right in
 			// their bodies, leave it to this one.
 			node.metadata = { ...node.metadata, invalid_directive_jump: true };
@@ -6354,7 +6372,16 @@ function child_jump_scope(node, parent, child, scope) {
 	if (node.type === 'JSXForExpression' && child === node.body) {
 		return { kind: 'for', targets: [] };
 	}
-	// The `@if` check reports a jump in an `@if` body.
+	if (node.type === 'JSXIfExpression' && child === node.alternate && child.type === 'IfStatement') {
+		return { kind: 'chain', targets: [] };
+	}
+	if (scope.kind === 'chain' && node.type === 'IfStatement') {
+		if (child === node.alternate && child.type === 'IfStatement') return scope;
+		return child === node.consequent || child === node.alternate
+			? { kind: 'if', targets: [] }
+			: NO_JUMP_SCOPE;
+	}
+	// The `@if` check reports a jump in an `@if` or `@else` body.
 	if (node.type === 'JSXIfExpression' || node.type === 'JSXForExpression') return NO_JUMP_SCOPE;
 	if (node.type === 'JSXTryExpression' && (child === node.block || child === node.pending)) {
 		return { kind: 'body', targets: [] };
@@ -7514,24 +7541,23 @@ function add_ref_import_specifier(imports, source, specifier) {
 /**
  * @param {AST.IfStatement | AST.JSXIfExpression} node
  * @param {TransformContext} transform_context
- * @param {boolean} [template] Whether `node` is an `@if`, or an `@else if` of one.
  * @returns {AST.IfStatement}
  */
-function create_render_if_statement(node, transform_context, template = is_template_if_node(node)) {
+function create_render_if_statement(node, transform_context) {
 	const consequent_body =
 		node.consequent.type === 'BlockStatement' ? node.consequent.body : [node.consequent];
-	if (template) {
+	if (is_template_if_node(node)) {
 		validate_if_body_control_flow(consequent_body, transform_context);
 	}
 
 	let alternate = null;
 	if (node.alternate) {
 		if (is_if_control_node(node.alternate)) {
-			alternate = create_render_if_statement(node.alternate, transform_context, template);
+			alternate = create_render_if_statement(node.alternate, transform_context);
 		} else {
 			const alternate_body =
 				node.alternate.type === 'BlockStatement' ? node.alternate.body : [node.alternate];
-			if (template) {
+			if (is_template_if_node(node)) {
 				validate_if_body_control_flow(alternate_body, transform_context);
 			}
 			alternate = set_loc(

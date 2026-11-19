@@ -3090,6 +3090,36 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			}
 		});
 
+		it("reports a jump in an `@if` or `@for` nested in an `@if` once, with the inner one's error", () => {
+			for (const [template, error] of /** @type {const} */ ([
+				[
+					'<div>@if (log) { @for (const x of items) { if (x) continue; <i /> } }</div>',
+					TSRX_ERRORS.FOR_CONTINUE_STATEMENT,
+				],
+				[
+					'<div>@if (log) { <b /> } @else if (item) { @for (const x of items) { if (x) continue; <i /> } }</div>',
+					TSRX_ERRORS.FOR_CONTINUE_STATEMENT,
+				],
+				[
+					'<div>@if (log) { @if (item) { if (log) continue; <b /> } }</div>',
+					TSRX_ERRORS.IF_CONTINUE_STATEMENT,
+				],
+			])) {
+				const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
+					for (const item of items) {
+						const view = ${template};
+						console.log(item, view);
+					}
+					<p />
+				}`;
+				const start = source.indexOf('continue;');
+				const expected = expect.objectContaining({ code: error.code, pos: start });
+
+				expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
+			}
+		});
+
 		it('allows a jump to a loop, `switch` or label inside the `@try` body or block it is in', () => {
 			for (const block of [
 				'@try { for (const x of items) { if (x) continue; console.log(x); } <b /> } @catch (e) { <i /> }',

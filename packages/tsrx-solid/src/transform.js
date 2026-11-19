@@ -705,6 +705,11 @@ function validate_if_body_control_flow(node, transform_context) {
 
 	const current = /** @type {AST.TraversableAstNode} */ (node);
 
+	// A nested `@if` or `@for` checks its own body.
+	if (is_template_if_node(current) || current.type === 'JSXForExpression') {
+		return;
+	}
+
 	if (current.type === 'ReturnStatement') {
 		error(
 			TSRX_ERRORS.IF_RETURN_STATEMENT,
