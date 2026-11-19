@@ -1,5 +1,28 @@
 # @tsrx/eslint-parser
 
+## 0.7.6
+
+### Patch Changes
+
+- [#1393](https://github.com/tsrx-org/tsrx/pull/1393)
+  [`7394c52`](https://github.com/tsrx-org/tsrx/commit/7394c52be324f0cd211efaca79ae05d56cd106d8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Give ESLint
+  typescript-eslint's visitor keys, under the parser's own. For a node type
+  without keys, ESLint visited the node's properties in the order the parser set
+  them: a label after its statement, a `case` test after its consequent, a call's
+  type arguments after its arguments, and decorators last. So rules that follow
+  the code path reported falsely even in plain JavaScript. For example,
+  `no-useless-assignment` reported a value read only in a `case` test or a
+  labelled block. `no-inline-comments` also reported a comment that is all a JSX
+  expression container holds, since ESLint walked into the comment as if it were a
+  node. For the same reason, `indent` skipped a comment that is all a block holds;
+  it now checks that comment's indentation, as it does with espree and
+  typescript-eslint's parser, so it can report lines it didn't before.
+- Updated dependencies
+  [[`981b167`](https://github.com/tsrx-org/tsrx/commit/981b1677af270e1b1665f17fb9358f2e260d4533),
+  [`e0ba2b7`](https://github.com/tsrx-org/tsrx/commit/e0ba2b797fdd42a4770be2b486d8e92a03f71641)]:
+  - @tsrx/core@0.6.6
+
 ## 0.7.5
 
 ### Patch Changes
