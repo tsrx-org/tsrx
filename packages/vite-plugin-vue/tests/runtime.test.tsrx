@@ -3380,6 +3380,33 @@ function SecondCaseRowsApp() @{
 	</ul>
 }
 
+const case_fails = ref(false);
+
+function case_value(value: string) {
+	if (case_fails.value) throw new Error('case boom');
+	return value;
+}
+
+function CaseTestRowsApp() @{
+	<ul class="case-test-rows">
+		@for (const row of lookup_rows.value; key row.id) {
+			@switch (row.kind) {
+				@case case_value('a'): {
+					<li>{'a'}</li>
+				}
+				@case case_value('b'): {
+					<li>{'b'}</li>
+				}
+				@default: {
+					<li>
+						<TodoCounter label={'other' + row.id} />
+					</li>
+				}
+			}
+		}
+	</ul>
+}
+
 function NestedCaseRowsApp() @{
 	<ul class="nested-case-rows">
 		@for (const todo of todos.value; key todo.id) {
@@ -3593,6 +3620,32 @@ describe('tsrx-vue keyed @switch rows', () => {
 		app.unmount();
 		expect(during).toEqual(['b1:1']);
 		expect(after).toEqual(['b1:1']);
+
+		// A throwing case test, with the default case showing.
+		lookup_rows.value = [{ id: '1', kind: 'c' }];
+		case_fails.value = false;
+		const tests_app = createVaporApp(CaseTestRowsApp);
+		tests_app.config.errorHandler = (caught) => {
+			errors.push(String(caught));
+		};
+		tests_app.mount(container);
+		await flush();
+		(container.querySelector('.case-test-rows .todo-counter') as HTMLElement).click();
+		await flush();
+		case_fails.value = true;
+		await flush();
+		const failing = texts('.case-test-rows li');
+		case_fails.value = false;
+		await flush();
+		const recovered = texts('.case-test-rows li');
+		lookup_rows.value = [{ id: '1', kind: 'b' }];
+		await flush();
+		const followed = texts('.case-test-rows li');
+		tests_app.unmount();
+		expect(failing).toEqual(['other1:1']);
+		expect(recovered).toEqual(['other1:1']);
+		expect(followed).toEqual(['b']);
+		expect(errors.some((error) => error.includes('case boom'))).toBe(true);
 	});
 
 	it('follows a @switch row’s value in a loop with @empty, and renders @empty', async () => {
