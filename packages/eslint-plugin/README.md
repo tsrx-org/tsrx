@@ -103,15 +103,15 @@ after `tsrx.configs.react`.
   the `@try`. A body or `@pending` that awaits or yields runs in the component
   instead, `@pending` first, where a throw leaves it: when such a block doesn't
   reach its end, the rule reports the `@catch` and the code after the `@try`, as
-  the core rule does. On Hono, `@pending`'s code runs in the component too, so a
-  `@pending` that throws ends it there, but the rule doesn't know the target and
-  doesn't report the code after that `@try`. It still reports unreachable code
-  inside an arm or a block of a `@try`: there it follows `throw`, `return`,
-  `break`, `continue`, `try` and endless loops itself, since code path analysis
-  has already given up on that code. It can miss unreachable code there when a
-  `break`, `continue`, `return` or `throw` passes through a `finally` block, and
-  it reports nothing there that the core rule doesn't report on the same code in a
-  plain function. The
+  the core rule does. On Hono, a `@pending` that neither awaits nor yields runs in
+  the component too, so when it throws it ends the component there, but the rule
+  doesn't know the target and doesn't report the code after that `@try`. It still
+  reports unreachable code inside an arm or a block of a `@try`: there it follows
+  `throw`, `return`, `break`, `continue`, `try` and endless loops itself, since
+  code path analysis has already given up on that code. It can miss unreachable
+  code there when a `break`, `continue`, `return` or `throw` passes through a
+  `finally` block, and it reports nothing there that the core rule doesn't report
+  on the same code in a plain function. The
   [`@tsrx/eslint-parser` README](https://github.com/tsrx-org/tsrx/tree/main/packages/eslint-parser#known-limitations)
   explains what the core rule reports instead.
 
