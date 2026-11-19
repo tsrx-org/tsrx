@@ -12222,6 +12222,22 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: first_member,
 			match: { accessibility: 'private', abstract: true, value: { async: true } },
 		},
+		// An error before the `async`, once: acorn-typescript's TS1030, or the
+		// TS1243 it doesn't report.
+		{
+			source: 'abstract class A { abstract abstract async public m(): Promise<void>; }',
+			errors: [[UPSTREAM_ERRORS.DUPLICATE_MODIFIER, 'abstract async']],
+			throws: [UPSTREAM_ERRORS.DUPLICATE_MODIFIER, '1:28'],
+			pick: first_member,
+			match: { abstract: true, value: { async: true } },
+		},
+		{
+			source: 'abstract class A { abstract private async static m(): Promise<void>; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'private async']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:28'],
+			pick: first_member,
+			match: { abstract: true, static: true, value: { async: true } },
+		},
 		{
 			source: 'class A { async async m() {} }',
 			errors: [[TS_ERRORS.MODIFIER_ALREADY_SEEN, 'async m']],
@@ -14605,6 +14621,16 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		const source = 'abstract class A { async abstract m(,): void; }';
 		const [outcome] = await parse_in_worker([{ source }]);
 		expect(outcome).toMatchObject({ ok: false, pos: source.indexOf(',') });
+	});
+
+	it("keeps acorn's syntax error for an async after a modifier a method can't take (#235)", async () => {
+		const source = 'class A { accessor async static m() {} }';
+		const outcomes = await parse_in_worker(
+			[undefined, ...collect_modes].map((options) => ({ source, options })),
+		);
+		for (const outcome of outcomes) {
+			expect(outcome).toMatchObject({ ok: false, code: 'TS1012', pos: source.indexOf(' m(') + 1 });
+		}
 	});
 
 	it("keeps acorn's error for a decorated async constructor in an async constructor (#235)", async () => {

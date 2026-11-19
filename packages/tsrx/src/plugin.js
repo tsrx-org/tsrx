@@ -7952,7 +7952,15 @@ export function TSRXPlugin(config) {
 			 * @returns {boolean}
 			 */
 			#atAsyncBeforeModifier(allowed) {
-				if (!this.isContextual('async') || this.#memberDecorated || this.isAmbientContext) {
+				const member = /** @type {Record<string, unknown> | null} */ (this.#modifiersNode);
+				if (
+					!this.isContextual('async') ||
+					this.#memberDecorated ||
+					this.isAmbientContext ||
+					member?.accessor ||
+					member?.readonly ||
+					member?.declare
+				) {
 					return false;
 				}
 				return this.tsLookAhead(() => {
@@ -8116,7 +8124,16 @@ export function TSRXPlugin(config) {
 				if (leading) {
 					const result = super.parseClassMethod(method, isGenerator, true, allowsDirectSuper);
 					const { held, found } = leading;
-					if (found && found !== 'acorn') this.#raiseCheckerError(found.start, found.error);
+					// acorn-typescript reported most errors of the modifiers before the
+					// `async` as it read them.
+					const recorded = this.#hold.held ?? this.#errors;
+					if (
+						found &&
+						found !== 'acorn' &&
+						!recorded?.some((error) => error.pos === found.start && error.code === found.error.code)
+					) {
+						this.#raiseCheckerError(found.start, found.error);
+					}
 					this.#releaseErrors(
 						found ? held.filter((error) => !MODIFIER_ERROR_CODES.has(error.code ?? '')) : held,
 					);
