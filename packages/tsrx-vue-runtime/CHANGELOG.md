@@ -1,5 +1,75 @@
 # @tsrx/vue-runtime
 
+## 0.2.4
+
+### Patch Changes
+
+- [#1413](https://github.com/tsrx-org/tsrx/pull/1413)
+  [`70f7d64`](https://github.com/tsrx-org/tsrx/commit/70f7d642950483081dbede9fe3a2cbbcb32070bf)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, an
+  error from a `@catch` body now goes to the next `@catch` out, or to
+  `app.config.errorHandler` when there is none. React and Preact do the same for
+  an error a `@catch` throws as it renders; they don't send an event handler's
+  error to a boundary at all. Before, `TsrxErrorBoundary` caught it itself and
+  rendered the same `@catch` again with it. When the `@catch` threw again as it
+  rendered, that looped until Vue stopped with
+  `Maximum recursive updates exceeded in component <TsrxErrorBoundary>`, and the
+  enclosing `@catch` never showed. It happened when an async component in a `@try`
+  with `@pending` rejected or the `@pending` body threw and the `@catch` then
+  threw, and when a component the `@catch` rendered threw after the `@catch` had
+  rendered, such as a VDOM component, the content of a `Teleport` or `Suspense`,
+  or a watcher.
+
+  An error counts as the `@catch`'s when its path reaches the boundary through a
+  component created after the `@catch` first rendered. That includes an error a
+  component of the `@catch` throws later, from an event handler or a watcher, also
+  right after it calls `reset`: before, the `@catch` showed it in place of the
+  first error, or looped when it threw as it rendered. An error from the body
+  still shows in the `@catch`, also one that comes while or after the `@catch`
+  renders. When it comes while the `@catch` first renders inside an outer `@try`,
+  it now shows in that `@catch` too, not the outer one. A component created right
+  under the boundary after the `@catch` first rendered counts as the `@catch`'s,
+  even when body code created it, so its error goes on rather than showing in the
+  `@catch`. That happens when the body threw as it first rendered and one of its
+  `@if` branches, which go on updating out of sight as before, later renders a
+  component, and when a watcher in a detached effect scope renders one while the
+  `@catch` renders. A `@try` inside an authored `Suspense` in a `@catch`, whose
+  body's inline code throws while that `Suspense` is pending, now sends the error
+  to the next `@catch` out, or to `app.config.errorHandler`, and its body keeps
+  its last output; before, its own `@catch` showed it. A `@try` with `@pending`
+  renders its `@catch` from two boundaries, and the compiler now marks the inner
+  one `sharesCatch`, so that the `@catch` runs once and its error goes on from
+  both. A `@catch` that doesn't throw, and its `reset`, work as before.
+
+- [#1416](https://github.com/tsrx-org/tsrx/pull/1416)
+  [`390af1c`](https://github.com/tsrx-org/tsrx/commit/390af1c3857c60f51da2afe0ca203df039c1a923)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target,
+  server rendering a `@try` now renders its body, or its `@catch` when the body
+  throws as it renders. Before, `TsrxErrorBoundary` called Vue's Vapor
+  `renderEffect`, which Vue's server build doesn't have, so every `@try` with a
+  `@catch` rendered as an empty comment and `app.config.errorHandler` got
+  `TypeError: vapor.renderEffect is not a function`. On the server the boundary
+  now renders as a functional VDOM component. A component in the body that throws
+  as the server renders it still goes to `app.config.errorHandler` and leaves a
+  comment, as it does without a `@try`.
+
+  A `@try` among an element's or fragment's children now compiles to a child
+  component instead of an expression child (`{<__TsrxErrorBoundary … />}`).
+  vue-jsx-vapor renders an expression child through a text placeholder, which
+  can't hydrate a component: hydrating a `@try` inside an element stopped with
+  `No current hydration node was found`, and its body no longer updated. In
+  client-only rendering, a `@try` with siblings after it in an element now leaves
+  an empty comment (`<!---->`) after its output: the anchor vue-jsx-vapor gives a
+  child component that has siblings after it. A hydrated page keeps the server's
+  nodes and has none.
+
+  Some shapes still don't hydrate cleanly. With `@pending`, the body hydrates but
+  stops updating. A body that is a fragment hydrates with a mismatch warning. When
+  the server rendered the `@catch`, the client mismatches and leaves an empty node
+  of the body beside it. A `@try` that reaches an element through another
+  expression child, such as a `@switch` case, still can't hydrate, like any
+  component there.
+
 ## 0.2.3
 
 ### Patch Changes

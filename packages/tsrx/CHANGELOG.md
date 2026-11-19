@@ -1,5 +1,79 @@
 # @tsrx/core
 
+## 0.6.8
+
+### Patch Changes
+
+- [#1412](https://github.com/tsrx-org/tsrx/pull/1412)
+  [`f86f19e`](https://github.com/tsrx-org/tsrx/commit/f86f19e3056d2aaae8ea3c7494effbba57b12a45)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Report a namespace or
+  module declared outside the module's or a namespace's body, in a function,
+  block, `if`, loop, label, `case`, static block or template body, as TypeScript
+  does: TS1235
+  (`A namespace declaration is only allowed at the top level of a namespace or module.`),
+  or TS1234
+  (`An ambient module declaration is only allowed at the top level in a file.`)
+  for `module "m"` or `global`, at the declaration's first token (after a leading
+  `abstract`, which the output leaves out, at the token after it, where the editor
+  shows TypeScript's own error). A strict parse throws it before the checker
+  errors in the declaration. A syntax error, an error a strict parse can't read
+  past (such as a rest parameter that isn't last), or one that ends every parse
+  (such as a `break` with nowhere to go) still comes first, as before. The compile
+  used to report nothing and emit output that doesn't parse. After `export` in a
+  block, `global` and `module "m"` are TS1234 too, where they were TS1184 or
+  TS1235, and `declare` or `abstract` before one there is no longer reported on
+  its own. The editor's code maps the declaration's first token, so the editor
+  shows TypeScript's own error there, once. With it mapped, the editor also shows
+  TypeScript's TS1540 deprecation hint on `module M {}`, as in a .ts file. An
+  import or export in a block is reported on its whole `import` or `export`
+  keyword, as TypeScript reports it, so the editor shows that once too, also in an
+  arrow's default parameter.
+
+- [#1407](https://github.com/tsrx-org/tsrx/pull/1407)
+  [`57de0fc`](https://github.com/tsrx-org/tsrx/commit/57de0fccba61bc6f9d93e4d7540e73d770fd50a3)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Let a label in a
+  template body reuse the name of a label around the template, as in a nested
+  function. Every target runs an `@if`, `@for`, `@empty`, `@switch`, `@try`,
+  `@pending` or `@catch` body, and a nested `@{ … }` block, in a function of its
+  own, where TypeScript reads the two labels as unrelated, but the parser reported
+  TS1114 (`Label 'outer' is already declared`).
+
+  A label still can't reuse one around it in the same body or function. Nor can it
+  in a code-only `@{ … }` that is inlined before a `return`, in the same function
+  or body: a returned one, a child of a returned fragment, and one of these in a
+  `{ … }` inside a returned fragment, also inside a render-only `@{ … }`
+  (`return <>{<>@{ … }</>}</>`). A `{ … }` in an element isn't inlined. TS1114
+  also stays for a few such `{ … }` shapes that the lowering runs in a function of
+  their own, as before.
+
+- [#1409](https://github.com/tsrx-org/tsrx/pull/1409)
+  [`7607d2b`](https://github.com/tsrx-org/tsrx/commit/7607d2b1bc87622b60aeefa4362669c76b8f87c9)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Give every static
+  hoisted to module level a name of its own. Each function numbered its statics
+  from 1 after its name, so functions with the same name, or none, such as two
+  object or class methods with `@{ … }` bodies, a getter and its setter, or two
+  unnamed arrows, could each hoist a `TSRXTemplate__static1`, output that
+  redeclares a `const`. React, Preact and Hono hoist statics.
+
+- [#1414](https://github.com/tsrx-org/tsrx/pull/1414)
+  [`2913244`](https://github.com/tsrx-org/tsrx/commit/291324419187552e6ab75b4567b425e04d85befc)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The React, Preact and
+  Hono targets now import the `TsrxTryBody` that renders a `@try` or `@pending`
+  body as `__TsrxTryBody`, as they already did for `Suspense`, `Fragment` and
+  `TsrxErrorBoundary`. An authored binding named `TsrxTryBody`, imported or local,
+  no longer collides with the generated import or takes the place of the generated
+  element, which then rendered the authored component instead of the body.
+
+  On Hono, the `Suspense` fallback is now always a node. An empty `@pending`
+  passes an empty fragment instead of `null`, and any other `@pending` body is
+  wrapped in a fragment, since it lowers to an expression that can still give
+  `null`, such as a lone `@if` that renders nothing. Before, once the body
+  suspended behind a `null` fallback, Hono's server renderer called
+  `fallback.toString()`: the `@catch` showed
+  `TypeError: Cannot read properties of null (reading 'toString')`, or without one
+  the stream closed empty. Hono's DOM renderer let the suspension through, so
+  `render()` threw the promise and nothing rendered.
+
 ## 0.6.7
 
 ### Patch Changes
