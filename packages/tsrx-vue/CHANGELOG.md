@@ -1,5 +1,101 @@
 # @tsrx/vue
 
+## 0.4.7
+
+### Patch Changes
+
+- [#1408](https://github.com/tsrx-org/tsrx/pull/1408)
+  [`68592f4`](https://github.com/tsrx-org/tsrx/commit/68592f42009fbb557aff493acf5c0ab0c7195f87)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, a
+  host element's child `@if` / `@else` whose branches are each one element or
+  component now renders as `v-if` / `v-else` elements. Alone or beside other
+  elements, that is the same `createIf` as before, with the same flags. Beside
+  another expression child, including an `@for` or a `@switch`, vue-jsx-vapor used
+  to evaluate the `@if`'s ternary inside that child's `setNodes` effect. That
+  caused these problems, now fixed:
+
+  - **State loss.** The branch rendered again, and its components lost their
+    state, whenever what the condition read changed, even when its value didn't
+    ([#1402](https://github.com/tsrx-org/tsrx/issues/1402)). The branch now stays
+    while the condition does.
+  - **Hydration.** Hydrating server markup there threw
+    `No current hydration node was found`. The server's branch now hydrates. One
+    case still breaks: when an expression just before the choice rendered nothing
+    on the server (a `<!---->`), hydration logs a mismatch and renders the branch
+    a second time. On main this case threw, and an `@if` without `@else` behaves
+    the same.
+  - **Fallthrough.** A component branch there was created as its parent's single
+    root, so it took the parent component's fallthrough `class`, `data-*`
+    attributes and listeners, and a parent's `onClick` fired twice. It no longer
+    does.
+  - **Teleport.** A `VaporTeleport` branch there left a `<!--teleport start-->`
+    comment behind on each toggle. It no longer does.
+
+  A `v-if` anchor comment now marks the choice.
+
+  These keep the shared lowering, and beside an expression child they still render
+  their branch again:
+
+  - `@else if` chains;
+  - branches with setup statements, a spread host element, a dynamic tag, or a
+    `<template>`, `<slot>` or `<component>`;
+  - an element with any `v-` attribute of its own;
+  - a choice whose next element has its own `v-else` or `v-else-if`.
+
+  A component's child (such as `KeepAlive`'s) also keeps the shared lowering,
+  because vue-jsx-vapor's server build would pass `v-if` / `v-else` to it as two
+  children. Slot content already compiled to a `createIf` that keeps its state.
+
+- [#1399](https://github.com/tsrx-org/tsrx/pull/1399)
+  [`d9c2a14`](https://github.com/tsrx-org/tsrx/commit/d9c2a14eb0211dc932b164380509d21e1e4dff8b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, a
+  server-rendered element whose child is an `@if` without `@else` (or with an
+  empty `@else {}`) now hydrates when its condition was false on the server.
+  Hydration used to throw
+  `Cannot read properties of null (reading 'insertBefore')`: vue-jsx-vapor makes
+  the shared lowering's `null` branch `createNodes(null)`, which doesn't take the
+  server's `<!---->`. When the branch is one element or component, the choice now
+  renders as that element with `v-if`, which hydrates both the `<!---->` and a
+  rendered branch and then follows the condition.
+
+  Client behaviour that changes with it:
+
+  - **Sibling expressions.** The `v-if` is a `createIf` of its own, so its branch
+    keeps its components' state when an expression child beside it changes (part
+    of [#1402](https://github.com/tsrx-org/tsrx/issues/1402)). An `@if` with a
+    non-empty `@else` there still renders again.
+  - **Slot fallback.** When a component's child content is only such `@if`s and
+    all of them are false, the component's `<slot>` fallback now shows on the
+    client too, as it does on the server. Hydrating that fallback and then
+    toggling the `@if` leaves the server's fallback text in place beside the new
+    one (`fallbackfallback`), a gap in vue-jsx-vapor's `<slot>` output.
+
+  These keep the shared lowering, and still fail to hydrate when false on the
+  server:
+
+  - an `@else if` chain, whose nested ternary gives a keyed `createIf` that
+    `VaporKeepAlive` caches, where vue-jsx-vapor's `v-else-if` doesn't;
+  - a branch with setup statements, a host element with a spread
+    (`<p {...attrs}>`), or a dynamic tag;
+  - a `<template>`, `<slot>` or `<component>` branch;
+  - a branch element with any `v-` attribute of its own, plain or namespaced
+    (`v-slot`, `v-slot:name`, `v-focus`);
+  - a choice whose next element, past any text or expression children, has its own
+    `v-else` or `v-else-if`.
+
+  An `@if` with a non-empty `@else` already hydrated and keeps the shared lowering
+  too.
+
+  `@tsrx/core` exports its `@if` lowering as `ifStatementToJsxChild`, for a
+  platform's `controlFlow.ifStatement` hook.
+
+- Updated dependencies
+  [[`1c05e13`](https://github.com/tsrx-org/tsrx/commit/1c05e13519bb63260ab00e385222c3a4ad5ade11),
+  [`c610ad5`](https://github.com/tsrx-org/tsrx/commit/c610ad5133602eaf2e73b038dca6dc77def29bb1),
+  [`cc100ea`](https://github.com/tsrx-org/tsrx/commit/cc100ea1da0b5ec9746af40184da8c0778d1036b),
+  [`d9c2a14`](https://github.com/tsrx-org/tsrx/commit/d9c2a14eb0211dc932b164380509d21e1e4dff8b)]:
+  - @tsrx/core@0.6.7
+
 ## 0.4.6
 
 ### Patch Changes
