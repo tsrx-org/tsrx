@@ -138,7 +138,9 @@ Some core ESLint rules miss part of what TSRX syntax does, and the parser can't
 change that without misdescribing the source to other rules.
 [`@tsrx/eslint-plugin`](https://www.npmjs.com/package/@tsrx/eslint-plugin) has
 TSRX versions of these rules. Its `js` configuration, for `js.configs.recommended`
-users, uses `tsrx/no-unused-vars` and `tsrx/no-unreachable` for `.tsrx` files:
+users, uses `tsrx/no-unused-vars` and `tsrx/no-unreachable` for `.tsrx` files, and
+on ESLint 10, whose `js.configs.recommended` turns on `no-useless-assignment`,
+`tsrx/no-useless-assignment`:
 
 - `no-unused-vars` reports an unused `@for` index, but its "Remove unused
   variable" suggestion deletes only the name, and `index )` doesn't parse.
@@ -158,6 +160,16 @@ users, uses `tsrx/no-unused-vars` and `tsrx/no-unreachable` for `.tsrx` files:
   `tsrx/no-unreachable` treats `@pending`, the `@catch` and the code after the
   `@try` as reached whenever the `@try` is, unless the body or `@pending` awaits
   or yields and doesn't reach its end.
+- For the same reason, `no-useless-assignment` treats a value as overwritten by a
+  block of a `@try` though another block, or the code after the `@try`, reads it:
+  a value set before the `@try` and assigned in the body but read in `@pending` or
+  the `@catch`, or a value assigned in the body and again in the `@catch` before
+  the code after the `@try` reads it. `tsrx/no-useless-assignment` lets each block
+  start from the start of the `@try` or from the end of any block before it,
+  unless the body or `@pending` awaits or yields. It still reports a value read
+  only in a block that code path analysis holds unreachable, such as a `@catch`
+  after a body that throws, or only in a block that runs again after a later one,
+  such as the body after `reset()`.
 
 Other rules built on code paths still treat every `@switch` arm as always running.
 For example, `react-hooks/rules-of-hooks` doesn't report a hook called in a
@@ -172,9 +184,6 @@ No TSRX rule covers these:
     `@catch` throws, as if the loop could run only once.
   - `react-hooks/rules-of-hooks` reports as conditional a hook after a `@try`
     whose body or `@catch` throws.
-  - `no-useless-assignment` treats an assignment in the body as overwritten by one
-    in `@catch`. It also treats a value set before the `@try` as overwritten when
-    the body or `@pending` assigns it, though the `@catch` reads it.
 
   `rules-of-hooks` also misses a hook such as `useState` called in `@catch`,
   though React fails on it. A `try` statement would fix these, but
@@ -196,9 +205,6 @@ No TSRX rule covers these:
   `@else`, `@else if` or `@for` body that holds a single statement, such as
   `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
   doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
-- A `@pending` block shows while the `@try` body suspends, but code path analysis
-  runs it after the body. So `no-useless-assignment` can flag a value only
-  `@pending` reads, when the body overwrites it or can't complete.
 
 ## Related Packages
 

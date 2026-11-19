@@ -114,22 +114,101 @@ after `tsrx.configs.react`.
   on the same code in a plain function. The
   [`@tsrx/eslint-parser` README](https://github.com/tsrx-org/tsrx/tree/main/packages/eslint-parser#known-limitations)
   explains what the core rule reports instead.
+- `tsrx/no-useless-assignment` is ESLint's `no-useless-assignment`, with the
+  blocks of a `@try` as alternatives. The core rule runs them one after another,
+  so it reports a value set before a `@try` and assigned in the body though
+  `@pending` or the `@catch` reads it, and a value the body assigns and the
+  `@catch` assigns again, which the code after the `@try` reads when the `@catch`
+  doesn't render. The compiled output runs the blocks in callbacks of the `@try`'s
+  boundaries, and the `@catch` or `@pending` can render without the blocks before
+  them. The rule also runs the core rule on code paths cut at the blocks'
+  boundaries, once as they are and once with each block, and the code after the
+  `@try`, also starting from the start of the `@try` or from the end of any block
+  before it. It drops a report of the core rule only when the cut code paths give
+  it and the ones with the added starts don't, so it reports nothing the core rule
+  doesn't, and in a file without `@try` it is the core rule.
+
+  It can still drop a report that holds:
+
+  - The added starts mix two orders. On React, Preact and Hono, the code after a
+    `@try` runs first and the blocks render later; on Solid and Vue, the blocks
+    run in source order, and an element's attributes are set after its children.
+    The rule lets a block's value reach the code after the `@try` as in source
+    order, while code path analysis runs the rest as React does, so it can drop a
+    report that holds on every target, when no single order reads the value:
+    - across two `@try`s on one path, siblings or one inside another's block. With
+      `@try { status = 'a'; <b /> } @catch (e) { <i /> }`, then the same with
+      `status = 'b'`, then `<p>{status}</p>`, the value `'a'` is never read, and
+      the rule doesn't report it;
+    - with one `@try`, when the body assigns a value before anything that can
+      throw, the `@catch` reads it, and either the code after the `@try` assigns
+      it again on every path or nothing renders the `@try`, as when it is an
+      operand of `,` that isn't the last, or a value no output uses. With
+      `let x = 'init';`, then
+      `@try { x = 'body'; <Boom /> } @catch (e) { <i>{x}</i> }`, then an `@if`
+      whose arms both assign `x`, `'init'` is never read, and the rule doesn't
+      report it;
+    - when an element after the `@try` reads the value in an attribute and assigns
+      it in its children, as `<p title={String(x)}>{(x = 3, null)}</p>` does:
+      Solid and Vue set the attribute after the children, and React, Preact and
+      Hono read it before the blocks run.
+  - On Hono, a `@pending` that neither awaits nor yields runs in the component,
+    before the body and the code after the `@try`. The rule doesn't know the
+    target, so it can drop the report of a value such a `@pending` overwrites.
+  - Like the core rule, it counts a read in a branch that can never run, such as
+    `@if (false) { … }`, and a `typeof x` in a type, and doesn't see a write in a
+    function the code calls or the assignment to the target of a `for…of` or
+    `for…in` without `let` or `const`. So such a read after a `@try` can drop the
+    report of a value the `@catch` overwrites, though the read can't run or the
+    value is overwritten again first.
+
+  It keeps the core rule's reports, adding no starts, for a `@try`:
+
+  - whose body or `@pending` awaits or yields, since those blocks run in the
+    component, in order;
+  - where code path analysis follows more than one path at once, as in a `finally`
+    block that a `throw` or a `return` can enter;
+  - in a `@switch` arm before the last, or in the last arm when an earlier arm
+    assigns anything, since code path analysis runs the arms one after another but
+    only one renders; and likewise in the body of a `@for` with `@empty`, or in
+    `@empty` when the loop assigns anything, since `@empty` renders only when the
+    body doesn't;
+  - anywhere but statements, template children, the blocks of `@if`, `@for` and
+    `@try`, and the parts of an expression the rule lists as running in order
+    (call arguments, array elements, property values, the branches of `?:`, `&&`
+    and `??`, and a few more). That leaves out attribute values, which every
+    target runs after the element's children, and a component runs whenever it
+    reads its prop; a `@for`'s index and key and a destructuring default, which
+    code path analysis runs out of order; and others, such as the operand of `!`;
+  - whose code path has a part that code path analysis runs before the `@try`'s
+    part though it really runs after it, and that part assigns something, as a
+    computed key `[x = 3]` in a destructuring target or `key (i, x = 3)` on a
+    `@for` does. The same goes for a `@try` in the iterable of a `for…of` or
+    `for…in` loop whose target isn't a new `let` or `const` binding.
+
+  It also still reports a value read only in a block that code path analysis holds
+  unreachable, such as a `@catch` after a body that throws, or only in a block
+  that runs again after a later one, as the body does after `@pending` or after
+  `reset()`. When a block always ends in a `throw`, what follows it is unreachable
+  for code path analysis, and the rule adds no starts for that `@try`.
 
 ### With `js.configs.recommended`
 
-`js.configs.recommended` turns on `no-unused-vars` and `no-unreachable`. The `js`
-configuration turns those two off for `.tsrx` files and turns on
-`tsrx/no-unused-vars` and `tsrx/no-unreachable` at `error`. Every other report and
-suggestion is the core rule's, except in the code `tsrx/no-unreachable` revives,
-where it follows exits itself: after a `@switch` arm that throws, the other arms
-and the code after the `@switch`, and after a `@try` block that throws, the
-`@try`'s other blocks and the code after it. A configuration can't read the
-severity or options another one gives the core rule, so:
+`js.configs.recommended` turns on `no-unused-vars` and `no-unreachable`, and on
+ESLint 10 also `no-useless-assignment`. The `js` configuration turns those off for
+`.tsrx` files and turns on `tsrx/no-unused-vars` and `tsrx/no-unreachable` at
+`error`, and on ESLint 10 `tsrx/no-useless-assignment`. Every other report and
+suggestion is the core rule's, except what `tsrx/no-useless-assignment` drops
+after a `@try`, and except in the code `tsrx/no-unreachable` revives, where it
+follows exits itself: after a `@switch` arm that throws, the other arms and the
+code after the `@switch`, and after a `@try` block that throws, the `@try`'s other
+blocks and the code after it. A configuration can't read the severity or options
+another one gives the core rule, so:
 
 - list `tsrx.configs.js` after `js.configs.recommended`, and after any other
   configuration that turns these core rules on. Listed before them, it leaves both
   versions on for `.tsrx` files, and each problem is reported twice;
-- on its own, without `js.configs.recommended`, it turns the two TSRX rules on;
+- on its own, without `js.configs.recommended`, it turns the TSRX rules on;
 - give `tsrx/no-unused-vars` the options you give `no-unused-vars`, and set a
   `tsrx/` rule to `warn` or `off` to change its severity;
 - name the TSRX rule in `eslint-disable` comments in `.tsrx` files:
@@ -154,6 +233,27 @@ export default [
       'tsrx/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
       'no-await-in-loop': 'off',
       'tsrx/no-await-in-loop': 'error',
+    },
+  },
+];
+```
+
+On ESLint 9, `js.configs.recommended` leaves `no-useless-assignment` off, so the
+`js` configuration doesn't turn on `tsrx/no-useless-assignment` there. If you turn
+on `no-useless-assignment`, use `tsrx/no-useless-assignment` for `.tsrx` files
+instead:
+
+```js
+export default [
+  js.configs.recommended,
+  ...tsrx.configs.recommended,
+  ...tsrx.configs.js,
+  { rules: { 'no-useless-assignment': 'error' } },
+  {
+    files: ['**/*.tsrx'],
+    rules: {
+      'no-useless-assignment': 'off',
+      'tsrx/no-useless-assignment': 'error',
     },
   },
 ];
