@@ -2136,6 +2136,28 @@ abstract class C {
 		expect(await prettier.format(source, { parser: 'typescript' })).toBe(source);
 	});
 
+	// TypeScript reads an `async` before a method's other modifiers as a
+	// modifier, which the parser read as the name, with a syntax error after
+	// it (#235).
+	test('an async before the other modifiers of a method prints like the typescript parser', async () => {
+		const source = `abstract class A {
+  async abstract m(): Promise<void>;
+  async static n() {}
+  async public static *g() {}
+  async static async() {}
+}
+`;
+		const expected = await prettier.format(source, { parser: 'typescript' });
+		expect(expected).toBe(`abstract class A {
+  abstract async m(): Promise<void>;
+  static async n() {}
+  public static async *g() {}
+  static async async() {}
+}
+`);
+		await expectFormat(source, expected);
+	});
+
 	// Prettier's key quoting read the body-less method's value as a whole method,
 	// and failed with `Cannot read properties of null` (#916).
 	test('a method without a body formats with quoteProps "consistent"', async () => {
@@ -2534,6 +2556,8 @@ describe('parse errors', () => {
 				'1:23',
 			],
 			['import.foo;', 'TS17012', '1:8'],
+			// #235: acorn threw its own error at the name.
+			['class A {\n  async constructor() {}\n}', 'TS1089', '2:3'],
 			// #881, #785, #784.
 			['import type a, { b } from "a";', TS_ERRORS.TYPE_IMPORT_DEFAULT_AND_NAMED, '1:8'],
 			// #1161: empty named bindings too.
