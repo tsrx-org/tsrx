@@ -165,6 +165,8 @@ function create_hono_platform(mode) {
 			// text; `dangerouslySetInnerHTML` renders the body as written in both
 			// modes.
 			scriptBody: 'dangerouslySetInnerHTML',
+			// Hono's `Suspense` doesn't take a `null` fallback.
+			pendingFallbackNode: true,
 		},
 		validation: {
 			// Server JSX supports async function components. The DOM renderer is

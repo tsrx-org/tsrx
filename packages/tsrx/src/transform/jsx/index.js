@@ -7143,12 +7143,30 @@ function try_statement_to_jsx_child(node, transform_context) {
 	if (pending) {
 		transform_context.needs_suspense = true;
 		const pending_body_nodes = pending.body || [];
-		const fallback_body =
+		/** @type {ESTreeJSX.JSXRenderNode | AST.Expression} */
+		let fallback_body =
 			pending_body_nodes.length === 0
 				? create_null_literal()
 				: transform_context.platform.jsx.pendingFallback === 'try-body'
 					? try_body_to_jsx_child(pending_body_nodes, transform_context)
 					: statement_body_to_jsx_child(pending_body_nodes, transform_context);
+		if (
+			transform_context.platform.jsx.pendingFallbackNode &&
+			fallback_body.type !== 'JSXElement' &&
+			fallback_body.type !== 'JSXFragment'
+		) {
+			// An empty fragment for an empty `@pending`, and around a body that can
+			// render nothing, such as a lone `@if`.
+			fallback_body = b.jsx_fragment(
+				pending_body_nodes.length === 0
+					? []
+					: [
+							fallback_body.type === 'JSXExpressionContainer'
+								? fallback_body
+								: to_jsx_expression_container(/** @type {AST.Expression} */ (fallback_body)),
+						],
+			);
+		}
 		const fallback_content =
 			fallback_body.type === 'JSXExpressionContainer'
 				? fallback_body
@@ -7314,7 +7332,7 @@ function try_body_to_jsx_child(body_nodes, transform_context) {
 		b.block(build_render_statements(body_nodes, true, transform_context)),
 	);
 	return create_jsx_element(
-		'TsrxTryBody',
+		TRY_BODY_INTERNAL_NAME,
 		[b.jsx_attribute(b.jsx_id('render'), to_jsx_expression_container(render_fn))],
 		[],
 	);
@@ -7430,7 +7448,7 @@ function inject_try_imports(program, transform_context, platform, suspense_sourc
 	}
 
 	if (transform_context.needs_try_body && platform.imports.tryBody) {
-		imports.push(b.imports([['TsrxTryBody', 'TsrxTryBody']], platform.imports.tryBody));
+		imports.push(b.imports([['TsrxTryBody', TRY_BODY_INTERNAL_NAME]], platform.imports.tryBody));
 	}
 
 	const merge_refs_source =
@@ -8345,12 +8363,14 @@ export const NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME =
 export const SPREAD_REF_BAGS_INTERNAL_NAME = '__spread_ref_bags';
 /**
  * Local aliases for the components the transform imports itself: `Suspense`
- * for `@pending`, `TsrxErrorBoundary` for `@catch`, and `Fragment` for keyed
- * fragment rows. An authored binding of the public name, imported or local,
- * then neither collides with the import nor replaces the generated element.
+ * for `@pending`, `TsrxErrorBoundary` for `@catch`, `TsrxTryBody` for a
+ * `@try` or `@pending` body, and `Fragment` for keyed fragment rows. An
+ * authored binding of the public name, imported or local, then neither
+ * collides with the import nor replaces the generated element.
  */
 export const SUSPENSE_INTERNAL_NAME = '__Suspense';
 export const ERROR_BOUNDARY_INTERNAL_NAME = '__TsrxErrorBoundary';
+export const TRY_BODY_INTERNAL_NAME = '__TsrxTryBody';
 export const FRAGMENT_INTERNAL_NAME = '__Fragment';
 /**
  * Point a generated node at the DIRECTIVE KEYWORD that produced it.

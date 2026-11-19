@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import {
 	LocalSuspenseNameApp,
+	LocalTryBodyNameApp,
 	LoopVariableFragmentNameApp,
 	ModuleErrorBoundaryNameApp,
+	ModuleTryBodyNameApp,
 } from './generated-import-bindings-components.tsrx';
 
 /**
  * Shared runtime suite for the components the compiler imports itself
- * (`Suspense`, `Fragment`, `TsrxErrorBoundary`). An authored binding with one
- * of those names neither breaks the build nor replaces the generated element.
+ * (`Suspense`, `Fragment`, `TsrxErrorBoundary`, `TsrxTryBody`). An authored
+ * binding with one of those names neither breaks the build nor replaces the
+ * generated element.
  */
 export function runGeneratedImportBindingsRuntimeTests() {
 	async function settle() {
@@ -47,6 +50,20 @@ export function runGeneratedImportBindingsRuntimeTests() {
 			expect(texts('.generated-suspense-child')).toEqual(['ready']);
 			expect(texts('.local-suspense .generated-suspense-child')).toEqual([]);
 		});
+
+		it.each([
+			['a module binding', ModuleTryBodyNameApp, '.authored-try-body'],
+			['a setup local', LocalTryBodyNameApp, '.local-try-body'],
+		])(
+			'renders the generated @try body beside %s named TsrxTryBody',
+			async (_name, App, authored) => {
+				await mount(App);
+
+				expect(texts(`${authored} .authored-try-body-child`)).toEqual(['authored']);
+				expect(texts('.generated-try-body-child')).toEqual(['ready']);
+				expect(texts(`${authored} .generated-try-body-child`)).toEqual([]);
+			},
+		);
 
 		it('renders keyed fragment rows when the loop variable is named Fragment', async () => {
 			await mount(LoopVariableFragmentNameApp);

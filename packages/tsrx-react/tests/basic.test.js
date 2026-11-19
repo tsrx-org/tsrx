@@ -1469,10 +1469,10 @@ describe('@tsrx/react basic', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toContain("import { TsrxTryBody } from '@tsrx/react/try-body';");
+		expect(code).toContain("import { TsrxTryBody as __TsrxTryBody } from '@tsrx/react/try-body';");
 		// The body renders as a child of <Suspense>, so `use()` suspends to it.
 		expect(code).toMatch(
-			/<__Suspense fallback=[\s\S]*><TsrxTryBody render=\{\(\) => \{\s*const data = use\(fetchData\(\)\);/,
+			/<__Suspense fallback=[\s\S]*><__TsrxTryBody render=\{\(\) => \{\s*const data = use\(fetchData\(\)\);/,
 		);
 	});
 
@@ -1622,7 +1622,7 @@ describe('@tsrx/react basic', () => {
 		// As a component inside both boundaries, the fallback runs only while
 		// the body suspends, and its throw reaches `@catch`.
 		expect(code).toMatch(
-			/<__Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
+			/<__Suspense fallback=\{<__TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
 		);
 	});
 

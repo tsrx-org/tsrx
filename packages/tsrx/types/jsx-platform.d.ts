@@ -654,6 +654,15 @@ export interface JsxPlatform {
 		 */
 		pendingFallback?: 'try-body';
 		/**
+		 * Whether the `Suspense` fallback has to be a node. When set, an empty
+		 * `@pending` passes an empty fragment, and a body that can render
+		 * nothing, such as a lone `@if`, is wrapped in one. For runtimes whose
+		 * `Suspense` doesn't take `null`: Hono's DOM renderer then lets the
+		 * suspension through, and its server renderer calls
+		 * `fallback.toString()`.
+		 */
+		pendingFallbackNode?: boolean;
+		/**
 		 * Where a host spread binds its normalized props bag when the element
 		 * also reads the bag's `ref` through a `ref` attribute.
 		 *
