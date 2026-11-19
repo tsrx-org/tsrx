@@ -447,21 +447,55 @@ function has_code_block_render(block) {
 /**
  * The `@{ … }` blocks every target inlines before a `return` of `argument`, in
  * the same function: a returned code-only block, and each code-only child of a
- * returned fragment.
+ * returned fragment. The lowering returns what a fragment's `{ … }` holds, and
+ * a render-only block's output, the same way (`build_return_expression`), so
+ * this follows `{ … }` containers and render-only blocks too. It follows every
+ * container, so it also takes in a few blocks that the lowering runs in a
+ * function of their own, such as `<>{@{ … }}<b /></>`, which TS1114 was
+ * reported for before too.
  * @param {AST.Node | null | undefined} argument
  * @returns {AST.JSXCodeBlock[]}
  */
 function get_inlined_code_blocks(argument) {
-	let value = argument;
+	/** @type {AST.JSXCodeBlock[]} */
+	const blocks = [];
+	collect_returned_code_blocks(argument, true, blocks);
+	return blocks;
+}
+
+/**
+ * Add to `blocks` the code-only blocks inlined from `node`, a returned value or
+ * a part of one (see `get_inlined_code_blocks`). A fragment's code-only
+ * children are inlined when the fragment is returned or in a `{ … }`
+ * container, and not when it is a child of another fragment or a render-only
+ * block's output, whose containers are still followed.
+ * @param {AST.Node | null | undefined} node
+ * @param {boolean} inline whether a code-only block here is inlined
+ * @param {AST.JSXCodeBlock[]} blocks
+ * @returns {void}
+ */
+function collect_returned_code_blocks(node, inline, blocks) {
+	let value = node;
 	while (value?.type === 'ParenthesizedExpression') value = value.expression;
-	/** @type {AST.Node[]} */
-	let blocks;
-	if (value?.type === 'JSXFragment') blocks = value.children;
-	else if (value?.type === 'JSXCodeBlock') blocks = [value];
-	else return [];
-	return /** @type {AST.JSXCodeBlock[]} */ (
-		blocks.filter((child) => child.type === 'JSXCodeBlock' && !has_code_block_render(child))
-	);
+	if (value?.type === 'JSXExpressionContainer') {
+		collect_returned_code_blocks(value.expression, true, blocks);
+	} else if (value?.type === 'JSXFragment') {
+		for (const child of value.children) {
+			if (child.type === 'JSXExpressionContainer') {
+				collect_returned_code_blocks(child, true, blocks);
+			} else if (child.type === 'JSXFragment') {
+				collect_returned_code_blocks(child, false, blocks);
+			} else if (child.type === 'JSXCodeBlock') {
+				collect_returned_code_blocks(child, inline, blocks);
+			}
+		}
+	} else if (value?.type === 'JSXCodeBlock') {
+		if (!has_code_block_render(value)) {
+			if (inline) blocks.push(/** @type {AST.JSXCodeBlock} */ (value));
+		} else if ((value.body ?? []).length === 0) {
+			collect_returned_code_blocks(value.render, false, blocks);
+		}
+	}
 }
 
 /**

@@ -3272,6 +3272,32 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				);
 			}
 
+			// Nor in one reached through a `{ … }` or a render-only block, whose value
+			// the lowering returns in the same way.
+			for (const returned of [
+				'<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>',
+				'<>{(<>@{ outer: for (const y of items) { console.log(y); } }</>)}</>',
+				'(<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>)',
+				'<>{<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>}</>',
+				'<><>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</></>',
+				'<>@{ console.log(x); }{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>',
+				'@{ <>{@{ outer: for (const y of items) { console.log(y); } }}</> }',
+				'@{ <>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</> }',
+				'@{ @{ <>{@{ outer: for (const y of items) { console.log(y); } }}</> } }',
+				'@{ for (const z of items) { return <>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>; } }',
+			]) {
+				const contained = source.replace(
+					'<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>',
+					returned,
+				);
+				expect(() => compile(contained, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({
+						code: 'TS1114',
+						pos: contained.indexOf('outer: for (const y'),
+					}),
+				);
+			}
+
 			// Nor in a code-only block chained in one's output position.
 			const chained = source.replace(
 				'@{ outer: for (const y of items) { console.log(y); } }',
@@ -3301,6 +3327,7 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			for (const returned of [
 				'@{ outer: for (const y of items) { console.log(y); } }',
 				'<>@{ outer: for (const y of items) { console.log(y); } }<i /></>',
+				'<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>',
 			]) {
 				const in_body = `export function App({ items }: { items: string[] }) {
 					const view = @{ outer: for (const x of items) { if (x) return ${returned}; } <b /> };
@@ -3326,6 +3353,24 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 					return null;
 				}`;
 				expect(compile(allowed, 'App.tsrx', { collect: true }).errors, block).toEqual([]);
+			}
+
+			// Nor is a code-only block in a fragment nested in the returned one, in
+			// a render-only block's output, or reached through the output of a block
+			// with statements.
+			for (const returned of [
+				'<><>@{ outer: for (const y of items) { console.log(y); } }</></>',
+				'@{ console.log(x); <>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</> }',
+				'@{ <>@{ outer: for (const y of items) { console.log(y); } }<b /></> }',
+				'@{ <>@{ outer: for (const y of items) { console.log(y); } }</> }',
+			]) {
+				const allowed = `export function App({ items }: { items: string[] }) {
+					outer: for (const x of items) {
+						if (x) return ${returned};
+					}
+					return null;
+				}`;
+				expect(compile(allowed, 'App.tsrx', { collect: true }).errors, returned).toEqual([]);
 			}
 
 			// A returned code-only block in a template body is inlined into that

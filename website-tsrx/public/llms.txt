@@ -993,8 +993,9 @@ nested `@{ ... }` block. A code-only block that is a child of a returned
 fragment is inlined before the `return`, but it keeps the same rule, as it keeps
 the `var` rule. A label in any of these bodies, or in an `@if`, `@for` or
 `@switch` body, may reuse the name of a label outside it, as in a nested
-function, except in that inlined block or a returned code-only block, which is
-inlined too.
+function, except in that inlined block, a returned code-only block, or one of
+these reached through a `{ ... }` or a render-only `@{ ... }` in the returned
+value (`return <>{<>@{ ... }</>}</>`), which are all inlined too (TS1114).
 
 ### Guard returns
 
