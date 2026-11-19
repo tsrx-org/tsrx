@@ -1144,10 +1144,9 @@ export function SpecificationPage() @{
 								but it keeps the same rule, as it keeps the <code class="inline-code">var</code>{' '}
 								rule (TSRX2030). A label in any template body may reuse the name of a label outside
 								it, as in a nested function, except in that inlined block, a returned code-only
-								block, or one of these reached through a{' '}
-								<code class="inline-code">{'{ ... }'}</code> or a render-only{' '}
-								<code class="inline-code">{'@{ ... }'}</code> in the returned value, which are all
-								inlined too (TS1114).
+								block, or one of these in a <code class="inline-code">{'{ ... }'}</code> of the
+								returned value, also inside a render-only{' '}
+								<code class="inline-code">{'@{ ... }'}</code>, where TS1114 is still reported.
 							</p>
 							<p class="section-body">
 								Plain JSX children are the default. When an expression position, function body,
