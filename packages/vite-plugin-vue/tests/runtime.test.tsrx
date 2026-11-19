@@ -5102,6 +5102,72 @@ function NestedLoader() @{
 	<Inner />
 }
 
+// The same shapes with a plain @try inside an authored Suspense.
+function PlainTryResolvesInElement() @{
+	const AsyncChild = defineVaporAsyncComponent(pending_loader);
+	@try {
+		<section>
+			<AsyncChild />
+		</section>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
+function PlainTrySibling() @{
+	const AsyncChild = defineVaporAsyncComponent(pending_loader);
+	@try {
+		<>
+			<AsyncChild />
+			<PendingSibling />
+		</>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
+function PlainTryReject() @{
+	const Rejects = defineVaporAsyncComponent(
+		() => new Promise<any>((_resolve, reject) => (reject_first = reject)),
+	);
+	const AsyncChild = defineVaporAsyncComponent(pending_loader);
+	@try {
+		<>
+			<Rejects />
+			<AsyncChild />
+		</>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
+function SuspendedResolvesInElement() @{
+	<Suspense
+		v-slots={{
+			default: () => <PlainTryResolvesInElement />,
+			fallback: () => <i class="pending-loading">{'loading'}</i>,
+		}}
+	/>
+}
+
+function SuspendedSibling() @{
+	<Suspense
+		v-slots={{
+			default: () => <PlainTrySibling />,
+			fallback: () => <i class="pending-loading">{'loading'}</i>,
+		}}
+	/>
+}
+
+function SuspendedReject() @{
+	<Suspense
+		v-slots={{
+			default: () => <PlainTryReject />,
+			fallback: () => <i class="pending-loading">{'loading'}</i>,
+		}}
+	/>
+}
+
 const late_async_shown = ref(false);
 let finish_late: (component: unknown) => void = () => {};
 
@@ -5192,6 +5258,8 @@ describe('tsrx-vue a @try whose body throws while its Suspense is pending', () =
 		return { app, handled };
 	}
 
+	// With @pending, the boundary around the Suspense shows the @catch and
+	// replaces the whole Suspense, as React's does.
 	it.each([
 		['', PendingResolvesToThrower],
 		[' inside an element', PendingResolvesToThrowerInElement],
@@ -5209,12 +5277,50 @@ describe('tsrx-vue a @try whose body throws while its Suspense is pending', () =
 		},
 	);
 
-	it('shows the @catch for a sibling that threw, once the async component resolves', async () => {
+	it('shows the @catch at once for a sibling that throws while one loads', async () => {
 		pending_sibling_broken.value = false;
 		const { app, handled } = await mount(PendingSiblingThrows);
 		expect(text('.pending-loading')).toBe('loading');
 		pending_sibling_broken.value = true;
-		await flush();
+		await settle();
+		expect(text('.pending-caught')).toBe('Error: sibling');
+		expect(container.querySelector('.pending-loading')).toBeNull();
+		expect(handled).toEqual([]);
+		pending_finish(ResolvedFine);
+		await settle();
+		expect(text('.pending-caught')).toBe('Error: sibling');
+		app.unmount();
+	});
+
+	it('shows the @catch at once for an async component that rejects while another loads', async () => {
+		const { app, handled } = await mount(PendingRejectBeside);
+		reject_first(new Error('rejected'));
+		await settle();
+		expect(text('.pending-caught')).toBe('Error: rejected');
+		expect(container.querySelector('.pending-loading')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	// A plain @try inside an authored Suspense shows its own @catch, once the
+	// async components the Suspense waits for in its body have settled.
+	it('waits for the loading component an error came through, inside an element', async () => {
+		const { app, handled } = await mount(SuspendedResolvesInElement);
+		expect(text('.pending-loading')).toBe('loading');
+		pending_finish(ResolvedThrows);
+		await settle();
+		expect(text('.pending-caught')).toBe('Error: resolved body');
+		expect(container.querySelector('.pending-loading')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('waits for a loading component beside the one that threw', async () => {
+		pending_sibling_broken.value = false;
+		const { app, handled } = await mount(SuspendedSibling);
+		pending_sibling_broken.value = true;
+		await settle();
+		expect(text('.pending-loading')).toBe('loading');
 		pending_finish(ResolvedFine);
 		await settle();
 		expect(text('.pending-caught')).toBe('Error: sibling');
@@ -5223,8 +5329,8 @@ describe('tsrx-vue a @try whose body throws while its Suspense is pending', () =
 		app.unmount();
 	});
 
-	it('shows the @catch for a rejected async component once the other one resolves', async () => {
-		const { app, handled } = await mount(PendingRejectBeside);
+	it('waits for a loading component beside one that rejected', async () => {
+		const { app, handled } = await mount(SuspendedReject);
 		reject_first(new Error('rejected'));
 		await settle();
 		expect(text('.pending-loading')).toBe('loading');
@@ -5237,7 +5343,7 @@ describe('tsrx-vue a @try whose body throws while its Suspense is pending', () =
 
 	it('waits for an async component that a loading one renders once it resolves', async () => {
 		pending_sibling_broken.value = false;
-		const { app, handled } = await mount(PendingSiblingThrows);
+		const { app, handled } = await mount(SuspendedSibling);
 		pending_sibling_broken.value = true;
 		await flush();
 		pending_finish(NestedLoader);

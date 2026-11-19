@@ -591,6 +591,17 @@ function initialize_boundary_state(instance) {
 	});
 
 	onErrorCaptured((captured_error, source) => {
+		// The boundary inside a `@pending` `Suspense` that renders the same
+		// `@catch` as the one around it: while that `Suspense` is pending, let
+		// the one around it show the `@catch`, as React's error boundary
+		// around a `Suspense` does. It replaces the whole `Suspense`; swapping
+		// here would unmount part of the branch the `Suspense` waits for.
+		if (
+			props_of(instance)?.sharesCatch &&
+			/** @type {{ suspense?: PendingSuspense | null }} */ (instance).suspense?.pendingBranch
+		) {
+			return;
+		}
 		// The boundary inside this one that renders the same `@catch` let this
 		// error from that `@catch` go on: let it go on too.
 		if (thrown_by_twin_fallback(source, instance)) return;

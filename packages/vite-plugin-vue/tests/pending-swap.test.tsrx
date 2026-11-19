@@ -186,14 +186,21 @@ const CancelledOnDispose = defineComponent({
 	},
 });
 
-function VdomPending() @{
+function VdomTry() @{
 	@try {
 		<CancelledOnDispose />
-	} @pending {
-		<i class="vdom-loading">{'loading'}</i>
 	} @catch (err) {
 		<b class="vdom-caught">{String(err)}</b>
 	}
+}
+
+function VdomPending() @{
+	<Suspense
+		v-slots={{
+			default: () => <VdomTry />,
+			fallback: () => <i class="vdom-loading">{'loading'}</i>,
+		}}
+	/>
 }
 
 const first_error = ref(false);
