@@ -79,7 +79,10 @@ const ORDERED_PARTS: Record<string, string[]> = {
 	TSAsExpression: ['expression'],
 	TSSatisfiesExpression: ['expression'],
 	TSNonNullExpression: ['expression'],
-	// Not the attributes: Solid sets them in effects, after the children.
+	// Not the attributes. Every target runs a `@try` in an attribute of a native
+	// element after the element's children (Solid's dynamic attributes and Vue's
+	// are set after them, and React, Preact and Hono render the blocks later),
+	// and a component's prop runs whenever the component reads it.
 	JSXElement: ['children'],
 	JSXFragment: ['children'],
 	JSXExpressionContainer: ['expression'],
@@ -122,7 +125,8 @@ function writes(node: any): boolean {
  * though it really runs after it, assigns something: a destructuring target
  * runs after its value, and a `@for`'s index and key after the iterable and
  * around the body. Code path analysis runs a `for…in` or `for…of` target
- * after the iterable, but the core rule doesn't see the loop assign it.
+ * after the iterable, but the core rule doesn't see the loop assign it, so a
+ * target that isn't a new `let` or `const` binding counts.
  */
 function writes_late(parent: any, child: unknown): boolean {
 	switch (parent.type) {
@@ -132,7 +136,10 @@ function writes_late(parent: any, child: unknown): boolean {
 			return child === parent.right && writes(parent.left);
 		case 'ForInStatement':
 		case 'ForOfStatement':
-			return child === parent.right && parent.left.type !== 'VariableDeclaration';
+			return (
+				child === parent.right &&
+				(parent.left.type !== 'VariableDeclaration' || parent.left.kind === 'var')
+			);
 		case 'JSXForExpression':
 			return child === parent.loop && (writes(parent.index) || writes(parent.key));
 		default:
@@ -141,15 +148,17 @@ function writes_late(parent: any, child: unknown): boolean {
 }
 
 /**
- * Whether the code that code path analysis runs after a node, in its code
- * path, can really run after it. It can't in a `@switch` arm before the last,
- * since the arms run one after another for code path analysis but only one
- * renders, nor in the body of a `@for` with `@empty`, which renders only when
- * the body doesn't, nor in a `@for`'s index or key, which run before the loop
- * for code path analysis but after the iterable, nor in a destructuring
- * default, which code path analysis runs before the value it defaults. Nor
- * can it when code path analysis runs an assignment before the node that
- * really runs after it, as in a computed key of a destructuring target.
+ * Whether the code that code path analysis runs before and after a node, in
+ * its code path, really runs before and after it. Code path analysis runs
+ * the `@switch` arms one after another, but only one renders, so the code
+ * after an arm before the last doesn't follow it, and an earlier arm that
+ * assigns doesn't come before the last. Likewise `@empty` renders only when
+ * the loop's body doesn't, so the body doesn't follow it when there is an
+ * `@empty`, and a loop that assigns doesn't come before `@empty`. A `@for`'s
+ * index and key run before the loop for code path analysis, but after the
+ * iterable, and a destructuring default before the value it defaults. Nor
+ * does it hold when code path analysis runs an assignment before the node
+ * that really runs after it, as in a computed key of a destructuring target.
  */
 function runs_in_order(node: any): boolean {
 	for (
@@ -167,11 +176,14 @@ function runs_in_order(node: any): boolean {
 		if (parent.type === 'JSXForExpression') {
 			if (child === parent.loop) {
 				if (parent.empty && previous === child.body) return false;
-			} else if (child !== parent.empty) {
+			} else if (
+				child !== parent.empty ||
+				[parent.index, parent.key, parent.loop.left, parent.loop.body].some(writes)
+			) {
 				return false;
 			}
 		} else if (parent.type === 'JSXSwitchExpression') {
-			if (parent.cases.at(-1) !== child) return false;
+			if (parent.cases.at(-1) !== child || parent.cases.slice(0, -1).some(writes)) return false;
 		} else if (
 			!ORDERED_PARTS[parent.type]?.some((part) =>
 				Array.isArray(parent[part]) ? parent[part].includes(child) : parent[part] === child,

@@ -140,6 +140,31 @@ ruleTester.run('no-useless-assignment', rule, {
 		@for (const item of [x]; key item) { <li>{item}</li> }
 	</ul>
 }`,
+		// The last `@switch` arm and `@empty` are cut when nothing that code path
+		// analysis runs before them assigns.
+		`export function A({ n }) @{
+	let x = 0;
+	<div>
+		@switch (n) {
+			@case 1: {
+				<b />
+			}
+			@default: {
+				@try { x = 1; <p>{x}</p> } @catch (e) { <i>{x}</i> }
+			}
+		}
+	</div>
+}`,
+		`export function A({ items }) @{
+	let x = 0;
+	<div>
+		@for (const i of items) {
+			<b>{i}</b>
+		} @empty {
+			@try { x = 1; <p>{x}</p> } @catch (e) { <i>{x}</i> }
+		}
+	</div>
+}`,
 		// An escaped name is still a read.
 		component(`let x = 0;`, `@try { log(n); x = 1; <>{x}</> } @catch (e) { <>{\\u0078}</> }`),
 		// Code without `@try` is left to the core rule.
@@ -215,14 +240,85 @@ ruleTester.run('no-useless-assignment', rule, {
 }`,
 			errors: [{ messageId: 'unnecessaryAssignment', line: 6, column: 10 }],
 		},
-		// A `@try` in an attribute's value isn't cut: Solid sets attributes in
-		// effects, after the children.
+		// A `@try` in an attribute's value isn't cut: every target runs it after
+		// the element's children, and a component runs it whenever it reads the
+		// prop.
 		{
 			code: `export function A({ n, log, Card }) @{
 	let x = 0;
 	<Card header={<div>@try { x = 1; <b>{x}</b> } @catch (e) { <i>{x}</i> }</div>} />
 }`,
 			errors: [{ messageId: 'unnecessaryAssignment', line: 2, column: 6 }],
+		},
+		// Code path analysis runs an earlier `@switch` arm before the last one, and
+		// the loop before `@empty`, but only one of them renders.
+		{
+			code: `export function A({ n, log }) @{
+	let x = 0;
+	log(x);
+	<div>
+		@switch (n) {
+			@case 1: {
+				x = 1;
+				<b />
+			}
+			@default: {
+				@try { x = 2; <p /> } @catch (e) { <i>{x}</i> }
+			}
+		}
+	</div>
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 7, column: 5 }],
+		},
+		{
+			code: `export function A({ items }) @{
+	let x = 0;
+	<div>
+		@for (const i of items) {
+			x = i;
+			<b />
+		} @empty {
+			@try { x = 2; <p /> } @catch (e) { <i>{x}</i> }
+		}
+	</div>
+}`,
+			errors: [
+				{ messageId: 'unnecessaryAssignment', line: 2, column: 6 },
+				{ messageId: 'unnecessaryAssignment', line: 5, column: 4 },
+			],
+		},
+		// A `var` head assigns the function's variable, which the core rule
+		// doesn't see.
+		{
+			code: `export function A(log) {
+	var x = 0;
+	log(x);
+	for (var x of [
+		@{
+			<div>@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }</div>
+		},
+	])
+		log(x);
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 6, column: 16 }],
+		},
+		// Known gap: the added starts mix the two orders with one `@try` too. The
+		// core rule also reports `'init'` (2:6), which no target reads: React,
+		// Preact and Hono render the `@catch` after the `@if`, and Solid and Vue
+		// run the body first. The rule drops it, since the `@catch` can start from
+		// the start of the `@try`.
+		{
+			code: `export function A({ c, Boom }) @{
+	let x = 'init';
+	<div>
+		@try { x = 'body'; <Boom /> } @catch (e) { <i>{x}</i> }
+		@if (c) { x = 'after-a'; <b /> } @else { x = 'after-b'; <b /> }
+	</div>
+}`,
+			errors: [
+				{ messageId: 'unnecessaryAssignment', line: 5, column: 13 },
+				{ messageId: 'unnecessaryAssignment', line: 5, column: 44 },
+			],
 		},
 		// A computed key in a destructuring target runs after the value, though
 		// code path analysis runs it before.

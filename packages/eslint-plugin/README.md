@@ -130,20 +130,28 @@ after `tsrx.configs.react`.
 
   It can still drop a report that holds:
 
-  - The added starts mix two orders: the code after a `@try` can run before its
-    blocks, as on React, Preact and Hono, or after them, in source order. Across
-    sibling `@try`s, that can drop a report that holds on every target. With
-    `@try { status = 'a'; <b /> } @catch (e) { <i /> }`, then the same with
-    `status = 'b'`, then `<p>{status}</p>`, the value `'a'` is never read, and the
-    rule doesn't report it.
+  - The added starts mix two orders. On React, Preact and Hono, the code after a
+    `@try` runs first and the blocks render later; on Solid and Vue, the blocks
+    run in source order. So the rule can drop a report that holds on every target:
+    - across two `@try`s on one path, siblings or one inside another's block. With
+      `@try { status = 'a'; <b /> } @catch (e) { <i /> }`, then the same with
+      `status = 'b'`, then `<p>{status}</p>`, the value `'a'` is never read, and
+      the rule doesn't report it;
+    - with one `@try`, when the body assigns a value before anything that can
+      throw, the `@catch` reads it, and the code after the `@try` assigns it again
+      on every path. With `let x = 'init';`, then
+      `@try { x = 'body'; <Boom /> } @catch (e) { <i>{x}</i> }`, then an `@if`
+      whose arms both assign `x`, `'init'` is never read, and the rule doesn't
+      report it.
   - On Hono, a `@pending` that neither awaits nor yields runs in the component,
     before the body and the code after the `@try`. The rule doesn't know the
     target, so it can drop the report of a value such a `@pending` overwrites.
   - Like the core rule, it counts a read in a branch that can never run, such as
     `@if (false) { … }`, and a `typeof x` in a type, and doesn't see a write in a
-    function the code calls. So such a read after a `@try`, or one after a call
-    that overwrites the value, can drop the report of a value the `@catch`
-    overwrites.
+    function the code calls or the assignment to the target of a `for…of` or
+    `for…in` without `let` or `const`. So such a read after a `@try` can drop the
+    report of a value the `@catch` overwrites, though the read can't run or the
+    value is overwritten again first.
 
   It keeps the core rule's reports, adding no starts, for a `@try`:
 
@@ -151,20 +159,23 @@ after `tsrx.configs.react`.
     component, in order;
   - where code path analysis follows more than one path at once, as in a `finally`
     block that a `throw` or a `return` can enter;
-  - in a `@switch` arm before the last, since code path analysis runs the arms one
-    after another but only one renders, or in the body of a `@for` with `@empty`,
-    which renders only when the body doesn't;
+  - in a `@switch` arm before the last, or in the last arm when an earlier arm
+    assigns anything, since code path analysis runs the arms one after another but
+    only one renders; and likewise in the body of a `@for` with `@empty`, or in
+    `@empty` when the loop assigns anything, since `@empty` renders only when the
+    body doesn't;
   - anywhere but statements, template children, the blocks of `@if`, `@for` and
     `@try`, and the parts of an expression the rule lists as running in order
     (call arguments, array elements, property values, the branches of `?:`, `&&`
-    and `??`, and a few more). That leaves out attribute values, which Solid sets
-    in effects, after the children; a `@for`'s index and key and a destructuring
-    default, which code path analysis runs out of order; and others, such as the
-    operand of `!`;
+    and `??`, and a few more). That leaves out attribute values, which every
+    target runs after the element's children, and a component runs whenever it
+    reads its prop; a `@for`'s index and key and a destructuring default, which
+    code path analysis runs out of order; and others, such as the operand of `!`;
   - whose code path has a part that code path analysis runs before the `@try`'s
     part though it really runs after it, and that part assigns something, as a
     computed key `[x = 3]` in a destructuring target or `key (i, x = 3)` on a
-    `@for` does.
+    `@for` does. The same goes for a `@try` in the iterable of a `for…of` or
+    `for…in` loop whose target isn't a new `let` or `const` binding.
 
   It also still reports a value read only in a block that code path analysis holds
   unreachable, such as a `@catch` after a body that throws, or only in a block
