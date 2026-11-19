@@ -162,10 +162,12 @@ on ESLint 10, whose `js.configs.recommended` turns on `no-useless-assignment`,
   block of a `@try` though another block, or the code after the `@try`, reads it:
   a value set before the `@try` and assigned in the body but read in `@pending` or
   the `@catch`, or a value assigned in the body and again in the `@catch` before
-  the code after the `@try` reads it. `tsrx/no-useless-assignment` treats the
-  blocks as alternatives, unless the body or `@pending` awaits or yields. It still
-  reports a value read only in a block that code path analysis holds unreachable,
-  such as a `@catch` after a body that throws.
+  the code after the `@try` reads it. `tsrx/no-useless-assignment` lets each block
+  start from the start of the `@try` or from the end of any block before it,
+  unless the body or `@pending` awaits or yields. It still reports a value read
+  only in a block that code path analysis holds unreachable, such as a `@catch`
+  after a body that throws, or only in a block that runs again after a later one,
+  such as the body after `reset()`.
 
 Other rules built on code paths still treat every `@switch` arm as always running.
 For example, `react-hooks/rules-of-hooks` doesn't report a hook called in a

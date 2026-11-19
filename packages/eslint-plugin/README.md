@@ -119,15 +119,18 @@ after `tsrx.configs.react`.
   so it reports a value set before a `@try` and assigned in the body though
   `@pending` or the `@catch` reads it, and a value assigned in the body and again
   in the `@catch` though the code after the `@try` reads it. The compiled output
-  runs the blocks in callbacks of the `@try`'s boundaries, in any order and after
-  the code that follows the `@try`. The rule runs the core rule a second time on
-  code paths that give each block a path of its own from the start of the `@try`
-  and from the end of each other block, and reports only what both runs report: it
-  reports nothing the core rule doesn't, and in a file without `@try` it is the
-  core rule. A `@try` whose body or `@pending` awaits or yields keeps the core
-  rule's answers, since those blocks run in the component, in order. It still
-  reports a value read only in a block that code path analysis holds unreachable,
-  such as a `@catch` after a body that throws.
+  runs the blocks in callbacks of the `@try`'s boundaries, and the `@catch` or
+  `@pending` can render without the blocks before them. The rule runs the core
+  rule a second time on code paths that let each block, and the code after the
+  `@try`, start from the start of the `@try` or from the end of any block before
+  it, and reports only what both runs report: it reports nothing the core rule
+  doesn't, and in a file without `@try` it is the core rule. It still reports a
+  value read only in a block that code path analysis holds unreachable, such as a
+  `@catch` after a body that throws, or only in a block that runs again after a
+  later one, as the body does after `@pending` or after `reset()`. It keeps the
+  core rule's answers for a `@try` whose body or `@pending` awaits or yields,
+  since those blocks run in the component, in order, and for a `@try` in a
+  `finally` block.
 
 ### With `js.configs.recommended`
 

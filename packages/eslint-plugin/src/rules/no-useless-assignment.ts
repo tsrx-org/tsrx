@@ -20,13 +20,14 @@ interface Piece {
 
 /** The pieces a `@try`'s boundaries end and start. */
 interface TryPieces {
+	/** Whether each boundary had one current segment, so its pieces line up. */
+	single: boolean;
 	entry: Piece[];
 	body_start: Piece[];
 	body_end: Piece[];
 	pending_start: Piece[];
 	pending_end: Piece[];
 	handler_start: Piece[];
-	handler_end: Piece[];
 }
 
 /**
@@ -40,11 +41,10 @@ interface TryPieces {
  *
  * The rule runs the core rule twice. One copy sees the code paths as they are.
  * The other sees each segment cut at the boundaries of every `@try` whose body
- * and `@pending` neither await nor yield, with each block reachable from the
- * start of the `@try` and from the end of each other block, and the code after
- * the `@try` reachable from all of them. It reports what both copies report,
- * so it reports nothing the core rule doesn't, and in a file without `@try`
- * it is the core rule.
+ * and `@pending` neither await nor yield, with each block and the code after
+ * the `@try` reachable from the start of the `@try` and from the end of each
+ * block before it. It reports what both copies report, so it reports nothing
+ * the core rule doesn't, and in a file without `@try` it is the core rule.
  */
 const rule: Rule.RuleModule = {
 	meta: wrapper_meta(
@@ -143,19 +143,20 @@ const rule: Rule.RuleModule = {
 				if (suspends(node.block) || suspends(node.pending)) return;
 				const { ended, started } = cut_here(node);
 				tries.set(node, {
+					single: ended.length === 1,
 					entry: ended,
 					body_start: started,
 					body_end: [],
 					pending_start: [],
 					pending_end: [],
 					handler_start: [],
-					handler_end: [],
 				});
 			},
 			BlockStatement(node: any) {
 				const state = tries.get(node.parent);
 				if (!state || node.parent.pending !== node) return;
 				const { ended, started } = cut_here(node);
+				state.single &&= ended.length === 1;
 				state.body_end = ended;
 				state.pending_start = started;
 			},
@@ -163,6 +164,7 @@ const rule: Rule.RuleModule = {
 				const state = tries.get(node.parent);
 				if (!state) return;
 				const { ended, started } = cut_here(node);
+				state.single &&= ended.length === 1;
 				if (node.parent.pending) state.pending_end = ended;
 				else state.body_end = ended;
 				state.handler_start = started;
@@ -171,13 +173,16 @@ const rule: Rule.RuleModule = {
 				const state = tries.get(node);
 				if (!state) return;
 				const { ended, started: after } = cut_here(node);
-				if (node.handler) state.handler_end = ended;
-				else state.pending_end = ended;
+				if (!node.handler) state.pending_end = ended;
+				// In a `finally` block, code path analysis keeps a segment for each way
+				// the block was entered; joining them would mix those paths up.
+				if (!state.single || ended.length !== 1) return;
+				// Only forward, in source order: an edge back to an earlier block would
+				// let a value reach a read before it in its own block.
 				const { body_start, pending_start, handler_start } = state;
 				join(state.entry, body_start, pending_start, handler_start, after);
 				join(state.body_end, pending_start, handler_start, after);
-				join(state.pending_end, body_start, handler_start, after);
-				join(state.handler_end, body_start, pending_start, after);
+				join(state.pending_end, handler_start, after);
 			},
 		};
 

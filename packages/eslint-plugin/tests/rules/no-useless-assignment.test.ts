@@ -36,10 +36,16 @@ ruleTester.run('no-useless-assignment', rule, {
 		component(`let x = 0;`, `@try { x = 1; <p>{x}</p> } @catch (e) { <i /> }\n{x}`),
 		// The body and the `@catch` are alternatives.
 		component(`let x = 0;\nlog(x);`, `@try { x = 1; <p /> } @catch (e) { x = 2; <i /> }\n{x}`),
-		// The body renders after `@pending` once it stops suspending.
-		component(`let x = 0;\nlog(x);`, `@try { <b>{x}</b> } @pending { x = 1; <s /> }`),
-		// `reset()` renders the body again after the `@catch`.
-		component(`let x = 0;\nlog(x);`, `@try { <p>{x}</p> } @catch (e) { x = 1; <i /> }`),
+		// The `@catch` can render without `@pending`, and the code after the
+		// `@try` runs without the `@catch`.
+		component(
+			`let x = 0;\nlog(x);`,
+			`@try { x = 1; <b /> } @pending { x = 2; <s /> } @catch (e) { <i>{x}</i> }`,
+		),
+		component(
+			`let x = 0;\nlog(x);`,
+			`@try { <b /> } @pending { x = 1; <s /> } @catch (e) { x = 2; <i /> }\n{x}`,
+		),
 		// A `@try` in a block of another.
 		component(
 			`let x = 0;`,
@@ -52,6 +58,49 @@ ruleTester.run('no-useless-assignment', rule, {
 		`function f() { let x = 0; x += 1; return x; }`,
 	],
 	invalid: [
+		// A block that runs again after a later one, as the body does after
+		// `@pending` or after `reset()`, isn't modelled: the core rule's answer
+		// holds.
+		{
+			code: component(`let x = 0;\nlog(x);`, `@try { <b>{x}</b> } @pending { x = 1; <s /> }`),
+			errors: [{ messageId: 'unnecessaryAssignment', line: 5 }],
+		},
+		{
+			code: component(`let x = 0;\nlog(x);`, `@try { <p>{x}</p> } @catch (e) { x = 1; <i /> }`),
+			errors: [{ messageId: 'unnecessaryAssignment', line: 5 }],
+		},
+		// A read earlier in the same block doesn't use the value.
+		{
+			code: component(
+				`let x = 0;`,
+				`@try {
+	log(x);
+	x = 1;
+	<b />
+} @catch (e) { <i /> }`,
+			),
+			errors: [{ messageId: 'unnecessaryAssignment', line: 6 }],
+		},
+		// In a `finally` block, code path analysis keeps the path of a `return`
+		// apart from the normal one.
+		{
+			code: `export function A(work) {
+	let x = 0;
+	try {
+		work();
+	} catch (e) {
+		x = 1;
+		return;
+	} finally {
+		const view = @{
+			<div>@try { <b /> } @catch (e) { <i /> }</div>
+		};
+		work(view);
+	}
+	work(x);
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 6 }],
+		},
 		// Overwritten before the `@try`.
 		{
 			code: component(`let x = 0;\nx = 1;`, `@try { <p>{x}</p> } @catch (e) { <i /> }`),
