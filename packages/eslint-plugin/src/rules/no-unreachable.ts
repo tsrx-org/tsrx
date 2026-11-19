@@ -50,10 +50,9 @@ interface TryExpressionState {
 	 */
 	inline_body: boolean;
 	inline_pending: boolean;
-	/** Whether the body, `@pending` or `@catch` reaches its end. */
+	/** Whether the body, or `@pending`, reaches its end. */
 	body_completes: boolean;
 	pending_completes: boolean;
-	handler_completes: boolean;
 	/** Whether an inline `@pending` was revived though the body doesn't end. */
 	pending_first: boolean;
 }
@@ -86,13 +85,13 @@ const THROWING_TYPES = ['CallExpression', 'NewExpression', 'MemberExpression', '
  * marks the other arms and the code after the `@switch` unreachable. It runs
  * the blocks of a `@try` one after another too, though `@pending` shows while
  * the body suspends, `@catch` renders when the body throws, and all three run
- * in callbacks of the `@try`'s boundaries. The core rule here sees each segment
- * through a proxy whose `reachable` revives those paths: at the start of each
- * arm of a reached `@switch`, and after the `@switch` when an arm reaches its
- * end or there is no `@default` arm; at the start of `@pending` and `@catch` of
- * a reached `@try`, and after the `@try` when one of its blocks reaches its end.
- * A body or `@pending` that awaits or yields runs in the function instead,
- * `@pending` first, so the rest then also needs it to reach its end.
+ * in callbacks of the `@try`'s boundaries, while the function goes on past the
+ * `@try`. The core rule here sees each segment through a proxy whose
+ * `reachable` revives those paths: at the start of each arm of a reached
+ * `@switch`, and after the `@switch` when an arm reaches its end or there is no
+ * `@default` arm; at the start of `@pending` and `@catch` of a reached `@try`,
+ * and after it. A body or `@pending` that awaits or yields runs in the function
+ * instead, `@pending` first, so the rest then also needs it to reach its end.
  *
  * Code path analysis records nothing for an exit inside code it already holds
  * unreachable, so in a revived path this rule follows `throw`, `return`,
@@ -168,23 +167,16 @@ const rule: Rule.RuleModule = {
 		};
 
 		// `@pending` shows while the body suspends and `@catch` renders when it
-		// throws: each is reached whenever the `@try` is, once the blocks that run
-		// inline in the function reach their end. An inline `@pending` runs before
-		// the body. The code after the `@try` also needs a block that reaches its
-		// end: a throw that leaves the `@try` ends the function on some targets,
-		// and the output of the function on all of them.
+		// throws, and the function goes on past the `@try` while they wait: each
+		// is reached whenever the `@try` is, once the blocks that run inline in the
+		// function reach their end. An inline `@pending` runs before the body.
 		const revive_try_path = (try_expression: unknown, at: 'pending' | 'handler' | 'after') => {
 			const state = try_expressions.get(try_expression)!;
 			const body_ends = !state.inline_body || state.body_completes;
 			const reached =
 				at === 'pending'
 					? state.inline_pending || body_ends
-					: body_ends &&
-						(!state.inline_pending || state.pending_completes) &&
-						(at === 'handler' ||
-							state.body_completes ||
-							state.pending_completes ||
-							state.handler_completes);
+					: body_ends && (!state.inline_pending || state.pending_completes);
 			if (state.entry && reached && !any_reachable()) {
 				revive();
 				state.pending_first = at === 'pending' && !body_ends;
@@ -403,7 +395,6 @@ const rule: Rule.RuleModule = {
 						inline_pending: suspends(node.pending),
 						body_completes: false,
 						pending_completes: false,
-						handler_completes: false,
 						pending_first: false,
 					});
 				},
@@ -418,9 +409,6 @@ const rule: Rule.RuleModule = {
 				},
 				'JSXTryExpression > CatchClause'(node: any) {
 					revive_try_path(node.parent, 'handler');
-				},
-				'JSXTryExpression > CatchClause:exit'(node: any) {
-					try_expressions.get(node.parent)!.handler_completes = any_reachable();
 				},
 				'JSXTryExpression:exit'(node: unknown) {
 					revive_try_path(node, 'after');

@@ -153,9 +153,9 @@ users, uses `tsrx/no-unused-vars` and `tsrx/no-unreachable` for `.tsrx` files:
   `@pending`, the `@catch` and the code after the `@try`. After a `@pending` that
   throws, it reports the `@catch` and the code after the `@try`, and after a
   `@catch` that throws, such as one that rethrows, the code after the `@try`.
-  `tsrx/no-unreachable` treats `@pending` and the `@catch` as reached whenever the
-  `@try` is, and the code after the `@try` as reached when one of its blocks
-  reaches its end, unless the body or `@pending` awaits or yields and then throws.
+  `tsrx/no-unreachable` treats `@pending`, the `@catch` and the code after the
+  `@try` as reached whenever the `@try` is, unless the body or `@pending` awaits
+  or yields and then throws.
 
 Other rules built on code paths still treat every `@switch` arm as always running.
 For example, `react-hooks/rules-of-hooks` doesn't report a hook called in a

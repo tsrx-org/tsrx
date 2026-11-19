@@ -96,24 +96,20 @@ after `tsrx.configs.react`.
 - `tsrx/no-unreachable` is ESLint's `no-unreachable`, with the arms of a `@switch`
   as alternatives, and the blocks of a `@try` run apart from the code around it.
   After an arm that throws, it doesn't report the other arms or the code after the
-  `@switch`. After a `@try` block that throws, it doesn't report `@pending` or the
-  `@catch`, which the compiled output runs in callbacks of the `@try`'s
-  boundaries. It reports the code after the `@try` only when no block of the
-  `@try` reaches its end: the throw that leaves the `@try` then ends the component
-  on Solid and Vue before that code runs, and on React, Preact and Hono, where
-  that code still runs, it throws away the component's output. A body or
-  `@pending` that awaits or yields runs in the component instead, `@pending`
-  first, where a throw leaves it: after such a block throws, the rule reports the
-  `@catch` and the code after the `@try`, as the core rule does. On Hono,
-  `@pending`'s code runs in the component too, so a `@pending` that throws ends it
-  there, but the rule doesn't know the target and doesn't report the code after
-  that `@try`. It still reports unreachable code inside an arm or a block of a
-  `@try`: there it follows `throw`, `return`, `break`, `continue`, `try` and
-  endless loops itself, since code path analysis has already given up on that
-  code. It can miss unreachable code there when a `break`, `continue`, `return` or
-  `throw` passes through a `finally` block. In generated arms with heavy
-  `try`/`finally`, label and loop nesting, it missed some unreachable code in
-  about 1 in 120 (0.8%), and reported nothing the core rule doesn't report on the
+  `@switch`. After a `@try` block that throws, it doesn't report `@pending`, the
+  `@catch` or the code after the `@try`: the compiled output runs the body,
+  `@pending` and `@catch` in callbacks of the `@try`'s boundaries, and the
+  component goes on past the `@try`. A body or `@pending` that awaits or yields
+  runs in the component instead, `@pending` first, where a throw leaves it: after
+  such a block throws, the rule reports the `@catch` and the code after the
+  `@try`, as the core rule does. On Hono, `@pending`'s code runs in the component
+  too, so a `@pending` that throws ends it there, but the rule doesn't know the
+  target and doesn't report the code after that `@try`. It still reports
+  unreachable code inside an arm or a block of a `@try`: there it follows `throw`,
+  `return`, `break`, `continue`, `try` and endless loops itself, since code path
+  analysis has already given up on that code. It can miss unreachable code there
+  when a `break`, `continue`, `return` or `throw` passes through a `finally`
+  block, and it reports nothing there that the core rule doesn't report on the
   same code in a plain function. The
   [`@tsrx/eslint-parser` README](https://github.com/tsrx-org/tsrx/tree/main/packages/eslint-parser#known-limitations)
   explains what the core rule reports instead.

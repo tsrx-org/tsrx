@@ -144,9 +144,9 @@ ruleTester.run('no-unreachable', rule, {
 		</div>
 	}
 }`),
-		// `@pending` and `@catch` are reached whenever the `@try` is: they run in
-		// callbacks of its boundaries. The code after the `@try` is reached when
-		// one of its blocks reaches its end.
+		// `@pending` and `@catch` are reached whenever the `@try` is, and so is the
+		// code after the `@try`: the blocks run in callbacks of its boundaries,
+		// and the component goes on past it.
 		component(`@try { throw new Error('one'); } @pending { <s /> } @catch (error) { <i /> }
 @if (n) { <u /> }`),
 		component(`@try { throw new Error('one'); } @catch (error) { <i /> }
@@ -159,6 +159,30 @@ ruleTester.run('no-unreachable', rule, {
 @if (n) { <u /> }`),
 		component(`@try { <b /> } @catch (error) { throw error; }
 @if (n) { <u /> }`),
+		// No block of the `@try` reaches its end, and the code after it still
+		// runs: a `@try` in an element runs only when that element renders.
+		component(`@try { throw new Error('one'); } @pending { throw new Error('two'); } @catch (error) { throw error; }
+@if (n) { <u /> }`),
+		`export function A({ log }) @{
+	const view = <div>@try { throw new Error('one'); } @catch (error) { throw error; }</div>;
+	log(view);
+	<i />
+}`,
+		`export function A({ show, log }) @{
+	const fallback_view = <div>@try { throw new Error('one'); } @catch (error) { throw error; }</div>;
+	const message = 'hello';
+	log(message);
+	<p>{show ? fallback_view : message}</p>
+}`,
+		component(`@switch (n) {
+	@case 1: { throw new Error('one'); }
+	@default: {
+		<div>
+			@try { throw new Error('two'); } @catch (error) { throw error; }
+			@if (n) { <u /> }
+		</div>
+	}
+}`),
 		// An `await` in a function doesn't keep the body in the component.
 		component(`@try {
 	const load = async () => {
@@ -219,33 +243,6 @@ ruleTester.run('no-unreachable', rule, {
 }`,
 	],
 	invalid: [
-		// No block of the `@try` reaches its end. The throw that leaves it ends
-		// the component on Solid and Vue, and the component's output elsewhere.
-		{
-			code: component(`@try { throw new Error('one'); } @pending { throw new Error('two'); } @catch (error) { throw error; }
-@if (n) { <u /> }`),
-			errors: [{ messageId: 'unreachableCode', line: 4 }],
-		},
-		{
-			code: `export function A({ log }) @{
-	const view = <div>@try { throw new Error('one'); } @catch (error) { throw error; }</div>;
-	log(view);
-	<i />
-}`,
-			errors: [{ messageId: 'unreachableCode', line: 3 }],
-		},
-		{
-			code: component(`@switch (n) {
-	@case 1: { throw new Error('one'); }
-	@default: {
-		<div>
-			@try { throw new Error('two'); } @catch (error) { throw error; }
-			@if (n) { <u /> }
-		</div>
-	}
-}`),
-			errors: [{ messageId: 'unreachableCode', line: 8 }],
-		},
 		// A body that awaits runs in the component, where a throw leaves it, so
 		// the rest is reached only when the body reaches its end. An `await` in a
 		// nested `@try`'s body keeps the outer body there too.
