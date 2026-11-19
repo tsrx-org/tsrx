@@ -202,8 +202,9 @@ describe('[vue] an element whose child is an @if / @else beside an expression on
 	});
 
 	it('keeps a component child as one choice, for KeepAlive', async () => {
-		// vue-jsx-vapor's server build would pass \`v-if\` / \`v-else\` to it as two
-		// children, which \`KeepAlive\` rejects.
+		// A component's child keeps the ternary, as on main: vue-jsx-vapor's
+		// server build would pass \`v-if\` / \`v-else\` to it as two children,
+		// which \`KeepAlive\` rejects.
 		const { App } = await server.ssrLoadModule('/kept-if-else.tsrx');
 		expect(await renderToString(createSSRApp(App, { on: true }))).toBe(
 			'<div><button>a</button></div>',

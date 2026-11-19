@@ -4124,6 +4124,8 @@ describe('tsrx-vue an element whose child is an @if / @else', () => {
 	});
 
 	it('keeps each branch cached by VaporKeepAlive', async () => {
+		// A component's child keeps the ternary, as on main, so VaporKeepAlive
+		// still caches both branches.
 		kept_pick.value = true;
 		await render(KeptPick);
 		(container.querySelector('.kept-pick-a') as HTMLElement).click();
