@@ -30,38 +30,17 @@ interface TryPieces {
 	handler_start: Piece[];
 }
 
-/** Nodes whose code starts a code path of its own. */
-const CODE_PATH_STARTS = new Set([
-	'FunctionDeclaration',
-	'FunctionExpression',
-	'ArrowFunctionExpression',
-	'StaticBlock',
-]);
-
 /**
  * Whether an identifier is the parser's name for a dynamic tag, which spans
- * the tag expression, or is in a `@for`'s index or key, which the traversal
- * visits before the loop, in the same code path.
+ * the tag expression.
  */
-function is_out_of_place(node: any): boolean {
-	for (let child = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
-		if (
-			CODE_PATH_STARTS.has(parent.type) ||
-			(parent.type === 'PropertyDefinition' && parent.value === child)
-		) {
-			return false;
-		}
-		if (
-			(parent.type === 'JSXOpeningElement' || parent.type === 'JSXClosingElement') &&
-			parent.name === child
-		) {
-			return Boolean(parent.tagExpression);
-		}
-		if (parent.type === 'JSXForExpression' && (parent.index === child || parent.key === child)) {
-			return true;
-		}
-	}
-	return false;
+function is_tag_expression_name(node: any): boolean {
+	const parent = node.parent;
+	return (
+		(parent?.type === 'JSXOpeningElement' || parent?.type === 'JSXClosingElement') &&
+		parent.name === node &&
+		Boolean(parent.tagExpression)
+	);
 }
 
 /**
@@ -117,6 +96,17 @@ const rule: Rule.RuleModule = {
 		// over.
 		const outer_identifier_ends: number[] = [];
 		let last_identifier_end = -1;
+		// The position before each `@for` whose loop hasn't started yet.
+		const for_starts = new Map<unknown, number>();
+		// A `@for`'s index and key follow its iterable in the source, but the
+		// traversal visits them before the loop, so the loop starts again from
+		// the position before the `@for`.
+		const start_loop = (node: any) => {
+			const start = for_starts.get(node.parent);
+			if (start === undefined || node.parent.loop !== node) return;
+			for_starts.delete(node.parent);
+			last_identifier_end = start;
+		};
 		const tries = new Map<unknown, TryPieces>();
 
 		// The segment each copy sees for a piece, with or without the edges, one
@@ -219,6 +209,12 @@ const rule: Rule.RuleModule = {
 				plain.onCodePathSegmentEnd?.(segment, node);
 				end_piece(segment, node);
 			},
+			JSXForExpression(node: unknown) {
+				for_starts.set(node, last_identifier_end);
+			},
+			ForStatement: start_loop,
+			ForInStatement: start_loop,
+			ForOfStatement: start_loop,
 			JSXTryExpression(node: any) {
 				if (suspends(node.block) || suspends(node.pending)) return;
 				const { ended, started } = cut_here(node);
@@ -274,18 +270,17 @@ const rule: Rule.RuleModule = {
 			merged[key] = (...args) => {
 				plain[key]?.(...args);
 				// The core rule places each read by the first and last identifier it
-				// visits in a segment. The traversal visits a few identifiers out of
-				// source order (a label after its block, type arguments after the
-				// call's arguments, a `@for`'s index and key before its loop), and the
-				// parser's name for a dynamic tag spans the whole tag expression. Such
-				// an identifier could stretch a piece over code across a `@try`
-				// boundary, so the cut copies don't see a dynamic tag's name or a
-				// `@for`'s index and key, and see the rest only when they come after
+				// visits in a segment. The traversal visits a few identifiers after
+				// code that follows them (a label after its block, type arguments
+				// after the call's arguments), and the parser's name for a dynamic tag
+				// spans the whole tag expression. Such an identifier could stretch a
+				// piece over code across a `@try` boundary, so the cut copies don't
+				// see a dynamic tag's name, and see the rest only when they come after
 				// the last one they saw in the code path. Leaving one out only narrows
 				// a piece, which can keep a report but never drop one.
 				const node = args[0];
 				if (node?.type === 'Identifier' || node?.type === 'JSXIdentifier') {
-					if (is_out_of_place(node) || node.range[0] < last_identifier_end) return;
+					if (is_tag_expression_name(node) || node.range[0] < last_identifier_end) return;
 					last_identifier_end = node.range[1];
 				}
 				cut[key]?.(...args);

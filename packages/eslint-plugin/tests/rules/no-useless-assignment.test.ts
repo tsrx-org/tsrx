@@ -109,6 +109,31 @@ ruleTester.run('no-useless-assignment', rule, {
 		})()) { <li>{item.id}</li> }
 	</ul>
 }`,
+		`export function A({ fail }) @{
+	<ul>
+		@for (const item of [@{
+			let x = 0;
+			<div>@try { fail(); x = 1; <b>{x}</b> } @catch (e) { <i>{x}</i> }</div>
+		}]; key ((k) => k)(0)) { <li>{item}</li> }
+	</ul>
+}`,
+		`export function A({ fail, pick }) @{
+	<ul>
+		@for (const item of [@{
+			let x = 0;
+			<div>@try { fail(); x = 1; <b>{x}</b> } @catch (e) { <i>{x}</i> }</div>
+		}]; key pick(<i />)) { <li>{item}</li> }
+	</ul>
+}`,
+		// A `@try` in a `@for`'s key.
+		`export function A({ items, fail, log }) @{
+	<ul>
+		@for (const item of items; key (@{
+			let x = 0;
+			@try { fail(); x = 1; log(x); } @catch (e) { log(x); }
+		}, item.id)) { <li>{item.id}</li> }
+	</ul>
+}`,
 		// An escaped name is still a read.
 		component(`let x = 0;`, `@try { log(n); x = 1; <>{x}</> } @catch (e) { <>{\\u0078}</> }`),
 		// Code without `@try` is left to the core rule.
@@ -386,9 +411,16 @@ describe('the core no-useless-assignment rule', () => {
 		).toEqual([]);
 		expect(
 			keys.filter((key) =>
-				['JSXTryExpression', 'JSXTryExpression:exit', 'BlockStatement', 'CatchClause'].includes(
-					key,
-				),
+				[
+					'JSXTryExpression',
+					'JSXTryExpression:exit',
+					'BlockStatement',
+					'CatchClause',
+					'JSXForExpression',
+					'ForStatement',
+					'ForInStatement',
+					'ForOfStatement',
+				].includes(key),
 			),
 		).toEqual([]);
 	});
