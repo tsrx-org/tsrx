@@ -509,6 +509,16 @@ export const TSRX_ERRORS = {
 		(target) =>
 			`${target} TSRX does not support \`await\` here: this part of the template renders through a callback the target calls, so its result cannot be awaited. Await the value in the component body, or move it into an async child component.`,
 	),
+	/**
+	 * `target` is the target's name. For an `await` that the target's JSX
+	 * compiler moves out of its async function, as for a `yield` in
+	 * `TARGET_TEMPLATE_YIELD_UNSUPPORTED`.
+	 */
+	TARGET_TEMPLATE_AWAIT_UNSUPPORTED: tsrx_with_values(
+		'TARGET_AWAIT_UNSUPPORTED',
+		(target) =>
+			`${target} TSRX does not support \`await\` in this part of the template: ${target}'s JSX compiler evaluates it in an effect, a getter or a callback, which is not async. Await the value before the template, as in \`const value = await …;\`, and use \`value\` in it.`,
+	),
 	/** `target` is the target's name. For a target whose components can't be async. */
 	TARGET_COMPONENT_AWAIT_UNSUPPORTED: tsrx_with_values(
 		'TARGET_AWAIT_UNSUPPORTED',

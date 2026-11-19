@@ -600,6 +600,8 @@ const TSRX_ERROR_CODES = [
 	'          @try { <p /> } @pending { <p /> }  (on targets without it)',
 	'TSRX2021  <target> TSRX does not support `await` here.',
 	'          @catch (e) { <p>{await f(e)}</p> }',
+	'TSRX2021  <target> TSRX does not support `await` in this part of the template.',
+	'          async function f(b) { const el = @{ <input title={await b.title} /> }; return el; }  (Solid, Vue)',
 	'TSRX2022  <target> TSRX does not support `yield` here.',
 	'          <ul>{@for (const x of xs) { <li title={yield x} /> }}</ul>',
 	'TSRX2023  <target> TSRX does not support `super` here.',

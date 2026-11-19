@@ -22,6 +22,7 @@ runSharedSourceMappingTests({
 	name: 'vue',
 	rejectsComponentAwait: true,
 	rejectsTemplateYield: true,
+	rejectsTemplateAwait: true,
 });
 
 describe('@tsrx/vue direct runtime imports', () => {
