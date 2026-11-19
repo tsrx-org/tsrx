@@ -124,6 +124,7 @@ const vue_platform = {
 			needs_define_vapor_component: false,
 			needs_vapor_for: false,
 			needs_use_slots: false,
+			needs_pending_body: false,
 		}),
 		wrapHelperComponent(helper_fn, helper_id, ctx, source_node) {
 			ctx.needs_define_vapor_component = true;
@@ -209,6 +210,9 @@ const vue_platform = {
 
 export const transform = createJsxTransform(vue_platform);
 
+/** Local name for the `TsrxPendingBody` that renders a `@pending` body. */
+const PENDING_BODY_INTERNAL_NAME = '__TsrxPendingBody';
+
 /**
  * @param {ESTreeJSX.JSXRenderNode} try_content
  * @param {ESTreeJSX.JSXRenderNode} fallback_content
@@ -237,7 +241,15 @@ function create_vapor_pending_boundary_from_default_slot(default_slot, fallback_
 	if (!ctx.typeOnly) slots_properties.unshift(b.init('_', b.literal(1)));
 
 	if (fallback_expression.type !== 'Literal' || fallback_expression.value !== null) {
-		slots_properties.push(b.init('fallback', b.arrow([], fallback_expression)));
+		slots_properties.push(
+			b.init(
+				'fallback',
+				b.arrow(
+					[],
+					ctx.typeOnly ? fallback_expression : create_pending_body(fallback_expression, ctx),
+				),
+			),
+		);
 	}
 
 	const slots = b.object(slots_properties);
@@ -286,6 +298,33 @@ function create_error_boundary_slot(content, fallback_fn, source_try) {
 	return b.arrow(
 		[],
 		setLocation(boundary, has_location(source_try) ? source_try : undefined, true),
+	);
+}
+
+/**
+ * Render a `@pending` body through `TsrxPendingBody`. `Suspense` then creates
+ * it only while it shows its fallback, and a throw in it reaches the nearest
+ * `@catch` instead of ending the mount.
+ *
+ * @param {AST.Expression} fallback_expression
+ * @param {TransformContext} ctx
+ * @returns {AST.TSRXJSXElement}
+ */
+function create_pending_body(fallback_expression, ctx) {
+	ctx.needs_pending_body = true;
+	return b.jsx_element_fresh(
+		b.jsx_opening_element(
+			b.jsx_id(PENDING_BODY_INTERNAL_NAME),
+			[
+				b.jsx_attribute(
+					b.jsx_id('content'),
+					to_jsx_expression_container(b.arrow([], fallback_expression)),
+				),
+			],
+			true,
+		),
+		null,
+		[],
 	);
 }
 
@@ -3208,6 +3247,15 @@ function inject_vue_imports(program, transform_context) {
 			transform_context.platform.imports.errorBoundary,
 			'TsrxErrorBoundary',
 			ERROR_BOUNDARY_INTERNAL_NAME,
+		);
+	}
+
+	if (transform_context.needs_pending_body) {
+		ensure_named_import(
+			program,
+			transform_context.platform.imports.errorBoundary,
+			'TsrxPendingBody',
+			PENDING_BODY_INTERNAL_NAME,
 		);
 	}
 

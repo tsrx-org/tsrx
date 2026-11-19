@@ -1876,7 +1876,7 @@ export function Card(${params}: any) @{
 			expect(errors, authored).toEqual([]);
 			expect(code, authored).toContain(authored);
 			expect(code.match(/^import .*\bSuspense\b.*$/gm), authored).toEqual(suspense_imports);
-			expect(code, authored).toMatch(/^import \{ computed as _\$_vapor_computed\b/);
+			expect(code, authored).toMatch(/^import \{ computed as _\$_vapor_computed\b/m);
 		}
 	});
 
@@ -2784,6 +2784,62 @@ export function Card(${params}: any) @{
 		expect(error_boundary_index).toBeLessThan(suspense_index);
 	});
 
+	it('renders a @pending body through TsrxPendingBody', () => {
+		const source = `function App() @{
+			@try {
+				<div>{'Async content'}</div>
+			} @pending {
+				const label = 'Loading...';
+				<div>{label}</div>
+			}
+		}`;
+
+		const { code } = compile(source, 'App.tsrx');
+		expect(code).toContain(
+			"import { TsrxPendingBody as __TsrxPendingBody } from '@tsrx/vue/error-boundary';",
+		);
+		expect(code).toContain('fallback: () => <__TsrxPendingBody content={() => (() => {');
+		expect(code).toContain("const label = 'Loading...';");
+
+		const direct = compile(source, 'App.tsrx', { runtimeImports: 'direct' }).code;
+		expect(direct).toContain(
+			"import { TsrxPendingBody as __TsrxPendingBody } from '@tsrx/vue-runtime/error-boundary';",
+		);
+		expect(direct).not.toMatch(/from '@tsrx\/vue\//);
+	});
+
+	it('imports TsrxPendingBody beside TsrxErrorBoundary, and not for an empty @pending', () => {
+		const { code } = compile(
+			`function App() @{
+				@try {
+					<div>{'Async content'}</div>
+				} @pending {
+					<div>{'Loading...'}</div>
+				} @catch (error) {
+					<p>{'failed'}</p>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			"import {\n\tTsrxErrorBoundary as __TsrxErrorBoundary,\n\tTsrxPendingBody as __TsrxPendingBody\n} from '@tsrx/vue/error-boundary';",
+		);
+		expect(code.match(/<__TsrxPendingBody /g)).toHaveLength(1);
+
+		const empty = compile(
+			`function App() @{
+				@try {
+					<div>{'Async content'}</div>
+				} @pending {
+				}
+			}`,
+			'App.tsrx',
+		).code;
+		expect(empty).not.toContain('TsrxPendingBody');
+		expect(empty).not.toContain('fallback:');
+	});
+
 	it('lowers a try/pending/catch catch body only into its fallback component', () => {
 		const { code } = compile(
 			`export function App() @{
@@ -3237,6 +3293,11 @@ export function Card(${params}: any) @{
 		expect(code).toContain('fallback={(err, _reset) =>');
 		expect(code).toContain('default: () => (() => {');
 		expect(code).toContain('return <AsyncChild value="hello" />');
+		// The @pending body stays inline in the slot.
+		expect(code).toContain(
+			'fallback: () => (() => {\n\t\t\treturn <p class="async-pending">{\'loading...\'}</p>',
+		);
+		expect(code).not.toContain('TsrxPendingBody');
 		expect(code).not.toContain('catch(_error)');
 		expect(code).not.toContain('return ((err, _reset) =>');
 		expect(code).not.toContain('err: any');

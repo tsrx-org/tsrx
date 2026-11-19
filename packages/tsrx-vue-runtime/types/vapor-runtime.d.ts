@@ -53,4 +53,6 @@ export interface VaporFragment {
 export interface VaporComponentInstance {
 	/** Raw (unresolved) props; accessor-valued entries are reactive getters. */
 	rawProps?: Record<string, unknown> | null;
+	/** What the component rendered. */
+	block?: VaporBlock;
 }
