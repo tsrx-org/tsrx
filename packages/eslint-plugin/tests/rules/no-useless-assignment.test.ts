@@ -165,6 +165,18 @@ ruleTester.run('no-useless-assignment', rule, {
 		}
 	</div>
 }`,
+		// Known gap: nothing renders a `@try` in an operand of `,` that isn't the
+		// last, so React, Preact and Hono never run its blocks, and Solid and Vue
+		// run the body, which assigns first. The core rule reports `'init'` (2:6),
+		// which no target reads, and the rule drops it.
+		`export function A({ Boom }) @{
+	let x = 'init';
+	<div>
+		{(@{
+			@try { x = 'body'; <Boom /> } @catch (e) { <i>{x}</i> }
+		}, null)}
+	</div>
+}`,
 		// An escaped name is still a read.
 		component(`let x = 0;`, `@try { log(n); x = 1; <>{x}</> } @catch (e) { <>{\\u0078}</> }`),
 		// Code without `@try` is left to the core rule.

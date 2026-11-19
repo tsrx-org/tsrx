@@ -138,8 +138,10 @@ after `tsrx.configs.react`.
       `status = 'b'`, then `<p>{status}</p>`, the value `'a'` is never read, and
       the rule doesn't report it;
     - with one `@try`, when the body assigns a value before anything that can
-      throw, the `@catch` reads it, and the code after the `@try` assigns it again
-      on every path. With `let x = 'init';`, then
+      throw, the `@catch` reads it, and either the code after the `@try` assigns
+      it again on every path or nothing renders the `@try`, as when it is an
+      operand of `,` that isn't the last, or a value no output uses. With
+      `let x = 'init';`, then
       `@try { x = 'body'; <Boom /> } @catch (e) { <i>{x}</i> }`, then an `@if`
       whose arms both assign `x`, `'init'` is never read, and the rule doesn't
       report it.
