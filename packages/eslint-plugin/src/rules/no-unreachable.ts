@@ -38,7 +38,28 @@ interface SwitchState {
 	completes: boolean;
 }
 
+interface TryExpressionState {
+	/** Whether the `@try` is reached. */
+	entry: boolean;
+	/**
+	 * Whether the body, or `@pending`, awaits or yields outside a function. The
+	 * compiler then runs that block in the function that holds the `@try`,
+	 * `@pending` first, where a throw leaves the function. Otherwise it runs the
+	 * block in a callback of the `@try`'s boundaries, as it always runs
+	 * `@catch`, and the function goes on past the `@try`.
+	 */
+	inline_body: boolean;
+	inline_pending: boolean;
+	/** Whether the body, `@pending` or `@catch` reaches its end. */
+	body_completes: boolean;
+	pending_completes: boolean;
+	handler_completes: boolean;
+	/** Whether an inline `@pending` was revived though the body doesn't end. */
+	pending_first: boolean;
+}
+
 interface TryState {
+	has_handler: boolean;
 	/** Whether the `try` block, the `catch` block or the `finally` block reaches its end. */
 	block?: boolean;
 	handler?: boolean;
@@ -57,14 +78,21 @@ interface TryState {
 const THROWING_TYPES = ['CallExpression', 'NewExpression', 'MemberExpression', 'ImportExpression'];
 
 /**
- * Core `no-unreachable`, with the arms of a `@switch` as alternatives.
+ * Core `no-unreachable`, with the arms of a `@switch` as alternatives, and the
+ * blocks of a `@try` run apart from the code around it.
  *
  * ESLint's code path analysis knows only the standard node types, so it runs
  * the arms of a `@switch` one after another: after an arm that throws, it
- * marks the other arms and the code after the `@switch` unreachable. The core
- * rule here sees each segment through a proxy whose `reachable` revives those
- * paths: at the start of each arm of a reached `@switch`, and after the
- * `@switch` when an arm reaches its end or there is no `@default` arm.
+ * marks the other arms and the code after the `@switch` unreachable. It runs
+ * the blocks of a `@try` one after another too, though `@pending` shows while
+ * the body suspends, `@catch` renders when the body throws, and all three run
+ * in callbacks of the `@try`'s boundaries. The core rule here sees each segment
+ * through a proxy whose `reachable` revives those paths: at the start of each
+ * arm of a reached `@switch`, and after the `@switch` when an arm reaches its
+ * end or there is no `@default` arm; at the start of `@pending` and `@catch` of
+ * a reached `@try`, and after the `@try` when one of its blocks reaches its end.
+ * A body or `@pending` that awaits or yields runs in the function instead,
+ * `@pending` first, so the rest then also needs it to reach its end.
  *
  * Code path analysis records nothing for an exit inside code it already holds
  * unreachable, so in a revived path this rule follows `throw`, `return`,
@@ -74,7 +102,7 @@ const THROWING_TYPES = ['CallExpression', 'NewExpression', 'MemberExpression', '
 const rule: Rule.RuleModule = {
 	meta: wrapper_meta(
 		core,
-		'Disallow unreachable code after `return`, `throw`, `continue`, and `break` statements, with the arms of a `@switch` as alternatives',
+		'Disallow unreachable code after `return`, `throw`, `continue`, and `break` statements, with the arms of a `@switch` as alternatives, and the blocks of a `@try` run apart from the code around it',
 	),
 	create(context) {
 		const listeners = core.create(context) as Record<string, any>;
@@ -90,12 +118,11 @@ const rule: Rule.RuleModule = {
 		const outer_segments: Set<Segment>[] = [];
 		let current = new Set<Segment>();
 		const switches = new Map<unknown, SwitchState>();
-		// The `try` statements and loops entered through a revived path.
+		const try_expressions = new Map<unknown, TryExpressionState>();
 		const tries = new Map<unknown, TryState>();
 		// The `try` statements of the current code path the traversal is in.
 		const outer_try_stacks: TryState[][] = [];
 		let try_stack: TryState[] = [];
-		const loops = new WeakSet<object>();
 		// Statements a `break` or `continue` in a revived path leaves or repeats.
 		const broken = new WeakSet<object>();
 		const continued = new WeakSet<object>();
@@ -140,6 +167,58 @@ const rule: Rule.RuleModule = {
 			}
 		};
 
+		// `@pending` shows while the body suspends and `@catch` renders when it
+		// throws: each is reached whenever the `@try` is, once the blocks that run
+		// inline in the function reach their end. An inline `@pending` runs before
+		// the body. The code after the `@try` also needs a block that reaches its
+		// end: a throw that leaves the `@try` ends the function on some targets,
+		// and the output of the function on all of them.
+		const revive_try_path = (try_expression: unknown, at: 'pending' | 'handler' | 'after') => {
+			const state = try_expressions.get(try_expression)!;
+			const body_ends = !state.inline_body || state.body_completes;
+			const reached =
+				at === 'pending'
+					? state.inline_pending || body_ends
+					: body_ends &&
+						(!state.inline_pending || state.pending_completes) &&
+						(at === 'handler' ||
+							state.body_completes ||
+							state.pending_completes ||
+							state.handler_completes);
+			if (state.entry && reached && !any_reachable()) {
+				revive();
+				state.pending_first = at === 'pending' && !body_ends;
+			}
+		};
+		// Whether code awaits or yields outside a function, as the compiler checks
+		// a `@try` body and `@pending` to run them inline.
+		const visitor_keys = context.sourceCode.visitorKeys as Record<string, readonly string[]>;
+		const suspends = (node: any): boolean => {
+			if (!node || typeof node.type !== 'string' || FUNCTION_TYPES.has(node.type)) return false;
+			if (
+				node.type === 'AwaitExpression' ||
+				node.type === 'YieldExpression' ||
+				(node.type === 'ForOfStatement' && node.await) ||
+				(node.type === 'VariableDeclaration' && node.kind === 'await using')
+			) {
+				return true;
+			}
+			// ESLint's traversal reads the keys of a type the parser doesn't list.
+			const keys =
+				visitor_keys[node.type] ??
+				Object.keys(node).filter(
+					(key) =>
+						key !== 'parent' &&
+						key !== 'leadingComments' &&
+						key !== 'trailingComments' &&
+						!key.startsWith('_'),
+				);
+			return keys.some((key) => {
+				const value = node[key];
+				return Array.isArray(value) ? value.some(suspends) : suspends(value);
+			});
+		};
+
 		const proxy = (segment: Segment) => {
 			let result = proxies.get(segment);
 			if (!result) {
@@ -182,6 +261,9 @@ const rule: Rule.RuleModule = {
 				) {
 					revive();
 				}
+				if (parent.type === 'JSXTryExpression' && parent.pending === node) {
+					revive_try_path(parent, 'pending');
+				}
 				listeners.BlockStatement(node);
 			},
 		};
@@ -195,19 +277,26 @@ const rule: Rule.RuleModule = {
 		}
 
 		// Something that can throw runs here, or with `throws_to_catch` false, a
-		// `return`, which reaches a `finally` block but no `catch` block.
+		// `return`, which reaches a `finally` block but no `catch` block. Code
+		// path analysis records it where it holds the code reachable.
+		// From the innermost `try` out, a throw goes on until a `catch` takes it.
 		const may_throw = (throws_to_catch = true) => {
-			if (!try_stack.length || !any_reachable()) return;
-			for (const state of try_stack) {
+			if (!try_stack.length || !in_revived_path()) return;
+			for (let index = try_stack.length - 1; index >= 0; index--) {
+				const state = try_stack[index];
 				state.throws = true;
-				if (throws_to_catch && state.in_block) state.block_throws = true;
+				if (throws_to_catch && state.in_block) {
+					state.block_throws = true;
+					if (state.has_handler) return;
+				}
 			}
 		};
 
+		// A loop's exits in a revived path. Code path analysis records the others.
 		const leave_loop = (node: any) => {
 			if (broken.has(node) || (continued.has(node) && !is_endless(node))) {
 				if (!any_reachable()) revive();
-			} else if (loops.has(node) && is_endless(node)) {
+			} else if (is_endless(node)) {
 				exit();
 			}
 		};
@@ -218,17 +307,7 @@ const rule: Rule.RuleModule = {
 		return merge_listeners(
 			{ ...listeners, ...wrapped },
 			{
-				...Object.fromEntries(
-					LOOP_TYPES.flatMap((type) => [
-						[
-							type,
-							(node: object) => {
-								if (in_revived_path()) loops.add(node);
-							},
-						],
-						[`${type}:exit`, leave_loop],
-					]),
-				),
+				...Object.fromEntries(LOOP_TYPES.map((type) => [`${type}:exit`, leave_loop])),
 				'SwitchStatement:exit': leave_breakable,
 				'LabeledStatement:exit': leave_breakable,
 				'BreakStatement:exit'(node: any) {
@@ -259,9 +338,14 @@ const rule: Rule.RuleModule = {
 				'Identifier:exit'(node: any) {
 					if (is_reference(node)) may_throw();
 				},
-				TryStatement(node: unknown) {
-					if (!in_revived_path()) return;
-					const state = { block_throws: false, throws: false, in_block: true };
+				// A `try` entered in reachable code can hold a revived path too.
+				TryStatement(node: any) {
+					const state = {
+						has_handler: Boolean(node.handler),
+						block_throws: false,
+						throws: false,
+						in_block: true,
+					};
 					tries.set(node, state);
 					try_stack.push(state);
 				},
@@ -311,6 +395,35 @@ const rule: Rule.RuleModule = {
 					if (state.entry && (state.completes || !state.has_default) && !any_reachable()) {
 						revive();
 					}
+				},
+				JSXTryExpression(node: any) {
+					try_expressions.set(node, {
+						entry: any_reachable(),
+						inline_body: suspends(node.block),
+						inline_pending: suspends(node.pending),
+						body_completes: false,
+						pending_completes: false,
+						handler_completes: false,
+						pending_first: false,
+					});
+				},
+				'JSXTryExpression > BlockStatement:exit'(node: any) {
+					const state = try_expressions.get(node.parent)!;
+					if (node.parent.block === node) state.body_completes = any_reachable();
+					if (node.parent.pending === node) {
+						state.pending_completes = any_reachable();
+						// What follows `@pending` follows the body, which doesn't end.
+						if (state.pending_first) exit();
+					}
+				},
+				'JSXTryExpression > CatchClause'(node: any) {
+					revive_try_path(node.parent, 'handler');
+				},
+				'JSXTryExpression > CatchClause:exit'(node: any) {
+					try_expressions.get(node.parent)!.handler_completes = any_reachable();
+				},
+				'JSXTryExpression:exit'(node: unknown) {
+					revive_try_path(node, 'after');
 				},
 			},
 		);
