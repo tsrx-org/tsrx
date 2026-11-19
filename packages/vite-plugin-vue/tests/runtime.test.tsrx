@@ -1,6 +1,7 @@
 import type { MockInstance } from 'vitest';
 import {
 	createVaporApp,
+	createVaporSSRApp,
 	defineVaporAsyncComponent,
 	inject,
 	onMounted,
@@ -3768,6 +3769,13 @@ function BadgeIf(props: { status: string; name: string }) @{
 	}
 }
 
+function BadgeSetup(props: { status: string; name: string }) @{
+	@if (props.status === 'active') {
+		const label = 'setup ' + props.name;
+		<p class="badge-setup">{label}</p>
+	}
+}
+
 function BadgeIfOnly(props: { status: string }) @{
 	@if (props.status === 'active') {
 		<BadgeCounter label="on" />
@@ -3814,6 +3822,9 @@ function BadgeHost() @{
 		<section class="badge-if-only">
 			<BadgeIfOnly status={badge.value.status} />
 		</section>
+		<section class="badge-setup">
+			<BadgeSetup status={badge.value.status} name={badge.value.name} />
+		</section>
 		<section class="badge-switch">
 			<BadgeSwitch status={badge.value.status} name={badge.value.name} />
 		</section>
@@ -3848,11 +3859,15 @@ describe('tsrx-vue a component whose only output is control flow', () => {
 		expect(badge_texts('badge-if-only')).toEqual(['on:1']);
 		expect(badge_texts('badge-switch')).toEqual(['switch Bo:1']);
 		expect(badge_texts('badge-try')).toEqual(['try:1']);
+		// A branch with setup statements renders again for each change it
+		// reads, as it does inside an element.
+		expect(badge_texts('badge-setup')).toEqual(['setup Bo']);
 
 		badge.value = { ...badge.value, status: 'idle', rows: [{ id: 'b' }] };
 		await flush();
 		expect(badge_texts('badge-if')).toEqual(['off']);
 		expect(badge_texts('badge-if-only')).toEqual([]);
+		expect(badge_texts('badge-setup')).toEqual([]);
 		expect(badge_texts('badge-switch')).toEqual(['idle Bo']);
 		expect(badge_texts('badge-try')).toEqual(['off']);
 		expect(badge_texts('badge-rows')).toEqual(['row b']);
@@ -3865,6 +3880,67 @@ describe('tsrx-vue a component whose only output is control flow', () => {
 		await flush();
 		expect(badge_texts('badge-if')).toEqual(['on :0']);
 		expect(badge_texts('badge-switch')).toEqual(['switch :0']);
+	});
+});
+
+const hydrated_badge = ref('active');
+
+function HydratedBadge(props: { status: string }) @{
+	@if (props.status === 'active') {
+		<input value="server" />
+	} @else {
+		<i>{'off'}</i>
+	}
+}
+
+function HydratedKind(props: { status: string }) @{
+	@switch (props.status) {
+		@case 'active': {
+			<b>{'kind on'}</b>
+		}
+		@case 'idle': {
+			<b>{'kind idle'}</b>
+		}
+	}
+}
+
+function HydratedHost() @{
+	<div>
+		<HydratedBadge status={hydrated_badge.value} class="badge" />
+		<HydratedKind status={hydrated_badge.value} class="kind" />
+	</div>
+}
+
+describe('tsrx-vue hydrating a component whose only output is control flow', () => {
+	it('keeps the server’s nodes, then follows its props', async () => {
+		// The server build returns the choice as it is (vapor-for-ssr.test.js):
+		// the branch renders alone, with the component's attributes.
+		container.innerHTML =
+			'<div><input value="server" class="badge"><b class="kind">kind on</b></div>';
+		const input = container.querySelector('input') as HTMLInputElement;
+		input.value = 'typed';
+		const warnings: string[] = [];
+		const warn_spy = vi.spyOn(console, 'warn').mockImplementation((...args) => {
+			warnings.push(args.map(String).join(' '));
+		});
+		const app = createVaporSSRApp(HydratedHost);
+		try {
+			app.mount(container);
+			await flush();
+			expect(warnings.filter((warning) => warning.includes('ydration'))).toEqual([]);
+			expect(container.querySelector('input')).toBe(input);
+			expect(input.value).toBe('typed');
+
+			hydrated_badge.value = 'idle';
+			await flush();
+			expect(container.querySelector('input')).toBe(null);
+			expect(texts('i.badge')).toEqual(['off']);
+			expect(texts('b.kind')).toEqual(['kind idle']);
+		} finally {
+			app.unmount();
+			warn_spy.mockRestore();
+			hydrated_badge.value = 'active';
+		}
 	});
 });
 

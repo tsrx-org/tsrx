@@ -57,8 +57,8 @@ function Rows({ items }: { items: { id: number }[] }) @{
 }
 export function App({ items }: { items: { id: number }[] }) @{
 	<div>
-		<Badge status={items.length ? 'active' : 'idle'} />
-		<Kind status={items.length ? 'active' : 'idle'} />
+		<Badge status={items.length ? 'active' : 'idle'} class="badge" />
+		<Kind status={items.length ? 'active' : 'idle'} class="kind" />
 		<Rows {items} />
 	</div>
 }`,
@@ -137,14 +137,19 @@ describe('[vue] keyed @for through VaporFor on the server', () => {
 	});
 });
 
-// A component whose only output is an `@if`, a `@switch` or an `@for` returns
-// a fragment around it, which renders on the server too.
+// A component whose only output is an `@if`, a `@switch` or an `@for` puts it
+// in a fragment on the client, so it follows its props. The server build
+// returns it as it is: the branch renders alone, with the component's
+// attributes, which the client's `createIf` hydrates (comments kept here).
 describe('[vue] a component whose only output is control flow on the server', () => {
-	it('renders the branch, case and rows its props pick', async () => {
-		expect(await render('top.tsrx', [{ id: 1 }, { id: 2 }])).toBe(
-			'<div><b>on</b><b>kind on</b><p>row 1</p><p>row 2</p></div>',
+	it('renders the branch, case and rows its props pick, with its attributes', async () => {
+		const { App } = await server.ssrLoadModule('/top.tsrx');
+		expect(await renderToString(createSSRApp(App, { items: [{ id: 1 }, { id: 2 }] }))).toBe(
+			'<div><b class="badge">on</b><b class="kind">kind on</b><!--[--><p>row 1</p><p>row 2</p><!--]--></div>',
 		);
-		expect(await render('top.tsrx', [])).toBe('<div><i>off</i></div>');
+		expect(await renderToString(createSSRApp(App, { items: [] }))).toBe(
+			'<div><i class="badge">off</i><!----><!--[--><!--]--></div>',
+		);
 	});
 });
 

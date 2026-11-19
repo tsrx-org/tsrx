@@ -238,6 +238,22 @@ const vue_platform = {
 
 export const transform = createJsxTransform(vue_platform);
 
+/**
+ * The transform for a server build, which vue-jsx-vapor compiles with `ssr`
+ * on: the same output, except that a component whose output is control flow
+ * returns it as it is (see `render_returned_control_flow`).
+ */
+export const transform_for_server = createJsxTransform({
+	...vue_platform,
+	hooks: {
+		...vue_platform.hooks,
+		initialState: () => ({
+			...vue_platform.hooks?.initialState?.(),
+			vapor_server: true,
+		}),
+	},
+});
+
 /** Local name for the `TsrxPendingBody` that renders a `@pending` body. */
 const PENDING_BODY_INTERNAL_NAME = '__TsrxPendingBody';
 
@@ -433,7 +449,7 @@ function mark_type_only_host_ref_attribute(attr) {
  * @returns {AST.VariableDeclaration}
  */
 function wrap_helper_component(helper_fn, helper_id, source_node, ctx) {
-	if (!ctx.typeOnly) {
+	if (!ctx.typeOnly && !ctx.vapor_server) {
 		helper_fn = render_returned_control_flow(helper_fn, ctx);
 	}
 	return setLocation(
@@ -1025,9 +1041,16 @@ function collect_default_reads(value, parent, reads, in_default = false) {
  * `@if`'s choice, a `@switch`'s IIFE or a `map_iterable` call (an `@for`)
  * renders what they gave once and never again. Such an output is put in a
  * fragment, which vue-jsx-vapor renders in a `createIf` or an effect that
- * follows it; a `@switch` that `switch_in_fragment` can render keeps its case
- * mounted while the case stays. Only the component's own returns change, not
- * those of functions in it.
+ * follows it, as it does the same child of an element; a `@switch` that
+ * `switch_in_fragment` can render keeps its case mounted while the case
+ * stays. Only the component's own returns change, not those of functions in
+ * it.
+ *
+ * Not for a server build (`transform_for_server`): a server render runs once,
+ * and vue-jsx-vapor renders a fragment there as a `Fragment`, whose markers
+ * the client's `createIf` doesn't hydrate and which a component's attributes
+ * don't fall through. The output returned as it is renders the branch alone,
+ * which the client's `createIf` hydrates.
  *
  * @template {AST.Function} F
  * @param {F} fn
@@ -1105,7 +1128,7 @@ function wrap_native_function_component(fn, source, ctx, path) {
 	validate_props_param(fn, ctx);
 	if (!ctx.typeOnly) {
 		fn = read_children_from_default_slot(fn, name, ctx);
-		fn = render_returned_control_flow(fn, ctx);
+		if (!ctx.vapor_server) fn = render_returned_control_flow(fn, ctx);
 	}
 
 	const call = setLocation(
@@ -2353,9 +2376,9 @@ function lowered_switch_statement(node) {
  * `switch` for the index of the case it picks, and the result is a fragment
  * around the case chosen by that index, which vue-jsx-vapor makes
  * `createIf`s: it follows its value, keeps its case mounted while the index
- * stays the same, and renders nothing when no case matches (the fragment is
- * never `null`, which a row can't be). The `computed` is made once, so the
- * `switch` runs once for each change it reads.
+ * stays the same, and renders an empty fragment when no case matches, since
+ * a row can't be `null`. The `computed` is made once, so the `switch` runs
+ * once for each change it reads.
  *
  * @param {AST.CallExpression} node
  * @param {TransformContext} transform_context
@@ -2397,9 +2420,7 @@ function switch_in_fragment(node, transform_context) {
 		);
 
 	/** @type {AST.Expression} */
-	// No matching case renders nothing: `null` in a `createIf`, where an empty
-	// fragment would break a server render.
-	let chain = b.literal(null);
+	let chain = b.jsx_fragment();
 	for (let index = statement.cases.length - 1; index >= 0; index--) {
 		const output = /** @type {AST.ReturnStatement} */ (statement.cases[index].consequent[0]);
 		chain = b.conditional(
@@ -2432,7 +2453,7 @@ function switch_in_fragment(node, transform_context) {
 					: held_index(),
 				b.literal(index),
 			),
-			output.argument ?? b.literal(null),
+			to_vapor_branch(output.argument ?? b.literal(null)),
 			chain,
 		);
 	}

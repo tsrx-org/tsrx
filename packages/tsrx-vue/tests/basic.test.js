@@ -2456,8 +2456,43 @@ export function Card(${params}: any) @{
 		expect(code).toContain('switch (value) {');
 		expect(code).toContain('const _$_case_1 = _$_vapor_computed((_$_previous) => {');
 		expect(code).toContain("? <div>{'A'}</div>");
-		expect(code).toContain("=== 1 ? <div>{'Fallback'}</div> : null}</>;");
+		expect(code).toContain("=== 1 ? <div>{'Fallback'}</div> : <></>}</>;");
 		expect(code).not.toContain('not yet supported in Vue TSRX');
+	});
+
+	it('returns a component’s control flow as it is for a server build', () => {
+		// A server render runs once, and vue-jsx-vapor renders a fragment there
+		// as a `Fragment`, which the client's `createIf` doesn't hydrate.
+		const source = `function Badge({ on }: { on: boolean }) @{
+			@if (on) {
+				<b>{'on'}</b>
+			} @else {
+				<i>{'off'}</i>
+			}
+		}
+		function Kind({ value }: { value: string }) @{
+			@switch (value) {
+				@case 'a': {
+					<b>{'A'}</b>
+				}
+			}
+		}
+		function Rows({ items }: { items: number[] }) @{
+			@for (const item of items) {
+				const label = 'row ' + item;
+				<p>{label}</p>
+			}
+		}`;
+		const server = compile(source, 'App.tsrx', { ssr: true }).code;
+		expect(server).toContain("return on ? <b>{'on'}</b> : <i>{'off'}</i>;");
+		expect(server).toMatch(/return \(\(\) => \{\s*switch \(value\) \{/);
+		expect(server).toContain('return __map_iterable(items, (item) => {');
+		expect(server).not.toContain('_$_vapor_computed');
+
+		const client = compile(source, 'App.tsrx').code;
+		expect(client).toContain("return <>{on ? <b>{'on'}</b> : <i>{'off'}</i>}</>;");
+		expect(client).toContain('const _$_case_1 = _$_vapor_computed(');
+		expect(client).toContain('return <>{__map_iterable(items, (item) => {');
 	});
 
 	it('compiles switch statements with inline case statements before JSX', () => {
@@ -3398,7 +3433,7 @@ describe('@tsrx/vue @switch rows', () => {
 
 		// The slot runs once, so a `computed` picks the case's index and the
 		// cases sit in a fragment, which vue-jsx-vapor makes `createIf`s; no
-		// matching case renders nothing.
+		// matching case is an empty fragment.
 		expect(errors).toEqual([]);
 		// The `computed` returns what the `switch` throws, with the index it
 		// held; the first choice throws it, in an effect that keeps following
@@ -3427,7 +3462,7 @@ describe('@tsrx/vue @switch rows', () => {
 					? <li>{row.value.id}</li>
 					: (typeof _$_case_1.value === 'object' ? _$_case_1.value.index : _$_case_1.value) === 1
 						? <li>{row.value.title}</li>
-						: null}</>;
+						: <></>}</>;
 			})()}</__VaporFor>`),
 		);
 		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
