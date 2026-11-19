@@ -1,13 +1,16 @@
 /** @import * as AST from 'estree' */
 /** @import { CompileError, JsxPlatform } from '../../types/index' */
 
+import { print } from 'esrap';
 import { describe, expect, it } from 'vitest';
+import { walk } from 'zimmerframe';
 import {
 	analyzeTsrx,
 	createJsxTransform,
 	createVolarMappingsResult,
 	parseModule,
 } from '../../src/index.js';
+import { tsx_with_ts_locations } from '../../src/transform/jsx/helpers.js';
 
 /**
  * A platform's AST pass can wrap an expression in a call that has the
@@ -123,7 +126,7 @@ function compile_wrapped(source, wrapper = 'read', nested = false) {
 		source_map: transformed.map,
 		errors,
 	});
-	return { code: transformed.code, mappings };
+	return { code: transformed.code, mappings, ast, transformed };
 }
 
 /**
@@ -135,6 +138,16 @@ function compile_wrapped(source, wrapper = 'read', nested = false) {
  */
 function mapped_texts(source, text, wrapper, nested) {
 	const { code, mappings } = compile_wrapped(source, wrapper, nested);
+	return texts_of(source, code, mappings, text);
+}
+
+/**
+ * @param {string} source
+ * @param {string} code
+ * @param {Array<{ sourceOffsets: number[], lengths: number[], generatedOffsets: number[], generatedLengths?: number[] }>} mappings
+ * @param {string} text
+ */
+function texts_of(source, code, mappings, text) {
 	const start = source.lastIndexOf(text);
 	return mappings
 		.filter((mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === text.length)
@@ -223,6 +236,36 @@ export class C extends Base {
 		const source = `${DECLARATIONS}export function App() @{ <p>{a.b.c.d}</p> }\n`;
 		expect(mapped_texts(source, 'a.b', 'read', true)).toEqual(['a.b']);
 		expect(mapped_texts(source, 'a.b.c.d', 'read', true)).toEqual(['read(read(read(a.b).c).d']);
+	});
+
+	it('maps a reused AST again from the names it has then', () => {
+		// A platform can map an AST, change it and map it again. Names looked up
+		// in one mapping don't carry over to the next.
+		const source = `${DECLARATIONS}export function App() @{ <p>{\\u0061.b}</p> }\n`;
+		const { code, mappings, ast, transformed } = compile_wrapped(source, 'a');
+		expect(texts_of(source, code, mappings, '\\u0061.b')).toEqual(['a.b']);
+		const start = source.lastIndexOf('\\u0061');
+		walk(/** @type {any} */ (transformed.ast), null, {
+			Identifier(node, { next }) {
+				if (node.loc && node.start === start) node.name = 'z';
+				next();
+			},
+		});
+		const output = print(
+			/** @type {any} */ (transformed.ast),
+			tsx_with_ts_locations(true, undefined, null, source),
+			{ sourceMapSource: 'App.tsrx', sourceMapContent: source },
+		);
+		expect(output.code).toContain('a(z.b)');
+		const again = createVolarMappingsResult({
+			ast: transformed.ast,
+			ast_from_source: ast,
+			source,
+			generated_code: output.code,
+			source_map: output.map,
+			errors: [],
+		});
+		expect(texts_of(source, output.code, again.mappings, '\\u0061.b')).toEqual(['z.b']);
 	});
 
 	const long_string = JSON.stringify('a'.repeat(300));

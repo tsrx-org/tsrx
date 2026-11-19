@@ -498,6 +498,12 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * The leftmost names `start_at_own_text` looked up in this conversion.
+	 * @type {Map<AST.Node, string | undefined>}
+	 */
+	const leftmost_names = new Map();
+
+	/**
 	 * Start a node's mapping where the node's own text is printed. A platform's
 	 * AST pass can wrap a node in a call that has the node's location, so that
 	 * hover and diagnostics on the call land on the authored text (Octane wraps
@@ -538,7 +544,7 @@ export function convert_source_map_to_mappings(
 				? offsets.findLast((offset) => prints_source(offset, node_start, node_end))
 				: undefined;
 		if (start === undefined) {
-			const name = leftmost_name(node);
+			const name = leftmost_name(node, leftmost_names);
 			if (name !== undefined) {
 				start = offsets.findLast((offset) => generated_code.startsWith(name, offset));
 			}
@@ -3816,19 +3822,18 @@ function has_source_map_boundaries(node, src_to_gen_map) {
 	);
 }
 
-/** @type {WeakMap<AST.Node, string | undefined>} */
-const leftmost_names = new WeakMap();
-
 /**
  * The name of the authored identifier a member expression or call starts
  * with, through objects, callees, tags and `!`, as the printer writes it.
  * Undefined for one that starts with other code, such as `this`, parentheses,
- * a literal, a `new` or a call a pass added. Each node's name is kept, so the
- * members of a long chain don't each walk the whole chain.
+ * a literal, a `new` or a call a pass added. Each node's name is kept in
+ * `names`, so the members of a long chain don't each walk the whole chain.
  * @param {AST.Node} node
+ * @param {Map<AST.Node, string | undefined>} names the names found so far in
+ * one mapping conversion; a node's name can change between conversions
  * @returns {string | undefined}
  */
-function leftmost_name(node) {
+function leftmost_name(node, names) {
 	/** @type {AST.Node[]} */
 	const chain = [];
 	/** @type {AST.Node | undefined} */
@@ -3836,8 +3841,8 @@ function leftmost_name(node) {
 	/** @type {string | undefined} */
 	let name;
 	while (current) {
-		if (leftmost_names.has(current)) {
-			name = leftmost_names.get(current);
+		if (names.has(current)) {
+			name = names.get(current);
 			break;
 		}
 		chain.push(current);
@@ -3857,7 +3862,7 @@ function leftmost_name(node) {
 							? current.expression
 							: undefined;
 	}
-	for (const part of chain) leftmost_names.set(part, name);
+	for (const part of chain) names.set(part, name);
 	return name;
 }
 
