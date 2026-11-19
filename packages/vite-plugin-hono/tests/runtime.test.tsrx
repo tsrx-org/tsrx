@@ -230,6 +230,33 @@ function ThrowingPendingOuterCatchApp() @{
 	}
 }
 
+function EmptyPendingApp() @{
+	<div class="empty-pending">
+		@try {
+			<AsyncContent />
+		} @pending {
+		} @catch (error) {
+			<p class="error">{(error as Error).message}</p>
+		}
+	</div>
+}
+
+const showPending = false;
+
+function NothingPendingApp() @{
+	<div class="nothing-pending">
+		@try {
+			<AsyncContent />
+		} @pending {
+			@if (showPending) {
+				<p class="pending">{'Loading'}</p>
+			}
+		} @catch (error) {
+			<p class="error">{(error as Error).message}</p>
+		}
+	</div>
+}
+
 const ThemeContext = createContext('light');
 
 function ThemeLabel() @{
@@ -556,6 +583,21 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		await Promise.resolve();
 		await Promise.resolve();
 		expect(container.innerHTML).toBe('<span class="resolved">ready</span>');
+	});
+
+	it.each([
+		['an empty @pending', EmptyPendingApp, 'empty-pending'],
+		['a @pending that renders nothing', NothingPendingApp, 'nothing-pending'],
+	])('shows nothing for %s while the body suspends', async (_name, App, name) => {
+		render(<App />, container);
+
+		expect(container.innerHTML).toBe(`<div class="${name}"></div>`);
+		resolveValue('ready');
+		await Promise.resolve();
+		await Promise.resolve();
+		expect(container.innerHTML).toBe(
+			`<div class="${name}"><span class="resolved">ready</span></div>`,
+		);
 	});
 
 	// Hono keeps the @pending body inline, so it throws while the outer @try

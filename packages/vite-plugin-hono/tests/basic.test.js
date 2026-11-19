@@ -636,6 +636,70 @@ describe('@tsrx/vite-plugin-hono', () => {
 		}
 	});
 
+	// Hono's server `Suspense` calls `fallback.toString()` once the body
+	// suspends, so a `null` fallback threw a TypeError into the @catch.
+	it('streams the body behind an empty @pending, or one that renders nothing, with Hono SSR', async () => {
+		const plugin = tsrxHono();
+		const context = create_context();
+		const directory = await mkdtemp(
+			path.join(path.dirname(fileURLToPath(import.meta.url)), '.tmp-hono-empty-pending-'),
+		);
+
+		try {
+			const source_id = path.join(directory, 'PendingPages.tsrx');
+			const output_id = path.join(directory, 'PendingPages.js');
+			const transformed = await plugin.transform.call(
+				context,
+				`async function Slow() {
+					await new Promise((resolve) => setTimeout(resolve, 5));
+					return <p>{'slow'}</p>;
+				}
+
+				const show = false;
+
+				export function EmptyPendingPage() @{
+					<div>
+						@try {
+							<Slow />
+						} @pending {
+						} @catch (error) {
+							<b>{'caught ' + error.message}</b>
+						}
+					</div>
+				}
+
+				export function NothingPendingPage() @{
+					<div>
+						@try {
+							<Slow />
+						} @pending {
+							@if (show) {
+								<i>{'loading'}</i>
+							}
+						} @catch (error) {
+							<b>{'caught ' + error.message}</b>
+						}
+					</div>
+				}`,
+				source_id,
+			);
+			await writeFile(output_id, transformed.code);
+
+			const [pages, { jsx }, { renderToReadableStream }] = await Promise.all([
+				import(`${pathToFileURL(output_id).href}?test=${Date.now()}`),
+				import('hono/jsx'),
+				import('hono/jsx/streaming'),
+			]);
+			for (const Page of [pages.EmptyPendingPage, pages.NothingPendingPage]) {
+				const html = await new Response(renderToReadableStream(jsx(Page, {}))).text();
+				expect(html).toContain('<p>slow</p>');
+				expect(html).not.toContain('caught');
+			}
+		} finally {
+			await rm(directory, { recursive: true, force: true });
+		}
+	});
+
 	it('catches a throw from a @try body setup statement with Hono SSR', async () => {
 		const plugin = tsrxHono();
 		const context = create_context();

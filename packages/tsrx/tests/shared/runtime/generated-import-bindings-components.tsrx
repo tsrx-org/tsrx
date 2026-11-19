@@ -20,6 +20,40 @@ export function ModuleErrorBoundaryNameApp() @{
 	</div>
 }
 
+function TsrxTryBody(props: { children?: unknown }) {
+	return <section class="authored-try-body">{props.children as never}</section>;
+}
+
+export function ModuleTryBodyNameApp() @{
+	<div>
+		<TsrxTryBody>
+			<p class="authored-try-body-child">{'authored'}</p>
+		</TsrxTryBody>
+		@try {
+			<p class="generated-try-body-child">{'ready'}</p>
+		} @catch (_error) {
+			<p>{'failed'}</p>
+		}
+	</div>
+}
+
+export function LocalTryBodyNameApp() @{
+	const TsrxTryBody = (props: { children?: unknown }) => (
+		<section class="local-try-body">{props.children as never}</section>
+	);
+
+	<div>
+		<TsrxTryBody>
+			<p class="authored-try-body-child">{'authored'}</p>
+		</TsrxTryBody>
+		@try {
+			<p class="generated-try-body-child">{'ready'}</p>
+		} @catch (_error) {
+			<p>{'failed'}</p>
+		}
+	</div>
+}
+
 export function LocalSuspenseNameApp() @{
 	const Suspense = (props: { children?: unknown }) => (
 		<section class="local-suspense">{props.children as never}</section>

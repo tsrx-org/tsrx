@@ -129,8 +129,49 @@ describe('@tsrx/hono @pending fallback', () => {
 			'App.tsrx',
 		);
 
-		expect(code).toMatch(/<__Suspense fallback=\{\(\(\) => \{\s*const label = loadLabel\(\);/);
+		// In a fragment: the body can render nothing, and Hono's `Suspense`
+		// doesn't take a `null` fallback.
+		expect(code).toMatch(/<__Suspense fallback=\{<>\{\(\(\) => \{\s*const label = loadLabel\(\);/);
 	});
+
+	it.each([
+		['server', compileServer],
+		['dom', compileDom],
+	])('%s compiler passes an empty fragment for an empty @pending', (_name, compile) => {
+		const { code } = compile(
+			`export function App() @{
+				@try {
+					<Child />
+				} @pending {}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('<__Suspense fallback={<></>}');
+	});
+
+	it.each([
+		['server', compileServer],
+		['dom', compileDom],
+	])(
+		'%s compiler wraps a @pending body that can render nothing in a fragment',
+		(_name, compile) => {
+			const { code } = compile(
+				`export function App({ show }) @{
+				@try {
+					<Child />
+				} @pending {
+					@if (show) {
+						<p>{'loading'}</p>
+					}
+				}
+			}`,
+				'App.tsrx',
+			);
+
+			expect(code).toMatch(/<__Suspense fallback=\{<>\{\(\(\) => \{\s*return show \?/);
+		},
+	);
 });
 
 describe('@tsrx/hono server compiler', () => {

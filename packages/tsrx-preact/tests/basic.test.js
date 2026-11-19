@@ -125,7 +125,7 @@ describe('@tsrx/preact basic', () => {
 		);
 
 		expect(code).toMatch(
-			/<__Suspense fallback=\{<TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
+			/<__Suspense fallback=\{<__TsrxTryBody render=\{\(\) => \{\s*const label = loadLabel\(\);/,
 		);
 	});
 

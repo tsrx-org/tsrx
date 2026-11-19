@@ -5000,7 +5000,8 @@ export function App() @{
 	describe(`[${name}] component try pending fallbacks`, () => {
 		// Vue lowers `@pending` to a Suspense slot object, the other targets to
 		// a `fallback={...}` prop — an empty block must not emit a fallback slot
-		// or a fallback prop respectively.
+		// or a fallback prop respectively. Hono's `Suspense` doesn't take a
+		// `null` fallback, so it gets an empty fragment.
 		it('allows empty pending blocks as null fallbacks', () => {
 			const { code } = compile(
 				`export function App() @{
@@ -5018,6 +5019,8 @@ export function App() @{
 				expect(code).toContain('default: () =>');
 				expect(code).not.toContain('fallback: () =>');
 				expect(code).not.toContain('fallback={');
+			} else if (name === 'hono') {
+				expect(code).toContain('fallback={<></>}');
 			} else {
 				expect(code).toContain('fallback={null}');
 			}
@@ -5111,16 +5114,19 @@ export function App() @{
 			Suspense: 'react',
 			Fragment: 'react',
 			TsrxErrorBoundary: '@tsrx/react/error-boundary',
+			TsrxTryBody: '@tsrx/react/try-body',
 		},
 		preact: {
 			Suspense: 'preact/compat',
 			Fragment: 'preact',
 			TsrxErrorBoundary: '@tsrx/preact/error-boundary',
+			TsrxTryBody: '@tsrx/preact/try-body',
 		},
 		hono: {
 			Suspense: 'hono/jsx',
 			Fragment: 'hono/jsx',
 			TsrxErrorBoundary: '@tsrx/hono/error-boundary',
+			TsrxTryBody: '@tsrx/hono/try-body',
 		},
 		solid: {
 			Show: 'solid-js',
@@ -5143,6 +5149,7 @@ export function App() @{
 			const templates = {
 				Suspense: `<div>@try { <p>{'ready'}</p> } @pending { <p>{'loading'}</p> }</div>`,
 				TsrxErrorBoundary: `<div>@try { <p>{'ready'}</p> } @catch (error) { <p>{'failed'}</p> }</div>`,
+				TsrxTryBody: `<div>@try { <p>{'ready'}</p> } @catch (error) { <p>{'failed'}</p> }</div>`,
 				Fragment: `<ul>@for (const row of rows; key row) { <><li>{row}</li><li>{'end'}</li></> }</ul>`,
 				Show: `<div>@if (rows.length > 0) { <p>{'some'}</p> }</div>`,
 				For: `<ul>@for (const row of rows) { <li>{row}</li> }</ul>`,
