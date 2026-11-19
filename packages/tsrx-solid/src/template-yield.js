@@ -46,7 +46,20 @@ const AST_METADATA_KEYS = new Set(['loc', 'start', 'end', 'metadata']);
  * @returns {AST.YieldExpression[]}
  */
 export function find_deferred_template_yields(program) {
-	return find_deferred(program, false);
+	return /** @type {AST.YieldExpression[]} */ (find_deferred(program, false, 'YieldExpression'));
+}
+
+/**
+ * The `await`s that babel-preset-solid moves out of their async function. It
+ * compiles an `await` as it compiles a `yield`, so these follow the same
+ * rules. `packages/vite-plugin-solid/tests/template-yield-downstream.test.js`
+ * checks these too.
+ *
+ * @param {AST.Program} program
+ * @returns {AST.AwaitExpression[]}
+ */
+export function find_deferred_template_awaits(program) {
+	return /** @type {AST.AwaitExpression[]} */ (find_deferred(program, false, 'AwaitExpression'));
 }
 
 /**
@@ -66,23 +79,41 @@ export function find_deferred_template_yields(program) {
  *
  * The client's `yield`s are found as `find_deferred_template_yields` finds
  * them, on their own, so a value the SSR check counts as maybe folded (see
- * `collect_folded_yields`) never hides one: a server build reports every
+ * `collect_folded`) never hides one: a server build reports every
  * `yield` a client build does.
  *
  * @param {AST.Program} program
  * @returns {AST.YieldExpression[]}
  */
 export function find_deferred_server_template_yields(program) {
-	return [...find_deferred(program, false), ...find_deferred(program, true)];
+	return /** @type {AST.YieldExpression[]} */ ([
+		...find_deferred(program, false, 'YieldExpression'),
+		...find_deferred(program, true, 'YieldExpression'),
+	]);
+}
+
+/**
+ * The same for the `await`s of a server build.
+ *
+ * @param {AST.Program} program
+ * @returns {AST.AwaitExpression[]}
+ */
+export function find_deferred_server_template_awaits(program) {
+	return /** @type {AST.AwaitExpression[]} */ ([
+		...find_deferred(program, false, 'AwaitExpression'),
+		...find_deferred(program, true, 'AwaitExpression'),
+	]);
 }
 
 /**
  * @param {AST.Program} program
  * @param {boolean} server whether to follow the SSR output as well
- * @returns {AST.YieldExpression[]}
+ * @param {'YieldExpression' | 'AwaitExpression'} type the node to find: a
+ *   `yield` in a generator, or an `await` in an async function
+ * @returns {AST.Node[]}
  */
-function find_deferred(program, server) {
-	/** @type {AST.YieldExpression[]} */
+function find_deferred(program, server, type) {
+	/** @type {AST.Node[]} */
 	const found = [];
 	const namespaces = collect_namespace_imports(program);
 	/**
@@ -93,10 +124,13 @@ function find_deferred(program, server) {
 	 */
 	const grouped = new Set();
 	const folder = server ? create_folder(program) : undefined;
-	const folded = collect_folded_yields(program, folder);
+	const folded = collect_folded(program, folder);
 
 	/**
-	 * @typedef {{ generator: boolean, deferred: boolean }} Context
+	 * `owner` is whether the nearest function is a generator, for a `yield`,
+	 * or async, for an `await`.
+	 *
+	 * @typedef {{ owner: boolean, deferred: boolean }} Context
 	 */
 
 	/**
@@ -107,9 +141,12 @@ function find_deferred(program, server) {
 	 */
 	const visit = (node, context) => {
 		if (isFunctionNode(node)) {
-			context = { generator: !!node.generator, deferred: false };
-		} else if (node.type === 'YieldExpression') {
-			if (context.generator && context.deferred && !folded.has(node)) found.push(node);
+			context = {
+				owner: type === 'YieldExpression' ? !!node.generator : !!node.async,
+				deferred: false,
+			};
+		} else if (node.type === type) {
+			if (context.owner && context.deferred && !folded.has(node)) found.push(node);
 		} else if (node.type === 'ReturnStatement' || node.type === 'VariableDeclarator') {
 			const value = node.type === 'ReturnStatement' ? node.argument : node.init;
 			const element = strip(value, []);
@@ -358,7 +395,8 @@ function find_deferred(program, server) {
 	 */
 	const visit_all = (node, context) => for_each_child(node, (child) => visit(child, context));
 
-	visit(program, { generator: false, deferred: false });
+	// A module's top level can await, but not yield.
+	visit(program, { owner: type === 'AwaitExpression', deferred: false });
 	return found;
 }
 
@@ -1357,7 +1395,7 @@ function is_folded_dynamic(node, namespaces) {
 	const expression = strip(node, []);
 	if (!expression) return false;
 	// A value that folds into a literal keeps no `yield` (see
-	// `collect_folded_yields`), so only an object's values need folding here.
+	// `collect_folded`), so only an object's values need folding here.
 	if (expression.type === 'ObjectExpression') return object_is_dynamic(expression);
 	return is_dynamic(expression, false, namespaces);
 }
@@ -1379,17 +1417,17 @@ function object_is_dynamic(object) {
 }
 
 /**
- * The `yield`s dom-expressions drops when it folds a host attribute value, a
- * value in an object there, or a host child into a literal. For the SSR
- * check, a value that may fold, but whose literals don't decide it, counts
- * too, so a `yield` only that check finds there goes unreported rather than
- * reported though dropped.
+ * The `yield`s and `await`s dom-expressions drops when it folds a host
+ * attribute value, a value in an object there, or a host child into a
+ * literal. For the SSR check, a value that may fold, but whose literals don't
+ * decide it, counts too, so a `yield` only that check finds there goes
+ * unreported rather than reported though dropped.
  *
  * @param {AST.Program} program
  * @param {Folder} [folder]
  * @returns {Set<AST.Node>}
  */
-function collect_folded_yields(program, folder) {
+function collect_folded(program, folder) {
 	/** @type {Set<AST.Node>} */
 	const folded = new Set();
 	/**
@@ -1400,7 +1438,7 @@ function collect_folded_yields(program, folder) {
 		// In a server build, a value the literals can't decide but that may
 		// fold counts as folded too.
 		if (folds(node, types) || (folder && !literal_value(node) && folder.may_fold(node))) {
-			for (const inner of find_yields(node)) folded.add(inner);
+			for (const inner of find_yields_and_awaits(node)) folded.add(inner);
 		}
 	};
 	/** @param {AST.Node} node */
@@ -1445,9 +1483,9 @@ function collect_folded_yields(program, folder) {
  * @param {AST.Node[]} [found]
  * @returns {AST.Node[]}
  */
-function find_yields(node, found = []) {
-	if (node.type === 'YieldExpression') found.push(node);
-	for_each_child(node, (child) => find_yields(child, found));
+function find_yields_and_awaits(node, found = []) {
+	if (node.type === 'YieldExpression' || node.type === 'AwaitExpression') found.push(node);
+	for_each_child(node, (child) => find_yields_and_awaits(child, found));
 	return found;
 }
 
@@ -1675,7 +1713,9 @@ function collect_namespace_imports(program) {
 }
 
 /**
- * dom-expressions compiles a capitalized or dotted tag as a component.
+ * dom-expressions compiles a dotted tag, or one that starts with a capital or
+ * with something other than a letter, as a component. That includes the
+ * control-flow components TSRX imports under private names, such as `__Show`.
  *
  * @param {AST.Node} name
  * @returns {boolean}
@@ -1684,7 +1724,7 @@ function is_component_name(name) {
 	if (name.type === 'JSXNamespacedName') return false;
 	if (name.type !== 'JSXIdentifier' && name.type !== 'Identifier') return true;
 	const first = name.name[0];
-	return first !== first.toLowerCase();
+	return first !== first.toLowerCase() || /[^a-zA-Z]/.test(first);
 }
 
 /**

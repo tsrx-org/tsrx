@@ -13,8 +13,9 @@ export interface CompileOptions {
 	 * `generate: 'ssr'` and `hydratable: true`, as `vite-plugin-solid` does with
 	 * its `ssr` option on. A `yield` in a template value that this output moves
 	 * into an arrow is then reported too (TSRX2034), as well as one the
-	 * client's DOM output moves. The output is the same either way. Defaults to
-	 * `false`: only the DOM output's rules apply.
+	 * client's DOM output moves, and so is an `await` there (TSRX2021). The
+	 * output is the same either way. Defaults to `false`: only the DOM output's
+	 * rules apply.
 	 */
 	ssr?: boolean;
 }

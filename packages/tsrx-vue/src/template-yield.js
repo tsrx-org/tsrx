@@ -19,27 +19,51 @@ const AST_METADATA_KEYS = new Set(['loc', 'start', 'end', 'metadata']);
  * @returns {AST.YieldExpression[]}
  */
 export function find_deferred_template_yields(program) {
-	/** @type {AST.YieldExpression[]} */
+	return /** @type {AST.YieldExpression[]} */ (find_deferred(program, 'YieldExpression'));
+}
+
+/**
+ * The `await`s that vue-jsx-vapor moves out of their async function, for the
+ * same reason: an `await` anywhere in an element or fragment ends up in a
+ * function that isn't async. `packages/vite-plugin-vue/tests/template-yield-downstream.test.js`
+ * checks these too.
+ *
+ * @param {AST.Program} program
+ * @returns {AST.AwaitExpression[]}
+ */
+export function find_deferred_template_awaits(program) {
+	return /** @type {AST.AwaitExpression[]} */ (find_deferred(program, 'AwaitExpression'));
+}
+
+/**
+ * @param {AST.Program} program
+ * @param {'YieldExpression' | 'AwaitExpression'} type
+ * @returns {AST.Node[]}
+ */
+function find_deferred(program, type) {
+	/** @type {AST.Node[]} */
 	const found = [];
 
 	/**
 	 * @param {AST.Node} node
-	 * @param {boolean} in_generator whether the nearest function is a generator
+	 * @param {boolean} in_owner whether the nearest function is a generator, for
+	 *   a `yield`, or async, for an `await`
 	 * @param {boolean} in_template whether the node is inside an element or fragment
 	 */
-	const visit = (node, in_generator, in_template) => {
+	const visit = (node, in_owner, in_template) => {
 		if (isFunctionNode(node)) {
-			in_generator = !!node.generator;
+			in_owner = type === 'YieldExpression' ? !!node.generator : !!node.async;
 			in_template = false;
-		} else if (node.type === 'YieldExpression' && in_generator && in_template) {
+		} else if (node.type === type && in_owner && in_template) {
 			found.push(node);
 		} else if (node.type === 'JSXElement' || node.type === 'JSXFragment') {
 			in_template = true;
 		}
-		for_each_child(node, (child) => visit(child, in_generator, in_template));
+		for_each_child(node, (child) => visit(child, in_owner, in_template));
 	};
 
-	visit(program, false, false);
+	// A module's top level can await, but not yield.
+	visit(program, type === 'AwaitExpression', false);
 	return found;
 }
 
