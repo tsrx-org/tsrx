@@ -3259,6 +3259,20 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				expect.objectContaining({ code: 'TS1114', pos: chained.indexOf('outer: for (const y') }),
 			);
 
+			// Nor in one returned inside a template body, from a label in that body.
+			for (const returned of [
+				'@{ outer: for (const y of items) { console.log(y); } }',
+				'<>@{ outer: for (const y of items) { console.log(y); } }<i /></>',
+			]) {
+				const in_body = `export function App({ items }: { items: string[] }) {
+					const view = @{ outer: for (const x of items) { if (x) return ${returned}; } <b /> };
+					return view;
+				}`;
+				expect(() => compile(in_body, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: in_body.indexOf('outer: for (const y') }),
+				);
+			}
+
 			// A block with output, and a function in a code-only block, aren't inlined.
 			for (const block of [
 				'@{ outer: for (const y of items) { console.log(y); } <b /> }',
@@ -3270,6 +3284,22 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				const allowed = `export function App({ items }: { items: string[] }) {
 					outer: for (const x of items) {
 						if (x) return <>${block}<b>{x}</b></>;
+					}
+					return null;
+				}`;
+				expect(compile(allowed, 'App.tsrx', { collect: true }).errors, block).toEqual([]);
+			}
+
+			// A returned code-only block in a template body is inlined into that
+			// body's function, apart from the label outside the template.
+			for (const block of [
+				'@{ for (const y of items) { return @{ outer: for (const z of items) { console.log(z); } }; } <b /> }',
+				'@{ for (const y of items) { return <>@{ outer: for (const z of items) { console.log(z); } }<i /></>; } <b /> }',
+			]) {
+				const allowed = `export function App({ items }: { items: string[] }) {
+					outer: for (const x of items) {
+						const view = ${block};
+						console.log(x, view);
 					}
 					return null;
 				}`;

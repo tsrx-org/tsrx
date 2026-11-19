@@ -15193,7 +15193,15 @@ export function TSRXPlugin(config) {
 				if (value?.type === 'JSXFragment') blocks = value.children;
 				else if (value?.type === 'JSXCodeBlock') blocks = [value];
 				else return;
-				const outer = new Set(this.labels.map((label) => label.name).filter(Boolean));
+				// Only the labels in the same template body as the `return` share its
+				// function once lowered.
+				const floor = this.#labelFloor?.labels === this.labels ? this.#labelFloor.length : 0;
+				const outer = new Set(
+					this.labels
+						.slice(floor)
+						.map((label) => label.name)
+						.filter(Boolean),
+				);
 				if (outer.size === 0) return;
 				for (const child of blocks) {
 					if (child.type !== 'JSXCodeBlock' || has_code_block_render(child)) continue;
