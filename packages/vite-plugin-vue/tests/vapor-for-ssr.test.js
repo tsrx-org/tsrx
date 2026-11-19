@@ -35,30 +35,16 @@ const FIXTURES = {
 	</ul>
 }`,
 
-	'top.tsrx': `function Badge({ status }: { status: string }) @{
-	@if (status === 'active') {
-		<b>{'on'}</b>
-	} @else {
-		<i>{'off'}</i>
-	}
-}
-function Kind({ status }: { status: string }) @{
-	@switch (status) {
-		@case 'active': {
-			<b>{'kind on'}</b>
-		}
-	}
-}
-function Rows({ items }: { items: { id: number }[] }) @{
+	'top-rows.tsrx': `function Rows({ items }: { items: { id: number }[] }) @{
 	@for (const item of items) {
 		const label = 'row ' + item.id;
 		<p>{label}</p>
+	} @empty {
+		<i>{'none'}</i>
 	}
 }
 export function App({ items }: { items: { id: number }[] }) @{
 	<div>
-		<Badge status={items.length ? 'active' : 'idle'} class="badge" />
-		<Kind status={items.length ? 'active' : 'idle'} class="kind" />
 		<Rows {items} />
 	</div>
 }`,
@@ -137,18 +123,16 @@ describe('[vue] keyed @for through VaporFor on the server', () => {
 	});
 });
 
-// A component whose only output is an `@if`, a `@switch` or an `@for` puts it
-// in a fragment on the client, so it follows its props. The server build
-// returns it as it is: the branch renders alone, with the component's
-// attributes, which the client's `createIf` hydrates (comments kept here).
-describe('[vue] a component whose only output is control flow on the server', () => {
-	it('renders the branch, case and rows its props pick, with its attributes', async () => {
-		const { App } = await server.ssrLoadModule('/top.tsrx');
+// A component whose only output is an `@for` with setup statements returns the
+// rows in a fragment, which renders on the server too (comments kept here).
+describe('[vue] a component whose only output is an @for on the server', () => {
+	it('renders its rows, or its @empty', async () => {
+		const { App } = await server.ssrLoadModule('/top-rows.tsrx');
 		expect(await renderToString(createSSRApp(App, { items: [{ id: 1 }, { id: 2 }] }))).toBe(
-			'<div><b class="badge">on</b><b class="kind">kind on</b><!--[--><p>row 1</p><p>row 2</p><!--]--></div>',
+			'<div><!--[--><!--[--><p>row 1</p><p>row 2</p><!--]--><!--]--></div>',
 		);
 		expect(await renderToString(createSSRApp(App, { items: [] }))).toBe(
-			'<div><i class="badge">off</i><!----><!--[--><!--]--></div>',
+			'<div><!--[--><!--[--><i>none</i><!--]--><!--]--></div>',
 		);
 	});
 });

@@ -1,7 +1,6 @@
 import type { MockInstance } from 'vitest';
 import {
 	createVaporApp,
-	createVaporSSRApp,
 	defineVaporAsyncComponent,
 	inject,
 	onMounted,
@@ -3751,196 +3750,40 @@ describe('tsrx-vue keyed @switch rows', () => {
 	});
 });
 
-const badge = ref({ status: 'active', name: 'Ann', rows: [{ id: 'a' }, { id: 'b' }] });
+const top_rows = ref([{ id: 'a' }, { id: 'b' }]);
 
-function BadgeCounter(props: { label: string }) @{
-	const count = ref(0);
-	<button
-		class="badge-counter"
-		onClick={() => count.value++}
-	>{`${props.label}:${count.value}`}</button>
-}
-
-function BadgeIf(props: { status: string; name: string }) @{
-	@if (props.status === 'active') {
-		<BadgeCounter label={'on ' + props.name} />
-	} @else {
-		<p class="badge-off">{'off'}</p>
-	}
-}
-
-function BadgeSetup(props: { status: string; name: string }) @{
-	@if (props.status === 'active') {
-		const label = 'setup ' + props.name;
-		<p class="badge-setup">{label}</p>
-	}
-}
-
-function BadgeIfOnly(props: { status: string }) @{
-	@if (props.status === 'active') {
-		<BadgeCounter label="on" />
-	}
-}
-
-function BadgeSwitch(props: { status: string; name: string }) @{
-	@switch (props.status) {
-		@case 'active': {
-			<BadgeCounter label={'switch ' + props.name} />
-		}
-		@case 'idle': {
-			@if (props.name.length > 0) {
-				<p class="badge-off">{'idle ' + props.name}</p>
-			}
-		}
-	}
-}
-
-function BadgeTry(props: { status: string }) @{
-	@try {
-		@if (props.status === 'active') {
-			<BadgeCounter label="try" />
-		} @else {
-			<p class="badge-off">{'off'}</p>
-		}
-	} @catch (error) {
-		<p>{'caught'}</p>
-	}
-}
-
-function BadgeRows(props: { rows: { id: string }[] }) @{
+function TopRows(props: { rows: { id: string }[] }) @{
 	@for (const row of props.rows) {
 		const label = 'row ' + row.id;
-		<p class="badge-row">{label}</p>
+		<p class="top-row">{label}</p>
+	} @empty {
+		<p class="top-row">{'none'}</p>
 	}
 }
 
-function BadgeHost() @{
-	<div>
-		<section class="badge-if">
-			<BadgeIf status={badge.value.status} name={badge.value.name} />
-		</section>
-		<section class="badge-if-only">
-			<BadgeIfOnly status={badge.value.status} />
-		</section>
-		<section class="badge-setup">
-			<BadgeSetup status={badge.value.status} name={badge.value.name} />
-		</section>
-		<section class="badge-switch">
-			<BadgeSwitch status={badge.value.status} name={badge.value.name} />
-		</section>
-		<section class="badge-try">
-			<BadgeTry status={badge.value.status} />
-		</section>
-		<section class="badge-rows">
-			<BadgeRows rows={badge.value.rows} />
-		</section>
-	</div>
+function TopRowsHost() @{
+	<section>
+		<TopRows rows={top_rows.value} />
+	</section>
 }
 
-function badge_texts(section: string) {
-	return texts(`.${section} button, .${section} p`);
-}
+describe('tsrx-vue a component whose only output is an @for', () => {
+	it('follows its props', async () => {
+		top_rows.value = [{ id: 'a' }, { id: 'b' }];
+		await render(TopRowsHost);
+		expect(texts('.top-row')).toEqual(['row a', 'row b']);
 
-describe('tsrx-vue a component whose only output is control flow', () => {
-	beforeEach(() => {
-		badge.value = { status: 'active', name: 'Ann', rows: [{ id: 'a' }, { id: 'b' }] };
-	});
-
-	it('follows its props, and keeps a branch’s state while the branch stays', async () => {
-		await render(BadgeHost);
-		for (const button of container.querySelectorAll('.badge-counter')) {
-			(button as HTMLElement).click();
-		}
+		top_rows.value = [{ id: 'b' }];
 		await flush();
+		expect(texts('.top-row')).toEqual(['row b']);
 
-		badge.value = { ...badge.value, name: 'Bo' };
+		top_rows.value = [];
 		await flush();
-		expect(badge_texts('badge-if')).toEqual(['on Bo:1']);
-		expect(badge_texts('badge-if-only')).toEqual(['on:1']);
-		expect(badge_texts('badge-switch')).toEqual(['switch Bo:1']);
-		expect(badge_texts('badge-try')).toEqual(['try:1']);
-		// A branch with setup statements renders again for each change it
-		// reads, as it does inside an element.
-		expect(badge_texts('badge-setup')).toEqual(['setup Bo']);
+		expect(texts('.top-row')).toEqual(['none']);
 
-		badge.value = { ...badge.value, status: 'idle', rows: [{ id: 'b' }] };
+		top_rows.value = [{ id: 'c' }];
 		await flush();
-		expect(badge_texts('badge-if')).toEqual(['off']);
-		expect(badge_texts('badge-if-only')).toEqual([]);
-		expect(badge_texts('badge-setup')).toEqual([]);
-		expect(badge_texts('badge-switch')).toEqual(['idle Bo']);
-		expect(badge_texts('badge-try')).toEqual(['off']);
-		expect(badge_texts('badge-rows')).toEqual(['row b']);
-
-		badge.value = { ...badge.value, status: 'gone', name: '' };
-		await flush();
-		expect(badge_texts('badge-switch')).toEqual([]);
-
-		badge.value = { ...badge.value, status: 'active' };
-		await flush();
-		expect(badge_texts('badge-if')).toEqual(['on :0']);
-		expect(badge_texts('badge-switch')).toEqual(['switch :0']);
-	});
-});
-
-const hydrated_badge = ref('active');
-
-function HydratedBadge(props: { status: string }) @{
-	@if (props.status === 'active') {
-		<input value="server" />
-	} @else {
-		<i>{'off'}</i>
-	}
-}
-
-function HydratedKind(props: { status: string }) @{
-	@switch (props.status) {
-		@case 'active': {
-			<b>{'kind on'}</b>
-		}
-		@case 'idle': {
-			<b>{'kind idle'}</b>
-		}
-	}
-}
-
-function HydratedHost() @{
-	<div>
-		<HydratedBadge status={hydrated_badge.value} class="badge" />
-		<HydratedKind status={hydrated_badge.value} class="kind" />
-	</div>
-}
-
-describe('tsrx-vue hydrating a component whose only output is control flow', () => {
-	it('keeps the server’s nodes, then follows its props', async () => {
-		// The server build returns the choice as it is (vapor-for-ssr.test.js):
-		// the branch renders alone, with the component's attributes.
-		container.innerHTML =
-			'<div><input value="server" class="badge"><b class="kind">kind on</b></div>';
-		const input = container.querySelector('input') as HTMLInputElement;
-		input.value = 'typed';
-		const warnings: string[] = [];
-		const warn_spy = vi.spyOn(console, 'warn').mockImplementation((...args) => {
-			warnings.push(args.map(String).join(' '));
-		});
-		const app = createVaporSSRApp(HydratedHost);
-		try {
-			app.mount(container);
-			await flush();
-			expect(warnings.filter((warning) => warning.includes('ydration'))).toEqual([]);
-			expect(container.querySelector('input')).toBe(input);
-			expect(input.value).toBe('typed');
-
-			hydrated_badge.value = 'idle';
-			await flush();
-			expect(container.querySelector('input')).toBe(null);
-			expect(texts('i.badge')).toEqual(['off']);
-			expect(texts('b.kind')).toEqual(['kind idle']);
-		} finally {
-			app.unmount();
-			warn_spy.mockRestore();
-			hydrated_badge.value = 'active';
-		}
+		expect(texts('.top-row')).toEqual(['row c']);
 	});
 });
 

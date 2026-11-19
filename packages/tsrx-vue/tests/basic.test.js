@@ -1551,9 +1551,7 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		// A component's setup returns once, so its output is a fragment around
-		// the choice, which vue-jsx-vapor makes a `createIf`.
-		expect(code).toContain("return <>{visible ? <div>{'Visible'}</div> : null}</>;");
+		expect(code).toContain("return visible ? <div>{'Visible'}</div> : null;");
 		expect(code).not.toContain('__static');
 		expect(code).not.toContain('not yet supported in Vue TSRX');
 	});
@@ -1570,9 +1568,7 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain(
-			"return <>{visible ? <div>{'Visible'}</div> : <div>{'Hidden'}</div>}</>;",
-		);
+		expect(code).toContain("return visible ? <div>{'Visible'}</div> : <div>{'Hidden'}</div>;");
 		expect(code).not.toContain('__static');
 	});
 
@@ -2451,48 +2447,38 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		// A component's setup returns once, so a `computed` picks the case and
-		// a fragment of `createIf`s renders it, as for a `VaporFor` row.
 		expect(code).toContain('switch (value) {');
-		expect(code).toContain('const _$_case_1 = _$_vapor_computed((_$_previous) => {');
-		expect(code).toContain("? <div>{'A'}</div>");
-		expect(code).toContain("=== 1 ? <div>{'Fallback'}</div> : <></>}</>;");
+		expect(code).toContain("<div>{'A'}</div>");
+		expect(code).toContain("<div>{'Fallback'}</div>");
+		expect(code).toContain("return <div>{'A'}</div>;");
+		expect(code).toContain("return <div>{'Fallback'}</div>;");
 		expect(code).not.toContain('not yet supported in Vue TSRX');
 	});
 
-	it('returns a component’s control flow as it is for a server build', () => {
-		// A server render runs once, and vue-jsx-vapor renders a fragment there
-		// as a `Fragment`, which the client's `createIf` doesn't hydrate.
-		const source = `function Badge({ on }: { on: boolean }) @{
-			@if (on) {
-				<b>{'on'}</b>
-			} @else {
-				<i>{'off'}</i>
-			}
-		}
-		function Kind({ value }: { value: string }) @{
-			@switch (value) {
-				@case 'a': {
-					<b>{'A'}</b>
+	it('returns a top-level @for with setup statements in a fragment', () => {
+		// A component's setup returns once, so the rows are evaluated in the
+		// fragment's effect, as the same loop inside an element is.
+		const { code } = compile(
+			`function Rows({ items }: { items: number[] }) @{
+				@for (const item of items) {
+					const label = 'row ' + item;
+					<p>{label}</p>
+				} @empty {
+					<i>{'none'}</i>
 				}
 			}
-		}
-		function Rows({ items }: { items: number[] }) @{
-			@for (const item of items) {
-				const label = 'row ' + item;
-				<p>{label}</p>
-			}
-		}`;
-		const server = compile(source, 'App.tsrx', { ssr: true }).code;
-		expect(server).toContain("return on ? <b>{'on'}</b> : <i>{'off'}</i>;");
-		expect(server).toMatch(/return \(\(\) => \{\s*switch \(value\) \{/);
-		expect(server).toContain('return __map_iterable(items, (item) => {');
-		expect(server).not.toContain('_$_vapor_computed');
+			function Badge({ on }: { on: boolean }) @{
+				@if (on) {
+					<b>{'on'}</b>
+				}
+			}`,
+			'App.tsrx',
+		);
 
-		const client = compile(source, 'App.tsrx').code;
-		expect(client).toContain("return <>{on ? <b>{'on'}</b> : <i>{'off'}</i>}</>;");
-		expect(client).toContain('const _$_case_1 = _$_vapor_computed(');
-		expect(client).toContain('return <>{__map_iterable(items, (item) => {');
+		expect(code).toContain('return <>{__map_iterable(');
+		// Not an `@if`, whose root `createIf` would not inherit the component's
+		// attributes as an element root does.
+		expect(code).toContain("return on ? <b>{'on'}</b> : null;");
 	});
 
 	it('compiles switch statements with inline case statements before JSX', () => {

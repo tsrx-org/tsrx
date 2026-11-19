@@ -256,7 +256,7 @@ function create_tsrx_vue_plugin(options) {
 			return resolved;
 		},
 
-		async load(id, load_options) {
+		async load(id) {
 			if (id.includes(CSS_QUERY)) {
 				const key = id.split('?')[0];
 				return cssCache.get(key) ?? '';
@@ -267,11 +267,7 @@ function create_tsrx_vue_plugin(options) {
 
 			const realPath = toRealPath(path);
 			const source = await readFile(realPath, 'utf-8');
-			let { code, css, map } = compile(source, realPath, {
-				...compile_options,
-				// vue-jsx-vapor reads the same flag to compile a server build.
-				ssr: !!load_options?.ssr,
-			});
+			let { code, css, map } = compile(source, realPath, compile_options);
 
 			if (css) {
 				cssCache.set(realPath, css);

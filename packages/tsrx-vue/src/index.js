@@ -11,7 +11,7 @@ import {
 	specializePlatform,
 	withPlatformTypes,
 } from '@tsrx/core';
-import { transform, transform_for_server } from './transform.js';
+import { transform } from './transform.js';
 
 export { isRefProp } from './ref.js';
 
@@ -34,7 +34,7 @@ export function parse(source, filename, options) {
  * @template {string} T
  * @param {string} source
  * @param {NonEmptyString<T>} filename
- * @param {BaseCompileOptions & { ssr?: boolean }} [options]
+ * @param {BaseCompileOptions} [options]
  * @returns {CompileResult}
  */
 export function compile(source, filename, options) {
@@ -57,7 +57,7 @@ export function compile(source, filename, options) {
 		filename,
 		collect ? { collect: true, loose: !!options?.loose, errors, comments } : undefined,
 	);
-	const { ast: _ast, ...result } = (options?.ssr ? transform_for_server : transform)(
+	const { ast: _ast, ...result } = transform(
 		ast,
 		source,
 		filename,
