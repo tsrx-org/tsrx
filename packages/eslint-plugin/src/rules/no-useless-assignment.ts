@@ -31,6 +31,26 @@ interface TryPieces {
 }
 
 /**
+ * Whether an identifier is the parser's name for a dynamic tag, which spans
+ * the tag expression, or is in a `@for`'s index or key, which the traversal
+ * visits before the loop.
+ */
+function is_out_of_place(node: any): boolean {
+	for (let child = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+		if (
+			(parent.type === 'JSXOpeningElement' || parent.type === 'JSXClosingElement') &&
+			parent.name === child
+		) {
+			return Boolean(parent.tagExpression);
+		}
+		if (parent.type === 'JSXForExpression' && (parent.index === child || parent.key === child)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
  * Core `no-useless-assignment`, with the blocks of a `@try` as alternatives.
  *
  * ESLint's code path analysis runs the blocks of a `@try` one after another,
@@ -240,18 +260,18 @@ const rule: Rule.RuleModule = {
 			merged[key] = (...args) => {
 				plain[key]?.(...args);
 				// The core rule places each read by the first and last identifier it
-				// visits in a segment. The traversal visits a few identifiers after
-				// later code (a label after its block, type arguments after the call's
-				// arguments), and the parser's name for a dynamic tag spans the whole
-				// tag expression. Such an identifier could stretch a piece over code
-				// across a `@try` boundary, so the cut copies see only identifiers that
-				// span their name and come after the last one they saw in the code path.
-				// Leaving one out only narrows a piece, which can keep a report but
-				// never drop one.
+				// visits in a segment. The traversal visits a few identifiers out of
+				// source order (a label after its block, type arguments after the
+				// call's arguments, a `@for`'s index and key before its loop), and the
+				// parser's name for a dynamic tag spans the whole tag expression. Such
+				// an identifier could stretch a piece over code across a `@try`
+				// boundary, so the cut copies don't see a dynamic tag's name or a
+				// `@for`'s index and key, and see the rest only when they come after
+				// the last one they saw in the code path. Leaving one out only narrows
+				// a piece, which can keep a report but never drop one.
 				const node = args[0];
 				if (node?.type === 'Identifier' || node?.type === 'JSXIdentifier') {
-					if (node.range[0] < last_identifier_end) return;
-					if (node.range[1] - node.range[0] !== String(node.name).length) return;
+					if (is_out_of_place(node) || node.range[0] < last_identifier_end) return;
 					last_identifier_end = node.range[1];
 				}
 				cut[key]?.(...args);

@@ -90,6 +90,18 @@ ruleTester.run('no-useless-assignment', rule, {
 		})()]; index i; key i) { <li>{item}</li> }
 	</ul>
 }`,
+		`export function A({ fail }) @{
+	<ul>
+		@for (const item of [@{
+			let x = 0;
+			<div>
+				@try { fail(); x = 1; <b>{x}</b> } @catch (e) { <i>{x}</i> }
+			</div>
+		}]; index i; key i) { <li>{item}</li> }
+	</ul>
+}`,
+		// An escaped name is still a read.
+		component(`let x = 0;`, `@try { log(n); x = 1; <>{x}</> } @catch (e) { <>{\\u0078}</> }`),
 		// Code without `@try` is left to the core rule.
 		`function f() { let x = 0; x += 1; return x; }`,
 	],
@@ -243,6 +255,67 @@ export function A() @{
 		},
 	],
 });
+
+// The TSRX parser with a traversal that visits a switch case's test after its
+// consequent and a label after its statement, so these tests pin how the rule
+// handles identifiers out of source order whatever order the parser uses.
+const reordered_parser = {
+	...parser,
+	parseForESLint(code: string, options?: Linter.ParserOptions) {
+		const result = parser.parseForESLint(code, options);
+		return {
+			...result,
+			visitorKeys: {
+				...result.visitorKeys,
+				SwitchCase: ['consequent', 'test'],
+				LabeledStatement: ['body', 'label'],
+			},
+		};
+	},
+};
+
+new RuleTester({ languageOptions: { parser: reordered_parser } }).run(
+	'no-useless-assignment with identifiers out of order',
+	rule,
+	{
+		valid: [
+			// The function in the test is visited after the consequent, and its
+			// code path starts over.
+			`export function F(k, log) {
+	switch (k) {
+		case (() => @{
+			let x = 0;
+			<div>@try { log(k); x = 1; <b>{x}</b> } @catch (e) { <i>{x}</i> }</div>
+		})():
+			log(k);
+	}
+}`,
+		],
+		invalid: [
+			// After a function with no identifiers, the label still comes before
+			// the last identifier the code path saw, so it can't stretch the piece
+			// after the `@try` over the `@try`.
+			{
+				code: `export function F(log) {
+	let x = 0;
+	L: {
+		log(x);
+		const view = @{
+			@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+		};
+		(() => 0)();
+	}
+	x = 3;
+	log(x);
+}`,
+				errors: [
+					{ messageId: 'unnecessaryAssignment', line: 6, column: 11 },
+					{ messageId: 'unnecessaryAssignment', line: 6, column: 39 },
+				],
+			},
+		],
+	},
+);
 
 describe('no-useless-assignment after a @try', () => {
 	const code = `export function App() @{
