@@ -190,6 +190,9 @@ export class C extends Base {
 		['\\u0061.z', 'a.z', 'a'],
 		// The wrapper's callee starts with the whole member expression.
 		['a.re', 'a.re', 'a.read'],
+		['a.b', 'a.b', 'a.b.read'],
+		['a.b', 'a.b', 'a.b'],
+		['a.𐐀', 'a.𐐀', 'a.𐐀more'],
 	])(
 		'maps `%s`, printed `%s`, from its own text in a `%s(…)` call',
 		(expression, printed, wrapper) => {
