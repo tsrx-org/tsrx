@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Linter, RuleTester } from 'eslint';
 import rule from '../../src/rules/no-useless-assignment.js';
+import { get_core_rule } from '../../src/utils/core-rule.js';
 import * as parser from '@tsrx/eslint-parser';
 
 const ruleTester = new RuleTester({ languageOptions: { parser } });
@@ -34,6 +35,17 @@ ruleTester.run('no-useless-assignment', rule, {
 		),
 		// The code after the `@try` runs before the blocks.
 		component(`let x = 0;`, `@try { x = 1; <p>{x}</p> } @catch (e) { <i /> }\n{x}`),
+		// The code after the `@try` runs without either block.
+		component(`let x = 0;`, `@try { x = 1; <p>{x}</p> } @catch (e) { x = 2; <i>{x}</i> }\n{x}`),
+		// Known gap: the added starts mix the two orders. The code after the
+		// second `@try` skips its body but follows the first one's, so the
+		// rule doesn't report `'a'`, which no target reads.
+		component(
+			`let status = 'none';\nlog(status);`,
+			`@try { status = 'a'; <b /> } @catch (e) { <i /> }
+@try { status = 'b'; <b /> } @catch (e) { <i /> }
+<p>{status}</p>`,
+		),
 		// The body and the `@catch` are alternatives.
 		component(`let x = 0;\nlog(x);`, `@try { x = 1; <p /> } @catch (e) { x = 2; <i /> }\n{x}`),
 		// The `@catch` can render without `@pending`, and the code after the
@@ -247,5 +259,43 @@ describe('no-useless-assignment after a @try', () => {
 
 	it('is not reported by tsrx/no-useless-assignment', () => {
 		expect(reported('tsrx/no-useless-assignment')).toEqual([]);
+	});
+});
+
+describe('the core no-useless-assignment rule', () => {
+	it('listens to no key tsrx/no-useless-assignment handles itself', () => {
+		// The wrapper handles these keys without passing them on, and passes every
+		// other key to the three copies as it is: a code path event there would
+		// carry a real segment instead of a piece.
+		const keys = Object.keys(
+			get_core_rule('no-useless-assignment').create({ sourceCode: {} } as never),
+		);
+		expect(keys).toEqual(
+			expect.arrayContaining([
+				'onCodePathStart',
+				'onCodePathEnd',
+				'onCodePathSegmentStart',
+				'onCodePathSegmentEnd',
+			]),
+		);
+		expect(
+			keys.filter(
+				(key) =>
+					key.startsWith('on') &&
+					![
+						'onCodePathStart',
+						'onCodePathEnd',
+						'onCodePathSegmentStart',
+						'onCodePathSegmentEnd',
+					].includes(key),
+			),
+		).toEqual([]);
+		expect(
+			keys.filter((key) =>
+				['JSXTryExpression', 'JSXTryExpression:exit', 'BlockStatement', 'CatchClause'].includes(
+					key,
+				),
+			),
+		).toEqual([]);
 	});
 });

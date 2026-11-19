@@ -1,5 +1,5 @@
 import { createRequire } from 'module';
-import { Linter } from 'eslint';
+import { get_core_rule } from './utils/core-rule.js';
 import noReturnInComponent from './rules/no-return-in-component.js';
 import controlFlowJsx from './rules/control-flow-jsx.js';
 import validForOfKey from './rules/valid-for-of-key.js';
@@ -123,7 +123,8 @@ plugin.configs.react = [
 // For `js.configs.recommended` users, listed after it: the TSRX versions of the
 // core rules it turns on. A config can't read the severity another gives the
 // core rule, so each is an error, as `js.configs.recommended` has it. ESLint 10's
-// `js.configs.recommended` also turns on `no-useless-assignment`.
+// `js.configs.recommended` also turns on `no-useless-assignment`, which its meta
+// marks as recommended.
 plugin.configs.js = [
 	{
 		name: 'tsrx/js-tsrx-files',
@@ -136,7 +137,7 @@ plugin.configs.js = [
 			'tsrx/no-unused-vars': 'error',
 			'no-unreachable': 'off',
 			'tsrx/no-unreachable': 'error',
-			...(Number(Linter.version.split('.')[0]) >= 10 && {
+			...(get_core_rule('no-useless-assignment').meta?.docs?.recommended === true && {
 				'no-useless-assignment': 'off',
 				'tsrx/no-useless-assignment': 'error',
 			}),

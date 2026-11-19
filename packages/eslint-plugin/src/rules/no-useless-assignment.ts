@@ -77,29 +77,35 @@ const rule: Rule.RuleModule = {
 		const alternatives = new Map<Piece, Set<Piece>>();
 		const outer_segments: Set<Segment>[] = [];
 		let current = new Set<Segment>();
-		const outer_identifier_ends: number[] = [];
+		// The end of the last identifier the cut copies saw. Nested functions
+		// lie inside the code around them, so one position serves every code path.
 		let last_identifier_end = -1;
 		const tries = new Map<unknown, TryPieces>();
 
-		// The segment-like view of the pieces each copy sees, with or without
-		// the edges, one object per piece.
+		// The segment each copy sees for a piece, with or without the edges, one
+		// object per piece. It is the real segment with its own `id` and
+		// `nextSegments`, the only fields the core rule reads.
 		const view = (with_edges: boolean) => {
 			const objects = new Map<Piece, Segment>();
 			const get = (piece: Piece): Segment => {
 				let object = objects.get(piece);
 				if (!object) {
-					object = {
-						id: `${piece.segment.id}~${piece.index}`,
-						get nextSegments() {
-							const list = pieces.get(piece.segment)!;
-							const next =
-								piece.index < list.length - 1
-									? [list[piece.index + 1]]
-									: piece.segment.nextSegments.flatMap((segment) => pieces.get(segment)?.[0] ?? []);
-							const edges = with_edges ? [...(alternatives.get(piece) ?? [])] : [];
-							return [...next, ...edges].map(get);
+					object = Object.create(piece.segment, {
+						id: { value: `${piece.segment.id}~${piece.index}` },
+						nextSegments: {
+							get() {
+								const list = pieces.get(piece.segment)!;
+								const next =
+									piece.index < list.length - 1
+										? [list[piece.index + 1]]
+										: piece.segment.nextSegments.flatMap(
+												(segment) => pieces.get(segment)?.[0] ?? [],
+											);
+								const edges = with_edges ? [...(alternatives.get(piece) ?? [])] : [];
+								return [...next, ...edges].map(get);
+							},
 						},
-					};
+					}) as Segment;
 					objects.set(piece, object);
 				}
 				return object;
@@ -146,16 +152,12 @@ const rule: Rule.RuleModule = {
 			onCodePathStart(...args) {
 				outer_segments.push(current);
 				current = new Set();
-				outer_identifier_ends.push(last_identifier_end);
-				last_identifier_end = -1;
 				plain.onCodePathStart?.(...args);
 				cut.onCodePathStart?.(...args);
 				joined.onCodePathStart?.(...args);
 			},
 			onCodePathEnd(...args) {
 				current = outer_segments.pop()!;
-				// The outer code path goes on after the nested function's code.
-				last_identifier_end = Math.max(last_identifier_end, outer_identifier_ends.pop()!);
 				plain.onCodePathEnd?.(...args);
 				cut.onCodePathEnd?.(...args);
 				joined.onCodePathEnd?.(...args);
@@ -237,8 +239,8 @@ const rule: Rule.RuleModule = {
 				// arguments), and the parser's name for a dynamic tag spans the whole
 				// tag expression. Such an identifier could stretch a piece over code
 				// across a `@try` boundary, so the cut copies see only identifiers that
-				// span their name and come after the last one they saw in the code
-				// path.
+				// span their name and come after the last one they saw. Leaving one out
+				// only narrows a piece, which can keep a report but never drop one.
 				const node = args[0];
 				if (node?.type === 'Identifier' || node?.type === 'JSXIdentifier') {
 					if (node.range[0] < last_identifier_end) return;
