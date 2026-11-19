@@ -1142,7 +1142,8 @@ export function SpecificationPage() @{
 								TSRX2037). A code-only block that is a child of a returned fragment is inlined
 								before the <code class="inline-code">return</code> rather than put in a function,
 								but it keeps the same rule, as it keeps the <code class="inline-code">var</code>{' '}
-								rule (TSRX2030).
+								rule (TSRX2030). A label in any template body may reuse the name of a label outside
+								it, as in a nested function, except in that inlined block (TS1114).
 							</p>
 							<p class="section-body">
 								Plain JSX children are the default. When an expression position, function body,

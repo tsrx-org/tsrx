@@ -991,7 +991,9 @@ only) or a label inside that block, and a `return` there is the template
 `return` error. The same holds for a `break` or `continue` in `@empty` or in a
 nested `@{ ... }` block. A code-only block that is a child of a returned
 fragment is inlined before the `return`, but it keeps the same rule, as it keeps
-the `var` rule.
+the `var` rule. A label in any of these bodies, or in an `@if`, `@for` or
+`@switch` body, may reuse the name of a label outside it, as in a nested
+function, except in that inlined block.
 
 ### Guard returns
 
