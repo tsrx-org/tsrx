@@ -2291,7 +2291,8 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 		});
 	});
 
-	describe(`[${name}] class member modifiers (#235)`, () => {
+	// TypeScript checks each source; the first program also reads its library.
+	describe(`[${name}] class member modifiers (#235)`, { timeout: 30_000 }, () => {
 		// esrap writes a member's modifiers in an order of its own, which
 		// TypeScript doesn't always accept (`override static m()` is TS1029, and
 		// Babel rejects it), so the printer keeps the source's.
@@ -2357,6 +2358,9 @@ ${members.map((member) => `\t${member}`).join('\n')}
 			'class A {\n\taccessor static x = 1;\n}',
 			'class A {\n\tstatic public x = 1;\n}',
 			'class A {\n\tasync static m() {}\n}',
+			'class A {\n\tasync static public m() {}\n}',
+			'class A {\n\tasync static ["m"]() {}\n}',
+			'abstract class A {\n\tabstract async static m(): Promise<void>;\n}',
 			'class A {\n\tasync constructor() {}\n}',
 			'class A {\n\tconstructor(readonly public x: number) {}\n}',
 			'declare class A {\n\tasync m(): Promise<void>;\n}',
@@ -2385,9 +2389,10 @@ ${members.map((member) => `\t${member}`).join('\n')}
 					);
 			expect(expected).not.toEqual([]);
 			expect(shown).toEqual(expected);
-			// The parser records no other mistake.
+			// The parser records no other mistake, and none twice.
 			const recorded = result.errors.map((error) => `${error.code}@${error.pos}`);
 			expect(recorded.filter((error) => !expected.includes(error))).toEqual([]);
+			expect(new Set(recorded).size).toBe(recorded.length);
 		});
 	});
 

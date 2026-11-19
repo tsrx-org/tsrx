@@ -12189,6 +12189,36 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: (program) =>
 				as_type(/** @type {AST.Node} */ (last(program)), 'ClassDeclaration').body.body[0],
 		},
+		// TypeScript reports only the first error of the modifiers: not also
+		// `public` after `static`, or `static` with `abstract`.
+		{
+			source: 'class A { async static public m() {} }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static public']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:16'],
+			pick: first_member,
+			match: { static: true, accessibility: 'public', value: { async: true } },
+		},
+		{
+			source: 'abstract class A { abstract async static m(): Promise<void>; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'async static']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:28'],
+			pick: first_member,
+			match: { static: true, abstract: true, value: { async: true } },
+		},
+		{
+			source: 'class A { async static ["m"]() {} }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static [']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:16'],
+			valid: 'class A { static async ["m"]() {} }',
+			pick: first_member,
+		},
+		{
+			source: 'class A { async async m() {} }',
+			errors: [[TS_ERRORS.MODIFIER_ALREADY_SEEN, 'async m']],
+			throws: [TS_ERRORS.MODIFIER_ALREADY_SEEN, '1:16'],
+			valid: 'class A { async m() {} }',
+			pick: first_member,
+		},
 		// acorn-typescript's error for another of its modifiers, which it raises
 		// at the member's start, is at that modifier.
 		{
@@ -14543,11 +14573,14 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		).toEqual(cases.map(({ throws: [error, at] }) => [code_of(error), at]));
 	});
 
-	it('leaves an async method in an ambient class to TypeScript (TS1040, #235)', async () => {
-		// Prettier's `typescript` parser accepts these.
+	it('leaves an async method in an ambient class, or a decorated one, to TypeScript (#235)', async () => {
 		const sources = [
+			// TS1040, which Prettier's `typescript` parser accepts.
 			'declare class A { async m(): Promise<void>; }',
 			'declare class A { async static m(): Promise<void>; }',
+			// TS1249 at the decorator of an overload comes first, and only the body
+			// tells an overload.
+			'declare function dec(...a: unknown[]): any;\nclass A { @dec async static m(): Promise<void>; static async m() {} }',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) =>

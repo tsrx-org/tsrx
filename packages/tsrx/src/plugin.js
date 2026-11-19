@@ -1148,10 +1148,14 @@ const duplicate_export_errors = new WeakSet();
 
 /**
  * The methods with an `async` before another modifier, which TypeScript reads
- * as a modifier too (see `tsParseModifiers`).
- * @type {WeakSet<object>}
+ * as a modifier too, and the errors acorn-typescript raised for the modifiers
+ * after it, held (see `tsParseModifiers`).
+ * @type {WeakMap<object, CompileError[]>}
  */
-const leading_async_modifiers = new WeakSet();
+const leading_async_modifiers = new WeakMap();
+
+/** The codes of the errors of a combination of modifiers. */
+const MODIFIER_ERROR_CODES = new Set(['TS1028', 'TS1029', 'TS1030', 'TS1243']);
 
 /** The modifiers of a class member, with `async`. */
 const MEMBER_MODIFIERS_WITH_ASYNC = new Set([
@@ -1169,6 +1173,8 @@ const MEMBER_MODIFIERS_WITH_ASYNC = new Set([
 
 /** acorn's error for an `async` constructor (see `parseClassMethod`). */
 const ASYNC_CONSTRUCTOR = "Constructor can't be an async method";
+/** TypeScript's code for it. */
+const ASYNC_CONSTRUCTOR_CODE = TS_ERRORS.MODIFIER_ON_CONSTRUCTOR('async').code;
 
 /** A word, after any spaces and comments. */
 const regex_word_after_comments =
@@ -7864,13 +7870,20 @@ export function TSRXPlugin(config) {
 				try {
 					let modifiers = super.tsParseModifiers(options);
 					if (!options.stopOnStartOfClassStaticBlock) return modifiers;
+					/** @type {CompileError[]} */
+					const held = [];
 					while (this.#atAsyncBeforeModifier(options.allowedModifiers)) {
-						leading_async_modifiers.add(options.modified);
+						leading_async_modifiers.set(options.modified, held);
 						this.#leadingAsyncMembers.add(
 							/** @type {number} */ (/** @type {AST.Node} */ (options.modified).start),
 						);
 						this.next();
-						modifiers = { ...modifiers, ...super.tsParseModifiers(options) };
+						// TypeScript reports the first error of the modifiers, which can be
+						// one of the `async` before them (see `parseClassMethod`).
+						modifiers = {
+							...modifiers,
+							...this.#holdingErrors(held, () => super.tsParseModifiers(options)),
+						};
 					}
 					return modifiers;
 				} finally {
@@ -7881,10 +7894,10 @@ export function TSRXPlugin(config) {
 			/**
 			 * Whether the token is an `async` that TypeScript reads as a modifier
 			 * before another modifier of a method: one on its line that is a
-			 * modifier there, with the method's name and parameters after the
-			 * modifiers. A property, an accessor, an index signature and a
-			 * constructor have nowhere to keep it, so it is still a syntax error
-			 * before their modifiers.
+			 * modifier there, or another `async`, with the method's name and
+			 * parameters after the modifiers. A property, an accessor, an index
+			 * signature and a constructor have nowhere to keep it, so it is still a
+			 * syntax error before their modifiers.
 			 * @param {readonly string[]} allowed The modifiers of a class member.
 			 * @returns {boolean}
 			 */
@@ -7902,15 +7915,25 @@ export function TSRXPlugin(config) {
 					) {
 						modifiers++;
 					}
-					if (modifiers === 0) return false;
 					// An `async` that acorn reads, before the name, or the name.
 					if (this.isContextual('async')) {
 						this.next();
-						if (this.type === tt.parenL || this.tsMatchLeftRelational()) return true;
+						if (this.type === tt.parenL || this.tsMatchLeftRelational()) return modifiers > 0;
 						if (this.hasPrecedingLineBreak()) return false;
+					} else if (modifiers === 0) {
+						return false;
 					}
 					if (this.type === tt.star) this.next();
-					if (
+					if (this.type === tt.bracketL) {
+						if (this.tsLookAhead(() => this.tsIsUnambiguouslyIndexSignature())) return false;
+						// A computed name: past its `]`.
+						for (let depth = 0; ;) {
+							if (this.type === tt.eof) return false;
+							if (this.type === tt.bracketL) depth++;
+							else if (this.type === tt.bracketR && --depth === 0) break;
+							this.next();
+						}
+					} else if (
 						!(this.type === tt.privateId || this.isLiteralPropertyName()) ||
 						this.value === 'constructor'
 					) {
@@ -7929,8 +7952,7 @@ export function TSRXPlugin(config) {
 			 * acorn-typescript doesn't check: `async` with `abstract` (TS1243), on a
 			 * constructor (TS1089), or before a modifier that must precede it
 			 * (TS1029, TS1040 for `declare`). `null` when there is none, or when
-			 * TypeScript reports another error of the modifiers or the decorators
-			 * first.
+			 * TypeScript reports another error of the modifiers first.
 			 *
 			 * An `async` method in an ambient class (TS1040) is left to TypeScript,
 			 * which reports it from the editor's code: Prettier's `typescript`
@@ -7940,14 +7962,6 @@ export function TSRXPlugin(config) {
 			 * @returns {{ start: number, error: Diagnostic } | null}
 			 */
 			#asyncModifierError(method) {
-				// TypeScript reports the decorators of a member that can't have any
-				// first (TS1206, TS1249).
-				if (
-					this.#memberDecorated &&
-					(method.abstract || this.isAmbientContext || method.kind === 'constructor')
-				) {
-					return null;
-				}
 				/** @type {Set<string>} */
 				const flags = new Set();
 				let async_start = -1;
@@ -8019,19 +8033,37 @@ export function TSRXPlugin(config) {
 			 * A method with an `async` before another modifier is async (see
 			 * `tsParseModifiers`). With an `async` method, the errors of its
 			 * modifiers that acorn-typescript doesn't report (see
-			 * `#asyncModifierError`). An `async` constructor is TypeScript's TS1089
-			 * at the `async`, a checker error, where acorn threw `Constructor can't
-			 * be an async method` at the name, and stays async, as TypeScript reads
-			 * it.
+			 * `#asyncModifierError`): TypeScript reports only the first, so one of
+			 * them replaces those acorn-typescript raised for the modifiers after
+			 * the `async`, which were held. An `async` constructor is TypeScript's
+			 * TS1089 at the `async`, a checker error, where acorn threw `Constructor
+			 * can't be an async method` at the name, and stays async, as TypeScript
+			 * reads it.
+			 *
+			 * TypeScript reports the decorators of a method without a body (TS1249)
+			 * or of a constructor (TS1206) before its modifiers, and whether there is
+			 * a body is known only once it's read: a decorated method's errors of
+			 * `async` are left to TypeScript, which reports them from the editor's
+			 * code.
 			 * @type {Parse.Parser['parseClassMethod']}
 			 */
 			parseClassMethod(method, isGenerator, isAsync, allowsDirectSuper) {
-				if (!isAsync && !leading_async_modifiers.has(method)) {
+				const held = leading_async_modifiers.get(method);
+				if (!isAsync && !held) {
 					return super.parseClassMethod(method, isGenerator, isAsync, allowsDirectSuper);
 				}
 				const member = /** @type {AST.MethodDefinition} */ (method);
-				const found = this.#asyncModifierError(member);
+				const found = this.#memberDecorated ? null : this.#asyncModifierError(member);
 				if (found) this.#raiseCheckerError(found.start, found.error);
+				if (held) {
+					this.#releaseErrors(
+						found ? held.filter((error) => !MODIFIER_ERROR_CODES.has(error.code ?? '')) : held,
+					);
+				}
+				if (member.kind === 'constructor' && found?.error.code !== ASYNC_CONSTRUCTOR_CODE) {
+					// acorn's error, as before
+					return super.parseClassMethod(method, isGenerator, isAsync, allowsDirectSuper);
+				}
 				const outer = this.#asyncConstructor;
 				this.#asyncConstructor = member.kind === 'constructor';
 				try {
