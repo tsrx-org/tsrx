@@ -7173,6 +7173,35 @@ export function App() @{
 			},
 		);
 
+		it.each([
+			[
+				'methods of an object',
+				'export const o = { a() @{ <b /> }, b() @{ <i /> } };\nexport const result = () => [o.a().type, o.b().type];',
+			],
+			[
+				'methods with the same name in two objects',
+				'export const o = { f() @{ <b /> } };\nexport const p = { f() @{ <i /> } };\nexport const result = () => [o.f().type, p.f().type];',
+			],
+			[
+				'methods with the same name in two classes',
+				'class A { f() @{ <b /> } }\nclass B { f() @{ <i /> } }\nexport const result = () => [new A().f().type, new B().f().type];',
+			],
+			[
+				'two getters',
+				'export const o = { get a() @{ <b /> }, get b() @{ <i /> } };\nexport const result = () => [o.a.type, o.b.type];',
+			],
+			[
+				'arrow functions with no name',
+				'export const list = [() => @{ <b /> }, () => @{ <i /> }];\nexport const result = () => list.map((f) => f().type);',
+			],
+		])('gives each static of %s a name of its own', (_case, source) => {
+			const { code } = compile(source, 'App.tsrx');
+			const names = [...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]);
+			expect(new Set(names).size, code).toBe(hoistsStaticJsx ? 2 : 0);
+			expect(names.length).toBe(hoistsStaticJsx ? 2 : 0);
+			expect(run_result(code)).toEqual(['b', 'i']);
+		});
+
 		it('hoists an intrinsic tag that shares its name with a later binding', () => {
 			const { code } = compile(
 				'function App() {\n\treturn <div>hello</div>;\n}\nconst div = 1;\nexport const result = () => App().type;',

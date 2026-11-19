@@ -603,6 +603,7 @@ export function createJsxTransform(platform) {
 			stylesheets,
 			type_only_style_anchors,
 			helper_state: null,
+			static_names: new Set(),
 			available_bindings: new Map(),
 			rejected_awaits: new Set(),
 			hoistable_tags: () => (hoistable_tags ??= collect_hoistable_tags(ast, parsed)),
@@ -3021,12 +3022,17 @@ function hoist_static_jsx(node, transform_context) {
 	if (holds_unclosed_tag(node)) return null;
 
 	// Skip a name the source already uses, so the static can't redeclare or be
-	// shadowed by an authored `App__static1`.
+	// shadowed by an authored `App__static1`, and one another function's
+	// static has: functions with the same name, or none, share a base name.
 	/** @type {string} */
 	let name;
 	do {
 		name = create_helper_name(helper_state, 'static');
-	} while (source_mentions_identifier(transform_context.source, name));
+	} while (
+		source_mentions_identifier(transform_context.source, name) ||
+		transform_context.static_names.has(name)
+	);
+	transform_context.static_names.add(name);
 	const id = create_generated_identifier(name);
 	const statement = b.const(id, lower_static_jsx(node, transform_context));
 	helper_state.statics.push(statement);
