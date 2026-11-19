@@ -15177,19 +15177,25 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Every target inlines a code-only `@{ … }` child of a returned fragment
-			 * before the `return`, in the same function, so a label in it can't reuse
-			 * the name of a label around the `return`, as in any block (TS1114). In
-			 * every other template body it can (see `#parseCodeBlockBody`).
+			 * Every target inlines a returned code-only `@{ … }`, and a code-only
+			 * `@{ … }` child of a returned fragment, before the `return`, in the same
+			 * function, so a label in it can't reuse the name of a label around the
+			 * `return`, as in any block (TS1114). In every other template body it can
+			 * (see `#parseCodeBlockBody`).
 			 * @param {AST.Node | null | undefined} argument
 			 */
 			#checkInlinedCodeBlockLabels(argument) {
-				let fragment = argument;
-				while (fragment?.type === 'ParenthesizedExpression') fragment = fragment.expression;
-				if (fragment?.type !== 'JSXFragment' || this.labels.length === 0) return;
+				let value = argument;
+				while (value?.type === 'ParenthesizedExpression') value = value.expression;
+				if (this.labels.length === 0) return;
+				/** @type {AST.Node[]} */
+				let blocks;
+				if (value?.type === 'JSXFragment') blocks = value.children;
+				else if (value?.type === 'JSXCodeBlock') blocks = [value];
+				else return;
 				const outer = new Set(this.labels.map((label) => label.name).filter(Boolean));
 				if (outer.size === 0) return;
-				for (const child of fragment.children) {
+				for (const child of blocks) {
 					if (child.type !== 'JSXCodeBlock' || has_code_block_render(child)) continue;
 					/** @type {AST.Node[]} */
 					const labels = [];

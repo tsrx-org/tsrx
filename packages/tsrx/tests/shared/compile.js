@@ -3235,6 +3235,21 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			expect(() => compile(source, 'App.tsrx')).toThrow(expected);
 			expect(() => compile(source, 'App.tsrx', { collect: true })).toThrow(expected);
 
+			// Nor in a returned code-only block, which is inlined the same way.
+			for (const returned of [
+				'@{ outer: for (const y of items) { console.log(y); } }',
+				'(@{ outer: for (const y of items) { console.log(y); } })',
+				'@{ console.log(x); @{ outer: for (const y of items) { console.log(y); } } }',
+			]) {
+				const direct = source.replace(
+					'<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>',
+					returned,
+				);
+				expect(() => compile(direct, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: direct.indexOf('outer: for (const y') }),
+				);
+			}
+
 			// Nor in a code-only block chained in one's output position.
 			const chained = source.replace(
 				'@{ outer: for (const y of items) { console.log(y); } }',
