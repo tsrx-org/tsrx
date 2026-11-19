@@ -4004,3 +4004,254 @@ describe('a module specifier that is not a string (sveltejs/acorn-typescript#167
 		}
 	});
 });
+
+/**
+ * Each statement of a program, or of the body of the function or block that is
+ * its only statement: a name read as an expression by its name, a label by
+ * its name and `:`, a namespace or module by its keyword and name, and any
+ * other statement by its type.
+ * @param {AST.Program} ast
+ */
+function statementWords(ast) {
+	let body = ast.body;
+	const [only] = body;
+	if (body.length === 1 && only.type === 'FunctionDeclaration') body = only.body.body;
+	else if (body.length === 1 && only.type === 'BlockStatement') body = only.body;
+	return body.map((statement) => {
+		if (statement.type === 'ExpressionStatement' && statement.expression.type === 'Identifier') {
+			return statement.expression.name;
+		}
+		if (statement.type === 'LabeledStatement') return `${statement.label.name}:`;
+		const node = /** @type {AST.Node} */ (statement);
+		if (node.type === 'TSModuleDeclaration') {
+			return `${node.kind} ${keyName(/** @type {AST.Identifier} */ (node.id))}`;
+		}
+		return statement.type;
+	});
+}
+
+/**
+ * Parse each source in every mode, expect no error, and give its statements
+ * (see `statementWords`) in each mode.
+ * @param {string[]} sources
+ */
+async function statementWordsInEveryMode(sources) {
+	const outcomes = await parse_in_worker_with_ast(in_every_mode(sources));
+	return sources.map((source, index) =>
+		PARSE_MODES.map((_, mode) => {
+			const { ast, errors } = parsed(outcomes[index * PARSE_MODES.length + mode], source);
+			expect(errors, source).toEqual([]);
+			return statementWords(ast);
+		}),
+	);
+}
+
+describe('a TypeScript word before `;` and another statement on its line (sveltejs/acorn-typescript, not reported yet)', () => {
+	it('reads the word as a name and the statement after it, as TypeScript does', async () => {
+		// acorn-typescript read the `;` while it looked for a declaration after the
+		// word, and the statement then needed another `;` or a line break.
+		/** @type {Array<[source: string, statements: string[]]>} */
+		const cases = [
+			['type; foo;', ['type', 'foo']],
+			['namespace; foo;', ['namespace', 'foo']],
+			['module; foo;', ['module', 'foo']],
+			['abstract; foo;', ['abstract', 'foo']],
+			['foo; module; foo;', ['foo', 'module', 'foo']],
+			['type;foo;', ['type', 'foo']],
+			['namespace\n;foo;', ['namespace', 'foo']],
+			['function f() { type; foo; }', ['type', 'foo']],
+			['{ namespace; foo; }', ['namespace', 'foo']],
+		];
+		const outcomes = await statementWordsInEveryMode(cases.map(([source]) => source));
+		for (const [index, [source, statements]] of cases.entries()) {
+			for (const words of outcomes[index]) expect(words, source).toEqual(statements);
+		}
+	});
+});
+
+describe('`declare` before a token that starts no declaration (sveltejs/acorn-typescript, not reported yet)', () => {
+	it('reads the name `declare` and the statement after it, as TypeScript does', async () => {
+		// TypeScript's parser reads the name, and reports no missing `;` after it
+		// (`parseErrorForMissingSemicolonAfter`). acorn-typescript read the `;`
+		// after it, or a word that starts a declaration only before a name, which
+		// it then dropped, or read a global augmentation without a body.
+		/** @type {Array<[source: string, statements: string[]]>} */
+		const cases = [
+			['declare; foo;', ['declare', 'foo']],
+			['declare namespace;', ['declare', 'namespace']],
+			['declare module;', ['declare', 'module']],
+			['declare global;', ['declare', 'global']],
+			['declare abstract;', ['declare', 'abstract']],
+			['declare namespace\nN;', ['declare', 'namespace', 'N']],
+			['declare foo;', ['declare', 'foo']],
+			['declare 1;', ['declare', 'ExpressionStatement']],
+			['declare using;', ['declare', 'using']],
+			['function f() { declare global; }', ['declare', 'global']],
+			['{ declare namespace; }', ['declare', 'namespace']],
+		];
+		const outcomes = await statementWordsInEveryMode(cases.map(([source]) => source));
+		for (const [index, [source, statements]] of cases.entries()) {
+			for (const words of outcomes[index]) expect(words, source).toEqual(statements);
+		}
+	});
+
+	it('still reads a declaration after `declare`', async () => {
+		/** @type {Array<[source: string, statements: string[]]>} */
+		const cases = [
+			['declare namespace N {}', ['namespace N']],
+			['declare namespace as {}', ['namespace as']],
+			['declare module "m" {}', ['module m']],
+			['declare global {}', ['global global']],
+			['declare abstract class A {}', ['ClassDeclaration']],
+			['declare const x: number;', ['VariableDeclaration']],
+			['declare type T = 1;', ['TSTypeAliasDeclaration']],
+		];
+		const outcomes = await statementWordsInEveryMode(cases.map(([source]) => source));
+		for (const [index, [source, statements]] of cases.entries()) {
+			for (const words of outcomes[index]) expect(words, source).toEqual(statements);
+		}
+	});
+
+	it('reads `declare type` as the start of a type alias, whatever follows', async () => {
+		// TypeScript's parser commits to a type alias there (`isDeclaration`), and
+		// reports TS1142 at a name on the next line, or TS1003 in its place.
+		// acorn-typescript dropped `type` (`declare type;` compiled to `declare;`).
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
+		const cases = [
+			['declare type;', TS_ERRORS.IDENTIFIER_EXPECTED, ';'],
+			['declare type = 1;', TS_ERRORS.IDENTIFIER_EXPECTED, '='],
+			['declare type\nT = 1;', TS_ERRORS.LINE_BREAK_NOT_PERMITTED, 'T'],
+		];
+		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, error, at]) => thrown_in_every_mode(error, source.indexOf(at))),
+		);
+	});
+});
+
+describe('a namespace or module named `as` or `satisfies` (sveltejs/acorn-typescript, not reported yet)', () => {
+	it('reads it as a namespace, as TypeScript does', async () => {
+		// acorn-typescript read `as` or `satisfies` after the expression
+		// `namespace` as an operator: `namespace as {}` compiled to an expression.
+		/** @type {Array<[source: string, statements: string[]]>} */
+		const cases = [
+			['namespace as {}', ['namespace as']],
+			['namespace satisfies {}', ['namespace satisfies']],
+			['module as {}', ['module as']],
+			['namespace as\n{}', ['namespace as']],
+			['namespace N { namespace as {} }', ['namespace N']],
+		];
+		const outcomes = await statementWordsInEveryMode(cases.map(([source]) => source));
+		for (const [index, [source, statements]] of cases.entries()) {
+			for (const words of outcomes[index]) expect(words, source).toEqual(statements);
+		}
+	});
+
+	it('reports it outside a module body (TS1235)', async () => {
+		const sources = ['{ namespace as {} }', 'function f() { module satisfies {} }'];
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+		const at = (/** @type {string} */ source) => source.search(/namespace|module/);
+		expect(outcomes).toEqual(
+			sources.flatMap((source) => [
+				thrown(TS_ERRORS.NESTED_NAMESPACE, at(source)),
+				{ ok: true, errors: [TS_ERRORS.NESTED_NAMESPACE.code] },
+				{ ok: true, errors: [TS_ERRORS.NESTED_NAMESPACE.code] },
+			]),
+		);
+	});
+
+	it('still reads `namespace` as a name before an operator elsewhere', async () => {
+		const outcomes = await statementWordsInEveryMode(['x = namespace as any;', 'namespace\nas;']);
+		expect(outcomes).toEqual([
+			PARSE_MODES.map(() => ['ExpressionStatement']),
+			PARSE_MODES.map(() => ['namespace', 'as']),
+		]);
+	});
+});
+
+describe('a TypeScript word as a label or an async arrow function parameter (sveltejs/acorn-typescript#175)', () => {
+	// The words acorn-typescript gives their own token, but `enum`, a reserved
+	// word, and `interface`, one in strict mode.
+	const words = [
+		'abstract',
+		'assert',
+		'asserts',
+		'declare',
+		'global',
+		'keyof',
+		'module',
+		'namespace',
+		'readonly',
+		'type',
+		'unique',
+	];
+
+	it('reads the word as a label, and after `break` or `continue`, as TypeScript does', async () => {
+		// acorn takes a label only from a name token: `namespace: …` failed with
+		// `';' expected.` at the `:`, and `break namespace;` with `Unexpected token`.
+		const sources = words.flatMap((word) => [
+			`${word}: for (;;) { if (x) continue ${word}; break ${word}; }`,
+			`function f() { ${word}: { break ${word}; } }`,
+			`${word}:\nfoo;`,
+		]);
+		const outcomes = await statementWordsInEveryMode(sources);
+		for (const [index, source] of sources.entries()) {
+			const word = words[Math.floor(index / 3)];
+			for (const statements of outcomes[index]) {
+				expect(statements, source).toEqual([`${word}:`]);
+			}
+		}
+	});
+
+	it('still reports a label that no statement around has', async () => {
+		const outcomes = await parse_in_worker(
+			in_every_mode(['for (;;) { break namespace; }', 'type: { continue type; }']),
+		);
+		expect(outcomes).toEqual([
+			...thrown_in_every_mode('TS1105', 11),
+			...thrown_in_every_mode('TS1104', 8),
+		]);
+	});
+
+	it('reads the word as an async arrow function parameter', async () => {
+		// acorn-typescript took the parameter only from a name token.
+		const sources = words.map((word) => `f(async ${word} => ${word});`);
+		const outcomes = await parse_in_worker_with_ast(in_every_mode(sources));
+		for (const [index, outcome] of outcomes.entries()) {
+			const source = sources[Math.floor(index / PARSE_MODES.length)];
+			const { ast, errors } = parsed(outcome, source);
+			expect(errors, source).toEqual([]);
+			const statement = as_type(ast.body[0], 'ExpressionStatement');
+			const call = as_type(statement.expression, 'CallExpression');
+			expect(call.arguments[0], source).toMatchObject({
+				type: 'ArrowFunctionExpression',
+				async: true,
+				params: [{ type: 'Identifier', name: source.slice(8, source.indexOf(' =>')) }],
+			});
+		}
+	});
+
+	it('reads `async` before `as` or `satisfies` as a name, and still `async as =>` as an arrow function', async () => {
+		// acorn-typescript took any name after `async` for an arrow function's
+		// parameter, and failed after `as` or `satisfies`.
+		/** @type {Array<[source: string, type: string]>} */
+		const cases = [
+			['x = async as number;', 'TSAsExpression'],
+			['x = async satisfies number;', 'TSSatisfiesExpression'],
+			['async as number;', 'TSAsExpression'],
+			['x = async as => as;', 'ArrowFunctionExpression'],
+		];
+		const outcomes = await parse_in_worker_with_ast(in_every_mode(cases.map(([source]) => source)));
+		for (const [index, outcome] of outcomes.entries()) {
+			const [source, type] = cases[Math.floor(index / PARSE_MODES.length)];
+			const { ast, errors } = parsed(outcome, source);
+			expect(errors, source).toEqual([]);
+			const statement = as_type(ast.body[0], 'ExpressionStatement');
+			const expression =
+				statement.expression.type === 'AssignmentExpression'
+					? statement.expression.right
+					: statement.expression;
+			expect(expression.type, source).toBe(type);
+		}
+	});
+});

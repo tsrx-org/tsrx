@@ -2186,6 +2186,9 @@ export function TSRXPlugin(config) {
 			// Where a `declare` after `abstract` is, whose TS1038 TypeScript doesn't
 			// report after `abstract`'s error (see `tsParseDeclaration`), or -1.
 			#declareAfterAbstract = -1;
+			// Where the name `declare` is that a statement ends after without a `;`
+			// before a token on its line (see `tsParseExpressionStatement`), or -1.
+			#nameDeclareStart = -1;
 			// The rest parameters read after parameter property modifiers on a
 			// method's parameter, with where the modifiers start (see `parseMethod`).
 			/** @type {WeakMap<AST.Node, number>} */
@@ -4111,7 +4114,65 @@ export function TSRXPlugin(config) {
 						return this.#parseJSXControlFlowValue();
 					}
 				}
+				if (
+					this.type === tt.name &&
+					this.value === 'async' &&
+					!this.containsEsc &&
+					this.potentialArrowAt === this.start &&
+					!this.#lineBreakAfter(this.end)
+				) {
+					const atom = this.#parseAsyncBeforeWord(refDestructuringErrors, forInit, forNew);
+					if (atom) return atom;
+				}
 				return super.parseExprAtom(refDestructuringErrors, forInit, forNew);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#175): remove once a release includes the fix
+			/**
+			 * `async` before a word on its line, where an arrow function can start: a
+			 * TypeScript word and then `=>` on its line are an async arrow function's
+			 * parameter (`async type => type`), and `as` or `satisfies` without a `=>`
+			 * after it is an operator on the name `async` (`async as T`), as in
+			 * TypeScript. acorn-typescript took the parameter only from a name token,
+			 * and any name token for one, so the first failed at the word and the
+			 * second at the token after it. `undefined` for any other word, which
+			 * acorn-typescript reads.
+			 * @param {Parameters<Parse.Parser['parseExprAtom']>[0]} refDestructuringErrors
+			 * @param {Parameters<Parse.Parser['parseExprAtom']>[1]} forInit
+			 * @param {Parameters<Parse.Parser['parseExprAtom']>[2]} forNew
+			 */
+			#parseAsyncBeforeWord(refDestructuringErrors, forInit, forNew) {
+				const word = this.lookahead();
+				const after = this.lookahead(2);
+				if (
+					word.type !== tt.name &&
+					word.type !== tstt.enum &&
+					Parser.acornTypeScript.tokenIsIdentifier(word.type) &&
+					after.type === tt.arrow &&
+					!this.#lineBreakAfter(word.end)
+				) {
+					const node = this.startNode();
+					this.next(); // `async`
+					const parameter = this.parseIdent(false);
+					this.expect(tt.arrow);
+					return this.parseArrowExpression(node, [parameter], true, forInit);
+				}
+				if (
+					word.type === tt.name &&
+					(word.value === 'as' || word.value === 'satisfies') &&
+					after.type !== tt.arrow
+				) {
+					// acorn-typescript reads an async arrow function only where one can
+					// start (`potentialArrowAt`).
+					const potential_arrow_at = this.potentialArrowAt;
+					this.potentialArrowAt = -1;
+					try {
+						return super.parseExprAtom(refDestructuringErrors, forInit, forNew);
+					} finally {
+						this.potentialArrowAt = potential_arrow_at;
+					}
+				}
+				return undefined;
 			}
 
 			/**
@@ -8085,6 +8146,22 @@ export function TSRXPlugin(config) {
 				);
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript, not reported yet): remove once a release
+			// includes the fix
+			/**
+			 * Whether a declaration can follow the TypeScript word that a statement
+			 * starts with, read as its expression (`next` false), without reading the
+			 * `;` after it. acorn-typescript's `isLineTerminator` read that `;`, and
+			 * the statement, which then isn't a declaration, needed another `;` or a
+			 * line break: `type; foo;`, `namespace; foo;` or `abstract;foo;` failed
+			 * with `';' expected.` at `foo`, where TypeScript reads two statements.
+			 * @type {Parse.Parser['tsCheckLineTerminator']}
+			 */
+			tsCheckLineTerminator(next) {
+				if (next) return super.tsCheckLineTerminator(next);
+				return this.type !== tt.semi && !this.canInsertSemicolon();
+			}
+
 			// UPSTREAM(sveltejs/acorn-typescript#143): remove once a release includes the fix
 			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
 			/**
@@ -8307,11 +8384,40 @@ export function TSRXPlugin(config) {
 						return declared;
 					}
 				}
-				const declared = super.tsTryParseDeclare(node);
+				const declared =
+					this.type === tstt.type
+						? this.#parseDeclaredTypeAlias(node)
+						: super.tsTryParseDeclare(node);
 				if (declared && ambient_declare !== -1) {
 					this.#raiseCheckerError(ambient_declare, TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT);
 				}
 				return declared;
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript, not reported yet): remove once a release
+			// includes the fix
+			/**
+			 * The type alias after `declare type`, which TypeScript's parser reads
+			 * whatever follows `type` (`isDeclaration`), and reports TS1142
+			 * `Line break not permitted here.` at a name on the next line, or TS1003
+			 * `Identifier expected.` at the token in its place, as after
+			 * `export declare type` (see `#checkExportDeclarationStart`).
+			 * acorn-typescript read `type` and then took nothing without a name on
+			 * its line: `declare type;` compiled to `declare;`, and
+			 * `declare type\nT = 1;` failed with `';' expected.`.
+			 * @param {AST.Node} node
+			 */
+			#parseDeclaredTypeAlias(node) {
+				return this.tsInAmbientContext(() => {
+					this.next(); // `type`
+					if (this.hasPrecedingLineBreak()) {
+						this.raise(this.start, TS_ERRORS.LINE_BREAK_NOT_PERMITTED);
+					}
+					if (!Parser.acornTypeScript.tokenIsIdentifier(this.type)) {
+						this.#raiseIdentifierExpected(this.getCurLookaheadState());
+					}
+					return this.tsParseTypeAliasDeclaration(node);
+				});
 			}
 
 			/**
@@ -9074,10 +9180,24 @@ export function TSRXPlugin(config) {
 			 * `(type) T = 1;` as a type alias, where a collecting parse (which
 			 * keeps the parentheses) failed. A parenthesized name starts after the
 			 * statement does.
+			 *
+			 * UPSTREAM(sveltejs/acorn-typescript, not reported yet): `declare` before
+			 * a token that starts no declaration is the name `declare`, as in
+			 * TypeScript (see `#declarationAfterDeclare`). acorn-typescript read the
+			 * `;` after it (`declare; foo;` then failed at `foo`), and a word that
+			 * starts a declaration only before a name, which it then dropped:
+			 * `declare namespace;` compiled to `declare;`, and `declare global;` to
+			 * a global augmentation without a body, which esbuild rejects.
 			 * @type {Parse.Parser['tsParseExpressionStatement']}
 			 */
 			tsParseExpressionStatement(node, expr) {
 				if (expr.start !== node.start) return undefined;
+				if (expr.name === 'declare' && !this.#declarationAfterDeclare()) {
+					// TypeScript ends the statement after the name, without an error
+					// before a token on its line (see `semicolon`).
+					this.#nameDeclareStart = /** @type {number} */ (expr.start);
+					return undefined;
+				}
 				if (
 					expr.name === 'declare' &&
 					expr.start !== this.#declareAfterAbstract &&
@@ -9087,6 +9207,80 @@ export function TSRXPlugin(config) {
 					this.#ambientDeclareStart = /** @type {number} */ (expr.start);
 				}
 				return super.tsParseExpressionStatement(node, expr);
+			}
+
+			/**
+			 * Whether TypeScript's parser reads a declaration after the `declare` just
+			 * read, from the current token (`isDeclaration`): on its line, `type`,
+			 * any other word or keyword that starts one there (see
+			 * `#declarationAfterModifier`), or a modifier on its line (`static` on
+			 * any line) and then one of these. Where it reads none, `declare` is a
+			 * name, and TypeScript reports no missing `;` after it
+			 * (`parseErrorForMissingSemicolonAfter`). Before `import` or `export` it
+			 * says yes without looking further, and acorn-typescript reads on.
+			 */
+			#declarationAfterDeclare() {
+				if (this.type === tt.semi || this.canInsertSemicolon()) return false;
+				if (this.type === tstt.type) return true;
+				const is_identifier = Parser.acornTypeScript.tokenIsIdentifier;
+				for (let ahead = 0; ; ahead++) {
+					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
+					if (!is_identifier(token.type)) {
+						const keyword = token.type.keyword;
+						return (
+							keyword === 'var' ||
+							keyword === 'const' ||
+							keyword === 'function' ||
+							keyword === 'class' ||
+							keyword === 'import' ||
+							keyword === 'export'
+						);
+					}
+					const word = /** @type {string} */ (token.value);
+					const next = this.lookahead(ahead + 1);
+					const same_line = !regex_line_break.test(this.input.slice(token.end, next.start));
+					switch (word) {
+						case 'let':
+						case 'enum':
+							return true;
+						case 'using':
+							return same_line && (is_identifier(next.type) || next.type === tt.braceL);
+						case 'await': {
+							// `await using x = y;`
+							if (!same_line || next.type !== tt.name || next.value !== 'using') return false;
+							const after = this.lookahead(ahead + 2);
+							return (
+								!regex_line_break.test(this.input.slice(next.end, after.start)) &&
+								(is_identifier(after.type) || after.type === tt.braceL)
+							);
+						}
+						case 'interface':
+						case 'type':
+							return same_line && is_identifier(next.type);
+						case 'namespace':
+						case 'module':
+							return same_line && (is_identifier(next.type) || next.type === tt.string);
+						case 'global':
+							return (
+								next.type === tt.braceL || next.type === tt._export || is_identifier(next.type)
+							);
+						case 'static':
+							continue;
+						case 'abstract':
+						case 'accessor':
+						case 'async':
+						case 'declare':
+						case 'private':
+						case 'protected':
+						case 'public':
+						case 'readonly':
+							if (!same_line) return false;
+							// `declare type` starts a type alias.
+							if (word === 'declare' && next.type === tstt.type) return true;
+							continue;
+					}
+					return false;
+				}
 			}
 
 			/**
@@ -15436,6 +15630,41 @@ export function TSRXPlugin(config) {
 				return this.#labelFloor?.labels === this.labels ? this.#labelFloor.length : 0;
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript#175): remove once a release includes the fix
+			/**
+			 * A TypeScript word after `break` or `continue` on its line is a label, as
+			 * any other name (see `#parseStatement`): acorn takes one only from a name
+			 * token, so `break namespace;` failed with `Unexpected token`. This is
+			 * acorn's method for these words.
+			 * @type {Parse.Parser['parseBreakContinueStatement']}
+			 */
+			parseBreakContinueStatement(node, keyword) {
+				const label = this.lookahead();
+				if (
+					label.type === tt.name ||
+					label.type === tstt.enum ||
+					!Parser.acornTypeScript.tokenIsIdentifier(label.type) ||
+					this.#lineBreakAfter(this.end)
+				) {
+					return super.parseBreakContinueStatement(node, keyword);
+				}
+				const is_break = keyword === 'break';
+				const statement = /** @type {AST.BreakStatement | AST.ContinueStatement} */ (node);
+				this.next();
+				this.type = tt.name;
+				const name = this.parseIdent();
+				statement.label = name;
+				this.semicolon();
+				if (
+					!this.labels.some(
+						(label) => label.name === name.name && (is_break || label.kind === 'loop'),
+					)
+				) {
+					this.raise(/** @type {number} */ (statement.start), `Unsyntactic ${keyword}`);
+				}
+				return this.finishNode(statement, is_break ? 'BreakStatement' : 'ContinueStatement');
+			}
+
 			/**
 			 * Records where the label starts, for the statement it labels (see
 			 * `#parseStatement`).
@@ -15590,12 +15819,34 @@ export function TSRXPlugin(config) {
 
 				this.#checkEscapedDeclarationKeyword();
 
-				if (this.type === tstt.type && this.#isTypeAliasNamedOperator()) {
+				if (
+					(this.type === tstt.type || this.type === tstt.namespace || this.type === tstt.module) &&
+					this.#isDeclarationNamedOperator()
+				) {
 					const node = this.startNode();
-					this.next(); // `type`
+					const alias = this.type === tstt.type;
+					this.next(); // `type`, `namespace` or `module`
 					return /** @type {AST.Statement} */ (
-						/** @type {unknown} */ (this.tsParseTypeAliasDeclaration(node))
+						/** @type {unknown} */ (
+							alias
+								? this.tsParseTypeAliasDeclaration(node)
+								: this.tsParseModuleOrNamespaceDeclaration(node)
+						)
 					);
+				}
+
+				// UPSTREAM(sveltejs/acorn-typescript#175): remove once a release includes the fix
+				// A TypeScript word before `:` is a label, as any other name: acorn
+				// takes a label only from a name token, and acorn-typescript gives
+				// these words their own, so `namespace: for (;;) {}` failed with
+				// `';' expected.` at the `:`. `enum` is a reserved word.
+				if (
+					this.type !== tt.name &&
+					this.type !== tstt.enum &&
+					Parser.acornTypeScript.tokenIsIdentifier(this.type) &&
+					this.lookahead().type === tt.colon
+				) {
+					this.type = tt.name;
 				}
 
 				const start = this.start;
@@ -15626,17 +15877,23 @@ export function TSRXPlugin(config) {
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#145): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript, not reported yet): remove once a release
+			// includes the fix
 			/**
-			 * Whether the current token, `type`, starts a type alias named `as` or
-			 * `satisfies`. TypeScript reads `type` before a name on the same line as a
-			 * type alias (`isDeclaration`), and these are names. acorn-typescript
-			 * reads the start of a statement as an expression first and makes a type
-			 * alias of `type` and the name after it, but it read `as` or `satisfies`
-			 * after the expression `type` as an operator, so `type as = 1;` failed at
-			 * `=`, and `type as number;` parsed as an expression, where TypeScript
-			 * expects the alias's `=` (TS1005).
+			 * Whether the current token, `type`, `namespace` or `module`, starts a
+			 * type alias or a namespace named `as` or `satisfies`. TypeScript reads
+			 * these words before a name on the same line as a declaration
+			 * (`isDeclaration`), and these are names. acorn-typescript reads the
+			 * start of a statement as an expression first and makes a declaration of
+			 * the word and the name after it, but it read `as` or `satisfies` after
+			 * the expression `type` as an operator, so `type as = 1;` failed at `=`,
+			 * and `type as number;` parsed as an expression, where TypeScript expects
+			 * the alias's `=` (TS1005) (sveltejs/acorn-typescript#145). So did
+			 * `namespace as {}`, which compiled to the expression `namespace as {};`,
+			 * and inside a function had no error where TypeScript reports the
+			 * namespace there (TS1235).
 			 */
-			#isTypeAliasNamedOperator() {
+			#isDeclarationNamedOperator() {
 				const next = this.lookahead();
 				return (
 					next.type === tt.name &&
@@ -15794,11 +16051,14 @@ export function TSRXPlugin(config) {
 			 * expression statement's or a `throw`'s lone name it reports TS1434
 			 * `Unexpected keyword or identifier.` at the name, TS1435 with the keyword
 			 * it takes the name for (`cosnt x = 1;`), or TS1440 after `let`
-			 * (`parseErrorForMissingSemicolonAfter`).
+			 * (`parseErrorForMissingSemicolonAfter`). After the name `declare` it
+			 * reports nothing, and the next statement starts at the token (see
+			 * `tsParseExpressionStatement`).
 			 * @type {Parse.Parser['semicolon']}
 			 */
 			semicolon() {
 				if (this.eat(tt.semi) || this.insertSemicolon()) return;
+				if (this.lastTokStart === this.#nameDeclareStart) return;
 				// `=>`, `in` and `of` end a declaration list too (`isListTerminator`).
 				if (
 					this.lastTokEnd === this.#declaratorEnd &&
