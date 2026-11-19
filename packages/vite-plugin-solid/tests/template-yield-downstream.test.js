@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { TSRX_ERRORS } from '@tsrx/core';
 import { compile } from '@tsrx/solid';
 import { transformWithOxc } from 'vite';
 import { describe, expect, it } from 'vitest';
@@ -13,6 +14,10 @@ import { describe, expect, it } from 'vitest';
 // #1291: with `ssr: true`, as `@tsrx/vite-plugin-solid` compiles a server
 // build, TSRX2034 must appear exactly when the server build (SSR output) or
 // its client build (DOM output) fails, since either fails the app.
+//
+// #1370: babel-preset-solid compiles an `await` as it compiles a `yield`, so
+// every probe also runs with its `yield`s as `await`s in a plain async
+// function, where TSRX2021 must appear exactly when the result fails.
 
 const require = createRequire(import.meta.url);
 const solid_require = createRequire(require.resolve('vite-plugin-solid'));
@@ -912,6 +917,37 @@ const SERVER_PROBES = [
 ];
 
 /**
+ * A probe with each `yield` as an `await`, in an async function. A function
+ * that returns its output, or has a `@{ … }` body, is a component, and a Solid
+ * component can't await at all, so the function declares its output first.
+ *
+ * @param {Array<[string, string]>} probes
+ * @returns {Array<[string, string]>}
+ */
+const as_await = (probes) =>
+	probes
+		.filter(([, source]) => !source.includes('yield*'))
+		.map(([label, source]) => [
+			label,
+			source
+				.replaceAll('function*', 'async function')
+				.replace(/\byield\b/g, 'await')
+				.replace(/\) @\{\n([\s\S]*)\n\}$/, ') {\n\tconst el = @{\n$1\n\t};\n\treturn el;\n}')
+				.replace(/\breturn ((?!el;)[\s\S]*?);(\n\t*\})/g, 'const el = $1;\n\treturn el;$2'),
+		]);
+
+/** @param {string} output */
+const block = (output) =>
+	`export async function f(t: any) {\n\tconst out = @{\n\t\t${output}\n\t};\n\treturn out;\n}`;
+
+/** @type {Array<[string, string]>} */
+const AWAIT_PROBES = [
+	...as_await(PROBES),
+	['a call in a child (#1370)', block("<p>{await Promise.resolve('x')}</p>")],
+	['a static child', block('<p>{await t}</p>')],
+];
+
+/**
  * @param {string} code
  * @param {{ generate: 'dom' | 'ssr', hydratable: boolean }} [options]
  * @returns {Promise<boolean>}
@@ -958,4 +994,31 @@ describe('in a server build, TSRX2034 matches what babel-preset-solid compiles f
 			!(await builds(code, { generate: 'dom', hydratable: true }));
 		expect({ reported, fails }).toEqual({ reported, fails: reported });
 	});
+});
+
+describe('TSRX2021 matches what babel-preset-solid compiles for an await in a template (#1370)', () => {
+	const { message } = TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED('Solid');
+	it.each(AWAIT_PROBES)('%s', async (_label, source) => {
+		const { code, errors } = compile(source, 'Probe.tsrx', { collect: true });
+		const reported = errors.length > 0;
+		expect(errors.filter((error) => error.message !== message)).toEqual([]);
+		expect({ reported, builds: await builds(code) }).toEqual({ reported, builds: !reported });
+	});
+
+	it.each([...AWAIT_PROBES, ...as_await(SERVER_PROBES)])(
+		'%s, in a server build',
+		async (_label, source) => {
+			const { code, errors } = compile(source, 'Probe.tsrx', { collect: true, ssr: true });
+			const reported = errors.length > 0;
+			const client = compile(source, 'Probe.tsrx', { collect: true }).errors;
+			expect(errors.map((error) => error.pos)).toEqual(
+				expect.arrayContaining(client.map((error) => error.pos)),
+			);
+			expect(errors.filter((error) => error.message !== message)).toEqual([]);
+			const fails =
+				!(await builds(code, { generate: 'ssr', hydratable: true })) ||
+				!(await builds(code, { generate: 'dom', hydratable: true }));
+			expect({ reported, fails }).toEqual({ reported, fails: reported });
+		},
+	);
 });

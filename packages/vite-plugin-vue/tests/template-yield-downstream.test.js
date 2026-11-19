@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module';
+import { TSRX_ERRORS } from '@tsrx/core';
 import { compile } from '@tsrx/vue';
 import { transformWithOxc } from 'vite';
 import { describe, expect, it } from 'vitest';
@@ -9,6 +10,9 @@ import { describe, expect, it } from 'vitest';
 // checks that TSRX2034 appears exactly when the result fails to parse as a
 // module. A vue-jsx-vapor release that compiles one of these differently fails
 // here.
+//
+// #1370: the same holds for an `await` in a plain async function's template,
+// reported as TSRX2021.
 
 const require = createRequire(import.meta.url);
 const { transform: vapor } = createRequire(require.resolve('vue-jsx-vapor'))(
@@ -57,6 +61,71 @@ const PROBES = [
 ];
 
 /**
+ * A probe with each `yield` as an `await`, in an async function. A function
+ * that returns its output, or has a `@{ … }` body, is a component, and a Vue
+ * component can't await at all, so the function declares its output first.
+ *
+ * @param {Array<[string, string]>} probes
+ * @returns {Array<[string, string]>}
+ */
+const as_await = (probes) =>
+	probes
+		.filter(([, source]) => !source.includes('yield*'))
+		.map(([label, source]) => [
+			label,
+			source
+				.replaceAll('function*', 'async function')
+				.replace(/\byield\b/g, 'await')
+				.replace(/\) @\{\n([\s\S]*)\n\}$/, ') {\n\tconst el = @{\n$1\n\t};\n\treturn el;\n}')
+				.replace(/\breturn ((?!el;)[\s\S]*?);(\n\t*\})/g, 'const el = $1;\n\treturn el;$2'),
+		]);
+
+/** @param {string} output */
+const block = (output) =>
+	`export async function f(t: any, items: Set<string>, rows: Set<Set<string>>) {\n\tconst out = @{\n\t\t${output}\n\t};\n\treturn out;\n}`;
+
+/** @type {Array<[string, string]>} */
+const AWAIT_PROBES = [
+	...as_await(PROBES),
+	// Reported: TSRX awaits a closure it generates, inside the element.
+	[
+		'an awaiting @for in an element',
+		block(
+			'<ul>\n\t\t\t@for (const x of items) {\n\t\t\t\tconst v = await t;\n\t\t\t\t<li>{v}</li>\n\t\t\t}\n\t\t</ul>',
+		),
+	],
+	[
+		'an awaiting @for in a fragment',
+		block(
+			'<>\n\t\t\t@for (const x of items) {\n\t\t\t\tconst v = await t;\n\t\t\t\t<li>{v}</li>\n\t\t\t}\n\t\t</>',
+		),
+	],
+	[
+		'an inner @for that awaits, in an element of the outer one',
+		block(
+			'@for (const row of rows) {\n\t\t\t<ul>\n\t\t\t\t@for (const x of row) {\n\t\t\t\t\tconst v = await t;\n\t\t\t\t\t<li>{v}</li>\n\t\t\t\t}\n\t\t\t</ul>\n\t\t}',
+		),
+	],
+	[
+		'an @if body with setup statements in an element',
+		block(
+			'<div>\n\t\t\t@if (t) {\n\t\t\t\tconst v = await t;\n\t\t\t\t<p>{v}</p>\n\t\t\t}\n\t\t</div>',
+		),
+	],
+	[
+		'an @switch case in an element',
+		block(
+			'<div>\n\t\t\t@switch (t) {\n\t\t\t\t@case 1: {\n\t\t\t\t\t<p>{await t}</p>\n\t\t\t\t}\n\t\t\t}\n\t\t</div>',
+		),
+	],
+	// Exempt: TSRX awaits the loop in the async function itself.
+	[
+		'an awaiting @for as the only output',
+		block('@for (const x of items) {\n\t\t\tconst v = await t;\n\t\t\t<li>{v}</li>\n\t\t}'),
+	],
+];
+
+/**
  * @param {string} code
  * @returns {Promise<boolean>}
  */
@@ -78,6 +147,16 @@ describe('TSRX2034 matches what vue-jsx-vapor compiles (#259)', () => {
 		const { code, errors } = compile(source, 'Probe.tsrx', { collect: true });
 		const reported = errors.some((error) => error.code === 'TSRX2034');
 		expect(errors.filter((error) => error.code !== 'TSRX2034')).toEqual([]);
+		expect({ reported, builds: await builds(code) }).toEqual({ reported, builds: !reported });
+	});
+});
+
+describe('TSRX2021 matches what vue-jsx-vapor compiles for an await in a template (#1370)', () => {
+	const { message } = TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED('Vue');
+	it.each(AWAIT_PROBES)('%s', async (_label, source) => {
+		const { code, errors } = compile(source, 'Probe.tsrx', { collect: true });
+		const reported = errors.length > 0;
+		expect(errors.filter((error) => error.message !== message)).toEqual([]);
 		expect({ reported, builds: await builds(code) }).toEqual({ reported, builds: !reported });
 	});
 });
