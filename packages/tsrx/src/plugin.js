@@ -8264,8 +8264,14 @@ export function TSRXPlugin(config) {
 				const held = [];
 				const result = this.#holdingErrors(held, () => super.parseClassField(field));
 				this.#raiseCheckerError(found.start, found.error);
+				// The field's own, not those of code in its initializer.
+				const value_start = member.value?.start ?? Infinity;
 				this.#releaseErrors(
-					held.filter((error) => !FIELD_ERRORS_AFTER_MODIFIERS.has(error.code ?? '')),
+					held.filter(
+						(error) =>
+							(error.pos ?? 0) >= value_start ||
+							!FIELD_ERRORS_AFTER_MODIFIERS.has(error.code ?? ''),
+					),
 				);
 				return result;
 			}

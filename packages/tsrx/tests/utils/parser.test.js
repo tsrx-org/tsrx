@@ -14667,6 +14667,12 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		).toEqual(outcomes.map(() => []));
 	});
 
+	it("keeps the errors in an accessor property's initializer with its modifiers' error (#235)", async () => {
+		const source = 'class A { accessor static x = class { public #y = 1; }; }';
+		const [outcome] = await parse_in_worker([{ source, options: { collect: true } }]);
+		expect(outcome).toEqual({ ok: true, errors: ['TS1029', 'TS18010'] });
+	});
+
 	it("reports a syntax error in an accessor property before its modifiers' error (#235)", async () => {
 		const source = 'class A { accessor static x = ; }';
 		const [outcome] = await parse_in_worker([{ source }]);
