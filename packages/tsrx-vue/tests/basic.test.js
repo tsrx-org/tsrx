@@ -2611,12 +2611,22 @@ export function Card(${params}: any) @{
 						<i>{'off'}</i>
 					}
 					<i v-else>{'authored else'}</i>
+					<Wrap>
+						@if (on) {
+							<b>{'in wrap'}</b>
+						} @else {
+							<i>{'off'}</i>
+						}
+					</Wrap>
 				</div>
 			}`,
 			'App.tsrx',
 		);
 
 		expect(code).toContain("<b v-if={on}>{'on'}</b><Item v-else />{name}");
+		// A component's child stays one choice: vue-jsx-vapor's server build
+		// would pass \`v-if\` / \`v-else\` to it as two children.
+		expect(code).toContain("<Wrap>{on ? <b>{'in wrap'}</b> : <i>{'off'}</i>}</Wrap>");
 		// A \`v-\` attribute of either branch's own keeps the ternary.
 		expect(code).toMatch(
 			/\{on\s*\? <b>\{'on'\}<\/b>\s*: <Item v-slot=\{\{ x \}\}><b>\{x\}<\/b><\/Item>\}/,

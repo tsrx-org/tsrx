@@ -2211,6 +2211,9 @@ function render_if_statement(node, transform_context) {
  *   expression child, though, vue-jsx-vapor evaluates the ternary in that
  *   child's `setNodes` effect, which renders the branch again whenever what
  *   the condition reads changes (#1402); `v-if` / `v-else` stays a `createIf`.
+ *   Only a host element's child: vue-jsx-vapor's server build passes
+ *   `v-if` / `v-else` to a component as two children, which `KeepAlive`
+ *   rejects ("expects exactly one child component").
  *
  * A choice followed by an element with its own `v-else` or `v-else-if`,
  * past any other children, keeps the shared lowering: that element would
@@ -2234,7 +2237,10 @@ function render_element_ifs_as_directives(program) {
 						child.type === 'JSXExpressionContainer' &&
 						child.expression.type !== 'JSXEmptyExpression' &&
 						!continues_directive_chain(element.children.slice(index + 1))
-							? if_directive_branches(/** @type {AST.Expression} */ (child.expression))
+							? if_directive_branches(
+									/** @type {AST.Expression} */ (child.expression),
+									!is_component_like_element(/** @type {AST.TSRXJSXElement} */ (element)),
+								)
 							: null;
 					if (!branches) {
 						children.push(child);
@@ -2285,9 +2291,10 @@ function continues_directive_chain(siblings) {
  * cache, where the nested ternary's `createIf` is keyed and is cached.
  *
  * @param {AST.Expression} node
+ * @param {boolean} with_else Whether an `@else` branch can become `v-else`.
  * @returns {{ test: AST.Expression, then: ESTreeJSX.JSXElement, else: ESTreeJSX.JSXElement | null } | null}
  */
-function if_directive_branches(node) {
+function if_directive_branches(node, with_else) {
 	if (
 		node.type !== 'ConditionalExpression' ||
 		!(
@@ -2299,7 +2306,10 @@ function if_directive_branches(node) {
 		return null;
 	}
 	const without_else = node.alternate.type === 'Literal' && node.alternate.value === null;
-	if (!takes_directive(node.consequent) || (!without_else && !takes_directive(node.alternate))) {
+	if (
+		!takes_directive(node.consequent) ||
+		(!without_else && (!with_else || !takes_directive(node.alternate)))
+	) {
 		return null;
 	}
 	return {

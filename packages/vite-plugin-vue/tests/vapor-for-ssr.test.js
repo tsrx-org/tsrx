@@ -79,6 +79,25 @@ export function App(props: { on: boolean; name: string }) @{
 	<Pick on={props.on} name={props.name} />
 }`,
 
+	'kept-if-else.tsrx': `import { KeepAlive } from 'vue';
+function A() @{
+	<button>{'a'}</button>
+}
+function B() @{
+	<button>{'b'}</button>
+}
+export function App({ on }: { on: boolean }) @{
+	<div>
+		<KeepAlive>
+			@if (on) {
+				<A />
+			} @else {
+				<B />
+			}
+		</KeepAlive>
+	</div>
+}`,
+
 	'switch.tsrx': `export function App({ items }: { items: { id: number }[] }) @{
 	<div>
 		@switch (items.length) {
@@ -179,6 +198,18 @@ describe('[vue] an element whose child is an @if / @else beside an expression on
 		);
 		expect(await renderToString(createSSRApp(App, { on: false, name: 'Ann' }))).toBe(
 			'<div><span class="pick"><i>off</i>Ann</span></div>',
+		);
+	});
+
+	it('keeps a component child as one choice, for KeepAlive', async () => {
+		// vue-jsx-vapor's server build would pass \`v-if\` / \`v-else\` to it as two
+		// children, which \`KeepAlive\` rejects.
+		const { App } = await server.ssrLoadModule('/kept-if-else.tsrx');
+		expect(await renderToString(createSSRApp(App, { on: true }))).toBe(
+			'<div><button>a</button></div>',
+		);
+		expect(await renderToString(createSSRApp(App, { on: false }))).toBe(
+			'<div><button>b</button></div>',
 		);
 	});
 });
