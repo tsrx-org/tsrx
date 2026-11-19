@@ -778,6 +778,24 @@ export function Button(props: { onPress?: () => void }) @{
 		}
 	});
 
+	it('leaves indent to skip a {name} shorthand attribute, as the README says (#1153)', () => {
+		const code = `export function App({ fetchProject }) @{
+	<Child
+		{fetchProject}
+		label="a"
+	/>
+}`;
+		// `indent` looks for the `=` between an attribute's name and value.
+		expect(() => lint(code, { rules: { indent: ['error', 'tab'] } })).toThrow(
+			/Cannot read properties of null \(reading 'range'\)/,
+		);
+		expect(
+			lint(code, {
+				rules: { indent: ['error', 'tab', { ignoredNodes: ['JSXAttribute[shorthand=true]'] }] },
+			}),
+		).toEqual([]);
+	});
+
 	it('gives jsx-ast-utils a {name} shorthand attribute as a JSXAttribute', () => {
 		// jsx-ast-utils' `propName` and `getPropValue`, which eslint-plugin-react
 		// and eslint-plugin-jsx-a11y call on every attribute that is not a spread.

@@ -3750,6 +3750,114 @@ describe('tsrx-vue keyed @switch rows', () => {
 	});
 });
 
+const shadow_log: string[] = [];
+
+function ShadowRows(props: { rows: { id: string }[] }) @{
+	<ul>
+		@for (const row of props.rows; index i; key row.id) {
+			<li>
+				<button
+					class="shadow-row"
+					onClick={() => {
+						try {
+							throw 'catch';
+						} catch (row) {
+							shadow_log.push(String(row));
+						}
+						try {
+							throw { row: 'catch pattern' };
+						} catch ({ row }) {
+							shadow_log.push(row);
+						}
+						for (const row of ['for of']) shadow_log.push(row);
+						for (const row in { 'for in': 1 }) {
+							shadow_log.push(row);
+						}
+						for (let row = 0; row < 1; row++) {
+							shadow_log.push('for ' + row);
+						}
+						switch (row.id) {
+							case 'a':
+								const row = 'case';
+								shadow_log.push(row);
+						}
+						const Named = class row {
+							static label = 'class';
+							read() {
+								return row.label;
+							}
+						};
+						shadow_log.push(new Named().read());
+						[7].forEach((i) => shadow_log.push('param ' + i));
+						try {
+							throw 'index';
+						} catch (i) {
+							shadow_log.push(String(i));
+						}
+						shadow_log.push(row.id + i);
+					}}
+				>
+					{row.id}
+				</button>
+			</li>
+		}
+	</ul>
+}
+
+function ShadowPatternRows(props: { rows: { id: string }[] }) @{
+	<ul>
+		@for (const { id } of props.rows; key id) {
+			<li>
+				<button
+					class="shadow-pattern-row"
+					onClick={() => {
+						try {
+							throw 'catch';
+						} catch (id) {
+							shadow_log.push(String(id));
+						}
+						for (const id of ['for of']) {
+							shadow_log.push(id);
+						}
+						shadow_log.push(id);
+					}}
+				>
+					{id}
+				</button>
+			</li>
+		}
+	</ul>
+}
+
+describe('tsrx-vue a keyed row that declares its item’s name again', () => {
+	beforeEach(() => {
+		shadow_log.length = 0;
+	});
+
+	it('reads the inner binding, and the item outside it', async () => {
+		await render(ShadowRows, { rows: [{ id: 'a' }] });
+		await click('.shadow-row');
+		expect(shadow_log).toEqual([
+			'catch',
+			'catch pattern',
+			'for of',
+			'for in',
+			'for 0',
+			'case',
+			'class',
+			'param 7',
+			'index',
+			'a0',
+		]);
+	});
+
+	it('does the same for a destructured item', async () => {
+		await render(ShadowPatternRows, { rows: [{ id: 'a' }] });
+		await click('.shadow-pattern-row');
+		expect(shadow_log).toEqual(['catch', 'for of', 'a']);
+	});
+});
+
 describe('tsrx-vue for_items', () => {
 	it('hands a reactive array to VaporFor as it is (#1147)', () => {
 		const list = reactive(['a', 'b']);

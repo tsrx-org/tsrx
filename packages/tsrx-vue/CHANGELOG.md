@@ -1,5 +1,66 @@
 # @tsrx/vue
 
+## 0.4.6
+
+### Patch Changes
+
+- [#1394](https://github.com/tsrx-org/tsrx/pull/1394)
+  [`a627c45`](https://github.com/tsrx-org/tsrx/commit/a627c4560a21fe3a773150b79260d84f99f63395)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, a
+  keyed `@for` row reads its item and index through `.value`, and that rewrite now
+  leaves alone a name that the row's code declares again: a `catch` parameter, a
+  `for`, `for…in` or `for…of` head, a `const`/`let` in a `switch` case, a class
+  expression's name, an `enum` or namespace in a block, an `enum` member, a
+  constructor's parameter property, and a declaration in a class `static` block.
+  Before, `catch (row) { … }` in a row's event handler compiled to
+  `catch(row.value)`, which vue-jsx-vapor rejects as a syntax error, and the same
+  happened to the other declarations. This applies to destructured items
+  (`const { id } of rows`) and to the index too.
+
+  A component's `props.children` read likewise leaves alone a `props` that a
+  `switch` case, a class expression's name, an `enum` member or a class `static`
+  block declares, instead of reading the component's default slot.
+
+- [#1388](https://github.com/tsrx-org/tsrx/pull/1388)
+  [`e0ba2b7`](https://github.com/tsrx-org/tsrx/commit/e0ba2b797fdd42a4770be2b486d8e92a03f71641)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, a
+  `@for` row that is a `@switch` and renders through `VaporFor` now follows its
+  value: in a keyed loop without `@empty` whose head has no default, computed key
+  or object rest, and in a loop without a key whose row reads the item's
+  properties (a destructured head without a key is read once, as before). Those
+  other loops render through `map_iterable`, which already followed the value. The
+  `VaporFor` row slot ran the `@switch`'s IIFE once, so the row kept the case it
+  picked first, and threw `Cannot read properties of null (reading 'anchor')` when
+  no case matched. The row now makes a `computed` that runs the `switch` for the
+  index of the case it picks, and renders the case chosen by that index in a
+  fragment, which vue-jsx-vapor makes `createIf`s: the row follows its value,
+  keeps its case mounted while the index stays the same, and renders nothing when
+  no case matches. A throw from the discriminant or a case test reaches Vue's
+  error handling, or an `@catch` around the loop. A row that mounted keeps the
+  case it showed while they throw, and follows its value again once they stop; a
+  row whose `@switch` threw while it mounted stays empty, as before. That recovery
+  doesn't happen when what throws is a `computed` the discriminant or a case test
+  reads: Vue 3.6.0-rc.14 stops running an effect once a `computed` it read threw,
+  as it does for any template expression that reads one. A row whose `@switch` has
+  no cases runs its discriminant whenever what it reads changes.
+
+  A row keeps the shared lowering when a case of its `@switch` has setup
+  statements, or renders anything but an element, a fragment, nothing or a choice
+  of them, such as a nested `@switch`: as a branch of its own, such a case would
+  render again, components and all, whenever its item is replaced. A fragment
+  around a single expression is that expression, so a case like `<>{row.title}</>`
+  keeps the shared lowering too, and a row still can't mount it, as before. So
+  does a row whose `@switch` has more than 64 cases. A `@switch` elsewhere, a
+  `@switch` row in a loop with `@empty` (which stays on `map_iterable`), one that
+  awaits or yields, and the type-only output keep the shared lowering.
+  `@tsrx/core` exports it as `switchStatementToJsxChild` for a platform's
+  `controlFlow.switchStatement` hook.
+
+- Updated dependencies
+  [[`981b167`](https://github.com/tsrx-org/tsrx/commit/981b1677af270e1b1665f17fb9358f2e260d4533),
+  [`e0ba2b7`](https://github.com/tsrx-org/tsrx/commit/e0ba2b797fdd42a4770be2b486d8e92a03f71641)]:
+  - @tsrx/core@0.6.6
+
 ## 0.4.5
 
 ### Patch Changes

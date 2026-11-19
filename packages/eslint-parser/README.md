@@ -205,6 +205,16 @@ No TSRX rule covers these:
   `@else`, `@else if` or `@for` body that holds a single statement, such as
   `@if (n) { throw error; }`. TSRX needs them, so `--fix` leaves a file that
   doesn't parse. Use `all` or `multi-line`, which leave these bodies alone.
+- `indent` crashes on a `{name}` shorthand attribute, such as
+  `<Child {fetchProject} />`, with
+  `Cannot read properties of null (reading 'range')`
+  ([#1153](https://github.com/tsrx-org/tsrx/issues/1153)). It looks for the `=`
+  between an attribute's name and its value, and a shorthand has none. The parser
+  gives the shorthand as a `JSXAttribute` whose value is the expression, which
+  `eslint-plugin-react` and `eslint-plugin-jsx-a11y` read, so no shape suits both.
+  To keep `indent`, give it `ignoredNodes: ['JSXAttribute[shorthand=true]']`, so
+  it doesn't check a shorthand attribute's lines, or turn it off for `.tsrx` files
+  and format them with `@tsrx/prettier-plugin`.
 
 ## Related Packages
 
