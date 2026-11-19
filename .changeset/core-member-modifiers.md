@@ -1,0 +1,6 @@
+---
+'@tsrx/core': patch
+'@tsrx/prettier-plugin': patch
+---
+
+Show a class member's modifier errors in the editor and in `tsrx-tsc` where TypeScript reports them in a .ts file, once. The output prints the modifiers of a class member or a parameter property in the order the source has them, where esrap wrote them in an order of its own: `static override m() {}` printed as `override static m() {}`, which TypeScript reports (TS1029) and Babel rejects, so a Solid build failed on it, and `public abstract m()` as `abstract public m()`. The editor's code maps each modifier, so TypeScript's error on one shows at it: `abstract async m()` (TS1243), `private abstract m()` (TS1243), `accessor static x` (TS1029) and an `async` method in a `declare class` (TS1040) showed nothing before. The compiler reports `abstract async m()` (TS1243) and an `async` constructor (TS1089, where it threw `Constructor can't be an async method` at the name), at the `async`. An `async` before a method's other modifiers, which TypeScript reads as a modifier too, is no longer a syntax error: `async abstract m()` is TS1243 at the `async` and `async static m()` TS1029 at `static`, as in TypeScript, and the method is async. The Prettier plugin formats those as Prettier's `typescript` parser does, and rejects an `async` constructor, as it does.

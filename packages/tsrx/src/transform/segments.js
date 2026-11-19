@@ -44,7 +44,7 @@ import {
 import { child_nodes, has_location, is_organized_import } from '../utils/ast.js';
 import { regex_whitespace, regex_whitespaces_strict } from '../utils/patterns.js';
 import { get_source_tokens } from '../parse/source-tokens.js';
-import { regex_jsx_text_escaped } from './jsx/helpers.js';
+import { member_modifiers, regex_jsx_text_escaped } from './jsx/helpers.js';
 import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 
 const RETURN_KEYWORD = 'return';
@@ -1052,6 +1052,24 @@ export function convert_source_map_to_mappings(
 				keyword,
 			);
 			from = token.start + keyword.length;
+		}
+	}
+
+	/**
+	 * Map the modifiers of a class member or a parameter property, which the
+	 * printer writes in the source's order (see `member_modifiers`). TypeScript
+	 * reports an error in their combination at one of them: TS1243 at `async`
+	 * in `abstract async m()`, TS1029 at `static` in `accessor static x`.
+	 * @param {AST.Node} node
+	 * @returns {void}
+	 */
+	function push_modifier_tokens(node) {
+		for (const modifier of member_modifiers(node, source) ?? []) {
+			const start = offset_to_line_col(modifier.start, src_line_offsets);
+			push_printed_token(
+				{ start, end: { line: start.line, column: start.column + modifier.text.length } },
+				modifier.text,
+			);
 		}
 	}
 
@@ -2627,6 +2645,7 @@ export function convert_source_map_to_mappings(
 						visit(decorator);
 					}
 				}
+				push_modifier_tokens(node);
 
 				if (node.computed) {
 					set_bracket_computed_mapping(node);
@@ -2810,12 +2829,13 @@ export function convert_source_map_to_mappings(
 				add_private_identifier_tokens(node);
 				return; // Leaf node, don't traverse further
 			} else if (node.type === 'PropertyDefinition') {
-				// Visit in source order: decorators, key, typeAnnotation, value
+				// Visit in source order: decorators, modifiers, key, typeAnnotation, value
 				if (node.decorators) {
 					for (const decorator of node.decorators) {
 						visit(decorator);
 					}
 				}
+				push_modifier_tokens(node);
 				if (node.computed) {
 					set_bracket_computed_mapping(node);
 				}
@@ -3433,6 +3453,7 @@ export function convert_source_map_to_mappings(
 				// The modifiers have no child nodes. The parameter is an Identifier
 				// (annotation on it) or an AssignmentPattern (which visits its own
 				// left-hand annotation).
+				push_modifier_tokens(node);
 				const parameter = /** @type {AST.Pattern} */ (/** @type {unknown} */ (node.parameter));
 				visit(parameter);
 				if (parameter.type === 'Identifier' && parameter.typeAnnotation) {

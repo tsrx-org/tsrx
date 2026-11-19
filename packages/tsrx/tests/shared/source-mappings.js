@@ -29,7 +29,21 @@ const lib_source_files = new Map();
  * @returns {string[]}
  */
 function output_type_errors(code) {
-	const file_name = '/output.tsx';
+	return type_diagnostics(code, '/output.tsx').map(
+		(diagnostic) =>
+			`TS${diagnostic.code} ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`,
+	);
+}
+
+/**
+ * TypeScript's diagnostics on a module, a `.tsx` or a `.ts` file by its name,
+ * with the ES library and without resolving its imports (TS2307).
+ *
+ * @param {string} code
+ * @param {string} file_name
+ * @returns {ts.Diagnostic[]}
+ */
+function type_diagnostics(code, file_name) {
 	/** @type {ts.CompilerOptions} */
 	const options = {
 		target: ts.ScriptTarget.ESNext,
@@ -46,7 +60,8 @@ function output_type_errors(code) {
 	host.fileExists = (name) => name === file_name || file_exists(name);
 	host.getSourceFile = (name, version, on_error, create) => {
 		if (name === file_name) {
-			return ts.createSourceFile(name, code, version, true, ts.ScriptKind.TSX);
+			const kind = file_name.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
+			return ts.createSourceFile(name, code, version, true, kind);
 		}
 		if (!lib_source_files.has(name)) {
 			lib_source_files.set(name, get_source_file(name, version, on_error, create));
@@ -55,11 +70,7 @@ function output_type_errors(code) {
 	};
 	return ts
 		.getPreEmitDiagnostics(ts.createProgram([file_name], options, host))
-		.filter((diagnostic) => diagnostic.file?.fileName === file_name && diagnostic.code !== 2307)
-		.map(
-			(diagnostic) =>
-				`TS${diagnostic.code} ${ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')}`,
-		);
+		.filter((diagnostic) => diagnostic.file?.fileName === file_name && diagnostic.code !== 2307);
 }
 
 /**
@@ -2277,6 +2288,106 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 			expect_identifier_mapping('tupleMaybe', 'tupleMaybe?: string');
 			expect_identifier_mapping('fnMaybe', 'fnMaybe?: string');
 			expect_identifier_mapping('declMaybe', 'declMaybe?: string');
+		});
+	});
+
+	describe(`[${name}] class member modifiers (#235)`, () => {
+		// esrap writes a member's modifiers in an order of its own, which
+		// TypeScript doesn't always accept (`override static m()` is TS1029, and
+		// Babel rejects it), so the printer keeps the source's.
+		const members = [
+			'public static override m() {}',
+			'public abstract override n(): void;',
+			'public declare a: number;',
+			'static declare b: number;',
+			'readonly abstract c: number;',
+		];
+		const source = `class Base {
+	static m() {}
+	n() {}
+}
+export abstract class A extends Base {
+${members.map((member) => `\t${member}`).join('\n')}
+}
+`;
+
+		it('prints them in the order the source has them', () => {
+			const build = compile(source, 'App.tsrx');
+			const editor = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			for (const member of members) {
+				expect(build.code).toContain(member);
+				expect(editor.code).toContain(member);
+			}
+			expect(output_type_errors(editor.code), editor.code).toEqual([]);
+		});
+
+		it('maps each of them for diagnostics', () => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const regex_modifier = /\b(?:public|static|override|abstract|declare|readonly)\b/g;
+			let count = 0;
+			for (const member of members) {
+				const member_start = source.indexOf(member);
+				for (const match of member.matchAll(regex_modifier)) {
+					const offset = member_start + /** @type {number} */ (match.index);
+					const mapping = result.mappings.find(
+						(mapping) =>
+							mapping.sourceOffsets[0] === offset && mapping.lengths[0] === match[0].length,
+					);
+					assert(mapping, `${match[0]} at ${offset} has no mapping`);
+					expect(isDiagnosticsEnabled(mapping.data)).toBe(true);
+					const generated = mapping.generatedOffsets[0];
+					expect(result.code.slice(generated, generated + match[0].length)).toBe(match[0]);
+					count++;
+				}
+			}
+			expect(count).toBe(12);
+		});
+
+		// TypeScript reports the first error of a member's modifiers at one of
+		// them. The editor shows a mistake the parser records once, TypeScript's
+		// when it reports the same code at the same place.
+		it.each([
+			'abstract class A {\n\tabstract async m(): Promise<void>;\n}',
+			'abstract class A {\n\tasync abstract m(): Promise<void>;\n}',
+			'abstract class A {\n\tpublic abstract async m(): Promise<void>;\n}',
+			'abstract class A {\n\tabstract /* note */ async *m(): AsyncGenerator<number>;\n}',
+			'abstract class A {\n\tprivate abstract m(): void;\n}',
+			'abstract class A {\n\tabstract private m(): void;\n}',
+			'abstract class A {\n\tabstract public m(): void;\n}',
+			'class A {\n\taccessor static x = 1;\n}',
+			'class A {\n\tstatic public x = 1;\n}',
+			'class A {\n\tasync static m() {}\n}',
+			'class A {\n\tasync constructor() {}\n}',
+			'class A {\n\tconstructor(readonly public x: number) {}\n}',
+			'declare class A {\n\tasync m(): Promise<void>;\n}',
+			'export function C() @{\n\tabstract class A {\n\t\tabstract async m(): Promise<void>;\n\t}\n\t<div />\n}',
+		])('reports the modifier error of %j where TypeScript does', (source) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const map = new SourceMap(result.mappings);
+			/** @type {string[]} */
+			const shown = [];
+			for (const diagnostic of type_diagnostics(result.code, '/output.tsx')) {
+				const start = /** @type {number} */ (diagnostic.start);
+				for (const [source_start] of map.toSourceRange(
+					start,
+					start + /** @type {number} */ (diagnostic.length),
+					true,
+					isDiagnosticsEnabled,
+				)) {
+					shown.push(`TS${diagnostic.code}@${source_start}`);
+					break;
+				}
+			}
+			const expected = source.includes('@{')
+				? [`TS1243@${source.indexOf('async')}`]
+				: type_diagnostics(source, '/input.ts').map(
+						(diagnostic) => `TS${diagnostic.code}@${diagnostic.start}`,
+					);
+			expect(expected).not.toEqual([]);
+			expect(shown).toEqual(expected);
+			// The parser records no other mistake.
+			const recorded = result.errors.map((error) => `${error.code}@${error.pos}`);
+			expect(recorded.filter((error) => !expected.includes(error))).toEqual([]);
 		});
 	});
 
