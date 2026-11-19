@@ -202,7 +202,8 @@ export function tsrxSolid(options = {}) {
 				runtimeImports: options.runtimeImports,
 				platform,
 				// babel-preset-solid compiles the SSR output with `generate: 'ssr'`.
-				// TSRX2034 follows it for the hydratable output, which moves more.
+				// TSRX2034 (`yield`) and TSRX2021 (`await`) follow it for the
+				// hydratable output, which moves more.
 				ssr: solid_options?.generate === 'ssr' && !!solid_options.hydratable,
 			};
 			if (platform !== undefined && build.config) {

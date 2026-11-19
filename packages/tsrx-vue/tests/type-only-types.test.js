@@ -170,6 +170,38 @@ describe('@tsrx/vue type-only output type-checks', () => {
 			}`,
 		],
 		[
+			'a keyed loop whose body can skip a row or picks a branch (#178)',
+			`export function App({ items }: { items: Set<{ id: number; on: boolean }> }) @{
+				<ul>
+					@for (const item of items; key item.id) {
+						@if (item.on) {
+							<li>{item.id}</li>
+						}
+					}
+					@for (const item of items; key item.id) {
+						@if (item.on) {
+							<li>{item.id}</li>
+						} @else {
+							<li>{'off'}</li>
+						}
+					}
+				</ul>
+			}`,
+		],
+		[
+			'a keyed loop over a Set with @empty that has setup statements (#178)',
+			`export function App({ items }: { items: Set<string> }) @{
+				<ul>
+					@for (const item of items; key item) {
+						<li>{item}</li>
+					} @empty {
+						const label = 'none';
+						<p>{label}</p>
+					}
+				</ul>
+			}`,
+		],
+		[
 			// Vue exports `Fragment` as a value only, so the rows' import of it sits
 			// beside a type of that name.
 			'a keyed fragment row beside an interface named Fragment (#179)',

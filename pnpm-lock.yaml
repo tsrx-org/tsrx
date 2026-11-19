@@ -202,7 +202,7 @@ catalogs:
       version: 10.3.0
 
 overrides:
-  esrap: ^2.4.0
+  esrap: ^2.4.2
   '@tsrx/ripple>esrap': 2.3.2
   '@tsrx/core@<0.5>esrap': 2.3.2
   semver: ^7.7.4
@@ -892,8 +892,8 @@ importers:
         specifier: catalog:default
         version: 8.18.0
       esrap:
-        specifier: ^2.4.0
-        version: 2.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))
+        specifier: ^2.4.2
+        version: 2.4.2(@typescript-eslint/types@8.56.1(typescript@5.9.3))
       get-tsconfig:
         specifier: catalog:default
         version: 5.0.0-beta.6
@@ -985,8 +985,8 @@ importers:
         specifier: workspace:*
         version: link:../tsrx-preact-runtime
       esrap:
-        specifier: ^2.4.0
-        version: 2.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))
+        specifier: ^2.4.2
+        version: 2.4.2(@typescript-eslint/types@8.56.1(typescript@5.9.3))
       zimmerframe:
         specifier: catalog:default
         version: 1.1.4
@@ -1022,8 +1022,8 @@ importers:
         specifier: workspace:*
         version: link:../tsrx-react-runtime
       esrap:
-        specifier: ^2.4.0
-        version: 2.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))
+        specifier: ^2.4.2
+        version: 2.4.2(@typescript-eslint/types@8.56.1(typescript@5.9.3))
       react:
         specifier: '>=18'
         version: 19.2.4
@@ -1071,8 +1071,8 @@ importers:
         specifier: workspace:*
         version: link:../tsrx-solid-runtime
       esrap:
-        specifier: ^2.4.0
-        version: 2.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))
+        specifier: ^2.4.2
+        version: 2.4.2(@typescript-eslint/types@8.56.1(typescript@5.9.3))
       solid-js:
         specifier: catalog:default
         version: 2.0.0-rc.3
@@ -1111,8 +1111,8 @@ importers:
         specifier: workspace:*
         version: link:../tsrx-vue-runtime
       esrap:
-        specifier: ^2.4.0
-        version: 2.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))
+        specifier: ^2.4.2
+        version: 2.4.2(@typescript-eslint/types@8.56.1(typescript@5.9.3))
       is-reference:
         specifier: catalog:default
         version: 3.0.3
@@ -5019,8 +5019,8 @@ packages:
       '@typescript-eslint/types':
         optional: true
 
-  esrap@2.4.0:
-    resolution: {integrity: sha512-CQPcneEHw/czj32uwQC52nYnax8H4SXt25FCM+LIwGZ49cMIxpOj3bP8wmzcI+Z0HIy5KkClaPhRLfCySzwHPA==}
+  esrap@2.4.2:
+    resolution: {integrity: sha512-WpVZsWnSheHBy+fGrO/0duwnbe6ODZH1QyBbjupreSCJGojaBWRncrq+HVeIJ8eHQjEwSJg9hC4yPJyNVOrpqg==}
     peerDependencies:
       '@typescript-eslint/types': ^8.2.0
     peerDependenciesMeta:
@@ -11023,13 +11023,13 @@ snapshots:
     optionalDependencies:
       '@typescript-eslint/types': 8.56.1(typescript@7.1.0-dev.20260930.4)
 
-  esrap@2.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3)):
+  esrap@2.4.2(@typescript-eslint/types@8.56.1(typescript@5.9.3)):
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
     optionalDependencies:
       '@typescript-eslint/types': 8.56.1(typescript@5.9.3)
 
-  esrap@2.4.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4)):
+  esrap@2.4.2(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4)):
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
     optionalDependencies:
@@ -12111,7 +12111,7 @@ snapshots:
     dependencies:
       '@tsrx/core': 0.1.40(@typescript-eslint/types@8.56.1(typescript@5.9.3))
       devalue: 5.8.1
-      esrap: 2.4.0(@typescript-eslint/types@8.56.1(typescript@5.9.3))
+      esrap: 2.4.2(@typescript-eslint/types@8.56.1(typescript@5.9.3))
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 
@@ -12119,7 +12119,7 @@ snapshots:
     dependencies:
       '@tsrx/core': 0.1.40(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))
       devalue: 5.8.1
-      esrap: 2.4.0(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))
+      esrap: 2.4.2(@typescript-eslint/types@8.56.1(typescript@7.1.0-dev.20260930.4))
     transitivePeerDependencies:
       - '@typescript-eslint/types'
 

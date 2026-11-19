@@ -391,6 +391,17 @@ export function C(props: { items: string[] }) @{
 `,
 	},
 	{
+		error: TSRX_ERRORS.TARGET_TEMPLATE_AWAIT_UNSUPPORTED,
+		source: `export async function field(bag: { title: Promise<string> }) {
+	const out = @{
+		<input title={await bag.title} />
+	};
+	return out;
+}
+`,
+		compiler: '@tsrx/vue',
+	},
+	{
 		error: TSRX_ERRORS.TARGET_COMPONENT_AWAIT_UNSUPPORTED,
 		source: `export async function C(props: { items: Promise<string>[] }) @{
 	<ul>

@@ -11,8 +11,9 @@ export interface TsrxSolidBunPluginOptions {
 	emitCss?: boolean;
 	/**
 	 * Options forwarded to `babel-preset-solid`. With `generate: 'ssr'` and
-	 * `hydratable: true`, TSRX2034 also follows the SSR output, which moves
-	 * more template values into arrows than the DOM output does.
+	 * `hydratable: true`, TSRX2034 (a `yield` in a template value) and TSRX2021
+	 * (an `await` there) also follow the SSR output, which moves more template
+	 * values into arrows than the DOM output does.
 	 */
 	solid?: object;
 }
