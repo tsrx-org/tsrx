@@ -6660,6 +6660,71 @@ export function App() @{
 		);
 	});
 
+	describe(`[${name}] getters and setters with an \`@{ … }\` body`, () => {
+		it.each([
+			[
+				'an object',
+				'export const target = { get R() @{ <b /> }, set R(v: unknown) @{ <i /> }, get S() @{ <u /> } };',
+			],
+			[
+				'an object, with string keys',
+				"export const target = { get 'R'() @{ <b /> }, set 'R'(v: unknown) @{ <i /> }, get 'S'() @{ <u /> } };",
+			],
+			[
+				'an object, with computed keys',
+				"const R = 'R';\nconst S = 'S';\nexport const target = { get [R]() @{ <b /> }, set [R](v: unknown) @{ <i /> }, get [S]() @{ <u /> } };",
+			],
+			[
+				// The Vue target also wraps a function that returns a local JSX binding.
+				'an object, with plain bodies that return an element',
+				'export const target = { get R() { const b = <b />; return b; }, set R(v: unknown) { console.log(v); }, get S() { const u = <u />; return u; } };',
+			],
+			[
+				'an object in a function',
+				'export const target = (() => ({ get R() @{ <b /> }, set R(v: unknown) @{ <i /> }, get S() @{ <u /> } }))();',
+			],
+			[
+				'a class',
+				'export class C { get R() @{ <b /> } set R(v: unknown) @{ <i /> } get S() @{ <u /> } }\nexport const target = C.prototype;',
+			],
+			[
+				'a class, static',
+				'export class C { static get R() @{ <b /> } static set R(v: unknown) @{ <i /> } static get S() @{ <u /> } }\nexport const target = C;',
+			],
+			[
+				'a class, static, with computed keys',
+				"const R = 'R';\nconst S = 'S';\nexport class C { static get [R]() @{ <b /> } static set [R](v: unknown) @{ <i /> } static get [S]() @{ <u /> } }\nexport const target = C;",
+			],
+		])('keeps the getters and setters of %s', (_case, source) => {
+			const { code } = compile(source, 'App.tsrx');
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+
+			const module = { exports: /** @type {Record<string, any>} */ ({}) };
+			const commonjs = ts.transpileModule(code, {
+				compilerOptions: {
+					jsx: ts.JsxEmit.React,
+					jsxFactory: 'h',
+					module: ts.ModuleKind.CommonJS,
+					target: ts.ScriptTarget.ES2022,
+				},
+			}).outputText;
+			new Function('module', 'exports', 'h', commonjs)(
+				module,
+				module.exports,
+				(/** @type {string} */ type) => ({ type }),
+			);
+			const { target } = module.exports;
+			const r = /** @type {PropertyDescriptor} */ (Object.getOwnPropertyDescriptor(target, 'R'));
+			const s = /** @type {PropertyDescriptor} */ (Object.getOwnPropertyDescriptor(target, 'S'));
+
+			expect([r.get?.call(target).type, typeof r.set, s.get?.call(target).type], code).toEqual([
+				'b',
+				'function',
+				'u',
+			]);
+		});
+	});
+
 	describe(`[${name}] static JSX hoisting`, () => {
 		/**
 		 * Runs compiled output with JSX elements as `{ type, props }` objects

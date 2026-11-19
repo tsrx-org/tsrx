@@ -1790,7 +1790,8 @@ function get_function_component_name(fn, parent) {
 	}
 
 	if (parent?.type === 'Property' && parent.value === fn) {
-		return get_static_name(parent.key);
+		// A getter or setter is no component, and a call can't take its place.
+		return parent.kind === 'init' ? get_static_name(parent.key) : null;
 	}
 
 	if (parent?.type === 'AssignmentExpression' && parent.right === fn) {
