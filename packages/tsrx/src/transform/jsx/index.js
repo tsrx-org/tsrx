@@ -6873,7 +6873,7 @@ function keyed_fragment(children, loop_key) {
  * @param {TransformContext} transform_context
  * @returns {ESTreeJSX.JSXExpressionContainer}
  */
-function switch_statement_to_jsx_child(node, transform_context) {
+export function switch_statement_to_jsx_child(node, transform_context) {
 	return to_jsx_expression_container(
 		b.call(
 			b.arrow(
