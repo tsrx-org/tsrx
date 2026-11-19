@@ -3245,7 +3245,7 @@ export function runSharedAnonymousComponentTests({ compile, name }) {
 				name === 'solid'
 					? '<__For each={__for_items(items)} keyed={false}>'
 					: name === 'vue'
-						? '<__VaporFor in={items}'
+						? '<__VaporFor in={__for_items(items)}'
 						: '__map_iterable(items, (item, i)',
 			);
 			expect(code).toContain(name === 'vue' ? '<li>{item.value}</li>' : '<li key={i}>{item}</li>');

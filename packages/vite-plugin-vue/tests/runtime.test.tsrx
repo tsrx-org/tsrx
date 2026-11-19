@@ -12,6 +12,7 @@ import {
 	watchEffect,
 } from 'vue';
 import { mergeRefs } from '@tsrx/vue/ref';
+import { for_items } from '@tsrx/vue/runtime/iterable';
 import { runSwitchFallthroughRuntimeTests } from '@tsrx/core/test-harness/runtime/switch-fallthrough';
 import { runTsxExpressionTsrxRuntimeTests } from '@tsrx/core/test-harness/runtime/tsx-expression-tsrx';
 import { runForOfHeadScopeRuntimeTests } from '@tsrx/core/test-harness/runtime/for-of-head-scope';
@@ -2735,8 +2736,8 @@ describe('tsrx-vue merged refs', () => {
 	});
 });
 
-// A keyed `@for` row whose body is a fragment, in a loop that doesn't render
-// through `VaporFor` (#179).
+// A keyed `@for` row whose body is a fragment (#179). A loop with `@empty`
+// renders through `VaporFor`; one whose body has setup statements doesn't.
 const fragment_rows = ref([{ id: 1 }, { id: 2 }, { id: 3 }]);
 
 function KeyedFragmentEmptyApp() @{
@@ -2780,14 +2781,16 @@ function OwnFragmentRow(props: { label: string }) @{
 }
 
 // A module can't import Vue's `Fragment` under its own name beside its own
-// `Fragment`, so here (aliased) the rows are unkeyed fragments.
+// `Fragment`, so here (aliased) the rows outside `VaporFor` are unkeyed
+// fragments.
 function OwnFragmentApp() @{
 	const Fragment = OwnFragmentRow;
 	<ul class="own-fragment">
 		@for (const item of fragment_rows.value; key item.id) {
+			const id = item.id;
 			<>
-				<li>{item.id}</li>
-				<Fragment label={'own ' + item.id} />
+				<li>{id}</li>
+				<Fragment label={'own ' + id} />
 			</>
 		} @empty {
 			<p>{'none'}</p>
@@ -2967,15 +2970,259 @@ describe('tsrx-vue @for over iterables', () => {
 	});
 });
 
-// Three single-element bodies still render through `<VaporFor>`, which walks
-// an array by index and reads a custom iterator twice (#1147).
-runForOfSourcesRuntimeTests({
-	skipItems: [
-		'an array with its own iterator',
-		'an empty array whose iterator yields',
-		'an iterable whose Symbol.iterator getter changes per read',
-	],
+type ToggleRow = { id: string; label: string; visible: boolean };
+
+function toggle_rows_initial(): ToggleRow[] {
+	return [
+		{ id: 'a', label: 'Alpha', visible: true },
+		{ id: 'b', label: 'Beta', visible: true },
+		{ id: 'c', label: 'Gamma', visible: true },
+	];
+}
+
+const toggle_rows = ref(toggle_rows_initial());
+
+function KeyedSkipApp() @{
+	<div class="keyed-skip">
+		@for (const item of toggle_rows.value; key item.id) {
+			@if (item.visible) {
+				<KeyedRow {item} />
+			}
+		}
+	</div>
+}
+
+function KeyedEmptyApp() @{
+	<div class="keyed-empty">
+		@for (const item of toggle_rows.value; key item.id) {
+			<KeyedRow {item} />
+		} @empty {
+			<p>{'none'}</p>
+		}
+	</div>
+}
+
+function KeyedSkipEmptyApp() @{
+	<div class="keyed-skip-empty">
+		@for (const item of toggle_rows.value; key item.id) {
+			@if (item.visible) {
+				<KeyedRow {item} />
+			}
+		} @empty {
+			<p>{'none'}</p>
+		}
+	</div>
+}
+
+function KeyedBranchApp() @{
+	<ul class="keyed-branch">
+		@for (const item of toggle_rows.value; key item.id) {
+			@if (item.visible) {
+				<li>{'shown ' + item.id}</li>
+			} @else {
+				<li>{'hidden ' + item.id}</li>
+			}
+		}
+	</ul>
+}
+
+function UnkeyedBranchApp() @{
+	<ul class="unkeyed-branch">
+		@for (const item of toggle_rows.value) {
+			@if (item.visible) {
+				<li>{'shown ' + item.id}</li>
+			} @else {
+				<li>{'hidden ' + item.id}</li>
+			}
+		}
+	</ul>
+}
+
+function MissingSourceApp(props: { items: { id: string }[] }) @{
+	<>
+		<ul class="missing-source">
+			@for (const item of props.items; key item.id) {
+				<li>{item.id}</li>
+			}
+		</ul>
+		<ul class="missing-source-empty">
+			@for (const item of props.items; key item.id) {
+				<li>{item.id}</li>
+			} @empty {
+				<li>{'none'}</li>
+			}
+		</ul>
+	</>
+}
+
+function NextKeyedBatchApp() @{
+	<ul class="next-keyed-batch">
+		@for (const item of nextBatch(); key item) {
+			<li>{item}</li>
+		} @empty {
+			<li>{'empty'}</li>
+		}
+	</ul>
+}
+
+describe('tsrx-vue keyed @for that can skip rows or has @empty (#178)', () => {
+	beforeEach(() => {
+		toggle_rows.value = toggle_rows_initial();
+	});
+
+	it('keeps row state on reorder when the body can skip a row', async () => {
+		await render(KeyedSkipApp);
+		await click('.keyed-skip .row-b');
+		toggle_rows.value = [...toggle_rows.value].reverse();
+		await flush();
+		expect(texts('.keyed-skip .keyed-row')).toEqual(['Gamma:0', 'Beta:1', 'Alpha:0']);
+	});
+
+	it('hides and shows a row as its condition changes in place', async () => {
+		await render(KeyedSkipApp);
+		await click('.keyed-skip .row-a');
+
+		toggle_rows.value[1].visible = false;
+		await flush();
+		expect(texts('.keyed-skip .keyed-row')).toEqual(['Alpha:1', 'Gamma:0']);
+
+		toggle_rows.value[1].visible = true;
+		await flush();
+		expect(texts('.keyed-skip .keyed-row')).toEqual(['Alpha:1', 'Beta:0', 'Gamma:0']);
+	});
+
+	it('keeps row state on reorder in a loop with @empty, and clears and refills it', async () => {
+		await render(KeyedEmptyApp);
+		await click('.keyed-empty .row-b');
+		toggle_rows.value = [...toggle_rows.value].reverse();
+		await flush();
+		expect(texts('.keyed-empty .keyed-row')).toEqual(['Gamma:0', 'Beta:1', 'Alpha:0']);
+		expect(texts('.keyed-empty p')).toEqual([]);
+
+		toggle_rows.value = [];
+		await flush();
+		expect(texts('.keyed-empty .keyed-row')).toEqual([]);
+		expect(texts('.keyed-empty p')).toEqual(['none']);
+
+		toggle_rows.value = toggle_rows_initial();
+		await flush();
+		expect(texts('.keyed-empty .keyed-row')).toEqual(['Alpha:0', 'Beta:0', 'Gamma:0']);
+		expect(texts('.keyed-empty p')).toEqual([]);
+	});
+
+	it('follows a ref array mutated in place, keeping row state', async () => {
+		await render(KeyedEmptyApp);
+		await click('.keyed-empty .row-b');
+
+		toggle_rows.value.reverse();
+		await flush();
+		expect(texts('.keyed-empty .keyed-row')).toEqual(['Gamma:0', 'Beta:1', 'Alpha:0']);
+
+		toggle_rows.value.push({ id: 'd', label: 'Delta', visible: true });
+		await flush();
+		expect(texts('.keyed-empty .keyed-row')).toEqual(['Gamma:0', 'Beta:1', 'Alpha:0', 'Delta:0']);
+
+		toggle_rows.value.splice(0);
+		await flush();
+		expect(texts('.keyed-empty .keyed-row')).toEqual([]);
+		expect(texts('.keyed-empty p')).toEqual(['none']);
+
+		toggle_rows.value.push({ id: 'e', label: 'Echo', visible: true });
+		await flush();
+		expect(texts('.keyed-empty .keyed-row')).toEqual(['Echo:0']);
+		expect(texts('.keyed-empty p')).toEqual([]);
+	});
+
+	it('follows a ref array mutated in place in a loop without @empty', async () => {
+		await render(KeyedSkipApp);
+		await click('.keyed-skip .row-b');
+
+		toggle_rows.value.reverse();
+		await flush();
+		expect(texts('.keyed-skip .keyed-row')).toEqual(['Gamma:0', 'Beta:1', 'Alpha:0']);
+
+		toggle_rows.value.splice(2, 1);
+		await flush();
+		expect(texts('.keyed-skip .keyed-row')).toEqual(['Gamma:0', 'Beta:1']);
+	});
+
+	it('renders @empty only when the source is empty, not when every row is skipped', async () => {
+		await render(KeyedSkipEmptyApp);
+		await click('.keyed-skip-empty .row-c');
+
+		for (const item of toggle_rows.value) item.visible = item.id === 'c';
+		await flush();
+		expect(texts('.keyed-skip-empty .keyed-row')).toEqual(['Gamma:1']);
+
+		toggle_rows.value[2].visible = false;
+		await flush();
+		expect(texts('.keyed-skip-empty .keyed-row')).toEqual([]);
+		expect(texts('.keyed-skip-empty p')).toEqual([]);
+
+		toggle_rows.value = [];
+		await flush();
+		expect(texts('.keyed-skip-empty p')).toEqual(['none']);
+	});
+
+	it('switches a row between @if and @else as its condition changes', async () => {
+		await render(KeyedBranchApp);
+		expect(texts('.keyed-branch li')).toEqual(['shown a', 'shown b', 'shown c']);
+
+		toggle_rows.value = toggle_rows.value.map((item) =>
+			item.id === 'b' ? { ...item, visible: false } : item,
+		);
+		await flush();
+		expect(texts('.keyed-branch li')).toEqual(['shown a', 'hidden b', 'shown c']);
+
+		toggle_rows.value[0].visible = false;
+		await flush();
+		expect(texts('.keyed-branch li')).toEqual(['hidden a', 'hidden b', 'shown c']);
+	});
+
+	it('switches a row of a loop without a key between @if and @else in place', async () => {
+		await render(UnkeyedBranchApp);
+		toggle_rows.value[1].visible = false;
+		await flush();
+		expect(texts('.unkeyed-branch li')).toEqual(['shown a', 'hidden b', 'shown c']);
+	});
+
+	it('renders no rows, or @empty, for a missing source', async () => {
+		await render(MissingSourceApp, { items: null });
+		expect(texts('.missing-source li')).toEqual([]);
+		expect(texts('.missing-source-empty li')).toEqual(['none']);
+	});
+
+	it('walks a keyed @for source with @empty once (#863)', async () => {
+		next_batch_calls = 0;
+		await render(NextKeyedBatchApp);
+		expect(texts('.next-keyed-batch li')).toEqual(['first', 'batch']);
+		expect(next_batch_calls).toBe(1);
+	});
 });
+
+describe('tsrx-vue for_items', () => {
+	it('hands a reactive array to VaporFor as it is (#1147)', () => {
+		const list = reactive(['a', 'b']);
+		expect(for_items(list)).toBe(list);
+		const held = ref(['a']);
+		expect(for_items(held.value)).toBe(held.value);
+	});
+
+	it('walks a reactive array with its own iterator through that iterator', () => {
+		const raw = ['stored'];
+		raw[Symbol.iterator] = function* () {
+			yield 'visible';
+		} as () => ArrayIterator<string>;
+		expect(for_items(reactive(raw))).toEqual(['visible']);
+	});
+
+	it('reads a missing source as no items', () => {
+		expect(for_items(null as unknown as string[])).toEqual([]);
+		expect(for_items(undefined as unknown as string[])).toEqual([]);
+	});
+});
+
+runForOfSourcesRuntimeTests();
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
 runForOfHeadScopeRuntimeTests();
