@@ -14,8 +14,8 @@ interface Segment {
 
 /** A part of a segment, from one `@try` block boundary to the next. */
 interface Piece {
-	readonly id: string;
-	readonly nextSegments: Piece[];
+	segment: Segment;
+	index: number;
 }
 
 /** The pieces a `@try`'s boundaries end and start. */
@@ -34,17 +34,20 @@ interface TryPieces {
  * Core `no-useless-assignment`, with the blocks of a `@try` as alternatives.
  *
  * ESLint's code path analysis runs the blocks of a `@try` one after another,
- * so a value the body overwrites counts as unused even when `@pending` or
- * `@catch` reads it, or the code after the `@try`. The compiled output runs
- * the body, `@pending` and `@catch` in callbacks of the `@try`'s boundaries,
- * in any order and after the code that follows the `@try`.
+ * so a value a block overwrites counts as unused even when a later block or
+ * the code after the `@try` reads it. The compiled output runs the body,
+ * `@pending` and `@catch` in callbacks of the `@try`'s boundaries, and the
+ * `@catch` or `@pending` can render without the blocks before them.
  *
- * The rule runs the core rule twice. One copy sees the code paths as they are.
- * The other sees each segment cut at the boundaries of every `@try` whose body
- * and `@pending` neither await nor yield, with each block and the code after
- * the `@try` reachable from the start of the `@try` and from the end of each
- * block before it. It reports what both copies report, so it reports nothing
- * the core rule doesn't, and in a file without `@try` it is the core rule.
+ * The rule runs the core rule three times. One copy sees the code paths as
+ * they are; its reports are the candidates. The other two see each segment cut
+ * at the boundaries of every `@try` whose body and `@pending` neither await nor
+ * yield, and one of them also sees edges that run forward, in source order:
+ * from the start of the `@try` and from the end of each block to each block
+ * after it and to the code after the `@try`. A candidate is dropped only when
+ * the cut copy reports it and the copy with the edges doesn't, so only the
+ * edges drop reports, never the cutting. The rule reports nothing the core
+ * rule doesn't, and in a file without `@try` it is the core rule.
  */
 const rule: Rule.RuleModule = {
 	meta: wrapper_meta(
@@ -54,13 +57,18 @@ const rule: Rule.RuleModule = {
 	create(context) {
 		if (!context.sourceCode.text.includes('@try')) return core.create(context);
 
-		const reports: Rule.ReportDescriptor[] = [];
-		const confirmed = new Set<unknown>();
+		const candidates: Rule.ReportDescriptor[] = [];
+		const cut_reports = new Set<unknown>();
+		const joined_reports = new Set<unknown>();
+		const node_of = (descriptor: Rule.ReportDescriptor) => (descriptor as { node?: unknown }).node;
 		const plain = core.create(
-			with_report(context, (descriptor) => reports.push(descriptor)),
+			with_report(context, (descriptor) => candidates.push(descriptor)),
 		) as Listeners;
 		const cut = core.create(
-			with_report(context, (descriptor) => confirmed.add((descriptor as { node?: unknown }).node)),
+			with_report(context, (descriptor) => cut_reports.add(node_of(descriptor))),
+		) as Listeners;
+		const joined = core.create(
+			with_report(context, (descriptor) => joined_reports.add(node_of(descriptor))),
 		) as Listeners;
 		const suspends = suspension_check(context);
 
@@ -71,36 +79,56 @@ const rule: Rule.RuleModule = {
 		let current = new Set<Segment>();
 		const tries = new Map<unknown, TryPieces>();
 
-		const new_piece = (segment: Segment): Piece => {
+		// The segment-like view of the pieces each copy sees, with or without
+		// the edges, one object per piece.
+		const view = (with_edges: boolean) => {
+			const objects = new Map<Piece, Segment>();
+			const get = (piece: Piece): Segment => {
+				let object = objects.get(piece);
+				if (!object) {
+					object = {
+						id: `${piece.segment.id}~${piece.index}`,
+						get nextSegments() {
+							const list = pieces.get(piece.segment)!;
+							const next =
+								piece.index < list.length - 1
+									? [list[piece.index + 1]]
+									: piece.segment.nextSegments.flatMap((segment) => pieces.get(segment)?.[0] ?? []);
+							const edges = with_edges ? [...(alternatives.get(piece) ?? [])] : [];
+							return [...next, ...edges].map(get);
+						},
+					};
+					objects.set(piece, object);
+				}
+				return object;
+			};
+			return get;
+		};
+		const cut_view = view(false);
+		const joined_view = view(true);
+
+		const start_piece = (segment: Segment, node: unknown) => {
 			const list = pieces.get(segment) ?? [];
 			pieces.set(segment, list);
-			const index = list.length;
-			const piece: Piece = {
-				id: `${segment.id}~${index}`,
-				get nextSegments() {
-					const next =
-						index < list.length - 1
-							? [list[index + 1]]
-							: segment.nextSegments.flatMap((next) => pieces.get(next)?.[0] ?? []);
-					return [...next, ...(alternatives.get(piece) ?? [])];
-				},
-			};
+			const piece = { segment, index: list.length };
 			list.push(piece);
+			cut.onCodePathSegmentStart?.(cut_view(piece), node);
+			joined.onCodePathSegmentStart?.(joined_view(piece), node);
 			return piece;
 		};
-		const last_piece = (segment: Segment) => pieces.get(segment)!.at(-1)!;
-
+		const end_piece = (segment: Segment, node: unknown) => {
+			const piece = pieces.get(segment)!.at(-1)!;
+			cut.onCodePathSegmentEnd?.(cut_view(piece), node);
+			joined.onCodePathSegmentEnd?.(joined_view(piece), node);
+			return piece;
+		};
 		// Ends the current pieces and starts new ones.
 		const cut_here = (node: unknown) => {
 			const ended: Piece[] = [];
 			const started: Piece[] = [];
 			for (const segment of current) {
-				const piece = last_piece(segment);
-				cut.onCodePathSegmentEnd?.(piece, node);
-				ended.push(piece);
-				const next = new_piece(segment);
-				cut.onCodePathSegmentStart?.(next, node);
-				started.push(next);
+				ended.push(end_piece(segment, node));
+				started.push(start_piece(segment, node));
 			}
 			return { ended, started };
 		};
@@ -118,26 +146,30 @@ const rule: Rule.RuleModule = {
 				current = new Set();
 				plain.onCodePathStart?.(...args);
 				cut.onCodePathStart?.(...args);
+				joined.onCodePathStart?.(...args);
 			},
 			onCodePathEnd(...args) {
 				current = outer_segments.pop()!;
 				plain.onCodePathEnd?.(...args);
 				cut.onCodePathEnd?.(...args);
-				for (const descriptor of reports) {
-					if (confirmed.has((descriptor as { node?: unknown }).node)) context.report(descriptor);
+				joined.onCodePathEnd?.(...args);
+				for (const descriptor of candidates) {
+					const node = node_of(descriptor);
+					if (!cut_reports.has(node) || joined_reports.has(node)) context.report(descriptor);
 				}
-				reports.length = 0;
-				confirmed.clear();
+				candidates.length = 0;
+				cut_reports.clear();
+				joined_reports.clear();
 			},
 			onCodePathSegmentStart(segment: Segment, node: unknown) {
 				current.add(segment);
 				plain.onCodePathSegmentStart?.(segment, node);
-				cut.onCodePathSegmentStart?.(new_piece(segment), node);
+				start_piece(segment, node);
 			},
 			onCodePathSegmentEnd(segment: Segment, node: unknown) {
 				current.delete(segment);
 				plain.onCodePathSegmentEnd?.(segment, node);
-				cut.onCodePathSegmentEnd?.(last_piece(segment), node);
+				end_piece(segment, node);
 			},
 			JSXTryExpression(node: any) {
 				if (suspends(node.block) || suspends(node.pending)) return;
@@ -174,8 +206,8 @@ const rule: Rule.RuleModule = {
 				if (!state) return;
 				const { ended, started: after } = cut_here(node);
 				if (!node.handler) state.pending_end = ended;
-				// In a `finally` block, code path analysis keeps a segment for each way
-				// the block was entered; joining them would mix those paths up.
+				// Code path analysis can keep a segment for each way into a `finally`
+				// block; joining them would mix those paths up.
 				if (!state.single || ended.length !== 1) return;
 				// Only forward, in source order: an edge back to an earlier block would
 				// let a value reach a read before it in its own block.
@@ -191,11 +223,9 @@ const rule: Rule.RuleModule = {
 		const merged: Listeners = { ...listeners };
 		for (const key of new Set([...Object.keys(plain), ...Object.keys(cut)])) {
 			if (key in listeners) continue;
-			const first = plain[key];
-			const second = cut[key];
+			const copies = [plain[key], cut[key], joined[key]];
 			merged[key] = (...args) => {
-				first?.(...args);
-				second?.(...args);
+				for (const listener of copies) listener?.(...args);
 			};
 		}
 		return merged as Rule.RuleListener;

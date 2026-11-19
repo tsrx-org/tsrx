@@ -54,6 +54,18 @@ ruleTester.run('no-useless-assignment', rule, {
 	<div>@try { x = 2; <p>{x}</p> } @catch (e) { <i>{x}</i> }</div>
 } @catch (e) { <i>{x}</i> }`,
 		),
+		// A `finally` block entered one way only has one path, so the blocks are
+		// alternatives there too.
+		`export function F(log) {
+	let x = 0;
+	try {
+	} finally {
+		const view = @{
+			<div>@try { x = 1; <b>{x}</b> } @catch (e) { <i>{x}</i> }</div>
+		};
+		log(view);
+	}
+}`,
 		// Code without `@try` is left to the core rule.
 		`function f() { let x = 0; x += 1; return x; }`,
 	],
@@ -80,6 +92,25 @@ ruleTester.run('no-useless-assignment', rule, {
 } @catch (e) { <i /> }`,
 			),
 			errors: [{ messageId: 'unnecessaryAssignment', line: 6 }],
+		},
+		// Cutting the code paths at the `@try` doesn't change the core rule's
+		// other answers. Here it reports `x` and `view`, because it reads the
+		// label after the labelled block.
+		{
+			code: `export function F(log) {
+	let x = 0;
+	L: {
+		log(x);
+		const view = @{
+			<div>@try { <b /> } @catch (e) { <i>{String(e)}</i> }</div>
+		};
+		log(view);
+	}
+}`,
+			errors: [
+				{ messageId: 'unnecessaryAssignment', line: 2, column: 6 },
+				{ messageId: 'unnecessaryAssignment', line: 5, column: 9 },
+			],
 		},
 		// In a `finally` block, code path analysis keeps the path of a `return`
 		// apart from the normal one.

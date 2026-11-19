@@ -120,17 +120,20 @@ after `tsrx.configs.react`.
   `@pending` or the `@catch` reads it, and a value assigned in the body and again
   in the `@catch` though the code after the `@try` reads it. The compiled output
   runs the blocks in callbacks of the `@try`'s boundaries, and the `@catch` or
-  `@pending` can render without the blocks before them. The rule runs the core
-  rule a second time on code paths that let each block, and the code after the
-  `@try`, start from the start of the `@try` or from the end of any block before
-  it, and reports only what both runs report: it reports nothing the core rule
-  doesn't, and in a file without `@try` it is the core rule. It still reports a
-  value read only in a block that code path analysis holds unreachable, such as a
-  `@catch` after a body that throws, or only in a block that runs again after a
-  later one, as the body does after `@pending` or after `reset()`. It keeps the
-  core rule's answers for a `@try` whose body or `@pending` awaits or yields,
-  since those blocks run in the component, in order, and for a `@try` in a
-  `finally` block.
+  `@pending` can render without the blocks before them. The rule also runs the
+  core rule on code paths cut at the blocks' boundaries, once as they are and once
+  with each block, and the code after the `@try`, also starting from the start of
+  the `@try` or from the end of any block before it. It drops a report of the core
+  rule only when the cut code paths give it and the ones with the added starts
+  don't, so it reports nothing the core rule doesn't, and in a file without `@try`
+  it is the core rule. It still reports a value read only in a block that code
+  path analysis holds unreachable, such as a `@catch` after a body that throws, or
+  only in a block that runs again after a later one, as the body does after
+  `@pending` or after `reset()`. It keeps the core rule's answers for a `@try`
+  whose body or `@pending` awaits or yields, since those blocks run in the
+  component, in order, and for a `@try` where code path analysis follows more than
+  one path at once, as in a `finally` block that a `throw` or a `return` can
+  enter.
 
 ### With `js.configs.recommended`
 
