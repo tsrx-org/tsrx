@@ -2197,19 +2197,18 @@ function render_if_statement(node, transform_context) {
 }
 
 /**
- * Renders an element's child `@if` without `@else` (an `@else if` chain
- * without one included) as `v-if` / `v-else-if` elements. Its shared
- * lowering, `cond ? <p /> : null`, is a `createIf` whose empty branch
- * vue-jsx-vapor makes `createNodes(null)`, which doesn't take the `<!---->`
- * the server rendered for a false condition: hydrating it throws. A
- * `createIf` from `v-if` without `v-else` hydrates both that `<!---->` and
- * the picked branch, and follows its condition from there. So when each
- * branch is one element, the choice becomes those elements, each with the
- * condition that picks it.
+ * Renders an element's child `@if` without `@else` or `@else if` as a
+ * `v-if` element. Its shared lowering, `cond ? <p /> : null`, is a
+ * `createIf` whose empty branch vue-jsx-vapor makes `createNodes(null)`,
+ * which doesn't take the `<!---->` the server rendered for a false
+ * condition: hydrating it throws. A `createIf` from `v-if` without `v-else`
+ * hydrates both that `<!---->` and the rendered branch, and follows its
+ * condition from there. So when the branch is one element, it becomes that
+ * element with `v-if` (`if_directive_branch`).
  *
  * A choice followed by an element with its own `v-else` or `v-else-if`,
  * past any other children, keeps the shared lowering: that element would
- * join the new chain.
+ * join the new `v-if` instead of the one before it.
  *
  * @param {AST.Program} program
  * @returns {void}
@@ -2225,26 +2224,18 @@ function render_element_ifs_as_directives(program) {
 				/** @type {ESTreeJSX.JSXElement['children']} */
 				const children = [];
 				element.children.forEach((child, index) => {
-					const branches =
+					const branch =
 						child.type === 'JSXExpressionContainer' &&
 						child.expression.type !== 'JSXEmptyExpression' &&
 						!continues_directive_chain(element.children.slice(index + 1))
-							? if_directive_branches(/** @type {AST.Expression} */ (child.expression))
+							? if_directive_branch(/** @type {AST.Expression} */ (child.expression))
 							: null;
-					if (!branches) {
+					if (!branch) {
 						children.push(child);
 						return;
 					}
 					changed = true;
-					branches.forEach((branch, branch_index) => {
-						children.push(
-							with_directive(
-								branch.element,
-								branch_index === 0 ? 'v-if' : 'v-else-if',
-								branch.test,
-							),
-						);
-					});
+					children.push(with_v_if(branch.element, branch.test));
 				});
 				return changed
 					? /** @type {AST.Node} */ (/** @type {unknown} */ ({ ...element, children }))
@@ -2278,13 +2269,17 @@ function continues_directive_chain(siblings) {
 }
 
 /**
- * The elements a marked `@if` without `@else` renders and the condition for
- * each, when each is one element that can take `v-if`.
+ * The element a marked `@if` without `@else` or `@else if` renders and its
+ * condition, when the element can take `v-if`.
+ *
+ * An `@else if` chain keeps the shared lowering: vue-jsx-vapor gives a
+ * `v-else-if` branch an unkeyed `createIf`, which `VaporKeepAlive` doesn't
+ * cache, where the nested ternary's `createIf` is keyed and is cached.
  *
  * @param {AST.Expression} node
- * @returns {{ test: AST.Expression, element: ESTreeJSX.JSXElement }[] | null}
+ * @returns {{ test: AST.Expression, element: ESTreeJSX.JSXElement } | null}
  */
-function if_directive_branches(node) {
+function if_directive_branch(node) {
 	if (
 		node.type !== 'ConditionalExpression' ||
 		!(
@@ -2295,27 +2290,26 @@ function if_directive_branches(node) {
 	) {
 		return null;
 	}
-	/** @type {{ test: AST.Expression, element: ESTreeJSX.JSXElement }[]} */
-	const branches = [];
-	/** @type {AST.Expression} */
-	let rest = node;
-	while (rest.type === 'ConditionalExpression') {
-		if (!takes_directive(rest.consequent)) return null;
-		branches.push({
-			test: rest.test,
-			element: /** @type {ESTreeJSX.JSXElement} */ (/** @type {unknown} */ (rest.consequent)),
-		});
-		rest = rest.alternate;
-	}
 	// With an `@else`, the `createIf` hydrates as it is.
-	return rest.type === 'Literal' && rest.value === null ? branches : null;
+	if (
+		!(node.alternate.type === 'Literal' && node.alternate.value === null) ||
+		!takes_directive(node.consequent)
+	) {
+		return null;
+	}
+	return {
+		test: node.test,
+		element: /** @type {ESTreeJSX.JSXElement} */ (/** @type {unknown} */ (node.consequent)),
+	};
 }
 
 /**
  * Whether `node` is one element that can take `v-if`: not a `<template>`,
  * `<slot>` or `<component>`, which vue-jsx-vapor renders itself (it
- * server-renders a `<template v-if>` empty), and without a directive of its
- * own that `v-if` would combine with.
+ * server-renders a `<template v-if>` empty), and without a `v-` attribute
+ * of its own, plain or namespaced (`v-slot:name`), that `v-if` would combine
+ * with. vue-jsx-vapor reads a component's only child with `v-if` and
+ * `v-slot` as the parent's slot declaration and drops it.
  *
  * @param {AST.Node | null | undefined} node
  * @returns {boolean}
@@ -2333,26 +2327,29 @@ function takes_directive(node) {
 	return opening.attributes.every(
 		(attribute) =>
 			attribute.type !== 'JSXAttribute' ||
-			attribute.name.type !== 'JSXIdentifier' ||
-			!/^v-(if|else|else-if|for|show|model|html|text|once|memo)$/.test(attribute.name.name),
+			!(
+				attribute.name.type === 'JSXNamespacedName'
+					? attribute.name.namespace.name
+					: attribute.name.name
+			).startsWith('v-'),
 	);
 }
 
 /**
- * `element` with `name={test}` first among its attributes.
+ * `element` with `v-if={test}` first among its attributes, at the element's
+ * position in the source.
  *
  * @param {ESTreeJSX.JSXElement} element
- * @param {'v-if' | 'v-else-if'} name
  * @param {AST.Expression} test
  * @returns {ESTreeJSX.JSXElement}
  */
-function with_directive(element, name, test) {
+function with_v_if(element, test) {
 	return {
 		...element,
 		openingElement: {
 			...element.openingElement,
 			attributes: [
-				b.jsx_attribute(b.jsx_id(name), to_jsx_expression_container(test)),
+				b.jsx_attribute(b.jsx_id('v-if'), to_jsx_expression_container(test)),
 				...element.openingElement.attributes,
 			],
 		},

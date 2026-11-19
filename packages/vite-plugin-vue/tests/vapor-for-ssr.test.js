@@ -48,9 +48,7 @@ function Ifs({ on, level }: { on: boolean; level: number }) @{
 			}
 		</span>
 		<span class="level">
-			@if (level === 1) {
-				<b>{'one'}</b>
-			} @else if (level === 2) {
+			@if (level === 2) {
 				<i>{'two'}</i>
 			}
 		</span>

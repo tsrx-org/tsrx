@@ -2581,13 +2581,28 @@ export function Card(${params}: any) @{
 		);
 
 		expect(code).toContain("<b v-if={on}>{'on'}</b>");
-		expect(code).toContain("<b v-if={level === 1}>{'one'}</b><Item v-else-if={level === 2} />");
+		// An \`@else if\` chain keeps the shared lowering: \`VaporKeepAlive\` caches
+		// the nested ternary's keyed \`createIf\`, not a \`v-else-if\` one.
+		expect(code).toContain("{level === 1 ? <b>{'one'}</b> : level === 2 ? <Item /> : null}");
 	});
 
 	it('keeps the shared lowering for other element @if children', () => {
 		const { code } = compile(
-			`function App({ on, kind }: { on: boolean; kind: string }) @{
+			`function App({ on, kind, Item, Wrap }: { on: boolean; kind: string; Item: any; Wrap: any }) @{
 				<div>
+					<Wrap>
+						@if (on) {
+							<Item v-slot={{ x }}><b>{x}</b></Item>
+						}
+					</Wrap>
+					<Wrap>
+						@if (on) {
+							<Item v-slot:header={{ x }}><b>{x}</b></Item>
+						}
+					</Wrap>
+					@if (on) {
+						<input v-focus />
+					}
 					@if (on) {
 						<b>{'on'}</b>
 					} @else {
@@ -2618,6 +2633,11 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
+		// A \`v-\` attribute of the branch's own keeps it: vue-jsx-vapor reads a
+		// component's only child with \`v-if\` and \`v-slot\` as the parent's slot.
+		expect(code).toContain('{on ? <Item v-slot={{ x }}><b>{x}</b></Item> : null}');
+		expect(code).toContain('{on ? <Item v-slot:header={{ x }}><b>{x}</b></Item> : null}');
+		expect(code).toContain('{on ? <input v-focus /> : null}');
 		// With \`@else\`, the \`createIf\` hydrates as it is.
 		expect(code).toContain("{on ? <b>{'on'}</b> : <i>{'off'}</i>}");
 		// A branch with setup statements, and a \`<template>\`, can't take \`v-if\`.
@@ -2627,6 +2647,7 @@ export function Card(${params}: any) @{
 		// \`{false}\` or \`{''}\`, would join a new chain.
 		expect(code).toContain("{on ? <b>{'before else'}</b> : null}");
 		expect(code).toContain("{on ? <b>{'before null'}</b> : null}");
+		// Only the two authored \`v-if\`s.
 		expect(code.match(/v-if/g)).toHaveLength(2);
 	});
 

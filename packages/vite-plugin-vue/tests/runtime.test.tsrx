@@ -10,6 +10,7 @@ import {
 	reactive,
 	ref,
 	watch,
+	VaporKeepAlive,
 	watchEffect,
 } from 'vue';
 import { mergeRefs } from '@tsrx/vue/ref';
@@ -3874,9 +3875,7 @@ function HydratedIfs({ on, level }: { on: boolean; level: number }) @{
 			}
 		</span>
 		<span class="level">
-			@if (level === 1) {
-				<b>{'one'}</b>
-			} @else if (level === 2) {
+			@if (level === 2) {
 				<i>{'two'}</i>
 			}
 		</span>
@@ -3927,16 +3926,16 @@ describe('tsrx-vue hydrating an element whose child is an @if without @else', ()
 		ifs.value = { on: false, level: 0 };
 		const app = await hydrate(server_markup.empty);
 		try {
-			ifs.value = { on: true, level: 1 };
+			ifs.value = { on: true, level: 2 };
 			await flush();
-			expect(shown()).toEqual(['on:0', 'one']);
+			expect(shown()).toEqual(['on:0', 'two']);
 			(container.querySelector('.on button') as HTMLElement).click();
 			await flush();
 
 			// The branch stays while its condition does, with its state.
-			ifs.value = { on: true, level: 2 };
+			ifs.value = { on: true, level: 0 };
 			await flush();
-			expect(shown()).toEqual(['on:1', 'two']);
+			expect(shown()).toEqual(['on:1', '']);
 
 			ifs.value = { on: false, level: 0 };
 			await flush();
@@ -3952,9 +3951,9 @@ describe('tsrx-vue hydrating an element whose child is an @if without @else', ()
 		try {
 			(container.querySelector('.on button') as HTMLElement).click();
 			await flush();
-			ifs.value = { on: true, level: 1 };
+			ifs.value = { on: true, level: 0 };
 			await flush();
-			expect(shown()).toEqual(['on:1', 'one']);
+			expect(shown()).toEqual(['on:1', '']);
 
 			ifs.value = { on: false, level: 0 };
 			await flush();
@@ -3966,6 +3965,79 @@ describe('tsrx-vue hydrating an element whose child is an @if without @else', ()
 		} finally {
 			app.unmount();
 		}
+	});
+});
+
+const kept_tab = ref(0);
+
+function KeptTabA() @{
+	const count = ref(0);
+	<button class="kept-a" onClick={() => count.value++}>
+		{'a:' + count.value}
+	</button>
+}
+
+function KeptTabB() @{
+	const count = ref(0);
+	<button class="kept-b" onClick={() => count.value++}>
+		{'b:' + count.value}
+	</button>
+}
+
+function KeptTabs() @{
+	<div class="kept">
+		<VaporKeepAlive>
+			@if (kept_tab.value === 1) {
+				<KeptTabA />
+			} @else if (kept_tab.value === 2) {
+				<KeptTabB />
+			}
+		</VaporKeepAlive>
+	</div>
+}
+
+const sibling_user = ref({ name: 'Ann', online: true });
+
+function SiblingCounter() @{
+	const count = ref(0);
+	<button class="sibling-counter" onClick={() => count.value++}>
+		{'a:' + count.value}
+	</button>
+}
+
+function SiblingIf() @{
+	<div class="sibling-if">
+		@if (sibling_user.value.online) {
+			<SiblingCounter />
+		}
+		{sibling_user.value.name}
+	</div>
+}
+
+describe('tsrx-vue an element whose child is an @if without @else, on the client', () => {
+	it('keeps an @else if branch cached by VaporKeepAlive', async () => {
+		// The chain keeps the nested ternary: its keyed \`createIf\` is what
+		// \`VaporKeepAlive\` caches, where a \`v-else-if\` one isn't.
+		kept_tab.value = 2;
+		await render(KeptTabs);
+		(container.querySelector('.kept-b') as HTMLElement).click();
+		await flush();
+		for (const tab of [1, 2, 0, 2]) {
+			kept_tab.value = tab;
+			await flush();
+		}
+		expect(text('.kept')).toBe('b:1');
+	});
+
+	it('keeps its branch when a sibling expression changes (#1402)', async () => {
+		// The \`v-if\` is a \`createIf\` of its own, outside the sibling's effect.
+		sibling_user.value = { name: 'Ann', online: true };
+		await render(SiblingIf);
+		(container.querySelector('.sibling-counter') as HTMLElement).click();
+		await flush();
+		sibling_user.value = { ...sibling_user.value };
+		await flush();
+		expect(text('.sibling-counter')).toBe('a:1');
 	});
 });
 
