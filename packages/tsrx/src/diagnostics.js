@@ -118,6 +118,10 @@ export const DIAGNOSTIC_CODES = {
 	 * it renders nothing.
 	 */
 	CODE_BLOCK_EXPRESSION_ONLY: 'TSRX2035',
+	/** A `break` that would leave an `@try`, `@pending`, `@catch` or `@empty` body, or a nested `@{ … }` block. */
+	DIRECTIVE_BODY_BREAK: 'TSRX2036',
+	/** A `continue` that would leave an `@try`, `@pending`, `@catch`, `@empty` or `@switch` case body, or a nested `@{ … }` block. */
+	DIRECTIVE_BODY_CONTINUE: 'TSRX2037',
 
 	/** `<style apply>` carries no expression value. */
 	STYLE_APPLY_VALUE: 'TSRX3001',
@@ -480,6 +484,14 @@ export const TSRX_ERRORS = {
 		'FOR_HEAD',
 		(kind) =>
 			`TSRX \`@for\` does not support \`${kind}\` loop variables. Declare the resource in the loop body instead: \`@for (const item of items) { ${kind} resource = item; ... }\`.`,
+	),
+	DIRECTIVE_BODY_BREAK: tsrx(
+		'DIRECTIVE_BODY_BREAK',
+		'A `break` cannot jump out of an `@try`, `@pending`, `@catch` or `@empty` body or a nested `@{ … }` block, since every target runs it in a function of its own. Break out of a loop or label inside it, or render conditionally instead.',
+	),
+	DIRECTIVE_BODY_CONTINUE: tsrx(
+		'DIRECTIVE_BODY_CONTINUE',
+		'A `continue` cannot jump out of an `@try`, `@pending`, `@catch`, `@empty` or `@switch` case body or a nested `@{ … }` block, since every target runs it in a function of its own. Continue a loop inside it, or filter before rendering instead.',
 	),
 	DIRECTIVE_BODY_VAR: tsrx(
 		'DIRECTIVE_BODY_VAR',

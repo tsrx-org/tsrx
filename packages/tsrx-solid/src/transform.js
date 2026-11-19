@@ -646,6 +646,13 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		);
 		return;
 	}
+	if (
+		(current.type === 'BreakStatement' || current.type === 'ContinueStatement') &&
+		current.metadata?.invalid_directive_jump
+	) {
+		// Reported by `@tsrx/core`'s directive jump check.
+		return;
+	}
 	if (current.type === 'BreakStatement') {
 		error(
 			TSRX_ERRORS.FOR_BREAK_STATEMENT,

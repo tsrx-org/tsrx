@@ -2935,6 +2935,131 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			}
 		});
 
+		it('rejects a jump out of an `@try`, `@pending` or `@catch` body, strictly and when collecting', () => {
+			// Every target runs the blocks of an `@try` in a function of its own, so
+			// the output would not parse.
+			for (const [block, jump] of [
+				['@try { if (log) JUMP; <b /> } @catch (e) { <i /> }', 'break'],
+				['@try { if (log) JUMP; <b /> } @catch (e) { <i /> }', 'continue'],
+				['@try { <b /> } @pending { if (log) JUMP; <p /> } @catch (e) { <i /> }', 'continue'],
+				['@try { <b /> } @catch (e) { if (log) JUMP; <i /> }', 'break'],
+				['@try { if (log) JUMP; <b /> } @catch (e) { <i /> }', 'break outer'],
+				['@try { if (log) JUMP; <b /> } @catch (e) { <i /> }', 'continue outer'],
+				[
+					'@try { <div>@try { if (log) JUMP; <b /> } @catch (e) { <i /> }</div> } @catch (e) { <i /> }',
+					'continue',
+				],
+				['@try { switch (log) { case 1: JUMP; } <b /> } @catch (e) { <i /> }', 'continue'],
+			]) {
+				const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
+					outer: for (const item of items) {
+						const view = <div>${block.replace('JUMP', jump)}</div>;
+						console.log(item, view);
+					}
+					<p />
+				}`;
+				const start = source.indexOf(`${jump};`);
+				const keyword = jump.split(' ')[0];
+				const expected = expect.objectContaining({
+					code: (keyword === 'break'
+						? TSRX_ERRORS.DIRECTIVE_BODY_BREAK
+						: TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE
+					).code,
+					pos: start,
+					end: start + keyword.length,
+				});
+
+				expect(() => compile(source, 'App.tsrx'), `${block} ${jump}`).toThrow(expected);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, `${block} ${jump}`).toEqual([
+					expected,
+				]);
+			}
+		});
+
+		it('rejects a jump out of an `@empty` body, an `@switch` case or a nested `@{ … }` block', () => {
+			for (const [template, jump, error] of /** @type {const} */ ([
+				[
+					'<ul>@for (const x of items) { <li /> } @empty { if (log) JUMP; <p /> }</ul>',
+					'continue',
+					TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE,
+				],
+				['@{ if (log) JUMP; <b /> }', 'break', TSRX_ERRORS.DIRECTIVE_BODY_BREAK],
+				['<div>{@{ if (log) JUMP; <b /> }}</div>', 'continue', TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE],
+				[
+					'<div>@switch (log) { @case 1: { if (log) JUMP; <b /> } @default: { <i /> } }</div>',
+					'continue',
+					TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE,
+				],
+				[
+					'<div>@switch (log) { @case 1: { if (log) JUMP; <b /> } @default: { <i /> } }</div>',
+					'break',
+					TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT,
+				],
+			])) {
+				const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
+					for (const item of items) {
+						const view = ${template.replace('JUMP', jump)};
+						console.log(item, view);
+					}
+					<p />
+				}`;
+				const start = source.indexOf(`${jump};`);
+				const expected = expect.objectContaining({ code: error.code, pos: start });
+
+				expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
+			}
+		});
+
+		it('reports a jump out of an `@try` in an `@for` or `@if` body once, as leaving the `@try`', () => {
+			// The `@for` check also sees a jump in an `@try` in its body.
+			for (const source of [
+				`export function App({ items, log }: { items: string[]; log: unknown }) @{
+					<ul>
+						@for (const x of items) {
+							<li>@try { if (log) continue; <b /> } @catch (e) { <i /> }</li>
+						}
+					</ul>
+				}`,
+				`export function App({ items, log }: { items: string[]; log: unknown }) @{
+					for (const item of items) {
+						const view = <div>@if (log) { <div>@try { <b /> } @catch (e) { if (log) continue; <i /> }</div> }</div>;
+						console.log(item, view);
+					}
+					<p />
+				}`,
+			]) {
+				const start = source.indexOf('continue;');
+				const expected = expect.objectContaining({
+					code: TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE.code,
+					pos: start,
+				});
+
+				expect(() => compile(source, 'App.tsrx'), source).toThrow(expected);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, source).toEqual([expected]);
+			}
+		});
+
+		it('allows a jump to a loop, `switch` or label inside the `@try` body or block it is in', () => {
+			for (const block of [
+				'@try { for (const x of items) { if (x) continue; console.log(x); } <b /> } @catch (e) { <i /> }',
+				'@try { inner: { if (log) break inner; console.log(log); } <b /> } @catch (e) { <i /> }',
+				'@try { switch (log) { case 1: console.log(1); break; default: console.log(0); } <b /> } @catch (e) { <i /> }',
+				'@try { <b /> } @catch (e) { outer: for (const x of items) { for (const y of items) { if (y) continue outer; } } <i /> }',
+				'@try { <b /> } @catch (e) { <button onClick={() => { for (const x of items) { if (x) break; } }} /> }',
+				'@switch (log) { @case 1: { for (const x of items) { if (x) continue; console.log(x); } <b /> } @default: { <i /> } }',
+			]) {
+				const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
+					for (const item of items) {
+						if (item) continue;
+					}
+					<div>${block}</div>
+				}`;
+
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, block).toEqual([]);
+			}
+		});
+
 		it('rejects a `var` declared in a directive body or a nested `@{ … }` block, strictly and when collecting (#1208)', () => {
 			const source = `export function App({ items }: { items: string[] }) @{
 				<>

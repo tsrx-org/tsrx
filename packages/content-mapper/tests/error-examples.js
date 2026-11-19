@@ -344,6 +344,40 @@ export function C(props: { items: string[] }) @{
 `,
 	},
 	{
+		error: TSRX_ERRORS.DIRECTIVE_BODY_BREAK,
+		source: `export function f(items: string[], a: boolean) {
+	for (const item of items) {
+		const element = <div>
+			@try {
+				if (a) break;
+				<p>{item}</p>
+			} @catch (e) {
+				<p>{'failed'}</p>
+			}
+		</div>;
+		console.log(element);
+	}
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE,
+		source: `export function f(items: string[], a: boolean) {
+	for (const item of items) {
+		const element = <div>
+			@try {
+				if (a) continue;
+				<p>{item}</p>
+			} @catch (e) {
+				<p>{'failed'}</p>
+			}
+		</div>;
+		console.log(element);
+	}
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.DIRECTIVE_BODY_VAR,
 		source: `export function C(props: { items: string[] }) @{
 	<ul>
