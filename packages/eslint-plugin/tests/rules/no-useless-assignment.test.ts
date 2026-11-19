@@ -130,6 +130,21 @@ ruleTester.run('no-useless-assignment', rule, {
 			`let Tag = 'b';\nlog(Tag);`,
 			`@try { Tag = 'i'; <b /> } @catch (e) { Tag = 'p'; <i /> }\n<{Tag} />`,
 		),
+		// A `@for`'s key, visited before its iterable, doesn't hide the
+		// iterable's read.
+		`export function A({ n, log }) @{
+	let x = 0;
+	log(x);
+	<ul>
+		@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+		@for (const item of [x]; key item) { <li>{item}</li> }
+	</ul>
+}`,
+		// A `@try` in an attribute's value.
+		`export function A({ n, log, Card }) @{
+	let x = 0;
+	<Card header={<div>@try { x = 1; <b>{x}</b> } @catch (e) { <i>{x}</i> }</div>} />
+}`,
 		// An escaped name is still a read.
 		component(`let x = 0;`, `@try { log(n); x = 1; <>{x}</> } @catch (e) { <>{\\u0078}</> }`),
 		// Code without `@try` is left to the core rule.

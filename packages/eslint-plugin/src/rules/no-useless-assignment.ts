@@ -79,7 +79,8 @@ const ORDERED_PARTS: Record<string, string[]> = {
 	TSAsExpression: ['expression'],
 	TSSatisfiesExpression: ['expression'],
 	TSNonNullExpression: ['expression'],
-	JSXElement: ['children'],
+	JSXElement: ['openingElement', 'children'],
+	JSXOpeningElement: ['attributes'],
 	JSXFragment: ['children'],
 	JSXExpressionContainer: ['expression'],
 	JSXAttribute: ['value'],
@@ -230,22 +231,22 @@ const rule: Rule.RuleModule = {
 		const alternatives = new Map<Piece, Set<Piece>>();
 		const outer_segments: Set<Segment>[] = [];
 		let current = new Set<Segment>();
-		// The end of the last identifier the cut copies saw in each code path. A
-		// nested function can be visited after code that follows it, as in a
-		// `@for` whose key comes before its iterable, so each code path starts
-		// over.
-		const outer_identifier_ends: number[] = [];
-		let last_identifier_end = -1;
-		// The position before each `@for` whose loop hasn't started yet.
-		const for_starts = new Map<unknown, number>();
-		// A `@for`'s index and key follow its iterable in the source, but the
-		// traversal visits them before the loop, so the loop starts again from
-		// the position before the `@for`.
+		// For each code path: the end of the last identifier the cut copies saw,
+		// and how many `@for`s it is in the index or key of. Those come after the
+		// iterable in the source, but the traversal visits them before the loop,
+		// so the cut copies don't see their identifiers; a `@try` there isn't
+		// cut. A nested function can be visited after code that follows it, so
+		// each code path starts over.
+		interface Position {
+			end: number;
+			for_heads: number;
+		}
+		const outer_positions: Position[] = [];
+		let position: Position = { end: -1, for_heads: 0 };
 		const start_loop = (node: any) => {
-			const start = for_starts.get(node.parent);
-			if (start === undefined || node.parent.loop !== node) return;
-			for_starts.delete(node.parent);
-			last_identifier_end = start;
+			if (node.parent?.type === 'JSXForExpression' && node.parent.loop === node) {
+				position.for_heads--;
+			}
 		};
 		const tries = new Map<unknown, TryPieces>();
 
@@ -319,15 +320,17 @@ const rule: Rule.RuleModule = {
 			onCodePathStart(...args) {
 				outer_segments.push(current);
 				current = new Set();
-				outer_identifier_ends.push(last_identifier_end);
-				last_identifier_end = -1;
+				outer_positions.push(position);
+				position = { end: -1, for_heads: 0 };
 				plain.onCodePathStart?.(...args);
 				cut.onCodePathStart?.(...args);
 				joined.onCodePathStart?.(...args);
 			},
 			onCodePathEnd(...args) {
 				current = outer_segments.pop()!;
-				last_identifier_end = Math.max(last_identifier_end, outer_identifier_ends.pop()!);
+				const inner = position;
+				position = outer_positions.pop()!;
+				if (!position.for_heads) position.end = Math.max(position.end, inner.end);
 				plain.onCodePathEnd?.(...args);
 				cut.onCodePathEnd?.(...args);
 				joined.onCodePathEnd?.(...args);
@@ -349,8 +352,8 @@ const rule: Rule.RuleModule = {
 				plain.onCodePathSegmentEnd?.(segment, node);
 				end_piece(segment, node);
 			},
-			JSXForExpression(node: unknown) {
-				for_starts.set(node, last_identifier_end);
+			JSXForExpression() {
+				position.for_heads++;
 			},
 			ForStatement: start_loop,
 			ForInStatement: start_loop,
@@ -415,13 +418,14 @@ const rule: Rule.RuleModule = {
 				// after the call's arguments). Such an identifier could stretch a
 				// piece over code across a `@try` boundary, so the cut copies see an
 				// identifier only when it comes after the last one they saw in the
-				// code path. Leaving one out only narrows a piece, which can keep a
-				// report but never drop one. (The parser's name for a dynamic tag
-				// spans the tag expression, but a `@try` there isn't cut.)
+				// code path, outside a `@for`'s index and key. Leaving one out only
+				// narrows a piece, which can keep a report but never drop one. (The
+				// parser's name for a dynamic tag spans the tag expression, but a
+				// `@try` there isn't cut.)
 				const node = args[0];
 				if (node?.type === 'Identifier' || node?.type === 'JSXIdentifier') {
-					if (node.range[0] < last_identifier_end) return;
-					last_identifier_end = node.range[1];
+					if (position.for_heads || node.range[0] < position.end) return;
+					position.end = node.range[1];
 				}
 				cut[key]?.(...args);
 				joined[key]?.(...args);
