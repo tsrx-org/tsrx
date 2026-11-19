@@ -148,6 +148,14 @@ users, uses `tsrx/no-unused-vars` and `tsrx/no-unreachable` for `.tsrx` files:
   alternatives. After an arm that ends in `throw`, `no-unreachable` reports the
   arms and code that follow it. `tsrx/no-unreachable` treats the arms as
   alternatives.
+- Code path analysis also runs the blocks of a `@try` one after another: the body,
+  `@pending`, then `@catch`. After a body that throws, `no-unreachable` reports
+  `@pending`, the `@catch` and the code after the `@try`. After a `@pending` that
+  throws, it reports the `@catch` and the code after the `@try`, and after a
+  `@catch` that throws, such as one that rethrows, the code after the `@try`.
+  `tsrx/no-unreachable` treats `@pending`, the `@catch` and the code after the
+  `@try` as reached whenever the `@try` is, unless the body or `@pending` awaits
+  or yields and doesn't reach its end.
 
 Other rules built on code paths still treat every `@switch` arm as always running.
 For example, `react-hooks/rules-of-hooks` doesn't report a hook called in a
@@ -155,13 +163,9 @@ For example, `react-hooks/rules-of-hooks` doesn't report a hook called in a
 
 No TSRX rule covers these:
 
-- Code path analysis runs the blocks of a `@try` one after another: the body,
-  `@pending`, then `@catch`. In TSRX, a `@catch` renders when the `@try` body
-  throws, and `@pending` shows while it suspends, so these reports can be false:
-  - After a body that throws, `no-unreachable` reports `@pending`, the `@catch`
-    and the code after the `@try`. After a `@pending` that throws, it reports the
-    `@catch` and the code after the `@try`, and after a `@catch` that throws, such
-    as one that rethrows, the code after the `@try`.
+- In TSRX, a `@catch` renders when the `@try` body throws, and `@pending` shows
+  while it suspends, so with the blocks of a `@try` run one after another, these
+  reports can be false:
   - `no-unreachable-loop` reports a `@for` that holds a `@try` whose body or
     `@catch` throws, as if the loop could run only once.
   - `react-hooks/rules-of-hooks` reports as conditional a hook after a `@try`
@@ -171,16 +175,20 @@ No TSRX rule covers these:
     the body or `@pending` assigns it, though the `@catch` reads it.
 
   `rules-of-hooks` also misses a hook such as `useState` called in `@catch`,
-  though React fails on it. A `try` statement would fix these, but it would put
-  the body inside a `try`, which the React, Preact and Hono output doesn't have.
+  though React fails on it. A `try` statement would fix these, but
   `rules-of-hooks` would then report as conditional every hook after the body's
   first call, member access or identifier, except `use()`, which react-hooks 6.1.1
   and 7.1.1 report anywhere in the body as inside a try/catch block.
 
-  The React, Preact and Hono output differs from that model, so some of these
-  reports hold there: it runs `@pending`'s code before the body on every render,
-  and a throw in the body's own code, rather than in a component the body renders,
-  ends the render without reaching the `@catch`.
+  On the client, the React, Preact and Hono output renders the body inside the
+  `@try`'s boundaries, so a throw in the body's own code reaches the `@catch`.
+  React and Preact render `@pending` inside them too, only while the body
+  suspends. Hono runs `@pending`'s code in the parent's render, before the body,
+  on every render, so a throw there skips the `@try`'s own `@catch`. In the React,
+  Preact and Hono output, a body or `@pending` that awaits or yields stays in the
+  parent, `@pending` first, so a throw in it leaves the parent without reaching
+  the `@catch`. Hono's DOM compiler rejects one that awaits, and Solid and Vue
+  reject both.
 
 - `curly` with `multi` or `multi-or-nest` removes the braces from an `@if`,
   `@else`, `@else if` or `@for` body that holds a single statement, such as

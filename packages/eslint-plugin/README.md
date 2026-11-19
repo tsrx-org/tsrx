@@ -94,28 +94,37 @@ after `tsrx.configs.react`.
 - `tsrx/no-await-in-loop` is ESLint's `no-await-in-loop`, and also reports an
   `await` in a `@for` key, which runs once per item, as the body does.
 - `tsrx/no-unreachable` is ESLint's `no-unreachable`, with the arms of a `@switch`
-  as alternatives. After an arm that throws, it doesn't report the other arms or
-  the code after the `@switch`. It still reports unreachable code inside an arm:
-  there it follows `throw`, `return`, `break`, `continue`, `try` and endless loops
-  itself, since code path analysis has already given up on the arm. It can miss
-  unreachable code there when a `break`, `continue` or `return` passes through a
-  `finally` block. In generated arms with heavy `try`/`finally`, label and loop
-  nesting, it missed some unreachable code in about 1 in 120 (0.8%), and reported
-  nothing the core rule doesn't report on the same code in a plain function. Like
-  the core rule, it reports the `@pending` and `@catch` of a `@try` whose body
-  throws, and the code after the `@try`, in an arm or not, as the
+  as alternatives, and the blocks of a `@try` run apart from the code around it.
+  After an arm that throws, it doesn't report the other arms, or the code after
+  the `@switch` when another arm reaches its end or there is no `@default` arm.
+  After a `@try` block that throws, it doesn't report `@pending`, the `@catch` or
+  the code after the `@try`: the compiled output runs the body, `@pending` and
+  `@catch` in callbacks of the `@try`'s boundaries, and the component goes on past
+  the `@try`. A body or `@pending` that awaits or yields runs in the component
+  instead, `@pending` first, where a throw leaves it: when such a block doesn't
+  reach its end, the rule reports the `@catch` and the code after the `@try`, as
+  the core rule does. On Hono, a `@pending` that neither awaits nor yields runs in
+  the component too, so when it throws it ends the component there, but the rule
+  doesn't know the target and doesn't report the code after that `@try`. It still
+  reports unreachable code inside an arm or a block of a `@try`: there it follows
+  `throw`, `return`, `break`, `continue`, `try` and endless loops itself, since
+  code path analysis has already given up on that code. It can miss unreachable
+  code there when a `break`, `continue`, `return` or `throw` passes through a
+  `finally` block, and it reports nothing there that the core rule doesn't report
+  on the same code in a plain function. The
   [`@tsrx/eslint-parser` README](https://github.com/tsrx-org/tsrx/tree/main/packages/eslint-parser#known-limitations)
-  explains.
+  explains what the core rule reports instead.
 
 ### With `js.configs.recommended`
 
 `js.configs.recommended` turns on `no-unused-vars` and `no-unreachable`. The `js`
 configuration turns those two off for `.tsrx` files and turns on
 `tsrx/no-unused-vars` and `tsrx/no-unreachable` at `error`. Every other report and
-suggestion is the core rule's, except in the code `tsrx/no-unreachable` revives
-after a `@switch` arm that throws, the other arms and the code after the
-`@switch`, where it follows exits itself. A configuration can't read the severity
-or options another one gives the core rule, so:
+suggestion is the core rule's, except in the code `tsrx/no-unreachable` revives,
+where it follows exits itself: after a `@switch` arm that throws, the other arms
+and the code after the `@switch`, and after a `@try` block that throws, the
+`@try`'s other blocks and the code after it. A configuration can't read the
+severity or options another one gives the core rule, so:
 
 - list `tsrx.configs.js` after `js.configs.recommended`, and after any other
   configuration that turns these core rules on. Listed before them, it leaves both
