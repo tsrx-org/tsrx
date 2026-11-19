@@ -3307,6 +3307,62 @@ function IndexSwitchRowsApp() @{
 	</ul>
 }
 
+const no_match_rows = ref([{ id: 'z', kind: 'none' }]);
+
+function NoMatchRowsApp() @{
+	<ul class="no-match-rows">
+		@for (const row of no_match_rows.value; key row.id) {
+			@switch (row.kind) {
+				@case 'note': {
+					<li>{'note ' + row.id}</li>
+				}
+			}
+		}
+	</ul>
+}
+
+const lookup_rows = ref([
+	{ id: '1', kind: 'a' },
+	{ id: '2', kind: 'b' },
+]);
+const kind_lookup = ref<Record<string, string> | null>({ a: 'a', b: 'b' });
+const lookup_fails = ref(false);
+
+function kind_or_throw(kind: string) {
+	if (lookup_fails.value) throw new Error('lookup boom');
+	return kind;
+}
+
+function LookupRowsApp() @{
+	<ul class="lookup-rows">
+		@for (const row of lookup_rows.value; key row.id) {
+			@switch (kind_lookup.value![row.kind]) {
+				@case 'a': {
+					<li>{'a' + row.id}</li>
+				}
+				@case 'b': {
+					<li>{'b' + row.id}</li>
+				}
+			}
+		}
+	</ul>
+}
+
+function FlagRowsApp() @{
+	<ul class="lookup-rows">
+		@for (const row of lookup_rows.value; key row.id) {
+			@switch (kind_or_throw(row.kind)) {
+				@case 'a': {
+					<li>{'a' + row.id}</li>
+				}
+				@case 'b': {
+					<li>{'b' + row.id}</li>
+				}
+			}
+		}
+	</ul>
+}
+
 function NestedCaseRowsApp() @{
 	<ul class="nested-case-rows">
 		@for (const todo of todos.value; key todo.id) {
@@ -3422,13 +3478,83 @@ describe('tsrx-vue keyed @switch rows', () => {
 	});
 
 	it('renders nothing for a keyed @switch row whose value matches no case when it mounts', async () => {
-		todos.value = [{ id: 'z', title: 'Zed', kind: 'none', synced: 0 }];
-		await render(KindRowsApp);
-		expect(texts('.kind-rows li')).toEqual([]);
+		// Its own rows and a caught mount error, so a mount that throws can't
+		// leave effects behind that the later tests' updates run.
+		/** @type {unknown} */
+		let error = null;
+		try {
+			await render(NoMatchRowsApp);
+		} catch (caught) {
+			error = caught;
+		}
+		expect(error).toBeNull();
+		expect(texts('.no-match-rows li')).toEqual([]);
 
-		update_todo('z', { kind: 'note' });
+		no_match_rows.value = [{ id: 'z', kind: 'note' }];
 		await flush();
-		expect(texts('.kind-rows li')).toEqual(['note Zed']);
+		expect(texts('.no-match-rows li')).toEqual(['note z']);
+	});
+
+	it('keeps following a @switch row’s value after its discriminant throws outside a @catch', async () => {
+		/** @type {string[]} */
+		const errors = [];
+		/** @param {Array<() => void>} steps */
+		const run = async (Component: unknown, steps: Array<() => void>) => {
+			lookup_rows.value = [
+				{ id: '1', kind: 'a' },
+				{ id: '2', kind: 'b' },
+			];
+			kind_lookup.value = { a: 'a', b: 'b' };
+			lookup_fails.value = false;
+			const app = createVaporApp(Component as Parameters<typeof createVaporApp>[0]);
+			app.config.errorHandler = (caught) => {
+				errors.push(String(caught));
+			};
+			app.mount(container);
+			await flush();
+			for (const step of steps) {
+				step();
+				await flush();
+			}
+			const shown = texts('.lookup-rows li');
+			app.unmount();
+			return shown;
+		};
+		const swap = () => {
+			lookup_rows.value = [
+				{ id: '1', kind: 'b' },
+				{ id: '2', kind: 'a' },
+			];
+		};
+		const restore = () => {
+			kind_lookup.value = { a: 'a', b: 'b' };
+		};
+
+		expect(await run(LookupRowsApp, [() => (kind_lookup.value = null), restore, swap])).toEqual([
+			'b1',
+			'a2',
+		]);
+		expect(await run(LookupRowsApp, [() => (kind_lookup.value = null), swap, restore])).toEqual([
+			'b1',
+			'a2',
+		]);
+		expect(
+			await run(FlagRowsApp, [
+				() => (lookup_fails.value = true),
+				() => (lookup_fails.value = false),
+				swap,
+			]),
+		).toEqual(['b1', 'a2']);
+		expect(
+			await run(FlagRowsApp, [
+				() => (lookup_fails.value = true),
+				() => {
+					lookup_fails.value = false;
+					swap();
+				},
+			]),
+		).toEqual(['b1', 'a2']);
+		expect(errors.length).toBeGreaterThan(0);
 	});
 
 	it('follows a @switch row’s value in a loop with @empty, and renders @empty', async () => {

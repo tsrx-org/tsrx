@@ -3395,16 +3395,26 @@ describe('@tsrx/vue @switch rows', () => {
 		// cases sit in a fragment, which vue-jsx-vapor makes `createIf`s; no
 		// matching case is an empty fragment.
 		expect(errors).toEqual([]);
+		// The `computed` returns what the `switch` throws, and the first choice
+		// throws it, in an effect that keeps following the `computed`.
 		expect(flat(code)).toContain(
 			flat(`<__VaporFor in={_$_for_items(props.rows)} getKey={(row) => row.id}>{(row) => (() => {
 				const _$_case_1 = _$_vapor_computed(() => {
-					switch (row.value.kind) {
-						case 'a': return 0;
-						case 'b': return 1;
+					try {
+						switch (row.value.kind) {
+							case 'a': return 0;
+							case 'b': return 1;
+						}
+						return -1;
+					} catch(_$_error) {
+						return { error: _$_error };
 					}
-					return -1;
 				});
-				return <>{_$_case_1.value === 0
+				return <>{(typeof _$_case_1.value === 'object'
+					? (() => {
+						throw _$_case_1.value.error;
+					})()
+					: _$_case_1.value) === 0
 					? <li>{row.value.id}</li>
 					: _$_case_1.value === 1 ? <li>{row.value.title}</li> : <></>}</>;
 			})()}</__VaporFor>`),
@@ -3412,7 +3422,7 @@ describe('@tsrx/vue @switch rows', () => {
 		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
 	});
 
-	it('renders a keyed @switch row without cases as an empty fragment after its discriminant', () => {
+	it('renders a keyed @switch row without cases as a fragment that runs its discriminant', () => {
 		const { code } = compile(
 			`declare function kind_of(row: { id: string }): string;
 			export function List(props: { rows: { id: string }[] }) @{
@@ -3427,11 +3437,60 @@ describe('@tsrx/vue @switch rows', () => {
 		);
 
 		expect(flat(code)).toContain(
-			flat(`{(row) => (() => {
+			flat(`{(row) => <>{(() => {
 				switch (kind_of(row.value)) {}
-				return <></>;
-			})()}`),
+				return null;
+			})()}</>}`),
 		);
+		expect(code).not.toContain('_$_vapor_computed');
+	});
+
+	it('takes no computed or name for a @switch row in a loop that keeps the shared lowering', () => {
+		const { code } = compile(
+			`export function List(props: { rows: { id: string; kind: string }[] }) @{
+				<>
+				<ul>
+					@for (const { id, kind = 'a' } of props.rows; key id) {
+						@switch (kind) {
+							@case 'a': {
+								<li>{id}</li>
+							}
+						}
+					}
+				</ul>
+				<ol>
+					@for (const row of props.rows; key row.id) {
+						@switch (row.kind) {
+							@case 'a': {
+								<li>{row.id}</li>
+							}
+						}
+					}
+				</ol>
+				</>
+			}`,
+			'List.tsrx',
+		);
+
+		expect(code).toContain('__map_iterable(');
+		expect(code).toContain('const _$_case_1 = _$_vapor_computed(() => {');
+		expect(code).not.toContain('_$_case_2');
+
+		const { code: fallback_only } = compile(
+			`export function List(props: { rows: { id: string; kind: string }[] }) @{
+				<ul>
+					@for (const { id, kind = 'a' } of props.rows; key id) {
+						@switch (kind) {
+							@case 'a': {
+								<li>{id}</li>
+							}
+						}
+					}
+				</ul>
+			}`,
+			'List.tsrx',
+		);
+		expect(fallback_only).not.toContain('_$_vapor_computed');
 	});
 
 	it('keeps the shared lowering for a @switch row whose case has setup statements or a nested @switch, or that has many cases', () => {

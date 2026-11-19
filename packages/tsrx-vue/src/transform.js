@@ -66,6 +66,8 @@ const FOR_ITEMS_INTERNAL_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'for_items';
 const VAPOR_ITEMS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'vapor_items';
 /** The `computed` that picks the case of a `@switch` row, numbered per row. */
 const SWITCH_CASE_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'case';
+/** What a `@switch` row's `computed` caught. */
+const SWITCH_ERROR_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'error';
 /**
  * How many `@switch` rows each compile has lowered, so a nested one's
  * `computed` can't capture an outer one's name.
@@ -1911,6 +1913,12 @@ function render_for_of_as_vapor_for(
 		return null;
 	}
 
+	if (is_lowered_switch(rendered) && lowered_switch_statement(rendered).cases.length > 0) {
+		// The name `switch_in_fragment` gave the row's `computed`.
+		switch_counts.set(transform_context, (switch_counts.get(transform_context) ?? 0) + 1);
+		transform_context.needs_vapor_computed = true;
+	}
+
 	transform_context.needs_vapor_for = true;
 	transform_context.needs_for_items = true;
 
@@ -2225,6 +2233,22 @@ function is_lowered_switch(node) {
 }
 
 /**
+ * The `switch` in the IIFE of a `@switch` that `render_switch_statement`
+ * marked.
+ *
+ * @param {AST.Expression} node
+ * @returns {AST.SwitchStatement}
+ */
+function lowered_switch_statement(node) {
+	return /** @type {AST.SwitchStatement} */ (
+		/** @type {AST.BlockStatement} */ (
+			/** @type {AST.ArrowFunctionExpression} */ (/** @type {AST.CallExpression} */ (node).callee)
+				.body
+		).body[0]
+	);
+}
+
+/**
  * A `VaporFor` row that is a `@switch`. Its slot runs once, so a `computed`
  * runs the `switch` for the index of the case it picks, and the row is a
  * fragment around the case chosen by that index, which vue-jsx-vapor makes
@@ -2235,47 +2259,75 @@ function is_lowered_switch(node) {
  *
  * @param {AST.CallExpression} node
  * @param {TransformContext} transform_context
- * @returns {AST.CallExpression}
+ * @returns {AST.Expression}
  */
 function switch_in_fragment(node, transform_context) {
-	const statement = /** @type {AST.SwitchStatement} */ (
-		/** @type {AST.BlockStatement} */ (
-			/** @type {AST.ArrowFunctionExpression} */ (node.callee).body
-		).body[0]
-	);
-	// Without cases there is nothing to choose; the discriminant still runs.
+	const statement = lowered_switch_statement(node);
+	// Without cases there is nothing to choose: the fragment runs the
+	// discriminant in an effect, as the `switch` ran it elsewhere.
 	if (statement.cases.length === 0) {
-		return b.call(
-			b.arrow(
-				[],
-				b.block([
-					statement,
-					b.return(/** @type {AST.Expression} */ (/** @type {unknown} */ (b.jsx_fragment()))),
-				]),
-			),
+		return /** @type {AST.Expression} */ (
+			/** @type {unknown} */ (
+				b.jsx_fragment([
+					to_jsx_expression_container(
+						b.call(b.arrow([], b.block([statement, b.return(b.literal(null))]))),
+					),
+				])
+			)
 		);
 	}
 
-	const count = (switch_counts.get(transform_context) ?? 0) + 1;
-	switch_counts.set(transform_context, count);
-	const case_ref = create_generated_identifier(`${SWITCH_CASE_NAME}_${count}`);
+	// Named with the next number, which `render_for_of_as_vapor_for` takes
+	// only if the loop renders through `VaporFor`.
+	const case_ref = create_generated_identifier(
+		`${SWITCH_CASE_NAME}_${(switch_counts.get(transform_context) ?? 0) + 1}`,
+	);
+	const error_ref = create_generated_identifier(SWITCH_ERROR_NAME);
 
 	/** @type {AST.Expression} */
 	let chain = b.jsx_fragment();
 	for (let index = statement.cases.length - 1; index >= 0; index--) {
 		const output = /** @type {AST.ReturnStatement} */ (statement.cases[index].consequent[0]);
 		chain = b.conditional(
-			b.binary('===', create_value_member_expression(case_ref), b.literal(index)),
+			b.binary(
+				'===',
+				// The first choice throws what the `switch` threw, in its
+				// `createIf`'s effect, which keeps following the `computed`.
+				index === 0
+					? b.conditional(
+							b.binary(
+								'===',
+								b.unary('typeof', create_value_member_expression(case_ref)),
+								b.literal('object'),
+							),
+							b.call(
+								b.arrow(
+									[],
+									b.block([
+										/** @type {AST.ThrowStatement} */ ({
+											type: 'ThrowStatement',
+											argument: b.member(create_value_member_expression(case_ref), 'error'),
+											metadata: { path: [] },
+										}),
+									]),
+								),
+							),
+							create_value_member_expression(case_ref),
+						)
+					: create_value_member_expression(case_ref),
+				b.literal(index),
+			),
 			to_vapor_branch(output.argument ?? b.literal(null)),
 			chain,
 		);
 	}
 
-	transform_context.needs_vapor_computed = true;
 	return b.call(
 		b.arrow(
 			[],
 			b.block([
+				// Vue stops running an effect that read a `computed` whose getter
+				// threw, so the `computed` returns what the `switch` threw.
 				b.const(
 					case_ref,
 					b.call(
@@ -2283,19 +2335,33 @@ function switch_in_fragment(node, transform_context) {
 						b.arrow(
 							[],
 							b.block([
-								setLocation(
-									b.switch(
-										statement.discriminant,
-										statement.cases.map((switch_case, index) =>
-											setLocation(
-												b.switch_case(switch_case.test, [b.return(b.literal(index))]),
-												has_location(switch_case) ? switch_case : undefined,
+								b.try(
+									b.block([
+										setLocation(
+											b.switch(
+												statement.discriminant,
+												statement.cases.map((switch_case, index) =>
+													setLocation(
+														b.switch_case(switch_case.test, [b.return(b.literal(index))]),
+														has_location(switch_case) ? switch_case : undefined,
+													),
+												),
 											),
+											has_location(statement) ? statement : undefined,
 										),
+										b.return(b.literal(-1)),
+									]),
+									b.catch_clause(
+										error_ref,
+										null,
+										b.block([
+											b.return(
+												b.object([b.prop('init', b.id('error'), clone_identifier(error_ref))]),
+											),
+										]),
 									),
-									has_location(statement) ? statement : undefined,
+									null,
 								),
-								b.return(b.literal(-1)),
 							]),
 						),
 					),
