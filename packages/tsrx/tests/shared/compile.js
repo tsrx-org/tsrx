@@ -7586,6 +7586,23 @@ export const b2 = {
 			],
 			['an element, for `&amp;`', '<b> R&amp;D </b>', "<b>{' R&D '}</b>"],
 			['an element, for `&#38;`', '<b> &#38;D </b>', "<b>{' &D '}</b>"],
+			[
+				'an element, for `&amp;` before a name',
+				'<b> &amp;amp; &amp;check; </b>',
+				"<b>{' &amp; &check; '}</b>",
+			],
+			[
+				'an element, for a name and a numeric reference',
+				'<b> &copy;&#169;&#xA9; </b>',
+				"<b>{' ©©© '}</b>",
+			],
+			[
+				'an element, for an astral reference before a name',
+				'<b> &#128512;&copy; </b>',
+				"<b>{' 😀© '}</b>",
+			],
+			['an element, for a plain `&` before a name', '<b> &&copy; </b>', "<b>{' &© '}</b>"],
+			['an element, for `&#38;` before a name', '<b> &#38;amp; </b>', "<b>{' &amp; '}</b>"],
 		])('prints the text of %s as one literal', (_case, element, printed) => {
 			for (const source of [
 				`${upper}export function A() {\n\treturn <div>${element}</div>;\n}`,
@@ -7613,6 +7630,15 @@ export const b2 = {
 			['a reference to a lone surrogate', '<b> &#xD800; </b>', "<b>{' '}&#xD800;{' '}</b>"],
 			['a reference without a semicolon', '<b> &copy </b>', "<b>{' '}&copy{' '}</b>"],
 			['an `&` before a name', '<b> a&b </b>', "<b>{' '}a&b{' '}</b>"],
+			['a name the parser leaves as written', '<b> &check; </b>', "<b>{' '}&check;{' '}</b>"],
+			[
+				'a name the parser leaves as written, in capitals',
+				'<b> &AMP; </b>',
+				"<b>{' '}&AMP;{' '}</b>",
+			],
+			['a reference to U+2028', '<b> &#8232; </b>', "<b>{' '}&#8232;{' '}</b>"],
+			['a reference to U+2029', '<b> &#8233; </b>', "<b>{' '}&#8233;{' '}</b>"],
+			['a reference to U+FEFF', '<b> &#xFEFF; </b>', "<b>{' '}&#xFEFF;{' '}</b>"],
 		])('prints %s as before', (_case, element, printed) => {
 			for (const source of [
 				`export function A() {\n\treturn <div>${element}</div>;\n}`,

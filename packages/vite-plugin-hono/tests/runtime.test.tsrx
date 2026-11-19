@@ -631,6 +631,12 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		expect(container.querySelector<HTMLTextAreaElement>('.only-text-textarea')?.value).toBe(' a ');
 	});
 
+	it("reads a name the parser doesn't decode as TypeScript does", () => {
+		render(<JsxTextOnlyApp />, container);
+
+		expect(container.querySelector('.only-text-html-name')?.textContent).toBe(' &check; ');
+	});
+
 	it('reads its character references as TypeScript does', () => {
 		render(<JsxTextOnlyApp />, container);
 

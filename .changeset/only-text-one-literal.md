@@ -14,7 +14,9 @@ at the text and `@` completions still work there. The literal reads the text as
 React, Preact and Hono already did, so on Solid and Vue such a text now renders
 that way too: Solid keeps a run of spaces or tabs inside it as written instead
 of one space, Solid and Vue read `&lang;` as TypeScript does (U+2329), and Vue
-keeps a line feed written as `&#10;`. A fragment's only text and text beside
-other children print as before, and so does a text that spans lines or holds
-whitespace other than spaces and tabs, or a character reference the compilers
-read differently from the parser.
+and SWC keep a line feed written as `&#10;` at the text's edge. A fragment's
+only text and text beside other children print as before, and so does a text
+that spans lines or holds whitespace other than spaces and tabs, a character
+reference the compilers read differently from the parser (such as `&check;`,
+which the parser leaves as written), or a reference to a control character
+other than a tab or a line feed, or to U+2028, U+2029 or U+FEFF.

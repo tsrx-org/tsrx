@@ -5531,8 +5531,13 @@ export function wrap_edge_whitespace(nodes, in_element = false) {
  *   a name or `#` that doesn't start a short reference ending in `;`, which
  *   it leaves as written (esbuild and oxc read `&#+65;` as `A`), and
  *   `&#X…;`, which they leave as written
- * - a reference to a control character other than a tab or a line feed, or to
- *   a lone surrogate, which oxc leaves as written
+ * - a name the parser doesn't decode (`&check;`, which HTML has and XHTML
+ *   doesn't): Solid's and Vue's HTML templates read it in the split text,
+ *   and the literal would keep it as written
+ * - a reference to a control character other than a tab or a line feed, to a
+ *   lone surrogate, which oxc leaves as written, or to U+2028, U+2029 or
+ *   U+FEFF, which the literal would print as is: JavaScript reads the first
+ *   two as line breaks where the source map doesn't
  *
  * @param {ESTreeJSX.JSXText} text
  * @returns {string | null}
@@ -5541,8 +5546,40 @@ function only_text_value(text) {
 	const { raw, value } = text;
 	if (!/^[ \t]|[ \t]$/.test(raw) || /[^\S \t]/.test(raw)) return null;
 	if (raw.replace(REFERENCE_OR_PLAIN_AMPERSAND, '').includes('&')) return null;
-	if (/[\0-\x08\v-\x1f\x7f-\x9f]|\p{Cs}/u.test(value)) return null;
+	if (!names_all_decoded(raw, value)) return null;
+	if (/[\0-\x08\v-\x1f\x7f-\x9f\u2028\u2029\ufeff]|\p{Cs}/u.test(value)) return null;
 	return value;
+}
+
+/**
+ * Whether the parser decoded every named reference in `raw`, the text as
+ * written, into `value`. Every `&` in it starts a short reference or stands
+ * before no name or `#` (`REFERENCE_OR_PLAIN_AMPERSAND`), so the parser
+ * decodes each numeric one, and a name either to its one character or not at
+ * all. Walk both texts once, finding where each reference went in `value`: a
+ * name left as written is still there, unless it's `&amp;`, which the parser
+ * always decodes, to the one character that starts it.
+ *
+ * @param {string} raw
+ * @param {string} value
+ * @returns {boolean}
+ */
+function names_all_decoded(raw, value) {
+	let at = 0;
+	let last = 0;
+	for (const match of raw.matchAll(/&(?:([A-Za-z][A-Za-z\d]*)|#(\d+)|#x([\da-fA-F]+));/g)) {
+		at += match.index - last;
+		last = match.index + match[0].length;
+		if (match[1] === undefined) {
+			const code = match[2] === undefined ? parseInt(match[3], 16) : Number(match[2]);
+			at += String.fromCodePoint(code).length;
+		} else if (match[1] !== 'amp' && value.startsWith(match[0], at)) {
+			return false;
+		} else {
+			at += 1;
+		}
+	}
+	return at + raw.length - last === value.length;
 }
 
 /**

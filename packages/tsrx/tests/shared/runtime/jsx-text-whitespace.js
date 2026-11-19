@@ -16,14 +16,15 @@ import {
  * Shared runtime suite for JSX whitespace and characters in template text
  * across the JSX targets: each case renders what the same TSX renders.
  *
- * @param {{ nbsp: 'kept' | 'trimmed', anchors?: 'empty comments', children?: 'slots' }} options -
+ * @param {{ nbsp: 'kept' | 'trimmed', anchors?: 'empty comments', children?: 'slots', references?: 'html' }} options -
  *   `nbsp` is what the target's JSX compiler does with a non-breaking space at
  *   the edge of a line, `anchors` names a marker the target's runtime leaves
- *   in the DOM, which isn't part of what these cases compare, and `children`
- *   is `'slots'` where a component reads its children as slots, never as a
- *   string
+ *   in the DOM, which isn't part of what these cases compare, `children` is
+ *   `'slots'` where a component reads its children as slots, never as a
+ *   string, and `references` is `'html'` where the target's compiler writes
+ *   JSX text into an HTML template, which reads HTML's named references
  */
-export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors, children }) {
+export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors, children, references }) {
 	async function settle() {
 		const flush = globalThis.flush;
 		if (flush) {
@@ -97,6 +98,16 @@ export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors, children }) {
 					globalThis.container.querySelector('.only-text-textarea')
 				)?.value,
 			).toBe(' a ');
+		});
+
+		// The parser doesn't decode `&check;`, so the text keeps the split, and
+		// each target reads it as it reads such a text anywhere else
+		it("reads a name the parser doesn't decode as the target's compiler does", async () => {
+			await globalThis.render(JsxTextOnlyApp);
+			await settle();
+			expect(globalThis.container.querySelector('.only-text-html-name')?.textContent).toBe(
+				references === 'html' ? ' \u2713 ' : ' &check; ',
+			);
 		});
 
 		it('reads its character references as TypeScript does', async () => {
