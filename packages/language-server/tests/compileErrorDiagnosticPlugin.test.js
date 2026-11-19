@@ -379,6 +379,9 @@ export {};`,
 export const g = (x = () => {
 	namespace K {}
 }) => x;
+export const h = (x = () => {
+	export namespace J {}
+}) => x;
 export function App() @{
 	@try {
 		declare module 'm' {}
@@ -396,6 +399,7 @@ export function App() @{
 			{ source: 'ts', text: 'export', offset: source.indexOf('export namespace') },
 			{ source: 'ts', text: 'namespace', offset: source.indexOf('namespace L') },
 			{ source: 'ts', text: 'namespace', offset: source.indexOf('namespace K') },
+			{ source: 'ts', text: 'export', offset: source.indexOf('export namespace J') },
 		]);
 		expect(reported(document, diagnostics, 'TS1234')).toEqual([
 			{ source: 'ts', text: 'declare', offset: source.indexOf('declare module') },

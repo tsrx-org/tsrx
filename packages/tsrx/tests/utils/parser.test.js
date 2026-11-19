@@ -12928,6 +12928,28 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:10'],
 		},
 		{
+			// A redeclaration before a function declaration of the name is still
+			// TS2300, in a namespace as outside one (#952).
+			source:
+				'function f() {\n\tnamespace N {\n\t\tlet x;\n\t\tlet x;\n\t\tfunction x() {}\n\t}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace'],
+				[UPSTREAM_ERRORS.REDECLARED, 'x;\n\t\tfunction'],
+				[UPSTREAM_ERRORS.REDECLARED, 'x() {}'],
+			],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			// `global` and `module` as names start no declaration.
+			source:
+				'function f() {\n\tglobal.x = () => {\n\t\tlet x;\n\t\tlet x;\n\t\tfunction x() {}\n\t};\n}',
+			errors: [
+				[UPSTREAM_ERRORS.REDECLARED, 'x;\n\t\tfunction'],
+				[UPSTREAM_ERRORS.REDECLARED, 'x() {}'],
+			],
+			throws: [UPSTREAM_ERRORS.REDECLARED, '4:6'],
+		},
+		{
 			// Before the errors in it, which TypeScript reports too.
 			source:
 				'function f() {\n\tnamespace A.B {\n\t\tfunction g() {\n\t\t\tmodule "m" {}\n\t\t}\n\t}\n}',

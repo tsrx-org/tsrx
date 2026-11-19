@@ -604,16 +604,41 @@ function nested_import_export_error(input, position) {
 	return TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE;
 }
 
-/** The words a namespace or module declaration's statement can start with. */
-const MODULE_DECLARATION_START_WORDS = new Set([
-	'abstract',
-	'declare',
-	'global',
-	'module',
-	'namespace',
-]);
 // A word, from where it starts.
 const regex_word = /[\p{ID_Continue}$\u200c\u200d]+/uy;
+
+/**
+ * Whether the statement at `position` reads as a namespace or module
+ * declaration: `namespace` or `module` before a name or a string, or `global`
+ * before `{`, after any `declare` and `abstract`.
+ * @param {string} input
+ * @param {number} position
+ * @returns {boolean}
+ */
+function starts_module_declaration(input, position) {
+	regex_next_token.lastIndex = position;
+	let match = regex_next_token.exec(input);
+	while (match && (match[1] === 'declare' || match[1] === 'abstract')) {
+		match = regex_next_token.exec(input);
+	}
+	const keyword = match?.[1];
+	if (keyword !== 'namespace' && keyword !== 'module' && keyword !== 'global') return false;
+	const next = regex_next_token.exec(input)?.[1];
+	if (next === undefined) return false;
+	if (keyword === 'global') return next === '{';
+	return next === '"' || next === "'" || /^[\p{ID_Start}$_\\]/u.test(next);
+}
+
+/**
+ * The end of the word at `position`, or the position after it.
+ * @param {string} input
+ * @param {number} position
+ * @returns {number}
+ */
+function word_end(input, position) {
+	regex_word.lastIndex = position;
+	return regex_word.test(input) ? regex_word.lastIndex : position + 1;
+}
 
 /**
  * TypeScript's checker error for a namespace or module declaration that isn't
@@ -5588,8 +5613,13 @@ export function TSRXPlugin(config) {
 					this.#raiseCheckerError(this.start, TS_ERRORS.AMBIENT_IMPLEMENTATION);
 					return /** @type {never} */ (undefined);
 				} else if (message === NESTED_IMPORT_EXPORT) {
-					// TypeScript reports each kind of import or export with its own error.
-					this.#raiseCheckerError(position, nested_import_export_error(this.input, position));
+					// TypeScript reports each kind of import or export with its own error,
+					// on the `import` or `export` (`grammarErrorOnFirstToken`).
+					this.#raiseCheckerError(
+						position,
+						nested_import_export_error(this.input, position),
+						word_end(this.input, position),
+					);
 					return /** @type {never} */ (undefined);
 				}
 				let error = to_diagnostic(message, kind);
@@ -6542,9 +6572,12 @@ export function TSRXPlugin(config) {
 			#reportRedeclarationsBeforeFunction(scope, name) {
 				const records = block_scoped_redeclarations.get(scope);
 				if (!records || !this.#errors) return;
+				// Also an error held while the statement around it is read (see
+				// `#holdingErrors`).
+				const errors = this.#hold.held ? [...this.#hold.held, ...this.#errors] : this.#errors;
 				for (const record of records) {
 					if (record.name !== name) continue;
-					const error = this.#errors.find(
+					const error = errors.find(
 						(error) =>
 							error.pos === record.pos &&
 							error.code === TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED.code,
@@ -15123,7 +15156,7 @@ export function TSRXPlugin(config) {
 				const held_module =
 					!nested_module_allowed &&
 					this.type !== tt.string &&
-					MODULE_DECLARATION_START_WORDS.has(/** @type {string} */ (this.value));
+					starts_module_declaration(this.input, start);
 				this.#statementContext = context ?? null;
 				this.#statementContextDepth = this.context.length - this.#currentTokenContextCount();
 				this.#statementOpenBrackets = this.#openBrackets;
@@ -15136,11 +15169,10 @@ export function TSRXPlugin(config) {
 						// after an `abstract`, which the output leaves out, so the editor
 						// shows TypeScript's own error on the output in its place.
 						const at = /** @type {number} */ (node.start);
-						regex_word.lastIndex = at;
 						this.#raiseCheckerError(
 							at,
 							module_declaration_place_error(node),
-							regex_word.test(this.input) ? regex_word.lastIndex : at + 1,
+							word_end(this.input, at),
 						);
 					}
 					return statement;
