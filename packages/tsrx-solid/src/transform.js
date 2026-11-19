@@ -2897,6 +2897,7 @@ function create_element_children(children, transform_context) {
 		/** @type {ESTreeJSX.JSXTransformChild[]} */ (
 			visible_children.map((child) => to_jsx_child(child, transform_context)).filter(Boolean)
 		),
+		true,
 	);
 }
 

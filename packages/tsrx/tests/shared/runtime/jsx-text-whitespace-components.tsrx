@@ -576,3 +576,26 @@ export const jsx_text_edge_places = [
 	['an element in an attribute value', 'attr'],
 	['an element an arrow returns', 'arrow'],
 ] as const;
+
+function Shout(props: { children: string }) @{
+	<span class="only-text-component">
+		{typeof props.children === 'string' ? props.children.toUpperCase() : 'not one string'}
+	</span>
+}
+
+/**
+ * An element whose only child is text with whitespace at an edge gets the text
+ * as one string (#1368): a `<textarea>` takes at most one child, and a
+ * component can read `children` as a string. Its character references read as
+ * TypeScript reads them on every target, except a name the parser doesn't
+ * decode (`&check;`), which keeps the split text.
+ */
+export function JsxTextOnlyApp() @{
+	// prettier-ignore
+	<div>
+		<textarea class="only-text-textarea"> a </textarea>
+		<span class="only-text-references"> &lang;&#10; </span>
+		<span class="only-text-html-name"> &check; </span>
+		<Shout> a </Shout>
+	</div>
+}

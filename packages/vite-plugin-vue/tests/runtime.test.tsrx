@@ -3256,7 +3256,12 @@ runTsxExpressionTsrxRuntimeTests();
 runForOfHeadScopeRuntimeTests();
 // Vapor leaves an empty comment where a constant `@if` with a following sibling
 // was inserted.
-runJsxTextWhitespaceRuntimeTests({ nbsp: 'kept', anchors: 'empty comments' });
+runJsxTextWhitespaceRuntimeTests({
+	nbsp: 'kept',
+	anchors: 'empty comments',
+	children: 'slots',
+	references: 'html',
+});
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();

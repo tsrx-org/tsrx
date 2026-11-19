@@ -1685,6 +1685,15 @@ function usePosition() {
 	return { x: 10, y: 20 };
 }
 
+// An element whose only child is text with edge whitespace (#1368)
+function OnlyTextHead() @{
+	// prettier-ignore
+	<>
+		<title> My page </title>
+		<pre>&#10;x </pre>
+	</>
+}
+
 // ── Tests ──
 
 describe('tsrx-react runtime', () => {
@@ -2719,6 +2728,16 @@ describe('tsrx-react runtime', () => {
 	it('object destructuring in variables works at runtime', async () => {
 		await render(DestructuredObjVarApp);
 		expect(text('.destructured-pos')).toBe('10,20');
+	});
+
+	// ── Only text with edge whitespace (#1368) ──
+
+	it("server-renders an element's only text with edge whitespace as one string", () => {
+		// `<title>` renders only a string, and a `<pre>` keeps its leading
+		// newline only when it gets one
+		expect(renderToString(createElement(OnlyTextHead))).toBe(
+			'<title> My page </title><pre>\n\nx </pre>',
+		);
 	});
 });
 

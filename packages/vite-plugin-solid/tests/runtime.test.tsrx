@@ -3103,7 +3103,7 @@ runSwitchFallthroughRuntimeTests();
 runForOfSourcesRuntimeTests();
 runForOfHeadScopeRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
-runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed' });
+runJsxTextWhitespaceRuntimeTests({ nbsp: 'trimmed', references: 'html' });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();
 runExpressionSpreadRefRuntimeTests();

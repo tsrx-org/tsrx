@@ -1159,6 +1159,77 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * An element's only text prints as one literal, `{' @if '}`, in a container
+	 * that has the text's location (`wrap_edge_whitespace`). Map the text to
+	 * the container, where TypeScript reports a type error on the literal. As
+	 * for JSX text, a text whose first character after its whitespace is `@`
+	 * is an in-progress directive: map it from the `@` to where the literal
+	 * prints it, for completions. The literal escapes quotes and backslashes and
+	 * prints a character reference as its character, so that mapping stops
+	 * before the first of them. The text's start can map to more than one
+	 * place, such as the `return` a template body adds before its output, so
+	 * the container is the one there that prints the literal of the text.
+	 * @param {ESTreeJSX.JSXExpressionContainer & AST.NodeWithLocation} container
+	 */
+	function push_text_literal_mappings(container) {
+		const { value } = /** @type {AST.Literal} */ (container.expression);
+		const { line, column } = container.loc.start;
+		let start = -1;
+		let end = -1;
+		for (const position of src_to_gen_map.get(`${line}:${column}`) ?? []) {
+			start = loc_to_offset(position.line, position.column, gen_line_offsets);
+			end = text_literal_end(start, value);
+			if (end !== -1) break;
+		}
+		if (end === -1) return;
+		mappings.push({
+			sourceOffsets: [container.start],
+			lengths: [container.end - container.start],
+			generatedOffsets: [start],
+			generatedLengths: [end - start],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
+		const text = source.slice(container.start, container.end);
+		const at = text.length - text.trimStart().length;
+		if (text[at] !== '@') return;
+		const verbatim = text.slice(at).split(/[\\'"&]/)[0];
+		const offset = generated_code.indexOf(verbatim, start);
+		if (offset === -1 || offset + verbatim.length > end) return;
+		mappings.push({
+			sourceOffsets: [container.start + at],
+			lengths: [verbatim.length],
+			generatedOffsets: [offset],
+			generatedLengths: [verbatim.length],
+			data: { ...mapping_data_completion_only, customData: {} },
+		});
+	}
+
+	/**
+	 * The end of the `{'…'}` that starts at `offset` in the generated code and
+	 * holds a string literal of `value`, or -1.
+	 * @param {number} offset
+	 * @param {unknown} value
+	 * @returns {number}
+	 */
+	function text_literal_end(offset, value) {
+		const quote = generated_code[offset + 1];
+		if (generated_code[offset] !== '{' || (quote !== "'" && quote !== '"')) return -1;
+		let printed = '';
+		for (let i = offset + 2; i < generated_code.length; i++) {
+			let char = generated_code[i];
+			if (char === quote) {
+				return printed === value && generated_code[i + 1] === '}' ? i + 2 : -1;
+			}
+			if (char === '\\') {
+				char = generated_code[++i];
+				char = char === 'n' ? '\n' : char === 'r' ? '\r' : char === 't' ? '\t' : char;
+			}
+			printed += char;
+		}
+		return -1;
+	}
+
+	/**
 	 * A lowered dynamic tag, `<{expr} … />`, prints as `<TsrxDynamic is={expr} … />`.
 	 * TypeScript reports a component's missing or unknown props (TS2769) on
 	 * the generated name, which has no source of its own, so it maps to the
@@ -1524,6 +1595,10 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'JSXExpressionContainer' || node.type === 'JSXSpreadChild') {
+				if (node.type === 'JSXExpressionContainer' && node.metadata?.text_literal) {
+					if (has_location(node)) push_text_literal_mappings(node);
+					return;
+				}
 				if (has_location(node)) {
 					const mapping = get_mapping_from_node(
 						node,
