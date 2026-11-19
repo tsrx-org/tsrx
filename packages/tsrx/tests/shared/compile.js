@@ -7267,20 +7267,39 @@ export function App() @{
 			expect(run_result(code)).toEqual(['b', 'i']);
 		});
 
-		it('leaves the name of a static a fold takes in to a later function', () => {
-			// The first arrow's two statics fold into one. The second spends an id on
-			// its spread props, and its static takes the name the fold left free.
-			const { code } = compile(
+		it.each([
+			[
+				'an earlier function',
+				// The first arrow's two statics fold into one. The second spends an id
+				// on its spread props, and its static takes the name the fold left.
 				`export const list = [
 	() => @{ <><b /><i /></> },
 	(p: any) => @{ <><input {...p} ref={p.ref} /><u /></> },
 ];`,
-				'App.tsrx',
-			);
-			expect([...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1])).toEqual(
-				hoistsStaticJsx ? ['TSRXTemplate__static1', 'TSRXTemplate__static2'] : [],
-			);
-		});
+				['TSRXTemplate__static1', 'TSRXTemplate__static2'],
+			],
+			[
+				'a later function',
+				// The second function's `<i />` has the first one's name until the
+				// fold takes it in, which leaves the names as they were.
+				`export const list = [
+	(p: any) => @{ <><input {...p} ref={p.ref} /><u /></> },
+	(p: any) => {
+		if (p) return <><b /><i /></>;
+		return <em />;
+	},
+];`,
+				['TSRXTemplate__static2', 'TSRXTemplate__static1', 'TSRXTemplate__static3'],
+			],
+		])(
+			'keeps the names when a fold in %s takes in the static that collided',
+			(_case, source, statics) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(
+					[...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]),
+				).toEqual(hoistsStaticJsx ? statics : []);
+			},
+		);
 
 		it('hoists an intrinsic tag that shares its name with a later binding', () => {
 			const { code } = compile(

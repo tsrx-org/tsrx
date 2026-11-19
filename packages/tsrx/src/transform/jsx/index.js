@@ -1877,15 +1877,7 @@ function transform_native_tsrx_function(node, { next, state, path }, { nativeBod
 		!saved_helper_state && !helper_state.local && helper_state.statics.length > 0
 			? fold_static_fragments(inner, helper_state)
 			: inner;
-	// Keep the names of the statics left after folding from later functions
-	// with the same base name (see `hoist_static_jsx`). A name the fold took in
-	// stays free, so a module that was valid keeps its names.
-	if (!saved_helper_state) {
-		for (const statement of helper_state.statics) {
-			const declarator = /** @type {AST.VariableDeclaration} */ (statement).declarations[0];
-			state.static_names.add(/** @type {AST.Identifier} */ (declarator.id).name);
-		}
-	}
+	if (!saved_helper_state) rename_colliding_statics(result, helper_state, state);
 	result.metadata = {
 		...strip_function_transform_metadata(result.metadata),
 		native_tsrx_function: true,
@@ -1894,6 +1886,52 @@ function transform_native_tsrx_function(node, { next, state, path }, { nativeBod
 	};
 
 	return result;
+}
+
+/**
+ * Gives each static that a function leaves at module level, once
+ * `fold_static_fragments` has folded them, a name that no earlier function's
+ * static has, and keeps its names from the later ones. Functions with the
+ * same name, or none, number their statics after the same base name, so two
+ * could both have `TSRXTemplate__static1`. Only a static whose name an
+ * earlier one has is renamed, with its references, after the function's
+ * other generated names, so a module whose names didn't collide keeps them.
+ *
+ * @param {AST.Function} fn the function's lowered output
+ * @param {JsxHelperState} helper_state
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function rename_colliding_statics(fn, helper_state, transform_context) {
+	const { source, static_names } = transform_context;
+	/** @type {Map<AST.Statement, string>} */
+	const renamed = new Map();
+	for (const statement of helper_state.statics) {
+		const id = /** @type {AST.Identifier} */ (
+			/** @type {AST.VariableDeclaration} */ (statement).declarations[0].id
+		);
+		if (static_names.has(id.name)) {
+			/** @type {string} */
+			let name;
+			do {
+				name = create_helper_name(helper_state, 'static');
+			} while (source_mentions_identifier(source, name) || static_names.has(name));
+			id.name = name;
+			renamed.set(statement, name);
+		}
+		static_names.add(id.name);
+	}
+	if (renamed.size === 0) return;
+	/** @param {AST.Node} node */
+	const rename = (node) => {
+		const statement = node.type === 'Identifier' ? node.metadata?.static_declaration : undefined;
+		const name = statement && renamed.get(statement);
+		if (name) /** @type {AST.Identifier} */ (node).name = name;
+		return node;
+	};
+	map_ast_nodes(fn, rename);
+	for (const helper of helper_state.helpers) map_ast_nodes(helper, rename);
+	for (const statement of helper_state.statics) map_ast_nodes(statement, rename);
 }
 
 /**
@@ -3031,17 +3069,14 @@ function hoist_static_jsx(node, transform_context) {
 	if (holds_unclosed_tag(node)) return null;
 
 	// Skip a name the source already uses, so the static can't redeclare or be
-	// shadowed by an authored `App__static1`, and one that an earlier function's
-	// static kept: functions with the same name, or none, share a base name (see
-	// `transform_native_tsrx_function`).
+	// shadowed by an authored `App__static1`. One that an earlier function's
+	// static has is renamed once this function is done (see
+	// `rename_colliding_statics`).
 	/** @type {string} */
 	let name;
 	do {
 		name = create_helper_name(helper_state, 'static');
-	} while (
-		source_mentions_identifier(transform_context.source, name) ||
-		transform_context.static_names.has(name)
-	);
+	} while (source_mentions_identifier(transform_context.source, name));
 	const id = create_generated_identifier(name);
 	const statement = b.const(id, lower_static_jsx(node, transform_context));
 	helper_state.statics.push(statement);
