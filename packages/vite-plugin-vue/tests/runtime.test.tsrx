@@ -3407,6 +3407,23 @@ function CaseTestRowsApp() @{
 	</ul>
 }
 
+let empty_switch_runs = 0;
+
+function count_kind(kind: string) {
+	empty_switch_runs++;
+	return kind;
+}
+
+function EmptySwitchRowsApp() @{
+	<ul class="empty-switch-rows">
+		@for (const row of lookup_rows.value; key row.id) {
+			@switch (count_kind(row.kind)) {
+			}
+		}
+		<li>{'end'}</li>
+	</ul>
+}
+
 function NestedCaseRowsApp() @{
 	<ul class="nested-case-rows">
 		@for (const todo of todos.value; key todo.id) {
@@ -3537,6 +3554,25 @@ describe('tsrx-vue keyed @switch rows', () => {
 		no_match_rows.value = [{ id: 'z', kind: 'note' }];
 		await flush();
 		expect(texts('.no-match-rows li')).toEqual(['note z']);
+	});
+
+	it('mounts a @switch row without cases and runs its discriminant on each change', async () => {
+		lookup_rows.value = [
+			{ id: '1', kind: 'a' },
+			{ id: '2', kind: 'b' },
+		];
+		empty_switch_runs = 0;
+		await render(EmptySwitchRowsApp);
+		expect(texts('.empty-switch-rows li')).toEqual(['end']);
+		expect(empty_switch_runs).toBe(2);
+
+		lookup_rows.value = [
+			{ id: '1', kind: 'c' },
+			{ id: '2', kind: 'b' },
+		];
+		await flush();
+		expect(texts('.empty-switch-rows li')).toEqual(['end']);
+		expect(empty_switch_runs).toBe(4);
 	});
 
 	it('keeps following a @switch row’s value after its discriminant throws outside a @catch', async () => {
