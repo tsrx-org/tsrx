@@ -1,4 +1,5 @@
 import { createRequire } from 'module';
+import { Linter } from 'eslint';
 import noReturnInComponent from './rules/no-return-in-component.js';
 import controlFlowJsx from './rules/control-flow-jsx.js';
 import validForOfKey from './rules/valid-for-of-key.js';
@@ -7,6 +8,7 @@ import jsxCurlyBracePresence from './rules/jsx-curly-brace-presence.js';
 import noUnusedVars from './rules/no-unused-vars.js';
 import noAwaitInLoop from './rules/no-await-in-loop.js';
 import noUnreachable from './rules/no-unreachable.js';
+import noUselessAssignment from './rules/no-useless-assignment.js';
 
 const plugin = {
 	meta: {
@@ -22,6 +24,7 @@ const plugin = {
 		'no-unused-vars': noUnusedVars,
 		'no-await-in-loop': noAwaitInLoop,
 		'no-unreachable': noUnreachable,
+		'no-useless-assignment': noUselessAssignment,
 	},
 	configs: {} as any,
 };
@@ -119,7 +122,8 @@ plugin.configs.react = [
 
 // For `js.configs.recommended` users, listed after it: the TSRX versions of the
 // core rules it turns on. A config can't read the severity another gives the
-// core rule, so each is an error, as `js.configs.recommended` has it.
+// core rule, so each is an error, as `js.configs.recommended` has it. ESLint 10's
+// `js.configs.recommended` also turns on `no-useless-assignment`.
 plugin.configs.js = [
 	{
 		name: 'tsrx/js-tsrx-files',
@@ -132,6 +136,10 @@ plugin.configs.js = [
 			'tsrx/no-unused-vars': 'error',
 			'no-unreachable': 'off',
 			'tsrx/no-unreachable': 'error',
+			...(Number(Linter.version.split('.')[0]) >= 10 && {
+				'no-useless-assignment': 'off',
+				'tsrx/no-useless-assignment': 'error',
+			}),
 		},
 	},
 ];

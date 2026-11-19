@@ -1,0 +1,136 @@
+import { describe, expect, it } from 'vitest';
+import { Linter, RuleTester } from 'eslint';
+import rule from '../../src/rules/no-useless-assignment.js';
+import * as parser from '@tsrx/eslint-parser';
+
+const ruleTester = new RuleTester({ languageOptions: { parser } });
+
+const component = (setup: string, template: string) => `export function A({ n, log }) @{
+${setup
+	.split('\n')
+	.map((line) => `\t${line}`)
+	.join('\n')}
+	<div>
+${template
+	.split('\n')
+	.map((line) => `\t\t${line}`)
+	.join('\n')}
+	</div>
+}`;
+
+ruleTester.run('no-useless-assignment', rule, {
+	valid: [
+		// #1289: `@pending` shows while the body suspends, before the body's
+		// assignment may have run.
+		component(
+			`let label = 'loading';`,
+			`@try { label = 'done'; <p>{label}</p> } @pending { <p>{label}</p> } @catch (e) { <p>err</p> }`,
+		),
+		// `@catch` renders when the body throws, which can be before its assignment.
+		component(`let x = 0;`, `@try { x = 1; <p>{x}</p> } @catch (e) { <i>{x}</i> }`),
+		component(
+			`let x = 0;`,
+			`@try { <b /> } @pending { x = 1; <s>{x}</s> } @catch (e) { <i>{x}</i> }`,
+		),
+		// The code after the `@try` runs before the blocks.
+		component(`let x = 0;`, `@try { x = 1; <p>{x}</p> } @catch (e) { <i /> }\n{x}`),
+		// The body and the `@catch` are alternatives.
+		component(`let x = 0;\nlog(x);`, `@try { x = 1; <p /> } @catch (e) { x = 2; <i /> }\n{x}`),
+		// The body renders after `@pending` once it stops suspending.
+		component(`let x = 0;\nlog(x);`, `@try { <b>{x}</b> } @pending { x = 1; <s /> }`),
+		// `reset()` renders the body again after the `@catch`.
+		component(`let x = 0;\nlog(x);`, `@try { <p>{x}</p> } @catch (e) { x = 1; <i /> }`),
+		// A `@try` in a block of another.
+		component(
+			`let x = 0;`,
+			`@try {
+	x = 1;
+	<div>@try { x = 2; <p>{x}</p> } @catch (e) { <i>{x}</i> }</div>
+} @catch (e) { <i>{x}</i> }`,
+		),
+		// Code without `@try` is left to the core rule.
+		`function f() { let x = 0; x += 1; return x; }`,
+	],
+	invalid: [
+		// Overwritten before the `@try`.
+		{
+			code: component(`let x = 0;\nx = 1;`, `@try { <p>{x}</p> } @catch (e) { <i /> }`),
+			errors: [{ messageId: 'unnecessaryAssignment', line: 2 }],
+		},
+		// Never read after the assignment, in any block or after the `@try`.
+		{
+			code: component(`let x = 0;\nlog(x);`, `@try { x = 1; <p /> } @catch (e) { <i /> }`),
+			errors: [{ messageId: 'unnecessaryAssignment', line: 5 }],
+		},
+		{
+			code: component(`let x = 0;\nlog(x);`, `@try { <p /> } @catch (e) { x = 2; <i /> }`),
+			errors: [{ messageId: 'unnecessaryAssignment', line: 5 }],
+		},
+		// Overwritten in the same block.
+		{
+			code: component(
+				`let x = 0;\nlog(x);`,
+				`@try { x = 1; x = 2; <p>{x}</p> } @catch (e) { <i /> }`,
+			),
+			errors: [{ messageId: 'unnecessaryAssignment', line: 5, column: 10 }],
+		},
+		// A body that awaits runs in the component, in order, so the core
+		// rule's answer holds.
+		{
+			code: component(
+				`let x = 0;`,
+				`@try { await log(n); x = 1; <p>{x}</p> } @catch (e) { <i>{x}</i> }`,
+			).replace('export function', 'export async function'),
+			errors: [{ messageId: 'unnecessaryAssignment', line: 2 }],
+		},
+		// Known gap: after a body that throws, code path analysis holds the
+		// `@catch` unreachable, so its read doesn't count.
+		{
+			code: component(`let x = 0;`, `@try { throw new Error('one'); } @catch (e) { <i>{x}</i> }`),
+			errors: [{ messageId: 'unnecessaryAssignment', line: 2 }],
+		},
+		// The core rule's reports in plain code are unchanged, in a file with
+		// `@try` and without.
+		{
+			code: `function f() { let x = 0; x = 1; return x; }`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 1, column: 20 }],
+		},
+		{
+			code: `function f() { let x = 0; x = 1; return x; }
+export function A() @{
+	<div>@try { <b /> } @catch (e) { <i /> }</div>
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 1, column: 20 }],
+		},
+	],
+});
+
+describe('no-useless-assignment after a @try', () => {
+	const code = `export function App() @{
+	let label = 'loading';
+	<div>
+		@try { @{ label = 'done'; } <p>{label}</p> } @pending { <p>{label}</p> } @catch (e) { <p>err</p> }
+	</div>
+}`;
+	const reported = (rule_id: string) =>
+		new Linter()
+			.verify(
+				code,
+				{
+					files: ['**/*.tsrx'],
+					languageOptions: { parser },
+					plugins: { tsrx: { rules: { 'no-useless-assignment': rule } } },
+					rules: { [rule_id]: 'error' },
+				},
+				'A.tsrx',
+			)
+			.map((message) => `${message.line}:${message.column}`);
+
+	it("is reported by the core rule (#1289's second case)", () => {
+		expect(reported('no-useless-assignment')).toEqual(['2:6']);
+	});
+
+	it('is not reported by tsrx/no-useless-assignment', () => {
+		expect(reported('tsrx/no-useless-assignment')).toEqual([]);
+	});
+});

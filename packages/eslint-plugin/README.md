@@ -114,22 +114,38 @@ after `tsrx.configs.react`.
   on the same code in a plain function. The
   [`@tsrx/eslint-parser` README](https://github.com/tsrx-org/tsrx/tree/main/packages/eslint-parser#known-limitations)
   explains what the core rule reports instead.
+- `tsrx/no-useless-assignment` is ESLint's `no-useless-assignment`, with the
+  blocks of a `@try` as alternatives. The core rule runs them one after another,
+  so it reports a value set before a `@try` and assigned in the body though
+  `@pending` or the `@catch` reads it, and a value assigned in the body and again
+  in the `@catch` though the code after the `@try` reads it. The compiled output
+  runs the blocks in callbacks of the `@try`'s boundaries, in any order and after
+  the code that follows the `@try`. The rule runs the core rule a second time on
+  code paths that give each block a path of its own from the start of the `@try`
+  and from the end of each other block, and reports only what both runs report: it
+  reports nothing the core rule doesn't, and in a file without `@try` it is the
+  core rule. A `@try` whose body or `@pending` awaits or yields keeps the core
+  rule's answers, since those blocks run in the component, in order. It still
+  reports a value read only in a block that code path analysis holds unreachable,
+  such as a `@catch` after a body that throws.
 
 ### With `js.configs.recommended`
 
-`js.configs.recommended` turns on `no-unused-vars` and `no-unreachable`. The `js`
-configuration turns those two off for `.tsrx` files and turns on
-`tsrx/no-unused-vars` and `tsrx/no-unreachable` at `error`. Every other report and
-suggestion is the core rule's, except in the code `tsrx/no-unreachable` revives,
-where it follows exits itself: after a `@switch` arm that throws, the other arms
-and the code after the `@switch`, and after a `@try` block that throws, the
-`@try`'s other blocks and the code after it. A configuration can't read the
-severity or options another one gives the core rule, so:
+`js.configs.recommended` turns on `no-unused-vars` and `no-unreachable`, and on
+ESLint 10 also `no-useless-assignment`. The `js` configuration turns those off for
+`.tsrx` files and turns on `tsrx/no-unused-vars` and `tsrx/no-unreachable` at
+`error`, and on ESLint 10 `tsrx/no-useless-assignment`. Every other report and
+suggestion is the core rule's, except what `tsrx/no-useless-assignment` drops
+after a `@try`, and except in the code `tsrx/no-unreachable` revives, where it
+follows exits itself: after a `@switch` arm that throws, the other arms and the
+code after the `@switch`, and after a `@try` block that throws, the `@try`'s other
+blocks and the code after it. A configuration can't read the severity or options
+another one gives the core rule, so:
 
 - list `tsrx.configs.js` after `js.configs.recommended`, and after any other
   configuration that turns these core rules on. Listed before them, it leaves both
   versions on for `.tsrx` files, and each problem is reported twice;
-- on its own, without `js.configs.recommended`, it turns the two TSRX rules on;
+- on its own, without `js.configs.recommended`, it turns the TSRX rules on;
 - give `tsrx/no-unused-vars` the options you give `no-unused-vars`, and set a
   `tsrx/` rule to `warn` or `off` to change its severity;
 - name the TSRX rule in `eslint-disable` comments in `.tsrx` files:

@@ -3,7 +3,14 @@ import { Linter } from 'eslint';
 import * as parser from '@tsrx/eslint-parser';
 import plugin from '../src/index.ts';
 
-const WRAPPED_CORE_RULES = ['no-unused-vars', 'no-await-in-loop', 'no-unreachable'];
+const WRAPPED_CORE_RULES = [
+	'no-unused-vars',
+	'no-await-in-loop',
+	'no-unreachable',
+	'no-useless-assignment',
+];
+// ESLint 10's `js.configs.recommended` also turns on `no-useless-assignment`.
+const ESLINT_10 = Number(Linter.version.split('.')[0]) >= 10;
 
 describe('eslint-plugin configs', () => {
 	it('includes .tsrx files in TSRX configs', () => {
@@ -74,6 +81,10 @@ describe('eslint-plugin configs', () => {
 					'tsrx/no-unused-vars': 'error',
 					'no-unreachable': 'off',
 					'tsrx/no-unreachable': 'error',
+					...(ESLINT_10 && {
+						'no-useless-assignment': 'off',
+						'tsrx/no-useless-assignment': 'error',
+					}),
 				},
 			},
 		]);
@@ -88,14 +99,22 @@ describe('eslint-plugin configs', () => {
 		}
 	</ul>
 }
-export function f() { return 1; f(); }`;
+export function f() { return 1; f(); }
+export function Label() @{
+	let label = 'loading';
+	<p>@try { label = 'done'; <b>{label}</b> } @pending { <s>{label}</s> } @catch (e) { <i>{String(e)}</i> }</p>
+}`;
 	const lint = (configs: Linter.Config[]) =>
 		new Linter()
 			.verify(code, [...configs, { files: ['**/*.tsrx'], languageOptions: { parser } }], 'App.tsrx')
 			.map((message) => `${message.line}:${message.column} ${message.ruleId}`);
-	// The two rules `js.configs.recommended` turns on that have TSRX versions.
+	// The rules `js.configs.recommended` turns on that have TSRX versions.
 	const base: Linter.Config = {
-		rules: { 'no-unused-vars': 'error', 'no-unreachable': 'error' },
+		rules: {
+			'no-unused-vars': 'error',
+			'no-unreachable': 'error',
+			...(ESLINT_10 && { 'no-useless-assignment': 'error' as const }),
+		},
 	};
 
 	it('reports each problem once when listed after js.configs.recommended', () => {
@@ -112,10 +131,12 @@ export function f() { return 1; f(); }`;
 			'6:14 no-unreachable',
 			'10:33 no-unreachable',
 			'10:33 tsrx/no-unreachable',
+			// The core rule runs the blocks of the `@try` one after another.
+			...(ESLINT_10 ? ['12:6 no-useless-assignment'] : []),
 		]);
 	});
 
-	it('adds the two TSRX rules on its own', () => {
+	it('adds the TSRX rules on its own', () => {
 		expect(lint(plugin.configs.js)).toEqual([
 			'3:36 tsrx/no-unused-vars',
 			'10:33 tsrx/no-unreachable',

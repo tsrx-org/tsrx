@@ -1,5 +1,6 @@
 import type { Rule } from 'eslint';
 import { get_core_rule, merge_listeners, wrapper_meta } from '../utils/core-rule.js';
+import { suspension_check } from '../utils/try-blocks.js';
 
 const core = get_core_rule('no-unreachable');
 
@@ -182,34 +183,7 @@ const rule: Rule.RuleModule = {
 				state.pending_first = at === 'pending' && !body_ends;
 			}
 		};
-		// Whether code awaits or yields outside a function, as the compiler checks
-		// a `@try` body and `@pending` to run them inline.
-		const visitor_keys = context.sourceCode.visitorKeys as Record<string, readonly string[]>;
-		const suspends = (node: any): boolean => {
-			if (!node || typeof node.type !== 'string' || FUNCTION_TYPES.has(node.type)) return false;
-			if (
-				node.type === 'AwaitExpression' ||
-				node.type === 'YieldExpression' ||
-				(node.type === 'ForOfStatement' && node.await) ||
-				(node.type === 'VariableDeclaration' && node.kind === 'await using')
-			) {
-				return true;
-			}
-			// ESLint's traversal reads the keys of a type the parser doesn't list.
-			const keys =
-				visitor_keys[node.type] ??
-				Object.keys(node).filter(
-					(key) =>
-						key !== 'parent' &&
-						key !== 'leadingComments' &&
-						key !== 'trailingComments' &&
-						!key.startsWith('_'),
-				);
-			return keys.some((key) => {
-				const value = node[key];
-				return Array.isArray(value) ? value.some(suspends) : suspends(value);
-			});
-		};
+		const suspends = suspension_check(context);
 
 		const proxy = (segment: Segment) => {
 			let result = proxies.get(segment);
