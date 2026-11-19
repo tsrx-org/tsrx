@@ -42,6 +42,12 @@ const PROBES = [
 	['a component spread', returning('<Comp {...(yield t)} />')],
 	['a component child', returning('<Comp>{yield t}</Comp>')],
 	['an @if test', template('<div>\n\t\t@if (yield t) { <p>a</p> }\n\t</div>')],
+	['an @if body', template('@if (t) {\n\t\t<p>{yield t}</p>\n\t}')],
+	[
+		'an @switch case',
+		template('@switch (t) {\n\t\t@case 1: {\n\t\t\t<p>{yield t}</p>\n\t\t}\n\t}'),
+	],
+	['an @if test in a fragment', template('<>\n\t\t@if (yield t) {\n\t\t\t<p>a</p>\n\t\t}\n\t</>')],
 	['an @for iterable', template('<ul>\n\t\t@for (const x of yield t) { <li>{x}</li> }\n\t</ul>')],
 	[
 		"a host spread beside a ref (#246's shape)",
@@ -103,6 +109,12 @@ const AWAIT_PROBES = [
 	[
 		'an inner @for that awaits, in an element of the outer one',
 		block(
+			'@for (const row of rows) {\n\t\t\tconst size = row.size;\n\t\t\t<ul data-size={size}>\n\t\t\t\t@for (const x of row) {\n\t\t\t\t\tconst v = await t;\n\t\t\t\t\t<li>{v}</li>\n\t\t\t\t}\n\t\t\t</ul>\n\t\t}',
+		),
+	],
+	[
+		'an inner @for that awaits, in the element of a VaporFor row',
+		block(
 			'@for (const row of rows) {\n\t\t\t<ul>\n\t\t\t\t@for (const x of row) {\n\t\t\t\t\tconst v = await t;\n\t\t\t\t\t<li>{v}</li>\n\t\t\t\t}\n\t\t\t</ul>\n\t\t}',
 		),
 	],
@@ -118,6 +130,16 @@ const AWAIT_PROBES = [
 			'<div>\n\t\t\t@switch (t) {\n\t\t\t\t@case 1: {\n\t\t\t\t\t<p>{await t}</p>\n\t\t\t\t}\n\t\t\t}\n\t\t</div>',
 		),
 	],
+	[
+		'a @try body',
+		block('@try {\n\t\t\t<p>{await t}</p>\n\t\t} @catch (e) {\n\t\t\t<p>e</p>\n\t\t}'),
+	],
+	[
+		'a @pending body',
+		block('@try {\n\t\t\t<p>a</p>\n\t\t} @pending {\n\t\t\t<p>{await t}</p>\n\t\t}'),
+	],
+	// A module's top level can await.
+	["a child at the module's top level", 'export const el = <p>{await Promise.resolve(1)}</p>;'],
 	// Exempt: TSRX awaits the loop in the async function itself.
 	[
 		'an awaiting @for as the only output',
@@ -152,11 +174,16 @@ describe('TSRX2034 matches what vue-jsx-vapor compiles (#259)', () => {
 });
 
 describe('TSRX2021 matches what vue-jsx-vapor compiles for an await in a template (#1370)', () => {
-	const { message } = TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED('Vue');
+	// TSRX2021 for an `await` in a template, or in a callback the target calls,
+	// but not the one for an `await` in a component.
+	const messages = [
+		TSRX_ERRORS.TARGET_TEMPLATE_AWAIT_UNSUPPORTED('Vue').message,
+		TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED('Vue').message,
+	];
 	it.each(AWAIT_PROBES)('%s', async (_label, source) => {
 		const { code, errors } = compile(source, 'Probe.tsrx', { collect: true });
 		const reported = errors.length > 0;
-		expect(errors.filter((error) => error.message !== message)).toEqual([]);
+		expect(errors.filter((error) => !messages.includes(error.message))).toEqual([]);
 		expect({ reported, builds: await builds(code) }).toEqual({ reported, builds: !reported });
 	});
 });

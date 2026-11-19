@@ -367,11 +367,12 @@ export interface JsxPlatformHooks {
 	) => AST.YieldExpression[];
 	/**
 	 * The `await`s in the final output that the target's own JSX compiler moves
-	 * out of their async function, as `findDeferredTemplateYields` finds
-	 * `yield`s. Each is reported as TSRX2021. Only an `await` whose nearest
-	 * enclosing function is async belongs here. A returned `await` the compiler
-	 * added for a generated closure it made async stands for the authored
-	 * `await`s inside that closure.
+	 * out of their async function, or the module's top level, as
+	 * `findDeferredTemplateYields` finds `yield`s. Each is reported as
+	 * TSRX2021. Only an `await` whose nearest enclosing function is async, or
+	 * that is at the module's top level, belongs here. A returned `await` the
+	 * compiler added for a generated closure it made async stands for the
+	 * authored `await`s inside that closure.
 	 */
 	findDeferredTemplateAwaits?: (
 		program: AST.Program,

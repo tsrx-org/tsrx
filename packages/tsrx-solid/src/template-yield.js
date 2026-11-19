@@ -395,7 +395,8 @@ function find_deferred(program, server, type) {
 	 */
 	const visit_all = (node, context) => for_each_child(node, (child) => visit(child, context));
 
-	visit(program, { owner: false, deferred: false });
+	// A module's top level can await, but not yield.
+	visit(program, { owner: type === 'AwaitExpression', deferred: false });
 	return found;
 }
 
@@ -1712,7 +1713,9 @@ function collect_namespace_imports(program) {
 }
 
 /**
- * dom-expressions compiles a capitalized or dotted tag as a component.
+ * dom-expressions compiles a dotted tag, or one that starts with a capital or
+ * with something other than a letter, as a component. That includes the
+ * control-flow components TSRX imports under private names, such as `__Show`.
  *
  * @param {AST.Node} name
  * @returns {boolean}
@@ -1721,7 +1724,7 @@ function is_component_name(name) {
 	if (name.type === 'JSXNamespacedName') return false;
 	if (name.type !== 'JSXIdentifier' && name.type !== 'Identifier') return true;
 	const first = name.name[0];
-	return first !== first.toLowerCase();
+	return first !== first.toLowerCase() || /[^a-zA-Z]/.test(first);
 }
 
 /**

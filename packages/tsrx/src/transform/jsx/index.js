@@ -4033,7 +4033,7 @@ function report_deferred_template_awaits(program, transform_context) {
 	// target calls itself.
 	report_unreported(
 		authored.values(),
-		TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED(transform_context.platform.name),
+		TSRX_ERRORS.TARGET_TEMPLATE_AWAIT_UNSUPPORTED(transform_context.platform.name),
 		transform_context,
 	);
 }

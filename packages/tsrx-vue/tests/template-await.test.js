@@ -1,4 +1,4 @@
-import { DIAGNOSTIC_CODES } from '@tsrx/core';
+import { DIAGNOSTIC_CODES, TSRX_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import { compile, compile_to_volar_mappings } from '../src/index.js';
 
@@ -96,6 +96,18 @@ describe('an await in a Vue template (#1370)', () => {
 		[
 			'an inner @for that awaits, in an element of the outer one',
 			block(`@for (const row of rows) {
+			const size = row.size;
+			<ul data-size={size}>
+				@for (const item of row) {
+					const text = await load();
+					<li>{text}</li>
+				}
+			</ul>
+		}`),
+		],
+		[
+			'an inner @for that awaits, in the element of a VaporFor row',
+			block(`@for (const row of rows) {
 			<ul>
 				@for (const item of row) {
 					const text = await load();
@@ -103,6 +115,11 @@ describe('an await in a Vue template (#1370)', () => {
 				}
 			</ul>
 		}`),
+		],
+		["a child at the module's top level", 'export const el = <p>{await Promise.resolve(1)}</p>;'],
+		[
+			'plain JSX in an async function',
+			'export async function f(t: Promise<string>) {\n\tconst el = <p>{await t}</p>;\n\treturn el;\n}',
 		],
 	])('reports each await in %s', (_label, source) => {
 		const awaits = [...source.matchAll(/\bawait\b/g)].map((match) => match.index);
@@ -156,6 +173,19 @@ describe('an await in a Vue template (#1370)', () => {
 		expect(code).toContain('<input {..._tsrx_spread_props_1} ref={_tsrx_spread_props_1?.ref} />');
 		expect(code).toContain(
 			'<input {...(_tsrx_spread_props_2 = __normalize_spread_props_for_ref_attr(items))} ref={_tsrx_spread_props_2?.ref} />',
+		);
+	});
+
+	it('says to await the value before the template', () => {
+		const source = block('<p>{await load()}</p>');
+		expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([
+			expect.objectContaining({
+				...TSRX_ERRORS.TARGET_TEMPLATE_AWAIT_UNSUPPORTED('Vue'),
+				pos: source.indexOf('await'),
+			}),
+		]);
+		expect(TSRX_ERRORS.TARGET_TEMPLATE_AWAIT_UNSUPPORTED('Vue').message).toContain(
+			'Await the value before the template',
 		);
 	});
 

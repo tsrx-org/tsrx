@@ -1631,7 +1631,8 @@ directive-prefixed template control flow, scoped styles, host `innerHTML`, and
 not supported for Vue TSRX. vue-jsx-vapor evaluates template values in effects
 and getters, so in a plain async function an `await` in an element or fragment
 is a compile error too (TSRX2021): await the value before the template. An
-awaiting `@for` that is a template's only output is fine. vue-jsx-vapor finds
+awaiting `@for` that is a template's only output is fine, and so is an awaiting
+host spread, which TSRX evaluates before the element. vue-jsx-vapor finds
 components by calls to `defineVaporComponent`, so a Vue module can't declare its
 own binding of that name (TSRX2032); importing it from `vue-jsx-vapor` is fine.
 

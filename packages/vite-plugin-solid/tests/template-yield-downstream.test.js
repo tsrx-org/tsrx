@@ -61,6 +61,39 @@ const PROBES = [
 	],
 	['a dynamic @if test', template('<div>\n\t\t@if (yield bag.ok) { <p>a</p> }\n\t</div>')],
 	['an @if body', template('<div>\n\t\t@if (t) { <p title={yield bag.t}>a</p> }\n\t</div>')],
+	// A control-flow body is a component's children (`__Show`, `__Match`,
+	// `__ErrorBoundary`, `__Loading`), which the compiler passes in a getter,
+	// so even a static value there is evaluated in it.
+	['a static child in an @if body', template('@if (t) {\n\t\t<p>{yield t}</p>\n\t}')],
+	[
+		'a static attribute in an @if body in an element',
+		template('<div>\n\t\t@if (t) {\n\t\t\t<p title={yield t}>a</p>\n\t\t}\n\t</div>'),
+	],
+	['an event handler in an @if body', template('@if (t) {\n\t\t<button onClick={yield t} />\n\t}')],
+	[
+		'a style object in an @if body',
+		template('@if (t) {\n\t\t<p style={{ color: yield t }} />\n\t}'),
+	],
+	[
+		'a static child in an @else body',
+		template('@if (t) {\n\t\t<p>a</p>\n\t} @else {\n\t\t<p>{yield t}</p>\n\t}'),
+	],
+	[
+		'a static child in an @switch case',
+		template('@switch (t) {\n\t\t@case 1: {\n\t\t\t<p>{yield t}</p>\n\t\t}\n\t}'),
+	],
+	[
+		'a static child in a @try body',
+		template('@try {\n\t\t<p>{yield t}</p>\n\t} @catch (e) {\n\t\t<p>e</p>\n\t}'),
+	],
+	[
+		'a static child in a @pending body',
+		template('@try {\n\t\t<p>a</p>\n\t} @pending {\n\t\t<p>{yield t}</p>\n\t}'),
+	],
+	[
+		'a dynamic @if test in a fragment',
+		template('<>\n\t\t@if (yield bag.ok) {\n\t\t\t<p>a</p>\n\t\t}\n\t</>'),
+	],
 	[
 		'a dynamic @for iterable',
 		template('<ul>\n\t\t@for (const x of yield bag.items) { <li>{x}</li> }\n\t</ul>'),
@@ -272,6 +305,16 @@ const PROBES = [
 	],
 	// Exempt: the compiler evaluates the value in place.
 	['a static attribute value', returning('<input title={yield t} />')],
+	// A control-flow component in a fragment is created in place, and a
+	// static prop or child of it is passed as it is.
+	[
+		'a static @if test in a fragment',
+		template('<>\n\t\t@if (yield t) {\n\t\t\t<p>a</p>\n\t\t}\n\t</>'),
+	],
+	[
+		'a fragment in an @if body in a fragment',
+		template('<>\n\t\t@if (t) {\n\t\t\t<>{yield t}</>\n\t\t}\n\t</>'),
+	],
 	['a literal attribute value', returning("<input title={yield 'title'} />")],
 	['an event handler', returning('<button onClick={yield bag.onClick} />')],
 	['a namespaced event handler', returning('<button on:click={yield bag.onClick} />')],
@@ -945,6 +988,15 @@ const AWAIT_PROBES = [
 	...as_await(PROBES),
 	['a call in a child (#1370)', block("<p>{await Promise.resolve('x')}</p>")],
 	['a static child', block('<p>{await t}</p>')],
+	// A module's top level can await.
+	[
+		"a call in a child at the module's top level",
+		'export const el = <p>{await Promise.resolve(1)}</p>;',
+	],
+	[
+		"a static child at the module's top level",
+		'declare const t: Promise<string>;\nexport const el = <p>{await t}</p>;',
+	],
 ];
 
 /**
@@ -997,11 +1049,16 @@ describe('in a server build, TSRX2034 matches what babel-preset-solid compiles f
 });
 
 describe('TSRX2021 matches what babel-preset-solid compiles for an await in a template (#1370)', () => {
-	const { message } = TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED('Solid');
+	// TSRX2021 for an `await` in a template, or in a callback the target calls,
+	// but not the one for an `await` in a component.
+	const messages = [
+		TSRX_ERRORS.TARGET_TEMPLATE_AWAIT_UNSUPPORTED('Solid').message,
+		TSRX_ERRORS.TARGET_AWAIT_UNSUPPORTED('Solid').message,
+	];
 	it.each(AWAIT_PROBES)('%s', async (_label, source) => {
 		const { code, errors } = compile(source, 'Probe.tsrx', { collect: true });
 		const reported = errors.length > 0;
-		expect(errors.filter((error) => error.message !== message)).toEqual([]);
+		expect(errors.filter((error) => !messages.includes(error.message))).toEqual([]);
 		expect({ reported, builds: await builds(code) }).toEqual({ reported, builds: !reported });
 	});
 
@@ -1014,7 +1071,7 @@ describe('TSRX2021 matches what babel-preset-solid compiles for an await in a te
 			expect(errors.map((error) => error.pos)).toEqual(
 				expect.arrayContaining(client.map((error) => error.pos)),
 			);
-			expect(errors.filter((error) => error.message !== message)).toEqual([]);
+			expect(errors.filter((error) => !messages.includes(error.message))).toEqual([]);
 			const fails =
 				!(await builds(code, { generate: 'ssr', hydratable: true })) ||
 				!(await builds(code, { generate: 'dom', hydratable: true }));

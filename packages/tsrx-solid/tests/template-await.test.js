@@ -1,4 +1,4 @@
-import { DIAGNOSTIC_CODES } from '@tsrx/core';
+import { DIAGNOSTIC_CODES, TSRX_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import { compile, compile_to_volar_mappings } from '../src/index.js';
 
@@ -31,6 +31,25 @@ describe('an await in a template Solid evaluates in an effect, getter or callbac
 		['a host spread', block('<input {...(await t)} />')],
 		['an element in a fragment', block('<><input title={await t} /></>')],
 		['a dynamic component prop', block('<Comp title={await bag.title} />')],
+		// A control-flow body is a component's children, passed in a getter.
+		[
+			'a static child in an @if body',
+			block(`@if (t) {
+			<p>{await t}</p>
+		}`),
+		],
+		[
+			'a static attribute in a @pending body',
+			block(`@try {
+			<p>a</p>
+		} @pending {
+			<p title={await t}>b</p>
+		}`),
+		],
+		[
+			"a call in a child at the module's top level",
+			'export const el = <p>{await Promise.resolve(1)}</p>;',
+		],
 		[
 			'an @if body in an element',
 			block(`<div>
@@ -74,6 +93,19 @@ describe('an await in a template Solid evaluates in an effect, getter or callbac
 
 	it.each([
 		['a static child', block('<p>{await t}</p>')],
+		// A control-flow component in a fragment is created in place.
+		[
+			'a static @if test in a fragment',
+			block(`<>
+			@if (await t) {
+				<p>a</p>
+			}
+		</>`),
+		],
+		[
+			"a static child at the module's top level",
+			'declare const t: Promise<string>;\nexport const el = <p>{await t}</p>;',
+		],
 		['a static attribute value', block('<input title={await t} />')],
 		['an event handler', block('<button onClick={await bag.onClick} />')],
 		['a ref', block('<div ref={await bag.ref} />')],
@@ -92,6 +124,16 @@ describe('an await in a template Solid evaluates in an effect, getter or callbac
 		]) {
 			expect(errors).toEqual([]);
 		}
+	});
+
+	it('says to await the value before the template', () => {
+		const source = block("<p>{await Promise.resolve('x')}</p>");
+		expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([
+			expect.objectContaining({
+				...TSRX_ERRORS.TARGET_TEMPLATE_AWAIT_UNSUPPORTED('Solid'),
+				pos: source.indexOf('await'),
+			}),
+		]);
 	});
 
 	// The SSR output merges a host spread's props in an arrow (#1291).

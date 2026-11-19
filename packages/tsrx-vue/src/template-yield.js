@@ -62,7 +62,8 @@ function find_deferred(program, type) {
 		for_each_child(node, (child) => visit(child, in_owner, in_template));
 	};
 
-	visit(program, false, false);
+	// A module's top level can await, but not yield.
+	visit(program, type === 'AwaitExpression', false);
 	return found;
 }
 
