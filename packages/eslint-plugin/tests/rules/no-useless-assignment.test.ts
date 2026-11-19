@@ -100,6 +100,15 @@ ruleTester.run('no-useless-assignment', rule, {
 		}]; index i; key i) { <li>{item}</li> }
 	</ul>
 }`,
+		// A function in a `@for`'s key has a code path of its own.
+		`export function A({ items, fail, log }) @{
+	<ul>
+		@for (const item of items; key (() => @{
+			let x = 0;
+			@try { fail(); x = 1; log(x); } @catch (e) { log(x); }
+		})()) { <li>{item.id}</li> }
+	</ul>
+}`,
 		// An escaped name is still a read.
 		component(`let x = 0;`, `@try { log(n); x = 1; <>{x}</> } @catch (e) { <>{\\u0078}</> }`),
 		// Code without `@try` is left to the core rule.

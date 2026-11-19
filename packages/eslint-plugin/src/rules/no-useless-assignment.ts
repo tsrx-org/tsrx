@@ -30,13 +30,27 @@ interface TryPieces {
 	handler_start: Piece[];
 }
 
+/** Nodes whose code starts a code path of its own. */
+const CODE_PATH_STARTS = new Set([
+	'FunctionDeclaration',
+	'FunctionExpression',
+	'ArrowFunctionExpression',
+	'StaticBlock',
+]);
+
 /**
  * Whether an identifier is the parser's name for a dynamic tag, which spans
  * the tag expression, or is in a `@for`'s index or key, which the traversal
- * visits before the loop.
+ * visits before the loop, in the same code path.
  */
 function is_out_of_place(node: any): boolean {
 	for (let child = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+		if (
+			CODE_PATH_STARTS.has(parent.type) ||
+			(parent.type === 'PropertyDefinition' && parent.value === child)
+		) {
+			return false;
+		}
 		if (
 			(parent.type === 'JSXOpeningElement' || parent.type === 'JSXClosingElement') &&
 			parent.name === child
