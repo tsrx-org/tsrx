@@ -1270,6 +1270,28 @@ export const p = 1
 			}
 		});
 
+		it('reports a reused label in a parenthesized returned block in the editor too (TS1114)', () => {
+			// The editor keeps parentheses, where the compile inlines the block
+			// before the `return` and gets a duplicate label.
+			for (const returned of [
+				'(<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>)',
+				'(@{ outer: for (const y of items) { console.log(y); } })',
+			]) {
+				const source = `export function App({ items }: { items: string[] }) {
+					outer: for (const x of items) {
+						if (x) return ${returned};
+					}
+					return null;
+				}`;
+				expect(
+					() => compile_to_volar_mappings(source, 'App.tsrx', { loose: true }),
+					returned,
+				).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: source.indexOf('outer: for (const y') }),
+				);
+			}
+		});
+
 		it('keeps nested loop-target defaults in type-only output', () => {
 			const result = compile_to_volar_mappings(
 				`export function read(items, fallback) {
@@ -3171,6 +3193,202 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 
 			expect(() => compile(source, 'App.tsrx')).toThrow(expected);
 			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([expected]);
+		});
+
+		it('lets a label in a template body reuse the name of one outside it', () => {
+			// Every target runs these bodies in functions of their own, where the
+			// outer label isn't around them, as TypeScript reads the output.
+			const inner = 'outer: for (const y of items) { if (y) break outer; console.log(y); }';
+			const plain = 'outer: for (const y of items) { console.log(y); }';
+			for (const template of [
+				`<div>@try { ${inner} <b /> } @catch (e) { <i /> }</div>`,
+				`<div>@try { <b /> } @pending { ${inner} <p /> } @catch (e) { <i /> }</div>`,
+				`<div>@try { <b /> } @catch (e) { ${inner} <i /> }</div>`,
+				`<ul>@for (const z of items) { ${inner} <li /> } @empty { ${inner} <p /> }</ul>`,
+				`<div>@switch (log) { @case 1: { ${inner} <b /> } @default: { <i /> } }</div>`,
+				// The `@if` rules reject any jump in these bodies, so these labels have none.
+				`<div>@if (log) { ${plain} <b /> } @else if (item) { ${plain} <i /> } @else { ${plain} <p /> }</div>`,
+				`<div>{@{ ${inner} <b /> }}</div>`,
+				`@{ ${inner} <b /> }`,
+			]) {
+				const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
+					outer: for (const item of items) {
+						const view = ${template};
+						console.log(item, view);
+					}
+					<p />
+				}`;
+
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([]);
+			}
+		});
+
+		it('still reports a label that reuses one around it in the same body or function (TS1114)', () => {
+			for (const block of [
+				'@try { a: for (const y of items) { a: for (const z of items) { console.log(z); } } <b /> } @catch (e) { <i /> }',
+				'@try { const f = () => { a: for (const y of items) { a: for (const z of items) { console.log(z); } } }; f(); <b /> } @catch (e) { <i /> }',
+			]) {
+				const source = `export function App({ items }: { items: string[] }) @{
+					outer: for (const item of items) {
+						const view = <div>${block}</div>;
+						console.log(item, view);
+					}
+					<p />
+				}`;
+				const second = source.indexOf('a: for (const z');
+				const expected = expect.objectContaining({ code: 'TS1114', pos: second });
+
+				expect(() => compile(source, 'App.tsrx'), block).toThrow(expected);
+			}
+		});
+
+		it('keeps a label in a code-only `@{ … }` of a returned fragment from reusing an outer one (TS1114)', () => {
+			// Every target inlines the block before the `return`, in the same function.
+			const source = `export function App({ items }: { items: string[] }) {
+				outer: for (const x of items) {
+					if (x) return <>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>;
+				}
+				return null;
+			}`;
+			const expected = expect.objectContaining({
+				code: 'TS1114',
+				pos: source.indexOf('outer: for (const y'),
+			});
+
+			expect(() => compile(source, 'App.tsrx')).toThrow(expected);
+			expect(() => compile(source, 'App.tsrx', { collect: true })).toThrow(expected);
+
+			// Nor in a returned code-only block, which is inlined the same way.
+			for (const returned of [
+				'@{ outer: for (const y of items) { console.log(y); } }',
+				'(@{ outer: for (const y of items) { console.log(y); } })',
+				'@{ console.log(x); @{ outer: for (const y of items) { console.log(y); } } }',
+			]) {
+				const direct = source.replace(
+					'<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>',
+					returned,
+				);
+				expect(() => compile(direct, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: direct.indexOf('outer: for (const y') }),
+				);
+			}
+
+			// Nor in one reached through a `{ … }` or a render-only block, whose value
+			// the lowering returns in the same way.
+			for (const returned of [
+				'<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>',
+				'<>{(<>@{ outer: for (const y of items) { console.log(y); } }</>)}</>',
+				'(<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>)',
+				'<>{<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>}</>',
+				'<><>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</></>',
+				'<>@{ console.log(x); }{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>',
+				'@{ <>{@{ outer: for (const y of items) { console.log(y); } }}</> }',
+				'@{ <>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</> }',
+				'@{ @{ <>{@{ outer: for (const y of items) { console.log(y); } }}</> } }',
+				'@{ for (const z of items) { return <>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>; } }',
+			]) {
+				const contained = source.replace(
+					'<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>',
+					returned,
+				);
+				expect(() => compile(contained, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({
+						code: 'TS1114',
+						pos: contained.indexOf('outer: for (const y'),
+					}),
+				);
+			}
+
+			// Nor in a code-only block chained in one's output position.
+			const chained = source.replace(
+				'@{ outer: for (const y of items) { console.log(y); } }',
+				'@{ console.log(x); @{ outer: for (const y of items) { console.log(y); } } }',
+			);
+			expect(() => compile(chained, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS1114', pos: chained.indexOf('outer: for (const y') }),
+			);
+
+			// Nor in one returned inside a returned code-only block, which is
+			// inlined in the same function too.
+			for (const returned of [
+				'@{ for (const y of items) { return @{ outer: for (const z of items) { console.log(z); } }; } }',
+				'<>@{ for (const y of items) { return <>@{ outer: for (const z of items) { console.log(z); } }<i /></>; } }<i /></>',
+				'@{ for (const y of items) { return @{ for (const w of items) { return @{ outer: for (const z of items) { console.log(z); } }; } }; } }',
+			]) {
+				const nested = source.replace(
+					'<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>',
+					returned,
+				);
+				expect(() => compile(nested, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: nested.indexOf('outer: for (const z') }),
+				);
+			}
+
+			// Nor in one returned inside a template body, from a label in that body.
+			for (const returned of [
+				'@{ outer: for (const y of items) { console.log(y); } }',
+				'<>@{ outer: for (const y of items) { console.log(y); } }<i /></>',
+				'<>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</>',
+			]) {
+				const in_body = `export function App({ items }: { items: string[] }) {
+					const view = @{ outer: for (const x of items) { if (x) return ${returned}; } <b /> };
+					return view;
+				}`;
+				expect(() => compile(in_body, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: in_body.indexOf('outer: for (const y') }),
+				);
+			}
+
+			// A block with output, and a function in a code-only block, aren't inlined.
+			for (const block of [
+				'@{ outer: for (const y of items) { console.log(y); } <b /> }',
+				'@{ const f = () => { outer: for (const y of items) { console.log(y); } }; f(); }',
+				'@{ const v = <div>@try { outer: for (const y of items) { console.log(y); } <b /> } @catch (e) { <i /> }</div>; console.log(v); }',
+				'@{ const v = <div>{@{ outer: for (const y of items) { console.log(y); } <b /> }}</div>; console.log(v); }',
+				'@{ const v = @{ outer: for (const y of items) { console.log(y); } <b /> }; console.log(v); }',
+			]) {
+				const allowed = `export function App({ items }: { items: string[] }) {
+					outer: for (const x of items) {
+						if (x) return <>${block}<b>{x}</b></>;
+					}
+					return null;
+				}`;
+				expect(compile(allowed, 'App.tsrx', { collect: true }).errors, block).toEqual([]);
+			}
+
+			// Nor is a code-only block in a fragment nested in the returned one, in
+			// a render-only block's output, or reached through the output of a block
+			// with statements.
+			for (const returned of [
+				'<><>@{ outer: for (const y of items) { console.log(y); } }</></>',
+				'@{ console.log(x); <>{<>@{ outer: for (const y of items) { console.log(y); } }</>}</> }',
+				'@{ <>@{ outer: for (const y of items) { console.log(y); } }<b /></> }',
+				'@{ <>@{ outer: for (const y of items) { console.log(y); } }</> }',
+			]) {
+				const allowed = `export function App({ items }: { items: string[] }) {
+					outer: for (const x of items) {
+						if (x) return ${returned};
+					}
+					return null;
+				}`;
+				expect(compile(allowed, 'App.tsrx', { collect: true }).errors, returned).toEqual([]);
+			}
+
+			// A returned code-only block in a template body is inlined into that
+			// body's function, apart from the label outside the template.
+			for (const block of [
+				'@{ for (const y of items) { return @{ outer: for (const z of items) { console.log(z); } }; } <b /> }',
+				'@{ for (const y of items) { return <>@{ outer: for (const z of items) { console.log(z); } }<i /></>; } <b /> }',
+			]) {
+				const allowed = `export function App({ items }: { items: string[] }) {
+					outer: for (const x of items) {
+						const view = ${block};
+						console.log(x, view);
+					}
+					return null;
+				}`;
+				expect(compile(allowed, 'App.tsrx', { collect: true }).errors, block).toEqual([]);
+			}
 		});
 
 		it('allows a jump to a loop, `switch` or label inside the `@try` body or block it is in', () => {
