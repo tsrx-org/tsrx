@@ -678,6 +678,36 @@ export function Inner({ label = PREFIX }: { label?: string }) @{
 		expect(code).not.toContain('useSlots');
 	});
 
+	it('leaves children reads alone where a switch, class or static block declares props', () => {
+		const { code } = compile(
+			`function Card(props: any) @{
+				const use = (value: unknown) => value;
+				switch (0) {
+					case 0:
+						const props = { children: 'case' };
+						use(props.children);
+				}
+				const C = class props {
+					static children = 'class';
+					static read = props.children;
+				};
+				class D {
+					static {
+						const props = { children: 'static' };
+						use(props.children);
+					}
+				}
+				use([C, D]);
+				<div>{'x'}</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('use(props.children);\n\t}');
+		expect(code).toContain('static read = props.children;');
+		expect(code).not.toContain('useSlots');
+	});
+
 	it('keeps props.children as written in Volar TSX', () => {
 		const { code } = compile_to_volar_mappings(
 			`function Card(props: { children?: JSX.Element }) @{
@@ -1697,6 +1727,11 @@ export function Card(${params}: any) @{
 						const C = class item { read() { return item; } };
 						{ enum item { A } use(item.A); }
 						class D { static { const item = 3; use(item); } }
+						enum E { item = 1, Next = item + 1 }
+						enum Q { "item" = 1, Next = item + 1 }
+						const dec = (value: unknown) => (...args: unknown[]) => use([value, args]);
+						class P { constructor(@dec(item) public item: unknown, @dec(i) other: unknown) { use(item, other); } }
+						for (const item of item.children) use(item);
 						use(new C());
 						use(item.id + i);
 					}}>{item.id}</button>
@@ -1716,6 +1751,17 @@ export function Card(${params}: any) @{
 		expect(code).toContain('class item {');
 		expect(code).toContain('enum item {');
 		expect(code).toContain('const item = 3;');
+		// An enum's members and a constructor's parameter properties are its own.
+		expect(code).toMatch(/\bitem = 1,\s*Next = item \+ 1/);
+		expect(code).toMatch(/"item" = 1,\s*Next = item \+ 1/);
+		// A parameter's decorators run outside the constructor, so they read the
+		// row's item and index.
+		expect(code).toMatch(
+			/constructor\(\s*@dec\(item\.value\) public item: unknown,\s*@dec\(i\.value\) other: unknown\s*\) \{\s*use\(item, other\);/,
+		);
+		// The head's \`item\` is in its temporal dead zone on the right, as in
+		// JavaScript, so that read stays as written.
+		expect(code).toContain('for (const item of item.children) use(item);');
 		expect(code).toContain('use(item.value.id + i.value);');
 		expect(code).not.toContain('item.value =');
 		expect(code).not.toContain('catch(item.value)');

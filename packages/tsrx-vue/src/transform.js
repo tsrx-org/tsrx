@@ -1562,6 +1562,10 @@ function read_children_from_default_slot(fn, name, ctx) {
 			ForStatement: rewrite_head_shadowed_refs,
 			ForInStatement: rewrite_head_shadowed_refs,
 			ForOfStatement: rewrite_head_shadowed_refs,
+			SwitchStatement: rewrite_switch_shadowed_refs,
+			ClassExpression: rewrite_class_shadowed_refs,
+			StaticBlock: rewrite_static_block_shadowed_refs,
+			TSEnumDeclaration: rewrite_enum_shadowed_refs,
 			BlockStatement(node, context) {
 				// The component body declares the destructured `children` binding;
 				// it cannot redeclare the props parameter or its bindings.
@@ -2726,6 +2730,7 @@ function rewrite_vapor_for_keyed_slot_refs(node, loop_params, replacements = new
 				ForOfStatement: rewrite_head_shadowed_refs,
 				SwitchStatement: rewrite_switch_shadowed_refs,
 				ClassExpression: rewrite_class_shadowed_refs,
+				TSEnumDeclaration: rewrite_enum_shadowed_refs,
 			},
 		)
 	);
@@ -2837,7 +2842,7 @@ function collect_pattern_replacements(pattern, source, replacements) {
  * @param {import('zimmerframe').Context<AST.Node, S>} context
  * @returns {AST.Node | void}
  */
-function rewrite_function_shadowed_refs(node, { state, next }) {
+function rewrite_function_shadowed_refs(node, { state, next, visit }) {
 	const shadowed_names = new Set(state.shadowed_names);
 	if (node.type !== 'ArrowFunctionExpression' && node.id) {
 		collect_pattern_names(node.id, shadowed_names);
@@ -2846,7 +2851,59 @@ function rewrite_function_shadowed_refs(node, { state, next }) {
 		collect_pattern_names(param, shadowed_names);
 	}
 	collect_function_var_names(node.body, shadowed_names);
-	return next({ ...state, shadowed_names });
+	const inner = { ...state, shadowed_names };
+
+	// A parameter's decorators run in the enclosing scope, before the
+	// parameters exist: they are walked with the outer names and put back.
+	/** @typedef {AST.Node & { decorators?: AST.Node[] }} DecoratedNode */
+	/** @param {AST.Node} param */
+	const decorated = (param) =>
+		/** @type {DecoratedNode} */ (
+			param.type === 'TSParameterProperty'
+				? /** @type {{ parameter: AST.Node }} */ (/** @type {unknown} */ (param)).parameter
+				: param
+		);
+	/** @type {Map<number, AST.Node[]>} */
+	const decorators = new Map();
+	const params = (node.params || []).map((param, index) => {
+		const target = decorated(/** @type {AST.Node} */ (param));
+		if (!target.decorators?.length) return param;
+		decorators.set(
+			index,
+			target.decorators.map((decorator) => /** @type {AST.Node} */ (visit(decorator, state))),
+		);
+		return with_decorators(/** @type {AST.Node} */ (param), []);
+	});
+	if (decorators.size === 0) return next(inner);
+
+	const walked = /** @type {AST.Function} */ (
+		visit(/** @type {AST.Node} */ ({ ...node, params }), inner)
+	);
+	return /** @type {AST.Node} */ ({
+		...walked,
+		params: walked.params.map((param, index) => {
+			const outer = decorators.get(index);
+			return outer ? with_decorators(/** @type {AST.Node} */ (param), outer) : param;
+		}),
+	});
+}
+
+/**
+ * `param`, a parameter or a constructor's parameter property, with its
+ * decorators replaced.
+ *
+ * @param {AST.Node} param
+ * @param {AST.Node[]} decorators
+ * @returns {AST.Pattern}
+ */
+function with_decorators(param, decorators) {
+	if (param.type === 'TSParameterProperty') {
+		const property = /** @type {{ parameter: AST.Node }} */ (/** @type {unknown} */ (param));
+		return /** @type {AST.Pattern} */ (
+			/** @type {unknown} */ ({ ...param, parameter: { ...property.parameter, decorators } })
+		);
+	}
+	return /** @type {AST.Pattern} */ (/** @type {unknown} */ ({ ...param, decorators }));
 }
 
 /**
@@ -2878,7 +2935,10 @@ function rewrite_static_block_shadowed_refs(node, { state, next }) {
 
 /**
  * The names a `catch` clause's parameter or a `for` head declares, which
- * shadow the outer ones in the whole statement.
+ * shadow the outer ones in the whole statement. A `let` or `const` head's
+ * names are in their temporal dead zone in the loop's own expressions, the
+ * right-hand side of `for (const row of row.children)` included, which reads
+ * the inner `row` and throws, so those stay as written too.
  *
  * @template {{ shadowed_names: Set<string> }} S
  * @param {AST.CatchClause | AST.ForStatement | AST.ForInStatement | AST.ForOfStatement} node
@@ -2926,6 +2986,31 @@ function rewrite_switch_shadowed_refs(node, { state, visit }) {
 			(switch_case) => /** @type {AST.SwitchCase} */ (visit(switch_case, inner)),
 		),
 	};
+}
+
+/**
+ * An `enum`'s members are bound inside it: a member's initializer reads an
+ * earlier member by its name. (Members of another declaration of the same
+ * `enum` are in scope too; those aren't collected.)
+ *
+ * @template {{ shadowed_names: Set<string> }} S
+ * @param {AST.Node} node A `TSEnumDeclaration`.
+ * @param {import('zimmerframe').Context<AST.Node, S>} context
+ * @returns {AST.Node | void}
+ */
+function rewrite_enum_shadowed_refs(node, { state, next }) {
+	const members =
+		/** @type {{ body?: { members?: { id: AST.Node }[] }, members?: { id: AST.Node }[] }} */ (
+			/** @type {unknown} */ (node)
+		);
+	const shadowed_names = new Set(state.shadowed_names);
+	for (const member of members.body?.members ?? members.members ?? []) {
+		const id = /** @type {AST.Node} */ (member.id);
+		if (id.type === 'Identifier') shadowed_names.add(id.name);
+		// A quoted member (`"row" = 1`) is read by its name too.
+		else if (id.type === 'Literal' && typeof id.value === 'string') shadowed_names.add(id.value);
+	}
+	return next({ ...state, shadowed_names });
 }
 
 /**
@@ -3057,6 +3142,13 @@ function collect_pattern_names(node, names) {
 			break;
 		case 'Property':
 			collect_pattern_names(node.value, names);
+			break;
+		// A constructor's parameter property (`constructor(public row)`).
+		case 'TSParameterProperty':
+			collect_pattern_names(
+				/** @type {AST.Node} */ (/** @type {unknown} */ (node.parameter)),
+				names,
+			);
 			break;
 	}
 }
