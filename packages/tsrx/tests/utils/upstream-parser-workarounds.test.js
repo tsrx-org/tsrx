@@ -4089,6 +4089,7 @@ describe('`declare` before a token that starts no declaration (sveltejs/acorn-ty
 			['declare import("m");', ['declare', 'ExpressionStatement']],
 			['declare import.meta;', ['declare', 'ExpressionStatement']],
 			['declare global as any;', ['declare', 'ExpressionStatement']],
+			['declare global\nasync as any;', ['declare', 'global', 'ExpressionStatement']],
 			['function f() { declare global; }', ['declare', 'global']],
 			['{ declare namespace; }', ['declare', 'namespace']],
 		];
@@ -4119,7 +4120,11 @@ describe('`declare` before a token that starts no declaration (sveltejs/acorn-ty
 		// TypeScript reads a declaration after `declare` there, and reports
 		// errors in it (TS1146, TS1003): the parser doesn't take `declare` for a
 		// name and go on, which would compile them without an error.
-		const sources = ['declare defer as T;', 'declare namespace "m" {}'];
+		const sources = [
+			'declare defer as T;',
+			'declare namespace "m" {}',
+			'declare await\nusing as any;',
+		];
 		const outcomes = await parse_in_worker(in_every_mode(sources));
 		for (const [index, outcome] of outcomes.entries()) {
 			expect(outcome.ok, sources[Math.floor(index / PARSE_MODES.length)]).toBe(false);

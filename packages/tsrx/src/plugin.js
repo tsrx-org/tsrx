@@ -657,6 +657,46 @@ function decode_identifier_escapes(name) {
 // where an expression starts: not one of the reserved words acorn reads as
 // one (see `semicolon`).
 const regex_plain_name = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*$/u;
+// The words that TypeScript's scanner reads as keywords, not identifiers, and
+// acorn-typescript as names (`tt.name`); see `#declarationAfterDeclare`.
+const TYPESCRIPT_KEYWORD_NAMES = new Set([
+	'accessor',
+	'any',
+	'as',
+	'async',
+	'await',
+	'bigint',
+	'boolean',
+	'constructor',
+	'defer',
+	'from',
+	'get',
+	'implements',
+	'infer',
+	'intrinsic',
+	'is',
+	'let',
+	'never',
+	'number',
+	'object',
+	'of',
+	'out',
+	'override',
+	'package',
+	'private',
+	'protected',
+	'public',
+	'require',
+	'satisfies',
+	'set',
+	'static',
+	'string',
+	'symbol',
+	'undefined',
+	'unknown',
+	'using',
+	'yield',
+]);
 // The names after which TypeScript's parser reports another error than TS1434
 // for a missing `;`, or none (`parseErrorForMissingSemicolonAfter`), which
 // keep TS1005 here.
@@ -9256,8 +9296,8 @@ export function TSRXPlugin(config) {
 						case 'using':
 							return same_line && (is_identifier(next.type) || next.type === tt.braceL);
 						case 'await': {
-							// `await using x = y;`
-							if (!same_line || next.type !== tt.name || next.value !== 'using') return false;
+							// `await using x = y;`, with `using` on the line or the next.
+							if (next.type !== tt.name || next.value !== 'using') return false;
 							const after = this.lookahead(ahead + 2);
 							return (
 								!regex_line_break.test(this.input.slice(next.end, after.start)) &&
@@ -9272,12 +9312,13 @@ export function TSRXPlugin(config) {
 						case 'module':
 							return same_line && (is_identifier(next.type) || next.type === tt.string);
 						case 'global':
-							// Before an identifier, which `as` and `satisfies` aren't: TypeScript
-							// reads them as operators after the name `global`.
+							// Before an identifier, on any line, which no keyword is: after
+							// `declare global` and a line break, `async as T;` is a statement.
 							return (
 								next.type === tt.braceL ||
 								next.type === tt._export ||
-								(is_identifier(next.type) && next.value !== 'as' && next.value !== 'satisfies')
+								(next.type === tt.name &&
+									!TYPESCRIPT_KEYWORD_NAMES.has(/** @type {string} */ (next.value)))
 							);
 						case 'static':
 							continue;
