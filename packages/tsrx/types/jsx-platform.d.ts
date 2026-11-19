@@ -71,6 +71,8 @@ export interface JsxTransformContext {
 	stylesheets: AST.CSS.StyleSheet[];
 	type_only_style_anchors: AST.Statement[];
 	helper_state: JsxHelperState | null;
+	/** The names of the module-level statics hoisted so far. */
+	static_names: Set<string>;
 	/** Set once a helper is declared beside a component inside another function. */
 	has_local_helpers?: boolean;
 	available_bindings: Map<string, AST.Identifier>;

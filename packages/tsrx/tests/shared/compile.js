@@ -6880,6 +6880,71 @@ export function App() @{
 		);
 	});
 
+	describe(`[${name}] getters and setters with an \`@{ … }\` body`, () => {
+		it.each([
+			[
+				'an object',
+				'export const target = { get R() @{ <b /> }, set R(v: unknown) @{ <i /> }, get S() @{ <u /> } };',
+			],
+			[
+				'an object, with string keys',
+				"export const target = { get 'R'() @{ <b /> }, set 'R'(v: unknown) @{ <i /> }, get 'S'() @{ <u /> } };",
+			],
+			[
+				'an object, with computed keys',
+				"const R = 'R';\nconst S = 'S';\nexport const target = { get [R]() @{ <b /> }, set [R](v: unknown) @{ <i /> }, get [S]() @{ <u /> } };",
+			],
+			[
+				// The Vue target also wraps a function that returns a local JSX binding.
+				'an object, with plain bodies that return an element',
+				'export const target = { get R() { const b = <b />; return b; }, set R(v: unknown) { console.log(v); }, get S() { const u = <u />; return u; } };',
+			],
+			[
+				'an object in a function',
+				'export const target = (() => ({ get R() @{ <b /> }, set R(v: unknown) @{ <i /> }, get S() @{ <u /> } }))();',
+			],
+			[
+				'a class',
+				'export class C { get R() @{ <b /> } set R(v: unknown) @{ <i /> } get S() @{ <u /> } }\nexport const target = C.prototype;',
+			],
+			[
+				'a class, static',
+				'export class C { static get R() @{ <b /> } static set R(v: unknown) @{ <i /> } static get S() @{ <u /> } }\nexport const target = C;',
+			],
+			[
+				'a class, static, with computed keys',
+				"const R = 'R';\nconst S = 'S';\nexport class C { static get [R]() @{ <b /> } static set [R](v: unknown) @{ <i /> } static get [S]() @{ <u /> } }\nexport const target = C;",
+			],
+		])('keeps the getters and setters of %s', (_case, source) => {
+			const { code } = compile(source, 'App.tsrx');
+			expect(virtual_parse_diagnostics(code), code).toEqual([]);
+
+			const module = { exports: /** @type {Record<string, any>} */ ({}) };
+			const commonjs = ts.transpileModule(code, {
+				compilerOptions: {
+					jsx: ts.JsxEmit.React,
+					jsxFactory: 'h',
+					module: ts.ModuleKind.CommonJS,
+					target: ts.ScriptTarget.ES2022,
+				},
+			}).outputText;
+			new Function('module', 'exports', 'h', commonjs)(
+				module,
+				module.exports,
+				(/** @type {string} */ type) => ({ type }),
+			);
+			const { target } = module.exports;
+			const r = /** @type {PropertyDescriptor} */ (Object.getOwnPropertyDescriptor(target, 'R'));
+			const s = /** @type {PropertyDescriptor} */ (Object.getOwnPropertyDescriptor(target, 'S'));
+
+			expect([r.get?.call(target).type, typeof r.set, s.get?.call(target).type], code).toEqual([
+				'b',
+				'function',
+				'u',
+			]);
+		});
+	});
+
 	describe(`[${name}] static JSX hoisting`, () => {
 		/**
 		 * Runs compiled output with JSX elements as `{ type, props }` objects
@@ -7390,6 +7455,69 @@ export function App() @{
 					[...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]),
 				).toEqual(hoistsStaticJsx ? statics : []);
 				expect(run_result(code)).toEqual(expected);
+			},
+		);
+
+		it.each([
+			[
+				'methods of an object',
+				'export const o = { a() @{ <b /> }, b() @{ <i /> } };\nexport const result = () => [o.a().type, o.b().type];',
+			],
+			[
+				'methods with the same name in two objects',
+				'export const o = { f() @{ <b /> } };\nexport const p = { f() @{ <i /> } };\nexport const result = () => [o.f().type, p.f().type];',
+			],
+			[
+				'methods with the same name in two classes',
+				'class A { f() @{ <b /> } }\nclass B { f() @{ <i /> } }\nexport const result = () => [new A().f().type, new B().f().type];',
+			],
+			[
+				'two getters',
+				'export const o = { get a() @{ <b /> }, get b() @{ <i /> } };\nexport const result = () => [o.a.type, o.b.type];',
+			],
+			[
+				'arrow functions with no name',
+				'export const list = [() => @{ <b /> }, () => @{ <i /> }];\nexport const result = () => list.map((f) => f().type);',
+			],
+		])('gives each static of %s a name of its own', (_case, source) => {
+			const { code } = compile(source, 'App.tsrx');
+			const names = [...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]);
+			expect(new Set(names).size, code).toBe(hoistsStaticJsx ? 2 : 0);
+			expect(names.length).toBe(hoistsStaticJsx ? 2 : 0);
+			expect(run_result(code)).toEqual(['b', 'i']);
+		});
+
+		it.each([
+			[
+				'an earlier function',
+				// The first arrow's two statics fold into one. The second spends an id
+				// on its spread props, and its static takes the name the fold left.
+				`export const list = [
+	() => @{ <><b /><i /></> },
+	(p: any) => @{ <><input {...p} ref={p.ref} /><u /></> },
+];`,
+				['TSRXTemplate__static1', 'TSRXTemplate__static2'],
+			],
+			[
+				'a later function',
+				// The second function's `<i />` has the first one's name until the
+				// fold takes it in, which leaves the names as they were.
+				`export const list = [
+	(p: any) => @{ <><input {...p} ref={p.ref} /><u /></> },
+	(p: any) => {
+		if (p) return <><b /><i /></>;
+		return <em />;
+	},
+];`,
+				['TSRXTemplate__static2', 'TSRXTemplate__static1', 'TSRXTemplate__static3'],
+			],
+		])(
+			'keeps the names when a fold in %s takes in the static that collided',
+			(_case, source, statics) => {
+				const { code } = compile(source, 'App.tsrx');
+				expect(
+					[...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]),
+				).toEqual(hoistsStaticJsx ? statics : []);
 			},
 		);
 
