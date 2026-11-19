@@ -3120,6 +3120,27 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			}
 		});
 
+		it("rejects a jump out of a function's `@{ … }` body, as out of a `{ … }` body", () => {
+			for (const [body, code] of [
+				['const f = () => @{ if (item) break; <b /> };', 'TS1105'],
+				['const f = () => @{ if (item) continue; <b /> };', 'TS1104'],
+				['function f() @{ if (item) break outer; <b /> }', 'TS1105'],
+			]) {
+				const source = `export function App({ items }: { items: string[] }) @{
+					outer: for (const item of items) {
+						${body}
+						console.log(f);
+					}
+					<p />
+				}`;
+				const keyword = body.includes('continue') ? 'continue' : 'break';
+				const expected = expect.objectContaining({ code, pos: source.indexOf(keyword) });
+
+				expect(() => compile(source, 'App.tsrx'), body).toThrow(expected);
+				expect(() => compile(source, 'App.tsrx', { collect: true }), body).toThrow(expected);
+			}
+		});
+
 		it('allows a jump to a loop, `switch` or label inside the `@try` body or block it is in', () => {
 			for (const block of [
 				'@try { for (const x of items) { if (x) continue; console.log(x); } <b /> } @catch (e) { <i /> }',
