@@ -273,6 +273,29 @@ ruleTester.run('no-unreachable', rule, {
 				{ messageId: 'unreachableCode', line: 9 },
 			],
 		},
+		// An inline body or `@pending` that doesn't reach its end without a throw.
+		{
+			code: async_component(`@try {
+	await log(n);
+	for (;;) {}
+} @catch (error) { <i /> }
+@if (n) { <u /> }`),
+			errors: [
+				{ messageId: 'unreachableCode', line: 6 },
+				{ messageId: 'unreachableCode', line: 7 },
+			],
+		},
+		{
+			code: async_component(`@try { <b /> } @pending {
+	await log(n);
+	for (;;) {}
+} @catch (error) { <i /> }
+@if (n) { <u /> }`),
+			errors: [
+				{ messageId: 'unreachableCode', line: 6 },
+				{ messageId: 'unreachableCode', line: 7 },
+			],
+		},
 		// The other forms the compiler keeps in the component: `yield`, `for
 		// await` and `await using`.
 		...[
