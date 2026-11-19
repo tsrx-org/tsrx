@@ -584,6 +584,17 @@ type Mapped<T> = { [K in keyof T]: T[K] };`,
 		).toEqual(['1:43']);
 	});
 
+	it('lints the decorator of an index signature', () => {
+		// ESLint gives every node it visits a parent, and no-undef reads the parent
+		// of each reference scope analysis finds, so a decorator ESLint skipped
+		// crashed it.
+		expect(
+			lint(`export class C { @missing [key: string]: unknown; }`, {
+				rules: { 'no-undef': 'error' },
+			}),
+		).toContain("1: no-undef: 'missing' is not defined.");
+	});
+
 	it('visits no comment as a node', () => {
 		// ESLint leaves alone a comment that is all a JSX expression container
 		// holds, but only when it finds the container's empty expression there.
@@ -622,6 +633,7 @@ const Anonymous = class extends Base<string> {};
 const typed = <Box<string> label="a" />;
 class Recovered {
 	@dec static {}
+	@dec [key: string]: unknown;
 }
 export function App() @{
 	@try { <b /> } @catch (error, reset) { <i onClick={reset}>{String(error)}</i> }

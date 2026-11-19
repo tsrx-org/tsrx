@@ -76,8 +76,9 @@ const eslint_visitor_keys: Record<string, readonly string[]> = {
 	ClassExpression: CLASS_KEYS,
 	MethodDefinition: ['decorators', 'key', 'typeParameters', 'value'],
 	// The parser keeps the decorators of a static block, which TypeScript
-	// rejects (TS1206).
+	// rejects (TS1206), and of an index signature, which it accepts.
 	StaticBlock: ['decorators', 'body'],
+	TSIndexSignature: ['decorators', 'parameters', 'typeAnnotation'],
 	TSCallSignatureDeclaration: SIGNATURE_KEYS,
 	TSConstructSignatureDeclaration: SIGNATURE_KEYS,
 	TSConstructorType: SIGNATURE_KEYS,
