@@ -957,6 +957,30 @@ function write_keyword(keyword, node, context) {
 }
 
 const regex_identifier_char = /[\p{ID_Continue}$\u200c\u200d]/u;
+const regex_line_terminator = /\r\n?|[\n\u2028\u2029]/g;
+
+/** @type {{ source: string, line_starts: number[] } | null} */
+let line_starts_of = null;
+
+/**
+ * The offset of a location's position in the source, or -1 when the source
+ * has no such position.
+ * @param {string} source
+ * @param {AST.Position} position
+ * @returns {number}
+ */
+function source_offset(source, position) {
+	if (line_starts_of?.source !== source) {
+		const line_starts = [0];
+		for (const match of source.matchAll(regex_line_terminator)) {
+			line_starts.push(match.index + match[0].length);
+		}
+		line_starts_of = { source, line_starts };
+	}
+	const line_start = line_starts_of.line_starts[position.line - 1];
+	const offset = line_start === undefined ? -1 : line_start + position.column;
+	return offset <= source.length ? offset : -1;
+}
 
 /**
  * The node to print a statement's first keyword (or a block's `{`) from.
@@ -982,15 +1006,18 @@ const regex_identifier_char = /[\p{ID_Continue}$\u200c\u200d]/u;
  * @returns {T}
  */
 function keyword_node(node, keyword, source) {
-	if (!node.loc || source === undefined || typeof node.start !== 'number') return node;
-	const directive = source[node.start] === '@';
-	const start = directive ? node.start + 1 : node.start;
-	const end = start + keyword.length;
+	if (!node.loc || source === undefined) return node;
+	const node_start = source_offset(source, node.loc.start);
+	const directive = node_start >= 0 && source[node_start] === '@';
+	const start = directive ? node_start + 1 : node_start;
+	const next = source.codePointAt(start + keyword.length);
 	if (
+		node_start >= 0 &&
 		source.startsWith(keyword, start) &&
 		!(
 			regex_identifier_char.test(keyword.at(-1) ?? '') &&
-			regex_identifier_char.test(source[end] ?? '')
+			next !== undefined &&
+			(next === 92 || regex_identifier_char.test(String.fromCodePoint(next)))
 		)
 	) {
 		if (!directive) return node;

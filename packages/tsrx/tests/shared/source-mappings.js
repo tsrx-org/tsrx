@@ -989,15 +989,18 @@ export async function App() @{
 					if (/\w/.test(source[offset - 1] ?? '') && /\w/.test(source[offset] ?? '')) {
 						misplaced.push(`inside a word: ${describe_segment()}`);
 					}
-					// A keyword that ends where the next segment starts ends where the
-					// keyword ends in the source, after the `@` of a directive.
+					// A keyword that a segment ends after maps from where the source has
+					// it, after the `@` of a directive, and a keyword or block `{` ends
+					// where it does there. A keyword the source doesn't have there maps
+					// no end. (The printer also writes the `{` of an expression container
+					// from the expression's start.)
 					const next = segments[index + 1];
 					const text = lines[line].slice(column, next?.column);
 					if (!next || !/^(?:[a-z]+|\{)$/.test(text)) return;
 					const keyword_start = source[offset] === '@' ? offset + 1 : offset;
 					if (
-						next.offset === offset + text.length &&
-						!(next.offset === keyword_start + text.length && source.startsWith(text, keyword_start))
+						(text !== '{' && !source.startsWith(text, keyword_start)) ||
+						(next.offset === offset + text.length && next.offset !== keyword_start + text.length)
 					) {
 						misplaced.push(`keyword end: ${describe_segment()}`);
 					}
