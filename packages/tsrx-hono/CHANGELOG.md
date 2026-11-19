@@ -1,5 +1,35 @@
 # @tsrx/hono
 
+## 0.3.8
+
+### Patch Changes
+
+- [#1414](https://github.com/tsrx-org/tsrx/pull/1414)
+  [`2913244`](https://github.com/tsrx-org/tsrx/commit/291324419187552e6ab75b4567b425e04d85befc)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The React, Preact and
+  Hono targets now import the `TsrxTryBody` that renders a `@try` or `@pending`
+  body as `__TsrxTryBody`, as they already did for `Suspense`, `Fragment` and
+  `TsrxErrorBoundary`. An authored binding named `TsrxTryBody`, imported or local,
+  no longer collides with the generated import or takes the place of the generated
+  element, which then rendered the authored component instead of the body.
+
+  On Hono, the `Suspense` fallback is now always a node. An empty `@pending`
+  passes an empty fragment instead of `null`, and any other `@pending` body is
+  wrapped in a fragment, since it lowers to an expression that can still give
+  `null`, such as a lone `@if` that renders nothing. Before, once the body
+  suspended behind a `null` fallback, Hono's server renderer called
+  `fallback.toString()`: the `@catch` showed
+  `TypeError: Cannot read properties of null (reading 'toString')`, or without one
+  the stream closed empty. Hono's DOM renderer let the suspension through, so
+  `render()` threw the promise and nothing rendered.
+
+- Updated dependencies
+  [[`f86f19e`](https://github.com/tsrx-org/tsrx/commit/f86f19e3056d2aaae8ea3c7494effbba57b12a45),
+  [`57de0fc`](https://github.com/tsrx-org/tsrx/commit/57de0fccba61bc6f9d93e4d7540e73d770fd50a3),
+  [`7607d2b`](https://github.com/tsrx-org/tsrx/commit/7607d2b1bc87622b60aeefa4362669c76b8f87c9),
+  [`2913244`](https://github.com/tsrx-org/tsrx/commit/291324419187552e6ab75b4567b425e04d85befc)]:
+  - @tsrx/core@0.6.8
+
 ## 0.3.7
 
 ### Patch Changes
