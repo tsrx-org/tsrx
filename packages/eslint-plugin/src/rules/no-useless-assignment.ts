@@ -77,6 +77,8 @@ const rule: Rule.RuleModule = {
 		const alternatives = new Map<Piece, Set<Piece>>();
 		const outer_segments: Set<Segment>[] = [];
 		let current = new Set<Segment>();
+		const outer_identifier_ends: number[] = [];
+		let last_identifier_end = -1;
 		const tries = new Map<unknown, TryPieces>();
 
 		// The segment-like view of the pieces each copy sees, with or without
@@ -144,12 +146,16 @@ const rule: Rule.RuleModule = {
 			onCodePathStart(...args) {
 				outer_segments.push(current);
 				current = new Set();
+				outer_identifier_ends.push(last_identifier_end);
+				last_identifier_end = -1;
 				plain.onCodePathStart?.(...args);
 				cut.onCodePathStart?.(...args);
 				joined.onCodePathStart?.(...args);
 			},
 			onCodePathEnd(...args) {
 				current = outer_segments.pop()!;
+				// The outer code path goes on after the nested function's code.
+				last_identifier_end = Math.max(last_identifier_end, outer_identifier_ends.pop()!);
 				plain.onCodePathEnd?.(...args);
 				cut.onCodePathEnd?.(...args);
 				joined.onCodePathEnd?.(...args);
@@ -223,9 +229,21 @@ const rule: Rule.RuleModule = {
 		const merged: Listeners = { ...listeners };
 		for (const key of new Set([...Object.keys(plain), ...Object.keys(cut)])) {
 			if (key in listeners) continue;
-			const copies = [plain[key], cut[key], joined[key]];
 			merged[key] = (...args) => {
-				for (const listener of copies) listener?.(...args);
+				plain[key]?.(...args);
+				// The core rule places each read by the first and last identifier it
+				// visits in a segment. The traversal visits a few identifiers after
+				// later code (a label after its block, type arguments after the call's
+				// arguments), and such an identifier could stretch a piece back over
+				// code before a `@try` boundary. The cut copies see only identifiers
+				// that come after the last one they saw in the code path.
+				const node = args[0];
+				if (node?.type === 'Identifier' || node?.type === 'JSXIdentifier') {
+					if (node.range[0] < last_identifier_end) return;
+					last_identifier_end = node.range[1];
+				}
+				cut[key]?.(...args);
+				joined[key]?.(...args);
 			};
 		}
 		return merged as Rule.RuleListener;

@@ -112,6 +112,23 @@ ruleTester.run('no-useless-assignment', rule, {
 				{ messageId: 'unnecessaryAssignment', line: 5, column: 9 },
 			],
 		},
+		{
+			code: `export function F(log) {
+	let x = 0;
+	L: {
+		log(x);
+		const view = @{
+			@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+		};
+	}
+	x = 3;
+	log(x);
+}`,
+			errors: [
+				{ messageId: 'unnecessaryAssignment', line: 6, column: 11 },
+				{ messageId: 'unnecessaryAssignment', line: 6, column: 39 },
+			],
+		},
 		// In a `finally` block, code path analysis keeps the path of a `return`
 		// apart from the normal one.
 		{
