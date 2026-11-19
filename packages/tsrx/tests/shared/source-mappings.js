@@ -2946,6 +2946,9 @@ function C() @{
 			["import data from './label' with { type: 'json' }", 'import attributes'],
 			["import * as all from './label';", 'a namespace import'],
 			["import './label'", 'no names'],
+			// The printer writes the name without its escape, and adds a `;`, which
+			// the import's end maps after (#235).
+			["import { \\u006cabel } from './label'", 'an escaped name and no semicolon'],
 		])('maps the whole import %j (%s)', (statement) => {
 			const source = `${statement}
 

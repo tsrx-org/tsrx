@@ -745,7 +745,9 @@ export function convert_source_map_to_mappings(
 	 * The generated offset where an import ends, after its `;`. The printer
 	 * records the import's end after the `;`. When the printer adds a `;` that
 	 * the source does not have, the end of the module string maps to the
-	 * generated position before it.
+	 * generated position before it, and esrap (2.4.2) records that position
+	 * first. An import the editor's code doesn't print as written, such as one
+	 * with an escaped name, ends that way.
 	 * @param {(AST.ImportDeclaration | AST.TSRXImportDeclaration) & AST.NodeWithLocation} node
 	 * @param {number} generated_start
 	 * @returns {number | undefined}
@@ -1496,7 +1498,11 @@ export function convert_source_map_to_mappings(
 
 				// Map the 'import' keyword and an authored `;` as tokens. The whole
 				// statement (TypeScript reports an import whose names are all
-				// unused on it) maps through `add_import_mapping`.
+				// unused on it) maps through `add_import_mapping`. The printer's
+				// source map has both tokens, but only these make them mappings,
+				// with every feature, and TypeScript 7 applies an Organize Imports
+				// edit only inside spans of the same text whose features match
+				// (see `add_re_export_source_mappings`).
 				if (has_location(node)) {
 					tokens.push({
 						source: 'import',
