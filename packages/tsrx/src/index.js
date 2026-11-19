@@ -200,6 +200,7 @@ export {
 	SPREAD_REF_BAGS_INTERNAL_NAME,
 	SUSPENSE_INTERNAL_NAME,
 	switch_statement_to_jsx_child as switchStatementToJsxChild,
+	TRY_BODY_INTERNAL_NAME,
 	validate_at_most_one_ref_attribute as validateAtMostOneRefAttribute,
 	wrap_edge_whitespace as wrapEdgeWhitespace,
 } from './transform/jsx/index.js';
