@@ -1,5 +1,88 @@
 # @tsrx/solid
 
+## 0.4.5
+
+### Patch Changes
+
+- [#1383](https://github.com/tsrx-org/tsrx/pull/1383)
+  [`7e7fb73`](https://github.com/tsrx-org/tsrx/commit/7e7fb7361e62df0368dca7444c20b7a20b312a57)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Require esrap 2.4.2,
+  which prints a parenthesized string statement, the import attributes of an
+  import type, and the `?` of an optional destructured parameter itself
+  ([#235](https://github.com/tsrx-org/tsrx/issues/235)). The printer's own
+  workarounds for these are removed. With 2.4.2, source maps also map the binding
+  of a namespace import (`import * as themes`), and the editor mapping of
+  `<style apply={theme}>` covers its closing `}`.
+
+- [#1381](https://github.com/tsrx-org/tsrx/pull/1381)
+  [`b274983`](https://github.com/tsrx-org/tsrx/commit/b274983a48d0a9d08724b98e51d18e9ac797827b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An element whose only
+  child is text with a space or tab at an edge gets that text as one string again.
+  The text prints as one literal, `<textarea>{' a '}</textarea>`, instead of the
+  edge whitespace and the text as three children (`{' '}a{' '}`). React's
+  `<textarea>` no longer throws, `<title>` renders its text, a `<pre>` keeps a
+  leading `&[#10](https://github.com/tsrx-org/tsrx/issues/10);`, and a component
+  whose `children` is typed `string` gets a string, in the build and in the editor
+  (TS2322). The editor maps the literal to the text, so a type error on it shows
+  at the text and `@` completions still work there. The literal reads the text as
+  React, Preact and Hono already did, so on Solid and Vue such a text now renders
+  that way too: Solid keeps a run of spaces or tabs inside it as written instead
+  of one space, Solid and Vue read `&lang;` as TypeScript does (U+2329), and Vue
+  and SWC keep a line feed written as
+  `&[#10](https://github.com/tsrx-org/tsrx/issues/10);` at the text's edge. A
+  fragment's only text and text beside other children print as before, and so does
+  a text that spans lines or holds whitespace other than spaces and tabs, a
+  character reference the compilers read differently from the parser (such as
+  `&check;`, which the parser leaves as written), or a reference to a control
+  character other than a tab or a line feed, or to U+2028, U+2029 or U+FEFF.
+
+- [#1377](https://github.com/tsrx-org/tsrx/pull/1377)
+  [`a3328f9`](https://github.com/tsrx-org/tsrx/commit/a3328f90581dfd159ef9c79cbb1f790ee7b009a3)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Vue and Solid, an
+  `await` in a plain async function's JSX that the target's JSX compiler would
+  move into an effect, a getter or a callback is now reported as TSRX2021 at the
+  authored `await`, with its own message ("does not support `await` in this part
+  of the template … Await the value before the template"), instead of compiling to
+  output the build rejects with
+  `` `await` is only allowed within async functions ``
+  ([#1370](https://github.com/tsrx-org/tsrx/issues/1370)). The check works like
+  the TSRX2034 check for a `yield`
+  ([#259](https://github.com/tsrx-org/tsrx/issues/259)): it reads TSRX's final
+  output as that compiler does. It covers a `@{ … }` template, plain JSX such as
+  `const el = <p>{await t}</p>;`, and JSX at the module's top level. On Vue, that
+  is any `await` in an element or fragment: `<p>{await load()}</p>`, an attribute
+  value, an `@if`, `@switch` or `@for` body inside an element, and a nested `@for`
+  whose inner loop awaits. An awaiting `@for` that is the template's only output
+  still compiles, since TSRX awaits `map_iterable_async` in the function itself.
+  On Solid, babel-preset-solid compiles an `await` as it compiles a `yield`, so
+  the same values are reported: `<p>{await load()}</p>` is, `<p>{await text}</p>`
+  stays in place and still compiles, and a server build (`ssr: true`) also follows
+  the SSR output. On Vue, a host spread that awaits is now evaluated before the
+  element, as one that yields is
+  ([#1108](https://github.com/tsrx-org/tsrx/issues/1108)), so
+  `<input {...(await attrs)} />` compiles and builds.
+
+  Solid's check now also counts TSRX's generated control-flow components
+  (`__Show`, `__Switch`/`__Match`, `__ErrorBoundary`, `__Loading`) as components,
+  as babel-preset-solid does for a tag that doesn't start with a letter. A static
+  value in an `@if`, `@switch`, `@try` or `@pending` body, such as
+  `@if (c) { <p>{yield t}</p> }`, is passed to that component in a getter, so
+  TSRX2034 now reports the `yield` there, and TSRX2021 the `await`, where the
+  build failed before. A static value of a control-flow component in a fragment,
+  such as `<>@if (yield t) { <p>a</p> }</>`, stays in place and is no longer
+  reported.
+
+  Setup statements before the output, nested async functions, and React, Preact
+  and Hono output are unchanged.
+
+- Updated dependencies
+  [[`efee772`](https://github.com/tsrx-org/tsrx/commit/efee77286586a77c15ddcaf4294f4247ecb84d18),
+  [`7e7fb73`](https://github.com/tsrx-org/tsrx/commit/7e7fb7361e62df0368dca7444c20b7a20b312a57),
+  [`b274983`](https://github.com/tsrx-org/tsrx/commit/b274983a48d0a9d08724b98e51d18e9ac797827b),
+  [`c4e6c8f`](https://github.com/tsrx-org/tsrx/commit/c4e6c8f0c1be4b82de6f86ce501f0b31c1245304),
+  [`a3328f9`](https://github.com/tsrx-org/tsrx/commit/a3328f90581dfd159ef9c79cbb1f790ee7b009a3)]:
+  - @tsrx/core@0.6.5
+
 ## 0.4.4
 
 ### Patch Changes
