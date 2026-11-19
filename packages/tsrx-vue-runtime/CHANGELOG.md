@@ -1,5 +1,96 @@
 # @tsrx/vue-runtime
 
+## 0.2.3
+
+### Patch Changes
+
+- [#1378](https://github.com/tsrx-org/tsrx/pull/1378)
+  [`c4e6c8f`](https://github.com/tsrx-org/tsrx/commit/c4e6c8f0c1be4b82de6f86ce501f0b31c1245304)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, a
+  keyed `@for` whose body can skip a row (an `@if` without `@else`) or that has
+  `@empty` now keeps each row's state when its rows move
+  ([#178](https://github.com/tsrx-org/tsrx/issues/178)). These loops went through
+  `map_iterable`, which rendered every row again on each change; they now render
+  through `VaporFor` like other keyed loops with a one-element body. A skipped row
+  renders an empty fragment. `@empty` and the rows read the source through one
+  `computed`, so it is walked once
+  ([#863](https://github.com/tsrx-org/tsrx/issues/863)). Such a loop keeps
+  `map_iterable` when it has no key, when its body has setup statements, when its
+  source, head, key, body or `@empty` awaits or yields, when its head destructures
+  an array, has a default or a computed key, or collects the rest of an object
+  (`{ id, ...rest }`), and, with `@empty`, when its row is a `@switch`. In a loop
+  that moves, the key is read for every item, also one the body skips, so a key
+  that only holds for the rows the body renders (`key item.data!.id` with
+  `@if (item.data)`) now throws when the loop mounts; and the source is walked to
+  the end before the rows render, as in other `VaporFor` loops.
+
+  `VaporFor` now gets its items from `for_items`, a new helper in
+  `@tsrx/vue-runtime/iterable`, so it walks the source the way `for...of` does
+  ([#1147](https://github.com/tsrx-org/tsrx/issues/1147)): it follows an array's
+  own `Symbol.iterator` and reads a `Symbol.iterator` getter once. A reactive
+  array (`reactive([])`, or `ref([]).value`) is passed as it is, so `VaporFor`
+  still tracks it when it is changed in place. A missing source (`null` or
+  `undefined`) still renders no rows, and a keyed loop with `@empty` now renders
+  `@empty` for it, where `map_iterable` threw. A number or a plain object, which
+  `for...of` can't walk, now throws
+  `TypeError: The loop target has to be an Iterable`, as it already did in the
+  loops that use `map_iterable`; `VaporFor` rendered the numbers from 1 or the
+  object's values.
+
+  A `VaporFor` row that picks between `@if` and `@else` now switches branch when
+  its condition changes. The row returned the choice, which Vapor evaluated once;
+  it is now a fragment around the choice, which vue-jsx-vapor turns into a
+  `createIf`.
+
+  Two limits that every `VaporFor` loop already had now apply to the keyed loops
+  that moved to it, as a deliberate trade for keeping their rows. With
+  vue-jsx-vapor 3.2.29 they don't render on the server: `VaporFor` calls
+  `createFor`, which Vue's server build doesn't have, so server rendering throws
+  (a loop with `@empty` still renders it for an empty source). And a plain array,
+  such as a `shallowRef`'s value, changed in place and then announced with
+  `triggerRef` doesn't update them, since Vapor hands a component prop on only
+  when its value changes.
+
+  The `renderForOf` platform hook in `@tsrx/core` gets a fifth argument that
+  builds the `@empty` block's render statements.
+
+- [#1379](https://github.com/tsrx-org/tsrx/pull/1379)
+  [`0a9f334`](https://github.com/tsrx-org/tsrx/commit/0a9f334696e37f2486cc84536e4ef24afd696665)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Vue, a throw in a
+  `@pending` body now reaches `@catch`
+  ([#1310](https://github.com/tsrx-org/tsrx/issues/1310)). The body renders
+  through a new `TsrxPendingBody` component in the `Suspense` fallback slot, which
+  hands the throw to Vue's error handling. Before, Vapor rendered the fallback
+  slot outside that handling, so the throw ended `app.mount()` and neither
+  `@catch` nor `app.config.errorHandler` saw it. The same `@try`'s `@catch` shows
+  it now, or an enclosing one when the `@try` has none, and it stays when the
+  `@try` body's async component resolves. With no `@catch` anywhere, the throw
+  goes to `app.config.errorHandler`.
+
+  That includes a `@try` inside an element, a child component or a keyed `@for`
+  row under an outer `@try` with `@catch`: its own `@catch` shows its `@pending`
+  throw, where the outer `@catch` used to replace everything, the whole list for a
+  row. An error that a showing `@pending` body raises after its render, from a
+  reactive expression on an update, an event handler or `onMounted`, now shows
+  `@catch` too. Before, nothing showed it or reported it, and 3 nodes stayed in
+  the DOM after unmount.
+
+  `TsrxErrorBoundary` can now also replace a `Suspense` it renders when an error
+  reaches it after the render, which a component in a `@pending` body that throws
+  in setup needs: that left the boundary empty before. When it replaces its
+  content after the render, it no longer leaves empty text nodes behind: a
+  rejected async component in a `@try` body left one after unmount, each reset
+  from an empty `@catch` to a `v-if` root left one, and a `@try` whose body is a
+  bare keyed `@for` left two after a row threw and the app unmounted. Content that
+  has no anchor of its own, such as a `Suspense` or a VDOM component that is the
+  whole `@try` body, now has an empty text node after it; `innerHTML` doesn't
+  change.
+
+  The `@pending` body still runs only while the `@try` body suspends, as before.
+  Its setup code now runs with `TsrxPendingBody` as the current instance, instead
+  of the bridge instance Vue makes for the slot; `inject` there reads the same
+  providers as before. Type-only output is unchanged.
+
 ## 0.2.2
 
 ### Patch Changes
