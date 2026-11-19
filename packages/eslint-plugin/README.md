@@ -140,9 +140,10 @@ after `tsrx.configs.react`.
     before the body and the code after the `@try`. The rule doesn't know the
     target, so it can drop the report of a value such a `@pending` overwrites.
   - Like the core rule, it counts a read in a branch that can never run, such as
-    `@if (false) { … }`, and doesn't see a write in a function the code calls. So
-    such a read after a `@try`, or one after a call that overwrites the value, can
-    drop the report of a value the `@catch` overwrites.
+    `@if (false) { … }`, and a `typeof x` in a type, and doesn't see a write in a
+    function the code calls. So such a read after a `@try`, or one after a call
+    that overwrites the value, can drop the report of a value the `@catch`
+    overwrites.
 
   It keeps the core rule's reports, cutting nothing, for a `@try`:
 

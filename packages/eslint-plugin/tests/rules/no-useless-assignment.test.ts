@@ -242,6 +242,43 @@ ruleTester.run('no-useless-assignment', rule, {
 				{ messageId: 'unnecessaryAssignment', line: 7, column: 11 },
 			],
 		},
+		// A class's static block runs with it.
+		{
+			code: `export function A(log) {
+	let x = 0;
+	log(x);
+	const {
+		[(class {
+			static {
+				x = 3;
+			}
+		},
+		'view')]: view,
+	} = {
+		view: @{
+			@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+		},
+	};
+	log(x);
+	return view;
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 13, column: 11 }],
+		},
+		// The core rule doesn't see a `for…of` loop assign its target.
+		{
+			code: `export function A(log) {
+	let x: unknown = 0;
+	log(x);
+	for (x of [
+		@{
+			@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+		},
+	]) {
+		log(x);
+	}
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 6, column: 11 }],
+		},
 		// A `@for`'s key runs after the iterable.
 		{
 			code: `export function A(log) @{

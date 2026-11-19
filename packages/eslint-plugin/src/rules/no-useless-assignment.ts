@@ -100,11 +100,15 @@ const NOT_CHILDREN = new Set([
 	'innerComments',
 ]);
 
+const FUNCTIONS = new Set(['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression']);
+
 /**
- * Whether a node, outside the functions in it, assigns or updates anything.
+ * Whether a node, outside the functions in it, assigns or updates anything. A
+ * class's static block and field values count, since they run with it or
+ * later.
  */
 function writes(node: any): boolean {
-	if (!node || typeof node.type !== 'string' || CODE_PATH_STARTS.has(node.type)) return false;
+	if (!node || typeof node.type !== 'string' || FUNCTIONS.has(node.type)) return false;
 	if (node.type === 'AssignmentExpression' || node.type === 'UpdateExpression') return true;
 	return Object.entries(node).some(
 		([key, value]) =>
@@ -113,22 +117,25 @@ function writes(node: any): boolean {
 }
 
 /**
- * The parts of a node that code path analysis runs before one of its other
- * parts, though they really run after it: a destructuring target runs after
- * its value, and a `@for`'s index and key after the iterable and
- * around the body. (Code path analysis runs a `for…of` target after the
- * iterable itself.)
+ * Whether a part of a node that code path analysis runs before the child,
+ * though it really runs after it, assigns something: a destructuring target
+ * runs after its value, and a `@for`'s index and key after the iterable and
+ * around the body. Code path analysis runs a `for…in` or `for…of` target
+ * after the iterable, but the core rule doesn't see the loop assign it.
  */
-function runs_late(parent: any, child: unknown): unknown[] {
+function writes_late(parent: any, child: unknown): boolean {
 	switch (parent.type) {
 		case 'VariableDeclarator':
-			return child === parent.init ? [parent.id] : [];
+			return child === parent.init && writes(parent.id);
 		case 'AssignmentExpression':
-			return child === parent.right ? [parent.left] : [];
+			return child === parent.right && writes(parent.left);
+		case 'ForInStatement':
+		case 'ForOfStatement':
+			return child === parent.right && parent.left.type !== 'VariableDeclaration';
 		case 'JSXForExpression':
-			return child === parent.loop ? [parent.index, parent.key] : [];
+			return child === parent.loop && (writes(parent.index) || writes(parent.key));
 		default:
-			return [];
+			return false;
 	}
 }
 
@@ -155,7 +162,7 @@ function runs_in_order(node: any): boolean {
 		) {
 			return true;
 		}
-		if (runs_late(parent, child).some(writes)) return false;
+		if (writes_late(parent, child)) return false;
 		if (parent.type === 'JSXForExpression') {
 			if (child === parent.loop) {
 				if (parent.empty && previous === child.body) return false;
