@@ -155,8 +155,9 @@ after `tsrx.configs.react`.
     `@switch` arm before the last, since only one arm renders; in the body of a
     `@for` with `@empty`, which renders only when the body doesn't; and anywhere
     but statements, template children, the blocks of `@if`, `@for` and `@try`, and
-    the parts of an expression that run in order, which leaves out a `@for`'s
-    index and key and a destructuring default.
+    the parts of an expression that run in order, which leaves out attribute
+    values (Solid sets them in effects, after the children), a `@for`'s index and
+    key, and a destructuring default.
 
   It also still reports a value read only in a block that code path analysis holds
   unreachable, such as a `@catch` after a body that throws, or only in a block

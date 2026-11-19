@@ -79,8 +79,8 @@ const ORDERED_PARTS: Record<string, string[]> = {
 	TSAsExpression: ['expression'],
 	TSSatisfiesExpression: ['expression'],
 	TSNonNullExpression: ['expression'],
-	JSXElement: ['openingElement', 'children'],
-	JSXOpeningElement: ['attributes'],
+	// Not the attributes: Solid sets them in effects, after the children.
+	JSXElement: ['children'],
 	JSXFragment: ['children'],
 	JSXExpressionContainer: ['expression'],
 	JSXAttribute: ['value'],

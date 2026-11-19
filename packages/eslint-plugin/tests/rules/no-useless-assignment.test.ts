@@ -140,11 +140,6 @@ ruleTester.run('no-useless-assignment', rule, {
 		@for (const item of [x]; key item) { <li>{item}</li> }
 	</ul>
 }`,
-		// A `@try` in an attribute's value.
-		`export function A({ n, log, Card }) @{
-	let x = 0;
-	<Card header={<div>@try { x = 1; <b>{x}</b> } @catch (e) { <i>{x}</i> }</div>} />
-}`,
 		// An escaped name is still a read.
 		component(`let x = 0;`, `@try { log(n); x = 1; <>{x}</> } @catch (e) { <>{\\u0078}</> }`),
 		// Code without `@try` is left to the core rule.
@@ -219,6 +214,15 @@ ruleTester.run('no-useless-assignment', rule, {
 	return views;
 }`,
 			errors: [{ messageId: 'unnecessaryAssignment', line: 6, column: 10 }],
+		},
+		// A `@try` in an attribute's value isn't cut: Solid sets attributes in
+		// effects, after the children.
+		{
+			code: `export function A({ n, log, Card }) @{
+	let x = 0;
+	<Card header={<div>@try { x = 1; <b>{x}</b> } @catch (e) { <i>{x}</i> }</div>} />
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 2, column: 6 }],
 		},
 		// A computed key in a destructuring target runs after the value, though
 		// code path analysis runs it before.
