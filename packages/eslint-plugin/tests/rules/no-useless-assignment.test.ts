@@ -205,6 +205,59 @@ ruleTester.run('no-useless-assignment', rule, {
 }`,
 			errors: [{ messageId: 'unnecessaryAssignment', line: 6, column: 10 }],
 		},
+		// A computed key in a destructuring target runs after the value, though
+		// code path analysis runs it before.
+		{
+			code: `export function A(log) {
+	let x = 0;
+	log(x);
+	const { [x = 3]: view } = {
+		3: @{
+			@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+		},
+	};
+	log(x);
+	return view;
+}`,
+			errors: [
+				{ messageId: 'unnecessaryAssignment', line: 4, column: 11 },
+				{ messageId: 'unnecessaryAssignment', line: 6, column: 11 },
+			],
+		},
+		{
+			code: `export function A(log) {
+	let x = 0;
+	let view;
+	log(x);
+	({ [x = 3]: view } = {
+		3: @{
+			@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+		},
+	});
+	log(x);
+	return view;
+}`,
+			errors: [
+				{ messageId: 'unnecessaryAssignment', line: 5, column: 6 },
+				{ messageId: 'unnecessaryAssignment', line: 7, column: 11 },
+			],
+		},
+		// A `@for`'s key runs after the iterable.
+		{
+			code: `export function A(log) @{
+	let x = 0;
+	log(x);
+	<div>
+		@for (const item of [@{
+			@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+		}]; index i; key (i, x = 3)) { <p>{x}</p> }
+	</div>
+}`,
+			errors: [
+				{ messageId: 'unnecessaryAssignment', line: 6, column: 11 },
+				{ messageId: 'unnecessaryAssignment', line: 7, column: 24 },
+			],
+		},
 		// Code path analysis runs a `@for`'s key before the loop, so the code
 		// after a `@try` there includes the iterable, which runs first.
 		{

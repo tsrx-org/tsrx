@@ -90,6 +90,48 @@ const ORDERED_PARTS: Record<string, string[]> = {
 	JSXSwitchCase: ['consequent'],
 };
 
+const NOT_CHILDREN = new Set([
+	'parent',
+	'metadata',
+	'loc',
+	'range',
+	'leadingComments',
+	'trailingComments',
+	'innerComments',
+]);
+
+/**
+ * Whether a node, outside the functions in it, assigns or updates anything.
+ */
+function writes(node: any): boolean {
+	if (!node || typeof node.type !== 'string' || CODE_PATH_STARTS.has(node.type)) return false;
+	if (node.type === 'AssignmentExpression' || node.type === 'UpdateExpression') return true;
+	return Object.entries(node).some(
+		([key, value]) =>
+			!NOT_CHILDREN.has(key) && (Array.isArray(value) ? value.some(writes) : writes(value)),
+	);
+}
+
+/**
+ * The parts of a node that code path analysis runs before one of its other
+ * parts, though they really run after it: a destructuring target runs after
+ * its value, and a `@for`'s index and key after the iterable and
+ * around the body. (Code path analysis runs a `for…of` target after the
+ * iterable itself.)
+ */
+function runs_late(parent: any, child: unknown): unknown[] {
+	switch (parent.type) {
+		case 'VariableDeclarator':
+			return child === parent.init ? [parent.id] : [];
+		case 'AssignmentExpression':
+			return child === parent.right ? [parent.left] : [];
+		case 'JSXForExpression':
+			return child === parent.loop ? [parent.index, parent.key] : [];
+		default:
+			return [];
+	}
+}
+
 /**
  * Whether the code that code path analysis runs after a node, in its code
  * path, can really run after it. It can't in a `@switch` arm before the last,
@@ -97,7 +139,9 @@ const ORDERED_PARTS: Record<string, string[]> = {
  * renders, nor in the body of a `@for` with `@empty`, which renders only when
  * the body doesn't, nor in a `@for`'s index or key, which run before the loop
  * for code path analysis but after the iterable, nor in a destructuring
- * default, which code path analysis runs before the value it defaults.
+ * default, which code path analysis runs before the value it defaults. Nor
+ * can it when code path analysis runs an assignment before the node that
+ * really runs after it, as in a computed key of a destructuring target.
  */
 function runs_in_order(node: any): boolean {
 	for (
@@ -111,6 +155,7 @@ function runs_in_order(node: any): boolean {
 		) {
 			return true;
 		}
+		if (runs_late(parent, child).some(writes)) return false;
 		if (parent.type === 'JSXForExpression') {
 			if (child === parent.loop) {
 				if (parent.empty && previous === child.body) return false;
