@@ -2511,13 +2511,17 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 				'the first expression of a sequence',
 				'export function App(props: { counts: { a: number } }) @{\n\tconst k = () => 1;\n\tconst value = (props.counts.a++, k());\n\t<p>{value}</p>\n}\n',
 				'props.counts.a',
+				[],
 			],
 			[
 				'a `@for` key',
 				'export function App(props: { items: { id: number }[] }) @{\n\t<ul>\n\t\t@for (const item of props.items; key item.id) {\n\t\t\t<li />\n\t\t}\n\t</ul>\n}\n',
 				'item.id',
+				// Solid also maps the key function it makes from the key, as a whole
+				// arrow function, from the `{` before it.
+				name === 'solid' ? ['{(item) => item.id'] : [],
 			],
-		])('maps %s from its own text', (_, source, text) => {
+		])('maps %s from its own text', (_, source, text, others) => {
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			const start = source.indexOf(text);
 			const texts = result.mappings
@@ -2530,7 +2534,7 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 						mapping.generatedOffsets[0] + mapping.generatedLengths[0],
 					),
 				);
-			expect(texts).toContain(text);
+			expect(texts).toEqual([...others, text]);
 		});
 	});
 
