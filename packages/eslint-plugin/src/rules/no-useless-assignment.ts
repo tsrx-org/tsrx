@@ -77,8 +77,11 @@ const rule: Rule.RuleModule = {
 		const alternatives = new Map<Piece, Set<Piece>>();
 		const outer_segments: Set<Segment>[] = [];
 		let current = new Set<Segment>();
-		// The end of the last identifier the cut copies saw. Nested functions
-		// lie inside the code around them, so one position serves every code path.
+		// The end of the last identifier the cut copies saw in each code path. A
+		// nested function can be visited after code that follows it, as in a
+		// `@for` whose key comes before its iterable, so each code path starts
+		// over.
+		const outer_identifier_ends: number[] = [];
 		let last_identifier_end = -1;
 		const tries = new Map<unknown, TryPieces>();
 
@@ -152,12 +155,15 @@ const rule: Rule.RuleModule = {
 			onCodePathStart(...args) {
 				outer_segments.push(current);
 				current = new Set();
+				outer_identifier_ends.push(last_identifier_end);
+				last_identifier_end = -1;
 				plain.onCodePathStart?.(...args);
 				cut.onCodePathStart?.(...args);
 				joined.onCodePathStart?.(...args);
 			},
 			onCodePathEnd(...args) {
 				current = outer_segments.pop()!;
+				last_identifier_end = Math.max(last_identifier_end, outer_identifier_ends.pop()!);
 				plain.onCodePathEnd?.(...args);
 				cut.onCodePathEnd?.(...args);
 				joined.onCodePathEnd?.(...args);
@@ -239,8 +245,9 @@ const rule: Rule.RuleModule = {
 				// arguments), and the parser's name for a dynamic tag spans the whole
 				// tag expression. Such an identifier could stretch a piece over code
 				// across a `@try` boundary, so the cut copies see only identifiers that
-				// span their name and come after the last one they saw. Leaving one out
-				// only narrows a piece, which can keep a report but never drop one.
+				// span their name and come after the last one they saw in the code path.
+				// Leaving one out only narrows a piece, which can keep a report but
+				// never drop one.
 				const node = args[0];
 				if (node?.type === 'Identifier' || node?.type === 'JSXIdentifier') {
 					if (node.range[0] < last_identifier_end) return;

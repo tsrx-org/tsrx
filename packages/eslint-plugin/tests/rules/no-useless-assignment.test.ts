@@ -78,6 +78,18 @@ ruleTester.run('no-useless-assignment', rule, {
 		log(view);
 	}
 }`,
+		// A function the traversal visits after code that follows it: a `@for`'s
+		// index and key come before its iterable.
+		`export function A() @{
+	<ul>
+		@for (const item of [(() => @{
+			let x = 0;
+			<div>
+				@try { x = 1; <b>{x}</b> } @catch (e) { <i>{x}</i> }
+			</div>
+		})()]; index i; key i) { <li>{item}</li> }
+	</ul>
+}`,
 		// Code without `@try` is left to the core rule.
 		`function f() { let x = 0; x += 1; return x; }`,
 	],
