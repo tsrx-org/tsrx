@@ -776,6 +776,41 @@ it('reports computed property name errors whatever is inside the brackets in .ts
 	expect(result.output).toContain(`${at(7, '[ key ]')}: error TS2416: Property '[key]' in type`);
 });
 
+it('reports a fallthrough case at its case in .tsrx files', () => {
+	const tsconfig_path = path.join(workspace, 'tsconfig.json');
+	const tsconfig = JSON.parse(fs.readFileSync(tsconfig_path, 'utf8'));
+	tsconfig.compilerOptions.noFallthroughCasesInSwitch = true;
+	fs.writeFileSync(tsconfig_path, JSON.stringify(tsconfig));
+	const lines = [
+		'export function label(n: number): string {',
+		"\tlet out = '';",
+		'\tswitch (n) {',
+		'\t\tcase 1:',
+		"\t\t\tout = 'one';",
+		'\t\tdefault:',
+		"\t\t\tout += 'other';",
+		'\t}',
+		'\treturn out;',
+		'}',
+		'export function Label({ n }: { n: number }) @{',
+		'\tswitch (n) {',
+		'\t\tcase 1:',
+		'\t\t\tconsole.log(n);',
+		'\t\tcase 2:',
+		'\t\t\tbreak;',
+		'\t}',
+		'\t<p>{n}</p>',
+		'}',
+	];
+	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${lines.join('\n')}\n`);
+	const result = run_cli('native');
+	expect(result.status).toBe(2);
+	const ts7029 = 'error TS7029: Fallthrough case in switch.';
+	expect(result.output).toContain(`layout.tsrx(7,3): ${ts7029}`);
+	expect(result.output).toContain(`layout.tsrx(16,3): ${ts7029}`);
+	expect(result.output.match(/TS7029/g)).toHaveLength(2);
+});
+
 it('reports a missing return on a primitive return type in .tsrx files', () => {
 	const line = 'export class Model { value(): number {} }';
 	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${line}\n`);
