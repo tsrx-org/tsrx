@@ -1877,6 +1877,15 @@ function transform_native_tsrx_function(node, { next, state, path }, { nativeBod
 		!saved_helper_state && !helper_state.local && helper_state.statics.length > 0
 			? fold_static_fragments(inner, helper_state)
 			: inner;
+	// Keep the names of the statics left after folding from later functions
+	// with the same base name (see `hoist_static_jsx`). A name the fold took in
+	// stays free, so a module that was valid keeps its names.
+	if (!saved_helper_state) {
+		for (const statement of helper_state.statics) {
+			const declarator = /** @type {AST.VariableDeclaration} */ (statement).declarations[0];
+			state.static_names.add(/** @type {AST.Identifier} */ (declarator.id).name);
+		}
+	}
 	result.metadata = {
 		...strip_function_transform_metadata(result.metadata),
 		native_tsrx_function: true,
@@ -3022,8 +3031,9 @@ function hoist_static_jsx(node, transform_context) {
 	if (holds_unclosed_tag(node)) return null;
 
 	// Skip a name the source already uses, so the static can't redeclare or be
-	// shadowed by an authored `App__static1`, and one another function's
-	// static has: functions with the same name, or none, share a base name.
+	// shadowed by an authored `App__static1`, and one that an earlier function's
+	// static kept: functions with the same name, or none, share a base name (see
+	// `transform_native_tsrx_function`).
 	/** @type {string} */
 	let name;
 	do {
@@ -3032,7 +3042,6 @@ function hoist_static_jsx(node, transform_context) {
 		source_mentions_identifier(transform_context.source, name) ||
 		transform_context.static_names.has(name)
 	);
-	transform_context.static_names.add(name);
 	const id = create_generated_identifier(name);
 	const statement = b.const(id, lower_static_jsx(node, transform_context));
 	helper_state.statics.push(statement);

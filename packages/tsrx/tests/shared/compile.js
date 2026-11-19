@@ -7267,6 +7267,21 @@ export function App() @{
 			expect(run_result(code)).toEqual(['b', 'i']);
 		});
 
+		it('leaves the name of a static a fold takes in to a later function', () => {
+			// The first arrow's two statics fold into one. The second spends an id on
+			// its spread props, and its static takes the name the fold left free.
+			const { code } = compile(
+				`export const list = [
+	() => @{ <><b /><i /></> },
+	(p: any) => @{ <><input {...p} ref={p.ref} /><u /></> },
+];`,
+				'App.tsrx',
+			);
+			expect([...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1])).toEqual(
+				hoistsStaticJsx ? ['TSRXTemplate__static1', 'TSRXTemplate__static2'] : [],
+			);
+		});
+
 		it('hoists an intrinsic tag that shares its name with a later binding', () => {
 			const { code } = compile(
 				'function App() {\n\treturn <div>hello</div>;\n}\nconst div = 1;\nexport const result = () => App().type;',
