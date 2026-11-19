@@ -145,19 +145,26 @@ after `tsrx.configs.react`.
     that overwrites the value, can drop the report of a value the `@catch`
     overwrites.
 
-  It keeps the core rule's reports, cutting nothing, for a `@try`:
+  It keeps the core rule's reports, adding no starts, for a `@try`:
 
   - whose body or `@pending` awaits or yields, since those blocks run in the
     component, in order;
   - where code path analysis follows more than one path at once, as in a `finally`
     block that a `throw` or a `return` can enter;
-  - where code path analysis goes on to code that doesn't follow it: in a
-    `@switch` arm before the last, since only one arm renders; in the body of a
-    `@for` with `@empty`, which renders only when the body doesn't; and anywhere
-    but statements, template children, the blocks of `@if`, `@for` and `@try`, and
-    the parts of an expression that run in order, which leaves out attribute
-    values (Solid sets them in effects, after the children), a `@for`'s index and
-    key, and a destructuring default.
+  - in a `@switch` arm before the last, since code path analysis runs the arms one
+    after another but only one renders, or in the body of a `@for` with `@empty`,
+    which renders only when the body doesn't;
+  - anywhere but statements, template children, the blocks of `@if`, `@for` and
+    `@try`, and the parts of an expression the rule lists as running in order
+    (call arguments, array elements, property values, the branches of `?:`, `&&`
+    and `??`, and a few more). That leaves out attribute values, which Solid sets
+    in effects, after the children; a `@for`'s index and key and a destructuring
+    default, which code path analysis runs out of order; and others, such as the
+    operand of `!`;
+  - whose code path has a part that code path analysis runs before the `@try`'s
+    part though it really runs after it, and that part assigns something, as a
+    computed key `[x = 3]` in a destructuring target or `key (i, x = 3)` on a
+    `@for` does.
 
   It also still reports a value read only in a block that code path analysis holds
   unreachable, such as a `@catch` after a body that throws, or only in a block
