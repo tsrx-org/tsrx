@@ -125,8 +125,28 @@ ruleTester.run('no-useless-assignment', rule, {
 		}]; key pick(<i />)) { <li>{item}</li> }
 	</ul>
 }`,
-		// A `@try` in a `@for`'s key.
-		`export function A({ items, fail, log }) @{
+		// An escaped name is still a read.
+		component(`let x = 0;`, `@try { log(n); x = 1; <>{x}</> } @catch (e) { <>{\\u0078}</> }`),
+		// Code without `@try` is left to the core rule.
+		`function f() { let x = 0; x += 1; return x; }`,
+	],
+	invalid: [
+		// Code path analysis runs a `@for`'s key before the loop, so the code
+		// after a `@try` there includes the iterable, which runs first. The rule
+		// keeps the core rule's answer.
+		{
+			code: `export function A() @{
+	let x = 0;
+	<ul>
+		@for (const item of [x]; key (@{
+			@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+		})) { <li>{item}</li> }
+	</ul>
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 5, column: 11 }],
+		},
+		{
+			code: `export function A({ items, fail, log }) @{
 	<ul>
 		@for (const item of items; key (@{
 			let x = 0;
@@ -134,12 +154,8 @@ ruleTester.run('no-useless-assignment', rule, {
 		}, item.id)) { <li>{item.id}</li> }
 	</ul>
 }`,
-		// An escaped name is still a read.
-		component(`let x = 0;`, `@try { log(n); x = 1; <>{x}</> } @catch (e) { <>{\\u0078}</> }`),
-		// Code without `@try` is left to the core rule.
-		`function f() { let x = 0; x += 1; return x; }`,
-	],
-	invalid: [
+			errors: [{ messageId: 'unnecessaryAssignment', line: 4, column: 8 }],
+		},
 		// A block that runs again after a later one, as the body does after
 		// `@pending` or after `reset()`, isn't modelled: the core rule's answer
 		// holds.

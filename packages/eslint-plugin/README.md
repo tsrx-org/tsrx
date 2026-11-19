@@ -141,10 +141,11 @@ after `tsrx.configs.react`.
   for that `@try`. It keeps the core rule's answers for a `@try` whose body or
   `@pending` awaits or yields, since those blocks run in the component, in order,
   and for a `@try` where code path analysis follows more than one path at once, as
-  in a `finally` block that a `throw` or a `return` can enter. On Hono, a
-  `@pending` that neither awaits nor yields runs in the component, before the body
-  and the code after the `@try`, but the rule doesn't know the target, so it can
-  drop the report of a value such a `@pending` overwrites.
+  in a `finally` block that a `throw` or a `return` can enter, and for a `@try` in
+  a `@for`'s index or key, which code path analysis runs before the loop. On Hono,
+  a `@pending` that neither awaits nor yields runs in the component, before the
+  body and the code after the `@try`, but the rule doesn't know the target, so it
+  can drop the report of a value such a `@pending` overwrites.
 
 ### With `js.configs.recommended`
 

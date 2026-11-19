@@ -43,6 +43,34 @@ function is_tag_expression_name(node: any): boolean {
 	);
 }
 
+/** Nodes whose code starts a code path of its own. */
+const CODE_PATH_STARTS = new Set([
+	'FunctionDeclaration',
+	'FunctionExpression',
+	'ArrowFunctionExpression',
+	'StaticBlock',
+]);
+
+/**
+ * Whether a node is in a `@for`'s index or key, in the same code path. Code
+ * path analysis runs those before the loop, so the code after a `@try` there
+ * includes the iterable, which runs before it.
+ */
+function in_for_head(node: any): boolean {
+	for (let child = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+		if (
+			CODE_PATH_STARTS.has(parent.type) ||
+			(parent.type === 'PropertyDefinition' && parent.value === child)
+		) {
+			return false;
+		}
+		if (parent.type === 'JSXForExpression' && (parent.index === child || parent.key === child)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 /**
  * Core `no-useless-assignment`, with the blocks of a `@try` as alternatives.
  *
@@ -55,7 +83,7 @@ function is_tag_expression_name(node: any): boolean {
  * The rule runs the core rule three times. One copy sees the code paths as
  * they are; its reports are the candidates. The other two see each segment cut
  * at the boundaries of every `@try` whose body and `@pending` neither await nor
- * yield, and one of them also sees edges that run forward, in source order:
+ * yield, outside a `@for`'s index and key, and one of them also sees edges that run forward, in source order:
  * from the start of the `@try` and from the end of each block to each block
  * after it and to the code after the `@try`. A candidate is dropped only when
  * the cut copy reports it and the copy with the edges doesn't, so only the
@@ -216,7 +244,7 @@ const rule: Rule.RuleModule = {
 			ForInStatement: start_loop,
 			ForOfStatement: start_loop,
 			JSXTryExpression(node: any) {
-				if (suspends(node.block) || suspends(node.pending)) return;
+				if (suspends(node.block) || suspends(node.pending) || in_for_head(node)) return;
 				const { ended, started } = cut_here(node);
 				tries.set(node, {
 					single: ended.length === 1,
