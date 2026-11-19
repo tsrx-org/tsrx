@@ -4211,6 +4211,68 @@ describe('tsrx-vue for_items', () => {
 	});
 });
 
+const hydrated_count = ref(0);
+
+function HydratedTryInElement() @{
+	<div>
+		@try {
+			<button class="hydrated-inc" onClick={() => hydrated_count.value++}>
+				{'count ' + hydrated_count.value}
+			</button>
+		} @catch (err) {
+			<b class="hydrated-caught">{String(err)}</b>
+		}
+	</div>
+}
+
+function HydratedTryAtRoot() @{
+	@try {
+		<button class="hydrated-inc" onClick={() => hydrated_count.value++}>
+			{'count ' + hydrated_count.value}
+		</button>
+	} @catch (err) {
+		<b class="hydrated-caught">{String(err)}</b>
+	}
+}
+
+describe('tsrx-vue hydrating a @try', () => {
+	// The markup the server build renders (try-ssr.test.js renders the same
+	// shapes).
+	it.each([
+		[
+			'inside an element',
+			HydratedTryInElement,
+			'<div><button class="hydrated-inc">count 0</button></div>',
+		],
+		['at the component root', HydratedTryAtRoot, '<button class="hydrated-inc">count 0</button>'],
+	])('hydrates its body %s, then updates it', async (_name, component, markup) => {
+		hydrated_count.value = 0;
+		container.innerHTML = markup;
+		const server_button = container.querySelector('.hydrated-inc');
+		const errors: unknown[] = [];
+		const warnings: string[] = [];
+		const app = createVaporSSRApp(component);
+		app.config.errorHandler = (error) => {
+			errors.push(error);
+		};
+		app.config.warnHandler = (message) => {
+			warnings.push(message);
+		};
+		try {
+			app.mount(container);
+			await flush();
+			expect(errors).toEqual([]);
+			expect(warnings).toEqual([]);
+			expect(container.querySelector('.hydrated-inc')).toBe(server_button);
+			(server_button as HTMLElement).click();
+			await flush();
+			expect(text('.hydrated-inc')).toBe('count 1');
+		} finally {
+			app.unmount();
+		}
+	});
+});
+
 runForOfSourcesRuntimeTests();
 runSwitchFallthroughRuntimeTests();
 runTsxExpressionTsrxRuntimeTests();
