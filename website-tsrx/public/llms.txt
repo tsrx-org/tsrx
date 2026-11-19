@@ -984,11 +984,12 @@ export const RetryBoundary = () => @try {
 };
 ```
 
-Every target runs the body, `@pending` and `@catch` in functions of their own,
-so a `break` or `continue` in one of them can only reach a loop, `switch` or
-label inside that block, and a `return` is the template `return` error. The same
-goes for `@empty`, a nested `@{ ... }` block, and a `continue` in an `@switch`
-case.
+Every target runs the body, `@pending` and `@catch` inside functions, so a
+`break` or `continue` in one of them can only reach a loop, `switch` or label
+inside that block, and a `return` there is the template `return` error. A
+`break` or `continue` in `@empty` or a nested `@{ ... }` block, and a `continue`
+in an `@switch` case, can likewise only reach a loop, `switch` or label inside
+it.
 
 ### Guard returns
 

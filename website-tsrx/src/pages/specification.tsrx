@@ -1134,7 +1134,7 @@ export function SpecificationPage() @{
 								<code class="inline-code">@pending</code> and{' '}
 								<code class="inline-code">@catch</code> blocks, an{' '}
 								<code class="inline-code">@empty</code> block and a nested{' '}
-								<code class="inline-code">{'@{ ... }'}</code> block in a function of its own, so a{' '}
+								<code class="inline-code">{'@{ ... }'}</code> block inside a function, so a{' '}
 								<code class="inline-code">break</code> or <code class="inline-code">continue</code>{' '}
 								there can only reach a loop, <code class="inline-code">switch</code> or label inside
 								it (TSRX2036, TSRX2037).

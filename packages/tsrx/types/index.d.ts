@@ -395,14 +395,14 @@ declare module 'estree' {
 
 	interface BreakStatement {
 		metadata: BaseNodeMetaData & {
-			/** A `break` the directive jump check reported, which the `@for` check then leaves alone. */
+			/** A `break` the directive jump check reported, which the `@if` and `@for` checks then leave alone. */
 			invalid_directive_jump?: boolean;
 		};
 	}
 
 	interface ContinueStatement {
 		metadata: BaseNodeMetaData & {
-			/** A `continue` the directive jump check reported, which the `@for` check then leaves alone. */
+			/** A `continue` the directive jump check reported, which the `@if` and `@for` checks then leave alone. */
 			invalid_directive_jump?: boolean;
 		};
 	}

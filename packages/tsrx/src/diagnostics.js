@@ -487,11 +487,11 @@ export const TSRX_ERRORS = {
 	),
 	DIRECTIVE_BODY_BREAK: tsrx(
 		'DIRECTIVE_BODY_BREAK',
-		'A `break` cannot jump out of an `@try`, `@pending`, `@catch` or `@empty` body or a nested `@{ … }` block, since every target runs it in a function of its own. Break out of a loop or label inside it, or render conditionally instead.',
+		'A `break` cannot jump out of an `@try`, `@pending`, `@catch` or `@empty` body or a nested `@{ … }` block, since every target runs it inside a function. Break out of a loop or label inside it, or render conditionally instead.',
 	),
 	DIRECTIVE_BODY_CONTINUE: tsrx(
 		'DIRECTIVE_BODY_CONTINUE',
-		'A `continue` cannot jump out of an `@try`, `@pending`, `@catch`, `@empty` or `@switch` case body or a nested `@{ … }` block, since every target runs it in a function of its own. Continue a loop inside it, or filter before rendering instead.',
+		'A `continue` cannot jump out of an `@try`, `@pending`, `@catch`, `@empty` or `@switch` case body or a nested `@{ … }` block, since every target runs it inside a function. Continue a loop inside it, or filter before rendering instead.',
 	),
 	DIRECTIVE_BODY_VAR: tsrx(
 		'DIRECTIVE_BODY_VAR',
