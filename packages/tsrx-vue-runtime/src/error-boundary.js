@@ -8,8 +8,10 @@ import {
 	ErrorCodes,
 	getCurrentInstance,
 	handleError,
+	onBeforeUnmount,
 	onErrorCaptured,
 	shallowRef,
+	warn,
 } from 'vue';
 
 /**
@@ -24,6 +26,14 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
  * @typedef {object} BoundaryState
  * @property {ShallowRef<number>} version bumped to render the boundary again
  * @property {{ error: unknown } | null} caught the error the fallback shows
+ * @property {number | null} fallback_from while the fallback shows, a
+ * component uid taken as it first rendered: Vue numbers components in the
+ * order it creates them, so the fallback's have later uids, and the content's
+ * earlier ones
+ * @property {boolean} shows_content whether the boundary last rendered its
+ * content rather than its fallback; `reset` doesn't change it, the render
+ * after it does
+ * @property {boolean} unmounting whether the boundary's teardown has begun
  * @property {() => void} reset
  */
 
@@ -94,6 +104,108 @@ function find_render_frame(source, owner) {
 		if (ancestors.has(rendering[i].instance)) return rendering[i];
 	}
 	return undefined;
+}
+
+/**
+ * The props of a boundary rendered as a component.
+ *
+ * @param {ComponentInternalInstance} instance
+ * @returns {TsrxErrorBoundaryProps | undefined}
+ */
+function props_of(instance) {
+	return /** @type {TsrxErrorBoundaryProps | undefined} */ (
+		/** @type {{ props?: unknown }} */ (instance).props
+	);
+}
+
+/**
+ * The instance of the component an error came from, and its parents up to
+ * `boundary`, innermost first; empty when `boundary` isn't among them.
+ *
+ * @param {unknown} source a Vapor instance, or a VDOM component's public proxy
+ * @param {unknown} boundary
+ * @returns {InstanceLink[]}
+ */
+function chain_to(source, boundary) {
+	const link = /** @type {InstanceLink | null} */ (source);
+	/** @type {InstanceLink[]} */
+	const chain = [];
+	/** @type {InstanceLink | null | undefined} */
+	let current = link?.$ ?? link;
+	for (; current; current = current.parent) {
+		if (current === boundary) return chain;
+		chain.push(current);
+	}
+	return [];
+}
+
+/**
+ * Whether the error from `source` came from the fallback `boundary` shows:
+ * the component under the boundary that `source` belongs to was created after
+ * the fallback started to render. That covers what the fallback mounts later,
+ * such as a VDOM component or a `Teleport`'s content, and what it throws after
+ * it has rendered. A component of the content was created before, and an
+ * error from it, or from what it creates later, is the boundary's own.
+ *
+ * @param {unknown} source
+ * @param {ComponentInternalInstance} boundary
+ * @returns {boolean}
+ */
+function thrown_by_fallback(source, boundary) {
+	const from = boundary_states.get(boundary)?.fallback_from;
+	if (from == null) return false;
+	const chain = chain_to(source, boundary);
+	const top = /** @type {{ uid?: number } | undefined} */ (chain[chain.length - 1]);
+	return typeof top?.uid === 'number' && top.uid > from;
+}
+
+/**
+ * Whether `source`'s error was thrown by the fallback of a boundary inside
+ * `boundary` that renders the same `@catch` (`sharesCatch`), with no other
+ * boundary between them. A `@try` with `@pending` renders its `@catch` from
+ * two boundaries: one around the `Suspense`, and one inside its default slot,
+ * which catches what the body throws there and gives `reset`. When the inner
+ * one lets an error from that `@catch` go on, the outer one has to as well,
+ * so the `@catch` runs once and the error reaches the next `@try` out.
+ *
+ * @param {unknown} source
+ * @param {ComponentInternalInstance} boundary
+ * @returns {boolean}
+ */
+function thrown_by_twin_fallback(source, boundary) {
+	const chain = chain_to(source, boundary);
+	for (let i = chain.length - 1; i >= 0; i--) {
+		const inner = /** @type {ComponentInternalInstance} */ (/** @type {unknown} */ (chain[i]));
+		if (!boundary_states.has(inner)) continue;
+		// The nearest boundary inside this one.
+		return !!props_of(inner)?.sharesCatch && thrown_by_fallback(source, inner);
+	}
+	return false;
+}
+
+/**
+ * The state of `source` when it is a mounted boundary, other than the one
+ * `own` belongs to, whose last render showed its content: an error it is the
+ * source of came from its content's inline code. A boundary that renders the
+ * same `@catch` as the one around it (`sharesCatch`) is left to that one,
+ * which shows the same `@catch` and can replace a pending `Suspense`. So is
+ * one inside a `Suspense` that is still pending: its fallback would render in
+ * the hidden branch, and the `Suspense` would never resolve.
+ *
+ * @param {unknown} source
+ * @param {BoundaryState} own
+ * @returns {BoundaryState | undefined}
+ */
+function shows_content_of(source, own) {
+	const instance = /** @type {ComponentInternalInstance} */ (source);
+	const inner = boundary_states.get(instance);
+	if (!inner || inner === own || !inner.shows_content || inner.unmounting) return undefined;
+	if (/** @type {{ isUnmounted?: boolean }} */ (source).isUnmounted) return undefined;
+	if (props_of(instance)?.sharesCatch) return undefined;
+	const suspense = /** @type {{ suspense?: { pendingBranch?: unknown } | null }} */ (source)
+		.suspense;
+	if (suspense?.pendingBranch) return undefined;
+	return inner;
 }
 
 /**
@@ -274,8 +386,13 @@ export function TsrxErrorBoundary(props, ctx) {
 		// Read so a reset, or an error caught after rendering, renders again.
 		void state.version.value;
 		if (state.caught) {
-			return props.fallback(state.caught.error, state.reset);
+			return render_fallback(state, props);
 		}
+		// The content renders again, after a reset: what the fallback created
+		// before is gone. Until now, what it throws still goes on, also right
+		// after its own call to `reset`.
+		state.fallback_from = null;
+		state.shows_content = true;
 
 		/** @type {RenderFrame} */
 		const frame = { instance: vapor.currentInstance, errors: [] };
@@ -294,15 +411,56 @@ export function TsrxErrorBoundary(props, ctx) {
 		}
 		// Not a reactive write: this render already shows the fallback.
 		state.caught = { error: frame.errors[0] };
-		return props.fallback(state.caught.error, state.reset);
+		return render_fallback(state, props);
 	});
+}
+
+/**
+ * Renders the fallback for the caught error. The first time, it takes the
+ * uid that tells the components the fallback creates from the content's:
+ * what the fallback throws isn't the boundary's to show.
+ *
+ * @param {BoundaryState} state
+ * @param {TsrxErrorBoundaryProps} props
+ * @returns {unknown}
+ */
+function render_fallback(state, props) {
+	const caught = /** @type {{ error: unknown }} */ (state.caught);
+	state.shows_content = false;
+	if (state.fallback_from === null) state.fallback_from = take_uid();
+	return props.fallback(caught.error, state.reset);
+}
+
+/**
+ * Whether this Vue lacks `nextUid`, an internal of its Vapor renderer.
+ * Without it, a boundary can't tell its fallback's components from its
+ * content's, and routes errors as it did before it could.
+ */
+const no_uid = typeof vapor.nextUid !== 'function';
+
+let warned_no_uid = false;
+
+/**
+ * The next component uid, or null when this Vue doesn't export `nextUid`.
+ *
+ * @returns {number | null}
+ */
+function take_uid() {
+	if (!no_uid) return /** @type {() => number} */ (vapor.nextUid)();
+	if (!warned_no_uid) {
+		warned_no_uid = true;
+		warn(
+			'[tsrx] This Vue version has no `nextUid` export, so errors a @catch throws are routed as in earlier versions: a @catch that throws again as it renders, with no @try rendering around it, can loop until Vue stops it.',
+		);
+	}
+	return null;
 }
 
 // Declared, so they are props rather than attributes: Vue passes a
 // component's attributes down to a component or element at the root of what
 // it renders, which put them on the DOM and handed a nested boundary this
 // one's `content`.
-TsrxErrorBoundary.props = ['fallback', 'content'];
+TsrxErrorBoundary.props = ['fallback', 'content', 'sharesCatch'];
 
 /**
  * @param {unknown} _props
@@ -322,6 +480,9 @@ function create_boundary_state() {
 	const state = {
 		version: shallowRef(0),
 		caught: null,
+		fallback_from: null,
+		shows_content: false,
+		unmounting: false,
 		reset() {
 			state.caught = null;
 			state.version.value++;
@@ -342,13 +503,43 @@ function initialize_boundary_state(instance) {
 
 	const state = create_boundary_state();
 	boundary_states.set(instance, state);
+	// Registered before anything the content registers, so it runs first.
+	onBeforeUnmount(() => {
+		state.unmounting = true;
+	});
 
 	onErrorCaptured((captured_error, source) => {
-		// While the boundary shows its fallback, the error came from that
-		// fallback, which a boundary rendering further out has to take.
-		const frame = find_render_frame(source, state.caught ? null : instance);
+		// The boundary inside this one that renders the same `@catch` let this
+		// error from that `@catch` go on: let it go on too.
+		if (thrown_by_twin_fallback(source, instance)) return;
+		// An error from the fallback is for a boundary further out: one
+		// rendering around this one takes it here.
+		const from_fallback = thrown_by_fallback(source, instance);
+		// Without uids, any error while the fallback shows is taken as the
+		// fallback's here, as before.
+		const frame = find_render_frame(
+			source,
+			from_fallback || (no_uid && state.caught) ? null : instance,
+		);
 		if (frame) {
 			frame.errors.push(captured_error);
+			return false;
+		}
+		// Thrown by the fallback, with no boundary rendering around it: it goes
+		// on to the next boundary out, or to `app.config.errorHandler`, as React
+		// does with a render error. Showing the fallback again would throw again, until Vue
+		// stopped the loop. An error from the content, which can still come
+		// while or after the fallback shows, is the boundary's own, as before.
+		if (from_fallback) {
+			// Unless a `@try` the fallback rendered is the source and shows its
+			// content: its content's inline code threw, on an update or from a
+			// handler. Vue starts at the parent of the instance that threw, which
+			// skipped that boundary's own hook, so show the error there, as the
+			// fallback rendering again used to.
+			const inner = shows_content_of(source, state);
+			if (!inner) return;
+			inner.caught = { error: captured_error };
+			inner.version.value++;
 			return false;
 		}
 		// Thrown outside a render. An async component whose loader rejected

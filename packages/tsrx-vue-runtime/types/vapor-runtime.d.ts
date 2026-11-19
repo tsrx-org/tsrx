@@ -24,6 +24,12 @@ export interface VaporRuntime {
 	renderEffect(fn: () => void): void;
 	insert(block: VaporBlock, parent: ParentNode, anchor?: Node | null): void;
 	remove(block: VaporBlock, parent: ParentNode): void;
+	/**
+	 * Takes the next component uid, the one Vue would give the next component
+	 * it creates. Vapor and VDOM components share the counter. Optional: a
+	 * Vue that no longer exports it leaves boundaries on their old routing.
+	 */
+	nextUid?(): number;
 }
 
 /**
