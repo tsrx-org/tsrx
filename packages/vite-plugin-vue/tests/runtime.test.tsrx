@@ -3750,43 +3750,6 @@ describe('tsrx-vue keyed @switch rows', () => {
 	});
 });
 
-const top_rows = ref([{ id: 'a' }, { id: 'b' }]);
-
-function TopRows(props: { rows: { id: string }[] }) @{
-	@for (const row of props.rows) {
-		const label = 'row ' + row.id;
-		<p class="top-row">{label}</p>
-	} @empty {
-		<p class="top-row">{'none'}</p>
-	}
-}
-
-function TopRowsHost() @{
-	<section>
-		<TopRows rows={top_rows.value} />
-	</section>
-}
-
-describe('tsrx-vue a component whose only output is an @for', () => {
-	it('follows its props', async () => {
-		top_rows.value = [{ id: 'a' }, { id: 'b' }];
-		await render(TopRowsHost);
-		expect(texts('.top-row')).toEqual(['row a', 'row b']);
-
-		top_rows.value = [{ id: 'b' }];
-		await flush();
-		expect(texts('.top-row')).toEqual(['row b']);
-
-		top_rows.value = [];
-		await flush();
-		expect(texts('.top-row')).toEqual(['none']);
-
-		top_rows.value = [{ id: 'c' }];
-		await flush();
-		expect(texts('.top-row')).toEqual(['row c']);
-	});
-});
-
 describe('tsrx-vue for_items', () => {
 	it('hands a reactive array to VaporFor as it is (#1147)', () => {
 		const list = reactive(['a', 'b']);

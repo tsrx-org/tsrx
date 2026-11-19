@@ -148,7 +148,7 @@ const vue_platform = {
 		}),
 		wrapHelperComponent(helper_fn, helper_id, ctx, source_node) {
 			ctx.needs_define_vapor_component = true;
-			return wrap_helper_component(helper_fn, helper_id, source_node, ctx);
+			return wrap_helper_component(helper_fn, helper_id, source_node);
 		},
 		canHoistStaticNode() {
 			// Vapor JSX evaluates to a DOM node, so a module-level static would be
@@ -424,13 +424,9 @@ function mark_type_only_host_ref_attribute(attr) {
  * @param {AST.FunctionDeclaration} helper_fn
  * @param {AST.Identifier} helper_id
  * @param {AST.NodeWithLocation | undefined} source_node
- * @param {TransformContext} ctx
  * @returns {AST.VariableDeclaration}
  */
-function wrap_helper_component(helper_fn, helper_id, source_node, ctx) {
-	if (!ctx.typeOnly) {
-		helper_fn = render_returned_loops(helper_fn);
-	}
+function wrap_helper_component(helper_fn, helper_id, source_node) {
 	return setLocation(
 		b.declaration('const', [
 			b.declarator(
@@ -1016,48 +1012,6 @@ function collect_default_reads(value, parent, reads, in_default = false) {
 }
 
 /**
- * A Vapor component's setup runs once, so a component that returns the
- * `map_iterable` call of an `@for` (one whose body has setup statements)
- * renders the rows it gave at mount and never again. The call is put in a
- * fragment, which vue-jsx-vapor evaluates in an effect, as it does the same
- * loop inside an element. Only the component's own returns change, not those
- * of functions in it. Rows inherit none of the component's attributes either
- * way.
- *
- * @template {AST.Function} F
- * @param {F} fn
- * @returns {F}
- */
-function render_returned_loops(fn) {
-	if (fn.body?.type !== 'BlockStatement') {
-		return fn;
-	}
-	const body = walk(/** @type {AST.Node} */ (fn.body), null, {
-		FunctionDeclaration() {},
-		FunctionExpression() {},
-		ArrowFunctionExpression() {},
-		ClassDeclaration() {},
-		ClassExpression() {},
-		ReturnStatement(node) {
-			const output = node.argument;
-			if (
-				output?.type === 'CallExpression' &&
-				output.callee.type === 'Identifier' &&
-				output.callee.name === MAP_ITERABLE_INTERNAL_NAME
-			) {
-				return {
-					...node,
-					argument: /** @type {AST.Expression} */ (
-						/** @type {unknown} */ (b.jsx_fragment([to_jsx_expression_container(output)]))
-					),
-				};
-			}
-		},
-	});
-	return body === fn.body ? fn : { ...fn, body: /** @type {AST.BlockStatement} */ (body) };
-}
-
-/**
  * @param {AST.Function} node
  * @param {import('zimmerframe').Context<AST.Node, TransformContext>} context
  * @returns {AST.Node}
@@ -1091,7 +1045,6 @@ function wrap_native_function_component(fn, source, ctx, path) {
 	validate_props_param(fn, ctx);
 	if (!ctx.typeOnly) {
 		fn = read_children_from_default_slot(fn, name, ctx);
-		fn = render_returned_loops(fn);
 	}
 
 	const call = setLocation(

@@ -2455,32 +2455,6 @@ export function Card(${params}: any) @{
 		expect(code).not.toContain('not yet supported in Vue TSRX');
 	});
 
-	it('returns a top-level @for with setup statements in a fragment', () => {
-		// A component's setup returns once, so the rows are evaluated in the
-		// fragment's effect, as the same loop inside an element is.
-		const { code } = compile(
-			`function Rows({ items }: { items: number[] }) @{
-				@for (const item of items) {
-					const label = 'row ' + item;
-					<p>{label}</p>
-				} @empty {
-					<i>{'none'}</i>
-				}
-			}
-			function Badge({ on }: { on: boolean }) @{
-				@if (on) {
-					<b>{'on'}</b>
-				}
-			}`,
-			'App.tsrx',
-		);
-
-		expect(code).toContain('return <>{__map_iterable(');
-		// Not an `@if`, whose root `createIf` would not inherit the component's
-		// attributes as an element root does.
-		expect(code).toContain("return on ? <b>{'on'}</b> : null;");
-	});
-
 	it('compiles switch statements with inline case statements before JSX', () => {
 		const { code } = compile(
 			`function App({ value }) @{

@@ -35,20 +35,6 @@ const FIXTURES = {
 	</ul>
 }`,
 
-	'top-rows.tsrx': `function Rows({ items }: { items: { id: number }[] }) @{
-	@for (const item of items) {
-		const label = 'row ' + item.id;
-		<p>{label}</p>
-	} @empty {
-		<i>{'none'}</i>
-	}
-}
-export function App({ items }: { items: { id: number }[] }) @{
-	<div>
-		<Rows {items} />
-	</div>
-}`,
-
 	'switch.tsrx': `export function App({ items }: { items: { id: number }[] }) @{
 	<div>
 		@switch (items.length) {
@@ -120,20 +106,6 @@ describe('[vue] keyed @for through VaporFor on the server', () => {
 
 	it('throws for a keyed loop whose body can skip a row', async () => {
 		await expect(render('skip.tsrx', [{ id: 1 }, { id: 2 }])).rejects.toThrow('createFor');
-	});
-});
-
-// A component whose only output is an `@for` with setup statements returns the
-// rows in a fragment, which renders on the server too (comments kept here).
-describe('[vue] a component whose only output is an @for on the server', () => {
-	it('renders its rows, or its @empty', async () => {
-		const { App } = await server.ssrLoadModule('/top-rows.tsrx');
-		expect(await renderToString(createSSRApp(App, { items: [{ id: 1 }, { id: 2 }] }))).toBe(
-			'<div><!--[--><!--[--><p>row 1</p><p>row 2</p><!--]--><!--]--></div>',
-		);
-		expect(await renderToString(createSSRApp(App, { items: [] }))).toBe(
-			'<div><!--[--><!--[--><i>none</i><!--]--><!--]--></div>',
-		);
 	});
 });
 
