@@ -1,5 +1,105 @@
 # @tsrx/core
 
+## 0.6.7
+
+### Patch Changes
+
+- [#1398](https://github.com/tsrx-org/tsrx/pull/1398)
+  [`1c05e13`](https://github.com/tsrx-org/tsrx/commit/1c05e13519bb63260ab00e385222c3a4ad5ade11)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Report a `break` or
+  `continue` that would jump out of an `@try`, `@pending`, `@catch` or `@empty`
+  body, or out of a nested `@{ … }` block, as TSRX2036 or TSRX2037, and a
+  `continue` that would leave an `@switch` case as TSRX2037. Every target runs
+  those bodies inside functions, so the jump couldn't reach the loop, `switch` or
+  label outside, and the compiled output didn't parse; a `break` to a loop,
+  `switch` or label inside the body, or a `continue` to a loop inside it, still
+  works. A `break` nested in an `@switch` case, such as `if (done) break;`, is now
+  TSRX2008, as a `break` right in the case already was; Solid's output didn't
+  parse, and the other targets rendered nothing for the `@switch` when the `break`
+  ran. A code-only `@{ … }` child of a returned fragment, as in
+  `return <>@{ if (x) continue; }<b /></>` in a loop, is now held to the same
+  rule: every target inlined it before the `return`, so the jump reached the loop,
+  but it is now TSRX2036 or TSRX2037, as a `var` there already was TSRX2030. A
+  `break` or `continue` in a loop in an `@for` body that leaves the body, such as
+  `break outer`, is now TSRX2006 or TSRX2007, and a jump that leaves an `@else if`
+  body, or the `@else` after one, is now TSRX2003 or TSRX2004 on React, Preact,
+  Vue and Hono too, as on Solid; both compiled to output that didn't parse. A jump
+  in an `@if` or `@for` nested in an `@if` is now reported once, with the nested
+  one's error. A `break` or `continue` in a function's `@{ … }` body that targets
+  a loop or label outside the function is now TS1105 or TS1104, as in a `{ … }`
+  body.
+
+- [#1404](https://github.com/tsrx-org/tsrx/pull/1404)
+  [`c610ad5`](https://github.com/tsrx-org/tsrx/commit/c610ad5133602eaf2e73b038dca6dc77def29bb1)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A keyword the compiler
+  prints from a node that doesn't start with it in the source no longer maps its
+  end into other text. The `return` around a template's output, such as the root
+  element of a `@{ … }` body or an `@if` output, and the `const` the Vue target
+  writes for a component function or an `@catch` body, map no keyword end. A
+  `switch`, `case`, `default` or `{` printed from `@switch`, `@case`, `@default`
+  or `@{` now ends where that directive ends. The source map put those ends at the
+  node's start plus the keyword's length: in a string, in the middle of a
+  directive such as `@for`, or past the node. In the editor, an expression that
+  started there, such as `{props.label}` in `@{ <div>{props.label}</div> }`, now
+  maps from its own text, so a diagnostic on it covers the right text.
+
+- [#1406](https://github.com/tsrx-org/tsrx/pull/1406)
+  [`cc100ea`](https://github.com/tsrx-org/tsrx/commit/cc100ea1da0b5ec9746af40184da8c0778d1036b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - In the editor, a member
+  expression, call or `new` expression now maps from its own text when other code
+  starts at the same source position and is printed before it. A platform's AST
+  pass that wraps a member expression in a call with the member's location, as
+  Octane does for template reads, made `value.list[0]` map to
+  `read(value.list[0]`, so an editor diagnostic on it started at `read(`. The same
+  happened with the `(` of a parenthesized sequence (`(count.a++, next())`), with
+  the attribute the Solid target makes from an `@if` test, and with the key
+  function it makes from a `@for` key. The mapping now starts where the printed
+  code has the node's whole source text, apart from whitespace, or else its
+  leftmost identifier; a node printed otherwise keeps its mapping.
+
+- [#1399](https://github.com/tsrx-org/tsrx/pull/1399)
+  [`d9c2a14`](https://github.com/tsrx-org/tsrx/commit/d9c2a14eb0211dc932b164380509d21e1e4dff8b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, a
+  server-rendered element whose child is an `@if` without `@else` (or with an
+  empty `@else {}`) now hydrates when its condition was false on the server.
+  Hydration used to throw
+  `Cannot read properties of null (reading 'insertBefore')`: vue-jsx-vapor makes
+  the shared lowering's `null` branch `createNodes(null)`, which doesn't take the
+  server's `<!---->`. When the branch is one element or component, the choice now
+  renders as that element with `v-if`, which hydrates both the `<!---->` and a
+  rendered branch and then follows the condition.
+
+  Client behaviour that changes with it:
+
+  - **Sibling expressions.** The `v-if` is a `createIf` of its own, so its branch
+    keeps its components' state when an expression child beside it changes (part
+    of [#1402](https://github.com/tsrx-org/tsrx/issues/1402)). An `@if` with a
+    non-empty `@else` there still renders again.
+  - **Slot fallback.** When a component's child content is only such `@if`s and
+    all of them are false, the component's `<slot>` fallback now shows on the
+    client too, as it does on the server. Hydrating that fallback and then
+    toggling the `@if` leaves the server's fallback text in place beside the new
+    one (`fallbackfallback`), a gap in vue-jsx-vapor's `<slot>` output.
+
+  These keep the shared lowering, and still fail to hydrate when false on the
+  server:
+
+  - an `@else if` chain, whose nested ternary gives a keyed `createIf` that
+    `VaporKeepAlive` caches, where vue-jsx-vapor's `v-else-if` doesn't;
+  - a branch with setup statements, a host element with a spread
+    (`<p {...attrs}>`), or a dynamic tag;
+  - a `<template>`, `<slot>` or `<component>` branch;
+  - a branch element with any `v-` attribute of its own, plain or namespaced
+    (`v-slot`, `v-slot:name`, `v-focus`);
+  - a choice whose next element, past any text or expression children, has its own
+    `v-else` or `v-else-if`.
+
+  An `@if` with a non-empty `@else` already hydrated and keeps the shared lowering
+  too.
+
+  `@tsrx/core` exports its `@if` lowering as `ifStatementToJsxChild`, for a
+  platform's `controlFlow.ifStatement` hook.
+
 ## 0.6.6
 
 ### Patch Changes
