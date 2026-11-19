@@ -1,5 +1,14 @@
-import { createVaporApp, defineComponent, defineVaporAsyncComponent, h, nextTick, ref } from 'vue';
-import { TsrxErrorBoundary } from '@tsrx/vue/error-boundary';
+import {
+	createVaporApp,
+	defineComponent,
+	defineVaporAsyncComponent,
+	h,
+	nextTick,
+	ref,
+	shallowRef,
+	Suspense,
+} from 'vue';
+import { TsrxErrorBoundary, TsrxPendingBody } from '@tsrx/vue/error-boundary';
 
 // A `@pending` body runs only while the `@try` body suspends, and a throw in
 // it reaches the nearest `@catch`: the same `@try`'s, or an enclosing one.
@@ -255,6 +264,30 @@ function CachedBlockApp() @{
 	/>
 }
 
+function PrimitivePendingApp(props: { value: unknown }) @{
+	<TsrxPendingBody content={() => props.value} />
+}
+
+const live_pending = shallowRef<unknown>('loading');
+
+function LivePendingApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		<>{live_pending.value}</>
+	}
+}
+
+function AsyncContentApp() @{
+	<Suspense
+		v-slots={{
+			default: () => <TsrxPendingBody content={async () => document.createTextNode('ready')} />,
+			fallback: () => <span>{'waiting'}</span>,
+		}}
+	/>
+}
+
 function html() {
 	return container.innerHTML;
 }
@@ -422,6 +455,50 @@ describe('tsrx-vue @pending', () => {
 		} finally {
 			warn.mockRestore();
 		}
+	});
+
+	it.each([
+		['loading', 'loading'],
+		[42, '42'],
+	])('renders %j from TsrxPendingBody as text, without a Vue warning', async (value, text) => {
+		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			await render(PrimitivePendingApp, { value });
+			expect(html()).toBe(text);
+			expect(warn.mock.calls.map((args) => String(args[0]))).toEqual([]);
+		} finally {
+			warn.mockRestore();
+		}
+	});
+
+	it('removes a @pending body that changed while it showed', async () => {
+		live_pending.value = 'loading';
+		const { promise, resolve } = deferred();
+		const app = createVaporApp(LivePendingApp, { promise });
+		try {
+			app.mount(container);
+			await flush();
+			expect(html()).toBe('loading');
+
+			live_pending.value = Object.assign(document.createElement('b'), { textContent: 'updated' });
+			await flush();
+			expect(html()).toBe('<b>updated</b>');
+
+			resolve(Resolved);
+			await flush();
+			expect(container.querySelector('b')).toBeNull();
+			expect(container.querySelector('.resolved')?.textContent).toBe('hello');
+		} finally {
+			app.unmount();
+			await nextTick();
+		}
+		expect(container.childNodes.length).toBe(0);
+	});
+
+	it('lets Vue wait for a promise that TsrxPendingBody content returns', async () => {
+		await render(AsyncContentApp);
+		await flush();
+		expect(html()).toBe('ready');
 	});
 
 	it('keeps a block the content renders again in place, with its state', async () => {

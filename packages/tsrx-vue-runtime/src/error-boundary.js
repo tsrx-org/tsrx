@@ -387,9 +387,14 @@ export function TsrxPendingBody(props, ctx) {
 		handleError(error, instance, ErrorCodes.RENDER_FUNCTION);
 		content = null;
 	}
-	// A component must return a block: an empty body, such as an `@if` that
-	// renders nothing, gives an empty text node.
-	return content == null || typeof content === 'boolean' ? document.createTextNode('') : content;
+	// A component must return a block, so a primitive, such as the `null` of
+	// an `@if` that renders nothing or a string, becomes a text node. Anything
+	// else is returned as is: compiled JSX updates an array in place, and Vue
+	// waits for a promise as async setup.
+	if (content === null || (typeof content !== 'object' && typeof content !== 'function')) {
+		return normalize_block(content, undefined);
+	}
+	return content;
 }
 
 TsrxPendingBody.props = ['content'];
