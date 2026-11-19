@@ -8,15 +8,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { tsrxVue } from '../src/index.js';
 
 // A keyed `@for` row whose body is a fragment, in a loop that doesn't render
-// through `VaporFor`, server-rendered through Vite and vue-jsx-vapor (#179).
-// vue-jsx-vapor's server build passes a `<Fragment>`'s children as an array
-// only when the tag is spelled `Fragment`.
+// through `VaporFor` (its body has setup statements), server-rendered through
+// Vite and vue-jsx-vapor (#179). vue-jsx-vapor's server build passes a
+// `<Fragment>`'s children as an array only when the tag is spelled `Fragment`.
 const FIXTURES = {
 	'empty.tsrx': `export function App({ items }: { items: { id: number }[] }) @{
 	<ul>
 		@for (const item of items; key item.id) {
+			const id = item.id;
 			<>
-				<li>{item.id}</li>
+				<li>{id}</li>
 			</>
 		} @empty {
 			<p>{'none'}</p>
@@ -42,8 +43,9 @@ export function App({ items }: { items: { id: number }[] }) @{
 	<Fragment>
 		<ul>
 			@for (const item of items; key item.id) {
+				const id = item.id;
 				<>
-					<li>{item.id * count.value}</li>
+					<li>{id * count.value}</li>
 				</>
 			} @empty {
 				<p>{'none'}</p>
@@ -58,9 +60,10 @@ export function App({ items }: { items: { id: number }[] }) @{
 export function App({ items }: { items: { id: number }[] }) @{
 	<ul>
 		@for (const item of items; key item.id) {
+			const id = item.id;
 			<>
-				<li>{item.id}</li>
-				<Fragment label={'own ' + item.id} />
+				<li>{id}</li>
+				<Fragment label={'own ' + id} />
 			</>
 		} @empty {
 			<p>{'none'}</p>

@@ -241,12 +241,16 @@ export interface JsxPlatformHooks {
 	 * body renders; with this hook set, those branches stay unkeyed, including
 	 * when the hook returns `null`. Vue uses this to hand the loop to the
 	 * downstream Vapor JSX compiler as a typed `VaporFor` component.
+	 * `emptyStatements` is set when the loop has `@empty`: it returns that
+	 * block's render statements, built once whether the hook or the default
+	 * lowering uses them.
 	 */
 	renderForOf?: (
 		node: AST.ForOfStatement,
 		loopParams: AST.Pattern[],
 		bodyStatements: AST.Statement[],
 		ctx: JsxTransformContext,
+		emptyStatements: (() => AST.Statement[]) | null,
 	) => ESTreeJSX.JSXExpressionContainer | null;
 	/**
 	 * Optionally replace the default React-style pending lowering for
@@ -474,8 +478,9 @@ export interface JsxPlatform {
 		 * use target-owned paths like `'@tsrx/react/runtime/iterable'` and
 		 * `'@tsrx/preact/runtime/iterable'`, which re-export from
 		 * `'@tsrx/core/runtime/iterable'`. Vue sets it too
-		 * (`'@tsrx/vue/runtime/iterable'`) for the loops it doesn't render through
-		 * `<VaporFor>`. Solid imports the helpers that give its
+		 * (`'@tsrx/vue/runtime/iterable'`): `for_items` hands `<VaporFor>` the
+		 * source's items, and `map_iterable` renders the loops that don't go
+		 * through it. Solid imports the helpers that give its
 		 * `<For>` an array from this module instead.
 		 */
 		forOfIterableHelper?: string;

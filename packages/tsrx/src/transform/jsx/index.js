@@ -6220,11 +6220,31 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 
 	let body_statements = build_render_statements(loop_body, true, transform_context);
 
+	// `@empty` renders outside the loop, so the head's names aren't bound in it.
+	// Its statements are built once, for the platform hook or the lowering below.
+	/** @type {AST.Statement[] | undefined} */
+	let empty_statements;
+	const get_empty_statements = () => {
+		if (!empty_statements) {
+			const empty = /** @type {AST.Statement} */ (node.empty);
+			const loop_bindings = transform_context.available_bindings;
+			transform_context.available_bindings = saved_bindings;
+			empty_statements = build_render_statements(
+				empty.type === 'BlockStatement' ? empty.body : [empty],
+				true,
+				transform_context,
+			);
+			transform_context.available_bindings = loop_bindings;
+		}
+		return empty_statements;
+	};
+
 	const platform_for_of = transform_context.platform.hooks?.renderForOf?.(
 		node,
 		loop_params,
 		body_statements,
 		transform_context,
+		node.empty ? get_empty_statements : null,
 	);
 	if (platform_for_of) {
 		transform_context.available_bindings = saved_bindings;
@@ -6285,13 +6305,7 @@ function for_of_statement_to_jsx_child(node, transform_context) {
 		? b.call(
 				b.arrow(
 					[],
-					b.block(
-						build_render_statements(
-							node.empty.type === 'BlockStatement' ? node.empty.body : [node.empty],
-							true,
-							transform_context,
-						),
-					),
+					b.block(get_empty_statements()),
 					false,
 					undefined,
 					has_location(node.empty) ? node.empty : undefined,

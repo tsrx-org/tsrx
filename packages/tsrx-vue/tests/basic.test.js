@@ -1628,7 +1628,9 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('<__VaporFor in={items}>{(item) => <div>{item}</div>}</__VaporFor>');
+		expect(code).toContain(
+			'<__VaporFor in={_$_for_items(items)}>{(item) => <div>{item}</div>}</__VaporFor>',
+		);
 		expect(code).toContain(
 			"import { defineVaporComponent, VaporFor as __VaporFor } from 'vue-jsx-vapor';",
 		);
@@ -1645,7 +1647,7 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('<__VaporFor in={items} getKey={(item) => item.id}>');
+		expect(code).toContain('<__VaporFor in={_$_for_items(items)} getKey={(item) => item.id}>');
 		expect(code).toContain('item.value.text');
 	});
 
@@ -1678,7 +1680,7 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('<__VaporFor in={items} getKey={(item, i) => item.id}>');
+		expect(code).toContain('<__VaporFor in={_$_for_items(items)} getKey={(item, i) => item.id}>');
 		expect(code).toContain('{(item, i) => <div>');
 		expect(code).toContain('{i.value}');
 		expect(code).toContain('item.value.text');
@@ -1694,7 +1696,7 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('<__VaporFor in={items} getKey={(item, i) => i}>');
+		expect(code).toContain('<__VaporFor in={_$_for_items(items)} getKey={(item, i) => i}>');
 		expect(code).toContain("{(item, i) => <div>{'test'}</div>}");
 		expect(code).toContain("<div>{'test'}</div>");
 		expect(code).not.toContain('<div key={i}>');
@@ -1714,7 +1716,7 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain('<__VaporFor in={items} getKey={(item, i) => i}>');
+		expect(code).toContain('<__VaporFor in={_$_for_items(items)} getKey={(item, i) => i}>');
 		expect(code).toContain('{(item, i) => <>');
 		expect(code).toContain("<div>{'one'}</div>");
 		expect(code).toContain("<div>{'two'}</div>");
@@ -1732,7 +1734,9 @@ export function Card(${params}: any) @{
 		);
 
 		expect(errors).toEqual([]);
-		expect(code).toContain("<__VaporFor in={rows} getKey={([first, second = 'none']) => first}>");
+		expect(code).toContain(
+			"<__VaporFor in={_$_for_items(rows)} getKey={([first, second = 'none']) => first}>",
+		);
 		expect(code).toMatch(
 			/const _\$_vapor_bindings_1 = _\$_vapor_computed\(\(\) => \{\s*const \[first, second = 'none'\] = __vapor_item\.value;\s*return \{ first, second \};/,
 		);
@@ -1742,10 +1746,12 @@ export function Card(${params}: any) @{
 	});
 
 	it('imports Fragment from vue for a keyed fragment row outside VaporFor (#179)', () => {
+		// A body with setup statements doesn't render through `VaporFor`.
 		const loop = `<ul>
 			@for (const item of items; key item.id) {
+				const id = item.id;
 				<>
-					<li>{item.id}</li>
+					<li>{id}</li>
 				</>
 			} @empty {
 				<p>{'none'}</p>
@@ -1771,7 +1777,7 @@ export function Card(${params}: any) @{
 			const { code, errors } = compile_with(module_scope);
 			expect(errors, module_scope).toEqual([]);
 			expect(code, module_scope).toMatch(/^import \{ Fragment \} from 'vue';$/m);
-			expect(code, module_scope).toContain('<Fragment key={item.id}><li>{item.id}</li></Fragment>');
+			expect(code, module_scope).toContain('<Fragment key={item.id}><li>{id}</li></Fragment>');
 			expect(code, module_scope).not.toContain('Fragment as');
 		}
 
@@ -1789,7 +1795,7 @@ export function Card(${params}: any) @{
 			const { code, errors } = compile_with(module_scope);
 			expect(errors, module_scope).toEqual([]);
 			expect(code, module_scope).not.toContain('<Fragment key=');
-			expect(code, module_scope).toContain('return <><li>{item.id}</li></>;');
+			expect(code, module_scope).toContain('return <><li>{id}</li></>;');
 			expect(code, module_scope).not.toContain('__Fragment');
 		}
 	});
@@ -2032,8 +2038,241 @@ export function Card(${params}: any) @{
 				'S.tsrx',
 			);
 
-			expect(code).toContain('<__VaporFor in={props.items}>');
+			expect(code).toContain('<__VaporFor in={_$_for_items(props.items)}>');
 			expect(code).not.toContain('__map_iterable');
+		});
+
+		it('hands VaporFor the source items from for_items (#1147)', () => {
+			for (const [options, source] of [
+				[undefined, '@tsrx/vue/runtime/iterable'],
+				[{ runtimeImports: 'direct' }, '@tsrx/vue-runtime/iterable'],
+			]) {
+				const { code } = compile(
+					`export function S(props: { items: Set<string> }) @{
+						@for (const item of props.items; key item) {
+							<li>{item}</li>
+						}
+					}`,
+					'S.tsrx',
+					/** @type {any} */ (options),
+				);
+
+				expect(code).toContain(`import { for_items as _$_for_items } from '${source}';`);
+				expect(code).toContain(
+					'<__VaporFor in={_$_for_items(props.items)} getKey={(item) => item}>',
+				);
+			}
+		});
+
+		it('renders a keyed loop whose body can skip a row through VaporFor (#178)', () => {
+			const { code } = compile(
+				`export function C(props: { items: Set<string> }) @{
+					<ul>
+						@for (const item of props.items; key item) {
+							@if (item.length > 1) {
+								<li>{item}</li>
+							}
+						}
+					</ul>
+				}`,
+				'C.tsrx',
+			);
+
+			// The choice is a fragment's child, so vue-jsx-vapor makes it a
+			// `createIf`; a skipped row is an empty fragment.
+			expect(code).toContain(
+				'<__VaporFor in={_$_for_items(props.items)} getKey={(item) => item}>{(item) => <>{item.value.length > 1 ? <li>{item.value}</li> : <></>}</>}</__VaporFor>',
+			);
+			expect(code).not.toContain('__map_iterable');
+		});
+
+		it('wraps a keyed row that picks a branch in a fragment', () => {
+			const { code } = compile(
+				`export function B(props: { items: { id: string; on: boolean }[] }) @{
+					<ul>
+						@for (const item of props.items; key item.id) {
+							@if (item.on) {
+								<li>{'on'}</li>
+							} @else {
+								<li>{'off'}</li>
+							}
+						}
+					</ul>
+				}`,
+				'B.tsrx',
+			);
+
+			expect(code).toContain(
+				"{(item) => <>{item.value.on ? <li>{'on'}</li> : <li>{'off'}</li>}</>}",
+			);
+		});
+
+		it('renders a keyed loop with @empty through VaporFor, walking the source once (#178)', () => {
+			const { code } = compile(
+				`export function E(props: { items: Set<string> }) @{
+					<ul>
+						@for (const item of props.items; key item) {
+							<li>{item}</li>
+						} @empty {
+							const label = 'none';
+							<li>{label}</li>
+						}
+					</ul>
+				}`,
+				'E.tsrx',
+			);
+
+			expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
+			expect(code).toContain(
+				'const _$_vapor_items = _$_vapor_computed(() => _$_for_items(props.items));',
+			);
+			expect(code).toMatch(
+				/return <>\{_\$_vapor_items\.value\.length === 0\s+\? \(\(\) => \{\s+const label = 'none';\s+return <li>\{label\}<\/li>;\s+\}\)\(\)\s+: <__VaporFor in=\{_\$_vapor_items\.value\} getKey=\{\(item\) => item\}>/,
+			);
+			expect(code).not.toContain('__map_iterable');
+		});
+
+		it('keeps map_iterable for a loop without a key that can skip a row or has @empty', () => {
+			const { code } = compile(
+				`export function U(props: { items: string[] }) @{
+					<ul>
+						@for (const item of props.items) {
+							@if (item) {
+								<li>{item}</li>
+							}
+						}
+						@for (const item of props.items) {
+							<li>{item}</li>
+						} @empty {
+							<li>{'none'}</li>
+						}
+					</ul>
+				}`,
+				'U.tsrx',
+			);
+
+			expect(code.match(/__map_iterable\(props\.items,/g)).toHaveLength(1);
+			expect(code).toContain('__map_iterable(\n');
+			expect(code).not.toContain('VaporFor');
+		});
+
+		it('keeps map_iterable_async for a keyed loop with @empty or a skipping body that awaits', () => {
+			const { code, errors } = compile(
+				`async function load(value: string) {
+					return value;
+				}
+				export async function rows(items: string[]) {
+					const empty = @{
+						@for (const item of items; key item) {
+							const value = await load(item);
+							<li>{value}</li>
+						} @empty {
+							<p>{'none'}</p>
+						}
+					};
+					const skip = @{
+						@for (const item of items; key item) {
+							@if (await load(item)) {
+								<li>{item}</li>
+							}
+						}
+					};
+					const source = @{
+						@for (const item of await load('a'); key item) {
+							<li>{item}</li>
+						} @empty {
+							<p>{'none'}</p>
+						}
+					};
+					return [empty, skip, source];
+				}`,
+				'rows.tsrx',
+			);
+
+			expect(errors).toEqual([]);
+			expect(code.match(/await __map_iterable_async\(/g)).toHaveLength(2);
+			expect(code).toContain("__map_iterable(\n\t\t\tawait load('a'),");
+			expect(code).not.toContain('VaporFor');
+		});
+
+		it('keeps map_iterable for a keyed loop with @empty whose row is a @switch', () => {
+			const { code } = compile(
+				`export function S(props: { items: { id: string; kind: number }[] }) @{
+					<ul>
+						@for (const item of props.items; key item.id) {
+							@switch (item.kind) {
+								@case 1: {
+									<li>{item.id}</li>
+								}
+							}
+						} @empty {
+							<li>{'none'}</li>
+						}
+					</ul>
+				}`,
+				'S.tsrx',
+			);
+
+			expect(code).toContain('__map_iterable(');
+			expect(code).not.toContain('VaporFor');
+		});
+
+		it('keeps map_iterable for a keyed loop whose head destructures an array and can skip a row', () => {
+			const { code } = compile(
+				`export function P(props: { rows: [string, string][] }) @{
+					<ul>
+						@for (const [id, label] of props.rows; key id) {
+							@if (label) {
+								<li>{label}</li>
+							}
+						}
+					</ul>
+				}`,
+				'P.tsrx',
+			);
+
+			expect(code).toContain('__map_iterable(props.rows, ([id, label]) => {');
+			expect(code).not.toContain('VaporFor');
+		});
+
+		it('keeps for_items apart from an outer item named __for_items', () => {
+			const { code, errors } = compile(
+				`export function N(props: { groups: string[][] }) @{
+					<ul>
+						@for (const __for_items of props.groups; key __for_items) {
+							<li>
+								@for (const item of __for_items; key item) {
+									<b>{item}</b>
+								}
+							</li>
+						}
+					</ul>
+				}`,
+				'N.tsrx',
+			);
+
+			expect(errors).toEqual([]);
+			expect(code).toContain('in={_$_for_items(__for_items.value)}');
+		});
+
+		it('keeps map_iterable for a keyed loop with @empty whose source yields', () => {
+			const { code, errors } = compile(
+				`export function* rows(items: string[]) {
+					const out = @{
+						@for (const item of yield items; key item) {
+							<li>{item}</li>
+						} @empty {
+							<p>{'none'}</p>
+						}
+					};
+					return out;
+				}`,
+				'rows.tsrx',
+			);
+
+			expect(errors).toEqual([]);
+			expect(code).toContain('__map_iterable(\n\t\t\tyield items,');
+			expect(code).not.toContain('VaporFor');
 		});
 
 		it('imports map_iterable from @tsrx/vue-runtime with direct runtime imports', () => {
@@ -2352,7 +2591,7 @@ export function Card(${params}: any) @{
 			"import type { VaporFor } from 'vue-jsx-vapor';",
 		]);
 		expect(code).toContain('const App = defineVaporComponent(function App(');
-		expect(code).toContain('<__VaporFor in={rows} getKey={(row) => row}>');
+		expect(code).toContain('<__VaporFor in={_$_for_items(rows)} getKey={(row) => row}>');
 	});
 
 	describe('authored bindings named defineVaporComponent', () => {
