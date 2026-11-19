@@ -314,6 +314,21 @@ ruleTester.run('no-useless-assignment', rule, {
 }`,
 			errors: [{ messageId: 'unnecessaryAssignment', line: 6, column: 16 }],
 		},
+		// Known gap: the core rule also reports `x = 1` (5:10), which no target
+		// reads: React, Preact and Hono read the attribute before the blocks run,
+		// and Solid and Vue set it after the children assign 3. The rule drops it,
+		// since the code after the `@try` can start from the end of the body.
+		{
+			code: `export function A({ log }) @{
+	let x = 0;
+	log(x);
+	<div>
+		@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+		<p title={String(x)}>{(x = 3, null)}</p>
+	</div>
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 6, column: 26 }],
+		},
 		// Known gap: the added starts mix the two orders with one `@try` too. The
 		// core rule also reports `'init'` (2:6), which no target reads: React,
 		// Preact and Hono render the `@catch` after the `@if`, and Solid and Vue

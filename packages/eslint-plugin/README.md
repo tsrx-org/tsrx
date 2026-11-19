@@ -132,7 +132,10 @@ after `tsrx.configs.react`.
 
   - The added starts mix two orders. On React, Preact and Hono, the code after a
     `@try` runs first and the blocks render later; on Solid and Vue, the blocks
-    run in source order. So the rule can drop a report that holds on every target:
+    run in source order, and an element's attributes are set after its children.
+    The rule lets a block's value reach the code after the `@try` as in source
+    order, while code path analysis runs the rest as React does, so it can drop a
+    report that holds on every target, when no single order reads the value:
     - across two `@try`s on one path, siblings or one inside another's block. With
       `@try { status = 'a'; <b /> } @catch (e) { <i /> }`, then the same with
       `status = 'b'`, then `<p>{status}</p>`, the value `'a'` is never read, and
@@ -144,7 +147,11 @@ after `tsrx.configs.react`.
       `let x = 'init';`, then
       `@try { x = 'body'; <Boom /> } @catch (e) { <i>{x}</i> }`, then an `@if`
       whose arms both assign `x`, `'init'` is never read, and the rule doesn't
-      report it.
+      report it;
+    - when an element after the `@try` reads the value in an attribute and assigns
+      it in its children, as `<p title={String(x)}>{(x = 3, null)}</p>` does:
+      Solid and Vue set the attribute after the children, and React, Preact and
+      Hono read it before the blocks run.
   - On Hono, a `@pending` that neither awaits nor yields runs in the component,
     before the body and the code after the `@try`. The rule doesn't know the
     target, so it can drop the report of a value such a `@pending` overwrites.
