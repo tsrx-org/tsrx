@@ -3437,7 +3437,6 @@ describe('`type` written with an escape in an import or export clause (sveltejs/
 	});
 });
 
-// #719
 describe('decorators before a `;` in a class body', () => {
 	it('reports decorators before a `;`, where TypeScript expects a declaration (TS1146)', async () => {
 		// acorn-typescript gave the decorators to the `null` it reads for the `;`
@@ -3473,6 +3472,7 @@ describe('decorators before a `;` in a class body', () => {
 	});
 });
 
+// #719
 describe('modifiers before a declaration that TypeScript reports from its checker (sveltejs/acorn-typescript#155)', () => {
 	it('records the error TypeScript reports, which a strict parse throws', async () => {
 		/** @type {Array<[source: string, pos: number, error: ErrorKind, type: string]>} */
