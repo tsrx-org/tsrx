@@ -4041,6 +4041,154 @@ describe('tsrx-vue an element whose child is an @if without @else, on the client
 	});
 });
 
+const picked = ref({ on: true, name: 'Ann' });
+
+function PickCounter({ label }: { label: string }) @{
+	const count = ref(0);
+	<button class="pick-counter" onClick={() => count.value++}>
+		{label + ':' + count.value}
+	</button>
+}
+
+function Pick({ on, name }: { on: boolean; name: string }) @{
+	<div>
+		<span class="pick">
+			@if (on) {
+				<PickCounter label="on" />
+			} @else {
+				<i>{'off'}</i>
+			}
+			{name}
+		</span>
+	</div>
+}
+
+function PickHost() @{
+	<Pick on={picked.value.on} name={picked.value.name} />
+}
+
+const kept_pick = ref(true);
+
+function KeptPickA() @{
+	const count = ref(0);
+	<button class="kept-pick-a" onClick={() => count.value++}>
+		{'a:' + count.value}
+	</button>
+}
+
+function KeptPickB() @{
+	const count = ref(0);
+	<button class="kept-pick-b" onClick={() => count.value++}>
+		{'b:' + count.value}
+	</button>
+}
+
+function KeptPick() @{
+	<div class="kept-pick">
+		<VaporKeepAlive>
+			@if (kept_pick.value) {
+				<KeptPickA />
+			} @else {
+				<KeptPickB />
+			}
+		</VaporKeepAlive>
+	</div>
+}
+
+const pick_user = ref({ name: 'Ann', online: true });
+
+function PickUser() @{
+	<div class="pick-user">
+		@if (pick_user.value.online) {
+			<PickCounter label="online" />
+		} @else {
+			<i>{'away'}</i>
+		}
+		{pick_user.value.name}
+	</div>
+}
+
+describe('tsrx-vue an element whose child is an @if / @else', () => {
+	it('keeps its branch when a sibling expression changes (#1402)', async () => {
+		// \`v-if\` / \`v-else\` is a \`createIf\` of its own, outside the sibling's effect.
+		pick_user.value = { name: 'Ann', online: true };
+		await render(PickUser);
+		(container.querySelector('.pick-counter') as HTMLElement).click();
+		await flush();
+		pick_user.value = { ...pick_user.value };
+		await flush();
+		expect(text('.pick-counter')).toBe('online:1');
+		pick_user.value = { ...pick_user.value, online: false };
+		await flush();
+		expect(text('.pick-user')).toBe('awayAnn');
+	});
+
+	it('keeps each branch cached by VaporKeepAlive', async () => {
+		// A component's child keeps the ternary, as on main, so VaporKeepAlive
+		// still caches both branches.
+		kept_pick.value = true;
+		await render(KeptPick);
+		(container.querySelector('.kept-pick-a') as HTMLElement).click();
+		await flush();
+		kept_pick.value = false;
+		await flush();
+		(container.querySelector('.kept-pick-b') as HTMLElement).click();
+		await flush();
+		kept_pick.value = true;
+		await flush();
+		expect(text('.kept-pick')).toBe('a:1');
+		kept_pick.value = false;
+		await flush();
+		expect(text('.kept-pick')).toBe('b:1');
+	});
+
+	for (const [state, markup] of [
+		[
+			{ on: true, name: 'Ann' },
+			'<div><span class="pick"><button class="pick-counter">on:0</button>Ann</span></div>',
+		],
+		[{ on: false, name: 'Ann' }, '<div><span class="pick"><i>off</i>Ann</span></div>'],
+	] as const) {
+		it(`hydrates the server's branch beside an expression, then follows (on: ${state.on})`, async () => {
+			// The markup the server build renders (vapor-for-ssr.test.js).
+			picked.value = { ...state };
+			container.innerHTML = markup;
+			const server_node = container.querySelector('button, i');
+			const errors: unknown[] = [];
+			const warnings: string[] = [];
+			const warn_spy = vi.spyOn(console, 'warn').mockImplementation((...args) => {
+				warnings.push(args.map(String).join(' '));
+			});
+			const app = createVaporSSRApp(PickHost);
+			app.config.errorHandler = (error) => {
+				errors.push(error);
+			};
+			try {
+				app.mount(container);
+				await flush();
+				expect(errors).toEqual([]);
+				expect(warnings.filter((warning) => warning.includes('ydration'))).toEqual([]);
+				expect(container.querySelector('button, i')).toBe(server_node);
+
+				picked.value = { on: true, name: 'Bo' };
+				await flush();
+				expect(text('.pick')).toBe('on:0Bo');
+				(container.querySelector('.pick-counter') as HTMLElement).click();
+				await flush();
+				picked.value = { on: true, name: 'Cy' };
+				await flush();
+				expect(text('.pick')).toBe('on:1Cy');
+				picked.value = { on: false, name: 'Cy' };
+				await flush();
+				expect(text('.pick')).toBe('offCy');
+			} finally {
+				app.unmount();
+				warn_spy.mockRestore();
+			}
+		});
+	}
+});
+
 describe('tsrx-vue for_items', () => {
 	it('hands a reactive array to VaporFor as it is (#1147)', () => {
 		const list = reactive(['a', 'b']);

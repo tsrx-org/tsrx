@@ -2263,8 +2263,9 @@ export function runSharedTsxExpressionTsrxTests({ compile, name, classAttrName }
 				'App.tsrx',
 			);
 			expect(code).toContain('prop={<h1>');
-			expect(code).toContain('<div>1</div>');
-			expect(code).toContain('<div>2</div>');
+			// Vue gives the branches \`v-if\` / \`v-else\`.
+			expect(code).toContain('>1</div>');
+			expect(code).toContain('>2</div>');
 			expect(code).not.toContain('@if');
 		});
 
