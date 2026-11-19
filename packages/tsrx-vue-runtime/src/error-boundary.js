@@ -431,22 +431,26 @@ function render_fallback(state, props) {
 	return props.fallback(caught.error, state.reset);
 }
 
+/**
+ * Whether this Vue lacks `nextUid`, an internal of its Vapor renderer.
+ * Without it, a boundary can't tell its fallback's components from its
+ * content's, and routes errors as it did before it could.
+ */
+const no_uid = typeof vapor.nextUid !== 'function';
+
 let warned_no_uid = false;
 
 /**
- * The next component uid, or null when this Vue doesn't export `nextUid`,
- * an internal of its Vapor renderer. Without it, a boundary can't tell its
- * fallback's components from its content's, so it shows what either throws,
- * as it did before it could.
+ * The next component uid, or null when this Vue doesn't export `nextUid`.
  *
  * @returns {number | null}
  */
 function take_uid() {
-	if (typeof vapor.nextUid === 'function') return vapor.nextUid();
+	if (!no_uid) return /** @type {() => number} */ (vapor.nextUid)();
 	if (!warned_no_uid) {
 		warned_no_uid = true;
 		warn(
-			'[tsrx] This Vue version has no `nextUid` export, so an error a @catch throws is shown by the same @catch instead of going on to the next one out.',
+			'[tsrx] This Vue version has no `nextUid` export, so errors a @catch throws are routed as in earlier versions: a @catch that throws again as it renders, with no @try rendering around it, can loop until Vue stops it.',
 		);
 	}
 	return null;
@@ -511,7 +515,12 @@ function initialize_boundary_state(instance) {
 		// An error from the fallback is for a boundary further out: one
 		// rendering around this one takes it here.
 		const from_fallback = thrown_by_fallback(source, instance);
-		const frame = find_render_frame(source, from_fallback ? null : instance);
+		// Without uids, any error while the fallback shows is taken as the
+		// fallback's here, as before.
+		const frame = find_render_frame(
+			source,
+			from_fallback || (no_uid && state.caught) ? null : instance,
+		);
 		if (frame) {
 			frame.errors.push(captured_error);
 			return false;
