@@ -25,6 +25,7 @@ runSharedSourceMappingTests({
 	name: 'solid',
 	rejectsComponentAwait: true,
 	rejectsTemplateYield: true,
+	rejectsTemplateAwait: true,
 });
 
 describe('@tsrx/solid direct runtime imports', () => {

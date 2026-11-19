@@ -71,6 +71,7 @@ export function runSharedSourceMappingTests({
 	name,
 	rejectsComponentAwait,
 	rejectsTemplateYield = false,
+	rejectsTemplateAwait = false,
 }) {
 	describe(`[${name}] source line endings outside templates`, () => {
 		it.each([
@@ -780,6 +781,89 @@ export async function App() @{
 		}
 
 		it.each(Object.keys(ALLOWED))('allows a yield in %s', (label) => {
+			const source = ALLOWED[label];
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
+			expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
+		});
+	});
+
+	describe(`[${name}] await in a plain async function's template (#1370)`, () => {
+		/** @param {string} output */
+		const block = (
+			output,
+		) => `export async function label(load: () => Promise<string>, ok: boolean, items: string[]) {
+	const out = @{
+		${output}
+	};
+	return out;
+}`;
+
+		/** @type {Record<string, string>} */
+		const SOURCES = {
+			child: block('<p>{await load()}</p>'),
+			'attribute value': block('<p title={await load()} />'),
+			'fragment child': block('<>{await load()}</>'),
+			'@if body in an element': block(`<div>
+			@if (ok) {
+				<p>{await load()}</p>
+			}
+		</div>`),
+			'setup statements of an @if body in an element': block(`<div>
+			@if (ok) {
+				const text = await load();
+				<p>{text}</p>
+			}
+		</div>`),
+			'@switch case in an element': block(`<div>
+			@switch (ok) {
+				@case true: {
+					<p>{await load()}</p>
+				}
+			}
+		</div>`),
+			'@for body in an element': block(`<ul>
+			@for (const item of items) {
+				const text = await load();
+				<li>{text}</li>
+			}
+		</ul>`),
+		};
+
+		/** @type {Record<string, string>} */
+		const ALLOWED = {
+			'the setup statements before the output': block(`const text = await load();
+		<p>{text}</p>`),
+			'a nested async function': block('<button onClick={async () => { await load(); }} />'),
+		};
+
+		// Solid's and Vue's compilers evaluate these in effects, getters or
+		// callbacks.
+		if (rejectsTemplateAwait) {
+			it.each(Object.keys(SOURCES))('reports the await in the %s', (label) => {
+				const source = SOURCES[label];
+				for (const { errors } of [
+					compile(source, 'App.tsrx', { collect: true }),
+					compile_to_volar_mappings(source, 'App.tsrx'),
+				]) {
+					expect(errors.map((error) => [error.code, error.pos])).toEqual([
+						[DIAGNOSTIC_CODES.TARGET_AWAIT_UNSUPPORTED, source.indexOf('await')],
+					]);
+				}
+			});
+		} else {
+			it.each(Object.keys(SOURCES))('accepts the await in the %s', (label) => {
+				const source = SOURCES[label];
+				const result = compile(source, 'App.tsrx', { collect: true });
+				expect(result.errors).toEqual([]);
+				expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
+				expect(result.code).toContain('await load()');
+				expect(() =>
+					parseModule(result.code, 'App.tsx', { preserveParens: true, errors: [], comments: [] }),
+				).not.toThrow();
+			});
+		}
+
+		it.each(Object.keys(ALLOWED))('allows an await in %s', (label) => {
 			const source = ALLOWED[label];
 			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
 			expect(compile_to_volar_mappings(source, 'App.tsrx').errors).toEqual([]);
