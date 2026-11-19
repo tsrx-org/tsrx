@@ -58,6 +58,27 @@ export function App(props: { on: boolean; level: number }) @{
 	<Ifs on={props.on} level={props.level} />
 }`,
 
+	'if-else.tsrx': `import { ref } from 'vue';
+function Counter({ label }: { label: string }) @{
+	const count = ref(0);
+	<button class="pick-counter">{label + ':' + count.value}</button>
+}
+function Pick({ on, name }: { on: boolean; name: string }) @{
+	<div>
+		<span class="pick">
+			@if (on) {
+				<Counter label="on" />
+			} @else {
+				<i>{'off'}</i>
+			}
+			{name}
+		</span>
+	</div>
+}
+export function App(props: { on: boolean; name: string }) @{
+	<Pick on={props.on} name={props.name} />
+}`,
+
 	'switch.tsrx': `export function App({ items }: { items: { id: number }[] }) @{
 	<div>
 		@switch (items.length) {
@@ -143,6 +164,21 @@ describe('[vue] an element whose child is an @if without @else on the server', (
 		);
 		expect(await renderToString(createSSRApp(App, { on: true, level: 2 }))).toBe(
 			'<div><span class="on"><button>on:0</button></span><span class="level"><i>two</i></span></div>',
+		);
+	});
+});
+
+// An element's `@if` / `@else` beside an expression child renders as `v-if` /
+// `v-else` elements; the server renders the picked branch, which the client
+// build hydrates (runtime.test.tsrx hydrates this markup; comments kept here).
+describe('[vue] an element whose child is an @if / @else beside an expression on the server', () => {
+	it('renders the picked branch', async () => {
+		const { App } = await server.ssrLoadModule('/if-else.tsrx');
+		expect(await renderToString(createSSRApp(App, { on: true, name: 'Ann' }))).toBe(
+			'<div><span class="pick"><button class="pick-counter">on:0</button>Ann</span></div>',
+		);
+		expect(await renderToString(createSSRApp(App, { on: false, name: 'Ann' }))).toBe(
+			'<div><span class="pick"><i>off</i>Ann</span></div>',
 		);
 	});
 });
