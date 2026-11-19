@@ -502,33 +502,40 @@ export function convert_source_map_to_mappings(
 	 * hover and diagnostics on the call land on the authored text (Octane wraps
 	 * a template read in a type-only helper). The call starts at the same source
 	 * position and is printed first, so the node's first generated position is
-	 * the call's callee, and the mapping covered `read(` too (#1392). A member
-	 * expression's or call's own text starts with its leftmost name, which the
-	 * printer never puts in parentheses, so take the first generated position for
-	 * the node's start, inside the mapping, that has that name. A node that
-	 * starts otherwise (`(a as B).k`, `` `t`.length ``, a renamed name) keeps its
-	 * mapping.
+	 * the call's callee, and the mapping covered `read(` too (#1392).
+	 *
+	 * Of the generated positions for the node's start inside the mapping, take
+	 * the first where the printed code has the node's source text, or else its
+	 * leftmost name, which the printer never puts in parentheses. A node printed
+	 * otherwise keeps its mapping: its printed text can start with parentheses
+	 * of its own (`/x/.test(s)` prints `(/x/).test(s)`).
 	 * @param {CodeMapping} mapping
 	 * @param {AST.Node} node
 	 * @returns {CodeMapping}
 	 */
 	function start_at_own_text(mapping, node) {
-		const name = leftmost_name(node);
 		const positions =
 			node.loc && src_to_gen_map.get(`${node.loc.start.line}:${node.loc.start.column}`);
-		if (name === undefined || !positions || positions.length < 2) return mapping;
+		if (!positions || positions.length < 2) return mapping;
 		const generated_start = mapping.generatedOffsets[0];
 		const generated_end = generated_start + mapping.generatedLengths[0];
-		for (const position of positions) {
-			const offset = loc_to_offset(position.line, position.column, gen_line_offsets);
-			if (offset < generated_start || offset >= generated_end) continue;
-			if (!generated_code.startsWith(name, offset)) continue;
-			if (regex_word_char.test(generated_code[offset + name.length] ?? '')) continue;
-			if (offset > generated_start) {
-				mapping.generatedOffsets = [offset];
-				mapping.generatedLengths = [generated_end - offset];
-			}
-			break;
+		const offsets = positions
+			.map((position) => loc_to_offset(position.line, position.column, gen_line_offsets))
+			.filter((offset) => offset >= generated_start && offset < generated_end);
+		const text = source.slice(/** @type {number} */ (node.start), /** @type {number} */ (node.end));
+		const name = leftmost_name(node);
+		const start =
+			offsets.find((offset) => generated_code.startsWith(text, offset)) ??
+			(name === undefined
+				? undefined
+				: offsets.find(
+						(offset) =>
+							generated_code.startsWith(name, offset) &&
+							!regex_word_char.test(generated_code[offset + name.length] ?? ''),
+					));
+		if (start !== undefined && start > generated_start) {
+			mapping.generatedOffsets = [start];
+			mapping.generatedLengths = [generated_end - start];
 		}
 		return mapping;
 	}

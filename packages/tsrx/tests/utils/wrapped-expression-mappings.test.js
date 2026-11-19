@@ -122,6 +122,7 @@ const DECLARATIONS = `declare const a: any;
 declare const b: number;
 declare function f(): { x: number };
 declare const re: { x: number };
+declare const read: { x: number };
 `;
 
 describe('an expression a platform wraps in a call with its own location (#1392)', () => {
@@ -139,33 +140,37 @@ export function App() @{ <p>{value.list[0]}</p> }
 		['a[b].c', ['a[b].c', 'a[b]']],
 		['f().x', ['f().x', 'f()']],
 		['a!.z', ['a!.z']],
-		// The wrapper's callee, `read`, starts with the name.
-		['re.x', ['re.x']],
+		['(a as { k: number }).k', ['(a as { k: number }).k', '(a as { k: number })']],
+		['`t`.length', ['`t`.length']],
+		// The wrapper's callee is the same name.
+		['read.x', ['read.x']],
 	])('maps each member expression and call in `%s` from its own text', (expression, texts) => {
 		const source = `${DECLARATIONS}export function App() @{ <p>{${expression}}</p> }\n`;
 		for (const text of texts) expect(mapped_texts(source, text), text).toEqual([text]);
 	});
 
-	it('maps `this.y` and `super.x` from their own text', () => {
+	it('maps `this .y` and `super .x`, printed without the space, from `this` and `super`', () => {
 		const source = `class Base { get x() { return 1; } }
 export class C extends Base {
 	y = 2;
 	m() {
-		return <p>{this.y}{super.x}</p>;
+		return <p>{this .y}{super .x}</p>;
 	}
 }
 `;
-		expect(mapped_texts(source, 'this.y')).toEqual(['this.y']);
-		expect(mapped_texts(source, 'super.x')).toEqual(['super.x']);
+		expect(mapped_texts(source, 'this .y')).toEqual(['this.y']);
+		expect(mapped_texts(source, 'super .x')).toEqual(['super.x']);
 	});
 
-	it.each([
-		['(a as { k: number }).k', '(a as { k: number }).k'],
-		['`t`.length', '`t`.length'],
-	])('keeps the mapping of `%s`, which starts with no name', (expression, text) => {
-		// The printer can put the start of such an expression in parentheses of
-		// its own, so its first generated position stays its start.
-		const source = `${DECLARATIONS}export function App() @{ <p>{${expression}}</p> }\n`;
-		expect(mapped_texts(source, text)).toEqual([`read(${text}`]);
+	it('maps a member expression the printer writes differently from its leftmost name', () => {
+		// `re .x` prints as `re.x`, and the wrapper's callee, `read`, starts with
+		// `re`.
+		const source = `${DECLARATIONS}export function App() @{ <p>{re .x}</p> }\n`;
+		expect(mapped_texts(source, 're .x')).toEqual(['re.x']);
+	});
+
+	it('keeps the parentheses the printer puts around a regular expression in the mapping', () => {
+		const source = `${DECLARATIONS}export function App() @{\n\tconst r = /x/.test('s');\n\t<p>{r}</p>\n}\n`;
+		expect(mapped_texts(source, '/x/.test')).toEqual(['(/x/).test']);
 	});
 });
