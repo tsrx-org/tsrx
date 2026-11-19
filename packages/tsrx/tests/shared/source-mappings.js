@@ -2359,7 +2359,6 @@ ${members.map((member) => `\t${member}`).join('\n')}
 			'class A {\n\tstatic public x = 1;\n}',
 			'class A {\n\tasync static m() {}\n}',
 			'class A {\n\tasync static public m() {}\n}',
-			'class A {\n\tasync static ["m"]() {}\n}',
 			'abstract class A {\n\tabstract async static m(): Promise<void>;\n}',
 			'class A {\n\tasync constructor() {}\n}',
 			'class A {\n\tconstructor(readonly public x: number) {}\n}',

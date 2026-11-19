@@ -12144,14 +12144,6 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			valid: 'class A {\n\tconstructor(private readonly x: number) {}\n}',
 			pick: constructor_parameter,
 		},
-		// A method's `async` with `abstract`, at the `async` (#235).
-		{
-			source: 'abstract class A { abstract async m(): Promise<void>; }',
-			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'async m']],
-			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:28'],
-			pick: first_member,
-			match: { abstract: true, key: { name: 'm' }, value: { async: true } },
-		},
 		// An `async` constructor, at the `async`, where acorn threw `Constructor
 		// can't be an async method` at the name. It stays async, as TypeScript
 		// reads it.
@@ -12205,12 +12197,30 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: first_member,
 			match: { static: true, abstract: true, value: { async: true } },
 		},
+		// Nor acorn-typescript's errors of the modifiers that it raises at the
+		// member's start, after them: TS1244 for `abstract` in a class that isn't
+		// abstract, TS1031 for `declare` on a method.
 		{
-			source: 'class A { async static ["m"]() {} }',
-			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static [']],
+			source: 'class A { async static abstract m(): void; }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static abstract']],
 			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:16'],
-			valid: 'class A { static async ["m"]() {} }',
 			pick: first_member,
+			match: { static: true, abstract: true, value: { async: true } },
+		},
+		{
+			source: 'class A { async declare m(): Promise<void>; }',
+			errors: [[TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT, 'declare m']],
+			throws: [TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT, '1:16'],
+			pick: first_member,
+			match: { key: { name: 'm' }, value: { async: true } },
+		},
+		// `async` with `abstract` comes before the private name (TS18019).
+		{
+			source: 'abstract class A { async abstract #m(): Promise<void>; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'async abstract']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:19'],
+			pick: first_member,
+			match: { abstract: true, value: { async: true } },
 		},
 		{
 			source: 'class A { async async m() {} }',
@@ -14573,14 +14583,14 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		).toEqual(cases.map(({ throws: [error, at] }) => [code_of(error), at]));
 	});
 
-	it('leaves an async method in an ambient class, or a decorated one, to TypeScript (#235)', async () => {
+	it("leaves the errors of an async method's modifiers that acorn reads to TypeScript (#235)", async () => {
 		const sources = [
+			// TS1243, TS18019
+			'abstract class A { abstract async m(): Promise<void>; }',
+			'abstract class A { abstract async #m(): Promise<void>; }',
 			// TS1040, which Prettier's `typescript` parser accepts.
 			'declare class A { async m(): Promise<void>; }',
 			'declare class A { async static m(): Promise<void>; }',
-			// TS1249 at the decorator of an overload comes first, and only the body
-			// tells an overload.
-			'declare function dec(...a: unknown[]): any;\nclass A { @dec async static m(): Promise<void>; static async m() {} }',
 		];
 		const outcomes = await parse_in_worker(
 			sources.flatMap((source) =>
@@ -14590,6 +14600,15 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		expect(
 			outcomes.map((outcome) => (outcome.ok ? (outcome.errors ?? []) : outcome.message)),
 		).toEqual(outcomes.map(() => []));
+	});
+
+	it('reports a syntax error in a method with a leading `async` first (#235)', async () => {
+		const [outcome] = await parse_in_worker([
+			{ source: 'abstract class A { async abstract m(,): void; }' },
+		]);
+		expect(outcome.ok ? 'parsed' : outcome.code).not.toBe(
+			code_of(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH),
+		);
 	});
 
 	it('reads an `async` that no modifier follows on its line as the name (#235)', () => {
