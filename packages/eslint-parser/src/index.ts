@@ -83,6 +83,8 @@ const eslint_visitor_keys: Record<string, readonly string[]> = {
 	TSImportType: ['argument', 'options', 'qualifier', 'typeArguments'],
 	TSMappedType: ['typeParameter', 'nameType', 'typeAnnotation'],
 	...visitorKeys,
+	// `<Box<Item> />`; a dynamic tag takes no type arguments.
+	JSXOpeningElement: ['name', 'tagExpression', 'typeArguments', 'attributes'],
 };
 
 /**

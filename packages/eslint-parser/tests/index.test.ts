@@ -619,6 +619,7 @@ class Box<T> extends Base<T> implements Api<T> {
 	}
 }
 const Anonymous = class extends Base<string> {};
+const typed = <Box<string> label="a" />;
 export function App() @{
 	@try { <b /> } @catch (error, reset) { <i onClick={reset}>{String(error)}</i> }
 }`;
