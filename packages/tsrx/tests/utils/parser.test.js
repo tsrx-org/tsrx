@@ -12842,6 +12842,115 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
 		},
 		{
+			source: "function f() {\n\texport module 'm' {}\n}",
+			errors: [[TS_ERRORS.NESTED_AMBIENT_MODULE, 'export module']],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			source: 'function f() {\n\texport declare global {}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'export declare'],
+				[TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION, 'export declare'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			source: 'function f() {\n\texport abstract namespace N {}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'export abstract']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		// A namespace or module outside the module's or a namespace's body:
+		// TypeScript's checker reports its place at its first token, and nothing
+		// else about it (TS1235, or TS1234 for an ambient module or a global
+		// augmentation).
+		{
+			source: 'function f() {\n\tnamespace N {}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+			valid: 'namespace N {}',
+			pick: function_statement,
+			pickValid: first,
+		},
+		{
+			source: '{\n\tmodule A.B {}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'module A.B']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+			valid: 'module A.B {}',
+			pick: block_statement,
+			pickValid: first,
+		},
+		{
+			source: 'function f() {\n\tdeclare namespace N {}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'declare namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			source: "function f() {\n\tdeclare module 'm' {}\n\tmodule 'n' {}\n}",
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'declare module'],
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, "module 'n'"],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			// Not TS1184 for `declare`, as for another declaration there (#1264).
+			source: 'if (a) declare global {}',
+			errors: [[TS_ERRORS.NESTED_AMBIENT_MODULE, 'declare global']],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '1:7'],
+		},
+		{
+			source: 'L: namespace N {}\nfor (;;) namespace M {}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace N'],
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace M'],
+			],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '1:3'],
+		},
+		{
+			source:
+				'switch (a) {\n\tcase 1:\n\t\tnamespace N {}\n}\nclass A {\n\tstatic {\n\t\tnamespace M {}\n\t}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace N'],
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace M'],
+			],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '3:2'],
+		},
+		{
+			// Not TS1242 for `abstract`, nor TS1184 for `declare`.
+			source:
+				'function f() {\n\tabstract namespace N {}\n}\nif (a) declare abstract namespace M {}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'abstract namespace N'],
+				[TS_ERRORS.NESTED_NAMESPACE, 'declare abstract'],
+			],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			source: 'export function App() @{\n\tnamespace N {}\n\t<div />\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			source:
+				"export function App() @{\n\t@try {\n\t\tdeclare module 'm' {}\n\t\t<b />\n\t} @catch (e) {\n\t\tdeclare global {}\n\t\t<i />\n\t}\n}",
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'declare module'],
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'declare global'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '3:2'],
+		},
+		{
+			// The `await` after it is in the function, not the namespace (no TS1308).
+			source: 'async function f() {\n\tnamespace N {}\n\tawait g();\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			source: 'export const view = @{\n\tnamespace N {}\n\t<b />\n};',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
 			source: "export function App() @{\n\timport a from 'a';\n\t<div>{a}</div>\n}",
 			errors: [[TS_ERRORS.NESTED_IMPORT, 'import a']],
 			throws: [TS_ERRORS.NESTED_IMPORT, '2:1'],
@@ -15125,7 +15234,6 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'declare const v: string;',
 			'for (const x of y) {}',
 			'class A {\n\t#x;\n\tm() {\n\t\treturn #x in this;\n\t}\n}',
-			'async function f() {\n\tnamespace N {}\n\tawait g();\n}',
 			// A declarator on the line after `const`.
 			'const\n\t[a] = b;',
 			// An overload signature may have an optional binding pattern.
