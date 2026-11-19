@@ -533,14 +533,16 @@ export function convert_source_map_to_mappings(
 			.filter((offset) => offset >= generated_start && offset < generated_end);
 		const node_start = /** @type {number} */ (node.start);
 		const node_end = /** @type {number} */ (node.end);
-		const name = leftmost_name(node);
-		const start =
-			(node_end - node_start <= OWN_TEXT_MAX_LENGTH
+		let start =
+			node_end - node_start <= OWN_TEXT_MAX_LENGTH
 				? offsets.findLast((offset) => prints_source(offset, node_start, node_end))
-				: undefined) ??
-			(name === undefined
-				? undefined
-				: offsets.findLast((offset) => generated_code.startsWith(name, offset)));
+				: undefined;
+		if (start === undefined) {
+			const name = leftmost_name(node);
+			if (name !== undefined) {
+				start = offsets.findLast((offset) => generated_code.startsWith(name, offset));
+			}
+		}
 		if (start !== undefined && start > generated_start) {
 			mapping.generatedOffsets = [start];
 			mapping.generatedLengths = [generated_end - start];
@@ -3814,35 +3816,48 @@ function has_source_map_boundaries(node, src_to_gen_map) {
 	);
 }
 
+/** @type {WeakMap<AST.Node, string | undefined>} */
+const leftmost_names = new WeakMap();
+
 /**
  * The name of the identifier a member expression or call starts with, through
  * objects, callees, tags and `!`, as the printer writes it. Undefined for one
  * that starts with other code, such as `this`, parentheses, a literal or a
- * `new`.
+ * `new`. Each node's name is kept, so the members of a long chain don't each
+ * walk the whole chain.
  * @param {AST.Node} node
  * @returns {string | undefined}
  */
 function leftmost_name(node) {
-	while (true) {
-		switch (node.type) {
-			case 'Identifier':
-				return node.name;
-			case 'MemberExpression':
-				node = node.object;
-				break;
-			case 'CallExpression':
-				node = node.callee;
-				break;
-			case 'TaggedTemplateExpression':
-				node = node.tag;
-				break;
-			case 'TSNonNullExpression':
-				node = node.expression;
-				break;
-			default:
-				return undefined;
+	/** @type {AST.Node[]} */
+	const chain = [];
+	/** @type {AST.Node | undefined} */
+	let current = node;
+	/** @type {string | undefined} */
+	let name;
+	while (current) {
+		if (leftmost_names.has(current)) {
+			name = leftmost_names.get(current);
+			break;
 		}
+		chain.push(current);
+		if (current.type === 'Identifier') {
+			name = current.name;
+			break;
+		}
+		current =
+			current.type === 'MemberExpression'
+				? current.object
+				: current.type === 'CallExpression'
+					? current.callee
+					: current.type === 'TaggedTemplateExpression'
+						? current.tag
+						: current.type === 'TSNonNullExpression'
+							? current.expression
+							: undefined;
 	}
+	for (const part of chain) leftmost_names.set(part, name);
+	return name;
 }
 
 /**
