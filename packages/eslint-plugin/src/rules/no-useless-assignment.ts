@@ -425,12 +425,12 @@ const rule: Rule.RuleModule = {
 			merged[key] = (...args) => {
 				plain[key]?.(...args);
 				// The core rule places each read by the first and last identifier it
-				// visits in a segment. The traversal visits a few identifiers after
-				// code that follows them (a label after its block, type arguments
-				// after the call's arguments). Such an identifier could stretch a
-				// piece over code across a `@try` boundary, so the cut copies see an
-				// identifier only when it comes after the last one they saw in the
-				// code path, outside a `@for`'s index and key. Leaving one out only
+				// visits in a segment. An identifier visited after code that follows
+				// it could stretch a piece over code across a `@try` boundary. The
+				// TSRX parser visits the code in source order, apart from a `@for`'s
+				// index and key, but another parser's keys may not, so the cut copies
+				// see an identifier only when it comes after the last one they saw in
+				// the code path, outside a `@for`'s index and key. Leaving one out only
 				// narrows a piece, which can keep a report but never drop one. (The
 				// parser's name for a dynamic tag spans the tag expression, but a
 				// `@try` there isn't cut.)

@@ -177,6 +177,18 @@ ruleTester.run('no-useless-assignment', rule, {
 		}, null)}
 	</div>
 }`,
+		// Cutting the code paths at the `@try` doesn't change the core rule's
+		// answers in a labelled block, where it reports nothing.
+		`export function F(log) {
+	let x = 0;
+	L: {
+		log(x);
+		const view = @{
+			<div>@try { <b /> } @catch (e) { <i>{String(e)}</i> }</div>
+		};
+		log(view);
+	}
+}`,
 		// An escaped name is still a read.
 		component(`let x = 0;`, `@try { log(n); x = 1; <>{x}</> } @catch (e) { <>{\\u0078}</> }`),
 		// Code without `@try` is left to the core rule.
@@ -483,25 +495,6 @@ ruleTester.run('no-useless-assignment', rule, {
 } @catch (e) { <i /> }`,
 			),
 			errors: [{ messageId: 'unnecessaryAssignment', line: 6 }],
-		},
-		// Cutting the code paths at the `@try` doesn't change the core rule's
-		// other answers. Here it reports `x` and `view`, because it reads the
-		// label after the labelled block.
-		{
-			code: `export function F(log) {
-	let x = 0;
-	L: {
-		log(x);
-		const view = @{
-			<div>@try { <b /> } @catch (e) { <i>{String(e)}</i> }</div>
-		};
-		log(view);
-	}
-}`,
-			errors: [
-				{ messageId: 'unnecessaryAssignment', line: 2, column: 6 },
-				{ messageId: 'unnecessaryAssignment', line: 5, column: 9 },
-			],
 		},
 		{
 			code: `export function F(log) {
