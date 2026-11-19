@@ -66,6 +66,8 @@ export interface JsxTransformContext {
 	needs_vapor_computed: boolean;
 	/** Vue: a component reads its children from the default slot. */
 	needs_use_slots?: boolean;
+	/** Vue: a `@pending` body renders through `TsrxPendingBody`. */
+	needs_pending_body?: boolean;
 	stylesheets: AST.CSS.StyleSheet[];
 	type_only_style_anchors: AST.Statement[];
 	helper_state: JsxHelperState | null;

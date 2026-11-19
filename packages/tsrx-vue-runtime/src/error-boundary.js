@@ -1,9 +1,16 @@
 /** @import { ComponentInternalInstance, ShallowRef } from 'vue' */
-/** @import { TsrxErrorBoundaryProps } from '../types/error-boundary' */
+/** @import { TsrxErrorBoundaryProps, TsrxPendingBodyProps } from '../types/error-boundary' */
 /** @import { VaporBlock, VaporFragment, VaporRenderedBlock, VaporRuntime } from '../types/vapor-runtime' */
 
 import * as Vue from 'vue';
-import { EffectScope, getCurrentInstance, onErrorCaptured, shallowRef } from 'vue';
+import {
+	EffectScope,
+	ErrorCodes,
+	getCurrentInstance,
+	handleError,
+	onErrorCaptured,
+	shallowRef,
+} from 'vue';
 
 /**
  * The Vapor renderer's fragment/component helpers are runtime-internal, so
@@ -117,7 +124,13 @@ function track_dynamic_values(value) {
  * @returns {VaporRenderedBlock}
  */
 function normalize_block(node, anchor) {
-	if (node instanceof Node || vapor.isFragment(node)) return node;
+	if (node instanceof Node) return node;
+	if (vapor.isFragment(node)) {
+		// A fragment with no anchor of its own, such as the one Vapor makes for
+		// a VDOM component like `Suspense`, gets one, so that a later render can
+		// find where it is to replace it.
+		return node.anchor ? node : create_fragment(node, anchor);
+	}
 	if (vapor.isVaporComponent(node)) {
 		if (!(node.rawProps && 'content' in node.rawProps && 'fallback' in node.rawProps)) {
 			track_dynamic_values(node.rawProps);
@@ -306,3 +319,31 @@ function initialize_boundary_state(instance) {
 
 	return state;
 }
+
+/**
+ * Renders a `@pending` body as its own component, which `Suspense` creates
+ * only while it shows its fallback.
+ *
+ * Vapor renders a `Suspense` fallback slot without Vue's error handling, so a
+ * throw there would end the mount without reaching any `onErrorCaptured` hook
+ * or `app.config.errorHandler`. This component catches what the body throws
+ * and hands it to Vue's error handling as its own render error, so the
+ * nearest enclosing boundary shows it: the same `@try`'s `@catch`, or an
+ * outer one.
+ *
+ * @param {TsrxPendingBodyProps} props
+ * @param {unknown} [ctx] the instance, when Vapor renders it as a component
+ * @returns {unknown}
+ */
+export function TsrxPendingBody(props, ctx) {
+	const instance = own_instance(ctx);
+	if (!instance) return props.content();
+	try {
+		return props.content();
+	} catch (error) {
+		handleError(error, instance, ErrorCodes.RENDER_FUNCTION);
+		return document.createTextNode('');
+	}
+}
+
+TsrxPendingBody.props = ['content'];
