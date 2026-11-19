@@ -952,6 +952,7 @@ export async function App() @{
 			['class A { [ k ]() {} }', '[ k ]'],
 			['class A { [/* c */ k]() {} }', '[/* c */ k]'],
 			['const o = { [\n\tk\n]: 1 };', '[\n\tk\n]'],
+			["const merge = (current: object) => ({ ...current, [k]: '' });", '[k]'],
 			// The decorator's argument holds the first `[` inside the member.
 			[
 				'function dec(...args: unknown[]) { return () => {}; }\nclass A { @dec([1]) [k]() {} }',
@@ -982,6 +983,29 @@ export async function App() @{
 		const expect_maps = (source) => {
 			expect(() => compile_to_volar_mappings(source, 'App.tsrx', { loose: true })).not.toThrow();
 		};
+		/**
+		 * One mapping covers `span`, the first in `source`, reports diagnostics there,
+		 * and prints it as written.
+		 * @param {string} source
+		 * @param {string} span
+		 */
+		const expect_span_mapped = (source, span) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const offset = source.indexOf(span);
+			const mapping = result.mappings.find(
+				(candidate) =>
+					candidate.sourceOffsets[0] === offset && candidate.lengths[0] === span.length,
+			);
+			assert(mapping, `no mapping covers ${JSON.stringify(span)}`);
+			expect(isDiagnosticsEnabled(mapping.data)).toBe(true);
+			const generated_start = mapping.generatedOffsets[0];
+			expect(
+				result.code.slice(
+					generated_start,
+					generated_start + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+				),
+			).toBe(span);
+		};
 
 		// JS nodes whose esrap printer emits leading/trailing literal tokens
 		// (like `new`, `return`, backticks, `[...]`) without location markers;
@@ -995,15 +1019,17 @@ export async function App() @{
 	const x = foo[bar];
 }`));
 		// The index expression's acorn location starts at the `(` of its
-		// parenthesized left operand — a position the printer emits no marker
-		// for; the verify mapping is skipped instead of failing the file.
+		// parenthesized left operand, which the printer maps from its token.
 		it('computed MemberExpression with parenthesized binary index', () =>
-			expect_maps(`const C = ['a', 'b'];
+			expect_span_mapped(
+				`const C = ['a', 'b'];
 function F(props: { n: number }) @{
 	const x = { fill: C[(props.n - 1) % C.length] };
-}`));
-		// The synthesized `[key]` bracket span starts one column before the key —
-		// unmarked in some object-literal contexts; skipped, not fatal.
+}`,
+				'(props.n - 1) % C.length',
+			));
+		// The `[key]` span maps from its source brackets ("computed key brackets"
+		// above checks it).
 		it('computed object key', () =>
 			expect_maps(`function F(props: { k: string }) @{
 	const merge = (current: object) => ({ ...current, [props.k]: '' });
@@ -1013,19 +1039,27 @@ function F(props: { n: number }) @{
 function C() @{
 	const value = { [method]() { return 'ok'; } };
 }`));
-		// AssignmentPattern spans reaching into marker-less literal tokens.
+		// AssignmentPattern spans ending at a literal's bracket, at a call's
+		// closing paren, and a span ending at a computed member's closing bracket.
 		it('parameter default array literal', () =>
-			expect_maps(`function parse(points = []) {
+			expect_span_mapped(
+				`function parse(points = []) {
 	return points.length;
-}`));
-		// The pattern's span ends at a call's closing paren.
+}`,
+				'points = []',
+			));
 		it('parameter default ending in a call', () =>
-			expect_maps(`const use = ({ dir = getDocumentDirection() } = {}) => dir;`));
-		// A statement/property span ending at a computed member's closing bracket.
+			expect_span_mapped(
+				`const use = ({ dir = getDocumentDirection() } = {}) => dir;`,
+				'dir = getDocumentDirection()',
+			));
 		it('computed member access at span end', () =>
-			expect_maps(`function next(items: string[], index: number) {
+			expect_span_mapped(
+				`function next(items: string[], index: number) {
 	return { value: items[index++], done: false };
-}`));
+}`,
+				'items[index++]',
+			));
 		it('destructured parameter defaults', () =>
 			expect_maps(`const use = ({ a = 1 } = {}) => a;
 export function usePos(
