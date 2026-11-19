@@ -8243,19 +8243,50 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * Whether the current token starts a namespace or module declaration, as
-			 * TypeScript's parser reads one (see `#declarationAfterModifier`).
-			 * @returns {boolean}
+			 * Where TypeScript's checker reports the namespace or module declaration
+			 * that the current token starts, as TypeScript's parser reads one (see
+			 * `#declarationAfterModifier`), when it isn't directly in the module's or
+			 * a namespace's body (`checkGrammarModuleElementContext`), and the error:
+			 * TS1234 for an ambient module (`module "m"`) or a global augmentation,
+			 * and TS1235 for any other. It's the first token, after an `abstract`,
+			 * which the output leaves out, so the editor shows TypeScript's own error
+			 * on the output in its place. `null` when the token starts none.
+			 * @returns {{ start: number, end: number, error: Diagnostic } | null}
 			 */
-			#startsModuleDeclaration() {
+			#moduleDeclarationPlace() {
 				if (
 					!Parser.acornTypeScript.tokenIsIdentifier(this.type) ||
 					!MODULE_DECLARATION_START_WORDS.has(/** @type {string} */ (this.value))
 				) {
-					return false;
+					return null;
 				}
-				const word = this.#declarationAfterModifier(0)?.at(-1);
-				return word === 'namespace' || word === 'module' || word === 'global';
+				const words = this.#declarationAfterModifier(0);
+				const keyword = words?.at(-1);
+				if (!words || (keyword !== 'namespace' && keyword !== 'module' && keyword !== 'global')) {
+					return null;
+				}
+				const tokens = words.map((_, i) =>
+					i === 0 ? this.getCurLookaheadState() : this.lookahead(i),
+				);
+				// An escape in a keyword but `global` is TS1260, which the parse throws
+				// as TypeScript's parser reports it, before anything else.
+				if (
+					tokens.some(
+						(token, i) =>
+							words[i] !== 'global' && this.input.slice(token.start, token.end).includes('\\'),
+					)
+				) {
+					return null;
+				}
+				const first = words[0] === 'abstract' ? tokens[1] : tokens[0];
+				const ambient =
+					keyword === 'global' ||
+					(keyword === 'module' && this.lookahead(words.length).type === tt.string);
+				return {
+					start: first.start,
+					end: first.end,
+					error: ambient ? TS_ERRORS.NESTED_AMBIENT_MODULE : TS_ERRORS.NESTED_NAMESPACE,
+				};
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#155): remove once a release includes the fix
@@ -15153,31 +15184,40 @@ export function TSRXPlugin(config) {
 					(this.#exportedDeclarationStart !== -1 &&
 						(start === this.#exportedDeclarationStart ||
 							this.lastTokStart === this.#exportedDeclarationStart));
-				// A statement that may be a misplaced namespace or module, whose place
-				// TypeScript reports before the errors in it.
-				const held_module = !nested_module_allowed && this.#startsModuleDeclaration();
+				// TypeScript's checker reports a namespace or module there, and nothing
+				// else about it (`checkModuleDeclaration`), before the errors in it,
+				// which are held until it's read. A syntax error still comes first.
+				const place = nested_module_allowed ? null : this.#moduleDeclarationPlace();
 				this.#statementContext = context ?? null;
 				this.#statementContextDepth = this.context.length - this.#currentTokenContextCount();
 				this.#statementOpenBrackets = this.#openBrackets;
 				const read = () => {
 					const statement = this.#parseStatement(context, topLevel, exports);
 					const node = /** @type {AST.Node | undefined} */ (statement);
-					if (!nested_module_allowed && node?.type === 'TSModuleDeclaration') {
-						// TypeScript's checker reports it at its first token, and nothing
-						// else about it (`checkModuleDeclaration`). The declaration starts
-						// after an `abstract`, which the output leaves out, so the editor
-						// shows TypeScript's own error on the output in its place.
-						const at = /** @type {number} */ (node.start);
-						this.#raiseCheckerError(
-							at,
-							module_declaration_place_error(node),
-							word_end(this.input, at),
-						);
+					if (
+						!nested_module_allowed &&
+						node?.type === 'TSModuleDeclaration' &&
+						// acorn-typescript reads `declare global;` as a global augmentation
+						// without a body, where TypeScript reads two names.
+						(node.kind !== 'global' || node.body)
+					) {
+						if (place) {
+							this.#raiseCheckerError(place.start, place.error, place.end);
+						} else {
+							// One the tokens don't show, such as one after decorators, or
+							// one acorn-typescript reads after `declare` on the line before.
+							const at = /** @type {number} */ (node.start);
+							this.#raiseCheckerError(
+								at,
+								module_declaration_place_error(node),
+								word_end(this.input, at),
+							);
+						}
 					}
 					return statement;
 				};
 				try {
-					if (!held_module) return read();
+					if (!place) return read();
 					/** @type {CompileError[]} */
 					const held = [];
 					const statement = this.#holdingErrors(held, read);

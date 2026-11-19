@@ -12937,6 +12937,38 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
 		},
 		{
+			// An ambient module without a body.
+			source: '{\n\tdeclare module "m";\n}',
+			errors: [[TS_ERRORS.NESTED_AMBIENT_MODULE, 'declare module']],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			// Recorded first, but a strict parse throws an error it can't read past
+			// as it comes, as it does without the namespace.
+			source: '{\n\tnamespace N {\n\t\tfunction f(...x, y) {}\n\t}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace'],
+				[TS_ERRORS.REST_PARAMETER_NOT_LAST, '...x'],
+			],
+			throws: [TS_ERRORS.REST_PARAMETER_NOT_LAST, '3:13'],
+		},
+		{
+			// One acorn-typescript reads after `declare` on the line before, which
+			// TypeScript reads as a name. TypeScript reports it at `abstract`.
+			source: 'let declare: any;\nfunction f() {\n\tdeclare\n\tabstract namespace N {}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'declare']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '3:1'],
+		},
+		{
+			// Errors held in a parameter's default are still corrected to TS2300.
+			source: 'export function f(p = () => {\n\tlet x;\n\tlet x;\n\tfunction x() {}\n}) {}',
+			errors: [
+				[UPSTREAM_ERRORS.REDECLARED, 'x;\n\tfunction'],
+				[UPSTREAM_ERRORS.REDECLARED, 'x() {}'],
+			],
+			throws: [UPSTREAM_ERRORS.REDECLARED, '3:5'],
+		},
+		{
 			// A redeclaration before a function declaration of the name is still
 			// TS2300, in a namespace as outside one (#952).
 			source:
@@ -14258,6 +14290,43 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it('reports no place for a namespace that acorn-typescript reads as an expression', () => {
+		// TypeScript reads a namespace named `as` and reports a syntax error in it
+		// instead, which acorn-typescript doesn't see.
+		for (const source of [
+			'{\n\tnamespace as any;\n}',
+			'{\n\tnamespace as { readonly r: number };\n}',
+		]) {
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'App.tsrx', { collect: true, errors });
+			expect(
+				errors.map((error) => error.code),
+				source,
+			).not.toContain(TS_ERRORS.NESTED_NAMESPACE.code);
+		}
+	});
+
+	it('throws a syntax error in a misplaced namespace before its place, as TypeScript reports it', () => {
+		const source = '{\n\tnamespace N {\n\t\treadonly r = 1;\n\t}\n}';
+		const expected = expect.objectContaining({ code: 'TS1128', pos: source.indexOf('readonly') });
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(expected);
+		expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] })).toThrow(expected);
+	});
+
+	it("throws TS1260 for an escape in a misplaced namespace's keyword before its place", () => {
+		// TypeScript's parser reports the escape, before its checker reports the place.
+		for (const source of [
+			'function f() {\n\tn\\u0061mespace N {}\n}',
+			'function f() {\n\td\\u0065clare namespace N {}\n}',
+			"function f() {\n\tm\\u006fdule 'm' {}\n}",
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code: 'TS1260', pos: source.indexOf('\\') - 1 }),
+			);
+		}
+	});
+
 	it('names the property of `import.<name>` without its escapes, as TypeScript does', () => {
 		expect(() => parseModule('import.f\\u006fo();', 'App.tsrx')).toThrow(
 			"'foo' is not a valid meta-property for keyword 'import'.",
@@ -15277,6 +15346,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'declare const v: string;',
 			'for (const x of y) {}',
 			'class A {\n\t#x;\n\tm() {\n\t\treturn #x in this;\n\t}\n}',
+			// `declare` and `global` as names: TypeScript reads `global` as a global
+			// augmentation only before `{`.
+			'let declare: any, global: any;\nexport function f() {\n\tdeclare global;\n}',
+			'let declare: any, global: any;\n{\n\tdeclare global\n}',
+			'let declare: any, global: any;\nexport function App() @{\n\tdeclare global;\n\t<b />\n}',
 			// A declarator on the line after `const`.
 			'const\n\t[a] = b;',
 			// An overload signature may have an optional binding pattern.
