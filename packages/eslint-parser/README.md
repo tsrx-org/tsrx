@@ -64,7 +64,8 @@ ESTree-compatible AST that ESLint can analyze.
 The parser:
 
 1. Parses the TSRX source code (`.tsrx`)
-2. Normalizes the AST for ESLint traversal
+2. Normalizes the AST for ESLint traversal, and gives ESLint typescript-eslint's
+   visitor keys, so rules visit each node's children in source order
 3. Returns the ESTree AST to ESLint
 4. Allows ESLint rules to analyze TSRX-specific patterns
 

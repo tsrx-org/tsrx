@@ -513,6 +513,151 @@ export const B = ({ ok }) => @if (ok) { throw new Error('d'); } @else { <i /> };
 		expect(names).toEqual(['a', 'p', 'b']);
 	});
 
+	it('visits the code in source order, with typescript-eslint keys', () => {
+		const starts: number[] = [];
+		lint(
+			`export function F(log: any, n: number) {
+	L: {
+		log(n);
+	}
+	switch (n) {
+		case n:
+			log(n);
+	}
+	log<typeof n>(n);
+	log<number>\`x\${n}\`;
+}
+class C {
+	@dec m<T>(this: C, value: T) {}
+	@dec static p = 1;
+}
+type Fn = <T>(value: T) => T;
+type Mapped<T> = { [K in keyof T]: T[K] };`,
+			{
+				plugins: {
+					probe: {
+						rules: {
+							order: {
+								create: () => ({
+									Identifier(node: any) {
+										starts.push(node.range[0]);
+									},
+								}),
+							},
+						},
+					},
+				},
+				rules: { 'probe/order': 'error' },
+			},
+		);
+		expect(starts.length).toBeGreaterThan(20);
+		expect(starts).toEqual([...starts].sort((a, b) => a - b));
+	});
+
+	it('reports what espree reports for code path rules in plain code', () => {
+		// The core rule reported each of these, since ESLint visited a label after
+		// its statement, a case's test after its consequent and a call's type
+		// arguments after its arguments.
+		const reported = (code: string) =>
+			new Linter()
+				.verify(
+					code,
+					{
+						files: ['**/*.tsrx'],
+						languageOptions: { parser },
+						rules: { 'no-useless-assignment': 'error' },
+					},
+					'App.tsrx',
+				)
+				.map((message) => `${message.line}:${message.column}`);
+		expect(
+			reported(
+				`export function f(n, log) { let x = 0; switch (n) { case x: return 1; default: return 2; } }`,
+			),
+		).toEqual([]);
+		expect(
+			reported(`export function f(n, log) { let x = 0; L: { log(x); const v = 1; log(v); } }`),
+		).toEqual([]);
+		// `c = 0` is overwritten; `c = g()` is read.
+		expect(
+			reported(`export function f(g: any, log: any) { let c = 0; c = g(); log<typeof c>(c); }`),
+		).toEqual(['1:43']);
+	});
+
+	it('visits no comment as a node', () => {
+		// ESLint leaves alone a comment that is all a JSX expression container
+		// holds, but only when it finds the container's empty expression there.
+		expect(
+			lint(
+				`export function A() {
+	return (
+		<div>
+			{/* note */}
+			<b />
+		</div>
+	);
+}`,
+				{ rules: { 'no-inline-comments': 'error' } },
+			),
+		).toEqual([]);
+	});
+
+	it('lists every child of the TypeScript nodes it shapes, once', () => {
+		const code = `type Fn = <T>(a: T, ...rest: T[]) => T;
+type Ctor = abstract new (a: string) => object;
+interface Api<T> extends Base<T> {
+	(a: T): void;
+	new (a: T): Api<T>;
+	method<U>(a: U): U;
+}
+type Mapped<T> = { readonly [K in keyof T as \`k\${string & K}\`]-?: T[K] };
+type Imported = import('./types').Foo<string>;
+type Json = typeof import('./data.json', { with: { type: 'json' } });
+class Box<T> extends Base<T> implements Api<T> {
+	@dec method<U>(this: Box<T>, value: U): U {
+		return value;
+	}
+}
+const Anonymous = class extends Base<string> {};
+export function App() @{
+	@try { <b /> } @catch (error, reset) { <i onClick={reset}>{String(error)}</i> }
+}`;
+		const { ast, visitorKeys } = parseForESLint(code, { filePath: 'App.tsrx' });
+		const is_node = (value: any) =>
+			value && typeof value === 'object' && typeof value.type === 'string';
+		const seen = new Set<any>();
+		const missing: string[] = [];
+		const visit = (node: any) => {
+			if (!is_node(node)) return;
+			expect(seen.has(node)).toBe(false);
+			seen.add(node);
+			const keys = visitorKeys![node.type];
+			for (const [key, value] of Object.entries(node)) {
+				if (
+					key === 'parent' ||
+					key.endsWith('Comments') ||
+					key === 'comments' ||
+					key === 'tokens'
+				) {
+					continue;
+				}
+				const children = Array.isArray(value)
+					? value.filter(is_node)
+					: is_node(value)
+						? [value]
+						: [];
+				if (keys && children.length && !keys.includes(key)) missing.push(`${node.type}.${key}`);
+			}
+			for (const key of keys ?? Object.keys(node).filter((key) => key !== 'parent')) {
+				const value = node[key];
+				for (const child of Array.isArray(value) ? value : [value]) visit(child);
+			}
+		};
+		visit(ast);
+		expect(missing).toEqual([]);
+		expect(seen.size).toBeGreaterThan(100);
+	});
+
 	it('keeps hooks in a @try body on one path, outside any try', () => {
 		// Test doubles for two checks in eslint-plugin-react-hooks, which isn't a
 		// dependency here: `use()` under a `TryStatement` or `CatchClause`, and a hook

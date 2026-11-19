@@ -78,6 +78,9 @@ catalogs:
     '@typescript-eslint/types':
       specifier: ^8.40.0
       version: 8.56.1
+    '@typescript-eslint/visitor-keys':
+      specifier: ^8.56.1
+      version: 8.56.1
     '@volar/language-core':
       specifier: ~2.4.28
       version: 2.4.28
@@ -523,6 +526,9 @@ importers:
       '@types/node':
         specifier: catalog:default
         version: 24.11.0
+      '@typescript-eslint/visitor-keys':
+        specifier: catalog:default
+        version: 8.56.1(typescript@5.9.3)
       eslint-9:
         specifier: npm:eslint@9.39.5
         version: eslint@9.39.5(jiti@2.6.1)(supports-color@7.2.0)

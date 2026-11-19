@@ -5,13 +5,14 @@ import {
 	DIAGNOSTIC_CODES,
 	parseModule as parse_module,
 } from '@tsrx/core';
+import { visitorKeys as typescript_visitor_keys } from '@typescript-eslint/visitor-keys';
 import { Definition, Referencer, ScopeManager } from 'eslint-scope';
 
 interface ParseResult {
 	ast: Program;
 	services?: Record<string, any>;
 	scopeManager?: any;
-	visitorKeys?: Record<string, string[]>;
+	visitorKeys?: Record<string, readonly string[]>;
 }
 
 const visitorKeys: Record<string, string[]> = {
@@ -41,6 +42,47 @@ const visitorKeys: Record<string, string[]> = {
 	// eslint-scope's default keys leave out `pending`, so without this, scope
 	// analysis would skip the `pending` block of a plain `try`.
 	TryStatement: ['block', 'pending', 'handler', 'finalizer'],
+};
+
+const SIGNATURE_KEYS = ['typeParameters', 'parameters', 'typeAnnotation'];
+const CLASS_KEYS = [
+	'decorators',
+	'id',
+	'typeParameters',
+	'superClass',
+	'superTypeParameters',
+	'implements',
+	'body',
+];
+
+/**
+ * The keys ESLint walks the tree with. For a type without keys, ESLint visits
+ * the node's properties in the order the parser set them, which puts a label
+ * after its statement, a switch case's test after its consequent, a call's
+ * type arguments after its arguments and decorators last. Rules that follow
+ * the code path, such as `no-useless-assignment`, then reported falsely even
+ * in plain JavaScript. typescript-eslint's keys list each node's children in
+ * source order. The TSRX parser names a few parts of TypeScript nodes as
+ * Babel does (a function type's `parameters` and `typeAnnotation`, a class's
+ * `superTypeParameters`), so those types list its names, and a `@catch` can
+ * take a `reset` function. A function type's `params` is the same array as
+ * its `parameters` and isn't listed, so each parameter is visited once. Scope
+ * analysis keeps `visitorKeys` and its own fallback.
+ */
+const eslint_visitor_keys: Record<string, readonly string[]> = {
+	...typescript_visitor_keys,
+	CatchClause: ['param', 'resetParam', 'body'],
+	ClassDeclaration: CLASS_KEYS,
+	ClassExpression: CLASS_KEYS,
+	MethodDefinition: ['decorators', 'key', 'typeParameters', 'value'],
+	TSCallSignatureDeclaration: SIGNATURE_KEYS,
+	TSConstructSignatureDeclaration: SIGNATURE_KEYS,
+	TSConstructorType: SIGNATURE_KEYS,
+	TSFunctionType: SIGNATURE_KEYS,
+	TSMethodSignature: ['key', ...SIGNATURE_KEYS],
+	TSImportType: ['argument', 'options', 'qualifier', 'typeArguments'],
+	TSMappedType: ['typeParameter', 'nameType', 'typeAnnotation'],
+	...visitorKeys,
 };
 
 /**
@@ -738,7 +780,7 @@ export function parseForESLint(code: string, options?: Linter.ParserOptions): Pa
 				tsrxDiagnostics: errors,
 			},
 			scopeManager: analyze_scope(result, options),
-			visitorKeys,
+			visitorKeys: eslint_visitor_keys,
 		};
 	} catch (error: any) {
 		if (error instanceof SyntaxError && (error as any).lineNumber != null) {
