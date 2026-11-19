@@ -12953,11 +12953,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.REST_PARAMETER_NOT_LAST, '3:13'],
 		},
 		{
-			// One acorn-typescript reads after `declare` on the line before, which
-			// TypeScript reads as a name. TypeScript reports it at `abstract`.
+			// After `declare` on the line before, which TypeScript reads as a name
+			// (the statement `declare;`), at the token after `abstract`, as above.
 			source: 'let declare: any;\nfunction f() {\n\tdeclare\n\tabstract namespace N {}\n}',
-			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'declare']],
-			throws: [TS_ERRORS.NESTED_NAMESPACE, '3:1'],
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '4:10'],
 		},
 		{
 			// Errors held in a parameter's default are still corrected to TS2300.
@@ -14290,20 +14290,23 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
-	it('reports no place for a namespace that acorn-typescript reads as an expression', () => {
+	it('reports the syntax error in a namespace named `as`, and not its place', () => {
 		// TypeScript reads a namespace named `as` and reports a syntax error in it
-		// instead, which acorn-typescript doesn't see.
-		for (const source of [
-			'{\n\tnamespace as any;\n}',
-			'{\n\tnamespace as { readonly r: number };\n}',
-		]) {
-			/** @type {CompileError[]} */
-			const errors = [];
-			parseModule(source, 'App.tsrx', { collect: true, errors });
-			expect(
-				errors.map((error) => error.code),
-				source,
-			).not.toContain(TS_ERRORS.NESTED_NAMESPACE.code);
+		// instead (TS1005 `'{' expected.` at `any`, where this parser reports
+		// `Unexpected token`, as after any namespace's name).
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
+		const cases = [
+			['{\n\tnamespace as any;\n}', TS_ERRORS.UNEXPECTED_TOKEN, 'any'],
+			[
+				'{\n\tnamespace as { readonly r: number };\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'readonly',
+			],
+		];
+		for (const [source, error, at] of cases) {
+			expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] }), source).toThrow(
+				expect.objectContaining({ code: code_of(error), pos: source.indexOf(at) }),
+			);
 		}
 	});
 
