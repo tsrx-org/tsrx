@@ -1059,9 +1059,12 @@ const PRINTED_MODIFIER_ORDER = {
 	TSParameterProperty: ['accessibility', 'override', 'readonly'],
 };
 
-/** A modifier word, after any spaces and comments. */
+/**
+ * A modifier word, after any spaces and comments. Each space, and each comment
+ * to its end, is matched one way only, so a failed match takes linear time.
+ */
 const regex_modifier =
-	/(?:\s+|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\/)*([a-z]+)(?![\p{ID_Continue}$\u200c\u200d\\])/uy;
+	/(?:\s|\/\/[^\n\r\u2028\u2029]*(?![^\n\r\u2028\u2029])|\/\*(?:[^*]|\*(?!\/))*\*\/)*([a-z]+)(?![\p{ID_Continue}$\u200c\u200d\\])/uy;
 
 /**
  * The modifiers of a class member or a parameter property, in the order the

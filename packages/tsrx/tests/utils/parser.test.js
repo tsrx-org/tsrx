@@ -12208,6 +12208,21 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			match: { static: true, abstract: true, value: { async: true } },
 		},
 		{
+			source: 'class A { async public public m() {} }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'public public']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:16'],
+			pick: first_member,
+			match: { accessibility: 'public', value: { async: true } },
+		},
+		// One that acorn-typescript doesn't report.
+		{
+			source: 'abstract class A { private async abstract m(): Promise<void>; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'abstract m']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:33'],
+			pick: first_member,
+			match: { accessibility: 'private', abstract: true, value: { async: true } },
+		},
+		{
 			source: 'class A { async async m() {} }',
 			errors: [[TS_ERRORS.MODIFIER_ALREADY_SEEN, 'async m']],
 			throws: [TS_ERRORS.MODIFIER_ALREADY_SEEN, '1:16'],
@@ -14590,6 +14605,19 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		const source = 'abstract class A { async abstract m(,): void; }';
 		const [outcome] = await parse_in_worker([{ source }]);
 		expect(outcome).toMatchObject({ ok: false, pos: source.indexOf(',') });
+	});
+
+	it("keeps acorn's error for a decorated async constructor in an async constructor (#235)", async () => {
+		const source =
+			'declare function dec(...a: unknown[]): any;\nclass A { async constructor() { class B { @dec async constructor() {} } } }';
+		const [outcome] = await parse_in_worker([{ source, options: { collect: true } }]);
+		expect(outcome).toMatchObject({ ok: false, pos: source.lastIndexOf('constructor') });
+	});
+
+	it("reads the words before a member's name in linear time (#235)", async () => {
+		const source = `class A { async${' '.repeat(64)}"constructor"() {} }`;
+		const [outcome] = await parse_in_worker([{ source, options: { collect: true } }]);
+		expect(outcome).toEqual({ ok: true, errors: ['TS1089'] });
 	});
 
 	it('keeps TS1368 for an async generator constructor, which TypeScript reports first (#235)', async () => {
