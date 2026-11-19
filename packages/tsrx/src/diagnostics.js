@@ -919,6 +919,10 @@ export const TS_ERRORS = {
 		code: 'TS1235',
 		message: 'A namespace declaration is only allowed at the top level of a namespace or module.',
 	},
+	NESTED_AMBIENT_MODULE: {
+		code: 'TS1234',
+		message: 'An ambient module declaration is only allowed at the top level in a file.',
+	},
 	NESTED_GLOBAL_EXPORT: {
 		code: 'TS1316',
 		message: 'Global module exports may only appear at top level.',

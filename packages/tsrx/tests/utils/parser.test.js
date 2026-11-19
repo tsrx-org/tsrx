@@ -12842,6 +12842,190 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
 		},
 		{
+			source: "function f() {\n\texport module 'm' {}\n}",
+			errors: [[TS_ERRORS.NESTED_AMBIENT_MODULE, 'export module']],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			source: 'function f() {\n\texport declare global {}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'export declare'],
+				[TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION, 'export declare'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			source: 'function f() {\n\texport abstract namespace N {}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'export abstract']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		// A namespace or module outside the module's or a namespace's body:
+		// TypeScript's checker reports its place at its first token, and nothing
+		// else about it (TS1235, or TS1234 for an ambient module or a global
+		// augmentation).
+		{
+			source: 'function f() {\n\tnamespace N {}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+			valid: 'namespace N {}',
+			pick: function_statement,
+			pickValid: first,
+		},
+		{
+			source: '{\n\tmodule A.B {}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'module A.B']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+			valid: 'module A.B {}',
+			pick: block_statement,
+			pickValid: first,
+		},
+		{
+			source: 'function f() {\n\tdeclare namespace N {}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'declare namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			source: "function f() {\n\tdeclare module 'm' {}\n\tmodule 'n' {}\n}",
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'declare module'],
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, "module 'n'"],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			// Not TS1184 for `declare`, as for another declaration there (#1264).
+			source: 'if (a) declare global {}',
+			errors: [[TS_ERRORS.NESTED_AMBIENT_MODULE, 'declare global']],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '1:7'],
+		},
+		{
+			source: 'L: namespace N {}\nfor (;;) namespace M {}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace N'],
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace M'],
+			],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '1:3'],
+		},
+		{
+			source:
+				'switch (a) {\n\tcase 1:\n\t\tnamespace N {}\n}\nclass A {\n\tstatic {\n\t\tnamespace M {}\n\t}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace N'],
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace M'],
+			],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '3:2'],
+		},
+		{
+			// Not TS1242 for `abstract`, nor TS1184 for `declare`. After a leading
+			// `abstract`, which the output leaves out, at the token after it, where
+			// TypeScript reports it on the output, which the editor shows.
+			source:
+				'function f() {\n\tabstract namespace N {}\n}\nif (a) declare abstract namespace M {}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace N'],
+				[TS_ERRORS.NESTED_NAMESPACE, 'declare abstract'],
+			],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:10'],
+		},
+		{
+			// Its place comes first after an escape in the keyword too.
+			source: 'function f() {\n\tglo\\u0062al {\n\t\tconst x;\n\t}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'glo'],
+				[TS_ERRORS.DECLARATION_NOT_INITIALIZED, 'x;'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			// An ambient module without a body.
+			source: '{\n\tdeclare module "m";\n}',
+			errors: [[TS_ERRORS.NESTED_AMBIENT_MODULE, 'declare module']],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			// Recorded first, but a strict parse throws an error it can't read past
+			// as it comes, as it does without the namespace.
+			source: '{\n\tnamespace N {\n\t\tfunction f(...x, y) {}\n\t}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace'],
+				[TS_ERRORS.REST_PARAMETER_NOT_LAST, '...x'],
+			],
+			throws: [TS_ERRORS.REST_PARAMETER_NOT_LAST, '3:13'],
+		},
+		{
+			// One acorn-typescript reads after `declare` on the line before, which
+			// TypeScript reads as a name. TypeScript reports it at `abstract`.
+			source: 'let declare: any;\nfunction f() {\n\tdeclare\n\tabstract namespace N {}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'declare']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '3:1'],
+		},
+		{
+			// Errors held in a parameter's default are still corrected to TS2300.
+			source: 'export function f(p = () => {\n\tlet x;\n\tlet x;\n\tfunction x() {}\n}) {}',
+			errors: [
+				[UPSTREAM_ERRORS.REDECLARED, 'x;\n\tfunction'],
+				[UPSTREAM_ERRORS.REDECLARED, 'x() {}'],
+			],
+			throws: [UPSTREAM_ERRORS.REDECLARED, '3:5'],
+		},
+		{
+			// A redeclaration before a function declaration of the name is still
+			// TS2300, in a namespace as outside one (#952).
+			source:
+				'function f() {\n\tnamespace N {\n\t\tlet x;\n\t\tlet x;\n\t\tfunction x() {}\n\t}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace'],
+				[UPSTREAM_ERRORS.REDECLARED, 'x;\n\t\tfunction'],
+				[UPSTREAM_ERRORS.REDECLARED, 'x() {}'],
+			],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			// `global` and `module` as names start no declaration.
+			source:
+				'function f() {\n\tglobal.x = () => {\n\t\tlet x;\n\t\tlet x;\n\t\tfunction x() {}\n\t};\n}',
+			errors: [
+				[UPSTREAM_ERRORS.REDECLARED, 'x;\n\t\tfunction'],
+				[UPSTREAM_ERRORS.REDECLARED, 'x() {}'],
+			],
+			throws: [UPSTREAM_ERRORS.REDECLARED, '4:6'],
+		},
+		{
+			// Before the errors in it, which TypeScript reports too.
+			source:
+				'function f() {\n\tnamespace A.B {\n\t\tfunction g() {\n\t\t\tmodule "m" {}\n\t\t}\n\t}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace A.B'],
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'module "m"'],
+			],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			source: 'export function App() @{\n\tnamespace N {}\n\t<div />\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			source:
+				"export function App() @{\n\t@try {\n\t\tdeclare module 'm' {}\n\t\t<b />\n\t} @catch (e) {\n\t\tdeclare global {}\n\t\t<i />\n\t}\n}",
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'declare module'],
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'declare global'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '3:2'],
+		},
+		{
+			// The `await` after it is in the function, not the namespace (no TS1308).
+			source: 'async function f() {\n\tnamespace N {}\n\tawait g();\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			source: 'export const view = @{\n\tnamespace N {}\n\t<b />\n};',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
 			source: "export function App() @{\n\timport a from 'a';\n\t<div>{a}</div>\n}",
 			errors: [[TS_ERRORS.NESTED_IMPORT, 'import a']],
 			throws: [TS_ERRORS.NESTED_IMPORT, '2:1'],
@@ -14106,6 +14290,58 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it('reports no place for a namespace that acorn-typescript reads as an expression', () => {
+		// TypeScript reads a namespace named `as` and reports a syntax error in it
+		// instead, which acorn-typescript doesn't see.
+		for (const source of [
+			'{\n\tnamespace as any;\n}',
+			'{\n\tnamespace as { readonly r: number };\n}',
+		]) {
+			/** @type {CompileError[]} */
+			const errors = [];
+			parseModule(source, 'App.tsrx', { collect: true, errors });
+			expect(
+				errors.map((error) => error.code),
+				source,
+			).not.toContain(TS_ERRORS.NESTED_NAMESPACE.code);
+		}
+	});
+
+	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {
+		// `global` is a global augmentation only before `{`, so TS1184, as on main.
+		for (const source of [
+			'let global: any;\n{\n\texport global;\n}',
+			'let global: any;\n{\n\texport global.x;\n}',
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({
+					code: TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE.code,
+					pos: source.indexOf('export'),
+				}),
+			);
+		}
+	});
+
+	it('throws a syntax error in a misplaced namespace before its place, as TypeScript reports it', () => {
+		const source = '{\n\tnamespace N {\n\t\treadonly r = 1;\n\t}\n}';
+		const expected = expect.objectContaining({ code: 'TS1128', pos: source.indexOf('readonly') });
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(expected);
+		expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] })).toThrow(expected);
+	});
+
+	it("throws TS1260 for an escape in a misplaced namespace's keyword before its place", () => {
+		// TypeScript's parser reports the escape, before its checker reports the place.
+		for (const source of [
+			'function f() {\n\tn\\u0061mespace N {}\n}',
+			'function f() {\n\td\\u0065clare namespace N {}\n}',
+			"function f() {\n\tm\\u006fdule 'm' {}\n}",
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code: 'TS1260', pos: source.indexOf('\\') - 1 }),
+			);
+		}
+	});
+
 	it('names the property of `import.<name>` without its escapes, as TypeScript does', () => {
 		expect(() => parseModule('import.f\\u006fo();', 'App.tsrx')).toThrow(
 			"'foo' is not a valid meta-property for keyword 'import'.",
@@ -15125,7 +15361,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			'declare const v: string;',
 			'for (const x of y) {}',
 			'class A {\n\t#x;\n\tm() {\n\t\treturn #x in this;\n\t}\n}',
-			'async function f() {\n\tnamespace N {}\n\tawait g();\n}',
+			// `declare` and `global` as names: TypeScript reads `global` as a global
+			// augmentation only before `{`.
+			'let declare: any, global: any;\nexport function f() {\n\tdeclare global;\n}',
+			'let declare: any, global: any;\n{\n\tdeclare global\n}',
+			'let declare: any, global: any;\nexport function App() @{\n\tdeclare global;\n\t<b />\n}',
 			// A declarator on the line after `const`.
 			'const\n\t[a] = b;',
 			// An overload signature may have an optional binding pattern.

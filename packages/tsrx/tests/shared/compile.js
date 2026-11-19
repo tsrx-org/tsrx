@@ -6880,6 +6880,50 @@ export function App() @{
 		);
 	});
 
+	describe(`[${name}] a namespace or module outside a module body`, () => {
+		it('reports TS1235 or TS1234 at its first token in a template body, and goes on', () => {
+			const source = `export function App({ a }: { a: boolean }) @{
+	namespace N {}
+	@if (a) {
+		declare module 'm' {}
+		<b />
+	} @else {
+		declare global {}
+		<i />
+	}
+}`;
+			const { errors } = compile(source, 'App.tsrx', { collect: true });
+
+			expect(errors.map((error) => [error.code, error.pos])).toEqual([
+				['TS1235', source.indexOf('namespace N')],
+				['TS1234', source.indexOf('declare module')],
+				['TS1234', source.indexOf('declare global')],
+			]);
+			expect(() => compile(source, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS1235', pos: source.indexOf('namespace N') }),
+			);
+		});
+
+		it('reports nothing for one in the module or in a namespace or module body', () => {
+			const source = `namespace A {
+	namespace B {}
+	export namespace C {}
+}
+declare module 'm' {
+	namespace D {}
+}
+declare global {
+	namespace E {}
+}
+module F.G {}
+export function App() @{
+	<div />
+}`;
+
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([]);
+		});
+	});
+
 	describe(`[${name}] getters and setters with an \`@{ … }\` body`, () => {
 		it.each([
 			[

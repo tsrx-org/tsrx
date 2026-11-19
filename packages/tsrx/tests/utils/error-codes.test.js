@@ -453,6 +453,20 @@ let E;`,
 	export declare namespace N {}
 }`,
 			],
+			// A namespace or module outside a module body, also unexported
+			[
+				'TS1235',
+				`function f() {
+	namespace N {}
+}`,
+			],
+			[
+				'TS1234',
+				`function f() {
+	declare module 'm' {}
+}`,
+			],
+			['TS1234', 'if (a) declare global {}'],
 			[
 				'TS1030',
 				`class A {

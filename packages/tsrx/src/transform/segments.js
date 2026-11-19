@@ -3283,7 +3283,17 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'TSModuleDeclaration') {
-				// Namespace/module declaration
+				// Namespace/module declaration. TypeScript reports one outside a module
+				// body at its first token (TS1235, TS1234), as the parser does.
+				// A dotted name's inner part (`B` in `namespace A.B`) starts at its
+				// name, which may spell a keyword.
+				if (has_location(node) && node.id?.start !== node.start) {
+					const start = node.start;
+					const keyword = ['declare', 'namespace', 'module', 'global'].find((text) =>
+						source.startsWith(text, start),
+					);
+					if (keyword) push_statement_keyword_token(node, keyword);
+				}
 				if (node.id) {
 					visit(node.id);
 				}

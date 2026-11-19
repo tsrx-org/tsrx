@@ -2576,6 +2576,14 @@ describe('parse errors', () => {
 			],
 			['{\n  declare abstract interface I {}\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:11'],
 			['{\n  declare abstract enum E {}\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:11'],
+			// Before a namespace in a block, TypeScript reports only its place (TS1235),
+			// and `abstract` is still refused.
+			[
+				'function f() {\n  abstract namespace N {}\n}',
+				TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED,
+				'2:3',
+			],
+			['{\n  declare abstract namespace N {}\n}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '2:11'],
 			['{\n  declare abstract const x: number;\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:11'],
 			[
 				'declare namespace N {\n  declare abstract function f(): void;\n}',

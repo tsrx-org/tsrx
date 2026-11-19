@@ -753,6 +753,7 @@ const TYPESCRIPT_ERROR_CODES = [
 	'TS1231  An export assignment must be at the top level of a file or module declaration.',
 	'TS1232  An import declaration can only be used at the top level of a namespace or module.',
 	'TS1233  An export declaration can only be used at the top level of a namespace or module.',
+	'TS1234  An ambient module declaration is only allowed at the top level in a file.',
 	'TS1235  A namespace declaration is only allowed at the top level of a namespace or module.',
 	"TS1242  'abstract' modifier can only appear on a class, method, or property declaration.",
 	"TS1243  '{0}' modifier cannot be used with '{1}' modifier.",

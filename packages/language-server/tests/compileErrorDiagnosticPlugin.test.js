@@ -367,6 +367,46 @@ export {};`,
 		]);
 	});
 
+	it('leaves a namespace or module outside a module body to TypeScript (TS1235, TS1234)', async () => {
+		const source = `export function f() {
+	namespace N {}
+	{
+		export namespace M {}
+	}
+	abstract namespace L {}
+	return N;
+}
+export const g = (x = () => {
+	namespace K {}
+}) => x;
+export const h = (x = () => {
+	export namespace J {}
+}) => x;
+export function App() @{
+	@try {
+		declare module 'm' {}
+		<b />
+	} @catch (e) {
+		declare global {}
+		<i />
+	}
+}`;
+		const { document, diagnostics } = await editor_diagnostics_for('NestedNamespace', source);
+
+		// After `abstract`, which the editor's code leaves out, at `namespace`.
+		expect(reported(document, diagnostics, 'TS1235')).toEqual([
+			{ source: 'ts', text: 'namespace', offset: source.indexOf('namespace N') },
+			{ source: 'ts', text: 'export', offset: source.indexOf('export namespace') },
+			{ source: 'ts', text: 'namespace', offset: source.indexOf('namespace L') },
+			{ source: 'ts', text: 'namespace', offset: source.indexOf('namespace K') },
+			{ source: 'ts', text: 'export', offset: source.indexOf('export namespace J') },
+		]);
+		expect(reported(document, diagnostics, 'TS1234')).toEqual([
+			{ source: 'ts', text: 'declare', offset: source.indexOf('declare module') },
+			{ source: 'ts', text: 'declare', offset: source.indexOf('declare global') },
+		]);
+	});
+
 	it('leaves an empty attribute value to TypeScript (#1311)', async () => {
 		const { document, diagnostics } = await editor_diagnostics_for(
 			'EmptyAttributeValue',

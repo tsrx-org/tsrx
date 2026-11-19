@@ -676,8 +676,9 @@ const regex_next_token =
  * TypeScript's error for the import or export at `position` inside a block,
  * where acorn raises `NESTED_IMPORT_EXPORT`: TS1232 for an import, and for an
  * export TS1231 (`export =`), TS1316 (`export as namespace`), TS1233 (a list
- * or `*`), TS1258 (a default expression), TS1235 (a namespace), and otherwise
- * TS1184 at the `export` modifier.
+ * or `*`), TS1258 (a default expression), TS1235 or TS1234 (a namespace or an
+ * ambient module, see `module_declaration_place_error`), and otherwise TS1184
+ * at the `export` modifier.
  * @param {string} input
  * @param {number} position
  * @returns {Diagnostic}
@@ -686,7 +687,7 @@ function nested_import_export_error(input, position) {
 	/** @type {string[]} */
 	const tokens = [];
 	regex_next_token.lastIndex = position;
-	for (let match; tokens.length < 4 && (match = regex_next_token.exec(input));) {
+	for (let match; tokens.length < 6 && (match = regex_next_token.exec(input));) {
 		tokens.push(match[1]);
 	}
 	const [keyword, first, second, third] = tokens;
@@ -708,9 +709,57 @@ function nested_import_export_error(input, position) {
 	) {
 		return TS_ERRORS.NESTED_DEFAULT_EXPORT;
 	}
-	const declared = first === 'declare' ? second : first;
-	if (declared === 'namespace' || declared === 'module') return TS_ERRORS.NESTED_NAMESPACE;
+	// The declaration after `declare` and `abstract`, which TypeScript reports
+	// there only for its place.
+	let declared = 1;
+	while (tokens[declared] === 'declare' || tokens[declared] === 'abstract') declared++;
+	// `global` is a global augmentation only before `{`.
+	if (tokens[declared] === 'global' && tokens[declared + 1] === '{') {
+		return TS_ERRORS.NESTED_AMBIENT_MODULE;
+	}
+	if (tokens[declared] === 'namespace' || tokens[declared] === 'module') {
+		const name = tokens[declared + 1];
+		return name === '"' || name === "'"
+			? TS_ERRORS.NESTED_AMBIENT_MODULE
+			: TS_ERRORS.NESTED_NAMESPACE;
+	}
 	return TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE;
+}
+
+/** The words a namespace or module declaration's statement can start with. */
+const MODULE_DECLARATION_START_WORDS = new Set([
+	'abstract',
+	'declare',
+	'global',
+	'module',
+	'namespace',
+]);
+// A word, from where it starts.
+const regex_word = /[\p{ID_Continue}$\u200c\u200d]+/uy;
+
+/**
+ * The end of the word at `position`, or the position after it.
+ * @param {string} input
+ * @param {number} position
+ * @returns {number}
+ */
+function word_end(input, position) {
+	regex_word.lastIndex = position;
+	return regex_word.test(input) ? regex_word.lastIndex : position + 1;
+}
+
+/**
+ * TypeScript's checker error for a namespace or module declaration that isn't
+ * directly in the module's or a namespace's body
+ * (`checkGrammarModuleElementContext`): TS1234 for an ambient module
+ * (`module "m"`) or a global augmentation, and TS1235 for any other.
+ * @param {AST.TSModuleDeclaration} declaration
+ * @returns {Diagnostic}
+ */
+function module_declaration_place_error(declaration) {
+	return declaration.kind === 'global' || declaration.id.type === 'Literal'
+		? TS_ERRORS.NESTED_AMBIENT_MODULE
+		: TS_ERRORS.NESTED_NAMESPACE;
 }
 
 /**
@@ -5704,8 +5753,13 @@ export function TSRXPlugin(config) {
 					this.#raiseCheckerError(this.start, TS_ERRORS.AMBIENT_IMPLEMENTATION);
 					return /** @type {never} */ (undefined);
 				} else if (message === NESTED_IMPORT_EXPORT) {
-					// TypeScript reports each kind of import or export with its own error.
-					this.#raiseCheckerError(position, nested_import_export_error(this.input, position));
+					// TypeScript reports each kind of import or export with its own error,
+					// on the `import` or `export` (`grammarErrorOnFirstToken`).
+					this.#raiseCheckerError(
+						position,
+						nested_import_export_error(this.input, position),
+						word_end(this.input, position),
+					);
 					return /** @type {never} */ (undefined);
 				}
 				let error = to_diagnostic(message, kind);
@@ -6658,9 +6712,12 @@ export function TSRXPlugin(config) {
 			#reportRedeclarationsBeforeFunction(scope, name) {
 				const records = block_scoped_redeclarations.get(scope);
 				if (!records || !this.#errors) return;
+				// Also an error held while the statement around it is read (see
+				// `#holdingErrors`).
+				const errors = this.#hold.held ? [...this.#hold.held, ...this.#errors] : this.#errors;
 				for (const record of records) {
 					if (record.name !== name) continue;
-					const error = this.#errors.find(
+					const error = errors.find(
 						(error) =>
 							error.pos === record.pos &&
 							error.code === TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED.code,
@@ -8134,21 +8191,25 @@ export function TSRXPlugin(config) {
 				const error = in_block
 					? TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE
 					: TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED;
+				// In a block, TypeScript reports a namespace or module only for its place
+				// (see `parseStatement`, and `nested_import_export_error` after `export`).
+				const place_only = block && kind === 'module';
 				const first =
-					declare_start === -1
+					place_only || declare_start === -1
 						? null
 						: ambient
 							? TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT
 							: in_block
 								? TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE
 								: null;
-				if (!first) {
+				if (!first && !place_only) {
 					this.#raiseCheckerError(start, error);
 					return;
 				}
-				this.#raiseCheckerError(declare_start, first);
+				if (first) this.#raiseCheckerError(declare_start, first);
 				// `abstract`'s own error, which TypeScript doesn't report beside the
-				// first, for the formatter (see `#raiseModifierErrors`) (#961).
+				// first or the place, for the formatter (see `#raiseModifierErrors`)
+				// (#961).
 				if (this.#collect && declaration) {
 					/** @type {CompileError[]} */
 					const dropped = [];
@@ -8333,6 +8394,53 @@ export function TSRXPlugin(config) {
 					}
 				}
 				return null;
+			}
+
+			/**
+			 * Where TypeScript's checker reports the namespace or module declaration
+			 * that the current token starts, as TypeScript's parser reads one (see
+			 * `#declarationAfterModifier`), when it isn't directly in the module's or
+			 * a namespace's body (`checkGrammarModuleElementContext`), and the error:
+			 * TS1234 for an ambient module (`module "m"`) or a global augmentation,
+			 * and TS1235 for any other. It's the first token, after an `abstract`,
+			 * which the output leaves out, so the editor shows TypeScript's own error
+			 * on the output in its place. `null` when the token starts none.
+			 * @returns {{ start: number, end: number, error: Diagnostic } | null}
+			 */
+			#moduleDeclarationPlace() {
+				if (
+					!Parser.acornTypeScript.tokenIsIdentifier(this.type) ||
+					!MODULE_DECLARATION_START_WORDS.has(/** @type {string} */ (this.value))
+				) {
+					return null;
+				}
+				const words = this.#declarationAfterModifier(0);
+				const keyword = words?.at(-1);
+				if (!words || (keyword !== 'namespace' && keyword !== 'module' && keyword !== 'global')) {
+					return null;
+				}
+				const tokens = words.map((_, i) =>
+					i === 0 ? this.getCurLookaheadState() : this.lookahead(i),
+				);
+				// An escape in a keyword but `global` is TS1260, which the parse throws
+				// as TypeScript's parser reports it, before anything else.
+				if (
+					tokens.some(
+						(token, i) =>
+							words[i] !== 'global' && this.input.slice(token.start, token.end).includes('\\'),
+					)
+				) {
+					return null;
+				}
+				const first = words[0] === 'abstract' ? tokens[1] : tokens[0];
+				const ambient =
+					keyword === 'global' ||
+					(keyword === 'module' && this.lookahead(words.length).type === tt.string);
+				return {
+					start: first.start,
+					end: first.end,
+					error: ambient ? TS_ERRORS.NESTED_AMBIENT_MODULE : TS_ERRORS.NESTED_NAMESPACE,
+				};
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#155): remove once a release includes the fix
@@ -15217,11 +15325,58 @@ export function TSRXPlugin(config) {
 				const outer = this.#statementContext;
 				const outer_context_depth = this.#statementContextDepth;
 				const outer_open_brackets = this.#statementOpenBrackets;
+				const start = this.start;
+				// An item of the module's or a namespace's body: acorn's `parseTopLevel`
+				// and acorn-typescript's `tsParseModuleBlock` pass `topLevel`, which the
+				// body of an `if`, a loop or a label never has. The declaration after a
+				// modifier that `tsParseDeclaration` reads, or after `export` or `export
+				// declare` (see `parseExportDeclaration`), is part of the statement that
+				// holds the modifier, reported with it.
+				const nested_module_allowed =
+					topLevel === true ||
+					start === this.#declarationAfterAbstractStart ||
+					(this.#exportedDeclarationStart !== -1 &&
+						(start === this.#exportedDeclarationStart ||
+							this.lastTokStart === this.#exportedDeclarationStart));
+				// TypeScript's checker reports a namespace or module there, and nothing
+				// else about it (`checkModuleDeclaration`), before the errors in it,
+				// which are held until it's read. A syntax error still comes first.
+				const place = nested_module_allowed ? null : this.#moduleDeclarationPlace();
 				this.#statementContext = context ?? null;
 				this.#statementContextDepth = this.context.length - this.#currentTokenContextCount();
 				this.#statementOpenBrackets = this.#openBrackets;
+				const read = () => {
+					const statement = this.#parseStatement(context, topLevel, exports);
+					const node = /** @type {AST.Node | undefined} */ (statement);
+					if (
+						!nested_module_allowed &&
+						node?.type === 'TSModuleDeclaration' &&
+						// acorn-typescript reads `declare global;` as a global augmentation
+						// without a body, where TypeScript reads two names.
+						(node.kind !== 'global' || node.body)
+					) {
+						if (place) {
+							this.#raiseCheckerError(place.start, place.error, place.end);
+						} else {
+							// One the tokens don't show, such as one after decorators, or
+							// one acorn-typescript reads after `declare` on the line before.
+							const at = /** @type {number} */ (node.start);
+							this.#raiseCheckerError(
+								at,
+								module_declaration_place_error(node),
+								word_end(this.input, at),
+							);
+						}
+					}
+					return statement;
+				};
 				try {
-					return this.#parseStatement(context, topLevel, exports);
+					if (!place) return read();
+					/** @type {CompileError[]} */
+					const held = [];
+					const statement = this.#holdingErrors(held, read);
+					this.#releaseErrors(held);
+					return statement;
 				} finally {
 					this.#statementContext = outer;
 					this.#statementContextDepth = outer_context_depth;
@@ -15452,7 +15607,10 @@ export function TSRXPlugin(config) {
 					if (
 						context != null &&
 						/** @type {{ declare?: boolean }} */ (statement).declare &&
-						statement.start === start
+						statement.start === start &&
+						// A namespace or module there is reported only for its place (see
+						// `parseStatement`).
+						/** @type {AST.Node} */ (statement).type !== 'TSModuleDeclaration'
 					) {
 						this.#raiseCheckerError(start, TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE);
 					}

@@ -865,6 +865,13 @@ Foo = 1;`,
 }`,
 	},
 	{
+		error: TS_ERRORS.NESTED_AMBIENT_MODULE,
+		source: `export function App() @{
+	declare module 'm' {}
+	<div />
+}`,
+	},
+	{
 		error: TS_ERRORS.NESTED_GLOBAL_EXPORT,
 		source: `function f() {
 	export as namespace A;
