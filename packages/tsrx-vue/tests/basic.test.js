@@ -3395,11 +3395,12 @@ describe('@tsrx/vue @switch rows', () => {
 		// cases sit in a fragment, which vue-jsx-vapor makes `createIf`s; no
 		// matching case is an empty fragment.
 		expect(errors).toEqual([]);
-		// The `computed` returns what the `switch` throws, and the first choice
-		// throws it, in an effect that keeps following the `computed`.
+		// The `computed` returns what the `switch` throws, with the index it
+		// held; the first choice throws it, in an effect that keeps following
+		// the `computed`, and the others keep the case picked before.
 		expect(flat(code)).toContain(
 			flat(`<__VaporFor in={_$_for_items(props.rows)} getKey={(row) => row.id}>{(row) => (() => {
-				const _$_case_1 = _$_vapor_computed(() => {
+				const _$_case_1 = _$_vapor_computed((_$_previous) => {
 					try {
 						switch (row.value.kind) {
 							case 'a': return 0;
@@ -3407,7 +3408,10 @@ describe('@tsrx/vue @switch rows', () => {
 						}
 						return -1;
 					} catch(_$_error) {
-						return { error: _$_error };
+						return {
+							error: _$_error,
+							index: typeof _$_previous === 'object' ? _$_previous.index : _$_previous ?? -1
+						};
 					}
 				});
 				return <>{(typeof _$_case_1.value === 'object'
@@ -3416,7 +3420,9 @@ describe('@tsrx/vue @switch rows', () => {
 					})()
 					: _$_case_1.value) === 0
 					? <li>{row.value.id}</li>
-					: _$_case_1.value === 1 ? <li>{row.value.title}</li> : <></>}</>;
+					: (typeof _$_case_1.value === 'object' ? _$_case_1.value.index : _$_case_1.value) === 1
+						? <li>{row.value.title}</li>
+						: <></>}</>;
 			})()}</__VaporFor>`),
 		);
 		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
@@ -3473,7 +3479,7 @@ describe('@tsrx/vue @switch rows', () => {
 		);
 
 		expect(code).toContain('__map_iterable(');
-		expect(code).toContain('const _$_case_1 = _$_vapor_computed(() => {');
+		expect(code).toContain('const _$_case_1 = _$_vapor_computed((_$_previous) => {');
 		expect(code).not.toContain('_$_case_2');
 
 		const { code: fallback_only } = compile(
@@ -3576,8 +3582,8 @@ describe('@tsrx/vue @switch rows', () => {
 			'List.tsrx',
 		);
 
-		expect(code).toContain('const _$_case_1 = _$_vapor_computed(() => {');
-		expect(code).toContain('const _$_case_2 = _$_vapor_computed(() => {');
+		expect(code).toContain('const _$_case_1 = _$_vapor_computed((_$_previous) => {');
+		expect(code).toContain('const _$_case_2 = _$_vapor_computed((_$_previous) => {');
 	});
 
 	it('keeps the shared lowering for a @switch outside a row and in the type-only output', () => {

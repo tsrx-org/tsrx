@@ -3363,6 +3363,23 @@ function FlagRowsApp() @{
 	</ul>
 }
 
+function SecondCaseRowsApp() @{
+	<ul class="second-case-rows">
+		@for (const row of lookup_rows.value; key row.id) {
+			@switch (kind_or_throw(row.kind)) {
+				@case 'a': {
+					<li>{'a'}</li>
+				}
+				@case 'b': {
+					<li>
+						<TodoCounter label={'b' + row.id} />
+					</li>
+				}
+			}
+		}
+	</ul>
+}
+
 function NestedCaseRowsApp() @{
 	<ul class="nested-case-rows">
 		@for (const todo of todos.value; key todo.id) {
@@ -3555,6 +3572,27 @@ describe('tsrx-vue keyed @switch rows', () => {
 			]),
 		).toEqual(['b1', 'a2']);
 		expect(errors.length).toBeGreaterThan(0);
+
+		// While it throws, a row keeps the case it showed, with its state.
+		lookup_rows.value = [{ id: '1', kind: 'b' }];
+		lookup_fails.value = false;
+		const app = createVaporApp(SecondCaseRowsApp);
+		app.config.errorHandler = (caught) => {
+			errors.push(String(caught));
+		};
+		app.mount(container);
+		await flush();
+		(container.querySelector('.second-case-rows .todo-counter') as HTMLElement).click();
+		await flush();
+		lookup_fails.value = true;
+		await flush();
+		const during = texts('.second-case-rows li');
+		lookup_fails.value = false;
+		await flush();
+		const after = texts('.second-case-rows li');
+		app.unmount();
+		expect(during).toEqual(['b1:1']);
+		expect(after).toEqual(['b1:1']);
 	});
 
 	it('follows a @switch row’s value in a loop with @empty, and renders @empty', async () => {

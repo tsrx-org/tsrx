@@ -68,6 +68,8 @@ const VAPOR_ITEMS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'vapor_items';
 const SWITCH_CASE_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'case';
 /** What a `@switch` row's `computed` caught. */
 const SWITCH_ERROR_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'error';
+/** The value a `@switch` row's `computed` held before it runs again. */
+const SWITCH_PREVIOUS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'previous';
 /**
  * How many `@switch` rows each compile has lowered, so a nested one's
  * `computed` can't capture an outer one's name.
@@ -2283,6 +2285,18 @@ function switch_in_fragment(node, transform_context) {
 		`${SWITCH_CASE_NAME}_${(switch_counts.get(transform_context) ?? 0) + 1}`,
 	);
 	const error_ref = create_generated_identifier(SWITCH_ERROR_NAME);
+	const previous_ref = create_generated_identifier(SWITCH_PREVIOUS_NAME);
+	/** The index the `computed` holds, or the last one it picked while it holds a throw. */
+	const held_index = () =>
+		b.conditional(
+			b.binary(
+				'===',
+				b.unary('typeof', create_value_member_expression(case_ref)),
+				b.literal('object'),
+			),
+			b.member(create_value_member_expression(case_ref), 'index'),
+			create_value_member_expression(case_ref),
+		);
 
 	/** @type {AST.Expression} */
 	let chain = b.jsx_fragment();
@@ -2292,7 +2306,8 @@ function switch_in_fragment(node, transform_context) {
 			b.binary(
 				'===',
 				// The first choice throws what the `switch` threw, in its
-				// `createIf`'s effect, which keeps following the `computed`.
+				// `createIf`'s effect, which keeps following the `computed`;
+				// the others keep the case picked before the throw.
 				index === 0
 					? b.conditional(
 							b.binary(
@@ -2314,7 +2329,7 @@ function switch_in_fragment(node, transform_context) {
 							),
 							create_value_member_expression(case_ref),
 						)
-					: create_value_member_expression(case_ref),
+					: held_index(),
 				b.literal(index),
 			),
 			to_vapor_branch(output.argument ?? b.literal(null)),
@@ -2327,13 +2342,14 @@ function switch_in_fragment(node, transform_context) {
 			[],
 			b.block([
 				// Vue stops running an effect that read a `computed` whose getter
-				// threw, so the `computed` returns what the `switch` threw.
+				// threw, so the `computed` returns what the `switch` threw, with
+				// the index it held before.
 				b.const(
 					case_ref,
 					b.call(
 						VUE_COMPUTED_INTERNAL_NAME,
 						b.arrow(
-							[],
+							[previous_ref],
 							b.block([
 								b.try(
 									b.block([
@@ -2356,7 +2372,22 @@ function switch_in_fragment(node, transform_context) {
 										null,
 										b.block([
 											b.return(
-												b.object([b.prop('init', b.id('error'), clone_identifier(error_ref))]),
+												b.object([
+													b.prop('init', b.id('error'), clone_identifier(error_ref)),
+													b.prop(
+														'init',
+														b.id('index'),
+														b.conditional(
+															b.binary(
+																'===',
+																b.unary('typeof', clone_identifier(previous_ref)),
+																b.literal('object'),
+															),
+															b.member(clone_identifier(previous_ref), 'index'),
+															b.logical('??', clone_identifier(previous_ref), b.literal(-1)),
+														),
+													),
+												]),
 											),
 										]),
 									),
