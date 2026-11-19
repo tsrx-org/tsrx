@@ -152,6 +152,23 @@ function normalize_block(node, anchor) {
 }
 
 /**
+ * Whether `node` is part of `block`: the block itself, an anchor in it, or
+ * anything it holds.
+ *
+ * @param {VaporBlock | undefined} block
+ * @param {Node} node
+ * @returns {boolean}
+ */
+function uses_node(block, node) {
+	if (block === node) return true;
+	if (!block || block instanceof Node) return false;
+	if (Array.isArray(block)) return block.some((item) => uses_node(item, node));
+	if (vapor.isFragment(block)) return block.anchor === node || uses_node(block.nodes, node);
+	if (vapor.isVaporComponent(block)) return uses_node(block.block, node);
+	return false;
+}
+
+/**
  * @param {VaporRenderedBlock | undefined} current
  * @param {unknown} value
  * @param {Node | undefined} anchor
@@ -163,13 +180,14 @@ function resolve_value(current, value, anchor) {
 
 	if (current) {
 		if (vapor.isFragment(current)) {
-			if (current.anchor && current.anchor.parentNode) {
-				const parent = current.anchor.parentNode;
+			const old_anchor = current.anchor;
+			if (old_anchor && old_anchor.parentNode) {
+				const parent = old_anchor.parentNode;
 				vapor.remove(current.nodes, parent);
-				vapor.insert(node, parent, current.anchor);
-				// The new block has its own anchor; the old one would stay
-				// behind, outside every block, also after unmount.
-				if (node !== current) parent.removeChild(current.anchor);
+				vapor.insert(node, parent, old_anchor);
+				// Unless the new block holds that node, the old anchor would stay
+				// behind outside every block, also after unmount.
+				if (!uses_node(node, old_anchor)) parent.removeChild(old_anchor);
 				if (current.scope) current.scope.stop();
 			}
 		} else if (current instanceof Node) {
@@ -178,7 +196,10 @@ function resolve_value(current, value, anchor) {
 			}
 			if (vapor.isFragment(node) && current.parentNode) {
 				vapor.insert(node, current.parentNode, current);
-				if (current.nodeType !== 3) current.parentNode.removeChild(current);
+				// A text node becomes the anchor of a fragment made around the new
+				// value. A fragment with an anchor of its own, such as a `v-if`
+				// root, doesn't take it.
+				if (!uses_node(node, current)) current.parentNode.removeChild(current);
 			} else if (node instanceof Node) {
 				if (current.nodeType === 3 && node.nodeType === 3) {
 					current.textContent = node.textContent;

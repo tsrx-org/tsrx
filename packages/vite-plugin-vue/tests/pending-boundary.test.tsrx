@@ -1,4 +1,5 @@
 import { createVaporApp, defineVaporAsyncComponent, nextTick, ref } from 'vue';
+import { TsrxErrorBoundary } from '@tsrx/vue/error-boundary';
 
 // A `@pending` body runs only while the `@try` body suspends, and a throw in
 // it reaches the nearest `@catch`: the same `@try`'s, or an enclosing one.
@@ -182,6 +183,46 @@ function RejectApp(props: { promise: Loader }) @{
 	}
 }
 
+// Renders a text node, then an array, which borrows the text node as its
+// anchor, then the same text node again, alone or in an array.
+function TextReuseApp() @{
+	const mode = ref(0);
+	const text = document.createTextNode('ready');
+	const content = () => {
+		if (mode.value % 2 === 1) return [document.createElement('p')];
+		text.data = 'ready';
+		return mode.value === 4 ? [text] : text;
+	};
+	<>
+		<button class="step" onClick={() => mode.value++}>
+			{'step'}
+		</button>
+		<TsrxErrorBoundary content={content} fallback={() => null} />
+	</>
+}
+
+let retry_empty_catch: () => void = () => {};
+
+function ThrowingButton() @{
+	<button
+		class="fail"
+		onClick={() => {
+			throw new Error('click boom');
+		}}
+	>
+		{'fail'}
+	</button>
+}
+
+function EmptyCatchApp() @{
+	const visible = ref(true);
+	@try {
+		<ThrowingButton v-if={visible.value} />
+	} @catch (error, reset) {
+		retry_empty_catch = reset;
+	}
+}
+
 function html() {
 	return container.innerHTML;
 }
@@ -304,6 +345,35 @@ describe('tsrx-vue @pending', () => {
 			reject(new Error('async reject boom'));
 			await flush();
 			expect(html()).toBe('<p class="caught">async reject boom</p>');
+		} finally {
+			app.unmount();
+			await nextTick();
+		}
+		expect(container.childNodes.length).toBe(0);
+	});
+
+	it('keeps a text node that the content renders again after an array borrowed it', async () => {
+		await render(TextReuseApp);
+		expect(container.textContent).toBe('stepready');
+		for (let step = 1; step <= 4; step++) {
+			(container.querySelector('.step') as HTMLElement).click();
+			await flush();
+			expect(container.textContent).toBe(step % 2 === 1 ? 'step' : 'stepready');
+		}
+	});
+
+	it('leaves no DOM nodes behind after resetting an empty @catch to a v-if root', async () => {
+		const app = createVaporApp(EmptyCatchApp);
+		try {
+			app.mount(container);
+			await flush();
+			for (let i = 0; i < 3; i++) {
+				(container.querySelector('.fail') as HTMLElement).click();
+				await flush();
+				retry_empty_catch();
+				await flush();
+			}
+			expect(container.querySelector('.fail')).not.toBeNull();
 		} finally {
 			app.unmount();
 			await nextTick();
