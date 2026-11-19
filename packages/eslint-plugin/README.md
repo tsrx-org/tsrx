@@ -128,24 +128,39 @@ after `tsrx.configs.react`.
   it and the ones with the added starts don't, so it reports nothing the core rule
   doesn't, and in a file without `@try` it is the core rule.
 
-  The added starts mix two orders: the code after a `@try` can run before its
-  blocks, as on React, Preact and Hono, or after them, in source order. Across
-  sibling `@try`s that can drop a report that holds on every target. With
-  `@try { status = 'a'; <b /> } @catch (e) { <i /> }`, then the same with
-  `status = 'b'`, then `<p>{status}</p>`, the value `'a'` is never read, and the
-  rule doesn't report it. It still reports a value read only in a block that code
-  path analysis holds unreachable, such as a `@catch` after a body that throws, or
-  only in a block that runs again after a later one, as the body does after
-  `@pending` or after `reset()`. When a block always ends in a `throw`, what
-  follows it is unreachable for code path analysis, and the rule adds no starts
-  for that `@try`. It keeps the core rule's answers for a `@try` whose body or
-  `@pending` awaits or yields, since those blocks run in the component, in order,
-  and for a `@try` where code path analysis follows more than one path at once, as
-  in a `finally` block that a `throw` or a `return` can enter, and for a `@try` in
-  a `@for`'s index or key, which code path analysis runs before the loop. On Hono,
-  a `@pending` that neither awaits nor yields runs in the component, before the
-  body and the code after the `@try`, but the rule doesn't know the target, so it
-  can drop the report of a value such a `@pending` overwrites.
+  It can still drop a report that holds:
+
+  - The added starts mix two orders: the code after a `@try` can run before its
+    blocks, as on React, Preact and Hono, or after them, in source order. Across
+    sibling `@try`s, that can drop a report that holds on every target. With
+    `@try { status = 'a'; <b /> } @catch (e) { <i /> }`, then the same with
+    `status = 'b'`, then `<p>{status}</p>`, the value `'a'` is never read, and the
+    rule doesn't report it.
+  - On Hono, a `@pending` that neither awaits nor yields runs in the component,
+    before the body and the code after the `@try`. The rule doesn't know the
+    target, so it can drop the report of a value such a `@pending` overwrites.
+  - Like the core rule, it counts a read in a branch that can never run, such as
+    `@if (false) { … }`, so such a read after a `@try` can drop the report of a
+    value the `@catch` overwrites.
+
+  It keeps the core rule's reports, cutting nothing, for a `@try`:
+
+  - whose body or `@pending` awaits or yields, since those blocks run in the
+    component, in order;
+  - where code path analysis follows more than one path at once, as in a `finally`
+    block that a `throw` or a `return` can enter;
+  - where code path analysis goes on to code that doesn't follow it: in a
+    `@switch` arm before the last, since only one arm renders; in the body of a
+    `@for` with `@empty`, which renders only when the body doesn't; and anywhere
+    but statements, template children, the blocks of `@if`, `@for` and `@try`, and
+    the parts of an expression that run in order, which leaves out a `@for`'s
+    index and key and a destructuring default.
+
+  It also still reports a value read only in a block that code path analysis holds
+  unreachable, such as a `@catch` after a body that throws, or only in a block
+  that runs again after a later one, as the body does after `@pending` or after
+  `reset()`. When a block always ends in a `throw`, what follows it is unreachable
+  for code path analysis, and the rule adds no starts for that `@try`.
 
 ### With `js.configs.recommended`
 

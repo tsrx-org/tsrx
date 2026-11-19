@@ -30,19 +30,6 @@ interface TryPieces {
 	handler_start: Piece[];
 }
 
-/**
- * Whether an identifier is the parser's name for a dynamic tag, which spans
- * the tag expression.
- */
-function is_tag_expression_name(node: any): boolean {
-	const parent = node.parent;
-	return (
-		(parent?.type === 'JSXOpeningElement' || parent?.type === 'JSXClosingElement') &&
-		parent.name === node &&
-		Boolean(parent.tagExpression)
-	);
-}
-
 /** Nodes whose code starts a code path of its own. */
 const CODE_PATH_STARTS = new Set([
 	'FunctionDeclaration',
@@ -52,23 +39,95 @@ const CODE_PATH_STARTS = new Set([
 ]);
 
 /**
- * Whether a node is in a `@for`'s index or key, in the same code path. Code
- * path analysis runs those before the loop, so the code after a `@try` there
- * includes the iterable, which runs before it.
+ * The parts of each node that run in the order code path analysis follows,
+ * and only in that order, so that the code it runs after a `@try` in one of
+ * them can really run after it.
  */
-function in_for_head(node: any): boolean {
-	for (let child = node, parent = node.parent; parent; child = parent, parent = parent.parent) {
+const ORDERED_PARTS: Record<string, string[]> = {
+	Program: ['body'],
+	BlockStatement: ['body'],
+	ExpressionStatement: ['expression'],
+	ReturnStatement: ['argument'],
+	VariableDeclaration: ['declarations'],
+	VariableDeclarator: ['init'],
+	ExportNamedDeclaration: ['declaration'],
+	ExportDefaultDeclaration: ['declaration'],
+	IfStatement: ['consequent', 'alternate'],
+	LabeledStatement: ['body'],
+	TryStatement: ['block', 'handler', 'finalizer'],
+	CatchClause: ['body'],
+	WhileStatement: ['body'],
+	DoWhileStatement: ['body'],
+	ForStatement: ['init', 'body'],
+	ForInStatement: ['right', 'body'],
+	ForOfStatement: ['right', 'body'],
+	AssignmentExpression: ['right'],
+	CallExpression: ['arguments'],
+	NewExpression: ['arguments'],
+	ChainExpression: ['expression'],
+	ArrayExpression: ['elements'],
+	ObjectExpression: ['properties'],
+	Property: ['value'],
+	SpreadElement: ['argument'],
+	ConditionalExpression: ['consequent', 'alternate'],
+	LogicalExpression: ['left', 'right'],
+	SequenceExpression: ['expressions'],
+	TemplateLiteral: ['expressions'],
+	TaggedTemplateExpression: ['quasi'],
+	AwaitExpression: ['argument'],
+	YieldExpression: ['argument'],
+	TSAsExpression: ['expression'],
+	TSSatisfiesExpression: ['expression'],
+	TSNonNullExpression: ['expression'],
+	JSXElement: ['children'],
+	JSXFragment: ['children'],
+	JSXExpressionContainer: ['expression'],
+	JSXAttribute: ['value'],
+	JSXSpreadAttribute: ['argument'],
+	JSXCodeBlock: ['body', 'render'],
+	JSXIfExpression: ['statement'],
+	JSXTryExpression: ['block', 'pending', 'handler'],
+	JSXSwitchCase: ['consequent'],
+};
+
+/**
+ * Whether the code that code path analysis runs after a node, in its code
+ * path, can really run after it. It can't in a `@switch` arm before the last,
+ * since the arms run one after another for code path analysis but only one
+ * renders, nor in the body of a `@for` with `@empty`, which renders only when
+ * the body doesn't, nor in a `@for`'s index or key, which run before the loop
+ * for code path analysis but after the iterable, nor in a destructuring
+ * default, which code path analysis runs before the value it defaults.
+ */
+function runs_in_order(node: any): boolean {
+	for (
+		let previous = undefined, child = node, parent = node.parent;
+		parent;
+		previous = child, child = parent, parent = parent.parent
+	) {
 		if (
 			CODE_PATH_STARTS.has(parent.type) ||
 			(parent.type === 'PropertyDefinition' && parent.value === child)
 		) {
-			return false;
-		}
-		if (parent.type === 'JSXForExpression' && (parent.index === child || parent.key === child)) {
 			return true;
 		}
+		if (parent.type === 'JSXForExpression') {
+			if (child === parent.loop) {
+				if (parent.empty && previous === child.body) return false;
+			} else if (child !== parent.empty) {
+				return false;
+			}
+		} else if (parent.type === 'JSXSwitchExpression') {
+			if (parent.cases.at(-1) !== child) return false;
+		} else if (
+			!ORDERED_PARTS[parent.type]?.some((part) =>
+				Array.isArray(parent[part]) ? parent[part].includes(child) : parent[part] === child,
+			)
+		) {
+			return false;
+		}
 	}
-	return false;
+	return true;
 }
 
 /**
@@ -83,7 +142,8 @@ function in_for_head(node: any): boolean {
  * The rule runs the core rule three times. One copy sees the code paths as
  * they are; its reports are the candidates. The other two see each segment cut
  * at the boundaries of every `@try` whose body and `@pending` neither await nor
- * yield, outside a `@for`'s index and key, and one of them also sees edges that run forward, in source order:
+ * yield and whose code path goes on as the code does, and one of them also
+ * sees edges that run forward, in source order:
  * from the start of the `@try` and from the end of each block to each block
  * after it and to the code after the `@try`. A candidate is dropped only when
  * the cut copy reports it and the copy with the edges doesn't, so only the
@@ -244,7 +304,7 @@ const rule: Rule.RuleModule = {
 			ForInStatement: start_loop,
 			ForOfStatement: start_loop,
 			JSXTryExpression(node: any) {
-				if (suspends(node.block) || suspends(node.pending) || in_for_head(node)) return;
+				if (suspends(node.block) || suspends(node.pending) || !runs_in_order(node)) return;
 				const { ended, started } = cut_here(node);
 				tries.set(node, {
 					single: ended.length === 1,
@@ -300,15 +360,15 @@ const rule: Rule.RuleModule = {
 				// The core rule places each read by the first and last identifier it
 				// visits in a segment. The traversal visits a few identifiers after
 				// code that follows them (a label after its block, type arguments
-				// after the call's arguments), and the parser's name for a dynamic tag
-				// spans the whole tag expression. Such an identifier could stretch a
-				// piece over code across a `@try` boundary, so the cut copies don't
-				// see a dynamic tag's name, and see the rest only when they come after
-				// the last one they saw in the code path. Leaving one out only narrows
-				// a piece, which can keep a report but never drop one.
+				// after the call's arguments). Such an identifier could stretch a
+				// piece over code across a `@try` boundary, so the cut copies see an
+				// identifier only when it comes after the last one they saw in the
+				// code path. Leaving one out only narrows a piece, which can keep a
+				// report but never drop one. (The parser's name for a dynamic tag
+				// spans the tag expression, but a `@try` there isn't cut.)
 				const node = args[0];
 				if (node?.type === 'Identifier' || node?.type === 'JSXIdentifier') {
-					if (is_tag_expression_name(node) || node.range[0] < last_identifier_end) return;
+					if (node.range[0] < last_identifier_end) return;
 					last_identifier_end = node.range[1];
 				}
 				cut[key]?.(...args);

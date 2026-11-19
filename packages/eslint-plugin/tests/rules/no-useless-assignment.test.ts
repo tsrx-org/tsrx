@@ -125,15 +125,88 @@ ruleTester.run('no-useless-assignment', rule, {
 		}]; key pick(<i />)) { <li>{item}</li> }
 	</ul>
 }`,
+		// A dynamic tag reads its expression.
+		component(
+			`let Tag = 'b';\nlog(Tag);`,
+			`@try { Tag = 'i'; <b /> } @catch (e) { Tag = 'p'; <i /> }\n<{Tag} />`,
+		),
 		// An escaped name is still a read.
 		component(`let x = 0;`, `@try { log(n); x = 1; <>{x}</> } @catch (e) { <>{\\u0078}</> }`),
 		// Code without `@try` is left to the core rule.
 		`function f() { let x = 0; x += 1; return x; }`,
 	],
 	invalid: [
+		// A destructuring default runs after the value it defaults, though code path
+		// analysis runs it before.
+		{
+			code: `export function A(log) {
+	let x = 0;
+	log(x);
+	const [view = @{
+		@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+	}] = (log(x), [undefined]);
+	return view;
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 5, column: 10 }],
+		},
+		// Only one `@switch` arm renders, though code path analysis runs them one
+		// after another, and a case's test runs before `@default`.
+		{
+			code: `export function A(log) @{
+	let x = 0;
+	log(x);
+	<div>
+		@switch (1) {
+			@default: { @try { x = 1; <b /> } @catch (e) { x = 2; <i /> } }
+			@case x: { <i /> }
+		}
+	</div>
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 6, column: 23 }],
+		},
+		{
+			code: `export function A(log) @{
+	let x = 0;
+	log(x);
+	<div>
+		@switch (0) {
+			@case 0: { @try { x = 1; <b /> } @catch (e) { x = 2; <i /> } }
+			@case 1: { <i>{x}</i> }
+		}
+	</div>
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 6, column: 22 }],
+		},
+		// `@empty` renders only when the body doesn't.
+		{
+			code: `export function A(log) @{
+	let x = 0;
+	log(x);
+	<div>
+		@for (const item of [1]) {
+			@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+		} @empty { <i>{x}</i> }
+	</div>
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 6, column: 11 }],
+		},
+		// A loop's update isn't a place the rule cuts.
+		{
+			code: `export function A(log) {
+	let x = 0;
+	log(x);
+	const views = [];
+	for (let i = 0; i < 1; i++, views.push(@{
+		@try { x = 1; <b /> } @catch (e) { x = 2; <i /> }
+	})) {
+		log(x);
+	}
+	return views;
+}`,
+			errors: [{ messageId: 'unnecessaryAssignment', line: 6, column: 10 }],
+		},
 		// Code path analysis runs a `@for`'s key before the loop, so the code
-		// after a `@try` there includes the iterable, which runs first. The rule
-		// keeps the core rule's answer.
+		// after a `@try` there includes the iterable, which runs first.
 		{
 			code: `export function A() @{
 	let x = 0;
@@ -215,8 +288,8 @@ ruleTester.run('no-useless-assignment', rule, {
 				{ messageId: 'unnecessaryAssignment', line: 6, column: 39 },
 			],
 		},
-		// The parser's name for a dynamic tag spans the whole tag expression.
-		// (The compiler rejects this tag, TSRX2014, but the ESLint parser takes it.)
+		// A `@try` in a dynamic tag's expression isn't cut. (The compiler rejects
+		// this tag, TSRX2014, but the ESLint parser takes it.)
 		{
 			code: `export function A(pick) @{
 	let x = 0;
