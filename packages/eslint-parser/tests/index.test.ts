@@ -554,10 +554,10 @@ type Mapped<T> = { [K in keyof T]: T[K] };`,
 		expect(starts).toEqual([...starts].sort((a, b) => a - b));
 	});
 
-	it('reports what espree reports for code path rules in plain code', () => {
+	it('gives no-useless-assignment a case test, a label and type arguments in order', () => {
 		// The core rule reported each of these, since ESLint visited a label after
 		// its statement, a case's test after its consequent and a call's type
-		// arguments after its arguments.
+		// arguments after its arguments. Espree reports none of the first two.
 		const reported = (code: string) =>
 			new Linter()
 				.verify(
@@ -620,6 +620,9 @@ class Box<T> extends Base<T> implements Api<T> {
 }
 const Anonymous = class extends Base<string> {};
 const typed = <Box<string> label="a" />;
+class Recovered {
+	@dec static {}
+}
 export function App() @{
 	@try { <b /> } @catch (error, reset) { <i onClick={reset}>{String(error)}</i> }
 }`;
