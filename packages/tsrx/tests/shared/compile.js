@@ -3259,6 +3259,22 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				expect.objectContaining({ code: 'TS1114', pos: chained.indexOf('outer: for (const y') }),
 			);
 
+			// Nor in one returned inside a returned code-only block, which is
+			// inlined in the same function too.
+			for (const returned of [
+				'@{ for (const y of items) { return @{ outer: for (const z of items) { console.log(z); } }; } }',
+				'<>@{ for (const y of items) { return <>@{ outer: for (const z of items) { console.log(z); } }<i /></>; } }<i /></>',
+				'@{ for (const y of items) { return @{ for (const w of items) { return @{ outer: for (const z of items) { console.log(z); } }; } }; } }',
+			]) {
+				const nested = source.replace(
+					'<>@{ outer: for (const y of items) { console.log(y); } }<b>{x}</b></>',
+					returned,
+				);
+				expect(() => compile(nested, 'App.tsrx'), returned).toThrow(
+					expect.objectContaining({ code: 'TS1114', pos: nested.indexOf('outer: for (const z') }),
+				);
+			}
+
 			// Nor in one returned inside a template body, from a label in that body.
 			for (const returned of [
 				'@{ outer: for (const y of items) { console.log(y); } }',

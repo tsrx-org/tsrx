@@ -445,6 +445,26 @@ function has_code_block_render(block) {
 }
 
 /**
+ * The `@{ … }` blocks every target inlines before a `return` of `argument`, in
+ * the same function: a returned code-only block, and each code-only child of a
+ * returned fragment.
+ * @param {AST.Node | null | undefined} argument
+ * @returns {AST.JSXCodeBlock[]}
+ */
+function get_inlined_code_blocks(argument) {
+	let value = argument;
+	while (value?.type === 'ParenthesizedExpression') value = value.expression;
+	/** @type {AST.Node[]} */
+	let blocks;
+	if (value?.type === 'JSXFragment') blocks = value.children;
+	else if (value?.type === 'JSXCodeBlock') blocks = [value];
+	else return [];
+	return /** @type {AST.JSXCodeBlock[]} */ (
+		blocks.filter((child) => child.type === 'JSXCodeBlock' && !has_code_block_render(child))
+	);
+}
+
+/**
  * The labeled statements a code-only `@{ … }` block runs in its own function's
  * code once inlined: those in its statements and in the blocks chained in its
  * render position.
@@ -460,7 +480,7 @@ function collect_inlined_labels(block, labels) {
 /**
  * The labeled statements in `node`, leaving out functions, classes and
  * template output (elements, fragments, `@{ … }` blocks and directives), which
- * run in functions of their own.
+ * run in functions of their own, but taking in the blocks a `return` inlines.
  * @param {unknown} node
  * @param {AST.Node[]} labels
  * @returns {void}
@@ -473,6 +493,13 @@ function collect_statement_labels(node, labels) {
 	}
 	const type = /** @type {{ type?: unknown }} */ (node).type;
 	if (typeof type !== 'string') return;
+	if (type === 'ReturnStatement') {
+		const argument = /** @type {AST.ReturnStatement} */ (node).argument;
+		for (const block of get_inlined_code_blocks(argument)) {
+			collect_inlined_labels(block, labels);
+		}
+		return;
+	}
 	if (
 		type === 'FunctionDeclaration' ||
 		type === 'FunctionExpression' ||
@@ -3843,10 +3870,11 @@ export function TSRXPlugin(config) {
 			 */
 			#parseCodeBlockBody(flat) {
 				// Every target runs a template body in a function of its own, apart
-				// from a code-only block in a returned fragment (see
-				// `#checkInlinedCodeBlockLabels`), so a label in it may reuse the name
-				// of one outside it, as in a nested function. A `break` or `continue`
-				// can still name a label outside, for the transform to report.
+				// from a returned code-only block or a code-only block in a returned
+				// fragment (see `#checkInlinedCodeBlockLabels`), so a label in it may
+				// reuse the name of one outside it, as in a nested function. A `break`
+				// or `continue` can still name a label outside, for the transform to
+				// report.
 				const outer_label_floor = this.#labelFloor;
 				this.#labelFloor = { labels: this.labels, length: this.labels.length };
 				try {
@@ -15185,39 +15213,38 @@ export function TSRXPlugin(config) {
 			 * @param {AST.Node | null | undefined} argument
 			 */
 			#checkInlinedCodeBlockLabels(argument) {
-				let value = argument;
-				while (value?.type === 'ParenthesizedExpression') value = value.expression;
-				if (this.labels.length === 0) return;
-				/** @type {AST.Node[]} */
-				let blocks;
-				if (value?.type === 'JSXFragment') blocks = value.children;
-				else if (value?.type === 'JSXCodeBlock') blocks = [value];
-				else return;
 				// Only the labels in the same template body as the `return` share its
-				// function once lowered.
-				const floor = this.#labelFloor?.labels === this.labels ? this.#labelFloor.length : 0;
+				// function once lowered. A `return` inlined in turn takes in this one's
+				// blocks, and checks them against the labels around it.
 				const outer = new Set(
 					this.labels
-						.slice(floor)
+						.slice(this.#outerLabelCount())
 						.map((label) => label.name)
 						.filter(Boolean),
 				);
 				if (outer.size === 0) return;
-				for (const child of blocks) {
-					if (child.type !== 'JSXCodeBlock' || has_code_block_render(child)) continue;
-					/** @type {AST.Node[]} */
-					const labels = [];
-					collect_inlined_labels(child, labels);
-					for (const label of labels) {
-						const name = /** @type {AST.LabeledStatement} */ (label).label.name;
-						if (outer.has(name)) {
-							this.raise(
-								/** @type {number} */ (/** @type {AST.LabeledStatement} */ (label).label.start),
-								`Label '${name}' is already declared`,
-							);
-						}
+				/** @type {AST.Node[]} */
+				const labels = [];
+				for (const block of get_inlined_code_blocks(argument)) {
+					collect_inlined_labels(block, labels);
+				}
+				for (const label of labels) {
+					const name = /** @type {AST.LabeledStatement} */ (label).label.name;
+					if (outer.has(name)) {
+						this.raise(
+							/** @type {number} */ (/** @type {AST.LabeledStatement} */ (label).label.start),
+							`Label '${name}' is already declared`,
+						);
 					}
 				}
+			}
+
+			/**
+			 * How many of `this.labels` are outside the template body being read.
+			 * @returns {number}
+			 */
+			#outerLabelCount() {
+				return this.#labelFloor?.labels === this.labels ? this.#labelFloor.length : 0;
 			}
 
 			/**
@@ -15232,7 +15259,7 @@ export function TSRXPlugin(config) {
 				// can't see that one while it checks.
 				/** @type {Array<{ name: string }>} */
 				const hidden = [];
-				const floor = this.#labelFloor?.labels === this.labels ? this.#labelFloor.length : 0;
+				const floor = this.#outerLabelCount();
 				for (let i = 0; i < floor; i++) {
 					const label = /** @type {{ name: string }} */ (this.labels[i]);
 					if (label.name === maybeName) {
