@@ -3438,6 +3438,35 @@ describe('`type` written with an escape in an import or export clause (sveltejs/
 });
 
 // #719
+describe('decorators before a `;` in a class body', () => {
+	it('reports decorators before a `;`, where TypeScript expects a declaration (TS1146)', async () => {
+		// acorn-typescript gave the decorators to the `null` it reads for the `;`
+		// and threw a TypeError.
+		const sources = [
+			'class C { @dec ; }',
+			'class C { @dec; m() {} }',
+			'class C { @a @b() ; }',
+			'class C { m() {} @dec ; }',
+			'export default class { @dec ; }',
+		];
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+		expect(outcomes).toEqual(
+			sources.flatMap((source) =>
+				thrown_in_every_mode(TS_ERRORS.DECLARATION_EXPECTED, source.lastIndexOf(';')),
+			),
+		);
+	});
+
+	it('still reads a `;` after a decorated member, or before one, as no member', () => {
+		for (const source of ['class C { @dec m() {}; }', 'class C { ; @dec m() {} }']) {
+			/** @type {CompileError[]} */
+			const errors = [];
+			expect(() => parseModule(source, 'A.tsrx', { collect: true, errors })).not.toThrow();
+			expect(errors).toEqual([]);
+		}
+	});
+});
+
 describe('modifiers before a declaration that TypeScript reports from its checker (sveltejs/acorn-typescript#155)', () => {
 	it('records the error TypeScript reports, which a strict parse throws', async () => {
 		/** @type {Array<[source: string, pos: number, error: ErrorKind, type: string]>} */
