@@ -212,8 +212,9 @@ No TSRX rule covers these:
   between an attribute's name and its value, and a shorthand has none. The parser
   gives the shorthand as a `JSXAttribute` whose value is the expression, which
   `eslint-plugin-react` and `eslint-plugin-jsx-a11y` read, so no shape suits both.
-  Turn `indent` off for `.tsrx` files and format them with
-  `@tsrx/prettier-plugin`.
+  To keep `indent`, give it `ignoredNodes: ['JSXAttribute[shorthand=true]']`, so
+  it doesn't check a shorthand attribute's lines, or turn it off for `.tsrx` files
+  and format them with `@tsrx/prettier-plugin`.
 
 ## Related Packages
 

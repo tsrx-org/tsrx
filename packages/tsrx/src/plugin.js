@@ -15704,8 +15704,9 @@ export function TSRXPlugin(config) {
 			 * reports the member as missing instead.
 			 *
 			 * Decorators before a `;` decorate no member. TypeScript reports the
-			 * member as missing at the `;` (TS1146 `Declaration expected.`), where
-			 * acorn-typescript threw a TypeError.
+			 * member as missing right after the decorators, before any comment or
+			 * space (TS1146 `Declaration expected.`), where acorn-typescript threw a
+			 * TypeError.
 			 *
 			 * A constructor named with an escape (`\u0063onstructor() {}`) is
 			 * TypeScript's TS1260 `Keywords cannot contain escape characters.`: its
@@ -15732,7 +15733,7 @@ export function TSRXPlugin(config) {
 				// acorn-typescript reads a `;` as no member and gives the decorators
 				// before it to that `null`.
 				if (this.type === tt.semi && this.lastTokEnd === this.#decoratorEnd) {
-					this.raise(this.start, TS_ERRORS.DECLARATION_EXPECTED);
+					this.raise(this.lastTokEnd, TS_ERRORS.DECLARATION_EXPECTED);
 				}
 				const start = this.start;
 				const decorators_start =
