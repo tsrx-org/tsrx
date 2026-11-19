@@ -604,6 +604,17 @@ function nested_import_export_error(input, position) {
 	return TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE;
 }
 
+/** The words a namespace or module declaration's statement can start with. */
+const MODULE_DECLARATION_START_WORDS = new Set([
+	'abstract',
+	'declare',
+	'global',
+	'module',
+	'namespace',
+]);
+// A word, from where it starts.
+const regex_word = /[\p{ID_Continue}$\u200c\u200d]+/uy;
+
 /**
  * TypeScript's checker error for a namespace or module declaration that isn't
  * directly in the module's or a namespace's body
@@ -15107,17 +15118,39 @@ export function TSRXPlugin(config) {
 					(this.#exportedDeclarationStart !== -1 &&
 						(start === this.#exportedDeclarationStart ||
 							this.lastTokStart === this.#exportedDeclarationStart));
+				// A statement that may be a misplaced namespace or module, whose place
+				// TypeScript reports before the errors in it.
+				const held_module =
+					!nested_module_allowed &&
+					this.type !== tt.string &&
+					MODULE_DECLARATION_START_WORDS.has(/** @type {string} */ (this.value));
 				this.#statementContext = context ?? null;
 				this.#statementContextDepth = this.context.length - this.#currentTokenContextCount();
 				this.#statementOpenBrackets = this.#openBrackets;
-				try {
+				const read = () => {
 					const statement = this.#parseStatement(context, topLevel, exports);
 					const node = /** @type {AST.Node | undefined} */ (statement);
 					if (!nested_module_allowed && node?.type === 'TSModuleDeclaration') {
 						// TypeScript's checker reports it at its first token, and nothing
-						// else about it (`checkModuleDeclaration`).
-						this.#raiseCheckerError(start, module_declaration_place_error(node));
+						// else about it (`checkModuleDeclaration`). The declaration starts
+						// after an `abstract`, which the output leaves out, so the editor
+						// shows TypeScript's own error on the output in its place.
+						const at = /** @type {number} */ (node.start);
+						regex_word.lastIndex = at;
+						this.#raiseCheckerError(
+							at,
+							module_declaration_place_error(node),
+							regex_word.test(this.input) ? regex_word.lastIndex : at + 1,
+						);
 					}
+					return statement;
+				};
+				try {
+					if (!held_module) return read();
+					/** @type {CompileError[]} */
+					const held = [];
+					const statement = this.#holdingErrors(held, read);
+					this.#releaseErrors(held);
 					return statement;
 				} finally {
 					this.#statementContext = outer;

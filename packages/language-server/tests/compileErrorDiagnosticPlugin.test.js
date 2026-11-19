@@ -373,8 +373,12 @@ export {};`,
 	{
 		export namespace M {}
 	}
+	abstract namespace L {}
 	return N;
 }
+export const g = (x = () => {
+	namespace K {}
+}) => x;
 export function App() @{
 	@try {
 		declare module 'm' {}
@@ -386,9 +390,12 @@ export function App() @{
 }`;
 		const { document, diagnostics } = await editor_diagnostics_for('NestedNamespace', source);
 
+		// After `abstract`, which the editor's code leaves out, at `namespace`.
 		expect(reported(document, diagnostics, 'TS1235')).toEqual([
 			{ source: 'ts', text: 'namespace', offset: source.indexOf('namespace N') },
 			{ source: 'ts', text: 'export', offset: source.indexOf('export namespace') },
+			{ source: 'ts', text: 'namespace', offset: source.indexOf('namespace L') },
+			{ source: 'ts', text: 'namespace', offset: source.indexOf('namespace K') },
 		]);
 		expect(reported(document, diagnostics, 'TS1234')).toEqual([
 			{ source: 'ts', text: 'declare', offset: source.indexOf('declare module') },

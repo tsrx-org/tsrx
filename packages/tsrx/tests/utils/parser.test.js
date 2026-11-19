@@ -12916,12 +12916,24 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.NESTED_NAMESPACE, '3:2'],
 		},
 		{
-			// Not TS1242 for `abstract`, nor TS1184 for `declare`.
+			// Not TS1242 for `abstract`, nor TS1184 for `declare`. After a leading
+			// `abstract`, which the output leaves out, at the token after it, where
+			// TypeScript reports it on the output, which the editor shows.
 			source:
 				'function f() {\n\tabstract namespace N {}\n}\nif (a) declare abstract namespace M {}',
 			errors: [
-				[TS_ERRORS.NESTED_NAMESPACE, 'abstract namespace N'],
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace N'],
 				[TS_ERRORS.NESTED_NAMESPACE, 'declare abstract'],
+			],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:10'],
+		},
+		{
+			// Before the errors in it, which TypeScript reports too.
+			source:
+				'function f() {\n\tnamespace A.B {\n\t\tfunction g() {\n\t\t\tmodule "m" {}\n\t\t}\n\t}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_NAMESPACE, 'namespace A.B'],
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'module "m"'],
 			],
 			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
 		},
