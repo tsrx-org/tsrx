@@ -129,6 +129,24 @@ ruleTester.run('no-useless-assignment', rule, {
 				{ messageId: 'unnecessaryAssignment', line: 6, column: 39 },
 			],
 		},
+		// The parser's name for a dynamic tag spans the whole tag expression.
+		// (The compiler rejects this tag, TSRX2014, but the ESLint parser takes it.)
+		{
+			code: `export function A(pick) @{
+	let x = 0;
+	<div>
+		@try { x = 1; <b /> } @catch (e) {
+			<{pick(@{
+				<div>@try { x = 2; <b>{x}</b> } @catch (inner) { <i /> }</div>
+			})} />
+		}
+	</div>
+}`,
+			errors: [
+				{ messageId: 'unnecessaryAssignment', line: 2, column: 6 },
+				{ messageId: 'unnecessaryAssignment', line: 4, column: 10 },
+			],
+		},
 		// In a `finally` block, code path analysis keeps the path of a `return`
 		// apart from the normal one.
 		{

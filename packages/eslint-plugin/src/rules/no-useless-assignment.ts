@@ -234,12 +234,15 @@ const rule: Rule.RuleModule = {
 				// The core rule places each read by the first and last identifier it
 				// visits in a segment. The traversal visits a few identifiers after
 				// later code (a label after its block, type arguments after the call's
-				// arguments), and such an identifier could stretch a piece back over
-				// code before a `@try` boundary. The cut copies see only identifiers
-				// that come after the last one they saw in the code path.
+				// arguments), and the parser's name for a dynamic tag spans the whole
+				// tag expression. Such an identifier could stretch a piece over code
+				// across a `@try` boundary, so the cut copies see only identifiers that
+				// span their name and come after the last one they saw in the code
+				// path.
 				const node = args[0];
 				if (node?.type === 'Identifier' || node?.type === 'JSXIdentifier') {
 					if (node.range[0] < last_identifier_end) return;
+					if (node.range[1] - node.range[0] !== String(node.name).length) return;
 					last_identifier_end = node.range[1];
 				}
 				cut[key]?.(...args);
