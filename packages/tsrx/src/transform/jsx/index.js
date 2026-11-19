@@ -624,6 +624,7 @@ export function createJsxTransform(platform) {
 		};
 
 		validate_directive_declarations(ast, transform_context);
+		validate_directive_jumps(ast, transform_context);
 
 		// Opt-in server-module dialect (`module <name> { … }` plus its boundary
 		// `import … from '<specifier>'`): lower to plain checkable TS before any
@@ -6044,6 +6045,14 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		);
 		return;
 	}
+	// The directive jump check reported a jump in a nested body, such as an
+	// `@try` in this one.
+	if (
+		(node.type === 'BreakStatement' || node.type === 'ContinueStatement') &&
+		node.metadata?.invalid_directive_jump
+	) {
+		return;
+	}
 	if (node.type === 'BreakStatement') {
 		error(
 			TSRX_ERRORS.FOR_BREAK_STATEMENT,
@@ -6090,6 +6099,11 @@ function validate_if_body_control_flow(node, transform_context) {
 		return;
 	}
 
+	// A nested `@if` or `@for` checks its own body.
+	if (is_template_if_node(node) || node.type === 'JSXForExpression') {
+		return;
+	}
+
 	if (node.type === 'ReturnStatement') {
 		error(
 			TSRX_ERRORS.IF_RETURN_STATEMENT,
@@ -6098,6 +6112,14 @@ function validate_if_body_control_flow(node, transform_context) {
 			transform_context.errors,
 			transform_context.comments,
 		);
+		return;
+	}
+	// The directive jump check reported a jump in a nested body, such as an
+	// `@try` in this one.
+	if (
+		(node.type === 'BreakStatement' || node.type === 'ContinueStatement') &&
+		node.metadata?.invalid_directive_jump
+	) {
 		return;
 	}
 	if (node.type === 'BreakStatement') {
@@ -6230,6 +6252,179 @@ function collect_directive_declarations(node, parent, in_body, found) {
 			node.type === 'JSXForExpression' && child !== node.body && child !== node.empty;
 		collect_directive_declarations(child, node, children_in_body && !in_for_head, found);
 	}
+}
+
+/**
+ * Every target runs an `@try`, `@pending`, `@catch` or `@empty` body, an
+ * `@switch` case body, and every `@{ … }` block that isn't a function's own
+ * body, inside a function, so a `break` or `continue` there can't reach
+ * a loop, `switch` or label outside it; the output wouldn't parse. This
+ * reports each such jump once, in source order. A `break` that leaves an
+ * `@switch` case is `SWITCH_CASE_BREAK_STATEMENT`, which the parser reports
+ * for a `break` right in the case. A jump in an `@if` body, or in an `@for`
+ * body outside a loop there, is the `@if` or `@for` check's to report; a
+ * jump in a loop in an `@for` body that leaves the body, which that check
+ * doesn't see, is reported here with the `@for` check's errors, and so is
+ * one that leaves an `@else if` body, or the `@else` after one, with the
+ * `@if` check's.
+ *
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function validate_directive_jumps(program, transform_context) {
+	/** @type {Array<{ node: AST.BreakStatement | AST.ContinueStatement, kind: JumpScope['kind'] }>} */
+	const found = [];
+	collect_directive_jumps(program, null, NO_JUMP_SCOPE, found);
+	found.sort(
+		(a, b) =>
+			/** @type {AST.NodeWithLocation} */ (a.node).start -
+			/** @type {AST.NodeWithLocation} */ (b.node).start,
+	);
+	for (const { node, kind } of found) {
+		const is_break = node.type === 'BreakStatement';
+		const diagnostic =
+			kind === 'for'
+				? is_break
+					? TSRX_ERRORS.FOR_BREAK_STATEMENT
+					: TSRX_ERRORS.FOR_CONTINUE_STATEMENT
+				: kind === 'if'
+					? is_break
+						? TSRX_ERRORS.IF_BREAK_STATEMENT
+						: TSRX_ERRORS.IF_CONTINUE_STATEMENT
+					: !is_break
+						? TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE
+						: kind === 'case'
+							? TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT
+							: TSRX_ERRORS.DIRECTIVE_BODY_BREAK;
+		// An `@if`, `@for` or `@switch` error covers the whole statement, as the
+		// `@if` and `@for` checks report it; the new ones cover the keyword, as
+		// the `var` check does.
+		const reused =
+			diagnostic !== TSRX_ERRORS.DIRECTIVE_BODY_BREAK &&
+			diagnostic !== TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE;
+		error(
+			diagnostic,
+			transform_context.filename,
+			reused ? node : get_statement_keyword_node(node, is_break ? 'break' : 'continue'),
+			transform_context.errors,
+			transform_context.comments,
+		);
+	}
+}
+
+/**
+ * What a jump can reach from where it is: `kind` is the body that cuts it off
+ * from the code around it (`'body'` for an `@try`, `@pending`, `@catch` or
+ * `@empty` body or a nested `@{ … }` block, `'case'` for an `@switch` case,
+ * `'for'` for an `@for` body, `'if'` for an `@else if` body or the `@else`
+ * after one, which the `@if` check doesn't see), `'chain'` for the
+ * `@else if` itself, or `'none'` where JavaScript's own rules, or the `@if`
+ * check, apply. `targets` are the loops, `switch` statements and
+ * labels inside the body. `nested` is whether the jump is in a loop in the
+ * body: the `@for` check reports a jump in an `@for` body outside such a
+ * loop, and this one a jump in it that leaves the body.
+ * @typedef {{ kind: 'none' | 'body' | 'case' | 'for' | 'if' | 'chain', targets: Array<{ loop: boolean, label: string | null }>, nested?: boolean }} JumpScope
+ */
+
+/**
+ * @param {AST.Node} node
+ * @param {AST.Node | null} parent
+ * @param {JumpScope} scope
+ * @param {Array<{ node: AST.BreakStatement | AST.ContinueStatement, kind: JumpScope['kind'] }>} found
+ * @returns {void}
+ */
+function collect_directive_jumps(node, parent, scope, found) {
+	if (node.type === 'BreakStatement' || node.type === 'ContinueStatement') {
+		const is_break = node.type === 'BreakStatement';
+		const label = node.label?.name ?? null;
+		const reaches = scope.targets.some((target) =>
+			label === null ? target.label === null && (is_break || target.loop) : target.label === label,
+		);
+		const reported =
+			scope.kind === 'body' ||
+			scope.kind === 'case' ||
+			scope.kind === 'if' ||
+			(scope.kind === 'for' && scope.nested);
+		if (reported && !reaches) {
+			// The `@if` and `@for` checks, which see a jump in an `@try` right in
+			// their bodies, leave it to this one.
+			node.metadata = { ...node.metadata, invalid_directive_jump: true };
+			found.push({ node, kind: scope.kind });
+		}
+		return;
+	}
+
+	for (const child of child_nodes(node)) {
+		collect_directive_jumps(child, node, child_jump_scope(node, parent, child, scope), found);
+	}
+}
+
+/** @type {JumpScope} */
+const NO_JUMP_SCOPE = { kind: 'none', targets: [] };
+
+/**
+ * The jump scope of `child`, a child of `node` (whose parent is `parent`) in
+ * `scope`.
+ * @param {AST.Node} node
+ * @param {AST.Node | null} parent
+ * @param {AST.Node} child
+ * @param {JumpScope} scope
+ * @returns {JumpScope}
+ */
+function child_jump_scope(node, parent, child, scope) {
+	if (is_function_or_class_boundary(node)) return NO_JUMP_SCOPE;
+	if (node.type === 'JSXForExpression' && child === node.empty) {
+		return { kind: 'body', targets: [] };
+	}
+	if (node.type === 'JSXForExpression' && child === node.body) {
+		return { kind: 'for', targets: [] };
+	}
+	if (node.type === 'JSXIfExpression' && child === node.alternate && child.type === 'IfStatement') {
+		return { kind: 'chain', targets: [] };
+	}
+	if (scope.kind === 'chain' && node.type === 'IfStatement') {
+		if (child === node.alternate && child.type === 'IfStatement') return scope;
+		return child === node.consequent || child === node.alternate
+			? { kind: 'if', targets: [] }
+			: NO_JUMP_SCOPE;
+	}
+	// The `@if` check reports a jump in an `@if` or `@else` body.
+	if (node.type === 'JSXIfExpression' || node.type === 'JSXForExpression') return NO_JUMP_SCOPE;
+	if (node.type === 'JSXTryExpression' && (child === node.block || child === node.pending)) {
+		return { kind: 'body', targets: [] };
+	}
+	if (node.type === 'CatchClause' && parent?.type === 'JSXTryExpression' && child === node.body) {
+		return { kind: 'body', targets: [] };
+	}
+	if (node.type === 'JSXCodeBlock' && !is_code_block_function_body(node, parent)) {
+		return { kind: 'body', targets: [] };
+	}
+	if (
+		node.type === 'SwitchCase' &&
+		parent?.type === 'JSXSwitchExpression' &&
+		node.consequent.includes(/** @type {AST.Statement} */ (child))
+	) {
+		return { kind: 'case', targets: [] };
+	}
+	if (node.type === 'LabeledStatement' && child === node.body) {
+		return {
+			kind: scope.kind,
+			targets: [...scope.targets, { loop: is_loop_statement(child), label: node.label.name }],
+			nested: scope.nested,
+		};
+	}
+	if (
+		(is_loop_statement(node) && child === /** @type {AST.ForOfStatement} */ (node).body) ||
+		(node.type === 'SwitchStatement' && node.cases.includes(/** @type {AST.SwitchCase} */ (child)))
+	) {
+		return {
+			kind: scope.kind,
+			targets: [...scope.targets, { loop: node.type !== 'SwitchStatement', label: null }],
+			nested: scope.nested || is_loop_statement(node),
+		};
+	}
+	return scope;
 }
 
 /**

@@ -646,6 +646,13 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		);
 		return;
 	}
+	if (
+		(current.type === 'BreakStatement' || current.type === 'ContinueStatement') &&
+		current.metadata?.invalid_directive_jump
+	) {
+		// Reported by `@tsrx/core`'s directive jump check.
+		return;
+	}
 	if (current.type === 'BreakStatement') {
 		error(
 			TSRX_ERRORS.FOR_BREAK_STATEMENT,
@@ -698,6 +705,11 @@ function validate_if_body_control_flow(node, transform_context) {
 
 	const current = /** @type {AST.TraversableAstNode} */ (node);
 
+	// A nested `@if` or `@for` checks its own body.
+	if (is_template_if_node(current) || current.type === 'JSXForExpression') {
+		return;
+	}
+
 	if (current.type === 'ReturnStatement') {
 		error(
 			TSRX_ERRORS.IF_RETURN_STATEMENT,
@@ -705,6 +717,13 @@ function validate_if_body_control_flow(node, transform_context) {
 			current,
 			transform_context.errors,
 		);
+		return;
+	}
+	if (
+		(current.type === 'BreakStatement' || current.type === 'ContinueStatement') &&
+		current.metadata?.invalid_directive_jump
+	) {
+		// Reported by `@tsrx/core`'s directive jump check.
 		return;
 	}
 	if (current.type === 'BreakStatement') {

@@ -165,6 +165,26 @@ describe('error codes', () => {
 }`,
 			],
 			[
+				'TSRX2036',
+				`function App() @{
+	for (const item of items) {
+		const view = <div>@try { if (item) break; <b /> } @catch (e) { <i /> }</div>;
+		log(view);
+	}
+	<p />
+}`,
+			],
+			[
+				'TSRX2037',
+				`function App() @{
+	for (const item of items) {
+		const view = <div>@try { <b /> } @catch (e) { if (item) continue; <i /> }</div>;
+		log(view);
+	}
+	<p />
+}`,
+			],
+			[
 				'TSRX3011',
 				`function App() @{
 	<>

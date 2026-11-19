@@ -634,6 +634,10 @@ const TSRX_ERROR_CODES = [
 	'          <p>@{user.name}</p>',
 	'TSRX2035  This @{…} code block holds only an expression statement, so it renders nothing.  (a warning)',
 	'          const v = @{ x };  (outside a child list)',
+	'TSRX2036  A `break` cannot jump out of an `@try`, `@pending`, `@catch` or `@empty` body or a nested `@{ … }` block.',
+	'          for (const x of xs) { const v = <div>@try { if (x) break; <b /> } @catch (e) { <i /> }</div>; }',
+	'TSRX2037  A `continue` cannot jump out of an `@try`, `@pending`, `@catch`, `@empty` or `@switch` case body or a nested `@{ … }` block.',
+	'          for (const x of xs) { const v = @{ if (x) continue; <b /> }; }',
 	"TSRX3001  The 'apply' attribute of a <style> block requires an expression value.",
 	'          <style apply="a" />',
 	"TSRX3002  'a' is not a style block.",
@@ -1120,8 +1124,25 @@ export function SpecificationPage() @{
 								Each <code class="inline-code">@switch</code> <code class="inline-code">@case</code>{' '}
 								and <code class="inline-code">@default</code> must use a{' '}
 								<code class="inline-code">{'{}'}</code> template block. Cases are isolated: they do
-								not fall through to later cases, and <code class="inline-code">break</code> and{' '}
-								<code class="inline-code">return</code> are syntax errors inside a JSX switch case.
+								not fall through to later cases, a <code class="inline-code">return</code> right in
+								a JSX switch case is a syntax error, and a <code class="inline-code">break</code> or{' '}
+								<code class="inline-code">continue</code> in a case can only reach a loop, a{' '}
+								<code class="inline-code">switch</code> (<code class="inline-code">break</code>{' '}
+								only) or a label inside the case.
+							</p>
+							<p class="section-body">
+								Every target runs an <code class="inline-code">@try</code> body, its{' '}
+								<code class="inline-code">@pending</code> and{' '}
+								<code class="inline-code">@catch</code> blocks, an{' '}
+								<code class="inline-code">@empty</code> block and a nested{' '}
+								<code class="inline-code">{'@{ ... }'}</code> block inside a function, so a{' '}
+								<code class="inline-code">break</code> or <code class="inline-code">continue</code>{' '}
+								there can only reach a loop, a <code class="inline-code">switch</code> (
+								<code class="inline-code">break</code> only) or a label inside it (TSRX2036,
+								TSRX2037). A code-only block that is a child of a returned fragment is inlined
+								before the <code class="inline-code">return</code> rather than put in a function,
+								but it keeps the same rule, as it keeps the <code class="inline-code">var</code>{' '}
+								rule (TSRX2030).
 							</p>
 							<p class="section-body">
 								Plain JSX children are the default. When an expression position, function body,
