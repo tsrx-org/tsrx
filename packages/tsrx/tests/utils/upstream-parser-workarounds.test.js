@@ -4086,6 +4086,9 @@ describe('`declare` before a token that starts no declaration (sveltejs/acorn-ty
 			['declare foo;', ['declare', 'foo']],
 			['declare 1;', ['declare', 'ExpressionStatement']],
 			['declare using;', ['declare', 'using']],
+			['declare import("m");', ['declare', 'ExpressionStatement']],
+			['declare import.meta;', ['declare', 'ExpressionStatement']],
+			['declare global as any;', ['declare', 'ExpressionStatement']],
 			['function f() { declare global; }', ['declare', 'global']],
 			['{ declare namespace; }', ['declare', 'namespace']],
 		];
@@ -4112,6 +4115,17 @@ describe('`declare` before a token that starts no declaration (sveltejs/acorn-ty
 		}
 	});
 
+	it('still fails where TypeScript reads a declaration that the parser does not', async () => {
+		// TypeScript reads a declaration after `declare` there, and reports
+		// errors in it (TS1146, TS1003): the parser doesn't take `declare` for a
+		// name and go on, which would compile them without an error.
+		const sources = ['declare defer as T;', 'declare namespace "m" {}'];
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+		for (const [index, outcome] of outcomes.entries()) {
+			expect(outcome.ok, sources[Math.floor(index / PARSE_MODES.length)]).toBe(false);
+		}
+	});
+
 	it('reads `declare type` as the start of a type alias, whatever follows', async () => {
 		// TypeScript's parser commits to a type alias there (`isDeclaration`), and
 		// reports TS1142 at a name on the next line, or TS1003 in its place.
@@ -4121,6 +4135,9 @@ describe('`declare` before a token that starts no declaration (sveltejs/acorn-ty
 			['declare type;', TS_ERRORS.IDENTIFIER_EXPECTED, ';'],
 			['declare type = 1;', TS_ERRORS.IDENTIFIER_EXPECTED, '='],
 			['declare type\nT = 1;', TS_ERRORS.LINE_BREAK_NOT_PERMITTED, 'T'],
+			// Written with an escape, before anything else.
+			['declare \\u0074ype;', TS_ERRORS.KEYWORD_ESCAPE, '\\u0074ype'],
+			['\\u0064eclare type;', TS_ERRORS.KEYWORD_ESCAPE, '\\u0064eclare'],
 		];
 		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
 		expect(outcomes).toEqual(
@@ -4203,14 +4220,23 @@ describe('a TypeScript word as a label or an async arrow function parameter (sve
 		}
 	});
 
-	it('still reports a label that no statement around has', async () => {
-		const outcomes = await parse_in_worker(
-			in_every_mode(['for (;;) { break namespace; }', 'type: { continue type; }']),
-		);
-		expect(outcomes).toEqual([
-			...thrown_in_every_mode('TS1105', 11),
-			...thrown_in_every_mode('TS1104', 8),
+	it('reports a label that no statement around has as for any other name', async () => {
+		// TypeScript reports TS1116 or TS1115 there, where this parser reports
+		// TS1105 or TS1104 for any label.
+		const sources = words.flatMap((word) => [
+			`for (;;) { break ${word}; }`,
+			`${word}: { continue ${word}; }`,
 		]);
+		const named = sources.map((source, index) => {
+			const word = words[Math.floor(index / 2)];
+			return source.replaceAll(word, 'x'.repeat(word.length));
+		});
+		const [outcomes, expected] = await Promise.all([
+			parse_in_worker(in_every_mode(sources)),
+			parse_in_worker(in_every_mode(named)),
+		]);
+		expect(outcomes).toEqual(expected);
+		expect(outcomes.every((outcome) => !outcome.ok)).toBe(true);
 	});
 
 	it('reads the word as an async arrow function parameter', async () => {

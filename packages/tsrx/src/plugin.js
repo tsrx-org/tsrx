@@ -8355,7 +8355,7 @@ export function TSRXPlugin(config) {
 				if (
 					this.#lastWordEscaped() &&
 					!this.hasPrecedingLineBreak() &&
-					this.#declarationAfterModifier(0) !== null
+					(this.type === tstt.type || this.#declarationAfterModifier(0) !== null)
 				) {
 					this.raise(this.lastTokStart, TS_ERRORS.KEYWORD_ESCAPE);
 				}
@@ -8410,6 +8410,7 @@ export function TSRXPlugin(config) {
 			#parseDeclaredTypeAlias(node) {
 				return this.tsInAmbientContext(() => {
 					this.next(); // `type`
+					this.#checkKeywordJustRead();
 					if (this.hasPrecedingLineBreak()) {
 						this.raise(this.start, TS_ERRORS.LINE_BREAK_NOT_PERMITTED);
 					}
@@ -9216,8 +9217,8 @@ export function TSRXPlugin(config) {
 			 * `#declarationAfterModifier`), or a modifier on its line (`static` on
 			 * any line) and then one of these. Where it reads none, `declare` is a
 			 * name, and TypeScript reports no missing `;` after it
-			 * (`parseErrorForMissingSemicolonAfter`). Before `import` or `export` it
-			 * says yes without looking further, and acorn-typescript reads on.
+			 * (`parseErrorForMissingSemicolonAfter`). Before `export` it says yes
+			 * without looking further, and acorn-typescript reads on.
 			 */
 			#declarationAfterDeclare() {
 				if (this.type === tt.semi || this.canInsertSemicolon()) return false;
@@ -9226,14 +9227,23 @@ export function TSRXPlugin(config) {
 				for (let ahead = 0; ; ahead++) {
 					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
 					if (!is_identifier(token.type)) {
-						const keyword = token.type.keyword;
+						if (token.type === tt._import) {
+							// An import declaration, not `import(…)` or `import.meta`.
+							const after = this.lookahead(ahead + 1).type;
+							return (
+								after === tt.string ||
+								after === tt.star ||
+								after === tt.braceL ||
+								after.keyword !== undefined ||
+								is_identifier(after)
+							);
+						}
 						return (
-							keyword === 'var' ||
-							keyword === 'const' ||
-							keyword === 'function' ||
-							keyword === 'class' ||
-							keyword === 'import' ||
-							keyword === 'export'
+							token.type === tt._var ||
+							token.type === tt._const ||
+							token.type === tt._function ||
+							token.type === tt._class ||
+							token.type === tt._export
 						);
 					}
 					const word = /** @type {string} */ (token.value);
@@ -9256,13 +9266,18 @@ export function TSRXPlugin(config) {
 						}
 						case 'interface':
 						case 'type':
+						case 'defer':
 							return same_line && is_identifier(next.type);
 						case 'namespace':
 						case 'module':
 							return same_line && (is_identifier(next.type) || next.type === tt.string);
 						case 'global':
+							// Before an identifier, which `as` and `satisfies` aren't: TypeScript
+							// reads them as operators after the name `global`.
 							return (
-								next.type === tt.braceL || next.type === tt._export || is_identifier(next.type)
+								next.type === tt.braceL ||
+								next.type === tt._export ||
+								(is_identifier(next.type) && next.value !== 'as' && next.value !== 'satisfies')
 							);
 						case 'static':
 							continue;
