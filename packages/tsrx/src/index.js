@@ -183,6 +183,7 @@ export {
 	FRAGMENT_INTERNAL_NAME,
 	for_of_pattern_reads_index as forOfPatternReadsIndex,
 	get_for_of_shadowed_names as getForOfShadowedNames,
+	if_statement_to_jsx_child as ifStatementToJsxChild,
 	insert_after_directives as insertAfterDirectives,
 	is_component_like_element,
 	is_svg_tag_name as isSvgTagName,

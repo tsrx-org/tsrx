@@ -1,6 +1,7 @@
 import type { MockInstance } from 'vitest';
 import {
 	createVaporApp,
+	createVaporSSRApp,
 	defineVaporAsyncComponent,
 	inject,
 	onMounted,
@@ -3855,6 +3856,116 @@ describe('tsrx-vue a keyed row that declares its item’s name again', () => {
 		await render(ShadowPatternRows, { rows: [{ id: 'a' }] });
 		await click('.shadow-pattern-row');
 		expect(shadow_log).toEqual(['catch', 'for of', 'a']);
+	});
+});
+
+const ifs = ref({ on: false, level: 0 });
+
+function IfsCounter({ label }: { label: string }) @{
+	const count = ref(0);
+	<button onClick={() => count.value++}>{label + ':' + count.value}</button>
+}
+
+function HydratedIfs({ on, level }: { on: boolean; level: number }) @{
+	<div>
+		<span class="on">
+			@if (on) {
+				<IfsCounter label="on" />
+			}
+		</span>
+		<span class="level">
+			@if (level === 1) {
+				<b>{'one'}</b>
+			} @else if (level === 2) {
+				<i>{'two'}</i>
+			}
+		</span>
+	</div>
+}
+
+function HydratedIfsHost() @{
+	<HydratedIfs on={ifs.value.on} level={ifs.value.level} />
+}
+
+describe('tsrx-vue hydrating an element whose child is an @if without @else', () => {
+	// The markup the server build renders for these states
+	// (vapor-for-ssr.test.js renders the same component).
+	const server_markup = {
+		empty: '<div><span class="on"><!----></span><span class="level"><!----></span></div>',
+		rendered:
+			'<div><span class="on"><button>on:0</button></span><span class="level"><i>two</i></span></div>',
+	};
+
+	async function hydrate(markup: string) {
+		container.innerHTML = markup;
+		const server_nodes = Array.from(container.querySelectorAll('button, b, i'));
+		const errors: unknown[] = [];
+		const warnings: string[] = [];
+		const warn_spy = vi.spyOn(console, 'warn').mockImplementation((...args) => {
+			warnings.push(args.map(String).join(' '));
+		});
+		const app = createVaporSSRApp(HydratedIfsHost);
+		app.config.errorHandler = (error) => {
+			errors.push(error);
+		};
+		app.mount(container);
+		await flush();
+		warn_spy.mockRestore();
+		expect(errors).toEqual([]);
+		expect(warnings.filter((warning) => warning.includes('ydration'))).toEqual([]);
+		const hydrated_nodes = Array.from(container.querySelectorAll('button, b, i'));
+		expect(hydrated_nodes.length).toBe(server_nodes.length);
+		hydrated_nodes.forEach((node, index) => expect(node).toBe(server_nodes[index]));
+		return app;
+	}
+
+	function shown() {
+		return [text('.on'), text('.level')];
+	}
+
+	it('hydrates the empty branches, then follows their conditions', async () => {
+		ifs.value = { on: false, level: 0 };
+		const app = await hydrate(server_markup.empty);
+		try {
+			ifs.value = { on: true, level: 1 };
+			await flush();
+			expect(shown()).toEqual(['on:0', 'one']);
+			(container.querySelector('.on button') as HTMLElement).click();
+			await flush();
+
+			// The branch stays while its condition does, with its state.
+			ifs.value = { on: true, level: 2 };
+			await flush();
+			expect(shown()).toEqual(['on:1', 'two']);
+
+			ifs.value = { on: false, level: 0 };
+			await flush();
+			expect(shown()).toEqual(['', '']);
+		} finally {
+			app.unmount();
+		}
+	});
+
+	it('hydrates the rendered branches, keeps their state, then follows their conditions', async () => {
+		ifs.value = { on: true, level: 2 };
+		const app = await hydrate(server_markup.rendered);
+		try {
+			(container.querySelector('.on button') as HTMLElement).click();
+			await flush();
+			ifs.value = { on: true, level: 1 };
+			await flush();
+			expect(shown()).toEqual(['on:1', 'one']);
+
+			ifs.value = { on: false, level: 0 };
+			await flush();
+			expect(shown()).toEqual(['', '']);
+
+			ifs.value = { on: true, level: 2 };
+			await flush();
+			expect(shown()).toEqual(['on:0', 'two']);
+		} finally {
+			app.unmount();
+		}
 	});
 });
 

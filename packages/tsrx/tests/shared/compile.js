@@ -3975,11 +3975,12 @@ export function App() @{
 				component('<div {...{ title: <b>a > b</b> }} />'),
 				'<b>a &gt; b</b>',
 			],
-			['an @if body', component('@if (c) { <b>a > b</b> }'), '<b>a &gt; b</b>'],
+			// Vue gives an element's `@if` without `@else` a `v-if`.
+			['an @if body', component('@if (c) { <b>a > b</b> }'), '>a &gt; b</b>'],
 			[
 				'an @if body in a container',
 				component('{c && <p>@if (d) { <b>a > b</b> }</p>}'),
-				'<b>a &gt; b</b>',
+				'>a &gt; b</b>',
 			],
 			[
 				'an @switch body',

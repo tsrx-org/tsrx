@@ -2561,6 +2561,75 @@ export function Card(${params}: any) @{
 		expect(code).not.toContain('not yet supported in Vue TSRX');
 	});
 
+	it("gives an element's @if without @else v-if branches", () => {
+		// The server's \`<!---->\` for a false condition hydrates as a \`createIf\`
+		// from \`v-if\`; the shared lowering's \`createNodes(null)\` doesn't take it.
+		const { code } = compile(
+			`function App({ on, level, Item }: { on: boolean; level: number; Item: any }) @{
+				<div>
+					@if (on) {
+						<b>{'on'}</b>
+					}
+					@if (level === 1) {
+						<b>{'one'}</b>
+					} @else if (level === 2) {
+						<Item />
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain("<b v-if={on}>{'on'}</b>");
+		expect(code).toContain("<b v-if={level === 1}>{'one'}</b><Item v-else-if={level === 2} />");
+	});
+
+	it('keeps the shared lowering for other element @if children', () => {
+		const { code } = compile(
+			`function App({ on, kind }: { on: boolean; kind: string }) @{
+				<div>
+					@if (on) {
+						<b>{'on'}</b>
+					} @else {
+						<i>{'off'}</i>
+					}
+					@if (on) {
+						const label = 'setup';
+						<b>{label}</b>
+					}
+					@if (on) {
+						<template><b>{'tpl'}</b></template>
+					}
+					<strong v-if={on}>{'authored'}</strong>
+					@if (on) {
+						<b>{'before else'}</b>
+					}
+					<i v-else>{'authored else'}</i>
+					<strong v-if={on}>{'authored'}</strong>
+					@if (on) {
+						<b>{'before null'}</b>
+					}
+					{null}
+					{false}
+					{''}
+					<i v-else-if={kind === 'x'}>{'authored else-if'}</i>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		// With \`@else\`, the \`createIf\` hydrates as it is.
+		expect(code).toContain("{on ? <b>{'on'}</b> : <i>{'off'}</i>}");
+		// A branch with setup statements, and a \`<template>\`, can't take \`v-if\`.
+		expect(code).toMatch(/\{on\s*\? \(\(\) => \{/);
+		expect(code).toContain("{on ? <template><b>{'tpl'}</b></template> : null}");
+		// An authored \`v-else\` or \`v-else-if\` after the choice, past \`{null}\`,
+		// \`{false}\` or \`{''}\`, would join a new chain.
+		expect(code).toContain("{on ? <b>{'before else'}</b> : null}");
+		expect(code).toContain("{on ? <b>{'before null'}</b> : null}");
+		expect(code.match(/v-if/g)).toHaveLength(2);
+	});
+
 	it('compiles switch statements with inline case statements before JSX', () => {
 		const { code } = compile(
 			`function App({ value }) @{

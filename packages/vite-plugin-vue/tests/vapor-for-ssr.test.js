@@ -35,6 +35,31 @@ const FIXTURES = {
 	</ul>
 }`,
 
+	'ifs.tsrx': `import { ref } from 'vue';
+function Counter({ label }: { label: string }) @{
+	const count = ref(0);
+	<button>{label + ':' + count.value}</button>
+}
+function Ifs({ on, level }: { on: boolean; level: number }) @{
+	<div>
+		<span class="on">
+			@if (on) {
+				<Counter label="on" />
+			}
+		</span>
+		<span class="level">
+			@if (level === 1) {
+				<b>{'one'}</b>
+			} @else if (level === 2) {
+				<i>{'two'}</i>
+			}
+		</span>
+	</div>
+}
+export function App(props: { on: boolean; level: number }) @{
+	<Ifs on={props.on} level={props.level} />
+}`,
+
 	'switch.tsrx': `export function App({ items }: { items: { id: number }[] }) @{
 	<div>
 		@switch (items.length) {
@@ -106,6 +131,21 @@ describe('[vue] keyed @for through VaporFor on the server', () => {
 
 	it('throws for a keyed loop whose body can skip a row', async () => {
 		await expect(render('skip.tsrx', [{ id: 1 }, { id: 2 }])).rejects.toThrow('createFor');
+	});
+});
+
+// An element's `@if` without `@else` renders as `v-if` elements. The server
+// renders the picked branch, or a `<!---->`, which the client build hydrates;
+// runtime.test.tsrx hydrates this markup (comments kept here).
+describe('[vue] an element whose child is an @if without @else on the server', () => {
+	it('renders the picked branch, or a comment', async () => {
+		const { App } = await server.ssrLoadModule('/ifs.tsrx');
+		expect(await renderToString(createSSRApp(App, { on: false, level: 0 }))).toBe(
+			'<div><span class="on"><!----></span><span class="level"><!----></span></div>',
+		);
+		expect(await renderToString(createSSRApp(App, { on: true, level: 2 }))).toBe(
+			'<div><span class="on"><button>on:0</button></span><span class="level"><i>two</i></span></div>',
+		);
 	});
 });
 
