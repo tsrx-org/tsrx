@@ -4183,6 +4183,8 @@ export function TSRXPlugin(config) {
 			 */
 			#parseAsyncBeforeWord(refDestructuringErrors, forInit, forNew) {
 				const word = this.lookahead();
+				// Not past a token that isn't a word, which could start a template.
+				if (!Parser.acornTypeScript.tokenIsIdentifier(word.type)) return undefined;
 				const after = this.lookahead(2);
 				if (
 					word.type !== tt.name &&
@@ -16154,11 +16156,14 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * See `semicolon`.
+			 * See `semicolon`. TypeScript reports no missing `;` after the name
+			 * `declare` there either (`throw declare foo;`).
 			 * @type {Parse.Parser['parseThrowStatement']}
 			 */
 			parseThrowStatement(node) {
-				this.#statementExpressionStart = this.lookahead().start;
+				const argument = this.lookahead();
+				this.#statementExpressionStart = argument.start;
+				if (argument.type === tstt.declare) this.#nameDeclareStart = argument.start;
 				return super.parseThrowStatement(node);
 			}
 

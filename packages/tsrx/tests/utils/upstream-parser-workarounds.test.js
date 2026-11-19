@@ -4090,6 +4090,7 @@ describe('`declare` before a token that starts no declaration (sveltejs/acorn-ty
 			['declare import.meta;', ['declare', 'ExpressionStatement']],
 			['declare global as any;', ['declare', 'ExpressionStatement']],
 			['declare global\nasync as any;', ['declare', 'global', 'ExpressionStatement']],
+			['throw declare foo;', ['ThrowStatement', 'foo']],
 			['function f() { declare global; }', ['declare', 'global']],
 			['{ declare namespace; }', ['declare', 'namespace']],
 		];
@@ -4271,6 +4272,9 @@ describe('a TypeScript word as a label or an async arrow function parameter (sve
 			['x = async satisfies number;', 'TSSatisfiesExpression'],
 			['async as number;', 'TSAsExpression'],
 			['x = async as => as;', 'ArrowFunctionExpression'],
+			// A template after `async` isn't read ahead as code.
+			['x = async`\\n`;', 'TaggedTemplateExpression'],
+			['x = async`"`;', 'TaggedTemplateExpression'],
 		];
 		const outcomes = await parse_in_worker_with_ast(in_every_mode(cases.map(([source]) => source)));
 		for (const [index, outcome] of outcomes.entries()) {
