@@ -393,6 +393,20 @@ declare module 'estree' {
 		};
 	}
 
+	interface BreakStatement {
+		metadata: BaseNodeMetaData & {
+			/** A `break` the directive jump check reported, which the `@if` and `@for` checks then leave alone. */
+			invalid_directive_jump?: boolean;
+		};
+	}
+
+	interface ContinueStatement {
+		metadata: BaseNodeMetaData & {
+			/** A `continue` the directive jump check reported, which the `@if` and `@for` checks then leave alone. */
+			invalid_directive_jump?: boolean;
+		};
+	}
+
 	interface BlockStatement {
 		metadata: BaseNodeMetaData & {
 			native_return_block?: boolean;

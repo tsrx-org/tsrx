@@ -12722,7 +12722,17 @@ export function TSRXPlugin(config) {
 						// whose declarations share the function's scope, so a `let` or
 						// `const` that redeclares a parameter is TS2300 (#964).
 						this.checkParams(node, false);
-						const body = this.#parseCodeBlock({ allowReturnStatements: true, functionBody: true });
+						// As acorn does for a `{ … }` body, a `break` or `continue` in the
+						// body can't reach a loop, `switch` or label outside the function.
+						const outer_labels = this.labels;
+						this.labels = [];
+						/** @type {AST.JSXCodeBlock} */
+						let body;
+						try {
+							body = this.#parseCodeBlock({ allowReturnStatements: true, functionBody: true });
+						} finally {
+							this.labels = outer_labels;
+						}
 						node.body = body;
 						// A `@{ … }` body compiles to the function's body, so its leading
 						// strings are its directive prologue, as acorn reads a `{ … }` body's.

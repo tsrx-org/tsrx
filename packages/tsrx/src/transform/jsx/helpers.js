@@ -417,36 +417,56 @@ export function tsx_with_ts_locations(
 		},
 		// esrap's printers of these statements end them with `;`.
 		VariableDeclaration: (node, context) => {
+			const keyword = keyword_node(node, node.declare ? 'declare' : node.kind, source);
 			if (!semicolon_free.has(node)) {
 				/** @type {NonNullable<typeof base.VariableDeclaration>} */ (base.VariableDeclaration)(
-					node,
+					keyword,
 					context,
 				);
 				return;
 			}
 			if (node.declare) {
-				write_keyword('declare', node, context);
+				write_keyword('declare', keyword, context);
 				context.write(' ');
 				context.write(node.kind);
 			} else {
-				write_keyword(node.kind, node, context);
+				write_keyword(node.kind, keyword, context);
 			}
 			context.write(' ');
 			context.visit(node.declarations[0]);
 		},
 		ReturnStatement: (node, context) => {
+			const keyword = keyword_node(node, 'return', source);
 			if (!semicolon_free.has(node)) {
 				/** @type {NonNullable<typeof base.ReturnStatement>} */ (base.ReturnStatement)(
-					node,
+					keyword,
 					context,
 				);
 				return;
 			}
-			write_keyword('return', node, context);
+			write_keyword('return', keyword, context);
 			if (node.argument) {
 				context.write(' ');
 				context.visit(node.argument);
 			}
+		},
+		SwitchStatement: (node, context) => {
+			/** @type {NonNullable<typeof base.SwitchStatement>} */ (base.SwitchStatement)(
+				keyword_node(node, 'switch', source),
+				context,
+			);
+		},
+		SwitchCase: (node, context) => {
+			/** @type {NonNullable<typeof base.SwitchCase>} */ (base.SwitchCase)(
+				keyword_node(node, node.test ? 'case' : 'default', source),
+				context,
+			);
+		},
+		BlockStatement: (node, context) => {
+			/** @type {NonNullable<typeof base.BlockStatement>} */ (base.BlockStatement)(
+				keyword_node(node, '{', source),
+				context,
+			);
 		},
 		// esrap's tsx printer writes `<T,>` for every one-parameter list, but
 		// only an arrow needs it: TSX reads `<T>(…) => …` as a JSX tag. Other
@@ -925,7 +945,8 @@ function is_name_chain(node) {
 
 /**
  * Write a keyword the way esrap's `token` does: mapped to the source token
- * when there is one, with the end of the keyword after it.
+ * when there is one, with the end of the keyword after it. Pass the node from
+ * `keyword_node`.
  * @param {string} keyword
  * @param {AST.Node} node
  * @param {ESRap.Context} context
@@ -933,6 +954,77 @@ function is_name_chain(node) {
 function write_keyword(keyword, node, context) {
 	context.write(keyword);
 	if (node.loc) context.location(node.loc.start.line, node.loc.start.column + keyword.length);
+}
+
+const regex_identifier_char = /[\p{ID_Continue}$\u200c\u200d]/u;
+const regex_line_terminator = /\r\n?|[\n\u2028\u2029]/g;
+
+/** @type {{ source: string, line_starts: number[] } | null} */
+let line_starts_of = null;
+
+/**
+ * The offset of a location's position in the source, or -1 when the source
+ * has no such position.
+ * @param {string} source
+ * @param {AST.Position} position
+ * @returns {number}
+ */
+function source_offset(source, position) {
+	if (line_starts_of?.source !== source) {
+		const line_starts = [0];
+		for (const match of source.matchAll(regex_line_terminator)) {
+			line_starts.push(match.index + match[0].length);
+		}
+		line_starts_of = { source, line_starts };
+	}
+	const line_start = line_starts_of.line_starts[position.line - 1];
+	const offset = line_start === undefined ? -1 : line_start + position.column;
+	return offset <= source.length ? offset : -1;
+}
+
+/**
+ * The node to print a statement's first keyword (or a block's `{`) from.
+ * esrap's `token` and `write_keyword` map the keyword's end to the node's
+ * start plus the keyword's length, which is where the keyword ends only if the
+ * source has it there. A node the compiler builds with the location of other
+ * code doesn't: the `return` of a template's output (`<p>…`, `@if …`), a
+ * `const` with a component function's location, or a `switch`, `case` or `{`
+ * from `@switch`, `@case` or `@{`. Its keyword's end would map into that code:
+ * into a string, another keyword or past the node (#1391).
+ *
+ * So the node itself when the source starts with the keyword; a copy that
+ * starts after the `@` of a directive, so the keyword ends where the
+ * directive's does; and otherwise a copy without a location, so the keyword
+ * maps no end. esrap's `_` visitor maps the node's start and end from the
+ * node itself, before and after its printer runs. These printers read the
+ * location only for the keyword, and a block's also for its `}`, which then
+ * maps with the text before it.
+ * @template {AST.Node} T
+ * @param {T} node
+ * @param {string} keyword
+ * @param {string | undefined} source
+ * @returns {T}
+ */
+function keyword_node(node, keyword, source) {
+	if (!node.loc || source === undefined) return node;
+	const node_start = source_offset(source, node.loc.start);
+	const directive = node_start >= 0 && source[node_start] === '@';
+	const start = directive ? node_start + 1 : node_start;
+	const next = source.codePointAt(start + keyword.length);
+	if (
+		node_start >= 0 &&
+		source.startsWith(keyword, start) &&
+		!(
+			regex_identifier_char.test(keyword.at(-1) ?? '') &&
+			next !== undefined &&
+			(next === 92 || regex_identifier_char.test(String.fromCodePoint(next)))
+		)
+	) {
+		if (!directive) return node;
+		const { line, column } = node.loc.start;
+		return { ...node, loc: { ...node.loc, start: { line, column: column + 1 } } };
+	}
+	return { ...node, loc: undefined };
 }
 
 /**
