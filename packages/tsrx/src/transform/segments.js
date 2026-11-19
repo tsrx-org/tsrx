@@ -50,6 +50,7 @@ import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 const RETURN_KEYWORD = 'return';
 /** A fragment's `<>`, with any whitespace or comments between its `<` and `>`. */
 const regex_opening_fragment = /^<(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*>$/;
+const regex_word_char = /[\p{ID_Continue}$\u200c\u200d]/u;
 const EXPORT_KEYWORD = 'export';
 const BLOCK_DECLARATION_TYPES = new Set([
 	'FunctionDeclaration',
@@ -488,8 +489,48 @@ export function convert_source_map_to_mappings(
 			return;
 		}
 		mappings.push(
-			get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+			start_at_own_text(
+				get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
+				node,
+			),
 		);
+	}
+
+	/**
+	 * Start a node's mapping where the node's own text is printed. A platform's
+	 * AST pass can wrap a node in a call that has the node's location, so that
+	 * hover and diagnostics on the call land on the authored text (Octane wraps
+	 * a template read in a type-only helper). The call starts at the same source
+	 * position and is printed first, so the node's first generated position is
+	 * the call's callee, and the mapping covered `read(` too (#1392). A member
+	 * expression's or call's own text starts with its leftmost name, which the
+	 * printer never puts in parentheses, so take the first generated position for
+	 * the node's start, inside the mapping, that has that name. A node that
+	 * starts otherwise (`(a as B).k`, `` `t`.length ``, a renamed name) keeps its
+	 * mapping.
+	 * @param {CodeMapping} mapping
+	 * @param {AST.Node} node
+	 * @returns {CodeMapping}
+	 */
+	function start_at_own_text(mapping, node) {
+		const name = leftmost_name(node);
+		const positions =
+			node.loc && src_to_gen_map.get(`${node.loc.start.line}:${node.loc.start.column}`);
+		if (name === undefined || !positions || positions.length < 2) return mapping;
+		const generated_start = mapping.generatedOffsets[0];
+		const generated_end = generated_start + mapping.generatedLengths[0];
+		for (const position of positions) {
+			const offset = loc_to_offset(position.line, position.column, gen_line_offsets);
+			if (offset < generated_start || offset >= generated_end) continue;
+			if (!generated_code.startsWith(name, offset)) continue;
+			if (regex_word_char.test(generated_code[offset + name.length] ?? '')) continue;
+			if (offset > generated_start) {
+				mapping.generatedOffsets = [offset];
+				mapping.generatedLengths = [generated_end - offset];
+			}
+			break;
+		}
+		return mapping;
 	}
 
 	/** @type {Map<string, number>} */
@@ -2217,7 +2258,7 @@ export function convert_source_map_to_mappings(
 						mapping_data_verify_only,
 					);
 
-					mappings.push(mapping);
+					mappings.push(start_at_own_text(mapping, node));
 				}
 
 				if (node.object) {
@@ -3737,6 +3778,43 @@ function has_source_map_boundaries(node, src_to_gen_map) {
 		src_to_gen_map.has(`${start.line}:${start.column}`) &&
 		src_to_gen_map.has(`${end.line}:${end.column}`)
 	);
+}
+
+/**
+ * The name a member expression or call starts with, as the printer writes it:
+ * its leftmost identifier, `this`, `super` or the `import` of `import.meta`,
+ * through objects, callees, tags and `!`. Undefined for one that starts with
+ * other code, such as parentheses, a literal or a `new`.
+ * @param {AST.Node} node
+ * @returns {string | undefined}
+ */
+function leftmost_name(node) {
+	while (true) {
+		switch (node.type) {
+			case 'Identifier':
+				return node.name;
+			case 'ThisExpression':
+				return 'this';
+			case 'Super':
+				return 'super';
+			case 'MetaProperty':
+				return node.meta.name;
+			case 'MemberExpression':
+				node = node.object;
+				break;
+			case 'CallExpression':
+				node = node.callee;
+				break;
+			case 'TaggedTemplateExpression':
+				node = node.tag;
+				break;
+			case 'TSNonNullExpression':
+				node = node.expression;
+				break;
+			default:
+				return undefined;
+		}
+	}
 }
 
 /**

@@ -2376,6 +2376,39 @@ export function optionalFn(declRequired: string, declMaybe?: string) {
 		});
 	});
 
+	describe(`[${name}] a member expression where other code starts at the same position (#1392)`, () => {
+		// The printer can write other code that starts at the same source position
+		// before a member expression: the `(` of a parenthesized sequence, or a key
+		// function the compiler makes from a `@for` key. The member expression maps
+		// from its own text.
+		it.each([
+			[
+				'the first expression of a sequence',
+				'export function App(props: { counts: { a: number } }) @{\n\tconst k = () => 1;\n\tconst value = (props.counts.a++, k());\n\t<p>{value}</p>\n}\n',
+				'props.counts.a',
+			],
+			[
+				'a `@for` key',
+				'export function App(props: { items: { id: number }[] }) @{\n\t<ul>\n\t\t@for (const item of props.items; key item.id) {\n\t\t\t<li />\n\t\t}\n\t</ul>\n}\n',
+				'item.id',
+			],
+		])('maps %s from its own text', (_, source, text) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const start = source.indexOf(text);
+			const texts = result.mappings
+				.filter(
+					(mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === text.length,
+				)
+				.map((mapping) =>
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + mapping.generatedLengths[0],
+					),
+				);
+			expect(texts).toContain(text);
+		});
+	});
+
 	describe(`[${name}] this and super keep mappings`, () => {
 		it('maps each bare this and super to the generated keyword', () => {
 			// TypeScript reports on the bare keyword (TS2683 implicit `this`, TS17009
