@@ -1124,10 +1124,11 @@ export function SpecificationPage() @{
 								Each <code class="inline-code">@switch</code> <code class="inline-code">@case</code>{' '}
 								and <code class="inline-code">@default</code> must use a{' '}
 								<code class="inline-code">{'{}'}</code> template block. Cases are isolated: they do
-								not fall through to later cases, and <code class="inline-code">break</code> and{' '}
-								<code class="inline-code">return</code> are syntax errors inside a JSX switch case.
-								A <code class="inline-code">continue</code> in a case can only reach a loop inside
-								it.
+								not fall through to later cases, <code class="inline-code">return</code> is a syntax
+								error inside a JSX switch case, and a <code class="inline-code">break</code> or{' '}
+								<code class="inline-code">continue</code> there can only reach a loop, a{' '}
+								<code class="inline-code">switch</code> (<code class="inline-code">break</code>{' '}
+								only) or a label inside the case.
 							</p>
 							<p class="section-body">
 								Every target runs an <code class="inline-code">@try</code> body, its{' '}
@@ -1136,8 +1137,9 @@ export function SpecificationPage() @{
 								<code class="inline-code">@empty</code> block and a nested{' '}
 								<code class="inline-code">{'@{ ... }'}</code> block inside a function, so a{' '}
 								<code class="inline-code">break</code> or <code class="inline-code">continue</code>{' '}
-								there can only reach a loop, <code class="inline-code">switch</code> or label inside
-								it (TSRX2036, TSRX2037).
+								there can only reach a loop, a <code class="inline-code">switch</code> (
+								<code class="inline-code">break</code> only) or a label inside it (TSRX2036,
+								TSRX2037), even in a code-only block in a returned fragment.
 							</p>
 							<p class="section-body">
 								Plain JSX children are the default. When an expression position, function body,

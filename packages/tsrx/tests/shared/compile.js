@@ -3004,7 +3004,12 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 					<p />
 				}`;
 				const start = source.indexOf(`${jump};`);
-				const expected = expect.objectContaining({ code: error.code, pos: start });
+				const reused = error === TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT;
+				const expected = expect.objectContaining({
+					code: error.code,
+					pos: start,
+					end: start + (reused ? `${jump};` : jump).length,
+				});
 
 				expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
 				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
@@ -3083,7 +3088,12 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 					<p />
 				}`;
 				const start = source.indexOf(`${jump};`);
-				const expected = expect.objectContaining({ code: error.code, pos: start });
+				// The `@if` and `@for` errors cover the whole statement.
+				const expected = expect.objectContaining({
+					code: error.code,
+					pos: start,
+					end: start + `${jump};`.length,
+				});
 
 				expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
 				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
@@ -3139,6 +3149,27 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				expect(() => compile(source, 'App.tsrx'), body).toThrow(expected);
 				expect(() => compile(source, 'App.tsrx', { collect: true }), body).toThrow(expected);
 			}
+		});
+
+		it('rejects a jump out of a code-only `@{ … }` in a returned fragment, which used to be inlined', () => {
+			// Every target inlined such a block before the `return`, so the jump
+			// reached the loop. A nested `@{ … }` runs in a function of its own,
+			// and a `var` there is already TSRX2030.
+			const source = `export function App({ items, log }: { items: number[]; log: (x: number) => void }) {
+				for (const x of items) {
+					if (x > 1) return <>@{ log(x); if (x) continue; }<b>{x}</b></>;
+				}
+				return null;
+			}`;
+			const start = source.indexOf('continue;');
+			const expected = expect.objectContaining({
+				code: TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE.code,
+				pos: start,
+				end: start + 'continue'.length,
+			});
+
+			expect(() => compile(source, 'App.tsrx')).toThrow(expected);
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([expected]);
 		});
 
 		it('allows a jump to a loop, `switch` or label inside the `@try` body or block it is in', () => {

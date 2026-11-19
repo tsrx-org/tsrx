@@ -948,8 +948,9 @@ const StatusMessage = ({ status }: { status: string }) => @switch (status) {
 ```
 
 Each `@case` and `@default` body is a `{...}` template block. Cases are
-isolated, do not fall through, and `break`/`return` are invalid inside an
-`@switch` case body. A `continue` there can only reach a loop inside the case.
+isolated and do not fall through. `return` is invalid inside an `@switch` case
+body, and a `break` or `continue` there can only reach a loop, a `switch`
+(`break` only) or a label inside the case.
 
 ### `try` / `catch` / `pending`
 
@@ -985,11 +986,10 @@ export const RetryBoundary = () => @try {
 ```
 
 Every target runs the body, `@pending` and `@catch` inside functions, so a
-`break` or `continue` in one of them can only reach a loop, `switch` or label
-inside that block, and a `return` there is the template `return` error. A
-`break` or `continue` in `@empty` or a nested `@{ ... }` block, and a `continue`
-in an `@switch` case, can likewise only reach a loop, `switch` or label inside
-it.
+`break` or `continue` in one of them can only reach a loop, a `switch` (`break`
+only) or a label inside that block, and a `return` there is the template
+`return` error. The same holds for a `break` or `continue` in `@empty` or in a
+nested `@{ ... }` block, even a code-only one in a returned fragment.
 
 ### Guard returns
 

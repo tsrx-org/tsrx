@@ -6283,7 +6283,7 @@ function validate_directive_jumps(program, transform_context) {
 	);
 	for (const { node, kind } of found) {
 		const is_break = node.type === 'BreakStatement';
-		error(
+		const diagnostic =
 			kind === 'for'
 				? is_break
 					? TSRX_ERRORS.FOR_BREAK_STATEMENT
@@ -6296,9 +6296,17 @@ function validate_directive_jumps(program, transform_context) {
 						? TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE
 						: kind === 'case'
 							? TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT
-							: TSRX_ERRORS.DIRECTIVE_BODY_BREAK,
+							: TSRX_ERRORS.DIRECTIVE_BODY_BREAK;
+		// An `@if`, `@for` or `@switch` error covers the whole statement, as the
+		// `@if` and `@for` checks report it; the new ones cover the keyword, as
+		// the `var` check does.
+		const reused =
+			diagnostic !== TSRX_ERRORS.DIRECTIVE_BODY_BREAK &&
+			diagnostic !== TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE;
+		error(
+			diagnostic,
 			transform_context.filename,
-			get_statement_keyword_node(node, is_break ? 'break' : 'continue'),
+			reused ? node : get_statement_keyword_node(node, is_break ? 'break' : 'continue'),
 			transform_context.errors,
 			transform_context.comments,
 		);
