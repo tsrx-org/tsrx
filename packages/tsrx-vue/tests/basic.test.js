@@ -1551,7 +1551,9 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain("return visible ? <div>{'Visible'}</div> : null;");
+		// A component's setup returns once, so its output is a fragment around
+		// the choice, which vue-jsx-vapor makes a `createIf`.
+		expect(code).toContain("return <>{visible ? <div>{'Visible'}</div> : null}</>;");
 		expect(code).not.toContain('__static');
 		expect(code).not.toContain('not yet supported in Vue TSRX');
 	});
@@ -1568,7 +1570,9 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
-		expect(code).toContain("return visible ? <div>{'Visible'}</div> : <div>{'Hidden'}</div>;");
+		expect(code).toContain(
+			"return <>{visible ? <div>{'Visible'}</div> : <div>{'Hidden'}</div>}</>;",
+		);
 		expect(code).not.toContain('__static');
 	});
 
@@ -2447,11 +2451,12 @@ export function Card(${params}: any) @{
 			'App.tsrx',
 		);
 
+		// A component's setup returns once, so a `computed` picks the case and
+		// a fragment of `createIf`s renders it, as for a `VaporFor` row.
 		expect(code).toContain('switch (value) {');
-		expect(code).toContain("<div>{'A'}</div>");
-		expect(code).toContain("<div>{'Fallback'}</div>");
-		expect(code).toContain("return <div>{'A'}</div>;");
-		expect(code).toContain("return <div>{'Fallback'}</div>;");
+		expect(code).toContain('const _$_case_1 = _$_vapor_computed((_$_previous) => {');
+		expect(code).toContain("? <div>{'A'}</div>");
+		expect(code).toContain("=== 1 ? <div>{'Fallback'}</div> : null}</>;");
 		expect(code).not.toContain('not yet supported in Vue TSRX');
 	});
 
@@ -3393,7 +3398,7 @@ describe('@tsrx/vue @switch rows', () => {
 
 		// The slot runs once, so a `computed` picks the case's index and the
 		// cases sit in a fragment, which vue-jsx-vapor makes `createIf`s; no
-		// matching case is an empty fragment.
+		// matching case renders nothing.
 		expect(errors).toEqual([]);
 		// The `computed` returns what the `switch` throws, with the index it
 		// held; the first choice throws it, in an effect that keeps following
@@ -3422,7 +3427,7 @@ describe('@tsrx/vue @switch rows', () => {
 					? <li>{row.value.id}</li>
 					: (typeof _$_case_1.value === 'object' ? _$_case_1.value.index : _$_case_1.value) === 1
 						? <li>{row.value.title}</li>
-						: <></>}</>;
+						: null}</>;
 			})()}</__VaporFor>`),
 		);
 		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");

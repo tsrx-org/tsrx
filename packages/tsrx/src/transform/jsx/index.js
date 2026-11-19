@@ -5899,7 +5899,7 @@ function return_value_if_statement_to_conditional_expression(node, transform_con
  * @param {TransformContext} transform_context
  * @returns {ESTreeJSX.JSXExpressionContainer}
  */
-function if_statement_to_jsx_child(node, transform_context) {
+export function if_statement_to_jsx_child(node, transform_context) {
 	const render_if_statement = create_render_if_statement(node, transform_context);
 	const conditional_expression = render_if_statement_to_conditional_expression(render_if_statement);
 	if (conditional_expression) {

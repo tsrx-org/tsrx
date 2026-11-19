@@ -21,6 +21,7 @@ import {
 	forOfPatternReadsIndex as for_of_pattern_reads_index,
 	has_location,
 	IDENTIFIER_OBFUSCATION_PREFIX,
+	ifStatementToJsxChild,
 	insertAfterDirectives,
 	is_component_like_element,
 	isFunctionNode,
@@ -78,9 +79,12 @@ const SWITCH_PREVIOUS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'previous';
 const switch_counts = new WeakMap();
 /**
  * The metadata flag on a `@switch`'s shared lowering, which survives the
- * clones a `VaporFor` row goes through.
+ * clones a `VaporFor` row goes through: `'row'` when `switch_in_fragment` can
+ * render it where it is evaluated once, `'shared'` otherwise.
  */
 const VAPOR_SWITCH_METADATA = 'vapor_switch';
+/** The metadata flag on an `@if`'s lowering. */
+const VAPOR_CHOICE_METADATA = 'vapor_choice';
 /** The most cases a `@switch` row turns into a chain of `createIf`s. */
 const MAX_SWITCH_ROW_CASES = 64;
 
@@ -148,7 +152,7 @@ const vue_platform = {
 		}),
 		wrapHelperComponent(helper_fn, helper_id, ctx, source_node) {
 			ctx.needs_define_vapor_component = true;
-			return wrap_helper_component(helper_fn, helper_id, source_node);
+			return wrap_helper_component(helper_fn, helper_id, source_node, ctx);
 		},
 		canHoistStaticNode() {
 			// Vapor JSX evaluates to a DOM node, so a module-level static would be
@@ -168,6 +172,7 @@ const vue_platform = {
 		renderForOf: (node, loop_params, body_statements, ctx, get_empty_statements) =>
 			render_for_of_as_vapor_for(node, loop_params, body_statements, ctx, get_empty_statements),
 		controlFlow: {
+			ifStatement: render_if_statement,
 			switchStatement: render_switch_statement,
 		},
 		createPendingBoundary(try_content, fallback_content, ctx) {
@@ -424,9 +429,13 @@ function mark_type_only_host_ref_attribute(attr) {
  * @param {AST.FunctionDeclaration} helper_fn
  * @param {AST.Identifier} helper_id
  * @param {AST.NodeWithLocation | undefined} source_node
+ * @param {TransformContext} ctx
  * @returns {AST.VariableDeclaration}
  */
-function wrap_helper_component(helper_fn, helper_id, source_node) {
+function wrap_helper_component(helper_fn, helper_id, source_node, ctx) {
+	if (!ctx.typeOnly) {
+		helper_fn = render_returned_control_flow(helper_fn, ctx);
+	}
 	return setLocation(
 		b.declaration('const', [
 			b.declarator(
@@ -1012,6 +1021,57 @@ function collect_default_reads(value, parent, reads, in_default = false) {
 }
 
 /**
+ * A Vapor component's setup runs once, so a component that returns an
+ * `@if`'s choice, a `@switch`'s IIFE or a `map_iterable` call (an `@for`)
+ * renders what they gave once and never again. Such an output is put in a
+ * fragment, which vue-jsx-vapor renders in a `createIf` or an effect that
+ * follows it; a `@switch` that `switch_in_fragment` can render keeps its case
+ * mounted while the case stays. Only the component's own returns change, not
+ * those of functions in it.
+ *
+ * @template {AST.Function} F
+ * @param {F} fn
+ * @param {TransformContext} ctx
+ * @returns {F}
+ */
+function render_returned_control_flow(fn, ctx) {
+	if (fn.body?.type !== 'BlockStatement') {
+		return fn;
+	}
+	const body = walk(/** @type {AST.Node} */ (fn.body), null, {
+		FunctionDeclaration() {},
+		FunctionExpression() {},
+		ArrowFunctionExpression() {},
+		ClassDeclaration() {},
+		ClassExpression() {},
+		ReturnStatement(node) {
+			const output = node.argument;
+			if (!output) return;
+			if (is_lowered_switch(output)) {
+				const rendered = switch_in_fragment(/** @type {AST.CallExpression} */ (output), ctx);
+				take_switch_name(output, ctx);
+				return { ...node, argument: rendered };
+			}
+			if (
+				control_flow_mark(output, VAPOR_CHOICE_METADATA) ||
+				control_flow_mark(output, VAPOR_SWITCH_METADATA) ||
+				(output.type === 'CallExpression' &&
+					output.callee.type === 'Identifier' &&
+					output.callee.name === MAP_ITERABLE_INTERNAL_NAME)
+			) {
+				return {
+					...node,
+					argument: /** @type {AST.Expression} */ (
+						/** @type {unknown} */ (b.jsx_fragment([to_jsx_expression_container(output)]))
+					),
+				};
+			}
+		},
+	});
+	return body === fn.body ? fn : { ...fn, body: /** @type {AST.BlockStatement} */ (body) };
+}
+
+/**
  * @param {AST.Function} node
  * @param {import('zimmerframe').Context<AST.Node, TransformContext>} context
  * @returns {AST.Node}
@@ -1045,6 +1105,7 @@ function wrap_native_function_component(fn, source, ctx, path) {
 	validate_props_param(fn, ctx);
 	if (!ctx.typeOnly) {
 		fn = read_children_from_default_slot(fn, name, ctx);
+		fn = render_returned_control_flow(fn, ctx);
 	}
 
 	const call = setLocation(
@@ -1915,10 +1976,8 @@ function render_for_of_as_vapor_for(
 		return null;
 	}
 
-	if (is_lowered_switch(rendered) && lowered_switch_statement(rendered).cases.length > 0) {
-		// The name `switch_in_fragment` gave the row's `computed`.
-		switch_counts.set(transform_context, (switch_counts.get(transform_context) ?? 0) + 1);
-		transform_context.needs_vapor_computed = true;
+	if (is_lowered_switch(rendered)) {
+		take_switch_name(rendered, transform_context);
 	}
 
 	transform_context.needs_vapor_for = true;
@@ -2174,19 +2233,39 @@ function render_switch_statement(node, transform_context) {
 	if (
 		!transform_context.typeOnly &&
 		statement?.type === 'SwitchStatement' &&
-		statement.cases.length <= MAX_SWITCH_ROW_CASES &&
-		statement.cases.every(
-			(switch_case) =>
-				switch_case.consequent.length === 1 &&
-				switch_case.consequent[0].type === 'ReturnStatement' &&
-				renders_once(switch_case.consequent[0].argument),
-		) &&
 		!suspends(node) &&
 		container.type === 'JSXExpressionContainer'
 	) {
 		/** @type {Record<string, unknown>} */ (
 			/** @type {unknown} */ (container.expression.metadata ??= { path: [] })
-		)[VAPOR_SWITCH_METADATA] = true;
+		)[VAPOR_SWITCH_METADATA] =
+			statement.cases.length <= MAX_SWITCH_ROW_CASES &&
+			statement.cases.every(
+				(switch_case) =>
+					switch_case.consequent.length === 1 &&
+					switch_case.consequent[0].type === 'ReturnStatement' &&
+					renders_once(switch_case.consequent[0].argument),
+			)
+				? 'row'
+				: 'shared';
+	}
+	return container;
+}
+
+/**
+ * `@if` on Vue: the shared lowering, marked so a component whose output it is
+ * can put it in a fragment (`render_returned_control_flow`).
+ *
+ * @param {AST.IfStatement} node
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXRenderNode}
+ */
+function render_if_statement(node, transform_context) {
+	const container = ifStatementToJsxChild(node, transform_context);
+	if (!transform_context.typeOnly && container.type === 'JSXExpressionContainer') {
+		/** @type {Record<string, unknown>} */ (
+			/** @type {unknown} */ (container.expression.metadata ??= { path: [] })
+		)[VAPOR_CHOICE_METADATA] = true;
 	}
 	return container;
 }
@@ -2224,14 +2303,32 @@ function renders_once(node) {
  * @returns {boolean}
  */
 function is_lowered_switch(node) {
-	return (
-		node.type === 'CallExpression' &&
-		!!(
-			/** @type {Record<string, unknown> | undefined} */ (/** @type {unknown} */ (node.metadata))?.[
-				VAPOR_SWITCH_METADATA
-			]
-		)
-	);
+	return node.type === 'CallExpression' && control_flow_mark(node, VAPOR_SWITCH_METADATA) === 'row';
+}
+
+/**
+ * @param {AST.Node} node
+ * @param {string} key
+ * @returns {unknown}
+ */
+function control_flow_mark(node, key) {
+	return /** @type {Record<string, unknown> | undefined} */ (
+		/** @type {unknown} */ (node.metadata)
+	)?.[key];
+}
+
+/**
+ * Takes the name `switch_in_fragment` gave the `computed` of `node`, a
+ * `@switch` it rendered, and the import of `computed`.
+ *
+ * @param {AST.Expression} node
+ * @param {TransformContext} transform_context
+ */
+function take_switch_name(node, transform_context) {
+	if (lowered_switch_statement(node).cases.length > 0) {
+		switch_counts.set(transform_context, (switch_counts.get(transform_context) ?? 0) + 1);
+		transform_context.needs_vapor_computed = true;
+	}
 }
 
 /**
@@ -2251,12 +2348,13 @@ function lowered_switch_statement(node) {
 }
 
 /**
- * A `VaporFor` row that is a `@switch`. Its slot runs once, so a `computed`
- * runs the `switch` for the index of the case it picks, and the row is a
- * fragment around the case chosen by that index, which vue-jsx-vapor makes
- * `createIf`s: the row follows its value, keeps its case mounted while the
- * index stays the same, and renders an empty fragment when no case matches,
- * since a row can't be `null`. The `computed` is made once per row, so the
+ * A `@switch` where it is evaluated once: a `VaporFor` row's slot, or a
+ * component's setup when it is the component's output. A `computed` runs the
+ * `switch` for the index of the case it picks, and the result is a fragment
+ * around the case chosen by that index, which vue-jsx-vapor makes
+ * `createIf`s: it follows its value, keeps its case mounted while the index
+ * stays the same, and renders nothing when no case matches (the fragment is
+ * never `null`, which a row can't be). The `computed` is made once, so the
  * `switch` runs once for each change it reads.
  *
  * @param {AST.CallExpression} node
@@ -2299,7 +2397,9 @@ function switch_in_fragment(node, transform_context) {
 		);
 
 	/** @type {AST.Expression} */
-	let chain = b.jsx_fragment();
+	// No matching case renders nothing: `null` in a `createIf`, where an empty
+	// fragment would break a server render.
+	let chain = b.literal(null);
 	for (let index = statement.cases.length - 1; index >= 0; index--) {
 		const output = /** @type {AST.ReturnStatement} */ (statement.cases[index].consequent[0]);
 		chain = b.conditional(
@@ -2332,7 +2432,7 @@ function switch_in_fragment(node, transform_context) {
 					: held_index(),
 				b.literal(index),
 			),
-			to_vapor_branch(output.argument ?? b.literal(null)),
+			output.argument ?? b.literal(null),
 			chain,
 		);
 	}

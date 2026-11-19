@@ -3750,6 +3750,124 @@ describe('tsrx-vue keyed @switch rows', () => {
 	});
 });
 
+const badge = ref({ status: 'active', name: 'Ann', rows: [{ id: 'a' }, { id: 'b' }] });
+
+function BadgeCounter(props: { label: string }) @{
+	const count = ref(0);
+	<button
+		class="badge-counter"
+		onClick={() => count.value++}
+	>{`${props.label}:${count.value}`}</button>
+}
+
+function BadgeIf(props: { status: string; name: string }) @{
+	@if (props.status === 'active') {
+		<BadgeCounter label={'on ' + props.name} />
+	} @else {
+		<p class="badge-off">{'off'}</p>
+	}
+}
+
+function BadgeIfOnly(props: { status: string }) @{
+	@if (props.status === 'active') {
+		<BadgeCounter label="on" />
+	}
+}
+
+function BadgeSwitch(props: { status: string; name: string }) @{
+	@switch (props.status) {
+		@case 'active': {
+			<BadgeCounter label={'switch ' + props.name} />
+		}
+		@case 'idle': {
+			@if (props.name.length > 0) {
+				<p class="badge-off">{'idle ' + props.name}</p>
+			}
+		}
+	}
+}
+
+function BadgeTry(props: { status: string }) @{
+	@try {
+		@if (props.status === 'active') {
+			<BadgeCounter label="try" />
+		} @else {
+			<p class="badge-off">{'off'}</p>
+		}
+	} @catch (error) {
+		<p>{'caught'}</p>
+	}
+}
+
+function BadgeRows(props: { rows: { id: string }[] }) @{
+	@for (const row of props.rows) {
+		const label = 'row ' + row.id;
+		<p class="badge-row">{label}</p>
+	}
+}
+
+function BadgeHost() @{
+	<div>
+		<section class="badge-if">
+			<BadgeIf status={badge.value.status} name={badge.value.name} />
+		</section>
+		<section class="badge-if-only">
+			<BadgeIfOnly status={badge.value.status} />
+		</section>
+		<section class="badge-switch">
+			<BadgeSwitch status={badge.value.status} name={badge.value.name} />
+		</section>
+		<section class="badge-try">
+			<BadgeTry status={badge.value.status} />
+		</section>
+		<section class="badge-rows">
+			<BadgeRows rows={badge.value.rows} />
+		</section>
+	</div>
+}
+
+function badge_texts(section: string) {
+	return texts(`.${section} button, .${section} p`);
+}
+
+describe('tsrx-vue a component whose only output is control flow', () => {
+	beforeEach(() => {
+		badge.value = { status: 'active', name: 'Ann', rows: [{ id: 'a' }, { id: 'b' }] };
+	});
+
+	it('follows its props, and keeps a branch’s state while the branch stays', async () => {
+		await render(BadgeHost);
+		for (const button of container.querySelectorAll('.badge-counter')) {
+			(button as HTMLElement).click();
+		}
+		await flush();
+
+		badge.value = { ...badge.value, name: 'Bo' };
+		await flush();
+		expect(badge_texts('badge-if')).toEqual(['on Bo:1']);
+		expect(badge_texts('badge-if-only')).toEqual(['on:1']);
+		expect(badge_texts('badge-switch')).toEqual(['switch Bo:1']);
+		expect(badge_texts('badge-try')).toEqual(['try:1']);
+
+		badge.value = { ...badge.value, status: 'idle', rows: [{ id: 'b' }] };
+		await flush();
+		expect(badge_texts('badge-if')).toEqual(['off']);
+		expect(badge_texts('badge-if-only')).toEqual([]);
+		expect(badge_texts('badge-switch')).toEqual(['idle Bo']);
+		expect(badge_texts('badge-try')).toEqual(['off']);
+		expect(badge_texts('badge-rows')).toEqual(['row b']);
+
+		badge.value = { ...badge.value, status: 'gone', name: '' };
+		await flush();
+		expect(badge_texts('badge-switch')).toEqual([]);
+
+		badge.value = { ...badge.value, status: 'active' };
+		await flush();
+		expect(badge_texts('badge-if')).toEqual(['on :0']);
+		expect(badge_texts('badge-switch')).toEqual(['switch :0']);
+	});
+});
+
 describe('tsrx-vue for_items', () => {
 	it('hands a reactive array to VaporFor as it is (#1147)', () => {
 		const list = reactive(['a', 'b']);

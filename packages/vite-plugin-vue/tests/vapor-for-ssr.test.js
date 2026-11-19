@@ -35,6 +35,34 @@ const FIXTURES = {
 	</ul>
 }`,
 
+	'top.tsrx': `function Badge({ status }: { status: string }) @{
+	@if (status === 'active') {
+		<b>{'on'}</b>
+	} @else {
+		<i>{'off'}</i>
+	}
+}
+function Kind({ status }: { status: string }) @{
+	@switch (status) {
+		@case 'active': {
+			<b>{'kind on'}</b>
+		}
+	}
+}
+function Rows({ items }: { items: { id: number }[] }) @{
+	@for (const item of items) {
+		const label = 'row ' + item.id;
+		<p>{label}</p>
+	}
+}
+export function App({ items }: { items: { id: number }[] }) @{
+	<div>
+		<Badge status={items.length ? 'active' : 'idle'} />
+		<Kind status={items.length ? 'active' : 'idle'} />
+		<Rows {items} />
+	</div>
+}`,
+
 	'switch.tsrx': `export function App({ items }: { items: { id: number }[] }) @{
 	<div>
 		@switch (items.length) {
@@ -106,6 +134,17 @@ describe('[vue] keyed @for through VaporFor on the server', () => {
 
 	it('throws for a keyed loop whose body can skip a row', async () => {
 		await expect(render('skip.tsrx', [{ id: 1 }, { id: 2 }])).rejects.toThrow('createFor');
+	});
+});
+
+// A component whose only output is an `@if`, a `@switch` or an `@for` returns
+// a fragment around it, which renders on the server too.
+describe('[vue] a component whose only output is control flow on the server', () => {
+	it('renders the branch, case and rows its props pick', async () => {
+		expect(await render('top.tsrx', [{ id: 1 }, { id: 2 }])).toBe(
+			'<div><b>on</b><b>kind on</b><p>row 1</p><p>row 2</p></div>',
+		);
+		expect(await render('top.tsrx', [])).toBe('<div><i>off</i></div>');
 	});
 });
 
