@@ -604,30 +604,16 @@ function nested_import_export_error(input, position) {
 	return TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE;
 }
 
+/** The words a namespace or module declaration's statement can start with. */
+const MODULE_DECLARATION_START_WORDS = new Set([
+	'abstract',
+	'declare',
+	'global',
+	'module',
+	'namespace',
+]);
 // A word, from where it starts.
 const regex_word = /[\p{ID_Continue}$\u200c\u200d]+/uy;
-
-/**
- * Whether the statement at `position` reads as a namespace or module
- * declaration: `namespace` or `module` before a name or a string, or `global`
- * before `{`, after any `declare` and `abstract`.
- * @param {string} input
- * @param {number} position
- * @returns {boolean}
- */
-function starts_module_declaration(input, position) {
-	regex_next_token.lastIndex = position;
-	let match = regex_next_token.exec(input);
-	while (match && (match[1] === 'declare' || match[1] === 'abstract')) {
-		match = regex_next_token.exec(input);
-	}
-	const keyword = match?.[1];
-	if (keyword !== 'namespace' && keyword !== 'module' && keyword !== 'global') return false;
-	const next = regex_next_token.exec(input)?.[1];
-	if (next === undefined) return false;
-	if (keyword === 'global') return next === '{';
-	return next === '"' || next === "'" || /^[\p{ID_Start}$_\\]/u.test(next);
-}
 
 /**
  * The end of the word at `position`, or the position after it.
@@ -8256,6 +8242,22 @@ export function TSRXPlugin(config) {
 				return null;
 			}
 
+			/**
+			 * Whether the current token starts a namespace or module declaration, as
+			 * TypeScript's parser reads one (see `#declarationAfterModifier`).
+			 * @returns {boolean}
+			 */
+			#startsModuleDeclaration() {
+				if (
+					!Parser.acornTypeScript.tokenIsIdentifier(this.type) ||
+					!MODULE_DECLARATION_START_WORDS.has(/** @type {string} */ (this.value))
+				) {
+					return false;
+				}
+				const word = this.#declarationAfterModifier(0)?.at(-1);
+				return word === 'namespace' || word === 'module' || word === 'global';
+			}
+
 			// UPSTREAM(sveltejs/acorn-typescript#155): remove once a release includes the fix
 			/**
 			 * The modifiers TypeScript's parser reads before a declaration from the
@@ -15153,10 +15155,7 @@ export function TSRXPlugin(config) {
 							this.lastTokStart === this.#exportedDeclarationStart));
 				// A statement that may be a misplaced namespace or module, whose place
 				// TypeScript reports before the errors in it.
-				const held_module =
-					!nested_module_allowed &&
-					this.type !== tt.string &&
-					starts_module_declaration(this.input, start);
+				const held_module = !nested_module_allowed && this.#startsModuleDeclaration();
 				this.#statementContext = context ?? null;
 				this.#statementContextDepth = this.context.length - this.#currentTokenContextCount();
 				this.#statementOpenBrackets = this.#openBrackets;

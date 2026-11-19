@@ -12928,6 +12928,15 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:10'],
 		},
 		{
+			// Its place comes first after an escape in the keyword too.
+			source: 'function f() {\n\tglo\\u0062al {\n\t\tconst x;\n\t}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'glo'],
+				[TS_ERRORS.DECLARATION_NOT_INITIALIZED, 'x;'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
 			// A redeclaration before a function declaration of the name is still
 			// TS2300, in a namespace as outside one (#952).
 			source:
