@@ -1195,6 +1195,16 @@ const duplicate_export_errors = new WeakSet();
  */
 const leading_async_modifiers = new WeakMap();
 
+/**
+ * The class members whose modifiers acorn-typescript reported an error for,
+ * as it read them (see `parseClassField`).
+ * @type {WeakSet<object>}
+ */
+const members_with_modifier_errors = new WeakSet();
+
+/** The access modifiers. */
+const ACCESSIBILITY_MODIFIERS = new Set(['public', 'protected', 'private']);
+
 /** The modifiers that a method takes. */
 const METHOD_MODIFIERS = new Set([
 	'public',
@@ -8005,8 +8015,12 @@ export function TSRXPlugin(config) {
 				const outer = this.#modifiersNode;
 				this.#modifiersNode = options.modified;
 				try {
+					const recorded = this.#hold.held ?? this.#errors;
+					const count = recorded?.length ?? 0;
 					let modifiers = super.tsParseModifiers(options);
 					if (!options.stopOnStartOfClassStaticBlock) return modifiers;
+					// See `parseClassField`.
+					if ((recorded?.length ?? 0) > count) members_with_modifier_errors.add(options.modified);
 					/** @type {CompileError[]} */
 					const held = [];
 					let leading = false;
@@ -8070,14 +8084,18 @@ export function TSRXPlugin(config) {
 					this.next();
 					if (this.hasPrecedingLineBreak()) return false;
 					let modifiers = 0;
+					let static_seen = false;
 					while (
 						Parser.acornTypeScript.tokenIsIdentifier(this.type) &&
 						!this.containsEsc &&
-						allowed.includes(/** @type {string} */ (this.value))
+						allowed.includes(/** @type {string} */ (this.value)) &&
+						// As in TypeScript, `static` after `static` is the name.
+						!(static_seen && this.value === 'static')
 					) {
 						const modifier = this.tsParseModifier(allowed, true);
 						if (modifier === undefined) break;
 						if (!METHOD_MODIFIERS.has(modifier)) return false;
+						static_seen ||= modifier === 'static';
 						modifiers++;
 					}
 					// An `async` that acorn reads, before the name, or the name.
@@ -8210,6 +8228,115 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * TypeScript's error for the modifiers of an `accessor` property that
+			 * acorn-typescript reports nothing for: `accessor` before `static`,
+			 * `override`, `abstract` or `readonly` (TS1029), or with `readonly` or
+			 * `declare` (TS1243). The output keeps the source's order (see
+			 * `member_modifiers` in `transform/jsx/helpers.js`), which esbuild and
+			 * Babel reject there, where esrap's order compiled: a strict parse throws
+			 * it at the source instead.
+			 * @type {Parse.Parser['parseClassField']}
+			 */
+			parseClassField(field) {
+				const member = /** @type {AST.PropertyDefinition} */ (field);
+				if (member.accessor && !members_with_modifier_errors.has(field)) {
+					const found = this.#accessorModifierError(member);
+					if (found) this.#raiseCheckerError(found.start, found.error);
+				}
+				return super.parseClassField(field);
+			}
+
+			/**
+			 * The first error TypeScript's checker reports for the modifiers of an
+			 * `accessor` property (`checkGrammarModifiers`), the words before its
+			 * name, or `null` when it reports none, or one of a kind this leaves to
+			 * acorn-typescript (TS1253 for `abstract` outside an abstract class,
+			 * TS18010 and TS18019 for a private name).
+			 * @param {AST.PropertyDefinition} property
+			 * @returns {{ start: number, error: Diagnostic } | null}
+			 */
+			#accessorModifierError(property) {
+				if (!this.inAbstractClass && property.abstract) return null;
+				// TS18010 and TS18019 for an access modifier, `declare` or `abstract`
+				const private_name = property.key.type === 'PrivateIdentifier';
+				/** @type {Set<string>} */
+				const flags = new Set();
+				const end = /** @type {number} */ (property.key.start);
+				regex_word_after_comments.lastIndex = /** @type {number} */ (property.start);
+				for (;;) {
+					const match = regex_word_after_comments.exec(this.input);
+					if (!match || regex_word_after_comments.lastIndex > end) return null;
+					const value = match[1];
+					const start = regex_word_after_comments.lastIndex - value.length;
+					/** @param {Diagnostic} error */
+					const at = (error) => ({ start, error });
+					/** @param {string} other */
+					const precede = (other) => at(TS_ERRORS.MODIFIER_MUST_PRECEDE(value, other));
+					/** @param {string} first @param {string} second */
+					const together = (first, second) =>
+						at(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH(first, second));
+					if (flags.has(value) && !ACCESSIBILITY_MODIFIERS.has(value)) {
+						return at(TS_ERRORS.MODIFIER_ALREADY_SEEN(value));
+					}
+					switch (value) {
+						case 'public':
+						case 'protected':
+						case 'private':
+							if (flags.has('accessibility')) {
+								return at(TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN);
+							}
+							for (const other of ['override', 'static', 'accessor', 'readonly']) {
+								if (flags.has(other)) return precede(other);
+							}
+							if (flags.has('abstract')) {
+								return value === 'private' ? together(value, 'abstract') : precede('abstract');
+							}
+							if (private_name) return null;
+							flags.add('accessibility');
+							break;
+						case 'static':
+							for (const other of ['readonly', 'accessor']) {
+								if (flags.has(other)) return precede(other);
+							}
+							if (flags.has('abstract')) return together(value, 'abstract');
+							if (flags.has('override')) return precede('override');
+							break;
+						case 'accessor':
+							for (const other of ['readonly', 'declare']) {
+								if (flags.has(other)) return together(value, other);
+							}
+							break;
+						case 'readonly':
+							if (flags.has('accessor')) return together(value, 'accessor');
+							break;
+						case 'override':
+							if (flags.has('declare')) return together(value, 'declare');
+							for (const other of ['readonly', 'accessor']) {
+								if (flags.has(other)) return precede(other);
+							}
+							break;
+						case 'declare':
+							if (flags.has('override')) {
+								return at(TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT('override'));
+							}
+							if (private_name) return null;
+							if (flags.has('accessor')) return together(value, 'accessor');
+							break;
+						case 'abstract':
+							if (flags.has('static')) return together('static', value);
+							if (flags.has('private')) return together('private', value);
+							if (flags.has('override')) return precede('override');
+							if (flags.has('accessor')) return precede('accessor');
+							if (private_name) return null;
+							break;
+						default:
+							return null;
+					}
+					flags.add(value);
+				}
+			}
+
+			/**
 			 * A method with an `async` before another modifier is async (see
 			 * `tsParseModifiers`). Once it's read, so that a syntax error in it
 			 * comes first, as in TypeScript, the first error of its modifiers, or
@@ -8239,6 +8366,9 @@ export function TSRXPlugin(config) {
 					}
 					this.#releaseErrors(
 						found ? held.filter((error) => !MODIFIER_ERROR_CODES.has(error.code ?? '')) : held,
+					);
+					this.#leadingAsyncMembers.delete(
+						/** @type {number} */ (/** @type {AST.Node} */ (method).start),
 					);
 					return result;
 				}

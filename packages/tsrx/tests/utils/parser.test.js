@@ -12144,6 +12144,44 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			valid: 'class A {\n\tconstructor(private readonly x: number) {}\n}',
 			pick: constructor_parameter,
 		},
+		// An `accessor` property's modifiers that acorn-typescript doesn't check,
+		// which the output keeps in the source's order, where esbuild and Babel
+		// reject them (#235).
+		{
+			source: 'class A { accessor static x = 1; }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static x']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:19'],
+			valid: 'class A { static accessor x = 1; }',
+			pick: first_member,
+		},
+		{
+			source: 'class A { accessor static #x = 1; }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static #x']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:19'],
+			valid: 'class A { static accessor #x = 1; }',
+			pick: first_member,
+		},
+		{
+			source: 'class A { accessor readonly x = 1; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'readonly x']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:19'],
+			pick: first_member,
+			match: { accessor: true, readonly: true },
+		},
+		{
+			source: 'class A { declare accessor x: number; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'accessor x']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:18'],
+			pick: first_member,
+			match: { accessor: true, declare: true },
+		},
+		{
+			source: 'abstract class A { private accessor abstract x: number; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'abstract x']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:36'],
+			pick: first_member,
+			match: { accessibility: 'private', accessor: true, abstract: true },
+		},
 		// An `async` constructor, at the `async`, where acorn threw `Constructor
 		// can't be an async method` at the name. It stays async, as TypeScript
 		// reads it.
@@ -14624,6 +14662,12 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		const source = 'abstract class A { async abstract m(,): void; }';
 		const [outcome] = await parse_in_worker([{ source }]);
 		expect(outcome).toMatchObject({ ok: false, pos: source.indexOf(',') });
+	});
+
+	it('reports a repeated modifier after a leading `async` where acorn did (#235)', async () => {
+		const source = 'class A { async static static m() {} }';
+		const [outcome] = await parse_in_worker([{ source }]);
+		expect(outcome).toMatchObject({ ok: false, code: 'TS1012', pos: source.indexOf('static m') });
 	});
 
 	it("keeps acorn's syntax error for an async after a modifier a method can't take (#235)", async () => {
