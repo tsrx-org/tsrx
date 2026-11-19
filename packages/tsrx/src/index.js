@@ -198,6 +198,7 @@ export {
 	source_mentions_identifier as sourceMentionsIdentifier,
 	SPREAD_REF_BAGS_INTERNAL_NAME,
 	SUSPENSE_INTERNAL_NAME,
+	switch_statement_to_jsx_child as switchStatementToJsxChild,
 	validate_at_most_one_ref_attribute as validateAtMostOneRefAttribute,
 	wrap_edge_whitespace as wrapEdgeWhitespace,
 } from './transform/jsx/index.js';

@@ -34,6 +34,31 @@ const FIXTURES = {
 		}
 	</ul>
 }`,
+
+	'switch.tsrx': `export function App({ items }: { items: { id: number }[] }) @{
+	<div>
+		@switch (items.length) {
+			@case 0: {
+				<p>{'zero'}</p>
+			}
+			@default: {
+				const count = items.length + ' items';
+				<p>{count}</p>
+			}
+		}
+		<ul>
+			@for (const item of items; key item.id) {
+				@switch (item.id) {
+					@case 1: {
+						<li>{'one'}</li>
+					}
+				}
+			} @empty {
+				<li>{'none'}</li>
+			}
+		</ul>
+	</div>
+}`,
 };
 
 /** @type {string} */
@@ -81,5 +106,16 @@ describe('[vue] keyed @for through VaporFor on the server', () => {
 
 	it('throws for a keyed loop whose body can skip a row', async () => {
 		await expect(render('skip.tsrx', [{ id: 1 }, { id: 2 }])).rejects.toThrow('createFor');
+	});
+});
+
+// A `@switch` picks its case in a `computed`, which the server build has; a
+// keyed loop with `@empty` whose row is a `@switch` stays on `map_iterable`.
+describe('[vue] @switch on the server', () => {
+	it('renders a @switch and a keyed @switch row in a loop with @empty', async () => {
+		expect(await render('switch.tsrx', [{ id: 1 }, { id: 2 }])).toBe(
+			'<div><p>2 items</p><ul><li>one</li></ul></div>',
+		);
+		expect(await render('switch.tsrx', [])).toBe('<div><p>zero</p><ul><li>none</li></ul></div>');
 	});
 });

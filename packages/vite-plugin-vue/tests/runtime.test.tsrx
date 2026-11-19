@@ -3228,6 +3228,275 @@ describe('tsrx-vue keyed @for that can skip rows or has @empty (#178)', () => {
 	});
 });
 
+type Todo = { id: string; title: string; kind: string; synced: number };
+
+function todos_initial(): Todo[] {
+	return [
+		{ id: 'a', title: 'Alpha', kind: 'task', synced: 0 },
+		{ id: 'b', title: 'Beta', kind: 'task', synced: 0 },
+	];
+}
+
+const todos = ref(todos_initial());
+
+function update_todo(id: string, patch: Partial<Todo>) {
+	todos.value = todos.value.map((todo) => (todo.id === id ? { ...todo, ...patch } : todo));
+}
+
+function reverse_todos() {
+	todos.value = [...todos.value].reverse();
+}
+
+function TodoCounter(props: { label: string }) @{
+	const count = ref(0);
+	<button
+		class="todo-counter"
+		onClick={() => count.value++}
+	>{`${props.label}:${count.value}`}</button>
+}
+
+function KindRowsApp() @{
+	<ul class="kind-rows">
+		@for (const todo of todos.value; key todo.id) {
+			@switch (todo.kind) {
+				@case 'task': {
+					<li>
+						<TodoCounter label={'task ' + todo.title} />
+					</li>
+				}
+				@case 'note': {
+					<li>{'note ' + todo.title}</li>
+				}
+			}
+		}
+	</ul>
+}
+
+function KindRowsEmptyApp() @{
+	<ul class="kind-rows-empty">
+		@for (const todo of todos.value; key todo.id) {
+			@switch (todo.kind) {
+				@case 'task': {
+					<li>
+						<TodoCounter label={'task ' + todo.title} />
+					</li>
+				}
+			}
+		} @empty {
+			<li>{'none'}</li>
+		}
+	</ul>
+}
+
+function IndexSwitchRowsApp() @{
+	<ul class="index-switch-rows">
+		@for (const todo of todos.value; index i; key todo.id) {
+			@switch (i === 0) {
+				@case true: {
+					<li>
+						<TodoCounter label={'first ' + todo.title} />
+					</li>
+				}
+				@default: {
+					<li>
+						<TodoCounter label={'later ' + todo.title} />
+					</li>
+				}
+			}
+		}
+	</ul>
+}
+
+function NestedCaseRowsApp() @{
+	<ul class="nested-case-rows">
+		@for (const todo of todos.value; key todo.id) {
+			@switch (todo.kind) {
+				@case 'task': {
+					@switch (todo.id) {
+						@case 'a': {
+							<li>
+								<TodoCounter label={todo.id} />
+							</li>
+						}
+						@default: {
+							<li>{'other'}</li>
+						}
+					}
+				}
+			}
+		}
+	</ul>
+}
+
+function CaseSetupRowsApp() @{
+	<ul class="case-setup-rows">
+		@for (const todo of todos.value; key todo.id) {
+			@switch (todo.kind) {
+				@case 'task': {
+					const label = todo.id;
+					<li>
+						<TodoCounter {label} />
+					</li>
+				}
+			}
+		}
+	</ul>
+}
+
+const switch_fails = ref(false);
+
+function select_kind() {
+	if (switch_fails.value) throw new Error('switch boom');
+	return 'a';
+}
+
+let picks = 0;
+
+function pick_kind(todo: Todo) {
+	picks++;
+	if (switch_fails.value) throw new Error('row boom');
+	return todo.kind;
+}
+
+function SwitchRowTryApp() @{
+	<div class="switch-row-try">
+		@try {
+			<ul>
+				@for (const todo of todos.value; key todo.id) {
+					@switch (pick_kind(todo)) {
+						@case 'task': {
+							<li>{todo.title}</li>
+						}
+					}
+				}
+			</ul>
+		} @catch (error) {
+			<p>{(error as Error).message}</p>
+		}
+	</div>
+}
+
+function SwitchTryApp() @{
+	<div class="switch-try">
+		@try {
+			@switch (select_kind()) {
+				@case 'a': {
+					<b>{'ok'}</b>
+				}
+			}
+		} @catch (error) {
+			<p>{(error as Error).message}</p>
+		}
+	</div>
+}
+
+describe('tsrx-vue keyed @switch rows', () => {
+	beforeEach(() => {
+		todos.value = todos_initial();
+		switch_fails.value = false;
+	});
+
+	it('follows a keyed @switch row’s value and keeps its case mounted while it stays chosen', async () => {
+		await render(KindRowsApp);
+		await click('.kind-rows .todo-counter');
+
+		update_todo('a', { synced: 1 });
+		await flush();
+		expect(texts('.kind-rows li')).toEqual(['task Alpha:1', 'task Beta:0']);
+
+		update_todo('b', { kind: 'note' });
+		await flush();
+		expect(texts('.kind-rows li')).toEqual(['task Alpha:1', 'note Beta']);
+
+		reverse_todos();
+		await flush();
+		expect(texts('.kind-rows li')).toEqual(['note Beta', 'task Alpha:1']);
+
+		update_todo('a', { kind: 'none' });
+		await flush();
+		expect(texts('.kind-rows li')).toEqual(['note Beta']);
+
+		update_todo('a', { kind: 'task' });
+		await flush();
+		expect(texts('.kind-rows li')).toEqual(['note Beta', 'task Alpha:0']);
+	});
+
+	it('renders nothing for a keyed @switch row whose value matches no case when it mounts', async () => {
+		todos.value = [{ id: 'z', title: 'Zed', kind: 'none', synced: 0 }];
+		await render(KindRowsApp);
+		expect(texts('.kind-rows li')).toEqual([]);
+
+		update_todo('z', { kind: 'note' });
+		await flush();
+		expect(texts('.kind-rows li')).toEqual(['note Zed']);
+	});
+
+	it('follows a @switch row’s value in a loop with @empty, and renders @empty', async () => {
+		await render(KindRowsEmptyApp);
+		update_todo('b', { kind: 'note' });
+		await flush();
+		expect(texts('.kind-rows-empty li')).toEqual(['task Alpha:0']);
+
+		todos.value = [];
+		await flush();
+		expect(texts('.kind-rows-empty li')).toEqual(['none']);
+	});
+
+	it('switches the case of a keyed @switch row that reads the index when the rows move', async () => {
+		await render(IndexSwitchRowsApp);
+		await click('.index-switch-rows .todo-counter');
+		expect(texts('.index-switch-rows li')).toEqual(['first Alpha:1', 'later Beta:0']);
+
+		reverse_todos();
+		await flush();
+		expect(texts('.index-switch-rows li')).toEqual(['first Beta:0', 'later Alpha:0']);
+	});
+
+	it('keeps the case of a keyed @switch row whose case has setup statements mounted, as before', async () => {
+		// Such a row keeps the shared lowering: as a branch of its own, the case
+		// would render again whenever its item is replaced.
+		await render(CaseSetupRowsApp);
+		await click('.case-setup-rows .todo-counter');
+		update_todo('a', { synced: 1 });
+		await flush();
+		expect(texts('.case-setup-rows li')).toEqual(['a:1', 'b:0']);
+	});
+
+	it('keeps the case of a keyed @switch row whose case is a nested @switch mounted, as before', async () => {
+		await render(NestedCaseRowsApp);
+		await click('.nested-case-rows .todo-counter');
+		update_todo('a', { synced: 1 });
+		await flush();
+		expect(texts('.nested-case-rows li')).toEqual(['a:1', 'other']);
+	});
+
+	it('runs a keyed @switch row’s value once per change, and sends its throw to @catch', async () => {
+		picks = 0;
+		await render(SwitchRowTryApp);
+		expect(texts('.switch-row-try li')).toEqual(['Alpha', 'Beta']);
+		expect(picks).toBe(2);
+
+		update_todo('a', { title: 'Alpha2' });
+		await flush();
+		expect(texts('.switch-row-try li')).toEqual(['Alpha2', 'Beta']);
+		expect(picks).toBe(3);
+
+		switch_fails.value = true;
+		update_todo('a', { synced: 1 });
+		await flush();
+		expect(texts('.switch-row-try p')).toEqual(['row boom']);
+	});
+
+	it('sends a throw from a @switch’s value on an update to its @catch', async () => {
+		await render(SwitchTryApp);
+		expect(texts('.switch-try b')).toEqual(['ok']);
+
+		switch_fails.value = true;
+		await flush();
+		expect(texts('.switch-try p')).toEqual(['switch boom']);
+	});
+});
+
 describe('tsrx-vue for_items', () => {
 	it('hands a reactive array to VaporFor as it is (#1147)', () => {
 		const list = reactive(['a', 'b']);

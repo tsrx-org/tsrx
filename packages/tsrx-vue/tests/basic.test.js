@@ -16,6 +16,19 @@ import {
 import { runSharedSourceMappingTests } from '@tsrx/core/test-harness/source-mappings';
 import { compile, compile_to_volar_mappings } from '../src/index.js';
 
+/**
+ * `code` with each run of whitespace as one space, so an expectation can be
+ * written indented.
+ *
+ * @param {string} code
+ */
+function flat(code) {
+	return code
+		.replace(/\s+/g, ' ')
+		.replace(/([({[<>]) /g, '$1')
+		.replace(/ ([)}\]])/g, '$1');
+}
+
 runSharedSourceMappingTests({
 	compile,
 	compile_to_volar_mappings,
@@ -3355,5 +3368,190 @@ export function Card(${params}: any) @{
 				'App.tsrx',
 			),
 		).not.toThrow();
+	});
+});
+
+describe('@tsrx/vue @switch rows', () => {
+	it('renders a keyed @switch row as a fragment around its cases', () => {
+		const { code, errors } = compile(
+			`export function List(props: { rows: { id: string; kind: string; title: string }[] }) @{
+				<ul>
+					@for (const row of props.rows; key row.id) {
+						@switch (row.kind) {
+							@case 'a': {
+								<li>{row.id}</li>
+							}
+							@case 'b': {
+								<li>{row.title}</li>
+							}
+						}
+					}
+				</ul>
+			}`,
+			'List.tsrx',
+		);
+
+		// The slot runs once, so a `computed` picks the case's index and the
+		// cases sit in a fragment, which vue-jsx-vapor makes `createIf`s; no
+		// matching case is an empty fragment.
+		expect(errors).toEqual([]);
+		expect(flat(code)).toContain(
+			flat(`<__VaporFor in={_$_for_items(props.rows)} getKey={(row) => row.id}>{(row) => (() => {
+				const _$_case_1 = _$_vapor_computed(() => {
+					switch (row.value.kind) {
+						case 'a': return 0;
+						case 'b': return 1;
+					}
+					return -1;
+				});
+				return <>{_$_case_1.value === 0
+					? <li>{row.value.id}</li>
+					: _$_case_1.value === 1 ? <li>{row.value.title}</li> : <></>}</>;
+			})()}</__VaporFor>`),
+		);
+		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
+	});
+
+	it('renders a keyed @switch row without cases as an empty fragment after its discriminant', () => {
+		const { code } = compile(
+			`declare function kind_of(row: { id: string }): string;
+			export function List(props: { rows: { id: string }[] }) @{
+				<ul>
+					@for (const row of props.rows; key row.id) {
+						@switch (kind_of(row)) {
+						}
+					}
+				</ul>
+			}`,
+			'List.tsrx',
+		);
+
+		expect(flat(code)).toContain(
+			flat(`{(row) => (() => {
+				switch (kind_of(row.value)) {}
+				return <></>;
+			})()}`),
+		);
+	});
+
+	it('keeps the shared lowering for a @switch row whose case has setup statements or a nested @switch, or that has many cases', () => {
+		const setup = compile(
+			`export function List(props: { rows: { id: string; kind: string; title: string }[] }) @{
+				<ul>
+					@for (const row of props.rows; key row.id) {
+						@switch (row.kind) {
+							@case 'a': {
+								const label = row.title + '!';
+								<li>{label}</li>
+							}
+						}
+					}
+				</ul>
+			}`,
+			'List.tsrx',
+		).code;
+		expect(setup).not.toContain('_$_case');
+		expect(setup).toContain('switch (row.value.kind) {');
+
+		// A case whose output is a nested `@switch` would run it in an effect.
+		const nested = compile(
+			`export function List(props: { rows: { id: string; kind: string; title: string }[] }) @{
+				<ul>
+					@for (const row of props.rows; key row.id) {
+						@switch (row.kind) {
+							@case 'a': {
+								@switch (row.title) {
+									@case 'A': {
+										<li>{row.id}</li>
+									}
+								}
+							}
+						}
+					}
+				</ul>
+			}`,
+			'List.tsrx',
+		).code;
+		expect(nested).not.toContain('_$_case');
+
+		const cases = Array.from({ length: 2000 }, (_, i) => `@case ${i}: { <li>{row.id}</li> }`).join(
+			'\n',
+		);
+		const { code: many, errors } = compile(
+			`export function List(props: { rows: { id: string; kind: number }[] }) @{
+				<ul>
+					@for (const row of props.rows; key row.id) {
+						@switch (row.kind) {
+							${cases}
+						}
+					}
+				</ul>
+			}`,
+			'List.tsrx',
+		);
+		expect(errors).toEqual([]);
+		expect(many).not.toContain('_$_case');
+	});
+
+	it('gives each @switch row its own computed', () => {
+		const { code } = compile(
+			`export function List(props: { groups: { id: string; kind: string; rows: { id: string; kind: string }[] }[] }) @{
+				<ul>
+					@for (const group of props.groups; key group.id) {
+						@switch (group.kind) {
+							@case 'a': {
+								<li>
+									@for (const row of group.rows; key row.id) {
+										@switch (row.kind) {
+											@case 'b': {
+												<b>{row.id}</b>
+											}
+										}
+									}
+								</li>
+							}
+						}
+					}
+				</ul>
+			}`,
+			'List.tsrx',
+		);
+
+		expect(code).toContain('const _$_case_1 = _$_vapor_computed(() => {');
+		expect(code).toContain('const _$_case_2 = _$_vapor_computed(() => {');
+	});
+
+	it('keeps the shared lowering for a @switch outside a row and in the type-only output', () => {
+		const outside = compile(
+			`export function Kind(props: { kind: string }) @{
+				<div>
+					@switch (props.kind) {
+						@case 'a': {
+							<b>{'a'}</b>
+						}
+					}
+				</div>
+			}`,
+			'Kind.tsrx',
+		).code;
+		expect(outside).toContain('switch (props.kind) {');
+		expect(outside).not.toContain('_$_case');
+
+		const { code: type_only } = compile_to_volar_mappings(
+			`export function List(props: { rows: { id: string; kind: string }[] }) @{
+				<ul>
+					@for (const row of props.rows; key row.id) {
+						@switch (row.kind) {
+							@case 'a': {
+								<li>{row.id}</li>
+							}
+						}
+					}
+				</ul>
+			}`,
+			'List.tsrx',
+		);
+		expect(type_only).toContain('switch (row.value.kind)');
+		expect(type_only).not.toContain('_$_case');
 	});
 });

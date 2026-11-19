@@ -1,0 +1,8 @@
+---
+'@tsrx/core': patch
+'@tsrx/vue': patch
+---
+
+On the Vue target, a `@for` row that is a `@switch` and renders through `VaporFor` now follows its value: in a keyed loop without `@empty` whose head has no default, computed key or object rest, and in a loop without a key whose row reads the item's properties (a destructured head without a key is read once, as before). Those other loops render through `map_iterable`, which already followed the value. The `VaporFor` row slot ran the `@switch`'s IIFE once, so the row kept the case it picked first, and threw `Cannot read properties of null (reading 'anchor')` when no case matched. The row now makes a `computed` that runs the `switch` for the index of the case it picks, and renders the case chosen by that index in a fragment, which vue-jsx-vapor makes `createIf`s: the row follows its value, keeps its case mounted while the index stays the same, and renders nothing when no case matches or the `@switch` has no cases.
+
+A row whose `@switch` has a case with setup statements, or a case that renders something other than an element, a fragment or a choice of them (such as a nested `@switch`), keeps the shared lowering: as a branch of its own, such a case would render again, components and all, whenever its item is replaced. So does a row with more than 64 cases. So do a `@switch` elsewhere, a `@switch` row in a loop with `@empty` (which stays on `map_iterable`), one that awaits or yields, and the type-only output. `@tsrx/core` exports the shared lowering as `switchStatementToJsxChild` for a platform's `controlFlow.switchStatement` hook.
