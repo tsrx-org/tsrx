@@ -1124,9 +1124,9 @@ export function SpecificationPage() @{
 								Each <code class="inline-code">@switch</code> <code class="inline-code">@case</code>{' '}
 								and <code class="inline-code">@default</code> must use a{' '}
 								<code class="inline-code">{'{}'}</code> template block. Cases are isolated: they do
-								not fall through to later cases, <code class="inline-code">return</code> is a syntax
-								error inside a JSX switch case, and a <code class="inline-code">break</code> or{' '}
-								<code class="inline-code">continue</code> there can only reach a loop, a{' '}
+								not fall through to later cases, a <code class="inline-code">return</code> right in
+								a JSX switch case is a syntax error, and a <code class="inline-code">break</code> or{' '}
+								<code class="inline-code">continue</code> in a case can only reach a loop, a{' '}
 								<code class="inline-code">switch</code> (<code class="inline-code">break</code>{' '}
 								only) or a label inside the case.
 							</p>
