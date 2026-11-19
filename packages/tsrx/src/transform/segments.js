@@ -3820,11 +3820,11 @@ function has_source_map_boundaries(node, src_to_gen_map) {
 const leftmost_names = new WeakMap();
 
 /**
- * The name of the identifier a member expression or call starts with, through
- * objects, callees, tags and `!`, as the printer writes it. Undefined for one
- * that starts with other code, such as `this`, parentheses, a literal or a
- * `new`. Each node's name is kept, so the members of a long chain don't each
- * walk the whole chain.
+ * The name of the authored identifier a member expression or call starts
+ * with, through objects, callees, tags and `!`, as the printer writes it.
+ * Undefined for one that starts with other code, such as `this`, parentheses,
+ * a literal, a `new` or a call a pass added. Each node's name is kept, so the
+ * members of a long chain don't each walk the whole chain.
  * @param {AST.Node} node
  * @returns {string | undefined}
  */
@@ -3842,7 +3842,8 @@ function leftmost_name(node) {
 		}
 		chain.push(current);
 		if (current.type === 'Identifier') {
-			name = current.name;
+			// A name a pass added, such as a wrapper's callee, isn't the node's.
+			name = current.loc ? current.name : undefined;
 			break;
 		}
 		current =

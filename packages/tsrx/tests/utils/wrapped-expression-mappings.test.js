@@ -45,8 +45,10 @@ const WRAPPED_TYPES = new Set([
  * `read(…)` with the expression's location.
  * @param {string} source
  * @param {string} [wrapper] the wrapping call's callee, a name or a dotted path
+ * @param {boolean} [nested] also wrap each member expression's object that is
+ * a member expression, from the innermost out
  */
-function compile_wrapped(source, wrapper = 'read') {
+function compile_wrapped(source, wrapper = 'read', nested = false) {
 	/** @type {CompileError[]} */
 	const errors = [];
 	/** @type {AST.CommentWithLocation[]} */
@@ -60,6 +62,37 @@ function compile_wrapped(source, wrapper = 'read') {
 		comments,
 	});
 	analyzeTsrx(ast, 'App.tsrx', { collect: true, loose: true, typeOnly: true, errors, comments });
+	/**
+	 * A call to the wrapper with `inner`'s location.
+	 * @param {any} inner
+	 */
+	const wrap_call = (inner) => ({
+		type: 'CallExpression',
+		callee: wrapper
+			.split('.')
+			.map((name) => /** @type {any} */ ({ type: 'Identifier', name, metadata: { path: [] } }))
+			.reduce((object, property) => ({
+				type: 'MemberExpression',
+				object,
+				property,
+				computed: false,
+				optional: false,
+				metadata: { path: [] },
+			})),
+		arguments: [inner],
+		optional: false,
+		start: inner.start,
+		end: inner.end,
+		loc: inner.loc,
+		metadata: { path: [] },
+	});
+	/** @param {any} expression */
+	const wrap_objects = (expression) => {
+		if (expression.type === 'MemberExpression' && expression.object.type === 'MemberExpression') {
+			expression.object = wrap_call(wrap_objects(expression.object));
+		}
+		return expression;
+	};
 	/** @param {any} node */
 	const wrap = (node) => {
 		if (!node || typeof node !== 'object') return;
@@ -68,27 +101,7 @@ function compile_wrapped(source, wrapper = 'read') {
 			return;
 		}
 		if (node.type === 'JSXExpressionContainer' && WRAPPED_TYPES.has(node.expression?.type)) {
-			const inner = node.expression;
-			node.expression = {
-				type: 'CallExpression',
-				callee: wrapper
-					.split('.')
-					.map((name) => /** @type {any} */ ({ type: 'Identifier', name, metadata: { path: [] } }))
-					.reduce((object, property) => ({
-						type: 'MemberExpression',
-						object,
-						property,
-						computed: false,
-						optional: false,
-						metadata: { path: [] },
-					})),
-				arguments: [inner],
-				optional: false,
-				start: inner.start,
-				end: inner.end,
-				loc: inner.loc,
-				metadata: { path: [] },
-			};
+			node.expression = wrap_call(nested ? wrap_objects(node.expression) : node.expression);
 		}
 		for (const key of Object.keys(node)) {
 			if (key !== 'loc' && key !== 'metadata') wrap(node[key]);
@@ -118,9 +131,10 @@ function compile_wrapped(source, wrapper = 'read') {
  * @param {string} source
  * @param {string} text
  * @param {string} [wrapper]
+ * @param {boolean} [nested]
  */
-function mapped_texts(source, text, wrapper) {
-	const { code, mappings } = compile_wrapped(source, wrapper);
+function mapped_texts(source, text, wrapper, nested) {
+	const { code, mappings } = compile_wrapped(source, wrapper, nested);
 	const start = source.lastIndexOf(text);
 	return mappings
 		.filter((mapping) => mapping.sourceOffsets[0] === start && mapping.lengths[0] === text.length)
@@ -200,6 +214,16 @@ export class C extends Base {
 			expect(mapped_texts(source, expression, wrapper)).toEqual([printed]);
 		},
 	);
+
+	it('maps a member expression whose object a pass also wrapped from its own text, or keeps its mapping', () => {
+		// `a.b.c.d` with each member wrapped prints `read(read(read(a.b).c).d)`.
+		// `a.b` maps from its own text. `a.b.c.d` prints differently from its
+		// source and starts with no authored name, so it keeps its mapping rather
+		// than taking a wrapper inside it.
+		const source = `${DECLARATIONS}export function App() @{ <p>{a.b.c.d}</p> }\n`;
+		expect(mapped_texts(source, 'a.b', 'read', true)).toEqual(['a.b']);
+		expect(mapped_texts(source, 'a.b.c.d', 'read', true)).toEqual(['read(read(read(a.b).c).d']);
+	});
 
 	const long_string = JSON.stringify('a'.repeat(300));
 	it.each([
