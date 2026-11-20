@@ -161,7 +161,12 @@ function arguments_unscoped(simple, subject_hashed = false) {
 	}
 	return simple.args.children.every((argument) => {
 		if (simple.name === 'not') return negation_unscoped(argument);
-		if (simple.name === 'where' && subject_hashed && argument.children.length === 1) {
+		if (
+			simple.name === 'where' &&
+			subject_hashed &&
+			argument.children.length === 1 &&
+			argument.children[0].combinator === null
+		) {
 			return argument.children[0].selectors.every((inner) => arguments_unscoped(inner));
 		}
 		return is_unscoped(argument);
@@ -363,9 +368,6 @@ const drops_selector_cache = new WeakMap();
 export function drops_selector(rule) {
 	let drops = drops_selector_cache.get(rule);
 	if (drops === undefined) {
-		// A rule in it can ask about it again (`:global.w { :global, :global.x {} }`):
-		// that inner question reads it as kept.
-		drops_selector_cache.set(rule, false);
 		drops = rule.metadata.is_global_block && compute_drops_selector(rule);
 		drops_selector_cache.set(rule, drops);
 	}
@@ -385,7 +387,31 @@ function compute_drops_selector(rule) {
 			is_global_block_selector(selector.children[0].selectors[0]),
 	);
 	if (lone && (selectors.length === 1 || !has_parent_rule_in_output(rule))) return true;
-	return !has_declaration(rule.block) && holds_unnestable_at_rule(rule.block);
+	return drops_for_at_rules(rule);
+}
+
+/** @type {WeakMap<AST.CSS.Rule, boolean>} */
+const drops_for_at_rules_cache = new WeakMap();
+
+/**
+ * Whether `rule` is a global block that styles nothing but holds an at-rule a
+ * style rule can't hold, which the output lifts out of it. This asks only
+ * about the rules in it, never about the rules around it, so a rule asking
+ * about its parent and the parent asking about it can't go round in a loop.
+ *
+ * @param {AST.CSS.Rule} rule
+ * @returns {boolean}
+ */
+function drops_for_at_rules(rule) {
+	let drops = drops_for_at_rules_cache.get(rule);
+	if (drops === undefined) {
+		drops =
+			rule.metadata.is_global_block &&
+			!has_declaration(rule.block) &&
+			holds_unnestable_at_rule(rule.block);
+		drops_for_at_rules_cache.set(rule, drops);
+	}
+	return drops;
 }
 
 /**
@@ -396,8 +422,8 @@ function holds_unnestable_at_rule(block) {
 	return !!block?.children.some((child) =>
 		child.type === 'Atrule'
 			? is_unnestable_at_rule(child) || holds_unnestable_at_rule(child.block)
-			: // A rule whose selector the output drops leaves its at-rules here.
-				child.type === 'Rule' && drops_selector(child) && holds_unnestable_at_rule(child.block),
+			: // A rule whose selector the output drops for them leaves its at-rules here.
+				child.type === 'Rule' && drops_for_at_rules(child),
 	);
 }
 

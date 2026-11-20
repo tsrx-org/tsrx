@@ -954,6 +954,12 @@ describe('scoped style analysis', () => {
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 					1,
 				],
+				// A combinator in the :where() points at another element.
+				[
+					'.p { :global.w, &:where(> .q) { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
+					0,
+				],
 				// In a @scope, & stands for the scope's root, which needn't have the hash.
 				[
 					'.p { @scope (.q) { :global.w, &:where(.q) { color: red; } } }',
@@ -1329,6 +1335,12 @@ describe('scoped style analysis', () => {
 					':root, :global.w { @function --f() { result: red; } }',
 					'/* :root, :global.w {*/ @function --f() { result: red; } /*}*/',
 					'@function --f() { result: red; }',
+				],
+				// The lone :global list's parent drops its selector, so the list does too.
+				[
+					':global.w { :global, :global.x { .k {} } @font-face { font-family: x; } }',
+					'/* :global.w {*/ /* :global, :global.x {*/ /* (empty) .k {}*/ /*}*/ @font-face { font-family: x; } /*}*/',
+					'/* (empty) .k {}*/ @font-face { font-family: x; }',
 				],
 				// A @media, or a @when, can sit in a style rule.
 				[
