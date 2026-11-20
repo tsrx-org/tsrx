@@ -1856,6 +1856,10 @@ export const p = 1
 				name: 'a partially typed `@if` between tabs in an element',
 				source: 'export function App() {\n\t<div>\t@if\t</div>\n}',
 			},
+			{
+				name: 'a partially typed `@if` that starts text over lines in an element',
+				source: 'export function App() {\n\t<div> @if  \n\t\tx </div>\n}',
+			},
 		]) {
 			it(`emits a well-formed completion-only mapping for ${name}`, () => {
 				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
@@ -8310,13 +8314,126 @@ export const b2 = {
 			}
 		});
 
+		// A text over lines reads as the target's compiled JSX reads it (the
+		// platform's `jsx.textReading`): JSX joins its lines with a space, and
+		// vue-jsx-vapor keeps them
+		const kept_lines = name === 'vue';
+
+		it.each([
+			[
+				'a `<textarea>`',
+				'<textarea> a\n\t\tb </textarea>',
+				"<textarea>{' a b '}</textarea>",
+				"<textarea>{' a\\n\t\tb '}</textarea>",
+			],
+			[
+				'a `<title>`',
+				'<title> My\n\t\tpage </title>',
+				"<title>{' My page '}</title>",
+				"<title>{' My\\n\t\tpage '}</title>",
+			],
+			[
+				'a component',
+				'<Upper> a\n\t\tb </Upper>',
+				"<Upper>{' a b '}</Upper>",
+				"<Upper>{' a\\n\t\tb '}</Upper>",
+			],
+			[
+				'an element, for a CRLF',
+				'<b> a\r\n\t\tb </b>',
+				"<b>{' a b '}</b>",
+				"<b>{' a\\r\\n\t\tb '}</b>",
+			],
+			[
+				'an element, for a blank line and spaces before a line break',
+				'<b> a  \n\n\t\tb </b>',
+				"<b>{' a b '}</b>",
+				"<b>{' a  \\n\\n\t\tb '}</b>",
+			],
+			[
+				'an element, for a line break at its end',
+				'<b> a\n\t</b>',
+				"<b>{' a'}</b>",
+				"<b>{' a'}</b>",
+			],
+			[
+				'an element, for a line break at its start',
+				'<b>\n\t\ta </b>',
+				"<b>{'a '}</b>",
+				"<b>{'a '}</b>",
+			],
+			[
+				'a `<pre>`, for a character reference',
+				'<pre>&#10;x\n\t\ty </pre>',
+				"<pre>{'\\nx y '}</pre>",
+				"<pre>{'\\nx\\n\t\ty '}</pre>",
+			],
+			[
+				'an element, for a space written as a reference at the start of a line',
+				'<b> a\n\t\t&#32;b </b>',
+				"<b>{' a  b '}</b>",
+				"<b>{' a\\n\t\t b '}</b>",
+			],
+			[
+				'an element, for a quote',
+				`<b> it's\n\t\t"q" </b>`,
+				`<b>{' it\\'s "q" '}</b>`,
+				`<b>{' it\\'s\\n\t\t"q" '}</b>`,
+			],
+		])('prints the text over lines of %s as one literal', (_case, element, joined, kept) => {
+			for (const source of [
+				`${upper}export function A() {\n\treturn <div>${element}</div>;\n}`,
+				`${upper}export function A() @{\n\t<div>${element}</div>\n}`,
+			]) {
+				expect(compile(source, 'A.tsrx').code).toContain(kept_lines ? kept : joined);
+			}
+		});
+
+		// Solid's and Vue's compilers read JSX text as HTML, where these can read
+		// differently from the literal, so they keep the split there. TypeScript,
+		// esbuild and oxc leave each as written, as the parser does.
+		const html = name === 'solid' || name === 'vue';
+
+		it.each([
+			['a reference without a semicolon', '<b> &copy </b>', "<b>{' &copy '}</b>"],
+			['an `&` before a name', '<textarea> R&D </textarea>', "<textarea>{' R&D '}</textarea>"],
+			['a name the parser leaves as written', '<b> &check; </b>', "<b>{' &check; '}</b>"],
+			['a name the parser leaves as written, in capitals', '<b> &AMP; </b>', "<b>{' &AMP; '}</b>"],
+			[
+				'a name the parser leaves as written, over lines',
+				'<b> &check;\n\t\tb </b>',
+				"<b>{' &check; b '}</b>",
+			],
+			// Solid's compiler turns it into a space
+			['a non-breaking space', '<b> a b </b>', "<b>{' a b '}</b>"],
+			['an ideographic space', '<b> a　b </b>', "<b>{' a　b '}</b>"],
+		])(
+			'prints %s as one literal unless the target reads text as HTML',
+			(_case, element, printed) => {
+				const inner = element.slice(element.indexOf('>') + 1, element.lastIndexOf('<'));
+				const tag = element.slice(0, element.indexOf('>') + 1);
+				const split = `${tag}{' '}${inner.slice(1, -1)}{' '}</${tag.slice(1)}`;
+				for (const source of [
+					`export function A() {\n\treturn <div>${element}</div>;\n}`,
+					`export function A() @{\n\t<div>${element}</div>\n}`,
+				]) {
+					expect(compile(source, 'A.tsrx').code).toContain(html ? split : printed);
+				}
+			},
+		);
+
 		it.each([
 			['text beside an element', '<b> a <i>x</i> b </b>', "<b>{' '}a <i>x</i> b{' '}</b>"],
 			["a fragment's only text", '<> a </>', "<>{' '}a{' '}</>"],
 			['text without edge whitespace', '<b>a</b>', '<b>a</b>'],
 			// The targets' JSX compilers read these differently from the literal
-			['text that spans lines', '<b> a\n\t\tb </b>', "<b>{' '}a\n\t\tb{' '}</b>"],
-			['text with a non-breaking space', '<b> a\u00a0b </b>', "<b>{' '}a\u00a0b{' '}</b>"],
+			[
+				'text over lines with a non-breaking space at a line start',
+				'<b> a\n b </b>',
+				"<b>{' '}a\n b{' '}</b>",
+			],
+			['text with a CR that is no CRLF', '<b> a\rb </b>', "<b>{' '}a\rb{' '}</b>"],
+			['text with a U+2028', '<b> a b </b>', "<b>{' '}a b{' '}</b>"],
 			[
 				'a reference longer than the parser reads',
 				'<b> &#0000000000000065; </b>',
@@ -8326,14 +8443,6 @@ export const b2 = {
 			['a reference with `&#X`', '<b> &#X41; </b>', "<b>{' '}&#X41;{' '}</b>"],
 			['a reference to a control character', '<b> &#128; </b>', "<b>{' '}&#128;{' '}</b>"],
 			['a reference to a lone surrogate', '<b> &#xD800; </b>', "<b>{' '}&#xD800;{' '}</b>"],
-			['a reference without a semicolon', '<b> &copy </b>', "<b>{' '}&copy{' '}</b>"],
-			['an `&` before a name', '<b> a&b </b>', "<b>{' '}a&b{' '}</b>"],
-			['a name the parser leaves as written', '<b> &check; </b>', "<b>{' '}&check;{' '}</b>"],
-			[
-				'a name the parser leaves as written, in capitals',
-				'<b> &AMP; </b>',
-				"<b>{' '}&AMP;{' '}</b>",
-			],
 			['a reference to U+2028', '<b> &#8232; </b>', "<b>{' '}&#8232;{' '}</b>"],
 			['a reference to U+2029', '<b> &#8233; </b>', "<b>{' '}&#8233;{' '}</b>"],
 			['a reference to U+FEFF', '<b> &#xFEFF; </b>', "<b>{' '}&#xFEFF;{' '}</b>"],

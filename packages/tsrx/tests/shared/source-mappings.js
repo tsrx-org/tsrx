@@ -4146,6 +4146,37 @@ export function A() {
 			expect(output_type_errors(code + jsx_types)).toEqual([]);
 		});
 
+		it('gives a component whose `children` is a string one string, for text over lines', () => {
+			const source = `function Upper(props: { children: string }) {
+	return null;
+}
+export function A() {
+	return <div><Upper> a
+		b </Upper></div>;
+}`;
+			const { code } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(output_type_errors(code + jsx_types)).toEqual([]);
+		});
+
+		// Solid's and Vue's compilers read JSX text as HTML, where an `&` before a
+		// name can start a reference, so that text keeps the split there
+		it('gives a component whose `children` is a string one string, for an `&` before a name', () => {
+			const source = `function Upper(props: { children: string }) {
+	return null;
+}
+export function A() {
+	return <div><Upper> R&D </Upper></div>;
+}`;
+			const { code } = compile_to_volar_mappings(source, 'App.tsrx');
+			const errors = output_type_errors(code + jsx_types);
+			if (name === 'solid' || name === 'vue') {
+				expect(errors).toHaveLength(1);
+				expect(errors[0]).toContain("TS2322 Type '{ children: string[]; }'");
+			} else {
+				expect(errors).toEqual([]);
+			}
+		});
+
 		// A template body's output starts where its `return` does, so the text's
 		// start maps there too
 		it.each([
@@ -4177,6 +4208,36 @@ export function A() {
 				).toEqual(["{' a '}"]);
 			},
 		);
+
+		it('maps text over lines to its literal, where TypeScript reports an error on it', () => {
+			const source = `function Num(props: { children: number }) {
+	return null;
+}
+export function A() {
+	return <div><Num> a
+		b </Num></div>;
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(output_type_errors(result.code + jsx_types)).toEqual([
+				"TS2322 Type 'string' is not assignable to type 'number'.",
+			]);
+			const text = ' a\n\t\tb ';
+			expect(
+				result.mappings
+					.filter(
+						(mapping) =>
+							mapping.sourceOffsets[0] === source.indexOf(text) &&
+							mapping.lengths[0] === text.length &&
+							mapping.data.verification,
+					)
+					.map((mapping) =>
+						result.code.slice(
+							mapping.generatedOffsets[0],
+							mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+						),
+					),
+			).toEqual([name === 'vue' ? "{' a\\n\t\tb '}" : "{' a b '}"]);
+		});
 	});
 
 	describe(`[${name}] input AST immutability`, () => {

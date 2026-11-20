@@ -673,6 +673,22 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		expect(container.querySelector<HTMLTextAreaElement>('.only-text-textarea')?.value).toBe(' a ');
 	});
 
+	it('gives a `<textarea>` its text over lines as one child, with its lines joined', () => {
+		render(<JsxTextOnlyApp />, container);
+
+		expect(
+			container.querySelector<HTMLTextAreaElement>('.only-text-textarea-lines')?.value,
+		).toBe(' a b ');
+	});
+
+	it('gives a `<textarea>` an `&` before a name as one child', () => {
+		render(<JsxTextOnlyApp />, container);
+
+		expect(
+			container.querySelector<HTMLTextAreaElement>('.only-text-textarea-ampersand')?.value,
+		).toBe(' R&D ');
+	});
+
 	it("reads a name the parser doesn't decode as TypeScript does", () => {
 		render(<JsxTextOnlyApp />, container);
 
@@ -689,6 +705,14 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 		render(<JsxTextOnlyApp />, container);
 
 		expect(container.querySelector('.only-text-component')?.textContent).toBe(' A ');
+	});
+
+	it('gives a component its text over lines as one string', () => {
+		render(<JsxTextOnlyApp />, container);
+
+		expect(
+			container.querySelector('.only-text-component-lines .only-text-component')?.textContent,
+		).toBe(' A B ');
 	});
 
 	// `@for` walks its source the way `for...of` does.

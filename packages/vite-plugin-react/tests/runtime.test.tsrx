@@ -1694,6 +1694,18 @@ function OnlyTextHead() @{
 	</>
 }
 
+// The same over lines, and with an `&` before a name
+function OnlyTextLinesHead() @{
+	// prettier-ignore
+	<>
+		<title> My
+			page </title>
+		<pre>&#10;x
+			y </pre>
+		<textarea> R&D </textarea>
+	</>
+}
+
 // ── Tests ──
 
 describe('tsrx-react runtime', () => {
@@ -2737,6 +2749,13 @@ describe('tsrx-react runtime', () => {
 		// newline only when it gets one
 		expect(renderToString(createElement(OnlyTextHead))).toBe(
 			'<title> My page </title><pre>\n\nx </pre>',
+		);
+	});
+
+	it("server-renders an element's only text over lines as one string", () => {
+		// JSX joins the lines with a space
+		expect(renderToString(createElement(OnlyTextLinesHead))).toBe(
+			'<title> My page </title><pre>\n\nx y </pre><textarea> R&amp;D </textarea>',
 		);
 	});
 });

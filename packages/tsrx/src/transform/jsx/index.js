@@ -1,6 +1,6 @@
 /** @import * as AST from 'estree' */
 /** @import * as ESTreeJSX from 'estree-jsx' */
-/** @import { BaseNodeMetaData, FunctionMetaData, JsxHelperComponent, JsxHelperState, JsxPlatform, JsxTransformContext as TransformContext, JsxTransformOptions, JsxTransformResult, JsxVisitorContext } from '@tsrx/core/types' */
+/** @import { BaseNodeMetaData, FunctionMetaData, JsxHelperComponent, JsxHelperState, JsxPlatform, JsxTextReading, JsxTransformContext as TransformContext, JsxTransformOptions, JsxTransformResult, JsxVisitorContext } from '@tsrx/core/types' */
 
 import { walk } from 'zimmerframe';
 import { print } from 'esrap';
@@ -83,9 +83,10 @@ export const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
 export const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
 const LEADING_INLINE_WHITESPACE = /^[ \t]+/;
 const TRAILING_INLINE_WHITESPACE = /[ \t]+$/;
-// A character reference that the parser and JSX compilers all decode (a name,
-// or a decimal or lowercase-hex number, short enough for the parser to read),
-// or an `&` before no name or `#`, which all of them leave as written
+// A character reference that the parser and an HTML reading of JSX text both
+// decode, if they know it (a name, or a decimal or lowercase-hex number, short
+// enough for the parser to read), or an `&` before no name or `#`, which both
+// leave as written
 const REFERENCE_OR_PLAIN_AMPERSAND =
 	/&(?:[A-Za-z][A-Za-z\d]{0,7}|#\d{1,6}|#x[\da-fA-F]{1,5});|&(?![#\w])/g;
 
@@ -3728,6 +3729,7 @@ function lower_static_jsx(node, transform_context) {
 				next = wrap_edge_whitespace(
 					/** @type {ESTreeJSX.JSXElement['children']} */ (next),
 					node.type === 'JSXElement',
+					transform_context.platform.jsx.textReading,
 				);
 			}
 		} else if (is_ast_node(value)) {
@@ -4993,6 +4995,7 @@ function create_element_children(children, transform_context) {
 			return wrap_edge_whitespace(
 				children.map((child) => to_jsx_child(child, transform_context)),
 				true,
+				transform_context.platform.jsx.textReading,
 			);
 		} finally {
 			transform_context.inside_element_child = saved_inside_element_child;
@@ -5462,33 +5465,39 @@ function is_try_control_node(node) {
  * An element's only child, when it is text with whitespace at an edge, prints
  * as one literal instead (`{' a '}`), so the element still gets one string:
  * `<textarea>`, `<title>` and a component that takes `children: string` need
- * one (#1368). See `only_text_value` for the text that is still split. A
- * fragment's only text is split too, which keeps the fragment.
+ * one (#1368). The literal is the text as the target's compiled JSX reads it
+ * (`reading`, the platform's `jsx.textReading`). See `only_text_value` for
+ * the text that is still split. A fragment's only text is split too, which
+ * keeps the fragment.
  */
 /**
  * @overload
  * @param {ESTreeJSX.JSXRenderChild[]} nodes
  * @param {boolean} [in_element] whether `nodes` are an element's children
+ * @param {JsxTextReading} [reading]
  * @returns {ESTreeJSX.JSXRenderChild[]}
  */
 /**
  * @overload
  * @param {ESTreeJSX.JSXElement['children']} nodes
  * @param {boolean} [in_element]
+ * @param {JsxTextReading} [reading]
  * @returns {ESTreeJSX.JSXElement['children']}
  */
 /**
  * @overload
  * @param {ESTreeJSX.JSXTransformChild[]} nodes
  * @param {boolean} [in_element]
+ * @param {JsxTextReading} [reading]
  * @returns {ESTreeJSX.JSXTransformChild[]}
  */
 /**
  * @param {ESTreeJSX.JSXTransformChild[]} nodes
  * @param {boolean} [in_element]
+ * @param {JsxTextReading} [reading]
  * @returns {ESTreeJSX.JSXTransformChild[]}
  */
-export function wrap_edge_whitespace(nodes, in_element = false) {
+export function wrap_edge_whitespace(nodes, in_element = false, reading = {}) {
 	const length = nodes.length;
 	if (length === 0) {
 		return nodes;
@@ -5500,7 +5509,8 @@ export function wrap_edge_whitespace(nodes, in_element = false) {
 		return nodes;
 	}
 
-	const value = in_element && length === 1 && first.type === 'JSXText' && only_text_value(first);
+	const value =
+		in_element && length === 1 && first.type === 'JSXText' && only_text_value(first, reading);
 	if (typeof value === 'string') {
 		// The container takes the text's location, which the editor maps
 		// (`segments.js`)
@@ -5567,70 +5577,162 @@ export function wrap_edge_whitespace(nodes, in_element = false) {
 }
 
 /**
- * The string an element's only text gives the element, for a text with a
- * space or tab at an edge, or `null`, which keeps the split edges. The string
- * is the text's value, as the parser decoded it, which is how TypeScript,
- * esbuild and oxc read such a text for React, Preact and Hono. Solid's and
- * Vue's compilers read some texts differently (a run of whitespace, `&lang;`,
- * a decoded line feed), and render the literal as written. A text keeps the
- * split when the literal could differ from that reading:
+ * The string an element's only text gives the element, for a text the split
+ * pulls a space or tab off an edge of, or `null`, which keeps the split edges.
+ * The string is the text as the target's compiled JSX reads it (`reading`).
+ * By default that's how TypeScript, esbuild and oxc read it for React, Preact
+ * and Hono: the value the parser decoded, with the lines of a text that spans
+ * lines trimmed and joined with a space (`joined_lines`). Solid's compiler
+ * joins lines the same way, and vue-jsx-vapor keeps them (`kept_lines`).
+ * Solid's and Vue's compilers read some texts differently (a run of
+ * whitespace, `&lang;`, a decoded line feed), and render the literal as
+ * written. A text keeps the split when the literal could differ from that
+ * reading:
  *
- * - whitespace other than spaces and tabs, which the compilers join and trim
- *   differently (vue-jsx-vapor keeps a text's lines, Solid's compiler turns a
- *   non-breaking space into a space and drops a CR)
- * - a character reference the parser doesn't read as they do: an `&` before
- *   a name or `#` that doesn't start a short reference ending in `;`, which
- *   it leaves as written (esbuild and oxc read `&#+65;` as `A`), and
- *   `&#X…;`, which they leave as written
- * - a name the parser doesn't decode (`&check;`, which HTML has and XHTML
- *   doesn't): Solid's and Vue's HTML templates read it in the split text,
- *   and the literal would keep it as written
- * - a reference to a control character other than a tab or a line feed, to a
- *   lone surrogate, which oxc leaves as written, or to U+2028, U+2029 or
- *   U+FEFF, which the literal would print as is: JavaScript reads the first
- *   two as line breaks where the source map doesn't
+ * - whitespace other than spaces and tabs in a text that spans lines: the
+ *   compilers trim it at a line's edge differently (TypeScript trims a
+ *   non-breaking space there, SWC and Babel don't)
+ * - an `&#` that doesn't start a short decimal or lowercase-hex reference
+ *   ending in `;`, which the parser reads differently (esbuild and oxc read
+ *   `&#+65;` as `A`; the parser decodes `&#X41;`, which they leave as
+ *   written)
+ * - with `html`, where the compiler reads JSX text as HTML: a name the parser
+ *   doesn't decode (`&check;`, which HTML has and XHTML doesn't) or an `&`
+ *   before a name without `;` (`&copy`), which HTML can decode and the
+ *   literal keeps as written, and whitespace other than spaces, tabs and line
+ *   breaks, which Solid's compiler turns into a space
+ * - a reference to, or a character that is, a control character other than a
+ *   tab or a line feed (a CR that isn't before a line feed, which Solid's
+ *   compiler drops, and `&#128;`, which an HTML template reads as `€`), a lone
+ *   surrogate, which oxc leaves as written, or U+2028, U+2029 or U+FEFF,
+ *   which the literal would print as is: JavaScript reads the first two as
+ *   line breaks where the source map doesn't
  *
  * @param {ESTreeJSX.JSXText} text
+ * @param {JsxTextReading} reading
  * @returns {string | null}
  */
-function only_text_value(text) {
+function only_text_value(text, reading) {
 	const { raw, value } = text;
-	if (!/^[ \t]|[ \t]$/.test(raw) || /[^\S \t]/.test(raw)) return null;
-	if (raw.replace(REFERENCE_OR_PLAIN_AMPERSAND, '').includes('&')) return null;
-	if (!names_all_decoded(raw, value)) return null;
+	const lead = LEADING_INLINE_WHITESPACE.exec(raw);
+	const trail = TRAILING_INLINE_WHITESPACE.exec(raw);
+	if (
+		!(lead && !is_newline_char(raw[lead[0].length])) &&
+		!(trail && !is_newline_char(raw[raw.length - trail[0].length - 1]))
+	) {
+		return null;
+	}
+	const lines = /[\n\r]/.test(raw);
+	if (/[^\S \t\n\r]/.test(raw) && (lines || reading.html)) return null;
+	if (/&#(?!\d{1,6};|x[\da-fA-F]{1,5};)/.test(raw)) return null;
+	if (reading.html && raw.replace(REFERENCE_OR_PLAIN_AMPERSAND, '').includes('&')) return null;
 	if (/[\0-\x08\v-\x1f\x7f-\x9f\u2028\u2029\ufeff]|\p{Cs}/u.test(value)) return null;
-	return value;
+	const offsets = value_offsets(raw, value, !!reading.html);
+	if (!offsets) return null;
+	if (!lines) return value;
+	return reading.lines === 'keep'
+		? kept_lines(raw, value, offsets)
+		: joined_lines(raw, value, offsets);
 }
 
 /**
- * Whether the parser decoded every named reference in `raw`, the text as
- * written, into `value`. Every `&` in it starts a short reference or stands
- * before no name or `#` (`REFERENCE_OR_PLAIN_AMPERSAND`), so the parser
- * decodes each numeric one, and a name either to its one character or not at
- * all. Walk both texts once, finding where each reference went in `value`: a
- * name left as written is still there, unless it's `&amp;`, which the parser
- * always decodes, to the one character that starts it.
+ * Where each position in `raw`, the text as written, is in `value`, the text
+ * the parser decoded, or `null`, with `html`, when the parser left a name as
+ * written. Every `&#` in `raw` starts a short reference, which the parser
+ * decodes, and each `&` before a name starts a reference that it decodes to
+ * its one character or leaves as written, or no reference at all. Walk both
+ * texts once, finding where each reference went in `value`: a name left as
+ * written is still there, unless it's `&amp;`, which the parser always
+ * decodes, to the one character that starts it. The parser reads a CRLF as a
+ * line feed.
  *
  * @param {string} raw
  * @param {string} value
- * @returns {boolean}
+ * @param {boolean} html
+ * @returns {number[] | null}
  */
-function names_all_decoded(raw, value) {
+function value_offsets(raw, value, html) {
+	/** @type {number[]} */
+	const offsets = [];
 	let at = 0;
-	let last = 0;
+	/** @param {number} end */
+	const plain = (end) => {
+		for (let i = offsets.length; i < end; i++) {
+			offsets.push(at);
+			if (raw[i] !== '\r' || raw[i + 1] !== '\n') at++;
+		}
+	};
 	for (const match of raw.matchAll(/&(?:([A-Za-z][A-Za-z\d]*)|#(\d+)|#x([\da-fA-F]+));/g)) {
-		at += match.index - last;
-		last = match.index + match[0].length;
+		plain(match.index);
+		offsets.push(at);
 		if (match[1] === undefined) {
 			const code = match[2] === undefined ? parseInt(match[3], 16) : Number(match[2]);
 			at += String.fromCodePoint(code).length;
 		} else if (match[1] !== 'amp' && value.startsWith(match[0], at)) {
-			return false;
+			if (html) return null;
+			at += match[0].length;
 		} else {
 			at += 1;
 		}
+		// A reference holds no whitespace, which is all that is sliced at
+		while (offsets.length < match.index + match[0].length) offsets.push(at);
 	}
-	return at + raw.length - last === value.length;
+	plain(raw.length);
+	offsets.push(at);
+	return at === value.length ? offsets : null;
+}
+
+/**
+ * A text that spans lines as JSX reads it (TypeScript's, esbuild's and oxc's
+ * transforms, and Solid's compiler): each line loses the spaces and tabs that
+ * touch a line break, a line with nothing else is left out, and the rest join
+ * with a space. That happens to the text as written, so a decoded space or
+ * line feed (`&#32;`, `&#10;`) stays.
+ *
+ * @param {string} raw
+ * @param {string} value
+ * @param {number[]} offsets `value_offsets`
+ * @returns {string}
+ */
+function joined_lines(raw, value, offsets) {
+	/** @type {string[]} */
+	const parts = [];
+	const line_break = /\r?\n/g;
+	let start = 0;
+	for (;;) {
+		const found = line_break.exec(raw);
+		let end = found ? found.index : raw.length;
+		let from = start;
+		if (start > 0) while (from < end && (raw[from] === ' ' || raw[from] === '\t')) from++;
+		if (found) while (end > from && (raw[end - 1] === ' ' || raw[end - 1] === '\t')) end--;
+		if (/[^ \t]/.test(raw.slice(from, end))) parts.push(value.slice(offsets[from], offsets[end]));
+		if (!found) return parts.join(' ');
+		start = line_break.lastIndex;
+	}
+}
+
+/**
+ * A text that spans lines as vue-jsx-vapor reads it: its lines as written,
+ * CRLFs too, without the whitespace at its start or end that holds a line
+ * break.
+ *
+ * @param {string} raw
+ * @param {string} value
+ * @param {number[]} offsets `value_offsets`
+ * @returns {string}
+ */
+function kept_lines(raw, value, offsets) {
+	const lead = /^[ \t\r\n]*/.exec(raw)?.[0] ?? '';
+	const trail = /[ \t\r\n]*$/.exec(raw)?.[0] ?? '';
+	let start = lead.includes('\n') ? lead.length : 0;
+	const end = trail.includes('\n') ? raw.length - trail.length : raw.length;
+	let out = '';
+	for (let crlf = raw.indexOf('\r\n', start); crlf !== -1 && crlf < end;) {
+		out += value.slice(offsets[start], offsets[crlf]) + '\r\n';
+		start = crlf + 2;
+		crlf = raw.indexOf('\r\n', start);
+	}
+	return out + value.slice(offsets[start], offsets[end]);
 }
 
 /**

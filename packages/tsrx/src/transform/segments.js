@@ -1268,11 +1268,13 @@ export function convert_source_map_to_mappings(
 	 * the container, where TypeScript reports a type error on the literal. As
 	 * for JSX text, a text whose first character after its whitespace is `@`
 	 * is an in-progress directive: map it from the `@` to where the literal
-	 * prints it, for completions. The literal escapes quotes and backslashes and
-	 * prints a character reference as its character, so that mapping stops
-	 * before the first of them. The text's start can map to more than one
-	 * place, such as the `return` a template body adds before its output, so
-	 * the container is the one there that prints the literal of the text.
+	 * prints it, for completions. The literal escapes quotes and backslashes,
+	 * prints a character reference as its character, and joins a text's lines
+	 * or escapes its line breaks, so that mapping stops before the first of
+	 * them, and before the spaces and tabs a join trims at a line break. The
+	 * text's start can map to more than one place, such as the `return` a
+	 * template body adds before its output, so the container is the one there
+	 * that prints the literal of the text.
 	 * @param {ESTreeJSX.JSXExpressionContainer & AST.NodeWithLocation} container
 	 */
 	function push_text_literal_mappings(container) {
@@ -1296,7 +1298,9 @@ export function convert_source_map_to_mappings(
 		const text = source.slice(container.start, container.end);
 		const at = text.length - text.trimStart().length;
 		if (text[at] !== '@') return;
-		const verbatim = text.slice(at).split(/[\\'"&]/)[0];
+		const lines = text.slice(at).split(/\r?\n/);
+		let verbatim = lines[0].split(/[\\'"&]/)[0];
+		if (lines.length > 1 && verbatim === lines[0]) verbatim = verbatim.replace(/[ \t]+$/, '');
 		const offset = generated_code.indexOf(verbatim, start);
 		if (offset === -1 || offset + verbatim.length > end) return;
 		mappings.push({

@@ -139,6 +139,9 @@ const solid_platform = {
 		// `<script>` element's text there isn't decoded; `innerHTML` renders the
 		// body as written on the client and the server.
 		scriptBody: 'innerHTML',
+		// Solid's compiler writes JSX text into its HTML template, and decodes
+		// a component's as HTML. It joins a text's lines as JSX does.
+		textReading: { html: true },
 	},
 	validation: {
 		requireUseServerForAwait: true,
@@ -2917,6 +2920,7 @@ function create_element_children(children, transform_context) {
 			visible_children.map((child) => to_jsx_child(child, transform_context)).filter(Boolean)
 		),
 		true,
+		transform_context.platform.jsx.textReading,
 	);
 }
 

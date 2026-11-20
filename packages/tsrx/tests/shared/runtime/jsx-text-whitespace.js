@@ -16,15 +16,17 @@ import {
  * Shared runtime suite for JSX whitespace and characters in template text
  * across the JSX targets: each case renders what the same TSX renders.
  *
- * @param {{ nbsp: 'kept' | 'trimmed', anchors?: 'empty comments', children?: 'slots', references?: 'html' }} options -
+ * @param {{ nbsp: 'kept' | 'trimmed', anchors?: 'empty comments', children?: 'slots', references?: 'html', lines?: 'kept' }} options -
  *   `nbsp` is what the target's JSX compiler does with a non-breaking space at
  *   the edge of a line, `anchors` names a marker the target's runtime leaves
  *   in the DOM, which isn't part of what these cases compare, `children` is
  *   `'slots'` where a component reads its children as slots, never as a
- *   string, and `references` is `'html'` where the target's compiler writes
- *   JSX text into an HTML template, which reads HTML's named references
+ *   string, `references` is `'html'` where the target's compiler writes JSX
+ *   text into an HTML template, which reads HTML's named references, and
+ *   `lines` is `'kept'` where the target's compiler keeps the lines of a text
+ *   that spans lines, which JSX joins with a space
  */
-export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors, children, references }) {
+export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors, children, references, lines }) {
 	async function settle() {
 		const flush = globalThis.flush;
 		if (flush) {
@@ -100,8 +102,30 @@ export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors, children, refe
 			).toBe(' a ');
 		});
 
-		// The parser doesn't decode `&check;`, so the text keeps the split, and
-		// each target reads it as it reads such a text anywhere else
+		it('gives a `<textarea>` its text over lines as one child, with its lines read as the target reads them', async () => {
+			await globalThis.render(JsxTextOnlyApp);
+			await settle();
+			expect(
+				/** @type {HTMLTextAreaElement | null} */ (
+					globalThis.container.querySelector('.only-text-textarea-lines')
+				)?.value,
+			).toBe(lines === 'kept' ? ' a\n\t\t\tb ' : ' a b ');
+		});
+
+		it('gives a `<textarea>` an `&` before a name as one child', async () => {
+			await globalThis.render(JsxTextOnlyApp);
+			await settle();
+			expect(
+				/** @type {HTMLTextAreaElement | null} */ (
+					globalThis.container.querySelector('.only-text-textarea-ampersand')
+				)?.value,
+			).toBe(' R&D ');
+		});
+
+		// The parser doesn't decode `&check;`. TypeScript, esbuild and oxc leave
+		// it as written too, and the text prints as one literal; Solid's and
+		// Vue's compilers read it as HTML, so it keeps the split there, and each
+		// target reads it as it reads such a text anywhere else
 		it("reads a name the parser doesn't decode as the target's compiler does", async () => {
 			await globalThis.render(JsxTextOnlyApp);
 			await settle();
@@ -124,6 +148,18 @@ export function runJsxTextWhitespaceRuntimeTests({ nbsp, anchors, children, refe
 				await globalThis.render(JsxTextOnlyApp);
 				await settle();
 				expect(globalThis.container.querySelector('.only-text-component')?.textContent).toBe(' A ');
+			},
+		);
+
+		it.skipIf(children === 'slots')(
+			'gives a component its text over lines as one string',
+			async () => {
+				await globalThis.render(JsxTextOnlyApp);
+				await settle();
+				expect(
+					globalThis.container.querySelector('.only-text-component-lines .only-text-component')
+						?.textContent,
+				).toBe(' A B ');
 			},
 		);
 	});
