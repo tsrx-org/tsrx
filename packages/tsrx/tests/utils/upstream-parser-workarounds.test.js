@@ -35,6 +35,16 @@ function parse(source) {
 }
 
 /**
+ * The end of the word at `pos` in `source`: TypeScript reports an error of a
+ * modifier on all of it.
+ * @param {string} source
+ * @param {number} pos
+ */
+function keywordEnd(source, pos) {
+	return pos + (/^[\w$]+/.exec(source.slice(pos))?.[0].length ?? 1);
+}
+
+/**
  * @param {AST.Expression | AST.PrivateIdentifier} key
  */
 function keyName(key) {
@@ -621,7 +631,9 @@ describe("a repeated modifier's error (sveltejs/acorn-typescript#129)", () => {
 			const [source, modifier, error] = cases[index];
 			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
 			const pos = source.indexOf(modifier);
-			expect(outcome.errors, source).toEqual([{ code: code_of(error), pos, end: pos + 1 }]);
+			expect(outcome.errors, source).toEqual([
+				{ code: code_of(error), pos, end: keywordEnd(source, pos) },
+			]);
 		}
 		const public_protected = outcomes[1];
 		if (!public_protected.ok) throw new Error('public protected threw');
@@ -677,7 +689,105 @@ describe("a modifier order or compatibility error's position (sveltejs/acorn-typ
 			const [source, modifier, error] = cases[index];
 			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
 			const pos = source.indexOf(modifier);
-			expect(outcome.errors, source).toEqual([{ code: code_of(error), pos, end: pos + 1 }]);
+			expect(outcome.errors, source).toEqual([
+				{ code: code_of(error), pos, end: keywordEnd(source, pos) },
+			]);
+		}
+	});
+});
+
+describe('modifiers that acorn-typescript checks unlike TypeScript (sveltejs/acorn-typescript, not reported yet)', () => {
+	it('allows `override` before `accessor`, as TypeScript does', async () => {
+		// acorn-typescript reported TS1243 `'accessor' modifier cannot be used with
+		// 'override' modifier.`, which TypeScript has no such rule for.
+		const sources = [
+			'class B { x = 1; }\nclass A extends B { override accessor x = 1; }',
+			'class B { x = 1; }\nclass A extends B { public override accessor x: number; }',
+			'class B { static x = 1; }\nclass A extends B { static override accessor x = 1; }',
+			'abstract class B { abstract x: number; }\nabstract class A extends B { abstract override accessor x: number; }',
+			'class B { x = 1; }\nconst C = class extends B { override accessor x = 1; };',
+		];
+		const outcomes = await parse_in_worker_with_ast(in_every_mode(sources));
+		for (const [index, outcome] of outcomes.entries()) {
+			const source = sources[Math.floor(index / PARSE_MODES.length)];
+			const { ast, errors } = parsed(outcome, source);
+			expect(errors ?? [], source).toEqual([]);
+			expect(JSON.stringify(ast), source).toContain('"accessor":true');
+		}
+	});
+
+	it("reads `'constructor'?()` as a method, as TypeScript does", async () => {
+		// acorn reads a constructor, which `abstract` would be TS1242 on.
+		const sources = ["abstract class A { abstract 'constructor'?(): void; }"];
+		const outcomes = await parse_in_worker_with_ast(in_every_mode(sources));
+		for (const outcome of outcomes) {
+			const { errors } = parsed(outcome, sources[0]);
+			expect(errors ?? [], sources[0]).toEqual([]);
+		}
+		// An `async` one keeps its TS1089, as on main, which a collecting parse
+		// records and reads past.
+		const source = "class A { async 'constructor'?() {} }";
+		const { errors } = parse(source);
+		expect(errors.map((error) => [error.code, error.pos])).toEqual([
+			[TS_ERRORS.MODIFIER_ON_CONSTRUCTOR.code, source.indexOf('async')],
+		]);
+	});
+
+	it("reports a constructor name's escape before its modifiers' error", async () => {
+		// TS1260 is a syntax error, which TypeScript reports alone.
+		const sources = [
+			'class A { accessor \\u0063onstructor() {} }',
+			'class A { static accessor \\u0063onstructor() {} }',
+		];
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+		expect(outcomes).toEqual(
+			sources.flatMap((source) =>
+				thrown_in_every_mode(TS_ERRORS.KEYWORD_ESCAPE, source.indexOf('\\u0063')),
+			),
+		);
+	});
+
+	it("reports `declare` with `override`, and a repeated modifier, in TypeScript's words", () => {
+		// acorn-typescript words `declare` with `override` one way, as TS1243, in
+		// either order, and a repeated modifier `Duplicate modifier: 'readonly'.`
+		/** @type {Array<[source: string, at: string, code: string, message: string]>} */
+		const cases = [
+			[
+				'class B { x = 1; }\nclass A extends B { declare override x: number; }',
+				'override x',
+				'TS1243',
+				"'override' modifier cannot be used with 'declare' modifier.",
+			],
+			[
+				'class B { x = 1; }\nclass A extends B { override declare x: number; }',
+				'declare x',
+				'TS1040',
+				"'override' modifier cannot be used in an ambient context.",
+			],
+			[
+				'class A { readonly readonly x = 1; }',
+				'readonly x',
+				'TS1030',
+				"'readonly' modifier already seen.",
+			],
+			[
+				'class A { constructor(readonly readonly x: number) {} }',
+				'readonly x',
+				'TS1030',
+				"'readonly' modifier already seen.",
+			],
+			['type T<in in U> = U;', 'in U', 'TS1030', "'in' modifier already seen."],
+		];
+		for (const [source, at, code, message] of cases) {
+			const pos = source.indexOf(at);
+			const { errors } = parse(source);
+			expect(
+				errors.map((error) => ({ code: error.code, pos: error.pos, message: error.message })),
+				source,
+			).toEqual([{ code, pos, message }]);
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code, pos, message: expect.stringContaining(message) }),
+			);
 		}
 	});
 });
@@ -2553,7 +2663,11 @@ describe('`abstract`, `module`, `namespace` or `type` after `export` that starts
 			expect(strict, source).toEqual(thrown(error, pos));
 			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
 			// The declaration, without `abstract`, which the formatter refuses.
-			expect(collect.errors?.[0], source).toEqual({ code: error.code, pos, end: pos + 1 });
+			expect(collect.errors?.[0], source).toEqual({
+				code: error.code,
+				pos,
+				end: keywordEnd(source, pos),
+			});
 			const [statement] = collect.ast.body;
 			assert_type(statement, 'ExportNamedDeclaration');
 			expect(statement.declaration?.type, source).toBe(cases[index][1]);
@@ -2829,7 +2943,7 @@ describe('`abstract` before a declaration other than a class (sveltejs/acorn-typ
 			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
 			// The declaration, without `abstract`, which the formatter refuses.
 			expect(collect.errors, source).toEqual([
-				{ code: TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED.code, pos, end: pos + 1 },
+				{ code: TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED.code, pos, end: keywordEnd(source, pos) },
 			]);
 			const [statement] = collect.ast.body;
 			expect(declarationOf(statement)?.type, source).toBe(cases[index][1]);
@@ -3042,7 +3156,9 @@ describe('a global augmentation after `export` (sveltejs/acorn-typescript#146)',
 			const pos = source.indexOf('export');
 			expect(strict, source).toEqual(thrown(error, pos));
 			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
-			expect(collect.errors, source).toEqual([{ code: error.code, pos, end: pos + 1 }]);
+			expect(collect.errors, source).toEqual([
+				{ code: error.code, pos, end: keywordEnd(source, pos) },
+			]);
 			const [exported] = moduleStatements(collect.ast);
 			assert_type(exported, 'ExportNamedDeclaration');
 			const declare = cases[index][1];
@@ -3565,7 +3681,11 @@ class A {}`,
 			const [, pos, error, type] = cases[index];
 			expect(strict, source).toEqual(thrown(error, pos));
 			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
-			expect(collect.errors?.[0], source).toEqual({ code: code_of(error), pos, end: pos + 1 });
+			expect(collect.errors?.[0], source).toEqual({
+				code: code_of(error),
+				pos,
+				end: keywordEnd(source, pos),
+			});
 			expect(collect.ast.body[0].type, source).toBe(type);
 		}
 	});

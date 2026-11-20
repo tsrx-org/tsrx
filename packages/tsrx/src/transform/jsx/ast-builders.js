@@ -428,6 +428,12 @@ export function summarize_switch_case(switch_case) {
 	const own_body = [];
 	let has_terminator = false;
 	for (const child of flatten_switch_consequent(switch_case.consequent || [])) {
+		// A `return` the parser reported (TSRX2009) stays a statement, so the
+		// code after it is still in a collecting compile's output.
+		if (child.type === 'ReturnStatement' && child.metadata?.invalid_tsrx_template_return) {
+			own_body.push(child);
+			continue;
+		}
 		if (child.type === 'ReturnStatement' && child.argument == null) {
 			has_terminator = true;
 			break;

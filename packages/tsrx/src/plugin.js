@@ -1219,6 +1219,29 @@ const METHOD_MODIFIERS = new Set([
 const MODIFIER_ERROR_CODES = new Set(['TS1028', 'TS1029', 'TS1030', 'TS1243']);
 
 /**
+ * The codes of the errors TypeScript's checker reports on a modifier, over all
+ * of it (`grammarErrorOnNode`, `grammarErrorOnFirstToken`), where the parser
+ * finds them at its start (see `#recordCheckerLevelError`).
+ */
+const MODIFIER_KEYWORD_ERROR_CODES = new Set([
+	...MODIFIER_ERROR_CODES,
+	'TS1024',
+	'TS1031',
+	'TS1038',
+	'TS1040',
+	'TS1042',
+	'TS1044',
+	'TS1079',
+	'TS1089',
+	'TS1184',
+	'TS1242',
+	'TS1275',
+	'TS1491',
+	'TS1495',
+	'TS2668',
+]);
+
+/**
  * The codes of the errors of a method's modifiers that acorn-typescript
  * raises at the method's start, once it has read them: `abstract` outside an
  * abstract class (TS1244).
@@ -1241,6 +1264,21 @@ const MEMBER_MODIFIERS_WITH_ASYNC = new Set([
 
 /** acorn's error for an `async` constructor (see `parseClassMethod`). */
 const ASYNC_CONSTRUCTOR = "Constructor can't be an async method";
+
+/**
+ * acorn-typescript's error for an `abstract` method with a body (TS1245), which
+ * TypeScript reports on a constructor as TS1242 instead (see
+ * `parseClassMethod`).
+ */
+const regex_abstract_implementation =
+	/^Method '.+' cannot have an implementation because it is marked abstract\.$/s;
+
+/**
+ * acorn-typescript's errors for two modifiers that TypeScript's checker words
+ * another way or allows (see `raise`).
+ */
+const ACCESSOR_WITH_OVERRIDE = TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH('accessor', 'override');
+const DECLARE_WITH_OVERRIDE = TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH('declare', 'override');
 
 /**
  * A word, after any spaces and comments. Each space, and each comment to its
@@ -2255,6 +2293,9 @@ export function TSRXPlugin(config) {
 			// Where the name of the `async` constructor being read starts, where
 			// acorn raises its error for it (see `parseClassMethod`).
 			#asyncConstructorAt = -1;
+			// Where the `abstract` constructor being read starts, where
+			// acorn-typescript raises its error for its body (see `parseClassMethod`).
+			#abstractConstructorAt = -1;
 			// The private names of a class's methods without a body, by the class's
 			// private-name scope (see `exitClassBody`).
 			/** @type {WeakMap<object, string[]>} */
@@ -4870,8 +4911,9 @@ export function TSRXPlugin(config) {
 					if (/^break\b/.test(raw)) {
 						this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT);
 					}
-					if (/^return\b/.test(raw)) {
-						this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT);
+					const direct_return = /^return\b/.test(raw);
+					if (direct_return) {
+						this.#reportSwitchCaseReturn(this.start + String(this.value ?? '').length - raw.length);
 					}
 					this.#filterTemplateScriptContexts();
 					this.pos = this.start;
@@ -4884,7 +4926,7 @@ export function TSRXPlugin(config) {
 					try {
 						this.#suppressTemplateRawTextToken = true;
 						this.next();
-						consequent.push(this.parseStatement(null));
+						consequent.push(this.#markSwitchCaseReturn(this.parseStatement(null), direct_return));
 					} finally {
 						this.#parsingJSXSwitchCaseScriptStatementDepth--;
 					}
@@ -4948,8 +4990,9 @@ export function TSRXPlugin(config) {
 				if (label === 'break') {
 					this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT);
 				}
-				if (label === 'return') {
-					this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT);
+				const direct_return = label === 'return';
+				if (direct_return) {
+					this.#reportSwitchCaseReturn(this.start);
 				}
 				if (label === 'continue' || label === 'throw') {
 					consequent.push(this.parseStatement(null));
@@ -4978,7 +5021,7 @@ export function TSRXPlugin(config) {
 				}
 				this.#parsingJSXSwitchCaseScriptStatementDepth++;
 				try {
-					consequent.push(this.parseStatement(null));
+					consequent.push(this.#markSwitchCaseReturn(this.parseStatement(null), direct_return));
 				} finally {
 					this.#parsingJSXSwitchCaseScriptStatementDepth--;
 				}
@@ -5593,6 +5636,35 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * A `return` right in an `@switch` case body (TSRX2009). A collecting or
+			 * loose parse records it and reads the statement on, as it does a
+			 * `return` in an `@try` body, so the editor keeps the rest of the file.
+			 * @param {number} start the `return` keyword's offset
+			 */
+			#reportSwitchCaseReturn(start) {
+				this.#report_recoverable_error_range(
+					start,
+					start + 'return'.length,
+					TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				);
+			}
+
+			/**
+			 * Marks a `return` `#reportSwitchCaseReturn` reported, so the template
+			 * return checks (here and in the transform) don't report it again.
+			 * @template {AST.Node} T
+			 * @param {T} statement
+			 * @param {boolean} reported
+			 * @returns {T}
+			 */
+			#markSwitchCaseReturn(statement, reported) {
+				if (reported && statement.type === 'ReturnStatement') {
+					statement.metadata = { ...statement.metadata, invalid_tsrx_template_return: true };
+				}
+				return statement;
+			}
+
+			/**
 			 * @param {number} position
 			 * @param {number} end
 			 * @param {ReportedError} message
@@ -5818,7 +5890,12 @@ export function TSRXPlugin(config) {
 					inside_loop = true;
 				}
 
-				if (!inside_nested_function && !inside_loop && node.type === 'ReturnStatement') {
+				if (
+					!inside_nested_function &&
+					!inside_loop &&
+					node.type === 'ReturnStatement' &&
+					!node.metadata?.invalid_tsrx_template_return
+				) {
 					node.metadata = {
 						...node.metadata,
 						invalid_tsrx_template_return: true,
@@ -5867,6 +5944,13 @@ export function TSRXPlugin(config) {
 				if (position === this.#asyncConstructorAt && message === ASYNC_CONSTRUCTOR) {
 					return /** @type {never} */ (undefined);
 				}
+				if (
+					position === this.#abstractConstructorAt &&
+					typeof message === 'string' &&
+					regex_abstract_implementation.test(message)
+				) {
+					return /** @type {never} */ (undefined);
+				}
 				let kind = typeof message === 'function' ? undefined : error_kind(message);
 				if (typeof message === 'function') {
 					// UPSTREAM(sveltejs/acorn-typescript#123): remove once a release includes
@@ -5888,6 +5972,13 @@ export function TSRXPlugin(config) {
 					// token after it, collected or thrown; the modifier is the token just
 					// read.
 					position = this.lastTokStart;
+					if (kind === UPSTREAM_ERRORS.DUPLICATE_MODIFIER && typeof message === 'string') {
+						// UPSTREAM(sveltejs/acorn-typescript, not reported yet): remove once a
+						// release words it as TypeScript's checker does.
+						message = TS_ERRORS.MODIFIER_ALREADY_SEEN(
+							/** @type {RegExpExecArray} */ (/'(\w+)'/.exec(message))[1],
+						);
+					}
 				} else if (
 					typeof message === 'string' &&
 					(kind === TS_ERRORS.MODIFIER_MUST_PRECEDE ||
@@ -5897,6 +5988,30 @@ export function TSRXPlugin(config) {
 					// the fix. `tsParseModifiers` passes the modifier's column as the
 					// position, collected or thrown; the modifier is the token just read.
 					position = this.lastTokStart;
+					// UPSTREAM(sveltejs/acorn-typescript, not reported yet): remove once a
+					// release checks these two as TypeScript's checker does.
+					if (message === ACCESSOR_WITH_OVERRIDE.message) {
+						// TypeScript allows `override accessor x`. Its error for `accessor
+						// override x` (TS1029) is `#memberModifierError`'s.
+						return /** @type {never} */ (undefined);
+					}
+					if (message === DECLARE_WITH_OVERRIDE.message) {
+						// `declare override x` is TS1243 at `override`, in the other order,
+						// and `override declare x` TS1040 at `declare`.
+						message =
+							this.input.slice(this.lastTokStart, this.lastTokEnd) === 'override'
+								? TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH('override', 'declare')
+								: TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT('override');
+					}
+				} else if (
+					kind === UPSTREAM_ERRORS.ABSTRACT_METHOD_IN_CLASS &&
+					!this.#memberDecorated &&
+					this.#atConstructorName(position)
+				) {
+					// TypeScript reports `abstract` on a constructor as TS1242 before it
+					// checks the class (see `#memberModifierError`), and the decorators
+					// of a decorated one (TS1206) first.
+					return /** @type {never} */ (undefined);
 				} else if (kind === TS_ERRORS.PARAMETER_PROPERTY_OUTSIDE_CONSTRUCTOR) {
 					// UPSTREAM(sveltejs/acorn-typescript#136): remove once a release includes
 					// the fix. `parseAssignableListItem` raises it at the first modifier's
@@ -6238,7 +6353,9 @@ export function TSRXPlugin(config) {
 			 * both when converting it and when validating it. An error recorded while
 			 * acorn-typescript tries a parse that it then abandons is dropped with the
 			 * rest of that parse's effects. While checker errors are held, it goes in
-			 * the held ones (see `#holdingErrors`).
+			 * the held ones (see `#holdingErrors`). An error at a modifier that ends
+			 * after the modifier's first character ends at its end, as TypeScript
+			 * reports it (see `MODIFIER_KEYWORD_ERROR_CODES`).
 			 * @param {number} start
 			 * @param {number} end
 			 * @param {ReportedError} error
@@ -6246,6 +6363,9 @@ export function TSRXPlugin(config) {
 			 *   `raise`, as a `SyntaxError` (see `#releaseErrors`)
 			 */
 			#recordCheckerLevelError(start, end, error, raised = false) {
+				if (end === start + 1 && MODIFIER_KEYWORD_ERROR_CODES.has(error.code ?? '')) {
+					end = word_end(this.input, start);
+				}
 				const held = this.#hold.held;
 				const errors = held ?? this.#errors;
 				if (errors) {
@@ -8228,21 +8348,51 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * TypeScript's error for the modifiers of an `accessor` property that
-			 * acorn-typescript reports nothing for: `accessor` before `static`,
-			 * `override`, `abstract` or `readonly` (TS1029), or with `readonly` or
-			 * `declare` (TS1243). The output keeps the source's order (see
-			 * `member_modifiers` in `transform/jsx/helpers.js`), which esbuild and
+			 * Whether the token, after a class member's modifiers, starts the name of
+			 * a constructor that acorn reads: `constructor` or `'constructor'` before
+			 * its parameters, after no `static`, and after an `async` on its line.
+			 * @param {number} member_start
+			 * @returns {boolean}
+			 */
+			#atConstructorName(member_start) {
+				regex_word_after_comments.lastIndex = member_start;
+				for (;;) {
+					const match = regex_word_after_comments.exec(this.input);
+					if (!match || regex_word_after_comments.lastIndex > this.start) break;
+					if (match[1] === 'static') return false;
+				}
+				return this.tsLookAhead(() => {
+					if (this.isContextual('async')) {
+						this.next();
+						if (this.hasPrecedingLineBreak()) return false;
+					}
+					const named =
+						this.type === tt.string
+							? this.value === 'constructor'
+							: this.isContextual('constructor');
+					if (!named) return false;
+					this.next();
+					return this.type === tt.parenL || this.tsMatchLeftRelational();
+				});
+			}
+
+			/**
+			 * TypeScript's error for the modifiers of a property that acorn-typescript
+			 * reports nothing for (see `#memberModifierError`), such as `accessor`
+			 * before `static`, `override`, `abstract` or `readonly` (TS1029), or with
+			 * `readonly` or `declare` (TS1243). The output keeps the source's order
+			 * (see `member_modifiers` in `transform/jsx/helpers.js`), which esbuild and
 			 * Babel reject there, where esrap's order compiled: a strict parse throws
 			 * it at the source instead.
 			 *
 			 * It's reported before the field is read, as acorn-typescript reports the
 			 * modifiers' errors it checks. So a syntax error in the initializer comes
 			 * after it, where TypeScript reports only that one, and acorn-typescript's
-			 * error for a private name (TS18010, TS18019) or an ambient initializer
-			 * (TS1039) is also recorded, where TypeScript reports only the first.
-			 * Holding those until the field is read reorders the errors of the code
-			 * in the initializer instead, and some of those can't be held.
+			 * error for a private name (TS18010, TS18019), an ambient initializer
+			 * (TS1039) or an abstract one (TS1267) is also recorded, where TypeScript
+			 * reports only the first. Holding those until the field is read reorders
+			 * the errors of the code in the initializer instead, and some of those
+			 * can't be held.
 			 *
 			 * On a decorated `declare` or `abstract` property, TypeScript reports the
 			 * decorators first (TS1206) unless `experimentalDecorators` is on, which
@@ -8251,31 +8401,39 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['parseClassField']}
 			 */
 			parseClassField(field) {
-				const member = /** @type {AST.PropertyDefinition} */ (field);
-				if (member.accessor && !members_with_modifier_errors.has(field)) {
-					const found = this.#accessorModifierError(member);
+				if (!members_with_modifier_errors.has(field)) {
+					const member = /** @type {AST.PropertyDefinition} */ (field);
+					const found = this.#memberModifierError(member, 'property');
 					if (found) this.#raiseCheckerError(found.start, found.error);
 				}
 				return super.parseClassField(field);
 			}
 
 			/**
-			 * The first error TypeScript's checker reports for the modifiers of an
-			 * `accessor` property (`checkGrammarModifiers`), the words before its
-			 * name, or `null` when it reports none, or one of a kind this leaves to
-			 * acorn-typescript (TS1253 for `abstract` outside an abstract class,
-			 * TS18010 and TS18019 for a private name).
-			 * @param {AST.PropertyDefinition} property
+			 * The first error TypeScript's checker reports for the modifiers of a
+			 * class member (`checkGrammarModifiers`), the words before its name, for a
+			 * member whose modifiers acorn-typescript reported no error for as it read
+			 * them (see `members_with_modifier_errors`), or `null`. acorn-typescript
+			 * checks some pairs of modifiers, but not an access modifier with
+			 * `abstract` (TS1029, or TS1243 for `private`), most pairs with `accessor`,
+			 * `accessor` on a method (TS1275), or `abstract` on a constructor (TS1242).
+			 *
+			 * `null` also where TypeScript reports none, or one of a kind this leaves
+			 * to acorn-typescript (TS1244 and TS1253 for `abstract` outside an
+			 * abstract class, TS18010 and TS18019 for a private name), or where a
+			 * modifier this doesn't check comes first, such as `async`.
+			 * @param {AST.PropertyDefinition | AST.MethodDefinition} member
+			 * @param {'property' | 'method' | 'constructor'} kind
 			 * @returns {{ start: number, error: Diagnostic } | null}
 			 */
-			#accessorModifierError(property) {
-				if (!this.inAbstractClass && property.abstract) return null;
+			#memberModifierError(member, kind) {
+				if (kind !== 'constructor' && !this.inAbstractClass && member.abstract) return null;
 				// TS18010 and TS18019 for an access modifier, `declare` or `abstract`
-				const private_name = property.key.type === 'PrivateIdentifier';
+				const private_name = member.key.type === 'PrivateIdentifier';
 				/** @type {Set<string>} */
 				const flags = new Set();
-				const end = /** @type {number} */ (property.key.start);
-				regex_word_after_comments.lastIndex = /** @type {number} */ (property.start);
+				const end = /** @type {number} */ (member.key.start);
+				regex_word_after_comments.lastIndex = /** @type {number} */ (member.start);
 				for (;;) {
 					const match = regex_word_after_comments.exec(this.input);
 					if (!match || regex_word_after_comments.lastIndex > end) return null;
@@ -8318,6 +8476,7 @@ export function TSRXPlugin(config) {
 							for (const other of ['readonly', 'declare']) {
 								if (flags.has(other)) return together(value, other);
 							}
+							if (kind !== 'property') return at(TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED);
 							break;
 						case 'readonly':
 							if (flags.has('accessor')) return together(value, 'accessor');
@@ -8336,6 +8495,7 @@ export function TSRXPlugin(config) {
 							if (flags.has('accessor')) return together(value, 'accessor');
 							break;
 						case 'abstract':
+							if (kind === 'constructor') return at(TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED);
 							if (flags.has('static')) return together('static', value);
 							if (flags.has('private')) return together('private', value);
 							if (flags.has('override')) return precede('override');
@@ -8386,21 +8546,61 @@ export function TSRXPlugin(config) {
 					return result;
 				}
 				const member = /** @type {AST.MethodDefinition} */ (method);
-				// TS1368 for a generator constructor comes first.
+				// TypeScript reads `'constructor'?()` as a method (and `constructor?()`
+				// as a syntax error), where acorn reads a constructor, and raises its
+				// error for an `async` one (see `#asyncConstructorError`).
+				const acorn_constructor = member.kind === 'constructor';
+				const constructor = acorn_constructor && !member.optional;
+				// TS1368 for a generator constructor comes first, and TS1260 for
+				// `constructor` written with an escape, `static` or not (see
+				// `parseClassElement` and `parseMethod`).
+				const checked =
+					!(acorn_constructor && isGenerator) &&
+					!(
+						member.key.type === 'Identifier' &&
+						member.key.name === 'constructor' &&
+						this.input.slice(
+							/** @type {number} */ (member.key.start),
+							/** @type {number} */ (member.key.end),
+						) !== 'constructor'
+					);
+				// TypeScript reports a constructor's decorators first (TS1206). A
+				// decorated method without a body is TS1249 first, which the parser
+				// doesn't report: it gets the modifiers' error instead. acorn-typescript
+				// reads a property with an `async` modifier as a method, which then
+				// fails at the token after the name.
+				const method_read =
+					checked &&
+					!members_with_modifier_errors.has(method) &&
+					!(constructor && this.#memberDecorated) &&
+					(this.type === tt.parenL || this.tsMatchLeftRelational());
 				const found =
-					isAsync && !isGenerator && member.kind === 'constructor'
-						? this.#asyncConstructorError(member)
-						: null;
-				if (!found) {
-					return super.parseClassMethod(method, isGenerator, isAsync, allowsDirectSuper);
+					(method_read
+						? this.#memberModifierError(member, constructor ? 'constructor' : 'method')
+						: null) ??
+					(checked && acorn_constructor && isAsync ? this.#asyncConstructorError(member) : null);
+				if (found) {
+					// TypeScript reports no more of its modifiers' errors (see
+					// `parseMethod`).
+					members_with_modifier_errors.add(method);
+					this.#raiseCheckerError(found.start, found.error);
 				}
-				this.#raiseCheckerError(found.start, found.error);
-				const outer = this.#asyncConstructorAt;
-				this.#asyncConstructorAt = /** @type {number} */ (member.key.start);
+				// Where TypeScript reports another error first, acorn's error for an
+				// `async` constructor goes, and acorn-typescript's for the body of an
+				// `abstract` one, which TypeScript reports as TS1242 (see `raise`).
+				const outer_async = this.#asyncConstructorAt;
+				const outer_abstract = this.#abstractConstructorAt;
+				if (found && acorn_constructor && isAsync) {
+					this.#asyncConstructorAt = /** @type {number} */ (member.key.start);
+				}
+				if (constructor && member.abstract) {
+					this.#abstractConstructorAt = /** @type {number} */ (member.start);
+				}
 				try {
 					return super.parseClassMethod(method, isGenerator, isAsync, allowsDirectSuper);
 				} finally {
-					this.#asyncConstructorAt = outer;
+					this.#asyncConstructorAt = outer_async;
+					this.#abstractConstructorAt = outer_abstract;
 				}
 			}
 
@@ -17125,9 +17325,11 @@ export function TSRXPlugin(config) {
 				}
 				// Written with an escape, TS1260 is a syntax error first (see
 				// `parseClassElement`).
+				// After an error of the modifiers before it, TypeScript reports none.
 				const key = /** @type {AST.Identifier} */ (method?.key);
 				if (
 					static_constructor &&
+					!members_with_modifier_errors.has(method) &&
 					this.input.slice(/** @type {number} */ (key.start), key.end) === 'constructor'
 				) {
 					const static_start = this.input.lastIndexOf(
