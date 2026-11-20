@@ -937,6 +937,23 @@ describe('scoped style analysis', () => {
 				[':global.w, :root .x { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
 				[':global.w, :root:has(.x) { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
 				[':global.w, :is(.a) { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
+				// Without its hashes, a :not() in a :not() matches more.
+				[
+					':global.w, :root:not(:root:not(.x)) { color: red; }',
+					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
+					0,
+				],
+				// :is() adds the specificity of the hash; the & of :global(.y) has no hash.
+				[
+					'.p { :global.w, &:is(.p) { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
+					0,
+				],
+				[
+					':global(.y) { :global.w, &:where(.p) { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
+					1,
+				],
 				// A nested keyframes name would get the hash.
 				[
 					':global.w, :root { color: red; @keyframes k { from { opacity: 0; } } }',
@@ -1025,6 +1042,10 @@ describe('scoped style analysis', () => {
 				// A :not() argument without the hash only makes it match fewer elements.
 				'.p { :global.x, &:not(.z) { color: red; } }',
 				':global.w, :root:not(.x) { color: red; }',
+				// The & already has the hash, and :where() adds no specificity.
+				'.p { :global.w, &:where(.p) { color: red; } }',
+				// At-rules a style rule can't hold, in a rule that styles nothing.
+				'.card, :global.w { @media print { @font-face { font-family: x; } } }',
 				// A lone :global in a rule stands for that rule (`&`).
 				'.p { :global.w,:global { color: red; } }',
 				'.p { :global, :global.w { .k { color: red; } } }',
@@ -1237,6 +1258,11 @@ describe('scoped style analysis', () => {
 					'& > .w { color: red; }',
 				],
 				[':global + .w { color: red; }', '& + .w { color: red; }', '& + .w { color: red; }'],
+				[
+					':global { :global :global > .w { color: red; } }',
+					'/* :global {*/ & > .w { color: red; } /*}*/',
+					'& > .w { color: red; }',
+				],
 				// A comment in the dropped selector doesn't end the one around it.
 				[
 					':global /* c */ { .w { color: red; } }',
@@ -1263,6 +1289,16 @@ describe('scoped style analysis', () => {
 					'/* :global.w {*/ @font-face { font-family: x; } /*}*/',
 					'@font-face { font-family: x; }',
 				],
+				[
+					'.card, :global.w { @media print { @font-face { font-family: x; } } }',
+					'/* .card, :global.w {*/ @media print { @font-face { font-family: x; } } /*}*/',
+					'@media print { @font-face { font-family: x; } }',
+				],
+				[
+					':global[data-x="*/"] { @font-face { font-family: x; } }',
+					'/* :global[data-x="*\\/"] {*/ @font-face { font-family: x; } /*}*/',
+					'@font-face { font-family: x; }',
+				],
 				// A @media can sit in a style rule.
 				[
 					':root, :global.w { @media print { color: red; } }',
@@ -1274,6 +1310,15 @@ describe('scoped style analysis', () => {
 				expect(strip_hash(render(css, [], false)), css).toBe(expected);
 				expect(strip_hash(render(css, [], true)), css).toBe(minified);
 			}
+		});
+
+		it('escapes each comment end in a rule it comments out as unused', () => {
+			expect(render('.z { content: "*/"; } /* c */', ['.z'], false)).toBe(
+				'/* (unused) .z { content: "*\\/"; }*/ /* c */',
+			);
+			expect(render('.z /* c */ { color: red; }', ['.z'], false)).toBe(
+				'/* (unused) .z /* c *\\/ { color: red; }*/',
+			);
 		});
 
 		it('keeps the comment markers at the edges of a :global selector, and minifies them away', () => {

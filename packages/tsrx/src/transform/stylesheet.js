@@ -267,6 +267,28 @@ function is_used(rule) {
 }
 
 /**
+ * Whether `selector`, which starts with a lone bare `:global`, starts with a
+ * combinator once that and the lone bare `:global`s after it are dropped.
+ *
+ * @param {AST.CSS.ComplexSelector} selector
+ * @returns {boolean}
+ */
+function starts_with_combinator(selector) {
+	for (const relative_selector of selector.children.slice(1)) {
+		const { combinator, selectors } = relative_selector;
+		if (combinator && combinator.name !== ' ') return true;
+		const [first] = selectors;
+		const bare_global =
+			selectors.length === 1 &&
+			first.type === 'PseudoClassSelector' &&
+			first.name === 'global' &&
+			first.args === null;
+		if (!bare_global) return false;
+	}
+	return false;
+}
+
+/**
  * @param {Array<AST.CSS.Node>} path
  */
 function is_in_global_block(path) {
@@ -359,32 +381,15 @@ function remove_global_pseudo_class(selector, combinator, state) {
 }
 
 /**
- * Escape the end of each comment in `node`'s text, which goes inside a
- * comment the output adds around it.
+ * Escape each `*` and `/` pair in `node`'s text, which goes inside a comment
+ * the output adds around it: the end of a comment in it, or of a string.
  *
  * @param {{ start: number, end: number }} node
  * @param {MagicString} code
  */
 function escape_comment_close(node, code) {
-	let escaped = false;
-	let in_comment = false;
-
-	for (let i = node.start; i < node.end; i++) {
-		if (escaped) {
-			escaped = false;
-		} else {
-			const char = code.original[i];
-			if (in_comment) {
-				if (char === '*' && code.original[i + 1] === '/') {
-					code.prependRight(++i, '\\');
-					in_comment = false;
-				}
-			} else if (char === '\\') {
-				escaped = true;
-			} else if (char === '/' && code.original[++i] === '*') {
-				in_comment = true;
-			}
-		}
+	for (let i = node.start; i < node.end - 1; i++) {
+		if (code.original[i] === '*' && code.original[i + 1] === '/') code.prependRight(i + 1, '\\');
 	}
 }
 
@@ -661,9 +666,7 @@ const visitors = {
 					(has_parent_rule_in_output(node.metadata.rule) ||
 						// An `&` the selector would otherwise start with a combinator after,
 						// which is invalid; at the top level it stands for the root.
-						(relative_selector.selectors.length === 1 &&
-							!!node.children[1]?.combinator &&
-							node.children[1].combinator.name !== ' '))
+						(relative_selector.selectors.length === 1 && starts_with_combinator(node)))
 				) {
 					// div { :global.x { ... } } becomes div { &.x { ... } }, but
 					// :global { :global.x { ... } } becomes .x { ... }: the block is

@@ -85,7 +85,11 @@ function check_global_block_list(rule, report) {
 		if (parent.metadata.is_global_block) return;
 	}
 	if (
-		(styles && selectors.some((selector, index) => !leading[index] && !is_unscoped(selector))) ||
+		(styles &&
+			selectors.some(
+				(selector, index) =>
+					!leading[index] && !is_unscoped(selector, subject_hashed(rule.metadata.parent_rule)),
+			)) ||
 		nests_scoped(rule.block)
 	) {
 		report(
@@ -95,26 +99,33 @@ function check_global_block_list(rule, report) {
 	}
 }
 
-/**
- * Pseudo-classes whose selector arguments the output scopes. `:not()` is left
- * out: an argument without the hash only makes it match fewer elements.
- */
-const SELECTOR_ARGUMENTS = ['is', 'where', 'has'];
+/** Pseudo-classes whose selector arguments the output scopes. */
+const SELECTOR_ARGUMENTS = ['is', 'where', 'not', 'has'];
 
 /**
- * Whether the output gives no part of `selector` a scope hash outside a global
- * block. A compound gets none when it is `:global(...)` (with its arguments
- * kept as written), `:root` or `:host` with only pseudo-classes, has an `&`,
- * is a lone `:is()` or `:where()`, or follows a bare `:global`; the arguments
- * of its `:is()`, `:where()` and `:has()` are scoped as selectors of their own.
+ * Whether leaving the scope hashes out of `selector`, as a global block does,
+ * can't make it match more than the output gives it on its own. Outside a
+ * global block a compound gets no hash when it is `:global(...)` (with its
+ * arguments kept as written), `:root` or `:host` with only pseudo-classes, has
+ * an `&`, is a lone `:is()` or `:where()`, or follows a bare `:global`; the
+ * arguments of its `:is()`, `:where()`, `:not()` and `:has()` are scoped as
+ * selectors of their own, except that:
+ *
+ * - a `:not()` argument without its hashes only makes the `:not()` match
+ *   fewer elements (a `:not()` within it is checked again), and
+ * - with `subject_hashed`, the `&` of a compound stands for an element that
+ *   has the hash already, so a single compound in its `:where()` (which adds
+ *   no specificity) needs no hash of its own.
  *
  * @param {AST.CSS.ComplexSelector} selector
+ * @param {boolean} [subject_hashed] whether an `&` here stands for an element
+ *   that the output gives the hash
  * @returns {boolean}
  */
-function is_unscoped(selector) {
+function is_unscoped(selector, subject_hashed = false) {
 	let after_bare_global = false;
 	return selector.children.every(({ selectors, metadata }) => {
-		if (after_bare_global) return selectors.every(arguments_unscoped);
+		if (after_bare_global) return selectors.every((simple) => arguments_unscoped(simple));
 		if (metadata.is_global) {
 			if (is_global_block_selector(selectors[0])) after_bare_global = true;
 			return true;
@@ -122,30 +133,98 @@ function is_unscoped(selector) {
 		const [first] = selectors;
 		const pseudo = (/** @type {AST.CSS.SimpleSelector} */ simple) =>
 			simple.type === 'PseudoClassSelector' || simple.type === 'PseudoElementSelector';
+		const nesting = selectors.some((simple) => simple.type === 'NestingSelector');
 		return (
 			((first.type === 'PseudoClassSelector' &&
 				(first.name === 'root' || first.name === 'host') &&
 				selectors.every(pseudo)) ||
-				selectors.some((simple) => simple.type === 'NestingSelector') ||
+				nesting ||
 				(selectors.length === 1 &&
 					first.type === 'PseudoClassSelector' &&
 					(first.name === 'is' || first.name === 'where'))) &&
-			selectors.every(arguments_unscoped)
+			selectors.every((simple) => arguments_unscoped(simple, nesting && subject_hashed))
 		);
 	});
 }
 
 /**
  * @param {AST.CSS.SimpleSelector} simple
+ * @param {boolean} [subject_hashed] whether the compound's element has the hash
  * @returns {boolean}
  */
-function arguments_unscoped(simple) {
-	return (
+function arguments_unscoped(simple, subject_hashed = false) {
+	if (
 		simple.type !== 'PseudoClassSelector' ||
 		!simple.args ||
-		!SELECTOR_ARGUMENTS.includes(simple.name) ||
-		simple.args.children.every(is_unscoped)
+		!SELECTOR_ARGUMENTS.includes(simple.name)
+	) {
+		return true;
+	}
+	return simple.args.children.every((argument) => {
+		if (simple.name === 'not') return negation_unscoped(argument);
+		if (simple.name === 'where' && subject_hashed && argument.children.length === 1) {
+			return argument.children[0].selectors.every((inner) => arguments_unscoped(inner));
+		}
+		return is_unscoped(argument);
+	});
+}
+
+/**
+ * Whether leaving the hashes out of `selector`, a `:not()` argument, can't
+ * make the `:not()` match more: hashes left out there only make it match
+ * less, except in a `:not()` within it.
+ *
+ * @param {AST.CSS.ComplexSelector} selector
+ * @returns {boolean}
+ */
+function negation_unscoped(selector) {
+	return selector.children.every(({ selectors }) =>
+		selectors.every(
+			(simple) =>
+				simple.type !== 'PseudoClassSelector' ||
+				!simple.args ||
+				!SELECTOR_ARGUMENTS.includes(simple.name) ||
+				simple.args.children.every((argument) =>
+					simple.name === 'not' ? is_unscoped(argument) : negation_unscoped(argument),
+				),
+		),
 	);
+}
+
+/**
+ * Whether the output gives the hash to each element `rule`'s selectors match,
+ * which an `&` in a rule nested in it stands for.
+ *
+ * @param {AST.CSS.Rule | null} rule
+ * @returns {boolean}
+ */
+function subject_hashed(rule) {
+	if (!rule) return false;
+	for (
+		let parent = /** @type {AST.CSS.Rule | null} */ (rule);
+		parent;
+		parent = parent.metadata.parent_rule
+	) {
+		if (parent.metadata.is_global_block) return false;
+	}
+	return rule.prelude.children.every((selector) => {
+		if (selector.children.some((child) => is_global_block_selector(child.selectors[0]))) {
+			return false;
+		}
+		const { selectors, metadata } = /** @type {AST.CSS.RelativeSelector} */ (
+			selector.children.at(-1)
+		);
+		const [first] = selectors;
+		if (metadata.is_global || metadata.is_global_like) return false;
+		if (selectors.some((simple) => simple.type === 'NestingSelector')) {
+			return subject_hashed(rule.metadata.parent_rule);
+		}
+		return !(
+			selectors.length === 1 &&
+			first.type === 'PseudoClassSelector' &&
+			(first.name === 'is' || first.name === 'where')
+		);
+	});
 }
 
 /**
@@ -161,7 +240,8 @@ function nests_scoped(block) {
 		if (child.type === 'Rule') {
 			return (
 				!child.metadata.is_global_block &&
-				((has_declaration(child.block) && !child.prelude.children.every(is_unscoped)) ||
+				((has_declaration(child.block) &&
+					!child.prelude.children.every((selector) => is_unscoped(selector))) ||
 					nests_scoped(child.block))
 			);
 		}
@@ -213,19 +293,34 @@ export function is_unnestable_at_rule(at_rule) {
 	return !NESTABLE_AT_RULES.includes(at_rule_name(at_rule));
 }
 
+/** @type {WeakMap<AST.CSS.Rule, boolean>} */
+const drops_selector_cache = new WeakMap();
+
 /**
  * Whether the output drops `rule`'s selector, leaving it behind as a comment,
  * and keeps what's in the rule: a lone `:global { ... }` block; a global block
  * with a lone `:global` in its list and no rule around it for an `&` to stand
- * for, which styles nothing (or is TSRX3011); and a global block that holds
- * only at-rules a style rule can't hold (`@keyframes`, `@font-face`), which
- * are valid only outside it.
+ * for, which styles nothing (or is TSRX3011); and a global block that styles
+ * nothing but holds an at-rule a style rule can't hold (`@keyframes`,
+ * `@font-face`), directly or in a `@media`, which is valid only outside it.
  *
  * @param {AST.CSS.Rule} rule
  * @returns {boolean}
  */
 export function drops_selector(rule) {
-	if (!rule.metadata.is_global_block) return false;
+	let drops = drops_selector_cache.get(rule);
+	if (drops === undefined) {
+		drops = rule.metadata.is_global_block && compute_drops_selector(rule);
+		drops_selector_cache.set(rule, drops);
+	}
+	return drops;
+}
+
+/**
+ * @param {AST.CSS.Rule} rule
+ * @returns {boolean}
+ */
+function compute_drops_selector(rule) {
 	const selectors = rule.prelude.children;
 	const lone = selectors.some(
 		(selector) =>
@@ -234,10 +329,18 @@ export function drops_selector(rule) {
 			is_global_block_selector(selector.children[0].selectors[0]),
 	);
 	if (lone && (selectors.length === 1 || !has_parent_rule_in_output(rule))) return true;
-	const { children } = rule.block;
-	return (
-		children.length > 0 &&
-		children.every((child) => child.type === 'Atrule' && is_unnestable_at_rule(child))
+	return !has_declaration(rule.block) && holds_unnestable_at_rule(rule.block);
+}
+
+/**
+ * @param {AST.CSS.Block | null} block
+ * @returns {boolean}
+ */
+function holds_unnestable_at_rule(block) {
+	return !!block?.children.some(
+		(child) =>
+			child.type === 'Atrule' &&
+			(is_unnestable_at_rule(child) || holds_unnestable_at_rule(child.block)),
 	);
 }
 
