@@ -1417,6 +1417,16 @@ describe('scoped style analysis', () => {
 				expect(render(css, pruned, true), selector).toBe(`${minified} { color: red; }`);
 			}
 		});
+
+		it('finds the comma after a pruned selector in time linear in the comments before the next one', () => {
+			for (const comment of ['/* , */', '<!-- -->']) {
+				const css = `.u,${comment.repeat(100_000)}.z { color: red; }`;
+				const start = performance.now();
+				const out = render(css, ['.u'], false);
+				expect(performance.now() - start, comment).toBeLessThan(2000);
+				expect(out.startsWith('/* (unused) .u,*/'), comment).toBe(true);
+			}
+		});
 	});
 
 	describe('assigned blocks are themes', () => {

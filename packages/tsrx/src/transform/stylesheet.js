@@ -298,8 +298,7 @@ function separator_comma(source, start, end) {
 		} else if (source.startsWith('<!--', i)) {
 			const close = source.indexOf('-->', i + 4);
 			const stop = close === -1 ? end : Math.min(close + 3, end);
-			const inner = source.lastIndexOf(',', stop - 1);
-			if (inner >= i) comma = inner;
+			for (let j = i; j < stop; j++) if (source[j] === ',') comma = j;
 			i = stop;
 		} else {
 			if (source[i] === ',') comma = i;
