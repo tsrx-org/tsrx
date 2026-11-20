@@ -705,7 +705,8 @@ export function analyze_css(css, options = {}) {
 			context.next(); // analyze relevant selectors first
 
 			{
-				const global = node.children.find(is_global);
+				const scope_root = is_scope_root_ampersand(context.state.rule);
+				const global = node.children.find((child) => is_global(child, scope_root));
 
 				if (global) {
 					const is_nested = context.path.at(-2)?.type === 'PseudoClassSelector';
@@ -721,7 +722,7 @@ export function analyze_css(css, options = {}) {
 					if (first.args !== null && idx !== 0 && idx !== node.children.length - 1) {
 						// ensure `:global(...)` is not used in the middle of a selector (but multiple `global(...)` in sequence are ok)
 						for (let i = idx + 1; i < node.children.length; i++) {
-							if (!is_global(node.children[i], is_scope_root_ampersand(context.state.rule))) {
+							if (!is_global(node.children[i], scope_root)) {
 								report(TSRX_ERRORS.CSS_GLOBAL_IN_MIDDLE, first);
 								break;
 							}

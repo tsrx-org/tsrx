@@ -1258,6 +1258,18 @@ describe('scoped style analysis', () => {
 			expect(errors).toHaveLength(1);
 		});
 
+		it("reads a :global(...)& compound as global only where the & is a @scope's root", () => {
+			// There it is `:global(.x):scope`, which can't be in the middle.
+			expect(
+				analyze_thrown(parse_stylesheet('@scope (.c) { .p :global(.x)& .k { color: red; } }'))
+					?.code,
+			).toBe(DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT);
+			// In a rule, the & is that rule, a compound of its own.
+			expect(
+				analyze_thrown(parse_stylesheet('.c { .p :global(.x)& .k { color: red; } }')),
+			).toBeNull();
+		});
+
 		it('positions a sheet parsed directly with a body origin', () => {
 			const prefix = 'const t = <style>';
 			const css = '.a :global(.b) .c { color: red; }';
