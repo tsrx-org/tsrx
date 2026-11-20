@@ -1946,6 +1946,30 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('reports a bare :global anywhere in a pseudo-class argument', () => {
+			for (const rule of [
+				':is(:global .w, .z) { color: red; }',
+				':is(.z:global, .p) { color: red; }',
+				'.p:not(.z:global.w) { color: red; }',
+				':is(:global(.p) :global .z) { color: red; }',
+			]) {
+				const source = `export function App() @{
+					<>
+						<style>${rule}</style>
+						<div ${attr}="p"><i ${attr}="z" /></div>
+					</>
+				}`;
+
+				expect(
+					compile(source, 'App.tsrx', { collect: true }).errors.map((error) => error.code),
+					rule,
+				).toEqual([DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT]);
+				expect(() => compile(source, 'App.tsrx'), rule).toThrow(
+					expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT }),
+				);
+			}
+		});
+
 		it('compiles a bare :global beside selectors that need no scoping', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{
