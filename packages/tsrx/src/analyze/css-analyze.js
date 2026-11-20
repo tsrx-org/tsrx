@@ -60,9 +60,11 @@ function is_global(relative_selector) {
  * Runs once the rule's selectors and nested rules have their metadata.
  *
  * @param {AST.CSS.Rule} rule
+ * @param {boolean} in_scope whether the rule is in a `@scope`, where `&` stands
+ *   for the scope's root rather than the rule around it
  * @param {(diagnostic: Diagnostic, node: AST.CSS.Node) => void} report
  */
-function check_global_block_list(rule, report) {
+function check_global_block_list(rule, in_scope, report) {
 	const selectors = rule.prelude.children;
 	if (selectors.length < 2) return;
 	const leading = selectors.map((selector) => {
@@ -88,7 +90,8 @@ function check_global_block_list(rule, report) {
 		(styles &&
 			selectors.some(
 				(selector, index) =>
-					!leading[index] && !is_unscoped(selector, subject_hashed(rule.metadata.parent_rule)),
+					!leading[index] &&
+					!is_unscoped(selector, !in_scope && subject_hashed(rule.metadata.parent_rule)),
 			)) ||
 		nests_scoped(rule.block)
 	) {
@@ -125,11 +128,11 @@ const SELECTOR_ARGUMENTS = ['is', 'where', 'not', 'has'];
 function is_unscoped(selector, subject_hashed = false) {
 	let after_bare_global = false;
 	return selector.children.every(({ selectors, metadata }) => {
-		if (after_bare_global) return selectors.every((simple) => arguments_unscoped(simple));
 		if (metadata.is_global) {
 			if (is_global_block_selector(selectors[0])) after_bare_global = true;
 			return true;
 		}
+		if (after_bare_global) return selectors.every((simple) => arguments_unscoped(simple));
 		const [first] = selectors;
 		const pseudo = (/** @type {AST.CSS.SimpleSelector} */ simple) =>
 			simple.type === 'PseudoClassSelector' || simple.type === 'PseudoElementSelector';
@@ -178,16 +181,18 @@ function arguments_unscoped(simple, subject_hashed = false) {
  * @returns {boolean}
  */
 function negation_unscoped(selector) {
-	return selector.children.every(({ selectors }) =>
-		selectors.every(
-			(simple) =>
-				simple.type !== 'PseudoClassSelector' ||
-				!simple.args ||
-				!SELECTOR_ARGUMENTS.includes(simple.name) ||
-				simple.args.children.every((argument) =>
-					simple.name === 'not' ? is_unscoped(argument) : negation_unscoped(argument),
-				),
-		),
+	return selector.children.every(
+		({ selectors, metadata }) =>
+			metadata.is_global ||
+			selectors.every(
+				(simple) =>
+					simple.type !== 'PseudoClassSelector' ||
+					!simple.args ||
+					!SELECTOR_ARGUMENTS.includes(simple.name) ||
+					simple.args.children.every((argument) =>
+						simple.name === 'not' ? is_unscoped(argument) : negation_unscoped(argument),
+					),
+			),
 	);
 }
 
@@ -200,6 +205,22 @@ function negation_unscoped(selector) {
  */
 function subject_hashed(rule) {
 	if (!rule) return false;
+	let hashed = subject_hashed_cache.get(rule);
+	if (hashed === undefined) {
+		hashed = compute_subject_hashed(rule);
+		subject_hashed_cache.set(rule, hashed);
+	}
+	return hashed;
+}
+
+/** @type {WeakMap<AST.CSS.Rule, boolean>} */
+const subject_hashed_cache = new WeakMap();
+
+/**
+ * @param {AST.CSS.Rule} rule
+ * @returns {boolean}
+ */
+function compute_subject_hashed(rule) {
 	for (
 		let parent = /** @type {AST.CSS.Rule | null} */ (rule);
 		parent;
@@ -271,8 +292,22 @@ function has_declaration(block) {
 	);
 }
 
-/** At-rules a style rule can hold (CSS Nesting's conditional group rules). */
-const NESTABLE_AT_RULES = ['media', 'supports', 'container', 'layer', 'scope', 'starting-style'];
+/** At-rules a style rule can't hold: the ones that hold descriptors. */
+const UNNESTABLE_AT_RULES = [
+	'keyframes',
+	'font-face',
+	'property',
+	'counter-style',
+	'page',
+	'font-feature-values',
+	'font-palette-values',
+	'view-transition',
+	'position-try',
+	'color-profile',
+	'namespace',
+	'import',
+	'charset',
+];
 
 /**
  * @param {AST.CSS.Atrule} at_rule
@@ -290,7 +325,7 @@ function at_rule_name(at_rule) {
  * @returns {boolean}
  */
 export function is_unnestable_at_rule(at_rule) {
-	return !NESTABLE_AT_RULES.includes(at_rule_name(at_rule));
+	return UNNESTABLE_AT_RULES.includes(at_rule_name(at_rule));
 }
 
 /** @type {WeakMap<AST.CSS.Rule, boolean>} */
@@ -337,10 +372,11 @@ function compute_drops_selector(rule) {
  * @returns {boolean}
  */
 function holds_unnestable_at_rule(block) {
-	return !!block?.children.some(
-		(child) =>
-			child.type === 'Atrule' &&
-			(is_unnestable_at_rule(child) || holds_unnestable_at_rule(child.block)),
+	return !!block?.children.some((child) =>
+		child.type === 'Atrule'
+			? is_unnestable_at_rule(child) || holds_unnestable_at_rule(child.block)
+			: // A rule whose selector the output drops leaves its at-rules here.
+				child.type === 'Rule' && drops_selector(child) && holds_unnestable_at_rule(child.block),
 	);
 }
 
@@ -435,7 +471,12 @@ export function analyze_css(css, options = {}) {
 			const state = { rule: node };
 			context.visit(node.prelude, state);
 			context.visit(node.block, state);
-			if (node.metadata.is_global_block) check_global_block_list(node, report);
+			if (node.metadata.is_global_block) {
+				const in_scope = context.path.some(
+					(ancestor) => ancestor.type === 'Atrule' && at_rule_name(ancestor) === 'scope',
+				);
+				check_global_block_list(node, in_scope, report);
+			}
 		},
 
 		ComplexSelector(node, context) {

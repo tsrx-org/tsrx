@@ -954,6 +954,12 @@ describe('scoped style analysis', () => {
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 					1,
 				],
+				// In a @scope, & stands for the scope's root, which needn't have the hash.
+				[
+					'.p { @scope (.q) { :global.w, &:where(.q) { color: red; } } }',
+					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
+					0,
+				],
 				// A nested keyframes name would get the hash.
 				[
 					':global.w, :root { color: red; @keyframes k { from { opacity: 0; } } }',
@@ -1044,6 +1050,9 @@ describe('scoped style analysis', () => {
 				':global.w, :root:not(.x) { color: red; }',
 				// The & already has the hash, and :where() adds no specificity.
 				'.p { :global.w, &:where(.p) { color: red; } }',
+				// A :global() compound keeps its arguments as written.
+				':global.w, :root:not(:global(.x):not(.a)) { color: red; }',
+				':global.w, :root :global :global(.x):has(.a) { color: red; }',
 				// At-rules a style rule can't hold, in a rule that styles nothing.
 				'.card, :global.w { @media print { @font-face { font-family: x; } } }',
 				// A lone :global in a rule stands for that rule (`&`).
@@ -1060,6 +1069,15 @@ describe('scoped style analysis', () => {
 				'.y, :global(.w) { color: red; }',
 			]) {
 				expect(analyze_thrown(parse_stylesheet(css)), css).toBeNull();
+			}
+		});
+
+		it('checks deep nests of :global lists without repeating the work for each level', () => {
+			for (const css of [
+				`${':global, :global.w {'.repeat(60)}@font-face { font-family: x; }${'}'.repeat(60)}`,
+				`.p {${'&, & {'.repeat(60)}:global.w, & { color: red; }${'}'.repeat(61)}`,
+			]) {
+				expect(analyze_thrown(parse_stylesheet(css)), css.slice(0, 40)).toBeNull();
 			}
 		});
 
@@ -1299,7 +1317,17 @@ describe('scoped style analysis', () => {
 					'/* :global[data-x="*\\/"] {*/ @font-face { font-family: x; } /*}*/',
 					'@font-face { font-family: x; }',
 				],
-				// A @media can sit in a style rule.
+				[
+					':root, :global.w { @media print { :root, :global.x { @font-face { font-family: x; } } } }',
+					'/* :root, :global.w {*/ @media print { /* :root, :global.x {*/ @font-face { font-family: x; } /*}*/ } /*}*/',
+					'@media print { @font-face { font-family: x; } }',
+				],
+				// A @media, or a @when, can sit in a style rule.
+				[
+					':global.w { @when media(width >= 0px) { color: red; } }',
+					'.w { @when media(width >= 0px) { color: red; } }',
+					'.w { @when media(width >= 0px) { color: red; } }',
+				],
 				[
 					':root, :global.w { @media print { color: red; } }',
 					':root, .w { @media print { color: red; } }',
