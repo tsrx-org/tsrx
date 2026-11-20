@@ -1071,6 +1071,43 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map a case clause's head, `case 1:` or `default:`, as the two points of
+	 * one mapping, for diagnostics only: TypeScript reports a fallthrough
+	 * (TS7029) from the clause's start to the end of its `:`, and the points
+	 * hold no range inside the test.
+	 * @param {AST.SwitchCase} node
+	 * @returns {void}
+	 */
+	function push_case_head_mapping(node) {
+		if (!has_location(node)) return;
+		const keyword = node.test ? 'case' : 'default';
+		const generated_start = generated_offset_for_text(node.loc.start, keyword);
+		if (generated_start === undefined) return;
+		const colon = find_source_token(source_tokens, ':', node.test?.end ?? node.start, 'after');
+		if (!colon || colon.end > node.end) return;
+		let generated_after = generated_start + keyword.length;
+		if (node.test) {
+			if (!has_location(node.test)) return;
+			const { line, column } = node.test.loc.end;
+			const end = (src_to_gen_map.get(`${line}:${column}`) ?? [])
+				.map((position) => loc_to_offset(position.line, position.column, gen_line_offsets))
+				.find((offset) => offset >= generated_start);
+			if (end === undefined) return;
+			generated_after = end;
+		}
+		const generated_colon = generated_code.indexOf(':', generated_after);
+		if (generated_colon < 0 || generated_code.slice(generated_after, generated_colon).trim())
+			return;
+		mappings.push({
+			sourceOffsets: [node.start, colon.end],
+			generatedOffsets: [generated_start, generated_colon + 1],
+			lengths: [0, 0],
+			generatedLengths: [0, 0],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
+	}
+
+	/**
 	 * Map the `}` that ends a block, for diagnostics only, so that unreachable
 	 * code (TS7027) that ends with the block keeps its end.
 	 * @param {AST.Node | null | undefined} node
@@ -2744,10 +2781,18 @@ export function convert_source_map_to_mappings(
 					}
 				}
 
+				// For diagnostics, only its ends, as a loop's: a mapping over the whole
+				// statement would map every range inside it by offset, which is wrong
+				// where the printed switch differs from the source (an `@switch` or
+				// `@case` loses its `@`, a case body its braces), and it would hold
+				// both ends of an expression inside it, such as `props.n as string`,
+				// before the expression's own tokens do.
+				push_statement_points_mapping(node, 'switch');
+				// TypeScript 7 reads no points. Its content mapper keeps the edges of
+				// a mapping over the whole statement, which Volar ignores when it has
+				// no feature at all (see `push_literal_mappings`).
 				if (has_location(node)) {
-					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
-					);
+					mappings.push(get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, {}));
 				}
 
 				return;
@@ -2760,6 +2805,14 @@ export function convert_source_map_to_mappings(
 					for (const statement of node.consequent) {
 						visit(statement);
 					}
+				}
+				// Its ends, as the switch's, for unreachable code (TS7027) that ends
+				// with the clause, and its head for a fallthrough (TS7029). An `@case`
+				// or `@default` arm of a template doesn't fall through, and its body
+				// is the compiler's: it claims no source.
+				if (has_location(node) && source[node.start] !== '@') {
+					push_statement_points_mapping(node, node.test ? 'case' : 'default');
+					push_case_head_mapping(node);
 				}
 				return;
 			} else if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') {

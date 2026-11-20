@@ -41,11 +41,13 @@ function output_type_errors(code) {
  *
  * @param {string} code
  * @param {string} file_name
+ * @param {ts.CompilerOptions} [extra_options]
  * @returns {ts.Diagnostic[]}
  */
-function type_diagnostics(code, file_name) {
+function type_diagnostics(code, file_name, extra_options = {}) {
 	/** @type {ts.CompilerOptions} */
 	const options = {
+		...extra_options,
 		target: ts.ScriptTarget.ESNext,
 		module: ts.ModuleKind.ESNext,
 		moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -1176,6 +1178,146 @@ export async function App() @{
 			expect(result.code).toMatch(/\n\s*\{\/\*\* @ts-expect-error \*\/\}\n\s*<Third b=\{2\} \/>/);
 			expect(result.code).toContain('plain {} more');
 			expect(result.code).not.toContain('not a directive');
+		});
+	});
+
+	describe(`[${name}] diagnostics in a switch`, () => {
+		it('reports an error on a whole discriminant or case test on that expression', () => {
+			const source = `export function App(props: { n: number; s: string }) @{
+	<div>
+		@switch (props.n as string) {
+			@case 'a': {
+				<b />
+			}
+			@case props.n as string: {
+				<i />
+			}
+		}
+		@switch (props.s) {
+			@case 'b': {
+				<b />
+			}
+			@default: {
+				<u>{props.n as string}</u>
+			}
+		}
+	</div>
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const map = new SourceMap(result.mappings);
+			/** @type {string[]} */
+			const shown = [];
+			for (const diagnostic of type_diagnostics(result.code, '/output.tsx')) {
+				if (diagnostic.code !== 2352) continue;
+				const start = /** @type {number} */ (diagnostic.start);
+				for (const [source_start, source_end] of map.toSourceRange(
+					start,
+					start + /** @type {number} */ (diagnostic.length),
+					true,
+					isDiagnosticsEnabled,
+				)) {
+					shown.push(`${source_start}:${source.slice(source_start, source_end)}`);
+					break;
+				}
+			}
+			const at = (/** @type {number} */ occurrence) => {
+				let index = -1;
+				for (let count = 0; count < occurrence; count++) {
+					index = source.indexOf('props.n as string', index + 1);
+				}
+				return `${index}:props.n as string`;
+			};
+			// Solid compares a copy of the discriminant with each case's test, so it
+			// reports the discriminant's error once per case.
+			expect([...new Set(shown)].sort()).toEqual([at(1), at(2), at(3)].sort());
+			// An `@switch` maps its ends from its `@`, for an error over all of it
+			// (TS7027 on an unreachable one). Solid prints `<Switch>` instead.
+			const switch_start = source.indexOf('@switch');
+			expect(
+				result.mappings
+					.filter(
+						(mapping) =>
+							mapping.sourceOffsets.length === 2 &&
+							mapping.sourceOffsets[0] === switch_start &&
+							isDiagnosticsEnabled(mapping.data),
+					)
+					.map((mapping) => [
+						result.code.slice(mapping.generatedOffsets[0], mapping.generatedOffsets[0] + 6),
+						result.code[mapping.generatedOffsets[1] - 1],
+						source[mapping.sourceOffsets[1] - 1],
+					]),
+			).toEqual(name === 'solid' ? [] : [['switch', '}', '}']]);
+		});
+
+		it('reports a fallthrough, unreachable code and an unreachable switch where they are', () => {
+			// The printer respaces `switch  (x)` and `case  0 :`, so mapping by offset
+			// from the statement's start would move each of these.
+			const source = `export function f(x: number) {
+	switch  (x) {
+		case  0 :
+			x++;
+
+		case 1:
+			return;
+			class D {}
+		default:
+			return;
+			label: { x++; }
+	}
+}
+export function g(x: number) {
+	return;
+	switch  (x) {
+		case  1 : break;
+	}
+}
+export function App() @{
+	<p />
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const map = new SourceMap(result.mappings);
+			const diagnostics = type_diagnostics(result.code, '/output.tsx', {
+				noFallthroughCasesInSwitch: true,
+				allowUnreachableCode: false,
+			});
+			/** @type {string[]} */
+			const shown = [];
+			for (const diagnostic of diagnostics) {
+				if (diagnostic.code !== 7027 && diagnostic.code !== 7029) continue;
+				const start = /** @type {number} */ (diagnostic.start);
+				for (const [source_start, source_end] of map.toSourceRange(
+					start,
+					start + /** @type {number} */ (diagnostic.length),
+					true,
+					isDiagnosticsEnabled,
+				)) {
+					shown.push(`TS${diagnostic.code} ${source.slice(source_start, source_end)}`);
+					break;
+				}
+			}
+			expect(shown.sort()).toEqual(
+				[
+					'TS7029 case  0 :',
+					'TS7027 class D {}',
+					'TS7027 label: { x++; }',
+					'TS7027 switch  (x) {\n\t\tcase  1 : break;\n\t}',
+				].sort(),
+			);
+			// The TypeScript 7 content mapper reads no points: it keeps the edges of
+			// a mapping over each whole switch that has no Volar feature at all.
+			const whole = result.mappings.filter(
+				(mapping) =>
+					source.startsWith('switch', mapping.sourceOffsets[0]) &&
+					mapping.lengths[0] > 0 &&
+					Object.entries(mapping.data).every(([key, value]) => key === 'customData' || !value),
+			);
+			expect(
+				whole.map((mapping) => source[mapping.sourceOffsets[0] + mapping.lengths[0] - 1]),
+			).toEqual(['}', '}']);
 		});
 	});
 
