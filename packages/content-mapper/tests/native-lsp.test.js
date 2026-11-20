@@ -1114,18 +1114,23 @@ export function Tag() @{
 `;
 
 /**
- * Bare names as an `@if` test, an `@else if` test and a `@for` key. Solid
- * prints each in an expression container (`when={a}`, `keyed={({ id }) =>
- * id}`) whose mapping covers the same text as the name's own.
+ * Bare names as the test of an `@if` with an `@else if` (Solid's `<Match>`),
+ * the test of an `@if` alone (`<Show>`) and a `@for` key. Solid prints each in
+ * an expression container (`when={a}`, `keyed={({ id }) => id}`) whose
+ * mapping covers the same text as the name's own.
  */
 const SHOWN_TSRX = `declare const a: boolean;
 export function Shown(props: { items: { id: number }[]; on: boolean }) @{
 	const shown = props.on;
+	const alone = props.items.length > 0;
 	<div>
 		@if (a) {
 			<b />
 		} @else if (shown) {
 			<i />
+		}
+		@if (alone) {
+			<u />
 		}
 		@for (const { id } of props.items; key id) {
 			<li />
@@ -1314,6 +1319,18 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 			rename: [
 				`Shown.tsrx ${declared_shown}:shown -> renamed`,
 				`Shown.tsrx ${test_shown}:shown -> renamed`,
+			],
+			completes: true,
+		});
+		const declared_alone = source.indexOf('alone =');
+		const test_alone = source.indexOf('alone)');
+		expect(await features_at('Shown.tsrx', '@if (alone)', 5, 'alone')).toEqual({
+			hover: `${test_alone}:alone const alone: boolean`,
+			definition: [`Shown.tsrx ${declared_alone}:alone`],
+			references: [`Shown.tsrx ${declared_alone}:alone`, `Shown.tsrx ${test_alone}:alone`],
+			rename: [
+				`Shown.tsrx ${declared_alone}:alone -> renamed`,
+				`Shown.tsrx ${test_alone}:alone -> renamed`,
 			],
 			completes: true,
 		});
