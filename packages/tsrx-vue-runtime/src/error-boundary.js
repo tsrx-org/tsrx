@@ -8,10 +8,12 @@ import {
 	ErrorCodes,
 	getCurrentInstance,
 	handleError,
+	inject,
 	onBeforeUnmount,
 	onErrorCaptured,
 	onScopeDispose,
 	shallowRef,
+	ssrContextKey,
 	warn,
 } from 'vue';
 
@@ -541,7 +543,7 @@ let re_rendering = null;
  * or the fallback rendered
  */
 export function TsrxErrorBoundary(props, ctx) {
-	if (typeof vapor.renderEffect !== 'function') return render_on_server(props);
+	if (renders_on_server()) return render_on_server(props);
 	const instance = own_instance(ctx);
 	const state = instance ? initialize_boundary_state(instance) : create_boundary_state();
 
@@ -644,18 +646,68 @@ function take_uid() {
 // one's `content`.
 TsrxErrorBoundary.props = ['fallback', 'content', 'sharesCatch'];
 
+/**
+ * Whether this realm can render Vapor: Vue's Vapor renderer and a DOM. Vue's
+ * Node build has no Vapor renderer, and a server that resolves its bundler
+ * build (an edge or worker runtime, or an SSR bundle) has no DOM. Read when
+ * Vue reads the flag, since a DOM can be set up after this module loads.
+ *
+ * @returns {boolean}
+ */
+function renders_vapor() {
+	return typeof vapor.renderEffect === 'function' && typeof document !== 'undefined';
+}
+
+/**
+ * Gives `component` a `__vapor` that reads `renders_vapor()`. It is
+ * enumerable, so a copy of the component (`Object.assign`, a spread) takes
+ * the value it reads then, and a write, such as Vue's HMR assigning a new
+ * definition over the old one, replaces it with that value.
+ *
+ * @param {Function} component
+ */
+function define_vapor_flag(component) {
+	Object.defineProperty(component, '__vapor', {
+		get: renders_vapor,
+		set(/** @type {unknown} */ value) {
+			Object.defineProperty(this, '__vapor', {
+				value,
+				writable: true,
+				enumerable: true,
+				configurable: true,
+			});
+		},
+		enumerable: true,
+		configurable: true,
+	});
+}
+
 // A Vapor component, also to an app with Vue's VDOM interop. vue-jsx-vapor
 // renders a function component through one proxy per function, cached for
 // every app, whose `__vapor` the app that first made it decides: a proxy
 // made while an app without interop, such as one that hydrates, rendered the
 // boundary told a later app with interop to mount it as a VDOM component,
 // which printed its blocks as text. Its own flag answers the same in each.
-// Only where Vue's Vapor renderer is present, as `TsrxErrorBoundary`
-// decides between its client and server paths: with Vue's Node build the
-// server renderer calls it as a functional VDOM component, and it wraps the
-// slots of what an owner with `__vapor` creates as Vapor slots, which loses
-// what a component adds to a cloned slot child.
-if (typeof vapor.renderEffect === 'function') TsrxErrorBoundary.__vapor = true;
+// Only where Vapor can render it: the server renderer, which calls it as a
+// functional VDOM component, wraps the slots of what an owner with `__vapor`
+// creates as Vapor slots, which loses what a component adds to a cloned slot
+// child.
+define_vapor_flag(TsrxErrorBoundary);
+
+/**
+ * Whether the boundary renders on the server. Vue's server renderer provides
+ * an SSR context to the app it renders (`useSSRContext`). Vue's Node build
+ * has no Vapor renderer at all; its bundler build, which a server resolves
+ * without the `node` condition (an edge or worker runtime, or an SSR bundle),
+ * has one, so a missing `renderEffect` alone doesn't tell.
+ *
+ * @returns {boolean}
+ */
+function renders_on_server() {
+	if (typeof vapor.renderEffect !== 'function') return true;
+	if (!vapor.currentInstance && !getCurrentInstance()) return false;
+	return inject(ssrContextKey, null) != null;
+}
 
 /**
  * @param {unknown} _props
@@ -670,9 +722,9 @@ TsrxErrorBoundary.__setup = function setup(_props, ctx) {
 };
 
 /**
- * Renders the boundary on the server. Vue's server build has no Vapor
- * renderer: vue-jsx-vapor compiles a component for the server to VDOM, and the
- * server renderer calls the boundary as a functional component. It renders
+ * Renders the boundary on the server (`renders_on_server`): vue-jsx-vapor
+ * compiles a component for the server to VDOM, and the server renderer calls
+ * the boundary as a functional component. It renders
  * the content, or the fallback when the content throws as it renders. An
  * error from a component in the content comes later, as the server renders
  * that component, and goes to `app.config.errorHandler` as it does without a
@@ -950,4 +1002,4 @@ export function TsrxPendingBody(props, ctx) {
 
 TsrxPendingBody.props = ['content'];
 // A Vapor component in every app (see `TsrxErrorBoundary.__vapor`).
-if (typeof vapor.renderEffect === 'function') TsrxPendingBody.__vapor = true;
+define_vapor_flag(TsrxPendingBody);
