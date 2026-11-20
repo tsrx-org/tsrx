@@ -4826,6 +4826,19 @@ describe('tsrx-vue a @catch that throws', () => {
 		app.unmount();
 	});
 
+	it('passes on a later error from the body a reset replaced once the @try unmounts', async () => {
+		replaced_twin.initial = true;
+		const app = await mount(LateFromReplacedTwin, { promise: never_loads() });
+		(container.querySelector('.replaced-reset') as HTMLElement).click();
+		await flush();
+		expect(text('.replaced-body')).toBe('ok');
+		app.unmount();
+		replaced_twin.release();
+		await flush();
+		// As without @pending, it goes to errorHandler.
+		expect(handled).toEqual(['late']);
+	});
+
 	it.each([
 		['with @pending', TeardownTwin, 'body'],
 		['without @pending', TeardownPlain, 'body'],

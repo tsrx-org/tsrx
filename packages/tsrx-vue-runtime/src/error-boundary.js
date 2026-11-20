@@ -245,7 +245,8 @@ function thrown_by_fallback(source, boundary) {
  * its body registered, whatever it showed: the app unmounting, or a `@try`
  * around it showing its `@catch`, removes it. One that the outer one's own
  * render removed, after a reset, is replaced while the outer one stays, and
- * what still comes from it is the body's, as before.
+ * what still comes from it is the body's, as before, until the outer one goes
+ * away too.
  *
  * @param {unknown} source
  * @param {ComponentInternalInstance} boundary
@@ -262,7 +263,7 @@ function thrown_by_twin_fallback(source, boundary) {
 		if (i === 0) {
 			if (!is_gone(inner, state)) {
 				if (!state.shows_content) return true;
-			} else if (state.dropped_by !== boundary) {
+			} else if (state.dropped_by !== boundary || is_gone(boundary)) {
 				return true;
 			}
 		}
