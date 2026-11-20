@@ -34,10 +34,23 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
  * content rather than its fallback; `reset` doesn't change it, the render
  * after it does
  * @property {boolean} unmounting whether the boundary's teardown has begun
+ * @property {number} epoch bumped when the boundary resets or shows an error:
+ * a swap still waiting from before then no longer applies
+ * @property {number} waits counts the swaps that waited: only the latest one
+ * still applies, as the latest error would have shown
+ * @property {unknown} rendered the blocks the boundary renders into
  * @property {() => void} reset
  */
 
 /** @typedef {{ asyncDep?: Promise<unknown> | null, asyncResolved?: boolean }} AsyncSetupState */
+
+/**
+ * @typedef {{ asyncDep?: Promise<unknown> | null, asyncResolved?: boolean, suspense?: unknown, suspenseId?: number, block?: VaporBlock, parent?: unknown }} AsyncInstance
+ */
+
+/** @typedef {{ pendingBranch?: unknown, pendingId?: number }} PendingSuspense */
+
+/** @typedef {PendingSuspense & { isUnmounted?: boolean }} SuspenseState */
 
 /** @typedef {{ parent?: InstanceLink | null, $?: InstanceLink }} InstanceLink */
 
@@ -206,6 +219,76 @@ function shows_content_of(source, own) {
 		.suspense;
 	if (suspense?.pendingBranch) return undefined;
 	return inner;
+}
+
+/**
+ * Whether `instance` is the boundary inside a `@pending` `Suspense` that
+ * renders the same `@catch` as the one around it (`sharesCatch`), while that
+ * `Suspense` is pending. It lets an error go on then, from a render too, and
+ * the one around it shows the `@catch`, as React's error boundary around a
+ * `Suspense` does: it replaces the whole `Suspense`. Swapping inside would
+ * unmount part of the branch the `Suspense` waits for. One that is gone,
+ * after a reset rendered a new pair, keeps its error, as before: the `@catch`
+ * around it now shows the new body.
+ *
+ * @param {ComponentInternalInstance} instance
+ * @returns {boolean}
+ */
+function passes_to_twin(instance) {
+	const suspense = /** @type {{ suspense?: SuspenseState | null }} */ (instance).suspense;
+	return (
+		!!props_of(instance)?.sharesCatch &&
+		!!suspense?.pendingBranch &&
+		!suspense.isUnmounted &&
+		!(/** @type {{ isUnmounted?: boolean }} */ (instance).isUnmounted)
+	);
+}
+
+/** How often a waiting swap checks whether its `Suspense` stopped waiting. */
+const ROUND_RECHECK_MS = 50;
+
+/**
+ * Whether `suspense`, while pending, counts `component`'s setup: it is still
+ * pending, and the component was created under that `Suspense` in its current
+ * pending round. Vue's `Suspense` counts each such setup, and its
+ * `registerDep` callback skips the count for a component that was unmounted,
+ * so unmounting one before it settles leaves the `Suspense` pending for good.
+ *
+ * @param {AsyncInstance} component
+ * @param {PendingSuspense} suspense
+ * @returns {boolean}
+ */
+function counted_setup(component, suspense) {
+	return (
+		!!component.asyncDep &&
+		!component.asyncResolved &&
+		component.suspense === suspense &&
+		component.suspenseId === suspense.pendingId
+	);
+}
+
+/**
+ * The async components in `block` whose setups `suspense` counts (see
+ * {@link counted_setup}): the components it holds and what they render,
+ * through fragments, but not the children of an element.
+ *
+ * @param {VaporBlock | undefined} block
+ * @param {PendingSuspense} suspense
+ * @param {AsyncInstance[]} [found]
+ * @returns {AsyncInstance[]}
+ */
+function pending_setups(block, suspense, found = []) {
+	if (!block || block instanceof Node) return found;
+	if (Array.isArray(block)) {
+		for (const item of block) pending_setups(item, suspense, found);
+	} else if (vapor.isVaporComponent(block)) {
+		const component = /** @type {AsyncInstance} */ (/** @type {unknown} */ (block));
+		if (counted_setup(component, suspense)) found.push(component);
+		pending_setups(component.block, suspense, found);
+	} else if (vapor.isFragment(block)) {
+		pending_setups(block.nodes, suspense, found);
+	}
+	return found;
 }
 
 /**
@@ -384,7 +467,7 @@ export function TsrxErrorBoundary(props, ctx) {
 	const instance = own_instance(ctx);
 	const state = instance ? initialize_boundary_state(instance) : create_boundary_state();
 
-	return create_boundary_nodes(() => {
+	const nodes = create_boundary_nodes(() => {
 		// Read so a reset, or an error caught after rendering, renders again.
 		void state.version.value;
 		if (state.caught) {
@@ -411,10 +494,23 @@ export function TsrxErrorBoundary(props, ctx) {
 		if (frame.errors.length === 0) {
 			return content;
 		}
+		if (instance && state.rendered && passes_to_twin(instance)) {
+			// Rendering again: hand the error to the boundary around the
+			// `Suspense`, which replaces it. Keep what this one showed: the
+			// fallback would unmount it, and with it a component the `Suspense`
+			// still waits for. A first render that throws has mounted nothing,
+			// and shows this `@catch`, as before; a component in an element of
+			// what it dropped can still hold the `Suspense` until it settles.
+			handleError(frame.errors[0], instance, ErrorCodes.RENDER_FUNCTION);
+			return /** @type {unknown[] | undefined} */ (state.rendered)?.[0] ?? null;
+		}
 		// Not a reactive write: this render already shows the fallback.
 		state.caught = { error: frame.errors[0] };
+		state.epoch++;
 		return render_fallback(state, props);
 	});
+	state.rendered = nodes;
+	return nodes;
 }
 
 /**
@@ -505,8 +601,12 @@ function create_boundary_state() {
 		fallback_from: null,
 		shows_content: false,
 		unmounting: false,
+		epoch: 0,
+		waits: 0,
+		rendered: undefined,
 		reset() {
 			state.caught = null;
+			state.epoch++;
 			state.version.value++;
 		},
 	};
@@ -531,6 +631,7 @@ function initialize_boundary_state(instance) {
 	});
 
 	onErrorCaptured((captured_error, source) => {
+		if (passes_to_twin(instance)) return;
 		// The boundary inside this one that renders the same `@catch` let this
 		// error from that `@catch` go on: let it go on too.
 		if (thrown_by_twin_fallback(source, instance)) return;
@@ -561,21 +662,94 @@ function initialize_boundary_state(instance) {
 			const inner = shows_content_of(source, state);
 			if (!inner) return;
 			inner.caught = { error: captured_error };
+			inner.epoch++;
 			inner.version.value++;
 			return false;
 		}
-		// Thrown outside a render. An async component whose loader rejected
-		// still has its setup pending, and Vapor cannot unmount it until its
-		// Suspense has mounted it, so swap in the fallback after that.
+		// Thrown outside a render: swap in the fallback.
 		const show = () => {
 			state.caught = { error: captured_error };
 			state.version.value++;
 		};
+		// Swapping unmounts the content. An async component in it that its
+		// `Suspense` still waits for has to settle first, or the `Suspense`
+		// stays pending for good: one the boundary's blocks hold, one the
+		// error came from or passed through, and what those render once they
+		// have settled. Swap after that, unless the boundary has reset or
+		// shown another error since.
+		// The components waited for, not their setups: two components can
+		// share one setup promise, and each is counted.
+		/** @type {Set<unknown>} */
+		const awaited = new Set();
+		const loading = () => {
+			const suspense = /** @type {{ suspense?: SuspenseState | null }} */ (instance).suspense;
+			/** @type {AsyncInstance[]} */
+			const found = [];
+			if (suspense?.pendingBranch && !suspense.isUnmounted) {
+				pending_setups(/** @type {VaporBlock | undefined} */ (state.rendered), suspense, found);
+				for (const current of chain_to(source, instance)) {
+					// A VDOM component on the path is left alone, as before: Vue
+					// counts its setup down when it unmounts.
+					if (!vapor.isVaporComponent(current)) continue;
+					const component = /** @type {AsyncInstance} */ (current);
+					if (counted_setup(component, suspense)) found.push(component);
+				}
+			}
+			/** @type {Promise<unknown>[]} */
+			const fresh = [];
+			for (const component of found) {
+				if (awaited.has(component)) continue;
+				awaited.add(component);
+				fresh.push(/** @type {Promise<unknown>} */ (component.asyncDep));
+			}
+			return fresh;
+		};
+		const first = loading();
 		const pending = /** @type {AsyncSetupState | null} */ (source);
-		if (pending?.asyncDep && !pending.asyncResolved) {
-			pending.asyncDep.then(show, show);
-		} else {
+		if (pending?.asyncDep && !pending.asyncResolved && !awaited.has(pending)) {
+			awaited.add(pending);
+			first.push(pending.asyncDep);
+		}
+		if (first.length === 0) {
+			state.epoch++;
 			show();
+		} else {
+			const at = state.epoch;
+			const ticket = ++state.waits;
+			// Whether this swap still applies: no reset or other error since,
+			// and no later error waiting, and the boundary still there.
+			const current = () =>
+				state.epoch === at &&
+				state.waits === ticket &&
+				!state.unmounting &&
+				!(/** @type {{ isUnmounted?: boolean }} */ (instance).isUnmounted);
+			/** @param {Promise<unknown>[]} setups */
+			const wait = (setups) => {
+				const suspense = /** @type {{ suspense?: SuspenseState | null }} */ (instance).suspense;
+				const round = suspense?.pendingId;
+				let settled = false;
+				const next = () => {
+					if (settled) return;
+					settled = true;
+					if (!current()) return;
+					const more = loading();
+					if (more.length > 0) wait(more);
+					else show();
+				};
+				Promise.allSettled(setups).then(next);
+				// A `Suspense` that goes back to the branch it was showing, starts
+				// a new round, or unmounts while the boundary stays (in a
+				// `KeepAlive`), stops counting these setups, and one of them may
+				// never settle: look again then.
+				const recheck = () => {
+					if (settled || !current()) return;
+					if (!suspense?.pendingBranch || suspense.isUnmounted || suspense.pendingId !== round)
+						next();
+					else setTimeout(recheck, ROUND_RECHECK_MS);
+				};
+				setTimeout(recheck, ROUND_RECHECK_MS);
+			};
+			wait(first);
 		}
 		return false;
 	});

@@ -1,0 +1,549 @@
+import {
+	createApp,
+	createVaporApp,
+	defineComponent,
+	defineVaporAsyncComponent,
+	defineVaporComponent as makeVaporComponent,
+	h,
+	KeepAlive,
+	onScopeDispose,
+	ref,
+	Suspense,
+	vaporInteropPlugin,
+	watch,
+} from 'vue';
+
+const active_broken = ref(false);
+
+function active_label(): string {
+	if (active_broken.value) throw new Error('active body');
+	return 'ok';
+}
+
+function ActiveThrower() @{
+	<p class="active-body">{active_label()}</p>
+}
+
+function ActiveTry() @{
+	@try {
+		<ActiveThrower />
+	} @catch (err) {
+		<b class="active-caught">{String(err)}</b>
+	}
+}
+
+const late_shown = ref(false);
+let finish_late: (component: unknown) => void = () => {};
+
+function LateFine() @{
+	<p class="late-ready">{'late ready'}</p>
+}
+
+// After the Suspense has resolved, the @try's body shows an async component
+// that the Suspense doesn't wait for.
+function ActiveTryWithLate() @{
+	const Late = defineVaporAsyncComponent(
+		() => new Promise<any>((resolve) => (finish_late = resolve)),
+	);
+	@try {
+		<>
+			@if (late_shown.value) {
+				<Late />
+			}
+			<ActiveThrower />
+		</>
+	} @catch (err) {
+		<b class="active-caught">{String(err)}</b>
+	}
+}
+
+const counted_shown = ref(false);
+let finish_counted: (component: unknown) => void = () => {};
+
+// The same, where the async component appears while the new branch loads, so
+// the Suspense counts it.
+function ActiveTryWithCounted() @{
+	const Counted = defineVaporAsyncComponent(
+		() => new Promise<any>((resolve) => (finish_counted = resolve)),
+	);
+	@try {
+		<>
+			<ActiveThrower />
+			@if (counted_shown.value) {
+				<Counted />
+			}
+		</>
+	} @catch (err) {
+		<b class="active-caught">{String(err)}</b>
+	}
+}
+
+const order_first = ref(false);
+const order_second = ref(false);
+const order_one = ref(false);
+const order_two = ref(false);
+const order_release: Array<() => void> = [];
+const order_finish: Array<(component: unknown) => void> = [];
+
+function OrderThrower() @{
+	watch(order_first, async () => {
+		await new Promise<void>((resolve) => (order_release[0] = resolve));
+		throw new Error('first');
+	});
+	watch(order_second, async () => {
+		await new Promise<void>((resolve) => (order_release[1] = resolve));
+		throw new Error('second');
+	});
+	<p>{'ok'}</p>
+}
+
+function OrderLoading(props: { id: number }) @{
+	const Async = defineVaporAsyncComponent(
+		() => new Promise<any>((resolve) => (order_finish[props.id] = resolve)),
+	);
+	<Async />
+}
+
+// Two errors wait for loading components; the first waits longer.
+function OrderTry() @{
+	@try {
+		<>
+			<OrderThrower />
+			@if (order_one.value) {
+				<OrderLoading id={0} />
+			}
+			@if (order_two.value) {
+				<OrderLoading id={1} />
+			}
+		</>
+	} @catch (err) {
+		<b class="active-caught">{String(err)}</b>
+	}
+}
+
+const shared_one = ref(false);
+const shared_two = ref(false);
+let shared_work: Promise<unknown> = Promise.resolve();
+let release_shared: (block: unknown) => void = () => {};
+
+// A Vapor component whose async setup returns a promise others share.
+const SharedSetup = makeVaporComponent(() => shared_work as never);
+
+// Two components with the same setup promise appear in different rounds.
+function SharedTry() @{
+	@try {
+		<>
+			<ActiveThrower />
+			@if (shared_one.value) {
+				<SharedSetup />
+			}
+			@if (shared_two.value) {
+				<SharedSetup />
+			}
+		</>
+	} @catch (err) {
+		<b class="active-caught">{String(err)}</b>
+	}
+}
+
+/**
+ * Mounts `component` as the first branch of a keyed `Suspense` that keeps it
+ * on screen while a second branch loads, and switches to that branch.
+ */
+async function mount_kept(component: unknown, before_switch?: () => Promise<void>) {
+	const key = ref('old');
+	const finish_new: Array<() => void> = [];
+	const New = defineComponent({
+		async setup() {
+			await new Promise<void>((resolve) => finish_new.push(resolve));
+			return () => h('p', 'new');
+		},
+	});
+	const Root = defineComponent({
+		setup() {
+			return () =>
+				h(
+					Suspense,
+					{ timeout: -1 },
+					{
+						default: () =>
+							key.value === 'old'
+								? h(component as never, { key: 'old' })
+								: h(New, { key: key.value }),
+						fallback: () => h('i', 'loading'),
+					},
+				);
+		},
+	});
+	const handled: string[] = [];
+	const app = createApp(Root).use(vaporInteropPlugin);
+	app.config.errorHandler = (error) => {
+		handled.push(String(error));
+	};
+	app.mount(container);
+	await flush();
+	await before_switch?.();
+	key.value = 'new';
+	await flush();
+	return { app, handled, key, finish: () => finish_new.forEach((finish) => finish()) };
+}
+
+// A Suspense keeps showing a @try while a new branch loads: the @try isn't in
+// the branch the Suspense waits for, so its @catch shows at once.
+describe('tsrx-vue a @try in the branch a pending Suspense still shows', () => {
+	it('shows its @catch at once, also beside an async component the Suspense does not wait for', async () => {
+		active_broken.value = false;
+		late_shown.value = false;
+		const { app, handled, key, finish } = await mount_kept(ActiveTryWithLate, async () => {
+			late_shown.value = true;
+			await flush();
+		});
+		active_broken.value = true;
+		await flush();
+		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: active body');
+		key.value = 'old';
+		await flush();
+		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: active body');
+		expect(handled).toEqual([]);
+		finish_late(LateFine);
+		finish();
+		app.unmount();
+	});
+
+	it('shows its @catch once the Suspense goes back to it, though a counted component still loads', async () => {
+		active_broken.value = false;
+		counted_shown.value = false;
+		const { app, handled, key, finish } = await mount_kept(ActiveTryWithCounted);
+		counted_shown.value = true;
+		await flush();
+		active_broken.value = true;
+		await flush();
+		key.value = 'old';
+		await flush();
+		await new Promise((resolve) => setTimeout(resolve, 120));
+		await flush();
+		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: active body');
+		expect(handled).toEqual([]);
+		finish_counted(LateFine);
+		finish();
+		app.unmount();
+	});
+
+	it('waits for each component that shares a setup promise, also in a later round', async () => {
+		active_broken.value = false;
+		shared_one.value = false;
+		shared_two.value = false;
+		shared_work = new Promise((resolve) => (release_shared = resolve));
+		const { app, handled, key, finish } = await mount_kept(SharedTry);
+		shared_one.value = true;
+		await flush();
+		active_broken.value = true;
+		await flush();
+		key.value = 'third';
+		await flush();
+		shared_two.value = true;
+		await flush();
+		await new Promise((resolve) => setTimeout(resolve, 120));
+		await flush();
+		finish();
+		await flush();
+		release_shared(document.createTextNode('shared'));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await flush();
+		expect(container.textContent).toBe('new');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('stops checking a waiting @catch once a KeepAlive puts its Suspense away', async () => {
+		active_broken.value = false;
+		counted_shown.value = false;
+		const key = ref('old');
+		const kept = ref(true);
+		let finish_new: () => void = () => {};
+		const New = defineComponent({
+			async setup() {
+				await new Promise<void>((resolve) => (finish_new = resolve));
+				return () => h('p', 'new');
+			},
+		});
+		const Other = defineComponent({ setup: () => () => h('p', 'other') });
+		const Root = defineComponent({
+			setup() {
+				return () =>
+					h(KeepAlive, null, {
+						default: () =>
+							kept.value
+								? h(
+										Suspense,
+										{ timeout: -1 },
+										{
+											default: () =>
+												key.value === 'old'
+													? h(ActiveTryWithCounted as never, { key: 'old' })
+													: h(New, { key: 'new' }),
+											fallback: () => h('i', 'loading'),
+										},
+									)
+								: h(Other, { key: 'other' }),
+					});
+			},
+		});
+		const handled: string[] = [];
+		const app = createApp(Root).use(vaporInteropPlugin);
+		app.config.errorHandler = (error) => {
+			handled.push(String(error));
+		};
+		app.mount(container);
+		await flush();
+		key.value = 'new';
+		await flush();
+		counted_shown.value = true;
+		await flush();
+		active_broken.value = true;
+		await flush();
+		kept.value = false;
+		await flush();
+		await new Promise((resolve) => setTimeout(resolve, 80));
+		const set_timeout = vi.spyOn(globalThis, 'setTimeout');
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		const checks = set_timeout.mock.calls.filter((call) => call[1] === 50);
+		set_timeout.mockRestore();
+		expect(checks).toEqual([]);
+		expect(handled).toEqual([]);
+		app.unmount();
+		finish_counted(LateFine);
+		finish_new();
+	});
+
+	it('stops checking a waiting @catch once the app unmounts', async () => {
+		active_broken.value = false;
+		counted_shown.value = false;
+		const { app, finish } = await mount_kept(ActiveTryWithCounted);
+		counted_shown.value = true;
+		await flush();
+		active_broken.value = true;
+		await flush();
+		finish();
+		app.unmount();
+		await flush();
+		const set_timeout = vi.spyOn(globalThis, 'setTimeout');
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		const checks = set_timeout.mock.calls.filter((call) => call[1] === 50);
+		set_timeout.mockRestore();
+		expect(checks).toEqual([]);
+		finish_counted(LateFine);
+	});
+
+	it('shows the later of two errors that wait for loading components', async () => {
+		order_first.value = false;
+		order_second.value = false;
+		order_one.value = false;
+		order_two.value = false;
+		const { app, handled, finish } = await mount_kept(OrderTry);
+		order_one.value = true;
+		await flush();
+		order_first.value = true;
+		order_second.value = true;
+		await flush();
+		order_release[0]();
+		await flush();
+		order_two.value = true;
+		await flush();
+		order_release[1]();
+		await flush();
+		order_finish[0](LateFine);
+		await flush();
+		order_finish[1]?.(LateFine);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await flush();
+		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: second');
+		expect(handled).toEqual([]);
+		finish();
+		app.unmount();
+	});
+
+	it('shows its @catch at once, and keeps it when that branch comes back', async () => {
+		active_broken.value = false;
+		const key = ref('old');
+		let finish_new: () => void = () => {};
+		const New = defineComponent({
+			async setup() {
+				await new Promise<void>((resolve) => (finish_new = resolve));
+				return () => h('p', 'new');
+			},
+		});
+		const Root = defineComponent({
+			setup() {
+				return () =>
+					h(
+						Suspense,
+						{ timeout: -1 },
+						{
+							default: () =>
+								key.value === 'old'
+									? h(ActiveTry as never, { key: 'old' })
+									: h(New, { key: 'new' }),
+							fallback: () => h('i', 'loading'),
+						},
+					);
+			},
+		});
+		const handled: string[] = [];
+		const app = createApp(Root).use(vaporInteropPlugin);
+		app.config.errorHandler = (error) => {
+			handled.push(String(error));
+		};
+		app.mount(container);
+		await flush();
+		key.value = 'new';
+		await flush();
+		active_broken.value = true;
+		await flush();
+		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: active body');
+		key.value = 'old';
+		await flush();
+		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: active body');
+		expect(handled).toEqual([]);
+		finish_new();
+		app.unmount();
+	});
+});
+
+const vdom_broken = ref(false);
+let vdom_disposals = 0;
+
+// A VDOM component whose async setup waits on work that its disposal
+// releases, and whose watcher throws.
+const CancelledOnDispose = defineComponent({
+	async setup() {
+		watch(vdom_broken, () => {
+			throw new Error('watcher failed');
+		});
+		let release: () => void = () => {};
+		const work = new Promise<void>((resolve) => (release = resolve));
+		onScopeDispose(() => {
+			vdom_disposals++;
+			release();
+		});
+		await work;
+		return () => null;
+	},
+});
+
+function VdomTry() @{
+	@try {
+		<CancelledOnDispose />
+	} @catch (err) {
+		<b class="vdom-caught">{String(err)}</b>
+	}
+}
+
+function VdomPending() @{
+	<Suspense
+		v-slots={{
+			default: () => <VdomTry />,
+			fallback: () => <i class="vdom-loading">{'loading'}</i>,
+		}}
+	/>
+}
+
+const first_error = ref(false);
+const newer_error = ref(false);
+let finish_work: (value: unknown) => void = () => {};
+let work: Promise<unknown> = Promise.resolve();
+
+// A Vapor component with an async setup and a watcher that throws.
+const LoadingWithWatcher = makeVaporComponent(() => {
+	watch(
+		first_error,
+		() => {
+			throw new Error('first async');
+		},
+		{ flush: 'sync' },
+	);
+	work = new Promise((resolve) => (finish_work = resolve));
+	return work as never;
+});
+
+function throw_newer() {
+	watch(
+		newer_error,
+		() => {
+			throw new Error('newer error');
+		},
+		{ flush: 'sync' },
+	);
+}
+
+function NewerLocal() @{
+	@try {
+		throw_newer();
+		<LoadingWithWatcher />
+	} @catch (err) {
+		<b class="newer-caught">{String(err)}</b>
+	}
+}
+
+function NewerApp() @{
+	@try {
+		throw new Error('outer');
+		<p />
+	} @catch (_err) {
+		<Suspense
+			v-slots={{
+				default: () => <NewerLocal />,
+				fallback: () => <i class="newer-loading">{'loading'}</i>,
+			}}
+		/>
+	}
+}
+
+describe('tsrx-vue a @try whose body throws while its Suspense is pending, again', () => {
+	async function settle() {
+		await flush();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await flush();
+	}
+
+	it('swaps at once for a loading VDOM component, which Vue counts down as it unmounts', async () => {
+		vdom_broken.value = false;
+		vdom_disposals = 0;
+		const handled: string[] = [];
+		const app = createVaporApp(VdomPending);
+		app.use(vaporInteropPlugin);
+		app.config.errorHandler = (error) => {
+			handled.push(String(error));
+		};
+		app.mount(container);
+		await flush();
+		expect(container.querySelector('.vdom-loading')?.textContent).toBe('loading');
+		vdom_broken.value = true;
+		await settle();
+		expect(container.querySelector('.vdom-caught')?.textContent).toBe('Error: watcher failed');
+		expect(vdom_disposals).toBe(1);
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('shows a newer error over one that waited for a loading component', async () => {
+		first_error.value = false;
+		newer_error.value = false;
+		const handled: string[] = [];
+		const app = createVaporApp(NewerApp);
+		app.use(vaporInteropPlugin);
+		app.config.errorHandler = (error) => {
+			handled.push(String(error));
+		};
+		app.mount(container);
+		await flush();
+		expect(container.querySelector('.newer-loading')?.textContent).toBe('loading');
+		work.then(() => queueMicrotask(() => (newer_error.value = true)));
+		first_error.value = true;
+		finish_work(document.createTextNode('loaded'));
+		await settle();
+		expect(container.querySelector('.newer-caught')?.textContent).toBe('Error: newer error');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+});
