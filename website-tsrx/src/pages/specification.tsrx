@@ -290,7 +290,8 @@ const STYLE_STATIC_CONSTRAINTS = [
 	'  An assigned block must not declare a class selector named $class.',
 	'TSRX3011',
 	'  :global(...) may begin or end a selector sequence but not sit in its middle,',
-	'  and a bare :global must not be nested inside another pseudo-class. A',
+	'  holds a selector list only as the whole selector, and a bare :global must',
+	'  not be nested inside another pseudo-class. A',
 	'  selector that starts with a bare :global leaves its whole rule unscoped, so',
 	'  outside another such rule, a selector beside it in the list that would be',
 	'  scoped on its own, or a rule or @keyframes name nested in it that would be,',
@@ -721,11 +722,14 @@ const TYPESCRIPT_ERROR_CODES = [
 	"TS1103  'for await' loops are only allowed within async functions and at the top levels of modules.",
 	"TS1104  A 'continue' statement can only be used within an enclosing iteration statement.",
 	"TS1105  A 'break' statement can only be used within an enclosing iteration or switch statement.",
+	'TS1107  Jump target cannot cross function boundary.',
 	"TS1108  A 'return' statement can only be used within a function body.",
 	'TS1109  Expression expected.',
 	"TS1111  Private field '{0}' must be declared in an enclosing class.",
 	"TS1113  A 'default' clause cannot appear more than once in a 'switch' statement.",
 	"TS1114  Duplicate label '{0}'.",
+	"TS1115  A 'continue' statement can only jump to a label of an enclosing iteration statement.",
+	"TS1116  A 'break' statement can only jump to a label of an enclosing statement.",
 	'TS1117  An object literal cannot have multiple properties with the same name.',
 	'TS1123  Variable declaration list cannot be empty.',
 	'TS1124  Digit expected.',
@@ -1132,8 +1136,11 @@ export function SpecificationPage() @{
 								Each <code class="inline-code">@switch</code> <code class="inline-code">@case</code>{' '}
 								and <code class="inline-code">@default</code> must use a{' '}
 								<code class="inline-code">{'{}'}</code> template block. Cases are isolated: they do
-								not fall through to later cases, a <code class="inline-code">return</code> right in
-								a JSX switch case is a syntax error, and a <code class="inline-code">break</code> or{' '}
+								not fall through to later cases, a <code class="inline-code">return</code> in a case
+								is an error, also inside a block, an <code class="inline-code">if</code> or a loop
+								there, unless it is in a function declared in the case (a case runs in a function of
+								its own, so the <code class="inline-code">return</code> would only end the case),
+								and a <code class="inline-code">break</code> or{' '}
 								<code class="inline-code">continue</code> in a case can only reach a loop, a{' '}
 								<code class="inline-code">switch</code> (<code class="inline-code">break</code>{' '}
 								only) or a label inside the case.

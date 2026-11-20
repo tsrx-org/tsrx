@@ -50,6 +50,7 @@ import {
 	NORMALIZE_SPREAD_PROPS_FOR_REF_ATTR_INTERNAL_NAME,
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	sourceMentionsIdentifier as source_mentions_identifier,
+	createDynamicAliasName as create_dynamic_alias_name,
 	returnValueBodyToExpression as return_value_body_to_expression,
 	SPREAD_REF_BAGS_INTERNAL_NAME,
 	clone_ast_node,
@@ -643,7 +644,11 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		return;
 	}
 
-	if (current.type === 'ReturnStatement') {
+	if (
+		current.type === 'ReturnStatement' &&
+		!current.metadata?.invalid_directive_jump &&
+		!current.metadata?.invalid_tsrx_template_return
+	) {
 		error(
 			TSRX_ERRORS.FOR_RETURN_STATEMENT,
 			transform_context.filename,
@@ -716,7 +721,11 @@ function validate_if_body_control_flow(node, transform_context) {
 		return;
 	}
 
-	if (current.type === 'ReturnStatement') {
+	if (
+		current.type === 'ReturnStatement' &&
+		!current.metadata?.invalid_directive_jump &&
+		!current.metadata?.invalid_tsrx_template_return
+	) {
 		error(
 			TSRX_ERRORS.IF_RETURN_STATEMENT,
 			transform_context.filename,
@@ -1683,8 +1692,7 @@ function rewrite_binding_refs(node, replacements, tag_declarations, transform_co
 				);
 				const walked = /** @type {ESTreeJSX.JSXElement} */ (next(state) ?? element);
 				if (!expression) return walked;
-				transform_context.local_statement_component_index += 1;
-				const local = `${DYNAMIC_IMPORT_LOCAL}_${transform_context.local_statement_component_index}`;
+				const local = create_dynamic_alias_name(transform_context);
 				transform_context.needs_dynamic_factory = true;
 				tag_declarations.push(
 					b.const(b.id(local), b.call(b.id(DYNAMIC_FACTORY_LOCAL), b.arrow([], expression))),

@@ -3893,11 +3893,46 @@ function add_diagnostic_mappings(
 		if (start === undefined) continue;
 		const end = error.end && error.end > start ? error.end : start + 1;
 		if (has_exact_source_map_position(error, src_to_gen_map)) {
+			if (!is_unclosed_fragment_error(error, source)) {
+				// An error on code that no mapping covers any of, at the start of a
+				// printed node, gets an anchor: on the word itself where the editor's
+				// code prints it as written without mapping it, and otherwise on the
+				// whitespace before the node (`accessor` before a method's name).
+				if (!maps_any_of(mappings, start, end)) {
+					const loc = /** @type {{ line: number, column: number }} */ (error.loc?.start);
+					const positions = (src_to_gen_map.get(`${loc.line}:${loc.column}`) ?? []).map(
+						(position) => loc_to_offset(position.line, position.column, gen_line_offsets),
+					);
+					// The word printed as written and not mapped (`async` in `declare
+					// async function f(): void;`): an anchor on it, as a mapping of it.
+					const text = source.slice(start, end);
+					const printed = positions.find((generated) => generated_code.startsWith(text, generated));
+					/** @type {CodeMapping | null | undefined} */
+					const anchor =
+						printed !== undefined
+							? {
+									sourceOffsets: [start],
+									generatedOffsets: [printed],
+									lengths: [text.length],
+									generatedLengths: [text.length],
+									data: {
+										...mapping_data_verify_only,
+										customData: { diagnosticAnchor: true },
+									},
+								}
+							: positions
+									.map((generated) =>
+										anchor_before(start, end, generated, mappings, generated_code),
+									)
+									.find(Boolean);
+					if (anchor) diagnostic_mappings.push(anchor);
+				}
+				continue;
+			}
 			// The mapping walker gives a fragment's `<>` no mapping, so an unclosed
 			// `<>` that the editor's code prints, where esrap records its position,
 			// gets an anchor on that `<>`, and one it leaves out gets an anchor as
 			// any error does (#1322).
-			if (!is_unclosed_fragment_error(error, source)) continue;
 			const fragment = unclosed_fragment_anchor(
 				error,
 				generated_code,
@@ -3917,18 +3952,67 @@ function add_diagnostic_mappings(
 			gen_line_offsets,
 			generated_code,
 		);
-		if (generated_start === null) continue;
+		if (generated_start === null) {
+			// Nothing before it on its line is printed, as for a modifier the
+			// editor's code leaves out at the start of a statement (`abstract` in
+			// `abstract namespace N {}`): an anchor on the space before the code
+			// after it on the line.
+			const loc = error.loc?.start;
+			const following = loc
+				? get_following_source_line_generated_position(
+						source_line_generated_map,
+						loc.line,
+						loc.column,
+					)
+				: null;
+			const anchor =
+				following &&
+				anchor_before(
+					start,
+					end,
+					loc_to_offset(following.line, following.column, gen_line_offsets),
+					mappings,
+					generated_code,
+				);
+			if (anchor) diagnostic_mappings.push(anchor);
+			continue;
+		}
 
-		// The anchor stays on its generated line. The source token isn't in the
-		// generated code, so running past the line would map unrelated code.
-		const line_end = generated_code.indexOf('\n', generated_start);
-		const room = (line_end === -1 ? generated_code.length : line_end) - generated_start;
+		// On code that no mapping covers any of, an anchor on the whitespace
+		// before the code after it on its line, where there is one (see
+		// `anchor_before`).
+		const loc = error.loc?.start;
+		const following =
+			loc && !maps_any_of(mappings, start, end)
+				? get_following_source_line_generated_position(
+						source_line_generated_map,
+						loc.line,
+						loc.column,
+					)
+				: null;
+		const before =
+			following &&
+			anchor_before(
+				start,
+				end,
+				loc_to_offset(following.line, following.column, gen_line_offsets),
+				mappings,
+				generated_code,
+			);
+		if (before) {
+			diagnostic_mappings.push(before);
+			continue;
+		}
 
+		// The anchor covers one character of the generated code: the source
+		// token isn't in it, so any more would map unrelated code, which
+		// TypeScript's errors on that code would then show at the token. The
+		// editor maps the error's one character back to its whole range.
 		diagnostic_mappings.push({
 			sourceOffsets: [start],
 			generatedOffsets: [generated_start],
 			lengths: [length],
-			generatedLengths: [generated_code.length === 0 ? 0 : Math.max(1, Math.min(length, room))],
+			generatedLengths: [generated_code.length === 0 ? 0 : 1],
 			data: {
 				...mapping_data_verify_only,
 				customData: { diagnosticAnchor: true },
@@ -3936,7 +4020,90 @@ function add_diagnostic_mappings(
 		});
 	}
 
+	// Anchors on code, of errors with other ranges, at one generated character
+	// would map each error back through the first: each takes as much of its
+	// line as its range then, as such an anchor did before. One on whitespace
+	// stays there.
+	for (const anchor of diagnostic_mappings) {
+		const generated = anchor.generatedOffsets[0];
+		if (
+			anchor.generatedLengths?.[0] !== 1 ||
+			regex_whitespace.test(generated_code[generated]) ||
+			!diagnostic_mappings.some(
+				(other) =>
+					other !== anchor &&
+					other.generatedOffsets[0] === generated &&
+					other.lengths[0] !== anchor.lengths[0],
+			)
+		) {
+			continue;
+		}
+		const line_end = generated_code.indexOf('\n', generated);
+		const room = (line_end === -1 ? generated_code.length : line_end) - generated;
+		anchor.generatedLengths = [Math.max(1, Math.min(anchor.lengths[0], room))];
+	}
+
 	mappings.unshift(...diagnostic_mappings);
+}
+
+/**
+ * Whether a mapping that reports diagnostics covers any of the source range.
+ * @param {CodeMapping[]} mappings
+ * @param {number} start
+ * @param {number} end
+ * @returns {boolean}
+ */
+function maps_any_of(mappings, start, end) {
+	return mappings.some(
+		(mapping) =>
+			mapping.data?.verification &&
+			mapping.sourceOffsets.some(
+				(offset, i) => offset < end && start < offset + mapping.lengths[i],
+			),
+	);
+}
+
+/**
+ * An anchor from the source range of an error on code that the editor's code
+ * leaves out or doesn't map to whitespace before `generated`, where the code
+ * after it starts in the editor's code, or `null` when there isn't two
+ * characters of whitespace there or code is mapped there. Volar maps a
+ * diagnostic that starts where a mapping ends through that mapping, so the
+ * anchor goes on the first of the two: TypeScript reports no error at
+ * whitespace, so its errors on the code after it still show on that code.
+ * @param {number} start
+ * @param {number} end
+ * @param {number} generated
+ * @param {CodeMapping[]} mappings
+ * @param {string} generated_code
+ * @returns {CodeMapping | null}
+ */
+function anchor_before(start, end, generated, mappings, generated_code) {
+	const before = generated - 2;
+	if (
+		before < 0 ||
+		!regex_whitespace.test(generated_code[before]) ||
+		!regex_whitespace.test(generated_code[before + 1])
+	) {
+		return null;
+	}
+	const taken = mappings.some((mapping) =>
+		mapping.generatedOffsets.some(
+			(offset, i) =>
+				offset <= before + 1 && before < offset + (mapping.generatedLengths ?? mapping.lengths)[i],
+		),
+	);
+	if (taken) return null;
+	return {
+		sourceOffsets: [start],
+		generatedOffsets: [before],
+		lengths: [end - start],
+		generatedLengths: [1],
+		data: {
+			...mapping_data_verify_only,
+			customData: { diagnosticAnchor: true },
+		},
+	};
 }
 
 /**
@@ -4145,6 +4312,22 @@ function get_nearest_source_line_generated_position(source_line_generated_map, l
 	const entry = line_positions[best];
 	const position = entry.position;
 	return { line: position.line, column: position.column, sourceColumn: entry.column };
+}
+
+/**
+ * The generated position of the first code printed after `column` on the
+ * source line, or `null`.
+ * @param {Map<number, Array<{ column: number, position: { line: number, column: number } }>>} source_line_generated_map
+ * @param {number} line
+ * @param {number} column
+ * @returns {{ line: number, column: number } | null}
+ */
+function get_following_source_line_generated_position(source_line_generated_map, line, column) {
+	let found = null;
+	for (const entry of source_line_generated_map.get(line) ?? []) {
+		if (entry.column > column && (!found || entry.column < found.column)) found = entry;
+	}
+	return found?.position ?? null;
 }
 
 /**

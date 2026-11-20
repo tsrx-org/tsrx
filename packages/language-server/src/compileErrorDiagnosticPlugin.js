@@ -32,10 +32,20 @@ export function createCompileErrorDiagnosticPlugin() {
 
 					/** @type {Diagnostic[]} */
 					const diagnostics = [];
-					const { virtualCode, sourceMap } = getVirtualCode(document, context);
+					const { virtualCode, sourceMap, sourceScript } = getVirtualCode(document, context);
+
+					if (virtualCode?.languageId === 'css') {
+						// The type-only code has nothing in a `<style>` body to show an
+						// error on, but the body's embedded CSS maps it whole.
+						const root = /** @type {TSRXVirtualCodeInstance | undefined} */ (
+							sourceScript?.generated?.root
+						);
+						return root?.languageId === 'tsrx' && has_own_id(virtualCode, root)
+							? css_region_diagnostics(root, virtualCode, document)
+							: [];
+					}
 
 					if (!virtualCode || virtualCode.languageId !== 'tsrx') {
-						// skip if it's like embedded css
 						return diagnostics;
 					}
 
@@ -47,6 +57,10 @@ export function createCompileErrorDiagnosticPlugin() {
 					let typescript_diagnostics;
 
 					for (const error of [...virtualCode.fatalErrors, ...virtualCode.usageErrors]) {
+						// Shown in the embedded CSS of the `<style>` body it is in.
+						const css = error.type === 'fatal' ? null : css_region_of(error, virtualCode);
+						if (css && has_own_id(css, virtualCode)) continue;
+
 						const diagnostic = parseCompilationErrorWithDocument(
 							error,
 							virtualCode,
@@ -82,6 +96,76 @@ export function createCompileErrorDiagnosticPlugin() {
 			};
 		},
 	};
+}
+
+/**
+ * The embedded CSS code (a `<style>` body) that holds all of `error`'s range,
+ * if one does.
+ * @param {CompileError} error
+ * @param {TSRXVirtualCodeInstance} root
+ * @returns {import('@volar/language-server').VirtualCode | null}
+ */
+function css_region_of(error, root) {
+	if (error.pos === undefined) return null;
+	const end = get_end_offset_from_error(error, error.pos);
+	for (const code of root.embeddedCodes ?? []) {
+		if (code.languageId !== 'css') continue;
+		const region = css_region_range(code);
+		if (region && region[0] <= error.pos && end <= region[1]) return code;
+	}
+	return null;
+}
+
+/**
+ * Whether `code` is the only embedded code of `root` with its id. Volar keeps
+ * one code of an id and gives every document of that id that code, so an error
+ * in a code whose id another shares stays on the TSRX document.
+ * @param {import('@volar/language-server').VirtualCode} code
+ * @param {TSRXVirtualCodeInstance} root
+ * @returns {boolean}
+ */
+function has_own_id(code, root) {
+	return (root.embeddedCodes ?? []).filter((other) => other.id === code.id).length === 1;
+}
+
+/**
+ * @param {import('@volar/language-server').VirtualCode} code
+ * @returns {[start: number, end: number] | null}
+ */
+function css_region_range(code) {
+	const mapping = code.mappings[0];
+	if (!mapping) return null;
+	const start = mapping.sourceOffsets[0];
+	return [start, start + mapping.lengths[0]];
+}
+
+/**
+ * The usage errors of `root` in the `<style>` body `css` is the embedded code
+ * of, on `document`, the embedded CSS, whose offsets are the body's.
+ * @param {TSRXVirtualCodeInstance} root
+ * @param {import('@volar/language-server').VirtualCode} css
+ * @param {TextDocument} document
+ * @returns {Diagnostic[]}
+ */
+function css_region_diagnostics(root, css, document) {
+	const region = css_region_range(css);
+	if (!region) return [];
+	/** @type {Diagnostic[]} */
+	const diagnostics = [];
+	for (const error of root.usageErrors) {
+		if (css_region_of(error, root) !== css) continue;
+		const start = /** @type {number} */ (error.pos) - region[0];
+		const end = get_end_offset_from_error(error, /** @type {number} */ (error.pos)) - region[0];
+		diagnostics.push({
+			severity:
+				error.severity === 'warning' ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
+			range: { start: document.positionAt(start), end: document.positionAt(end) },
+			message: error.message,
+			source: DIAGNOSTIC_SOURCE,
+			code: error.code ?? 'tsrx-usage-error',
+		});
+	}
+	return diagnostics;
 }
 
 /**
