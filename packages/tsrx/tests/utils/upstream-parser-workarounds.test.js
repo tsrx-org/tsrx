@@ -682,6 +682,102 @@ describe("a modifier order or compatibility error's position (sveltejs/acorn-typ
 	});
 });
 
+describe('modifiers that acorn-typescript checks unlike TypeScript (sveltejs/acorn-typescript, not reported yet)', () => {
+	it('allows `override` before `accessor`, as TypeScript does', async () => {
+		// acorn-typescript reported TS1243 `'accessor' modifier cannot be used with
+		// 'override' modifier.`, which TypeScript has no such rule for.
+		const sources = [
+			'class B { x = 1; }\nclass A extends B { override accessor x = 1; }',
+			'class B { x = 1; }\nclass A extends B { public override accessor x: number; }',
+			'class B { static x = 1; }\nclass A extends B { static override accessor x = 1; }',
+			'abstract class B { abstract x: number; }\nabstract class A extends B { abstract override accessor x: number; }',
+			'class B { x = 1; }\nconst C = class extends B { override accessor x = 1; };',
+		];
+		const outcomes = await parse_in_worker_with_ast(in_every_mode(sources));
+		for (const [index, outcome] of outcomes.entries()) {
+			const source = sources[Math.floor(index / PARSE_MODES.length)];
+			const { ast, errors } = parsed(outcome, source);
+			expect(errors ?? [], source).toEqual([]);
+			expect(JSON.stringify(ast), source).toContain('"accessor":true');
+		}
+	});
+
+	it("reads `'constructor'?()` as a method, as TypeScript does", async () => {
+		// acorn reads a constructor, which `abstract` would be TS1242 on.
+		const sources = ["abstract class A { abstract 'constructor'?(): void; }"];
+		const outcomes = await parse_in_worker_with_ast(in_every_mode(sources));
+		for (const outcome of outcomes) {
+			const { errors } = parsed(outcome, sources[0]);
+			expect(errors ?? [], sources[0]).toEqual([]);
+		}
+		// An `async` one keeps its TS1089, as on main, which a collecting parse
+		// records and reads past.
+		const source = "class A { async 'constructor'?() {} }";
+		const { errors } = parse(source);
+		expect(errors.map((error) => [error.code, error.pos])).toEqual([
+			[TS_ERRORS.MODIFIER_ON_CONSTRUCTOR.code, source.indexOf('async')],
+		]);
+	});
+
+	it("reports a constructor name's escape before its modifiers' error", async () => {
+		// TS1260 is a syntax error, which TypeScript reports alone.
+		const sources = [
+			'class A { accessor \\u0063onstructor() {} }',
+			'class A { static accessor \\u0063onstructor() {} }',
+		];
+		const outcomes = await parse_in_worker(in_every_mode(sources));
+		expect(outcomes).toEqual(
+			sources.flatMap((source) =>
+				thrown_in_every_mode(TS_ERRORS.KEYWORD_ESCAPE, source.indexOf('\\u0063')),
+			),
+		);
+	});
+
+	it("reports `declare` with `override`, and a repeated modifier, in TypeScript's words", () => {
+		// acorn-typescript words `declare` with `override` one way, as TS1243, in
+		// either order, and a repeated modifier `Duplicate modifier: 'readonly'.`
+		/** @type {Array<[source: string, at: string, code: string, message: string]>} */
+		const cases = [
+			[
+				'class B { x = 1; }\nclass A extends B { declare override x: number; }',
+				'override x',
+				'TS1243',
+				"'override' modifier cannot be used with 'declare' modifier.",
+			],
+			[
+				'class B { x = 1; }\nclass A extends B { override declare x: number; }',
+				'declare x',
+				'TS1040',
+				"'override' modifier cannot be used in an ambient context.",
+			],
+			[
+				'class A { readonly readonly x = 1; }',
+				'readonly x',
+				'TS1030',
+				"'readonly' modifier already seen.",
+			],
+			[
+				'class A { constructor(readonly readonly x: number) {} }',
+				'readonly x',
+				'TS1030',
+				"'readonly' modifier already seen.",
+			],
+			['type T<in in U> = U;', 'in U', 'TS1030', "'in' modifier already seen."],
+		];
+		for (const [source, at, code, message] of cases) {
+			const pos = source.indexOf(at);
+			const { errors } = parse(source);
+			expect(
+				errors.map((error) => ({ code: error.code, pos: error.pos, message: error.message })),
+				source,
+			).toEqual([{ code, pos, message }]);
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code, pos, message: expect.stringContaining(message) }),
+			);
+		}
+	});
+});
+
 describe('a parameter property modifier outside a constructor (sveltejs/acorn-typescript#136)', () => {
 	// TypeScript's parser reads the modifiers before any parameter, and its
 	// checker reports TS2369 outside a constructor. acorn-typescript reads a

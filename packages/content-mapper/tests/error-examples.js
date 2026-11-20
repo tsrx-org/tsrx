@@ -1095,12 +1095,6 @@ export default 2;`,
 	},
 	{ error: UPSTREAM_ERRORS.AMBIENT_INITIALIZER, source: `declare let a: number = 1;` },
 	{
-		error: UPSTREAM_ERRORS.DUPLICATE_MODIFIER,
-		source: `class A {
-	readonly readonly a = 1;
-}`,
-	},
-	{
 		error: UPSTREAM_ERRORS.TYPE_MEMBER_MODIFIER,
 		source: `interface A {
 	public a: number;
@@ -1214,6 +1208,10 @@ export const WITHOUT_EXAMPLE = new Map(
 		[
 			TS_ERRORS.LET_DECLARATION_NAME,
 			'Reported only with TS1214 (`TS_ERRORS.STRICT_MODE_RESERVED_WORD`) at the same name, as TypeScript reports both (`const let = 1;`).',
+		],
+		[
+			UPSTREAM_ERRORS.DUPLICATE_MODIFIER,
+			"acorn-typescript's words for a repeated modifier, which the parser reports in TypeScript's (`TS_ERRORS.MODIFIER_ALREADY_SEEN`, `readonly readonly a = 1`).",
 		],
 	]),
 );
