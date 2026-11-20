@@ -3159,9 +3159,10 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 
 		it("rejects a jump out of a function's `@{ … }` body, as out of a `{ … }` body", () => {
 			for (const [body, code] of [
-				['const f = () => @{ if (item) break; <b /> };', 'TS1105'],
-				['const f = () => @{ if (item) continue; <b /> };', 'TS1104'],
-				['function f() @{ if (item) break outer; <b /> }', 'TS1105'],
+				// TypeScript's TS1107 `Jump target cannot cross function boundary.`
+				['const f = () => @{ if (item) break; <b /> };', 'TS1107'],
+				['const f = () => @{ if (item) continue; <b /> };', 'TS1107'],
+				['function f() @{ if (item) break outer; <b /> }', 'TS1107'],
 			]) {
 				const source = `export function App({ items }: { items: string[] }) @{
 					outer: for (const item of items) {

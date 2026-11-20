@@ -14458,6 +14458,41 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it("reports a `break` or `continue` with no target with TypeScript's code for it", async () => {
+		// acorn reports `Unsyntactic break` or `Unsyntactic continue` (TS1105,
+		// TS1104 for any of them). TypeScript looks for the target up to the
+		// function or class `static` block around the statement.
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
+		const cases = [
+			['break;', TS_ERRORS.BREAK_OUTSIDE_LOOP, 'break'],
+			['continue;', TS_ERRORS.CONTINUE_OUTSIDE_LOOP, 'continue'],
+			['switch (a) { case 1: continue; }', TS_ERRORS.CONTINUE_OUTSIDE_LOOP, 'continue'],
+			['L: for (;;) { break M; }', TS_ERRORS.BREAK_LABEL_NOT_FOUND, 'break'],
+			['for (;;) { continue M; }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['L: { continue L; }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['M: { L: for (;;) { continue M; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['namespace N { break; }', TS_ERRORS.BREAK_OUTSIDE_LOOP, 'break'],
+			['function f() { break; }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			['function f() { L: for (;;) { break M; } }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			['L: for (;;) { const g = () => { break L; }; }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			[
+				'L: for (;;) { class K { static { continue L; } } }',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+				'continue',
+			],
+			['function f() { L: { continue L; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+		];
+		const outcomes = await parse_in_worker(
+			cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
+		);
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, error, at]) => [
+				thrown(error, source.indexOf(at)),
+				thrown(error, source.indexOf(at)),
+			]),
+		);
+	});
+
 	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {
 		// `global` is a global augmentation only before `{`, so TS1184, as on main.
 		for (const source of [
@@ -15219,8 +15254,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// `TS_SYNTAX_ERROR_CODES`).
 			...[
 				['class A { m(public x) { label: label: ; } }', 'TS1114', 'label: ;'],
-				['class A { m(public x) { break; } }', 'TS1105', 'break'],
-				['class A { m(public x) { continue; } }', 'TS1104', 'continue'],
+				['class A { m(public x) { break; } }', 'TS1107', 'break'],
+				['class A { m(public x) { continue; } }', 'TS1107', 'continue'],
 				['class A { m(public x) { delete y; } }', 'TS1102', 'delete'],
 				['class A { m(public x) { arguments = 1; } }', 'TS1100', 'arguments'],
 				["class A { m(public x) { 'use strict'; } }", 'TS1347', '(public'],
