@@ -1911,6 +1911,46 @@ export function runSharedScopedStyleTests({
 			expect(css).not.toContain('(unused)');
 		});
 
+		it('comments out a rule whose group rules hold nothing the output keeps', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							.p { @media print { .y {} } }
+							.p { @supports (display: grid) { .none { color: red; } } }
+							.p { @media print { @supports (display: grid) {} } }
+							.p { @media print { color: red; } }
+							.p { @media print { .k { color: blue; } } }
+							.p { @m\\65 dia print { .y {} } }
+							.p { @media print { @layer base {} } }
+							.p { @layer base {} }
+							.p { @media all { @keyframes k {} } }
+							.p { @media all { @-webkit-keyframes w {} } }
+						</style>
+						<div ${attr}="p"><i ${attr}="k" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain('/* (empty) .p { @media print { .y {} } }*/');
+			expect(css).toContain(
+				'/* (empty) .p { @supports (display: grid) { .none { color: red; } } }*/',
+			);
+			expect(css).toContain('/* (empty) .p { @media print { @supports (display: grid) {} } }*/');
+			expect(css).toContain(`.p.${hash} { @media print { color: red; } }`);
+			expect(css).toContain(`.p.${hash} { @media print { .k.${hash} { color: blue; } } }`);
+			expect(css).toContain(String.raw`/* (empty) .p { @m\65 dia print { .y {} } }*/`);
+			// An empty layer block still sets the order of layers.
+			expect(css).toContain(`.p.${hash} { @media print { @layer base {} } }`);
+			expect(css).toContain(`.p.${hash} { @layer base {} }`);
+			// An empty @keyframes still defines its name, so the scoped one stays.
+			expect(css).toContain(`@keyframes ${hash}-k {}`);
+			expect(css).toContain(`@-webkit-keyframes ${hash}-w {}`);
+			expect(css).not.toContain('/* (empty) .p { @media all');
+		});
+
 		it('keeps a comment end in a pruned selector inside the comment over it', () => {
 			// An early end would leave the rest of the selector as CSS, an invalid
 			// selector, so the browser would drop the rule and `.y` its style.

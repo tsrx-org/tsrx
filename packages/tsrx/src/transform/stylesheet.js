@@ -532,24 +532,56 @@ function is_empty(rule, is_in_global_block) {
 	}
 
 	// Rules with :global in the middle (like `div :global p`) should treat nested rules as global
-	const has_mid_global = has_global_in_middle(rule);
+	return is_block_empty(rule.block, is_in_global_block || has_global_in_middle(rule));
+}
 
-	for (const child of rule.block.children) {
+/**
+ * At-rules that only group what is in them, which keep nothing when it is all
+ * empty. Not `@layer`: a layer block, even an empty one, puts its layer in the
+ * cascade's order of layers, so it always counts.
+ */
+const group_at_rules = new Set([
+	'media',
+	'supports',
+	'container',
+	'scope',
+	'starting-style',
+	'when',
+	'else',
+	'document',
+]);
+
+/**
+ * Whether `block` puts nothing in the output: no declaration, no rule that is
+ * used and not empty itself, and no at-rule with something in it. A group
+ * rule (`@media`) has something in it only when what it holds isn't empty.
+ *
+ * @param {AST.CSS.Block} block
+ * @param {boolean} is_in_global_block whether every rule in it is kept
+ * @returns {boolean}
+ */
+function is_block_empty(block, is_in_global_block) {
+	for (const child of block.children) {
 		if (child.type === 'Declaration') {
 			return false;
 		}
 
 		if (child.type === 'Rule') {
-			if (
-				(is_used(child) || is_in_global_block || has_mid_global) &&
-				!is_empty(child, is_in_global_block || has_mid_global)
-			) {
+			if ((is_used(child) || is_in_global_block) && !is_empty(child, is_in_global_block)) {
 				return false;
 			}
 		}
 
 		if (child.type === 'Atrule') {
-			if (child.block === null || child.block.children.length > 0) return false;
+			const name = remove_css_prefix(unescape_css(child.name).toLowerCase());
+			// A layer block sets the order of layers, and a `@keyframes` defines
+			// its name (over an earlier one of the name) even when empty.
+			if (child.block === null || name === 'layer' || name === 'keyframes') return false;
+			if (group_at_rules.has(name)) {
+				if (!is_block_empty(child.block, is_in_global_block)) return false;
+			} else if (child.block.children.length > 0) {
+				return false;
+			}
 		}
 	}
 
