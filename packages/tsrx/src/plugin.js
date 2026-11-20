@@ -5595,13 +5595,6 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * @param {number} position
-			 * @param {number} end
-			 * @param {ReportedError} message
-			 * @param {CompileError[] | undefined} [errors] Where to record it, or
-			 *   `undefined` to throw it
-			 */
-			/**
 			 * A `return` right in an `@switch` case body (TSRX2009). A collecting or
 			 * loose parse records it and reads the statement on, as it does a
 			 * `return` in an `@try` body, so the editor keeps the rest of the file.
@@ -5630,6 +5623,13 @@ export function TSRXPlugin(config) {
 				return statement;
 			}
 
+			/**
+			 * @param {number} position
+			 * @param {number} end
+			 * @param {ReportedError} message
+			 * @param {CompileError[] | undefined} [errors] Where to record it, or
+			 *   `undefined` to throw it
+			 */
 			#report_recoverable_error_range(
 				position,
 				end,
