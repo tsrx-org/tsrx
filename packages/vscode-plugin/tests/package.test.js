@@ -93,6 +93,34 @@ describe('@tsrx/vscode-plugin package contract', () => {
 		});
 	});
 
+	it('offers Find File References for .tsrx files where VS Code offers its own for .ts files', () => {
+		expect(package_json.contributes.commands).toContainEqual({
+			command: 'tsrx.findAllFileReferences',
+			title: 'Find File References',
+			category: 'TSRX',
+		});
+		/** @param {string} menu */
+		const entries = (menu) =>
+			package_json.contributes.menus[menu].filter(
+				(/** @type {{ command: string }} */ entry) =>
+					entry.command === 'tsrx.findAllFileReferences',
+			);
+		// The Explorer and the editor tab menus, as VS Code's `typescript.findAllFileReferences`,
+		// and like Go to Source Definition, with no context key of the TypeScript extension:
+		// the command explains itself on TypeScript 7.
+		expect(entries('explorer/context')).toEqual([
+			{ command: 'tsrx.findAllFileReferences', when: 'resourceLangId == tsrx', group: '4_search' },
+		]);
+		expect(entries('editor/title/context')).toEqual([
+			{ command: 'tsrx.findAllFileReferences', when: 'resourceLangId == tsrx' },
+		]);
+		expect(entries('commandPalette')).toEqual([
+			{ command: 'tsrx.findAllFileReferences', when: 'editorLangId == tsrx' },
+		]);
+		const extension_source = readFileSync(resolve(__dirname, '../src/extension.js'), 'utf8');
+		expect(extension_source).toContain('register_file_references_command()');
+	});
+
 	it('ships no content mapper of its own and requires no other extension to be installed', () => {
 		// On the native backend TypeScript 7 runs the mapper each tsconfig.json declares under
 		// `contentMappers`; the optional extension API registration only contributes `.tsrx`
