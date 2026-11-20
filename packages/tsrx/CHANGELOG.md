@@ -1,5 +1,63 @@
 # @tsrx/core
 
+## 0.6.9
+
+### Patch Changes
+
+- [#1420](https://github.com/tsrx-org/tsrx/pull/1420)
+  [`c795641`](https://github.com/tsrx-org/tsrx/commit/c795641ae2677dde316f91dade4fa0131ab60a40)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Read TypeScript's
+  contextual keywords as plain names where TypeScript does, in modules, functions,
+  blocks and template bodies:
+
+  - `type`, `namespace`, `module`, `abstract` or `declare` alone as a statement,
+    with another statement after it on the same line (`type; foo;`), no longer
+    fails with `';' expected.`.
+  - `declare` before a token that starts no declaration is the name `declare`,
+    followed by the next statement, without an error, as TypeScript reads it.
+    `declare namespace;`, `declare module;` and `declare abstract;` used to
+    compile to `declare;` and drop the second word, `declare global;` compiled to
+    a global augmentation without a body, which doesn't parse, and `declare foo;`
+    and `throw declare foo;` reported `';' expected.`.
+  - `declare type` starts a type alias whatever follows `type`, as in TypeScript:
+    `declare type;` reports TS1003 (`Identifier expected.`) where it compiled to
+    `declare;`, and a name on the next line reports TS1142
+    (`Line break not permitted here.`).
+  - `namespace as {}`, `namespace satisfies {}`, `module as {}` and
+    `module satisfies {}` declare a namespace named `as` or `satisfies`, where
+    they compiled to an expression. In a function, block or template body they now
+    report TS1235, as other namespaces there do.
+  - The words the parser gives a token of their own (`abstract`, `assert`,
+    `asserts`, `declare`, `global`, `keyof`, `module`, `namespace`, `readonly`,
+    `type`, `unique`) work as a label, after `break` and `continue`, and as an
+    `async` arrow function's parameter (`async type => type`). `async as T` and
+    `async satisfies T` parse as expressions.
+
+- [#1419](https://github.com/tsrx-org/tsrx/pull/1419)
+  [`4137330`](https://github.com/tsrx-org/tsrx/commit/413733092ce7291b792c656ac30a7958ff3643d9)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Show a class member's
+  modifier errors in the editor and in `tsrx-tsc` where TypeScript reports them in
+  a .ts file, once. The output prints the modifiers of a class member or a
+  parameter property in the order the source has them, where esrap wrote them in
+  an order of its own: `static override m() {}` printed as
+  `override static m() {}`, which TypeScript reports (TS1029) and Babel rejects,
+  so a Solid build failed on it, and `public abstract m()` as
+  `abstract public m()`. The editor's code maps each modifier, so TypeScript's
+  error on one shows at it: `abstract async m()` (TS1243), `private abstract m()`
+  (TS1243), `accessor static x` (TS1029) and an `async` method in a
+  `declare class` (TS1040) showed nothing before. The compiler reports the
+  modifier errors of an `accessor` property that it reported nothing for, at
+  TypeScript's place: `accessor` before `static`, `override`, `abstract` or
+  `readonly` (TS1029), or with `readonly` or `declare` (TS1243), whose source
+  order esbuild and Babel reject. It reports an `async` constructor as TypeScript
+  does, TS1089 at the `async`, where it threw
+  `Constructor can't be an async method` at the name. An `async` before a method's
+  access modifier, `static`, `override` or `abstract`, which TypeScript reads as a
+  modifier too, is no longer a syntax error: `async abstract m()` is TS1243 at the
+  `async` and `async static m()` TS1029 at `static`, as in TypeScript, and the
+  method is async. The Prettier plugin formats those as Prettier's `typescript`
+  parser does, and rejects an `async` constructor, as it does.
+
 ## 0.6.8
 
 ### Patch Changes
