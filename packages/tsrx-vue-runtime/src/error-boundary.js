@@ -10,6 +10,7 @@ import {
 	handleError,
 	onBeforeUnmount,
 	onErrorCaptured,
+	onScopeDispose,
 	shallowRef,
 	warn,
 } from 'vue';
@@ -782,8 +783,9 @@ function initialize_boundary_state(instance) {
  * element of the body that the `Suspense` waits for, which the boundary
  * can't find (see `pending_setups`).
  *
- * The hook is removed as the boundary unmounts, or when the render that
- * created the boundary drops it before it mounts.
+ * The hook is removed when Vue disposes of the boundary, as it unmounts or
+ * after it was dropped before it mounted, or when the boundary render that
+ * created it drops it.
  *
  * @param {ComponentInternalInstance} instance
  * @param {BoundaryState} state
@@ -813,7 +815,10 @@ function take_own_errors(instance, state, capture) {
 		const index = hooks.indexOf(hook);
 		if (index !== -1) hooks.splice(index, 1);
 	};
-	onBeforeUnmount(remove);
+	// The boundary's scope stops as it unmounts, and also when Vue disposes of
+	// one it dropped before it mounted, such as one in a `@for` row that threw
+	// as it rendered, which runs no unmount hooks.
+	onScopeDispose(remove);
 	creating[creating.length - 1]?.push(remove);
 }
 

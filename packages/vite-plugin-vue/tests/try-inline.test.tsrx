@@ -154,6 +154,52 @@ function DiscardedInner() @{
 	}
 }
 
+const dropped_rows = ref<number[]>([]);
+let rows_owner: { ec?: unknown[] | null } | null = null;
+
+function remember_rows_owner(): string {
+	rows_owner = (Vue as unknown as { currentInstance: { ec?: unknown[] | null } }).currentInstance;
+	return '';
+}
+
+// Each row renders a @try, then throws, so Vue drops the row before the @try
+// mounts.
+function DroppedRows() @{
+	<div>
+		@for (const row of dropped_rows.value; key row) {
+			<>
+				<span>{remember_rows_owner()}</span>
+				@try {
+					<p>{'inner'}</p>
+				} @catch (err) {
+					<b>{String(err)}</b>
+				}
+				<span>{outer_fails()}</span>
+			</>
+		}
+	</div>
+}
+
+// The same from an expression that renders again.
+function DroppedExpression() @{
+	<div>
+		{(() => {
+			void dropped_rows.value;
+			return (
+				<>
+					<span>{remember_rows_owner()}</span>
+					@try {
+						<p>{'inner'}</p>
+					} @catch (err) {
+						<b>{String(err)}</b>
+					}
+					<span>{outer_fails()}</span>
+				</>
+			);
+		})()}
+	</div>
+}
+
 const hooked_broken = ref(false);
 const hooked_seen: string[] = [];
 
@@ -264,6 +310,27 @@ describe("tsrx-vue a @try body's inline code, more cases", () => {
 		expect(handled).toEqual([]);
 		app.unmount();
 	});
+
+	// The expression's scope keeps the @try it rendered last until it renders
+	// again, and the hook goes with it then; a @for row is disposed of at once.
+	it.each([
+		['a @for row', DroppedRows, 0],
+		['an expression', DroppedExpression, 1],
+	])(
+		'removes the hook of a @try that %s dropped before it mounted',
+		async (_name, component, kept) => {
+			dropped_rows.value = [];
+			const { app } = await mount(component);
+			const counts: number[] = [];
+			for (let i = 0; i < 4; i++) {
+				dropped_rows.value = [i];
+				await flush();
+				counts.push(rows_owner?.ec?.length ?? 0);
+			}
+			expect(counts).toEqual([kept, kept, kept, kept]);
+			app.unmount();
+		},
+	);
 
 	it('removes its hook from the component around it when it unmounts', async () => {
 		toggled_shown.value = true;
