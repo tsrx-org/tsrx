@@ -10,6 +10,7 @@ import {
 	handleError,
 	onBeforeUnmount,
 	onErrorCaptured,
+	onScopeDispose,
 	shallowRef,
 	warn,
 } from 'vue';
@@ -73,6 +74,57 @@ const boundary_states = new WeakMap();
  * @type {RenderFrame[]}
  */
 const rendering = [];
+
+/**
+ * @typedef {object} CreatingFrame
+ * @property {unknown} owner the instance current while the boundary renders
+ * @property {Array<() => void>} created how to remove the hooks that the
+ * boundaries it creates right under `owner` added to it
+ */
+
+/**
+ * For each boundary render in progress, innermost last, the hooks that the
+ * boundaries it creates add to the instance it renders as
+ * (`take_own_errors`). Content that throws as it renders is dropped before it
+ * mounts, and Vue doesn't dispose of what it created, so the boundary removes
+ * those hooks itself; so it does when its fallback throws as it renders. Only
+ * those right under it count: a boundary further down hangs its hook on a
+ * component that is dropped too, and one in another app that the render
+ * mounted stays.
+ *
+ * @type {CreatingFrame[]}
+ */
+const creating = [];
+
+/**
+ * Runs `render` as a boundary render that collects what the boundaries it
+ * creates add to their parents.
+ *
+ * @template T
+ * @param {(created: Array<() => void>) => T} render
+ * @returns {T}
+ */
+function track_created(render) {
+	/** @type {Array<() => void>} */
+	const created = [];
+	const owner = vapor.currentInstance;
+	creating.push({ owner, created });
+	let done = false;
+	try {
+		const result = render(created);
+		done = true;
+		return result;
+	} finally {
+		creating.pop();
+		if (!done) for (const remove of created) remove();
+		else {
+			// A boundary called as a plain function renders as the instance
+			// around it, and what it created goes if that render drops it.
+			const outer = creating[creating.length - 1];
+			if (outer && outer.owner === owner) outer.created.push(...created);
+		}
+	}
+}
 
 /**
  * The instance of a boundary rendered as a component. Vapor calls a
@@ -194,31 +246,6 @@ function thrown_by_twin_fallback(source, boundary) {
 		return !!props_of(inner)?.sharesCatch && thrown_by_fallback(source, inner);
 	}
 	return false;
-}
-
-/**
- * The state of `source` when it is a mounted boundary, other than the one
- * `own` belongs to, whose last render showed its content: an error it is the
- * source of came from its content's inline code. A boundary that renders the
- * same `@catch` as the one around it (`sharesCatch`) is left to that one,
- * which shows the same `@catch` and can replace a pending `Suspense`. So is
- * one inside a `Suspense` that is still pending: its fallback would render in
- * the hidden branch, and the `Suspense` would never resolve.
- *
- * @param {unknown} source
- * @param {BoundaryState} own
- * @returns {BoundaryState | undefined}
- */
-function shows_content_of(source, own) {
-	const instance = /** @type {ComponentInternalInstance} */ (source);
-	const inner = boundary_states.get(instance);
-	if (!inner || inner === own || !inner.shows_content || inner.unmounting) return undefined;
-	if (/** @type {{ isUnmounted?: boolean }} */ (source).isUnmounted) return undefined;
-	if (props_of(instance)?.sharesCatch) return undefined;
-	const suspense = /** @type {{ suspense?: { pendingBranch?: unknown } | null }} */ (source)
-		.suspense;
-	if (suspense?.pendingBranch) return undefined;
-	return inner;
 }
 
 /**
@@ -467,48 +494,52 @@ export function TsrxErrorBoundary(props, ctx) {
 	const instance = own_instance(ctx);
 	const state = instance ? initialize_boundary_state(instance) : create_boundary_state();
 
-	const nodes = create_boundary_nodes(() => {
-		// Read so a reset, or an error caught after rendering, renders again.
-		void state.version.value;
-		if (state.caught) {
-			return render_fallback(state, props);
-		}
-		// The content renders again, after a reset: what the fallback created
-		// before is gone. Until now, what it throws still goes on, also right
-		// after its own call to `reset`.
-		state.fallback_from = null;
-		state.shows_content = true;
+	const nodes = create_boundary_nodes(() =>
+		track_created((created) => {
+			// Read so a reset, or an error caught after rendering, renders again.
+			void state.version.value;
+			if (state.caught) {
+				return render_fallback(state, props);
+			}
+			// The content renders again, after a reset: what the fallback created
+			// before is gone. Until now, what it throws still goes on, also right
+			// after its own call to `reset`.
+			state.fallback_from = null;
+			state.shows_content = true;
 
-		/** @type {RenderFrame} */
-		const frame = { instance: vapor.currentInstance, errors: [] };
-		/** @type {unknown} */
-		let content;
-		rendering.push(frame);
-		try {
-			content = props.content();
-		} catch (caught_error) {
-			frame.errors.push(caught_error);
-		} finally {
-			rendering.pop();
-		}
-		if (frame.errors.length === 0) {
-			return content;
-		}
-		if (instance && state.rendered && passes_to_twin(instance)) {
-			// Rendering again: hand the error to the boundary around the
-			// `Suspense`, which replaces it. Keep what this one showed: the
-			// fallback would unmount it, and with it a component the `Suspense`
-			// still waits for. A first render that throws has mounted nothing,
-			// and shows this `@catch`, as before; a component in an element of
-			// what it dropped can still hold the `Suspense` until it settles.
-			handleError(frame.errors[0], instance, ErrorCodes.RENDER_FUNCTION);
-			return /** @type {unknown[] | undefined} */ (state.rendered)?.[0] ?? null;
-		}
-		// Not a reactive write: this render already shows the fallback.
-		state.caught = { error: frame.errors[0] };
-		state.epoch++;
-		return render_fallback(state, props);
-	});
+			/** @type {RenderFrame} */
+			const frame = { instance: vapor.currentInstance, errors: [] };
+			/** @type {unknown} */
+			let content;
+			rendering.push(frame);
+			try {
+				content = props.content();
+			} catch (caught_error) {
+				frame.errors.push(caught_error);
+			} finally {
+				rendering.pop();
+			}
+			if (frame.errors.length === 0) {
+				return content;
+			}
+			// The content is dropped before it mounts.
+			for (const remove of created.splice(0)) remove();
+			if (instance && state.rendered && passes_to_twin(instance)) {
+				// Rendering again: hand the error to the boundary around the
+				// `Suspense`, which replaces it. Keep what this one showed: the
+				// fallback would unmount it, and with it a component the `Suspense`
+				// still waits for. A first render that throws has mounted nothing,
+				// and shows this `@catch`, as before; a component in an element of
+				// what it dropped can still hold the `Suspense` until it settles.
+				handleError(frame.errors[0], instance, ErrorCodes.RENDER_FUNCTION);
+				return /** @type {unknown[] | undefined} */ (state.rendered)?.[0] ?? null;
+			}
+			// Not a reactive write: this render already shows the fallback.
+			state.caught = { error: frame.errors[0] };
+			state.epoch++;
+			return render_fallback(state, props);
+		}),
+	);
 	state.rendered = nodes;
 	return nodes;
 }
@@ -630,7 +661,12 @@ function initialize_boundary_state(instance) {
 		state.unmounting = true;
 	});
 
-	onErrorCaptured((captured_error, source) => {
+	/**
+	 * @param {unknown} captured_error
+	 * @param {unknown} source
+	 * @returns {false | undefined}
+	 */
+	const capture = (captured_error, source) => {
 		if (passes_to_twin(instance)) return;
 		// The boundary inside this one that renders the same `@catch` let this
 		// error from that `@catch` go on: let it go on too.
@@ -653,19 +689,9 @@ function initialize_boundary_state(instance) {
 		// does with a render error. Showing the fallback again would throw again, until Vue
 		// stopped the loop. An error from the content, which can still come
 		// while or after the fallback shows, is the boundary's own, as before.
-		if (from_fallback) {
-			// Unless a `@try` the fallback rendered is the source and shows its
-			// content: its content's inline code threw, on an update or from a
-			// handler. Vue starts at the parent of the instance that threw, which
-			// skipped that boundary's own hook, so show the error there, as the
-			// fallback rendering again used to.
-			const inner = shows_content_of(source, state);
-			if (!inner) return;
-			inner.caught = { error: captured_error };
-			inner.epoch++;
-			inner.version.value++;
-			return false;
-		}
+		// A `@try` the fallback rendered takes what its own content's inline
+		// code throws before this hook runs (`take_own_errors`).
+		if (from_fallback) return;
 		// Thrown outside a render: swap in the fallback.
 		const show = () => {
 			state.caught = { error: captured_error };
@@ -752,9 +778,70 @@ function initialize_boundary_state(instance) {
 			wait(first);
 		}
 		return false;
-	});
+	};
+	onErrorCaptured(capture);
+	take_own_errors(instance, state, capture);
 
 	return state;
+}
+
+/**
+ * Has `capture` take the errors `instance` itself is the source of, while it
+ * shows its content.
+ *
+ * Vue hands an error to the hooks of the parents of the instance it came
+ * from, never to that instance's own. A `@try` body's inline code, an
+ * expression that updates or an event handler, belongs to the boundary that
+ * renders it, so what it throws after the first render skipped the
+ * boundary's hook: it went to the next `@try` out, or to
+ * `app.config.errorHandler`. A hook put first among the parent's, where Vue
+ * starts, takes those errors to the boundary.
+ *
+ * Some still go on, as before: what the fallback's inline code throws; what
+ * comes while the boundary unmounts; and what comes while the boundary's
+ * `Suspense` is pending, since swapping could unmount a component in an
+ * element of the body that the `Suspense` waits for, which the boundary
+ * can't find (see `pending_setups`).
+ *
+ * The hook is removed when Vue disposes of the boundary, as it unmounts or
+ * after it was dropped before it mounted, or when the boundary render that
+ * created it drops it.
+ *
+ * @param {ComponentInternalInstance} instance
+ * @param {BoundaryState} state
+ * @param {(captured_error: unknown, source: unknown) => false | undefined} capture
+ */
+function take_own_errors(instance, state, capture) {
+	const parent = /** @type {{ ec?: Function[] | null } | null} */ (
+		/** @type {unknown} */ (instance.parent)
+	);
+	if (!parent) return;
+	onErrorCaptured((captured_error, proxy) => {
+		// Vue passes the instance's public proxy, or the instance itself when
+		// it has none, as a Vapor one doesn't.
+		const source = /** @type {unknown} */ (proxy);
+		if (source !== instance && source !== instance.proxy) return;
+		if (!state.shows_content || state.unmounting || instance.isUnmounted) return;
+		const suspense = /** @type {{ suspense?: SuspenseState | null }} */ (instance).suspense;
+		// Also in the branch a `Suspense` (`timeout: -1`) keeps showing while
+		// a new one loads: a component that appeared there in the new round,
+		// inside an element, is counted too, and the boundary can't find it.
+		if (suspense?.pendingBranch && !suspense.isUnmounted) return;
+		return capture(captured_error, instance);
+	}, /** @type {ComponentInternalInstance} */ (/** @type {unknown} */ (parent)));
+	const hooks = /** @type {Function[]} */ (parent.ec);
+	const hook = /** @type {Function} */ (hooks.pop());
+	hooks.unshift(hook);
+	const remove = () => {
+		const index = hooks.indexOf(hook);
+		if (index !== -1) hooks.splice(index, 1);
+	};
+	// The boundary's scope stops as it unmounts, and also when Vue disposes of
+	// one it dropped before it mounted, such as one in a `@for` row that threw
+	// as it rendered, which runs no unmount hooks.
+	onScopeDispose(remove);
+	const frame = creating[creating.length - 1];
+	if (frame && frame.owner === instance.parent) frame.created.push(remove);
 }
 
 /**
