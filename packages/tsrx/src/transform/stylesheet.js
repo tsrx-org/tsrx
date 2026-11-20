@@ -73,7 +73,17 @@ const fallback_functions = new Set(['var', 'env']);
 
 /** @param {AST.CSS.Atrule} node */
 const is_keyframes_node = (node) =>
-	remove_css_prefix(unescape_css(node.name).toLowerCase()) === 'keyframes';
+	remove_css_prefix(ascii_lowercase(unescape_css(node.name))) === 'keyframes';
+
+/**
+ * `text` with ASCII letters lowercased, as CSS compares at-rule names: unlike
+ * `toLowerCase`, it leaves letters such as the Kelvin sign (U+212A) alone.
+ * @param {string} text
+ * @returns {string}
+ */
+function ascii_lowercase(text) {
+	return text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
 
 /**
  * The index after the escape at `index`: up to six hex digits and one

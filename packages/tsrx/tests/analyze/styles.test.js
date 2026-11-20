@@ -1249,6 +1249,12 @@ describe('scoped style analysis', () => {
 					'@KEYFRAMES H-k { to { opacity: 0; } } .p.H { }',
 					'@KEYFRAMES H-k { to { opacity: 0; } }.p.H { }',
 				],
+				// Only ASCII letters fold: the Kelvin sign isn't a k.
+				[
+					String.raw`@keyframes -global-k { to { opacity: 0; } } @\212A eyframes k { to { opacity: 1; } } .p { animation: k 1s; }`,
+					String.raw`@keyframes k { to { opacity: 0; } } @\212A eyframes k { to.H { opacity: 1; } } .p.H { animation: k 1s; }`,
+					String.raw`@keyframes k { to { opacity: 0; } } @\212A eyframes k { to.H { opacity: 1; } } .p.H { animation: k 1s; }`,
+				],
 				// An @else is written after the condition before it.
 				[
 					'.p { @when media(print) { color: red; } @else { @font-face { font-family: x; } } }',
