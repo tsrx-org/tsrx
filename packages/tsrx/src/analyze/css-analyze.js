@@ -123,9 +123,10 @@ const SELECTOR_ARGUMENTS = ['is', 'where', 'not', 'has'];
  * Whether leaving the scope hashes out of `selector`, as a global block does,
  * can't make it match more than the output gives it on its own. Outside a
  * global block a compound gets no hash when it is `:global(...)` (with its
- * arguments kept as written), has `:root` or `:host`, has an `&`, is a lone `:is()` or `:where()`, or follows a bare `:global`; the
- * arguments of its `:is()`, `:where()`, `:not()` and `:has()` are scoped as
- * selectors of their own, except that:
+ * arguments kept as written), has `:root` or `:host`, has an `&` (other than
+ * one for a `@scope`'s root), is a lone `:is()` or `:where()`, or follows a
+ * bare `:global`; the arguments of its `:is()`, `:where()`, `:not()` and
+ * `:has()` are scoped as selectors of their own, except that:
  *
  * - a `:not()` argument without its hashes only makes the `:not()` match
  *   fewer elements (a `:not()` within it is checked again), and
