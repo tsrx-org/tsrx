@@ -538,17 +538,18 @@ export function analyze_css(css, options = {}) {
 			context.next(); // analyze relevant selectors first
 
 			{
+				// A bare :global anywhere in a pseudo-class's argument, not only one
+				// that starts a compound (`:is(.x:global)`, `:is(:global(.x) :global .y)`).
+				if (context.path.at(-2)?.type === 'PseudoClassSelector') {
+					const bare = node.children
+						.flatMap((relative_selector) => relative_selector.selectors)
+						.find(is_global_block_selector);
+					if (bare) report(TSRX_ERRORS.CSS_GLOBAL_IN_PSEUDOCLASS, bare);
+				}
+
 				const global = node.children.find(is_global);
 
 				if (global) {
-					const is_nested = context.path.at(-2)?.type === 'PseudoClassSelector';
-					if (
-						is_nested &&
-						!(/** @type {AST.CSS.PseudoClassSelector} */ (global.selectors[0]).args)
-					) {
-						report(TSRX_ERRORS.CSS_GLOBAL_IN_PSEUDOCLASS, global.selectors[0]);
-					}
-
 					const idx = node.children.indexOf(global);
 					const first = /** @type {AST.CSS.PseudoClassSelector} */ (global.selectors[0]);
 					if (first.args !== null && idx !== 0 && idx !== node.children.length - 1) {

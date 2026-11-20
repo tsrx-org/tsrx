@@ -912,6 +912,13 @@ describe('scoped style analysis', () => {
 				['.a :global(.b) .c { color: red; }', TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR],
 				[':not(:global) { color: red; }', TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR],
 				[':is(:global .a) { color: red; }', TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR],
+				// A bare :global that doesn't start the selector or its compound.
+				[':is(.x:global, .b) { color: red; }', TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR],
+				['.p:not(.y:global.z) { color: red; }', TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR],
+				[
+					':is(:global(.x) :global .y) { color: red; }',
+					TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
+				],
 			]) {
 				const thrown = analyze_thrown(parse_stylesheet(css));
 
@@ -1096,6 +1103,7 @@ describe('scoped style analysis', () => {
 				['.a :global(.b) .c { color: red; }', ':global(.b)'],
 				[':not(:global) { color: red; }', ':global'],
 				[':is(:global .a) { color: red; }', ':global'],
+				[':is(.x:global, .b) { color: red; }', ':global'],
 			]) {
 				const source = `const t = <style>${css}</style>;`;
 				expect_anchored_on(analyze_thrown(first_stylesheet(source)), source, selector);
