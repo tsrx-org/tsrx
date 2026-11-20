@@ -5,6 +5,7 @@ import {
 	defineVaporAsyncComponent,
 	defineVaporComponent as makeVaporComponent,
 	h,
+	KeepAlive,
 	onScopeDispose,
 	ref,
 	Suspense,
@@ -120,16 +121,41 @@ function OrderTry() @{
 	}
 }
 
+const shared_one = ref(false);
+const shared_two = ref(false);
+let shared_work: Promise<unknown> = Promise.resolve();
+let release_shared: (block: unknown) => void = () => {};
+
+// A Vapor component whose async setup returns a promise others share.
+const SharedSetup = makeVaporComponent(() => shared_work as never);
+
+// Two components with the same setup promise appear in different rounds.
+function SharedTry() @{
+	@try {
+		<>
+			<ActiveThrower />
+			@if (shared_one.value) {
+				<SharedSetup />
+			}
+			@if (shared_two.value) {
+				<SharedSetup />
+			}
+		</>
+	} @catch (err) {
+		<b class="active-caught">{String(err)}</b>
+	}
+}
+
 /**
  * Mounts `component` as the first branch of a keyed `Suspense` that keeps it
  * on screen while a second branch loads, and switches to that branch.
  */
 async function mount_kept(component: unknown, before_switch?: () => Promise<void>) {
 	const key = ref('old');
-	let finish_new: () => void = () => {};
+	const finish_new: Array<() => void> = [];
 	const New = defineComponent({
 		async setup() {
-			await new Promise<void>((resolve) => (finish_new = resolve));
+			await new Promise<void>((resolve) => finish_new.push(resolve));
 			return () => h('p', 'new');
 		},
 	});
@@ -141,7 +167,9 @@ async function mount_kept(component: unknown, before_switch?: () => Promise<void
 					{ timeout: -1 },
 					{
 						default: () =>
-							key.value === 'old' ? h(component as never, { key: 'old' }) : h(New, { key: 'new' }),
+							key.value === 'old'
+								? h(component as never, { key: 'old' })
+								: h(New, { key: key.value }),
 						fallback: () => h('i', 'loading'),
 					},
 				);
@@ -157,7 +185,7 @@ async function mount_kept(component: unknown, before_switch?: () => Promise<void
 	await before_switch?.();
 	key.value = 'new';
 	await flush();
-	return { app, handled, key, finish: () => finish_new() };
+	return { app, handled, key, finish: () => finish_new.forEach((finish) => finish()) };
 }
 
 // A Suspense keeps showing a @try while a new branch loads: the @try isn't in
@@ -199,6 +227,93 @@ describe('tsrx-vue a @try in the branch a pending Suspense still shows', () => {
 		finish_counted(LateFine);
 		finish();
 		app.unmount();
+	});
+
+	it('waits for each component that shares a setup promise, also in a later round', async () => {
+		active_broken.value = false;
+		shared_one.value = false;
+		shared_two.value = false;
+		shared_work = new Promise((resolve) => (release_shared = resolve));
+		const { app, handled, key, finish } = await mount_kept(SharedTry);
+		shared_one.value = true;
+		await flush();
+		active_broken.value = true;
+		await flush();
+		key.value = 'third';
+		await flush();
+		shared_two.value = true;
+		await flush();
+		await new Promise((resolve) => setTimeout(resolve, 120));
+		await flush();
+		finish();
+		await flush();
+		release_shared(document.createTextNode('shared'));
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await flush();
+		expect(container.textContent).toBe('new');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('stops checking a waiting @catch once a KeepAlive puts its Suspense away', async () => {
+		active_broken.value = false;
+		counted_shown.value = false;
+		const key = ref('old');
+		const kept = ref(true);
+		let finish_new: () => void = () => {};
+		const New = defineComponent({
+			async setup() {
+				await new Promise<void>((resolve) => (finish_new = resolve));
+				return () => h('p', 'new');
+			},
+		});
+		const Other = defineComponent({ setup: () => () => h('p', 'other') });
+		const Root = defineComponent({
+			setup() {
+				return () =>
+					h(KeepAlive, null, {
+						default: () =>
+							kept.value
+								? h(
+										Suspense,
+										{ timeout: -1 },
+										{
+											default: () =>
+												key.value === 'old'
+													? h(ActiveTryWithCounted as never, { key: 'old' })
+													: h(New, { key: 'new' }),
+											fallback: () => h('i', 'loading'),
+										},
+									)
+								: h(Other, { key: 'other' }),
+					});
+			},
+		});
+		const handled: string[] = [];
+		const app = createApp(Root).use(vaporInteropPlugin);
+		app.config.errorHandler = (error) => {
+			handled.push(String(error));
+		};
+		app.mount(container);
+		await flush();
+		key.value = 'new';
+		await flush();
+		counted_shown.value = true;
+		await flush();
+		active_broken.value = true;
+		await flush();
+		kept.value = false;
+		await flush();
+		await new Promise((resolve) => setTimeout(resolve, 80));
+		const set_timeout = vi.spyOn(globalThis, 'setTimeout');
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		const checks = set_timeout.mock.calls.filter((call) => call[1] === 50);
+		set_timeout.mockRestore();
+		expect(checks).toEqual([]);
+		expect(handled).toEqual([]);
+		app.unmount();
+		finish_counted(LateFine);
+		finish_new();
 	});
 
 	it('stops checking a waiting @catch once the app unmounts', async () => {

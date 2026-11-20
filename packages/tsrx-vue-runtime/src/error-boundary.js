@@ -50,6 +50,8 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
 
 /** @typedef {{ pendingBranch?: unknown, pendingId?: number }} PendingSuspense */
 
+/** @typedef {PendingSuspense & { isUnmounted?: boolean }} SuspenseState */
+
 /** @typedef {{ parent?: InstanceLink | null, $?: InstanceLink }} InstanceLink */
 
 /**
@@ -233,9 +235,7 @@ function shows_content_of(source, own) {
  * @returns {boolean}
  */
 function passes_to_twin(instance) {
-	const suspense =
-		/** @type {{ suspense?: (PendingSuspense & { isUnmounted?: boolean }) | null }} */ (instance)
-			.suspense;
+	const suspense = /** @type {{ suspense?: SuspenseState | null }} */ (instance).suspense;
 	return (
 		!!props_of(instance)?.sharesCatch &&
 		!!suspense?.pendingBranch &&
@@ -268,14 +268,14 @@ function counted_setup(component, suspense) {
 }
 
 /**
- * The counted setups (see {@link counted_setup}) of the async components in
- * `block`: the components it holds and what they render, through fragments,
- * but not the children of an element.
+ * The async components in `block` whose setups `suspense` counts (see
+ * {@link counted_setup}): the components it holds and what they render,
+ * through fragments, but not the children of an element.
  *
  * @param {VaporBlock | undefined} block
  * @param {PendingSuspense} suspense
- * @param {Promise<unknown>[]} [found]
- * @returns {Promise<unknown>[]}
+ * @param {AsyncInstance[]} [found]
+ * @returns {AsyncInstance[]}
  */
 function pending_setups(block, suspense, found = []) {
 	if (!block || block instanceof Node) return found;
@@ -283,8 +283,7 @@ function pending_setups(block, suspense, found = []) {
 		for (const item of block) pending_setups(item, suspense, found);
 	} else if (vapor.isVaporComponent(block)) {
 		const component = /** @type {AsyncInstance} */ (/** @type {unknown} */ (block));
-		if (counted_setup(component, suspense))
-			found.push(/** @type {Promise<unknown>} */ (component.asyncDep));
+		if (counted_setup(component, suspense)) found.push(component);
 		pending_setups(component.block, suspense, found);
 	} else if (vapor.isFragment(block)) {
 		pending_setups(block.nodes, suspense, found);
@@ -499,7 +498,9 @@ export function TsrxErrorBoundary(props, ctx) {
 			// Rendering again: hand the error to the boundary around the
 			// `Suspense`, which replaces it. Keep what this one showed: the
 			// fallback would unmount it, and with it a component the `Suspense`
-			// still waits for. A first render that throws mounted nothing yet.
+			// still waits for. A first render that throws has mounted nothing,
+			// and shows this `@catch`, as before; a component in an element of
+			// what it dropped can still hold the `Suspense` until it settles.
 			handleError(frame.errors[0], instance, ErrorCodes.RENDER_FUNCTION);
 			return /** @type {unknown[] | undefined} */ (state.rendered)?.[0] ?? null;
 		}
@@ -676,31 +677,37 @@ function initialize_boundary_state(instance) {
 		// error came from or passed through, and what those render once they
 		// have settled. Swap after that, unless the boundary has reset or
 		// shown another error since.
-		/** @type {Set<Promise<unknown>>} */
+		// The components waited for, not their setups: two components can
+		// share one setup promise, and each is counted.
+		/** @type {Set<unknown>} */
 		const awaited = new Set();
 		const loading = () => {
-			const suspense = /** @type {{ suspense?: PendingSuspense | null }} */ (instance).suspense;
-			/** @type {Promise<unknown>[]} */
+			const suspense = /** @type {{ suspense?: SuspenseState | null }} */ (instance).suspense;
+			/** @type {AsyncInstance[]} */
 			const found = [];
-			if (suspense?.pendingBranch) {
+			if (suspense?.pendingBranch && !suspense.isUnmounted) {
 				pending_setups(/** @type {VaporBlock | undefined} */ (state.rendered), suspense, found);
 				for (const current of chain_to(source, instance)) {
 					// A VDOM component on the path is left alone, as before: Vue
 					// counts its setup down when it unmounts.
 					if (!vapor.isVaporComponent(current)) continue;
 					const component = /** @type {AsyncInstance} */ (current);
-					if (counted_setup(component, suspense))
-						found.push(/** @type {Promise<unknown>} */ (component.asyncDep));
+					if (counted_setup(component, suspense)) found.push(component);
 				}
 			}
-			const fresh = found.filter((setup) => !awaited.has(setup));
-			for (const setup of fresh) awaited.add(setup);
+			/** @type {Promise<unknown>[]} */
+			const fresh = [];
+			for (const component of found) {
+				if (awaited.has(component)) continue;
+				awaited.add(component);
+				fresh.push(/** @type {Promise<unknown>} */ (component.asyncDep));
+			}
 			return fresh;
 		};
 		const first = loading();
 		const pending = /** @type {AsyncSetupState | null} */ (source);
-		if (pending?.asyncDep && !pending.asyncResolved && !awaited.has(pending.asyncDep)) {
-			awaited.add(pending.asyncDep);
+		if (pending?.asyncDep && !pending.asyncResolved && !awaited.has(pending)) {
+			awaited.add(pending);
 			first.push(pending.asyncDep);
 		}
 		if (first.length === 0) {
@@ -718,7 +725,7 @@ function initialize_boundary_state(instance) {
 				!(/** @type {{ isUnmounted?: boolean }} */ (instance).isUnmounted);
 			/** @param {Promise<unknown>[]} setups */
 			const wait = (setups) => {
-				const suspense = /** @type {{ suspense?: PendingSuspense | null }} */ (instance).suspense;
+				const suspense = /** @type {{ suspense?: SuspenseState | null }} */ (instance).suspense;
 				const round = suspense?.pendingId;
 				let settled = false;
 				const next = () => {
@@ -730,12 +737,14 @@ function initialize_boundary_state(instance) {
 					else show();
 				};
 				Promise.allSettled(setups).then(next);
-				// A `Suspense` that goes back to the branch it was showing, or
-				// starts a new round, stops counting these setups, and one of them
-				// may never settle: look again then.
+				// A `Suspense` that goes back to the branch it was showing, starts
+				// a new round, or unmounts while the boundary stays (in a
+				// `KeepAlive`), stops counting these setups, and one of them may
+				// never settle: look again then.
 				const recheck = () => {
 					if (settled || !current()) return;
-					if (!suspense?.pendingBranch || suspense.pendingId !== round) next();
+					if (!suspense?.pendingBranch || suspense.isUnmounted || suspense.pendingId !== round)
+						next();
 					else setTimeout(recheck, ROUND_RECHECK_MS);
 				};
 				setTimeout(recheck, ROUND_RECHECK_MS);
