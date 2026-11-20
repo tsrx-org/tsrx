@@ -1,5 +1,12 @@
 # @tsrx/zed-plugin
 
+## 0.1.16
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/language-server@0.7.11
+
 ## 0.1.15
 
 ### Patch Changes
