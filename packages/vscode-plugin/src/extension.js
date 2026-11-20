@@ -27,6 +27,7 @@ import { activate_closing_tags } from './closing-tags.js';
 import { register_restart_command, restart_on_request } from './restart.js';
 import { create_server_options } from './server-options.js';
 import { register_source_definition_command } from './source-definition.js';
+import { register_file_references_command } from './file-references.js';
 import { register_project_config_command } from './project-config.js';
 import { register_import_commands } from './import-commands.js';
 import { CompileErrorDedupe } from './diagnostics.js';
@@ -110,6 +111,7 @@ export async function activate(context) {
 	context.subscriptions.push(
 		register_restart_command(() => client),
 		register_source_definition_command(),
+		register_file_references_command(),
 		register_project_config_command(),
 		register_import_commands(),
 	);
@@ -207,12 +209,6 @@ export async function activate(context) {
 		// no settings: before, it wrote Prettier's document selectors and the whole [tsrx]
 		// block into the user settings on every start, and a provider of its own showed up as a
 		// second "TSRX" entry in Format Document With…
-
-		// The menus in package.json reuse the built-in TypeScript extension's commands on .tsrx
-		// files. VS Code manages .tsrx documents itself (the contributed plugin declares the
-		// language) and maintains every context key those menus use, `typescript.isManagedFile`,
-		// `tsSupportsFileReferences`, `supportedCodeAction`; with TypeScript 7 on, the built-in
-		// extension is off and those entries stay hidden by themselves.
 
 		// The mapper's compile errors, and tsserver's diagnostics, can arrive after the server's
 		// copy is already shown, and tsserver's can go while the server's copy is hidden. On the

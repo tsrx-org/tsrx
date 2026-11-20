@@ -113,6 +113,11 @@
         "category": "TSRX"
       },
       {
+        "command": "tsrx.findAllFileReferences",
+        "title": "Find File References",
+        "category": "TSRX"
+      },
+      {
         "command": "tsrx.goToProjectConfig",
         "title": "Go to Project Configuration",
         "category": "TSRX"
@@ -175,6 +180,19 @@
           "group": "navigation@1.41"
         }
       ],
+      "explorer/context": [
+        {
+          "command": "tsrx.findAllFileReferences",
+          "when": "resourceLangId == tsrx",
+          "group": "4_search"
+        }
+      ],
+      "editor/title/context": [
+        {
+          "command": "tsrx.findAllFileReferences",
+          "when": "resourceLangId == tsrx"
+        }
+      ],
       "commandPalette": [
         {
           "command": "tsrx.restartServer",
@@ -182,6 +200,10 @@
         },
         {
           "command": "tsrx.goToSourceDefinition",
+          "when": "editorLangId == tsrx"
+        },
+        {
+          "command": "tsrx.findAllFileReferences",
           "when": "editorLangId == tsrx"
         },
         {

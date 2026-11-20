@@ -13,6 +13,7 @@ import {
 	with_top_of_file_imports,
 } from './plugin-auto-imports.js';
 import { without_typescript_diagnostics_on_compile_error } from './plugin-diagnostics.js';
+import { register_file_references_command } from './plugin-file-references.js';
 import { with_jsx_closing_tags } from './plugin-jsx-closing-tag.js';
 import { with_whole_file_import_edits } from './plugin-organize-imports.js';
 import {
@@ -83,6 +84,7 @@ const plugin = (modules) => {
 					/** @type {any} */ (helper).languageService = helper_info.languageService;
 				});
 				register_source_definition_command(info.session);
+				register_file_references_command(info.session);
 			}
 			const decorated = info.languageService;
 			const get_language = () => languages.get(decorated);

@@ -41,6 +41,18 @@ above the file, where TSRX reads its settings (`tsrx.compiler`, `tsrx.platform`)
 VS Code's own **TypeScript: Go to Project Configuration** only runs in TypeScript
 and JavaScript files.
 
+### Find File References
+
+To list the files that import a `.tsrx` file, right-click the file in the Explorer
+or its editor tab and choose **Find File References**, or run **TSRX: Find File
+References** from the Command Palette. The importers show in the References view:
+`.ts`, `.js` and `.tsrx` files, with static imports, re-exports and `import()`. VS
+Code's own **TypeScript: Find File References** only runs in TypeScript and
+JavaScript files. This works on TypeScript 5.9 and 6. TypeScript 7 cannot find
+file references yet
+([microsoft/TypeScript#63806](https://github.com/microsoft/TypeScript/issues/63806)),
+so there the command says so.
+
 ### Sort and remove imports
 
 To sort the imports of the current `.tsrx` file, or to remove the unused ones, run
@@ -240,6 +252,10 @@ On the native backend (TypeScript 7):
   ([microsoft/TypeScript#64576](https://github.com/microsoft/TypeScript/issues/64576)).
   On the classic backend, the command goes past a `.d.ts` file to the JavaScript
   behind it.
+- **Find File References:** TSRX's command says that it does not work yet.
+  TypeScript 7 has no Find File References
+  ([microsoft/TypeScript#63806](https://github.com/microsoft/TypeScript/issues/63806)).
+  On the classic backend, the command lists the files that import a `.tsrx` file.
 
 ### Known limitation on both backends
 
