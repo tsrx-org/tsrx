@@ -2283,6 +2283,40 @@ export function runSharedScopedStyleTests({
 			);
 		});
 
+		it('reports every :global placement error of a block, each on its selector', () => {
+			const source = `export function App() @{
+				<>
+					<style>
+						:is(:global .x) { color: blue; }
+						.a :global(.b) .c { color: red; }
+					</style>
+					<div ${attr}="a">{'a'}</div>
+				</>
+			}`;
+			const errors = compile(source, 'App.tsrx', { collect: true }).errors;
+
+			expect(errors.map((error) => [error.code, source.slice(error.pos, error.end)])).toEqual([
+				[DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT, ':global'],
+				[DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT, ':global(.b)'],
+			]);
+			const line = source.split('\n').findIndex((text) => text.includes(':global(.b)')) + 1;
+			expect(errors[1].loc?.start).toEqual({
+				line,
+				column: source.split('\n')[line - 1].indexOf(':global(.b)'),
+			});
+			// Outside collect mode, the first in the source.
+			expect(() => compile(source, 'App.tsrx')).toThrow(
+				expect.objectContaining({ pos: source.indexOf(':global .x') }),
+			);
+			// A suppressing comment before the block covers all of them.
+			const suppressed = source.replace(
+				'\t\t\t\t\t<style>',
+				'\t\t\t\t\t// @tsrx-ignore\n\t\t\t\t\t<style>',
+			);
+			expect(suppressed).not.toBe(source);
+			expect(compile(suppressed, 'App.tsrx', { collect: true }).errors).toEqual([]);
+		});
+
 		it('throws the coded diagnostic outside collect mode', () => {
 			expect(() =>
 				compile(

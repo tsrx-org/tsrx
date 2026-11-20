@@ -73,10 +73,12 @@ function is_error_suppress_comment(comment) {
 }
 
 /**
+ * Whether a `// @tsrx-ignore` or `// @tsrx-expect-error` comment on the line
+ * before `node` suppresses the errors on it.
  * @param {AST.Node | AST.NodeWithLocation} node
  * @param {AST.CommentWithLocation[]} comments
  */
-function is_error_suppressed(node, comments) {
+export function is_error_suppressed(node, comments) {
 	if (node.loc) {
 		const node_start_line = node.loc.start.line;
 		for (const comment of comments) {

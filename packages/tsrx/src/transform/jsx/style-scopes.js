@@ -31,8 +31,7 @@
 
 import { analyze_css } from '../../analyze/css-analyze.js';
 import { keep_global_compound_arguments, prune_css } from '../../analyze/prune.js';
-import { DIAGNOSTIC_CODES } from '../../diagnostics.js';
-import { error } from '../../errors.js';
+import { error, is_error_suppressed } from '../../errors.js';
 import * as b from '../../utils/builders.js';
 import {
 	child_nodes,
@@ -522,9 +521,10 @@ function create_style_ref_temp_name(ctx) {
 }
 
 /**
- * `analyze_css` reports `:global` placement through a coded fatal error with
- * CSS-relative positions; re-anchor it on the block so editors can place it,
- * and keep going in collect mode.
+ * Report what `analyze_css` finds in a block's sheet, such as `:global`
+ * placement (TSRX3011): every error, in source order, each on the CSS it is
+ * about, and keep going in collect mode. A suppressing comment before the
+ * block covers all of them.
  *
  * @param {AST.JSXStyleElement} block
  * @param {AST.CSS.StyleSheet} sheet
@@ -532,22 +532,36 @@ function create_style_ref_temp_name(ctx) {
  * @returns {boolean} whether the sheet is usable
  */
 function analyze_scope_css(block, sheet, state) {
-	try {
-		analyze_css(sheet);
-		return true;
-	} catch (thrown) {
-		const compile_error = /** @type {CompileError} */ (thrown);
-		if (compile_error?.code !== DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT) throw thrown;
+	const { ctx } = state;
+	/** @type {CompileError[]} */
+	const found = [];
+	analyze_css(sheet, { errors: found });
+	if (found.length === 0) return true;
+	if (ctx.collect && ctx.comments && is_error_suppressed(block, ctx.comments)) return false;
+
+	found.sort((a, b) => (a.pos ?? 0) - (b.pos ?? 0));
+	for (const css_error of found) {
+		// The sheet's offsets are the file's when it has a body origin, as every
+		// sheet `parseModule` produces has.
+		/** @type {AST.Node | AST.NodeWithLocation} */
+		const node =
+			sheet.sourceStart !== undefined && css_error.pos !== undefined && css_error.loc
+				? /** @type {AST.NodeWithLocation} */ ({
+						start: css_error.pos,
+						end: css_error.end,
+						loc: css_error.loc,
+					})
+				: block;
 		error(
-			compile_error.message,
-			state.ctx.filename,
-			block,
-			state.ctx.collect ? state.ctx.errors : undefined,
-			state.ctx.comments,
-			compile_error.code,
+			css_error.message,
+			ctx.filename,
+			node,
+			ctx.collect ? ctx.errors : undefined,
+			undefined,
+			css_error.code,
 		);
-		return false;
 	}
+	return false;
 }
 
 /**
