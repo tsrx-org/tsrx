@@ -6,7 +6,9 @@ import {
 	defineVaporAsyncComponent,
 	inject,
 	onBeforeUnmount,
+	onErrorCaptured,
 	onMounted,
+	onScopeDispose,
 	onUnmounted,
 	provide,
 	reactive,
@@ -16,6 +18,7 @@ import {
 	VaporKeepAlive,
 	watchEffect,
 } from 'vue';
+import { defineVaporComponent } from 'vue-jsx-vapor';
 import * as Vue from 'vue';
 import { mergeRefs } from '@tsrx/vue/ref';
 import { for_items } from '@tsrx/vue/runtime/iterable';
@@ -4300,6 +4303,507 @@ function TeardownShowingPlain() @{
 	}
 }
 
+// A component in the body whose unmount hook throws.
+function ChildTeardown() @{
+	onBeforeUnmount(() => {
+		throw new Error('child teardown');
+	});
+	<span class="child-teardown">{'child'}</span>
+}
+
+function ChildTeardownTwin() @{
+	@try {
+		<ChildTeardown />
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function ChildTeardownPlain() @{
+	@try {
+		<ChildTeardown />
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function ChildTeardownNoTry() @{
+	<div>
+		<ChildTeardown />
+	</div>
+}
+
+const child_teardown_shown = ref(true);
+
+// An @if removes the inner part while the @try around it stays.
+function IfRemovesTeardown(props: { inner: unknown }) @{
+	const Inner = props.inner as typeof ChildTeardownPlain;
+	@try {
+		<div>
+			@if (child_teardown_shown.value) {
+				<Inner />
+			}
+		</div>
+	} @catch (err) {
+		<b class="if-caught">{(err as Error).message}</b>
+	}
+}
+
+// The same, with the @if as the whole body of the @try around it, which
+// renders its content again to remove it.
+function IfRemovesTeardownAtRoot(props: { inner: unknown }) @{
+	const Inner = props.inner as typeof ChildTeardownPlain;
+	@try {
+		@if (child_teardown_shown.value) {
+			<Inner />
+		}
+	} @catch (err) {
+		<b class="if-caught">{(err as Error).message}</b>
+	}
+}
+
+// A body component whose click throws, and whose unmount hook throws as
+// the @catch replaces it.
+function ClickThenTeardown() @{
+	onBeforeUnmount(() => {
+		throw new Error('child teardown');
+	});
+	<button
+		class="click-then-teardown"
+		onClick={() => {
+			throw new Error('click');
+		}}
+	>
+		{'fail'}
+	</button>
+}
+
+function SwapTeardownTwin() @{
+	@try {
+		<ClickThenTeardown />
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function SwapTeardownPlain() @{
+	@try {
+		<ClickThenTeardown />
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+// A component whose scope dispose callback throws, which ends Vue's teardown
+// of it partway, beside one whose teardown is plain.
+let scope_teardown_unmounts = 0;
+
+function ScopeTeardown() @{
+	onScopeDispose(() => {
+		throw new Error('scope teardown');
+	});
+	<span class="scope-teardown">{'scope'}</span>
+}
+
+function AfterScopeTeardown() @{
+	onBeforeUnmount(() => {
+		scope_teardown_unmounts++;
+	});
+	<span class="after-scope-teardown">{'after'}</span>
+}
+
+function ScopeTeardownBody() @{
+	<>
+		<button
+			class="scope-click"
+			onClick={() => {
+				throw new Error('click');
+			}}
+		>
+			{'fail'}
+		</button>
+		<ScopeTeardown />
+		<AfterScopeTeardown />
+	</>
+}
+
+function SwapScopeTeardownTwin() @{
+	@try {
+		<ScopeTeardownBody />
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function SwapScopeTeardownPlain() @{
+	@try {
+		<ScopeTeardownBody />
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+// A reset renders the content again, removing the @catch, which holds it.
+const scope_reset_fails = ref(true);
+
+function ScopeResetBody() @{
+	<p class="scope-reset-body">{scope_reset_fails.value ? fail_with('first') : 'ok'}</p>
+}
+
+function ResetScopeTeardown() @{
+	@try {
+		<ScopeResetBody />
+	} @catch (err, reset) {
+		<>
+			<ScopeTeardown />
+			<button class="scope-reset" onClick={reset}>
+				{(err as Error).message}
+			</button>
+		</>
+	}
+}
+
+// The same, with the component in a Suspense, which Vue tears down as the
+// @try removes the @catch, after the content rendered again.
+function ResetSuspenseScopeTeardown() @{
+	@try {
+		<ScopeResetBody />
+	} @catch (err, reset) {
+		<>
+			<Suspense
+				v-slots={{
+					default: () => <ScopeTeardown />,
+					fallback: () => <i>{'wait'}</i>,
+				}}
+			/>
+			<button class="scope-reset" onClick={reset}>
+				{(err as Error).message}
+			</button>
+		</>
+	}
+}
+
+// The @catch holds, in a Suspense, a component whose scope dispose callback
+// sets off a watcher in the content a reset renders, which throws.
+const reset_signal = ref(0);
+
+function BumpsOnDispose() @{
+	onScopeDispose(() => {
+		reset_signal.value++;
+	});
+	<span>{'old'}</span>
+}
+
+function WatchesResetSignal() @{
+	watch(
+		reset_signal,
+		() => {
+			throw new Error('new content watcher');
+		},
+		{ flush: 'sync' },
+	);
+	<p class="scope-reset-body">{'ok'}</p>
+}
+
+function WatchesResetSignalTwice() @{
+	watch(
+		reset_signal,
+		() => {
+			throw new Error('new content watcher');
+		},
+		{ flush: 'sync' },
+	);
+	watch(
+		reset_signal,
+		() => {
+			throw new Error('second content watcher');
+		},
+		{ flush: 'sync' },
+	);
+	<p class="scope-reset-body">{'ok'}</p>
+}
+
+function ResetWatcherBody(props: { body: unknown }) @{
+	const Body = props.body as typeof WatchesResetSignal;
+	<>{scope_reset_fails.value ? fail_with('first') : <Body />}</>
+}
+
+function ResetWatcherPlain(props: { body: unknown }) @{
+	@try {
+		<ResetWatcherBody body={props.body} />
+	} @catch (err, reset) {
+		<>
+			<Suspense
+				v-slots={{
+					default: () => <BumpsOnDispose />,
+					fallback: () => <i>{'wait'}</i>,
+				}}
+			/>
+			<button class="scope-reset" onClick={reset}>
+				{(err as Error).message}
+			</button>
+		</>
+	}
+}
+
+function ResetWatcherTwin(props: { body: unknown }) @{
+	@try {
+		<ResetWatcherBody body={props.body} />
+	} @pending {
+		<i>{'pending'}</i>
+	} @catch (err, reset) {
+		<>
+			<Suspense
+				v-slots={{
+					default: () => <BumpsOnDispose />,
+					fallback: () => <i>{'wait'}</i>,
+				}}
+			/>
+			<button class="scope-reset" onClick={reset}>
+				{(err as Error).message}
+			</button>
+		</>
+	}
+}
+
+// The same, with the watcher in the @try body's own inline code.
+let inline_reset_fails = true;
+
+function ResetInlineWatcherPlain() @{
+	@try {
+		if (inline_reset_fails) throw new Error('first');
+		watch(
+			reset_signal,
+			() => {
+				throw new Error('inline content watcher');
+			},
+			{ flush: 'sync' },
+		);
+		<p class="scope-reset-body">{'ok'}</p>
+	} @catch (err, reset) {
+		<>
+			<Suspense
+				v-slots={{
+					default: () => <BumpsOnDispose />,
+					fallback: () => <i>{'wait'}</i>,
+				}}
+			/>
+			<button class="scope-reset" onClick={reset}>
+				{(err as Error).message}
+			</button>
+		</>
+	}
+}
+
+function ResetInlineWatcherTwin() @{
+	@try {
+		if (inline_reset_fails) throw new Error('first');
+		watch(
+			reset_signal,
+			() => {
+				throw new Error('inline content watcher');
+			},
+			{ flush: 'sync' },
+		);
+		<p class="scope-reset-body">{'ok'}</p>
+	} @pending {
+		<i>{'pending'}</i>
+	} @catch (err, reset) {
+		<>
+			<Suspense
+				v-slots={{
+					default: () => <BumpsOnDispose />,
+					fallback: () => <i>{'wait'}</i>,
+				}}
+			/>
+			<button class="scope-reset" onClick={reset}>
+				{(err as Error).message}
+			</button>
+		</>
+	}
+}
+
+// The body holds, in a Suspense, a component whose unmount hook throws, and
+// throws as it renders again, which swaps in the @catch in that same render.
+const swap_render_fails = ref(false);
+
+function SuspendedTeardown() @{
+	onBeforeUnmount(() => {
+		throw new Error('old teardown');
+	});
+	<p>{'old'}</p>
+}
+
+function RenderSwapTwin() @{
+	@try {
+		if (swap_render_fails.value) throw new Error('render failure');
+		<Suspense v-slots={{ default: () => <SuspendedTeardown />, fallback: () => <i /> }} />
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function RenderSwapPlain() @{
+	@try {
+		if (swap_render_fails.value) throw new Error('render failure');
+		<Suspense v-slots={{ default: () => <SuspendedTeardown />, fallback: () => <i /> }} />
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+// A reset removes a @catch whose component's scope dispose callback throws
+// `scope_teardown_value`, once; a hook above that sees that value sets off a
+// watcher in the new content.
+let scope_teardown_armed = true;
+let scope_teardown_value: unknown = null;
+
+function ScopeTeardownOnce() @{
+	onScopeDispose(() => {
+		if (!scope_teardown_armed) return;
+		scope_teardown_armed = false;
+		throw scope_teardown_value;
+	});
+	<span>{'scope'}</span>
+}
+
+// The same value, thrown again by the new content's watcher.
+function WatchesResetSignalSameValue() @{
+	watch(
+		reset_signal,
+		() => {
+			throw scope_teardown_value;
+		},
+		{ flush: 'sync' },
+	);
+	<p class="scope-reset-body">{'ok'}</p>
+}
+
+function ObservedResetWatcher(props: { body: unknown }) @{
+	onErrorCaptured((error) => {
+		if (error === scope_teardown_value) reset_signal.value++;
+	});
+	<ResetWatcherWithThrowingCatch body={props.body} />
+}
+
+function ResetWatcherWithThrowingCatch(props: { body: unknown }) @{
+	@try {
+		<ResetWatcherBody body={props.body} />
+	} @catch (err, reset) {
+		<>
+			<Suspense
+				v-slots={{
+					default: () => <ScopeTeardownOnce />,
+					fallback: () => <i>{'wait'}</i>,
+				}}
+			/>
+			<button class="scope-reset" onClick={reset}>
+				{err instanceof Error ? err.message : String(err)}
+			</button>
+		</>
+	}
+}
+
+// The @catch's own teardown resets the @try, as the @catch renders again
+// for a change it reads: that render shows the content, whose watcher the
+// rest of the teardown sets off.
+let cleanup_reset_fails = true;
+let cleanup_resets = false;
+const cleanup_revision = ref(0);
+
+function ResetDuringCleanup() @{
+	@try {
+		if (cleanup_reset_fails) throw new Error('first');
+		<WatchesResetSignal />
+	} @catch (err, reset) {
+		const detail = cleanup_revision.value + ': ' + (err as Error).message;
+		onScopeDispose(() => {
+			if (!cleanup_resets) return;
+			cleanup_resets = false;
+			cleanup_reset_fails = false;
+			reset();
+		});
+		<>
+			<Suspense
+				v-slots={{
+					default: () => <BumpsOnDispose />,
+					fallback: () => <i>{'wait'}</i>,
+				}}
+			/>
+			<b class="cleanup-caught">{detail}</b>
+		</>
+	}
+}
+
+// The body's async component rejects while the Suspense is pending, so the
+// boundary around the Suspense swaps in the @catch and removes the body,
+// whose other component throws as it is torn down.
+let reject_beside_teardown: (error: Error) => void = () => {};
+
+function BesideTeardownBody() @{
+	const Loader = defineVaporAsyncComponent(
+		() => new Promise<any>((_resolve, fail) => (reject_beside_teardown = fail)),
+	);
+	<div>
+		<ChildTeardown />
+		<Loader />
+	</div>
+}
+
+function PendingSwapTeardown() @{
+	@try {
+		<BesideTeardownBody />
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+// A component whose setup never settles, so it counts as pending, with an
+// unmount hook that throws.
+const PendingSetupTeardown = defineVaporComponent(() => {
+	onBeforeUnmount(() => {
+		throw new Error('pending teardown');
+	});
+	return new Promise<never>(() => {});
+});
+
+function PendingSetupInTry() @{
+	@try {
+		<PendingSetupTeardown />
+	} @catch (err) {
+		<b>{String(err)}</b>
+	}
+}
+
+function ThrowsOnRender() @{
+	throw new Error('render');
+	<span />
+}
+
+// The outer @try drops its content, with the inner @try, before it mounts.
+function DropsBeforeMount() @{
+	@try {
+		<>
+			<PendingSetupInTry />
+			<ThrowsOnRender />
+		</>
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="dropped-caught">{(err as Error).message}</b>
+	}
+}
+
 // An enclosing @try shows its @catch, which removes the @try inside it.
 function EnclosingTeardown(props: { inner: unknown }) @{
 	const Inner = props.inner as typeof TeardownTwin;
@@ -4864,11 +5368,316 @@ describe('tsrx-vue a @catch that throws', () => {
 			expect(text('.teardown-caught')).toBe('body');
 			(container.querySelector('.remove-inner') as HTMLElement).click();
 			await flush();
-			expect(text('.enclosing-caught')).toBe('teardown');
+			// The enclosing @catch keeps the error it was swapped in for; the
+			// teardown error goes to errorHandler.
+			expect(text('.enclosing-caught')).toBe('remove');
+			expect(handled).toEqual(['teardown']);
+			app.unmount();
+		},
+	);
+
+	it.each([
+		['with @pending', ChildTeardownTwin],
+		['without @pending', ChildTeardownPlain],
+		['with no @try', ChildTeardownNoTry],
+	])(
+		"passes on what a component's unmount hook throws as the app unmounts, %s",
+		async (_name, component) => {
+			const app = await mount(component, {});
+			expect(text('.child-teardown')).toBe('child');
+			app.unmount();
+			expect(handled).toEqual(['child teardown']);
+		},
+	);
+
+	it.each([
+		['with @pending', ChildTeardownTwin],
+		['without @pending', ChildTeardownPlain],
+		['with no @try', ChildTeardownNoTry],
+	])(
+		"passes on what a component's unmount hook throws as an enclosing @catch removes it, %s",
+		async (_name, inner) => {
+			const app = await mount(EnclosingTeardown, { inner });
+			expect(text('.child-teardown')).toBe('child');
+			(container.querySelector('.remove-inner') as HTMLElement).click();
+			await flush();
+			expect(text('.enclosing-caught')).toBe('remove');
+			expect(handled).toEqual(['child teardown']);
+			app.unmount();
+		},
+	);
+
+	it.each([
+		['the @try', ChildTeardownPlain],
+		['the component, with no @try', ChildTeardownNoTry],
+	])(
+		"shows in the @catch around it what a component's unmount hook throws as an @if removes %s",
+		async (_name, inner) => {
+			for (const host of [IfRemovesTeardown, IfRemovesTeardownAtRoot]) {
+				child_teardown_shown.value = true;
+				handled = [];
+				const app = await mount(host, { inner });
+				expect(text('.child-teardown')).toBe('child');
+				child_teardown_shown.value = false;
+				await flush();
+				expect(text('.if-caught')).toBe('child teardown');
+				expect(handled).toEqual([]);
+				app.unmount();
+			}
+		},
+	);
+
+	it.each([
+		['with @pending', SwapTeardownTwin],
+		['without @pending', SwapTeardownPlain],
+	])(
+		'keeps the error the @catch was swapped in for over what the removed content throws, %s',
+		async (_name, component) => {
+			const app = await mount(component, {});
+			(container.querySelector('.click-then-teardown') as HTMLElement).click();
+			await flush();
+			expect(text('.teardown-caught')).toBe('click');
+			expect(handled).toEqual(['child teardown']);
+			app.unmount();
+		},
+	);
+
+	it.each([
+		['with @pending', SwapScopeTeardownTwin],
+		['without @pending', SwapScopeTeardownPlain],
+	])(
+		'shows the @catch and passes on what an onScopeDispose of the content it replaces throws, %s',
+		async (_name, component) => {
+			scope_teardown_unmounts = 0;
+			const app = await mount(component, {});
+			(container.querySelector('.scope-click') as HTMLElement).click();
+			await flush();
+			expect(text('.teardown-caught')).toBe('click');
+			expect(container.querySelector('.scope-teardown')).toBeNull();
+			expect(container.querySelector('.after-scope-teardown')).toBeNull();
+			expect(scope_teardown_unmounts).toBe(1);
+			expect(handled).toEqual(['scope teardown']);
+			app.unmount();
+		},
+	);
+
+	it('shows the @catch in development with no app.config.errorHandler, and logs what an onScopeDispose throws', async () => {
+		const logged: unknown[] = [];
+		const error_spy = vi.spyOn(console, 'error').mockImplementation((error) => {
+			logged.push(error);
+		});
+		const app = createVaporApp(SwapScopeTeardownPlain);
+		app.config.warnHandler = () => {};
+		try {
+			app.mount(container);
+			await flush();
+			(container.querySelector('.scope-click') as HTMLElement).click();
+			await flush();
+			expect(text('.teardown-caught')).toBe('click');
+			expect(container.querySelector('.scope-teardown')).toBeNull();
+			expect(logged.map((error) => (error as Error).message)).toEqual(['scope teardown']);
+		} finally {
+			app.unmount();
+			error_spy.mockRestore();
+		}
+	});
+
+	it('passes on what an onScopeDispose in a Suspense in the @catch throws as a reset removes it', async () => {
+		scope_reset_fails.value = true;
+		const app = await mount(ResetSuspenseScopeTeardown, {});
+		expect(text('.scope-reset')).toBe('first');
+		scope_reset_fails.value = false;
+		(container.querySelector('.scope-reset') as HTMLElement).click();
+		await flush();
+		expect(text('.scope-reset-body')).toBe('ok');
+		expect(texts('.scope-reset')).not.toContain('scope teardown');
+		expect(handled).toEqual(['scope teardown']);
+		app.unmount();
+	});
+
+	it('shows the @catch in development with no app.config.errorHandler, and logs what an onBeforeUnmount throws', async () => {
+		const logged: unknown[] = [];
+		const error_spy = vi.spyOn(console, 'error').mockImplementation((error) => {
+			logged.push(error);
+		});
+		const app = createVaporApp(SwapTeardownPlain);
+		app.config.warnHandler = () => {};
+		try {
+			app.mount(container);
+			await flush();
+			(container.querySelector('.click-then-teardown') as HTMLElement).click();
+			await flush();
+			expect(text('.teardown-caught')).toBe('click');
+			expect(logged.map((error) => (error as Error).message)).toContain('child teardown');
+		} finally {
+			app.unmount();
+			error_spy.mockRestore();
+		}
+	});
+
+	it.each([
+		['a component, with @pending', ResetWatcherTwin, WatchesResetSignal, 'new content watcher'],
+		['a component, without @pending', ResetWatcherPlain, WatchesResetSignal, 'new content watcher'],
+		[
+			'two watchers, with @pending',
+			ResetWatcherTwin,
+			WatchesResetSignalTwice,
+			'second content watcher',
+		],
+		[
+			'two watchers, without @pending',
+			ResetWatcherPlain,
+			WatchesResetSignalTwice,
+			'second content watcher',
+		],
+	])(
+		'shows in its @catch what the content a reset renders throws as the @catch is torn down: %s',
+		async (_name, component, body, shown) => {
+			scope_reset_fails.value = true;
+			reset_signal.value = 0;
+			const app = await mount(component, { body });
+			expect(text('.scope-reset')).toBe('first');
+			scope_reset_fails.value = false;
+			(container.querySelector('.scope-reset') as HTMLElement).click();
+			await flush();
+			expect(texts('.scope-reset')).toEqual([shown]);
 			expect(handled).toEqual([]);
 			app.unmount();
 		},
 	);
+
+	it.each([
+		['with @pending', ResetInlineWatcherTwin],
+		['without @pending', ResetInlineWatcherPlain],
+	])(
+		"shows in its @catch what the @try body's own code throws as a reset tears down the @catch, %s",
+		async (_name, component) => {
+			inline_reset_fails = true;
+			reset_signal.value = 0;
+			const app = await mount(component, {});
+			expect(text('.scope-reset')).toBe('first');
+			inline_reset_fails = false;
+			(container.querySelector('.scope-reset') as HTMLElement).click();
+			await flush();
+			expect(texts('.scope-reset')).toEqual(['inline content watcher']);
+			expect(handled).toEqual([]);
+			app.unmount();
+		},
+	);
+
+	it.each([
+		['with @pending', RenderSwapTwin],
+		['without @pending', RenderSwapPlain],
+	])(
+		'keeps the error the content threw as it rendered again over what removing it throws, %s',
+		async (_name, component) => {
+			swap_render_fails.value = false;
+			const app = await mount(component, {});
+			swap_render_fails.value = true;
+			await flush();
+			expect(texts('.teardown-caught')).toEqual(['render failure']);
+			expect(handled).toEqual(['old teardown']);
+			app.unmount();
+		},
+	);
+
+	it.each([
+		['its own error', WatchesResetSignal, 'new content watcher'],
+		['the same error', WatchesResetSignalSameValue, 'Error: scope teardown'],
+	])(
+		'keeps with the content a reset renders what a hook that sees a teardown error sets off, throwing %s',
+		async (_name, body, shown) => {
+			scope_teardown_armed = true;
+			scope_teardown_value = new Error('scope teardown');
+			scope_reset_fails.value = true;
+			reset_signal.value = 0;
+			const app = await mount(ObservedResetWatcher, { body });
+			expect(text('.scope-reset')).toBe('first');
+			scope_reset_fails.value = false;
+			(container.querySelector('.scope-reset') as HTMLElement).click();
+			await flush();
+			// The old @catch can stay beside it: Vue's teardown of what the
+			// Suspense held stopped at the throw.
+			expect(texts('.scope-reset')).toContain(shown.replace('Error: ', ''));
+			expect(handled).toEqual(['scope teardown']);
+			app.unmount();
+		},
+	);
+
+	it('shows in its @catch what the content throws when the @catch resets the @try as it is torn down', async () => {
+		cleanup_reset_fails = true;
+		cleanup_resets = false;
+		reset_signal.value = 0;
+		const app = await mount(ResetDuringCleanup, {});
+		expect(text('.cleanup-caught')).toBe('0: first');
+		cleanup_resets = true;
+		cleanup_revision.value++;
+		await flush();
+		expect(texts('.cleanup-caught')).toContain('1: new content watcher');
+		expect(handled).toEqual([]);
+		cleanup_resets = false;
+		app.unmount();
+	});
+
+	it('passes on a teardown error whatever the value, also NaN', async () => {
+		scope_teardown_armed = true;
+		scope_teardown_value = Number.NaN;
+		scope_reset_fails.value = true;
+		reset_signal.value = 0;
+		const app = await mount(ResetWatcherWithThrowingCatch, { body: WatchesResetSignal });
+		scope_reset_fails.value = false;
+		(container.querySelector('.scope-reset') as HTMLElement).click();
+		await flush();
+		expect(text('.scope-reset-body')).toBe('ok');
+		expect(texts('.scope-reset')).not.toContain('NaN');
+		expect(handled).toHaveLength(1);
+		app.unmount();
+	});
+
+	it('shows in the @catch around it what an onScopeDispose throws as an @if removes it', async () => {
+		for (const host of [IfRemovesTeardown, IfRemovesTeardownAtRoot]) {
+			child_teardown_shown.value = true;
+			handled = [];
+			const app = await mount(host, { inner: ScopeTeardown });
+			expect(text('.scope-teardown')).toBe('scope');
+			child_teardown_shown.value = false;
+			await flush();
+			expect(text('.if-caught')).toBe('scope teardown');
+			expect(handled).toEqual([]);
+			app.unmount();
+		}
+	});
+
+	it('renders the content again after a reset, and passes on what an onScopeDispose in the @catch throws', async () => {
+		scope_reset_fails.value = true;
+		const app = await mount(ResetScopeTeardown, {});
+		expect(text('.scope-reset')).toBe('first');
+		scope_reset_fails.value = false;
+		(container.querySelector('.scope-reset') as HTMLElement).click();
+		await flush();
+		expect(text('.scope-reset-body')).toBe('ok');
+		expect(container.querySelector('.scope-teardown')).toBeNull();
+		expect(handled).toEqual(['scope teardown']);
+		app.unmount();
+	});
+
+	it('passes on what the body throws as the @catch of a pending @try replaces it', async () => {
+		const app = await mount(PendingSwapTeardown, {});
+		reject_beside_teardown(new Error('rejected'));
+		await flush();
+		await flush();
+		expect(text('.teardown-caught')).toBe('rejected');
+		expect(handled).toEqual(['child teardown']);
+		app.unmount();
+	});
+
+	it('passes on what a component throws as a @try dropped before it mounted is disposed of', async () => {
+		const app = await mount(DropsBeforeMount, {});
+		expect(text('.dropped-caught')).toBe('render');
+		app.unmount();
+		await flush();
+		expect(handled).toEqual(['pending teardown']);
+	});
 
 	it('runs a @catch parameter pattern that throws once, and passes its error to app.config.errorHandler', async () => {
 		const app = await mount(SyncCatchPatternThrowsAlone, {});

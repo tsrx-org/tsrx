@@ -30,7 +30,11 @@
  */
 
 import { analyze_css } from '../../analyze/css-analyze.js';
-import { keep_global_compound_arguments, prune_css } from '../../analyze/prune.js';
+import {
+	keep_global_compound_arguments,
+	prune_css,
+	scope_unmatched_animation_rules,
+} from '../../analyze/prune.js';
 import { error, is_error_suppressed } from '../../errors.js';
 import * as b from '../../utils/builders.js';
 import {
@@ -603,6 +607,7 @@ export function apply_css_definition_metadata(
 		}
 		prune();
 	}
+	scope_unmatched_animation_rules(css);
 
 	if (top_scoped_classes.size > 0) {
 		metadata.topScopedClasses = top_scoped_classes;
