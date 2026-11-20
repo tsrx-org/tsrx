@@ -333,6 +333,58 @@ export class C extends Base {
 		]);
 	});
 
+	it('maps both names of a dynamic tag that a pass wraps after lowering from the argument', () => {
+		// The closing `{re}` maps through the opening name's generated `re`
+		// (`extra_source_mappings`), which a pass then wraps in `read(…)`.
+		const source = `${DECLARATIONS}export function App() @{ <div><{re}>{'x'}</{re}></div> }\n`;
+		const { ast, transformed } = compile_wrapped(source, 'read', false, new Set());
+		walk(/** @type {any} */ (transformed.ast), null, {
+			JSXAttribute(node, { next }) {
+				const value = /** @type {any} */ (node).value;
+				if (node.name.name === 'is' && value?.expression?.type === 'Identifier') {
+					const inner = value.expression;
+					value.expression = {
+						type: 'CallExpression',
+						callee: { type: 'Identifier', name: 'read', metadata: { path: [] } },
+						arguments: [inner],
+						optional: false,
+						start: inner.start,
+						end: inner.end,
+						loc: inner.loc,
+						metadata: { path: [] },
+					};
+				}
+				next();
+			},
+		});
+		const output = print(
+			/** @type {any} */ (transformed.ast),
+			tsx_with_ts_locations(true, undefined, null, source),
+			{ sourceMapSource: 'App.tsrx', sourceMapContent: source },
+		);
+		expect(output.code).toContain('is={read(re)}');
+		const { mappings } = createVolarMappingsResult({
+			ast: transformed.ast,
+			ast_from_source: ast,
+			source,
+			generated_code: output.code,
+			source_map: output.map,
+			errors: [],
+		});
+		const argument = output.code.indexOf('read(re)') + 'read('.length;
+		for (const start of [source.indexOf('{re}>') + 1, source.indexOf('</{re}>') + 3]) {
+			const offsets = mappings
+				.filter(
+					(mapping) =>
+						mapping.sourceOffsets[0] === start &&
+						mapping.lengths[0] === 2 &&
+						mapping.data.completion,
+				)
+				.map((mapping) => mapping.generatedOffsets[0]);
+			expect(offsets, String(start)).toEqual([argument]);
+		}
+	});
+
 	it('maps a member expression whose object a pass also wrapped from its own text, or keeps its mapping', () => {
 		// `a.b.c.d` with each member wrapped prints `read(read(read(a.b).c).d)`.
 		// `a.b` maps from its own text. `a.b.c.d` prints differently from its

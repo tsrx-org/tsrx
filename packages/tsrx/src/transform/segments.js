@@ -580,7 +580,9 @@ export function convert_source_map_to_mappings(
 	const generated_position_indexes = new Map();
 	/**
 	 * How many tokens start at each source position with each text, counted
-	 * before the tokens are mapped.
+	 * before the tokens are mapped. A token with a `generatedLoc` stands for
+	 * another source position of a name printed once (a dynamic tag's closing
+	 * name), so it isn't counted.
 	 * @type {Map<string, number>}
 	 */
 	const token_counts = new Map();
@@ -625,7 +627,7 @@ export function convert_source_map_to_mappings(
 		});
 		const end = generated_loc.end;
 		const end_offsets =
-			matching_positions.length > 1 && end && token_counts.get(token_key(token)) === 1
+			matching_positions.length > 1 && end && (token_counts.get(token_key(token)) ?? 0) <= 1
 				? new Set(
 						(src_to_gen_map.get(`${end.line}:${end.column}`) ?? []).map((position) =>
 							loc_to_offset(position.line, position.column, gen_line_offsets),
@@ -3557,6 +3559,7 @@ export function convert_source_map_to_mappings(
 	});
 
 	for (const token of tokens) {
+		if (token.generatedLoc) continue;
 		const key = token_key(token);
 		token_counts.set(key, (token_counts.get(key) ?? 0) + 1);
 	}
