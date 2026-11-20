@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.2.15
+
+### Patch Changes
+
+- [#1429](https://github.com/tsrx-org/tsrx/pull/1429)
+  [`ce4150b`](https://github.com/tsrx-org/tsrx/commit/ce4150b5e6adc18f336584877f8b4e70a902183c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Add **Find File
+  References** for `.tsrx` files in VS Code on TypeScript 5.9 and 6. Right-click a
+  `.tsrx` file in the Explorer or its editor tab, or run **TSRX: Find File
+  References**, to list the `.ts`, `.js` and `.tsrx` files that import it in the
+  References view, as VS Code's own command does for `.ts` files (that command
+  refuses `.tsrx` files). With no folder open, they show where
+  `references.preferredLocation` says. `@tsrx/typescript-plugin` adds the
+  `_tsrx:fileReferences` request for it, which runs tsserver's `fileReferences`
+  and gives the references in `.tsrx` importers at their source positions.
+  TypeScript 7 has no Find File References yet (microsoft/TypeScript#63806), so
+  there the command says so.
+
+- [#1431](https://github.com/tsrx-org/tsrx/pull/1431)
+  [`92d6ffc`](https://github.com/tsrx-org/tsrx/commit/92d6ffc699018633886ade50fbbdb90b7aba9712)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - **TSRX: Go to Source
+  Definition** now opens a definition in an unsaved document. Before, it opened a
+  `file:` path that doesn't exist. On TypeScript 5.9 and 6, in a tab that VS
+  Code's TypeScript doesn't serve, such as a `git:` one, Go to Source Definition
+  and Find File References now say "Unknown file type.", as VS Code's own commands
+  do, instead of "Cannot read properties of undefined (reading 'includes')". Find
+  File References runs that overlap now change `references.preferredLocation` one
+  at a time, so each one shows in the References view.
+- Updated dependencies
+  [[`ce4150b`](https://github.com/tsrx-org/tsrx/commit/ce4150b5e6adc18f336584877f8b4e70a902183c)]:
+  - @tsrx/typescript-plugin@0.7.10
+  - @tsrx/language-server@0.7.10
+
 ## 2.2.14
 
 ### Patch Changes
