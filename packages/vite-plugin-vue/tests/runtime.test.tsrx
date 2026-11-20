@@ -4511,13 +4511,32 @@ function WatchesResetSignal() @{
 	<p class="scope-reset-body">{'ok'}</p>
 }
 
-function ResetWatcherBody() @{
-	<>{scope_reset_fails.value ? fail_with('first') : <WatchesResetSignal />}</>
+function WatchesResetSignalTwice() @{
+	watch(
+		reset_signal,
+		() => {
+			throw new Error('new content watcher');
+		},
+		{ flush: 'sync' },
+	);
+	watch(
+		reset_signal,
+		() => {
+			throw new Error('second content watcher');
+		},
+		{ flush: 'sync' },
+	);
+	<p class="scope-reset-body">{'ok'}</p>
 }
 
-function ResetWatcherPlain() @{
+function ResetWatcherBody(props: { body: unknown }) @{
+	const Body = props.body as typeof WatchesResetSignal;
+	<>{scope_reset_fails.value ? fail_with('first') : <Body />}</>
+}
+
+function ResetWatcherPlain(props: { body: unknown }) @{
 	@try {
-		<ResetWatcherBody />
+		<ResetWatcherBody body={props.body} />
 	} @catch (err, reset) {
 		<>
 			<Suspense
@@ -4533,9 +4552,66 @@ function ResetWatcherPlain() @{
 	}
 }
 
-function ResetWatcherTwin() @{
+function ResetWatcherTwin(props: { body: unknown }) @{
 	@try {
-		<ResetWatcherBody />
+		<ResetWatcherBody body={props.body} />
+	} @pending {
+		<i>{'pending'}</i>
+	} @catch (err, reset) {
+		<>
+			<Suspense
+				v-slots={{
+					default: () => <BumpsOnDispose />,
+					fallback: () => <i>{'wait'}</i>,
+				}}
+			/>
+			<button class="scope-reset" onClick={reset}>
+				{(err as Error).message}
+			</button>
+		</>
+	}
+}
+
+// The same, with the watcher in the @try body's own inline code.
+let inline_reset_fails = true;
+
+function ResetInlineWatcherPlain() @{
+	@try {
+		if (inline_reset_fails) throw new Error('first');
+		watch(
+			reset_signal,
+			() => {
+				throw new Error('inline content watcher');
+			},
+			{ flush: 'sync' },
+		);
+		<p class="scope-reset-body">{'ok'}</p>
+	} @catch (err, reset) {
+		<>
+			<Suspense
+				v-slots={{
+					default: () => <BumpsOnDispose />,
+					fallback: () => <i>{'wait'}</i>,
+				}}
+			/>
+			<button class="scope-reset" onClick={reset}>
+				{(err as Error).message}
+			</button>
+		</>
+	}
+}
+
+function ResetInlineWatcherTwin() @{
+	@try {
+		if (inline_reset_fails) throw new Error('first');
+		watch(
+			reset_signal,
+			() => {
+				throw new Error('inline content watcher');
+			},
+			{ flush: 'sync' },
+		);
+		<p class="scope-reset-body">{'ok'}</p>
 	} @pending {
 		<i>{'pending'}</i>
 	} @catch (err, reset) {
@@ -5326,19 +5402,50 @@ describe('tsrx-vue a @catch that throws', () => {
 	});
 
 	it.each([
-		['with @pending', ResetWatcherTwin],
-		['without @pending', ResetWatcherPlain],
+		['a component, with @pending', ResetWatcherTwin, WatchesResetSignal, 'new content watcher'],
+		['a component, without @pending', ResetWatcherPlain, WatchesResetSignal, 'new content watcher'],
+		[
+			'two watchers, with @pending',
+			ResetWatcherTwin,
+			WatchesResetSignalTwice,
+			'second content watcher',
+		],
+		[
+			'two watchers, without @pending',
+			ResetWatcherPlain,
+			WatchesResetSignalTwice,
+			'second content watcher',
+		],
 	])(
-		'shows in its @catch what the content a reset renders throws as the @catch is torn down, %s',
-		async (_name, component) => {
+		'shows in its @catch what the content a reset renders throws as the @catch is torn down: %s',
+		async (_name, component, body, shown) => {
 			scope_reset_fails.value = true;
 			reset_signal.value = 0;
-			const app = await mount(component, {});
+			const app = await mount(component, { body });
 			expect(text('.scope-reset')).toBe('first');
 			scope_reset_fails.value = false;
 			(container.querySelector('.scope-reset') as HTMLElement).click();
 			await flush();
-			expect(texts('.scope-reset')).toEqual(['new content watcher']);
+			expect(texts('.scope-reset')).toEqual([shown]);
+			expect(handled).toEqual([]);
+			app.unmount();
+		},
+	);
+
+	it.each([
+		['with @pending', ResetInlineWatcherTwin],
+		['without @pending', ResetInlineWatcherPlain],
+	])(
+		"shows in its @catch what the @try body's own code throws as a reset tears down the @catch, %s",
+		async (_name, component) => {
+			inline_reset_fails = true;
+			reset_signal.value = 0;
+			const app = await mount(component, {});
+			expect(text('.scope-reset')).toBe('first');
+			inline_reset_fails = false;
+			(container.querySelector('.scope-reset') as HTMLElement).click();
+			await flush();
+			expect(texts('.scope-reset')).toEqual(['inline content watcher']);
 			expect(handled).toEqual([]);
 			app.unmount();
 		},

@@ -37,9 +37,12 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
  * @property {boolean} removes_fallback whether the render that is running
  * removes the fallback, as after a reset, rather than the content: what
  * tearing that down throws isn't the content's
- * @property {number | null} rendered_from while `removes_fallback`, a
- * component uid taken as the render began: what the content it renders
- * creates has later ones
+ * @property {boolean} removes_for_catch whether the render that is running
+ * swaps in the fallback for a caught error, which the boundary held as it
+ * began, rather than rendering the content again
+ * @property {number | null} rendered_from while a render after a reset
+ * removes the fallback, a component uid taken as it began: what the content
+ * it renders creates has later ones
  * @property {boolean} unmounting whether the boundary's teardown has begun
  * @property {unknown} dropped_by the boundary whose render removed this one,
  * as its teardown began: the one around it showing other content, such as
@@ -236,9 +239,11 @@ function thrown_by_fallback(source, boundary) {
 
 /**
  * Whether the error from `source` comes from what `boundary`'s render is
- * removing: the content, as it swaps in the fallback, or the fallback, as it
- * renders the content again after a reset. What the content it renders then
- * throws, such as a watcher the removal sets off, is the boundary's own.
+ * removing: the content or the fallback, as it swaps in the fallback for a
+ * caught error, or the fallback, as it renders the content again after a
+ * reset. What the content then throws, such as a watcher the removal sets
+ * off, in a component created since or in the boundary's own inline code, is
+ * the boundary's own, as is what the content removes as it updates.
  *
  * @param {unknown} source
  * @param {ComponentInternalInstance} boundary
@@ -247,13 +252,16 @@ function thrown_by_fallback(source, boundary) {
  */
 function torn_down_by_render(source, boundary, state) {
 	if (dropping !== boundary) return false;
-	if (state.caught !== null) return true;
+	if (state.removes_for_catch) return true;
 	if (!state.removes_fallback) return false;
+	// What the removal itself threw (`dropping_for`).
+	if (reporting === boundary) return true;
+	// A component the fallback showed. Without uids, as before, the content's.
 	const from = state.rendered_from;
-	if (from == null) return true;
+	if (from == null) return false;
 	const chain = chain_to(source, boundary);
 	const top = /** @type {{ uid?: number } | undefined} */ (chain[chain.length - 1]);
-	return !(typeof top?.uid === 'number' && top.uid > from);
+	return typeof top?.uid === 'number' && top.uid < from;
 }
 
 /**
@@ -586,7 +594,8 @@ function create_boundary_nodes(render, instance) {
 		const state = instance && boundary_states.get(instance);
 		if (state) {
 			state.removes_fallback = scope !== undefined && !state.shows_content;
-			state.rendered_from = state.removes_fallback ? take_uid() : null;
+			state.removes_for_catch = scope !== undefined && state.caught !== null;
+			state.rendered_from = state.removes_fallback && !state.removes_for_catch ? take_uid() : null;
 		}
 		try {
 			if (scope) dropping_for(instance, () => /** @type {EffectScope} */ (scope).stop());
@@ -608,6 +617,14 @@ function create_boundary_nodes(render, instance) {
  * @type {unknown}
  */
 let dropping = null;
+
+/**
+ * The boundary whose removal threw what it is handing to its error hook
+ * (`dropping_for`).
+ *
+ * @type {unknown}
+ */
+let reporting = null;
 
 /**
  * Runs `remove` as `instance`'s removal of what it showed before.
@@ -635,7 +652,13 @@ function dropping_for(instance, remove) {
 		// thrown, it would end the render. That includes one Vue reported
 		// already and threw again, such as from an `onBeforeUnmount`, which
 		// Vue's scheduler reports again too, without a `@try`.
-		handleError(error, instance, ErrorCodes.COMPONENT_UPDATE, false);
+		const outer_reporting = reporting;
+		reporting = instance;
+		try {
+			handleError(error, instance, ErrorCodes.COMPONENT_UPDATE, false);
+		} finally {
+			reporting = outer_reporting;
+		}
 	} finally {
 		dropping = outer;
 	}
@@ -819,6 +842,7 @@ function create_boundary_state() {
 		fallback_from: null,
 		shows_content: false,
 		removes_fallback: false,
+		removes_for_catch: false,
 		rendered_from: null,
 		unmounting: false,
 		dropped_by: null,
