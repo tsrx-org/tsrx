@@ -357,6 +357,14 @@ function unuse_selectors_with_emptied_has(stylesheet) {
 					)
 				) {
 					selector.metadata.used = false;
+					// As for a selector no element matched, nothing in it is scoped, so
+					// no hash is written into the comment, or after it.
+					walk(/** @type {AST.CSS.Node} */ (selector), null, {
+						RelativeSelector(relative_selector, context) {
+							relative_selector.metadata.scoped = false;
+							context.next();
+						},
+					});
 				}
 			}
 			next();

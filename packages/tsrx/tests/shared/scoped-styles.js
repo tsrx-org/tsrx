@@ -2064,6 +2064,7 @@ export function runSharedScopedStyleTests({
 							:root.dark:has(.missing), .icon { color: red; }
 							:root:has(.missing) { color: blue; }
 							:host.open:has(.missing, .icon) .wrap { color: green; }
+							.wrap, :root.dark:has(.missing) .icon { color: gray; }
 						</style>
 						<div ${attr}="wrap"><i ${attr}="icon" /></div>
 					</>
@@ -2079,6 +2080,10 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain('/* (unused) :root:has(.missing) { color: blue; }*/');
 			expect(css).toContain(
 				`:host.open:has(/* (unused) .missing,*/ .icon:where(.${hash})) .wrap.${hash} { color: green; }`,
+			);
+			// Nothing of a pruned selector is hashed, in its comment or after it.
+			expect(css).toContain(
+				`.wrap.${hash} /* (unused) :root.dark:has(.missing) .icon*/ { color: gray; }`,
 			);
 		});
 
