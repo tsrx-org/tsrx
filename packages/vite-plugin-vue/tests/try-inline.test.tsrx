@@ -42,6 +42,26 @@ function CatchInlineThrows() @{
 	}
 }
 
+const in_catch_broken = ref(false);
+
+function in_catch_label(): string {
+	if (in_catch_broken.value) throw new Error('in catch');
+	return 'ok';
+}
+
+// The @catch renders a @try whose inline code throws on an update.
+function TryInCatch() @{
+	@try {
+		<p>{always_throws()}</p>
+	} @catch (_err) {
+		@try {
+			<p class="in-catch-body">{in_catch_label()}</p>
+		} @catch (err) {
+			<b class="in-catch-caught">{String(err)}</b>
+		}
+	}
+}
+
 const toggled_shown = ref(true);
 let toggled_owner: { ec?: unknown[] | null } | null = null;
 
@@ -247,6 +267,17 @@ describe("tsrx-vue a @try body's inline code, more cases", () => {
 		await flush();
 		expect(text('.outer-caught')).toBe('Error: catch update');
 		expect(container.querySelector('.inner-caught')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('shows an error a @try in a @catch throws on an update in its own @catch', async () => {
+		in_catch_broken.value = false;
+		const { app, handled } = await mount(TryInCatch);
+		expect(text('.in-catch-body')).toBe('ok');
+		in_catch_broken.value = true;
+		await flush();
+		expect(text('.in-catch-caught')).toBe('Error: in catch');
 		expect(handled).toEqual([]);
 		app.unmount();
 	});
