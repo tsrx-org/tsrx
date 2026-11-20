@@ -8394,6 +8394,12 @@ export const b2 = {
 				"<textarea>{' a\u200bb\\n\t\tc '}</textarea>",
 			],
 			[
+				'an element, for zero-width spaces at its start and end',
+				'<b> \u200ba\n\t\tb\u200b </b>',
+				"<b>{' \u200ba b\u200b '}</b>",
+				"<b>{' \u200ba\\n\t\tb\u200b '}</b>",
+			],
+			[
 				'an element, for a quote',
 				`<b> it's\n\t\t"q" </b>`,
 				`<b>{' it\\'s "q" '}</b>`,
@@ -8464,6 +8470,16 @@ export const b2 = {
 				'text over lines with a zero-width space at a line start, after a tab',
 				'<b> a\r\n\t\u200bb </b>',
 				"<b>{' '}a\r\n\t\u200bb{' '}</b>",
+			],
+			[
+				'text over lines with zero-width spaces on a line of their own',
+				'<b> a\n \t\u200b\u200b\t\nb </b>',
+				"<b>{' '}a\n \t\u200b\u200b\t\nb{' '}</b>",
+			],
+			[
+				'text over lines with zero-width spaces among spaces before a CRLF',
+				'<b> a\u200b \t\u200b\r\nb </b>',
+				"<b>{' '}a\u200b \t\u200b\r\nb{' '}</b>",
 			],
 			// oxc leaves each as written, and an HTML template reads each as U+FFFD
 			[

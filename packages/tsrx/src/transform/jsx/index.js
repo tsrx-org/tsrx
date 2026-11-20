@@ -82,7 +82,6 @@ import { is_reference } from '../../utils/is-reference.js';
 export const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
 export const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
 const LEADING_INLINE_WHITESPACE = /^[ \t]+/;
-const TRAILING_INLINE_WHITESPACE = /[ \t]+$/;
 // A character reference that the parser and an HTML reading of JSX text both
 // decode, if they know it (a name, or a decimal or lowercase-hex number, short
 // enough for the parser to read), or an `&` before no name or `#`, which both
@@ -5549,10 +5548,10 @@ export function wrap_edge_whitespace(nodes, in_element = false, reading = {}) {
 		let trailing = null;
 		let trail_length = 0;
 		if (at_end) {
-			const trail = TRAILING_INLINE_WHITESPACE.exec(raw);
-			if (trail && !is_newline_char(raw[raw.length - trail[0].length - 1])) {
-				trailing = to_jsx_expression_container(b.literal(trail[0]), node);
-				trail_length = trail[0].length;
+			const trail = trailing_inline_whitespace(raw);
+			if (trail && !is_newline_char(raw[raw.length - trail - 1])) {
+				trailing = to_jsx_expression_container(b.literal(raw.slice(raw.length - trail)), node);
+				trail_length = trail;
 				value = value.slice(0, value.length - trail_length);
 				raw = raw.slice(0, raw.length - trail_length);
 			}
@@ -5594,9 +5593,9 @@ export function wrap_edge_whitespace(nodes, in_element = false, reading = {}) {
  * - whitespace other than spaces and tabs in a text that spans lines: the
  *   compilers trim it at a line's edge differently (TypeScript and esbuild
  *   trim a non-breaking space there, SWC and Babel don't; TypeScript and oxc
- *   trim U+200B, which isn't in `\s`, and esbuild, SWC and Babel don't, so
- *   it keeps the split at a line's edge), and a reference to whitespace at a
- *   line break (`whitespace_reference_at_line_break`)
+ *   trim U+200B, which isn't in `\s`, and esbuild, SWC and Babel don't),
+ *   and a reference to whitespace at a line break
+ *   (`trimmed_differently_at_line_break`)
  * - an `&#` that doesn't start a short decimal or lowercase-hex reference
  *   ending in `;`, which the parser reads differently (esbuild and oxc read
  *   `&#+65;` as `A`; the parser decodes `&#X41;`, which they leave as
@@ -5619,25 +5618,23 @@ export function wrap_edge_whitespace(nodes, in_element = false, reading = {}) {
  */
 function only_text_value(text, reading) {
 	const { raw, value } = text;
-	const lead = LEADING_INLINE_WHITESPACE.exec(raw);
-	const trail = TRAILING_INLINE_WHITESPACE.exec(raw);
+	const lead = LEADING_INLINE_WHITESPACE.exec(raw)?.[0].length ?? 0;
+	const trail = trailing_inline_whitespace(raw);
 	if (
-		!(lead && !is_newline_char(raw[lead[0].length])) &&
-		!(trail && !is_newline_char(raw[raw.length - trail[0].length - 1]))
+		!(lead && !is_newline_char(raw[lead])) &&
+		!(trail && !is_newline_char(raw[raw.length - trail - 1]))
 	) {
 		return null;
 	}
 	const lines = /[\n\r]/.test(raw);
 	if (/[^\S \t\n\r]/.test(raw) && (lines || reading.html)) return null;
-	// TypeScript and oxc also trim U+200B, which isn't in `\s`, at a line's edge
-	if (lines && /\u200b[ \t\u200b]*\r?\n|\n[ \t\u200b]*\u200b/.test(raw)) return null;
 	if (/&#(?!\d{1,6};|x[\da-fA-F]{1,5};)/.test(raw)) return null;
 	if (reading.html && raw.replace(REFERENCE_OR_PLAIN_AMPERSAND, '').includes('&')) return null;
 	if (/[\0-\x08\v-\x1f\x7f-\x9f\u2028\u2029\ufeff]|\p{Cs}/u.test(value)) return null;
 	const offsets = value_offsets(raw, value, !!reading.html);
 	if (!offsets) return null;
 	if (!lines) return value;
-	if (whitespace_reference_at_line_break(raw, value, offsets)) return null;
+	if (trimmed_differently_at_line_break(raw, value, offsets)) return null;
 	return reading.lines === 'keep'
 		? kept_lines(raw, value, offsets)
 		: joined_lines(raw, value, offsets);
@@ -5695,25 +5692,48 @@ function value_offsets(raw, value, html) {
 }
 
 /**
- * Whether a reference to whitespace (`&#32;`, `&#10;`) starts or ends a line
- * at a line break in `raw`, past the spaces and tabs there. JSX trims a line
- * as written, so it keeps such a reference, and so does the literal; SWC and
- * Babel trim a line after they decode it, and vue-jsx-vapor the whitespace
- * at a text's start or end, so they drop it from the split text.
+ * Whether the compilers trim a text over lines differently at one of its line
+ * breaks: past the spaces and tabs next to it, there's a U+200B, which
+ * TypeScript and oxc trim and esbuild, SWC and Babel don't, or a reference to
+ * whitespace (`&#32;`, `&#10;`). JSX trims a line as written, so it keeps
+ * such a reference, and so does the literal; SWC and Babel trim a line after
+ * they decode it, and vue-jsx-vapor the whitespace at a text's start or end,
+ * so they drop it from the split text. One pass over each line break's
+ * neighbours, so a long run of whitespace takes linear time.
  *
  * @param {string} raw
  * @param {string} value
  * @param {number[]} offsets `value_offsets`
  * @returns {boolean}
  */
-function whitespace_reference_at_line_break(raw, value, offsets) {
-	for (const found of raw.matchAll(/[ \t]*\r?\n[ \t]*/g)) {
-		const before = found.index;
-		const after = before + found[0].length;
+function trimmed_differently_at_line_break(raw, value, offsets) {
+	/** @param {string | undefined} char */
+	const trimmed = (char) => char === ' ' || char === '\t' || char === '\u200b';
+	for (let line_break = raw.indexOf('\n'); line_break !== -1;) {
+		let before = raw[line_break - 1] === '\r' ? line_break - 1 : line_break;
+		let after = line_break + 1;
+		while (trimmed(raw[before - 1])) if (raw[--before] === '\u200b') return true;
+		while (trimmed(raw[after])) if (raw[after++] === '\u200b') return true;
 		if (raw[before - 1] === ';' && /\s/.test(value[offsets[before] - 1])) return true;
 		if (raw[after] === '&' && /\s/.test(value[offsets[after]] ?? '')) return true;
+		line_break = raw.indexOf('\n', after);
 	}
 	return false;
+}
+
+/**
+ * The length of the spaces and tabs at the end of `text`, found from its end:
+ * a regular expression ending in `$` tries each start in a long run.
+ *
+ * @param {string} text
+ * @returns {number}
+ */
+function trailing_inline_whitespace(text) {
+	let length = 0;
+	while (text[text.length - 1 - length] === ' ' || text[text.length - 1 - length] === '\t') {
+		length++;
+	}
+	return length;
 }
 
 /**
@@ -5757,9 +5777,10 @@ function joined_lines(raw, value, offsets) {
  */
 function kept_lines(raw, value, offsets) {
 	const lead = /^[ \t\r\n]*/.exec(raw)?.[0] ?? '';
-	const trail = /[ \t\r\n]*$/.exec(raw)?.[0] ?? '';
+	let trail = raw.length;
+	while (/[ \t\r\n]/.test(raw[trail - 1] ?? '')) trail--;
 	let start = lead.includes('\n') ? lead.length : 0;
-	const end = trail.includes('\n') ? raw.length - trail.length : raw.length;
+	const end = raw.includes('\n', trail) ? trail : raw.length;
 	let out = '';
 	for (let crlf = raw.indexOf('\r\n', start); crlf !== -1 && crlf < end;) {
 		out += value.slice(offsets[start], offsets[crlf]) + '\r\n';
