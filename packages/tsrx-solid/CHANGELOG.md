@@ -1,5 +1,85 @@
 # @tsrx/solid
 
+## 0.4.12
+
+### Patch Changes
+
+- [#1460](https://github.com/tsrx-org/tsrx/pull/1460)
+  [`bc099a7`](https://github.com/tsrx-org/tsrx/commit/bc099a772a31729395ba5d2b052e57015d1eb6ed)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The `const` a dynamic
+  tag's expression is bound to (`TsrxDynamic_1`), a `<style ref>` block's
+  temporary (`_tsrx_style_ref_1`) and the editor's anchor for a `<style>` block
+  (`_tsrx_style_anchor_1`) now skip names the module already uses, as the
+  compiler's other generated names do. A component with
+  `const TsrxDynamic_1 = 'mine';` beside `<{as} />` declared `TsrxDynamic_1` twice
+  on React, Preact, Solid, Hono and Hono DOM, and on Vue the alias shadowed it, so
+  `title={TsrxDynamic_1}` read the tag instead. The check of a generated name
+  against the source is also faster: it reads the source's words once instead of
+  scanning the whole source for each name.
+
+- [#1445](https://github.com/tsrx-org/tsrx/pull/1445)
+  [`f282066`](https://github.com/tsrx-org/tsrx/commit/f2820665ceee6ee99ec454e788e50590e2ec4fac)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `return` nested in an
+  `@switch` case body (in a block, an `if`, a loop, a native `switch`, a label or
+  a `try`), outside a function declared in the case, is now reported as `TSRX2009`
+  on every target, as a `return` right in the case already was; one in an `@if`,
+  `@for` or `@try` inside the case keeps that block's error. Every target runs a
+  case in a function of its own, so such a `return` only ended the case, not the
+  component: `@case 1: { if (done) return; <b /> }` rendered nothing for the
+  `@switch` when it ran, and `@case 1: { if (x) return <b />; <p /> }` rendered
+  `<b />` in the `@switch`'s place. A `return` in a function in the case still
+  compiles. A `return` in an `@switch` in an `@if` or `@for` body is reported
+  once, as `TSRX2009`, where it was `TSRX2002` or `TSRX2005`.
+
+  Migration: write the condition in the case's template:
+  `@case 1: { if (x) return <b />; <p /> }` becomes
+  `@case 1: { @if (x) { <b /> } @else { <p /> } }`.
+
+- [#1454](https://github.com/tsrx-org/tsrx/pull/1454)
+  [`b6a8d06`](https://github.com/tsrx-org/tsrx/commit/b6a8d060582e4b8ff952beec13b13e9229108cb2)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `return` right in an
+  `@switch` case body is still `TSRX2009`, but a collecting compile and the editor
+  now record it and read on instead of stopping. Before,
+  `compile_to_volar_mappings` threw on it, also when the `@switch` was in an
+  `@try` or `@catch` body, so the editor lost the whole file's virtual code and
+  every other diagnostic in it. The code after the `return` in that case stays in
+  the editor output too, so its errors still show. The strict compile still
+  throws, now with the `return` keyword's range, and ESLint still reports it as a
+  parsing error. A `return` the parser reports is now reported once: one in an
+  `@switch` in an `@if` or `@for` body no longer also gets `TSRX2002` or
+  `TSRX2005`, one in an `@try` in an `@if` or `@for` body (`TSRX2001`) no longer
+  also gets `TSRX2002` or `TSRX2005`, and one in a nested `@{ … }` block in an
+  `@try` body is no longer reported twice.
+- Updated dependencies
+  [[`b9e55da`](https://github.com/tsrx-org/tsrx/commit/b9e55da4b35b99b981e085bb231628ce2bc657c3),
+  [`2965749`](https://github.com/tsrx-org/tsrx/commit/29657498701b5c93bd7f92f03203421b7e0ad06e),
+  [`c2051bd`](https://github.com/tsrx-org/tsrx/commit/c2051bd0e3409ea1c952e049c9aaf789a979dcb5),
+  [`3ed006b`](https://github.com/tsrx-org/tsrx/commit/3ed006bf3bba08b893f749f7a17218c688071e98),
+  [`bc5e182`](https://github.com/tsrx-org/tsrx/commit/bc5e1825001afa784668cd7091b06eaab32384b3),
+  [`86b8fe7`](https://github.com/tsrx-org/tsrx/commit/86b8fe7c8694496a8e64eaee1097247f6a4e204f),
+  [`f02bc13`](https://github.com/tsrx-org/tsrx/commit/f02bc134ec12097349548a8c202edf7c1458ee0f),
+  [`5e703a2`](https://github.com/tsrx-org/tsrx/commit/5e703a20767752361fabc7c8289e1e70eda120fc),
+  [`65f20ad`](https://github.com/tsrx-org/tsrx/commit/65f20ad82c42326878d284eb9f911a719de444ef),
+  [`9a4858c`](https://github.com/tsrx-org/tsrx/commit/9a4858ceb495407888d5b2ab16976f3b4c3e9e07),
+  [`1f443c2`](https://github.com/tsrx-org/tsrx/commit/1f443c20e584e08f96f1768a0d8c14fe2e384aa8),
+  [`235b523`](https://github.com/tsrx-org/tsrx/commit/235b523881dbad29fb600471443863394ab48159),
+  [`1d3775c`](https://github.com/tsrx-org/tsrx/commit/1d3775c51c564488947c63658d1556e8e8cc9fc2),
+  [`2541160`](https://github.com/tsrx-org/tsrx/commit/254116003f3a86d4d96cbbff2e662e3be1f80bc4),
+  [`c121dcf`](https://github.com/tsrx-org/tsrx/commit/c121dcfc055462ffdc0bd3647c1961b9dc7fc6ca),
+  [`8472671`](https://github.com/tsrx-org/tsrx/commit/847267193be0ed678ba7bef840c7207c6044b652),
+  [`6f2eaea`](https://github.com/tsrx-org/tsrx/commit/6f2eaea34119c9ccaf5af22608d8f66930e03c04),
+  [`bc099a7`](https://github.com/tsrx-org/tsrx/commit/bc099a772a31729395ba5d2b052e57015d1eb6ed),
+  [`a15572e`](https://github.com/tsrx-org/tsrx/commit/a15572ea8e40497c1019d02e5e1a076bb994eb30),
+  [`97384af`](https://github.com/tsrx-org/tsrx/commit/97384af9250bec5cb987bf36bac9e70852525821),
+  [`a1c5c04`](https://github.com/tsrx-org/tsrx/commit/a1c5c047b9b7dfebfe0dd0b3ab78cbc307932db5),
+  [`a8a9594`](https://github.com/tsrx-org/tsrx/commit/a8a9594ec7b5a0b171eb076543c0c550c740cc9f),
+  [`f282066`](https://github.com/tsrx-org/tsrx/commit/f2820665ceee6ee99ec454e788e50590e2ec4fac),
+  [`b6a8d06`](https://github.com/tsrx-org/tsrx/commit/b6a8d060582e4b8ff952beec13b13e9229108cb2),
+  [`14720c8`](https://github.com/tsrx-org/tsrx/commit/14720c84ff9e737dddeebb2ae0dbfeb19e22129d),
+  [`4415b25`](https://github.com/tsrx-org/tsrx/commit/4415b2513a9d7067aca211cf90c97ceb0403a483),
+  [`dcaf9b1`](https://github.com/tsrx-org/tsrx/commit/dcaf9b1fe7352933b59dde7c1b3f97f482df48e1)]:
+  - @tsrx/core@0.8.0
+
 ## 0.4.11
 
 ### Patch Changes

@@ -1,5 +1,21 @@
 # @tsrx/content-mapper
 
+## 0.1.5
+
+### Patch Changes
+
+- [#1462](https://github.com/tsrx-org/tsrx/pull/1462)
+  [`8e2322c`](https://github.com/tsrx-org/tsrx/commit/8e2322c905b3404605104dd2f9e547f8c81348ef)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Under TypeScript 7, a
+  name the compiler maps twice over the same text, once for diagnostics only,
+  keeps its hover, Go to Definition, Find References, rename and completion. The
+  content mapper kept the first of two such mappings, and when the
+  diagnostics-only one came first the name lost every feature: `item` in a Vue
+  `@for` body such as `{item.label}`, a Solid `@for` index used as the key
+  (`key i`), a return type such as `T` in `function identity<T>(x: T): T`, and
+  `name` in `<{registry[name]} />`. A mapping without features no longer takes the
+  place of one with features over the same ranges.
+
 ## 0.1.4
 
 ### Patch Changes
