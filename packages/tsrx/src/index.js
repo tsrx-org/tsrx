@@ -98,6 +98,7 @@ export {
 	is_statement_list_item as isStatementListItem,
 	is_statement_position as isStatementPosition,
 	is_layout_whitespace as isLayoutWhitespace,
+	render_children as renderChildren,
 } from './utils/ast.js';
 
 // Shared TSRX semantic analysis
