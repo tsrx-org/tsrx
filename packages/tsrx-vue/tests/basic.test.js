@@ -3109,6 +3109,51 @@ export function Card(${params}: any) @{
 		expect(direct).not.toMatch(/from '@tsrx\/vue\//);
 	});
 
+	it('puts a @pending body that is only a choice, a @switch or a loop in a fragment', () => {
+		// TsrxPendingBody calls its content once: in a fragment, vue-jsx-vapor
+		// makes the choice a createIf and evaluates the rest in an effect.
+		const { code } = compile(
+			`function App() @{
+				@try {
+					<div>{'Async content'}</div>
+				} @pending {
+					const label = 'Loading...';
+					@if (on.value) {
+						<div>{label}</div>
+					}
+				}
+			}
+			function Switch() @{
+				@try {
+					<div>{'Async content'}</div>
+				} @pending {
+					@switch (n.value) {
+						@case 1: {
+							<i>{'one'}</i>
+						}
+					}
+				}
+			}
+			function Element() @{
+				@try {
+					<div>{'Async content'}</div>
+				} @pending {
+					<div>{'Loading...'}</div>
+				}
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain(
+			"content={() => (() => {\n\t\t\tconst label = 'Loading...';\n\n\t\t\treturn <>{on.value ? <div>{label}</div> : null}</>;\n\t\t})()}",
+		);
+		expect(code).toMatch(/content=\{\(\) => \(\(\) => \{\n\t\t\treturn <>\{\(\(\) => \{\n\t+switch \(n\.value\)/);
+		// An element renders reactively as it is.
+		expect(code).toContain(
+			"content={() => (() => {\n\t\t\treturn <div>{'Loading...'}</div>;\n\t\t})()}",
+		);
+	});
+
 	it('imports TsrxPendingBody beside TsrxErrorBoundary, and not for an empty @pending', () => {
 		const { code } = compile(
 			`function App() @{
