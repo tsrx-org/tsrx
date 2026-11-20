@@ -9897,7 +9897,10 @@ export function TSRXPlugin(config) {
 					alias.typeParameters = this.tsTryParseTypeParameters(
 						this.tsParseInOutModifiers.bind(this),
 					);
-					this.expect(tt.eq);
+					// TS1005 `'=' expected.`, as TypeScript's parser reports it, where
+					// acorn reported `Unexpected token`.
+					if (this.type !== tt.eq) this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED('='));
+					this.next();
 					if (
 						this.type === tt.name &&
 						this.value === 'intrinsic' &&
@@ -13332,6 +13335,9 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['tsParseModuleBlock']}
 			 */
 			tsParseModuleBlock() {
+				// TypeScript's parser expects the body's `{` (TS1005 `'{' expected.`),
+				// where acorn reported `Unexpected token`.
+				if (this.type !== tt.braceL) this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED('{'));
 				// See `parseTopLevel`.
 				this.#moduleBodyRead = true;
 				/** @type {ModuleBodyExports} */
