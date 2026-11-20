@@ -752,6 +752,33 @@ const FOLDED_OBJECTS = ['Number', 'String', 'Math'];
 const FOLDED_GLOBALS = ['undefined', 'NaN', 'Infinity'];
 
 /**
+ * What babel's `evaluate` calls for `object.name(...)`, looked up as it looks
+ * it up: a property of a string or number literal, or an own property of
+ * `Number`, `String` or `Math` (whatever a local binding of that name, which
+ * babel doesn't check here) other than `random`. Without one, such as for
+ * `Math.toString()`, babel doesn't call it, so the call doesn't fold.
+ *
+ * @param {AST.Node} object
+ * @param {string} name
+ * @returns {unknown}
+ */
+function folded_method(object, name) {
+	if (object.type === 'Literal') {
+		const value = object.value;
+		return typeof value === 'string' || typeof value === 'number'
+			? /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (Object(value)))[name]
+			: undefined;
+	}
+	if (object.type !== 'Identifier' || !FOLDED_OBJECTS.includes(object.name) || name === 'random') {
+		return undefined;
+	}
+	const global = /** @type {Record<string, unknown>} */ (
+		/** @type {Record<string, unknown>} */ (globalThis)[object.name]
+	);
+	return Object.prototype.hasOwnProperty.call(global, name) ? global[name] : undefined;
+}
+
+/**
  * @param {AST.Program} program
  * @returns {Folder}
  */
@@ -817,12 +844,7 @@ function create_folder(program) {
 						(FOLDED_FUNCTIONS.includes(callee.name) || FOLDED_OBJECTS.includes(callee.name))) ||
 					(callee.type === 'MemberExpression' &&
 						callee.property.type === 'Identifier' &&
-						((callee.object.type === 'Literal' &&
-							(typeof callee.object.value === 'string' ||
-								typeof callee.object.value === 'number')) ||
-							(callee.object.type === 'Identifier' &&
-								FOLDED_OBJECTS.includes(callee.object.name) &&
-								callee.property.name !== 'random')));
+						!!folded_method(callee.object, callee.property.name));
 				return folds && expression.arguments.every(may_fold);
 			}
 			case 'ConditionalExpression': {

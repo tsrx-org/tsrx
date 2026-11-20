@@ -957,6 +957,49 @@ const SERVER_PROBES = [
 		'a constant whose name a loop elsewhere reassigns',
 		`function g() {\n\tfor (let i = 0; i < 1; i++) {}\n}\nconst i = 2;\n${returning('<div title={String(i)} textContent={yield t} />')}`,
 	],
+	// Babel calls only an own property of `Math`, `Number` or `String`, from its
+	// own globals whatever binds the name, and only a method a literal has.
+	[
+		'textContent beside Math.toString()',
+		returning('<div title={Math.toString()} textContent={yield t} />'),
+	],
+	[
+		"textContent beside Number.hasOwnProperty('x')",
+		returning("<div title={Number.hasOwnProperty('x')} textContent={yield t} />"),
+	],
+	[
+		'textContent beside a missing string method',
+		returning("<div title={'a'.missing()} textContent={yield t} />"),
+	],
+	[
+		'textContent beside Number.NaN(), which babel does not call',
+		returning('<div title={Number.NaN()} textContent={yield t} />'),
+	],
+	[
+		"textContent beside Math['max'](1, 2)",
+		returning("<div title={Math['max'](1, 2)} textContent={yield t} />"),
+	],
+	[
+		'textContent beside Math.max of a Math a const shadows',
+		`const Math = { max: (a: number, b: number) => a };\n${returning('<div title={Math.max(1, 2)} textContent={yield t} />')}`,
+	],
+	[
+		'textContent beside String.fromCharCode of a String a parameter shadows',
+		'export function* f(bag: any, t: any, String: any) {\n\treturn <div title={String.fromCharCode(65)} textContent={yield t} />;\n}',
+	],
+	// A child is inserted on its own, so it ends a run of grouped values.
+	[
+		'textContent after a dynamic child that follows a dynamic attribute',
+		returning('<div><b title={bag.x} />{bag.y}<p textContent={yield t} /></div>'),
+	],
+	[
+		'textContent before a dynamic child and a dynamic attribute',
+		returning('<div><p textContent={yield t} />{bag.y}<b title={bag.x} /></div>'),
+	],
+	[
+		'textContent between a dynamic attribute and a dynamic child, grouped with the attribute',
+		returning('<div title={bag.x}><p textContent={yield t} />{bag.y}</div>'),
+	],
 ];
 
 /**
