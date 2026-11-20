@@ -3072,7 +3072,7 @@ describe('a type alias named `as` or `satisfies` (sveltejs/acorn-typescript#145)
 		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
 		expect(outcomes).toEqual(
 			cases.flatMap(([source, at]) =>
-				thrown_in_every_mode(TS_ERRORS.UNEXPECTED_TOKEN, source.indexOf(at)),
+				thrown_in_every_mode(TS_ERRORS.TOKEN_EXPECTED('='), source.indexOf(at)),
 			),
 		);
 	});

@@ -14609,6 +14609,37 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it("expects a namespace's `{` and a type alias's `=` as TypeScript does (TS1005)", async () => {
+		// acorn reported `Unexpected token` (TS1012) at the token in their place.
+		/** @type {Array<[source: string, token: string, at: string]>} */
+		const cases = [
+			['namespace N export const x = 1;', '{', 'export'],
+			['module N export {};', '{', 'export'],
+			['declare namespace N const x: number;', '{', 'const'],
+			['namespace A.B const x = 1;', '{', 'const'],
+			['namespace N;', '{', ';'],
+			['export namespace N\nconst x = 1;', '{', 'const'],
+			['export {};\nnamespace N', '{', ''],
+			['type T number;', '=', 'number'],
+			['type T<U> U;', '=', 'U;'],
+			['declare type T number;', '=', 'number'],
+			['export type T number;', '=', 'number'],
+			['type T\n= 1; type U;', '=', ';'],
+		];
+		const outcomes = await parse_in_worker(
+			cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
+		);
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, token, at]) => {
+				const pos = at === '' ? source.length : source.lastIndexOf(at);
+				return [
+					thrown(TS_ERRORS.TOKEN_EXPECTED(token), pos),
+					thrown(TS_ERRORS.TOKEN_EXPECTED(token), pos),
+				];
+			}),
+		);
+	});
+
 	it('records an error of a modifier over the whole modifier, as TypeScript reports it', async () => {
 		// The parser finds these at the modifier's start, and recorded them over
 		// its first character.
@@ -14679,11 +14710,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 
 	it('reports the syntax error in a namespace named `as`, and not its place', () => {
 		// TypeScript reads a namespace named `as` and reports a syntax error in it
-		// instead (TS1005 `'{' expected.` at `any`, where this parser reports
-		// `Unexpected token`, as after any namespace's name).
+		// instead (TS1005 `'{' expected.` at `any`).
 		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
 		const cases = [
-			['{\n\tnamespace as any;\n}', TS_ERRORS.UNEXPECTED_TOKEN, 'any'],
+			['{\n\tnamespace as any;\n}', TS_ERRORS.TOKEN_EXPECTED('{'), 'any'],
 			[
 				'{\n\tnamespace as { readonly r: number };\n}',
 				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
