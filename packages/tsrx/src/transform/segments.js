@@ -30,6 +30,7 @@ import {
 	mapping_data,
 	mapping_data_verify_only,
 	mapping_data_verify_complete,
+	mapping_data_reference_directive,
 	mapping_data_completion_only,
 	mapping_data_string_span,
 	build_line_offsets,
@@ -1170,6 +1171,58 @@ export function convert_source_map_to_mappings(
 	/** @type {Set<string>} */
 	const mapped_comments = new Set();
 
+	/** @type {number | undefined} */
+	let header_end;
+
+	/**
+	 * Whether a comment printed as written is a `/// <reference …/>` that
+	 * TypeScript reads as one in the source: a file's leading comments are its
+	 * directives. After a statement it is an ordinary comment, yet the output can
+	 * still print it first (`;` prints nothing, and a platform guard can be
+	 * specialized away), where it would be read as a directive. Read from the
+	 * source text, which the specialized tree doesn't keep.
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function is_source_reference_directive(comment) {
+		if (comment.type !== 'Line' || !/^\/\s*<reference\s.*\/>/.test(comment.value)) return false;
+		header_end ??= leading_comments_end();
+		return comment.end <= header_end;
+	}
+
+	/**
+	 * Where the source's leading comments end: past a hashbang, whitespace and
+	 * comments, at its first token.
+	 * @returns {number}
+	 */
+	function leading_comments_end() {
+		let at = source.startsWith('#!') ? line_end(2) : 0;
+		while (at < source.length) {
+			if (regex_whitespace.test(source[at])) {
+				at++;
+			} else if (source.startsWith('//', at)) {
+				at = line_end(at + 2);
+			} else if (source.startsWith('/*', at)) {
+				const close = source.indexOf('*/', at + 2);
+				if (close === -1) return at;
+				at = close + 2;
+			} else {
+				break;
+			}
+		}
+		return at;
+	}
+
+	/**
+	 * Where the line holding `at` ends.
+	 * @param {number} at
+	 * @returns {number}
+	 */
+	function line_end(at) {
+		while (at < source.length && !'\n\r\u2028\u2029'.includes(source[at])) at++;
+		return at;
+	}
+
 	/**
 	 * @param {AST.Node | null | undefined} node
 	 * @returns {void}
@@ -1198,7 +1251,9 @@ export function convert_source_map_to_mappings(
 				// source coordinate. The printer writes this exact formatted text.
 				if (start === undefined) continue;
 				// TypeScript completes inside a comment printed as written, such as
-				// the `/** */` template after `/**` and JSDoc tags (#1066).
+				// the `/** */` template after `/**` and JSDoc tags (#1066), and
+				// navigates from the path of a triple-slash directive printed as
+				// written (`mapping_data_reference_directive`).
 				const as_written = text === source.slice(comment.start, comment.end);
 				mappings.push({
 					sourceOffsets: [comment.start],
@@ -1206,7 +1261,11 @@ export function convert_source_map_to_mappings(
 					generatedOffsets: [start],
 					generatedLengths: [text.length],
 					data: {
-						...(as_written ? mapping_data_verify_complete : mapping_data_verify_only),
+						...(!as_written
+							? mapping_data_verify_only
+							: is_source_reference_directive(comment)
+								? mapping_data_reference_directive
+								: mapping_data_verify_complete),
 						customData: {},
 					},
 				});
