@@ -108,6 +108,12 @@ config (step 2).
   - Comments between a directive's branches are placed by Prettier's own comment
     handling for `if` and `try`, while `@if` and `@try` present themselves as
     those statements. A comment before `@empty` is handled like one before `else`.
+- **`@` before a space in text:** where Prettier breaks a line at a space, it
+  prints the space as `{" "}`. After a word that ends in `@`, TSRX would read `@{`
+  as the start of a code block, so there the `{" "}` starts the next line, and a
+  line break between an `@` and a `{` stays. An element or fragment whose text has
+  an `@` before whitespace is laid out by the copy of Prettier's JSX printing in
+  `src/jsx.js` for that.
 - **JSX children** (`src/jsx.js`): a comment between children prints without the
   braces, as written. An element with such comments is laid out by a copy of
   Prettier's `printJsxElementInternal` and `printJsxChildren` with the two rules a

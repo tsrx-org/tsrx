@@ -1858,6 +1858,86 @@ describe('prettier-ignore between children', () => {
 	});
 });
 
+// TSRX reads `@{` in markup as the start of a code block, so the `{" "}` that
+// Prettier prints for a space where a line breaks can't follow an `@`. It
+// starts the next line instead.
+describe('a space after an `@` in text', () => {
+	test('starts the next line where the line breaks', async () => {
+		await expectFormat(
+			`const a = <p>Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod at@ <b>x</b></p>;
+const b = <>Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod at@ <b>x</b></>;`,
+			`const a = (
+  <p>
+    Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod at@
+    {" "}<b>x</b>
+  </p>
+);
+const b = (
+  <>
+    Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod at@
+    {" "}<b>x</b>
+  </>
+);
+`,
+		);
+	});
+
+	test('starts the next line at the end of a text beside other children', async () => {
+		await expectFormat(
+			`const a = <p><b>x</b> Lorem ipsum dolor sit amet consectetur adipiscing elit sed at@ </p>;`,
+			`const a = (
+  <p>
+    <b>x</b> Lorem ipsum dolor sit amet consectetur adipiscing elit sed at@
+    {" "}
+  </p>
+);
+`,
+		);
+	});
+
+	test('keeps the line break between an `@` and a `{`', async () => {
+		await expectFormat(
+			`const a = <p>@
+{"x"}</p>;
+const b = <>a@
+{/* c */}</>;
+const c = <p>@
+{...xs}</p>;`,
+			`const a = (
+  <p>
+    @
+    {"x"}
+  </p>
+);
+const b = (
+  <>
+    a@
+    {/* c */}
+  </>
+);
+const c = (
+  <p>
+    @
+    {...xs}
+  </p>
+);
+`,
+		);
+	});
+
+	test('stays a space where the line goes on', async () => {
+		await expectFormat(
+			`const a = <p>Write to us@ <a href="mailto:team@example.com">team</a> today.</p>;`,
+			`const a = (
+  <p>
+    Write to us@ <a href="mailto:team@example.com">team</a> today.
+  </p>
+);
+`,
+		);
+	});
+});
+
 describe('// in text', () => {
 	test('touching text, it is a word, as in Prettier', async () => {
 		await expectFormat(
