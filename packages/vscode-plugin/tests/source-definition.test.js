@@ -15,8 +15,10 @@ const host = vi.hoisted(() => ({
 	executeCommand: vi.fn(),
 	showErrorMessage: vi.fn(),
 	showInformationMessage: vi.fn(async () => undefined),
+	/** @type {Array<{ uri: { scheme: string, authority: string, path: string, fragment: string } }>} */
+	documents: [],
 	editor: {
-		document: { uri: { path: '/project/src/App.tsrx' } },
+		document: { uri: { scheme: 'file', path: '/project/src/App.tsrx' } },
 		selection: { active: { line: 4, character: 10 } },
 	},
 }));
@@ -53,6 +55,9 @@ vi.mock('vscode', () => {
 			},
 			ProgressLocation: { Window: 10 },
 			workspace: {
+				get textDocuments() {
+					return host.documents;
+				},
 				getConfiguration: (/** @type {string} */ section) => ({
 					inspect: () => ({ globalValue: section === 'js/ts' ? host.use_tsgo : undefined }),
 					get: () => (section === 'js/ts' ? host.use_tsgo : undefined),
@@ -87,6 +92,8 @@ beforeEach(() => {
 	host.extensions.clear();
 	host.registered.clear();
 	host.response = undefined;
+	host.documents = [];
+	host.editor.document.uri = { scheme: 'file', path: '/project/src/App.tsrx' };
 	vi.clearAllMocks();
 	host.executeCommand.mockImplementation(async (/** @type {string} */ command) =>
 		command === 'typescript.tsserverRequest' ? host.response : undefined,
@@ -149,6 +156,57 @@ describe('Go to Source Definition', () => {
 		);
 	});
 
+	it('opens a source definition in an unsaved document', async () => {
+		// The name VS Code gives tsserver for it, which is no file on disk.
+		const untitled = { scheme: 'untitled', authority: '', path: 'Untitled-1', fragment: '' };
+		host.documents = [{ uri: untitled }];
+		host.response = {
+			type: 'response',
+			body: [
+				{
+					file: '^/untitled/ts-nul-authority/Untitled-1',
+					start: { line: 2, offset: 17 },
+					end: { line: 2, offset: 22 },
+				},
+			],
+		};
+		await command()();
+		expect(host.executeCommand).toHaveBeenLastCalledWith(
+			'editor.action.goToLocations',
+			host.editor.document.uri,
+			host.editor.selection.active,
+			[
+				{
+					uri: untitled,
+					range: { start: { line: 1, character: 16 }, end: { line: 1, character: 21 } },
+				},
+			],
+			'goto',
+			'No source definitions found.',
+		);
+	});
+
+	it("says VS Code's own words in a tab that VS Code's TypeScript doesn't serve, such as a git: one", async () => {
+		host.editor.document.uri = { scheme: 'git', path: '/project/src/App.tsrx' };
+		await command()();
+		expect(host.showErrorMessage).toHaveBeenCalledExactlyOnceWith(
+			'Go to Source Definition failed: Unknown file type.',
+		);
+		expect(host.executeCommand).not.toHaveBeenCalled();
+	});
+
+	it('asks for the source definition in a virtual workspace document', async () => {
+		host.editor.document.uri = { scheme: 'vscode-vfs', path: '/github/owner/repo/src/App.tsrx' };
+		host.response = { type: 'response', body: [] };
+		await command()();
+		expect(host.showErrorMessage).not.toHaveBeenCalled();
+		expect(host.executeCommand).toHaveBeenCalledWith(
+			'typescript.tsserverRequest',
+			'_tsrx:findSourceDefinition',
+			{ file: host.editor.document.uri, line: 5, offset: 11 },
+		);
+	});
+
 	it('reports a failed request', async () => {
 		host.executeCommand.mockImplementation(async () => {
 			throw new Error('Unrecognized JSON command: _tsrx:findSourceDefinition');
@@ -161,6 +219,8 @@ describe('Go to Source Definition', () => {
 
 	it('opens the definition on TypeScript 7 and says why, once', async () => {
 		host.use_tsgo = true;
+		// Not a document VS Code's tsserver serves: that check is for VS Code's own TypeScript.
+		host.editor.document.uri = { scheme: 'git', path: '/project/src/App.tsrx' };
 		host.extensions.add('typescriptteam.native-preview');
 		const target = {
 			targetUri: { path: '/project/node_modules/@types/react/index.d.ts' },
@@ -192,5 +252,6 @@ describe('Go to Source Definition', () => {
 			'No definition found.',
 		);
 		expect(host.showInformationMessage).toHaveBeenCalledOnce();
+		expect(host.showErrorMessage).not.toHaveBeenCalled();
 	});
 });

@@ -1,9 +1,16 @@
 import vscode from 'vscode';
 import { FILE_REFERENCES_COMMAND } from '@tsrx/typescript-plugin/src/plugin-file-references.js';
 import { TYPESCRIPT_7_TRACKING_URL } from '@tsrx/typescript-plugin/src/typescript-version.js';
+import { served_by_tsserver, tsserver_location } from './tsserver-files.js';
 import { typescript_7_on } from './typescript-7.js';
 
 export const FIND_FILE_REFERENCES_COMMAND = 'tsrx.findAllFileReferences';
+
+/**
+ * The end of the last run's `show_in_references_view`.
+ * @type {Promise<unknown>}
+ */
+let settings_turn = Promise.resolve();
 
 /**
  * **Find File References** for `.tsrx` files: every file that imports the file. VS Code's
@@ -38,11 +45,21 @@ export function register_file_references_command() {
 					});
 				return;
 			}
+			if (!served_by_tsserver(uri)) {
+				vscode.window.showErrorMessage('Find File References failed: Unknown file type.');
+				return;
+			}
 			await vscode.window.withProgress(
 				{ location: vscode.ProgressLocation.Window, title: 'Finding file references' },
 				async () => {
 					const locations = await file_references(uri);
-					if (locations) await show_in_references_view(uri, locations);
+					if (!locations) return;
+					// One run at a time changes the setting: a run that started while another
+					// one's change was still being written could otherwise show after that
+					// change was taken back.
+					const shown = settings_turn.then(() => show_in_references_view(uri, locations));
+					settings_turn = shown.catch(() => {});
+					await shown;
 				},
 			);
 		},
@@ -56,7 +73,7 @@ export function register_file_references_command() {
  *   failed (after saying so), was cancelled or got no answer, as when no server runs.
  */
 async function file_references(uri) {
-	/** @type {{ type?: string, body?: { refs: Array<{ file: string, start: TsserverPosition, end: TsserverPosition }> } } | undefined} */
+	/** @type {{ type?: string, body?: { refs: import('./tsserver-files.js').TsserverSpan[] } } | undefined} */
 	let response;
 	try {
 		// Opened first, as VS Code's own command does: a file chosen in the Explorer may not be
@@ -74,47 +91,7 @@ async function file_references(uri) {
 	}
 	// As VS Code's own command: `cancelled`, `noContent` and `noServer` show nothing.
 	if (response?.type !== 'response' || !response.body) return undefined;
-	return response.body.refs.map(
-		(reference) =>
-			new vscode.Location(
-				to_uri(reference.file),
-				new vscode.Range(
-					reference.start.line - 1,
-					reference.start.offset - 1,
-					reference.end.line - 1,
-					reference.end.offset - 1,
-				),
-			),
-	);
-}
-
-/** What VS Code names a missing authority in the file names it gives tsserver. */
-const NUL_AUTHORITY = 'ts-nul-authority';
-
-/**
- * The URI of a file tsserver names. VS Code gives tsserver a document that is not on disk,
- * such as an unsaved one, as `^/<scheme>/<authority>/<path>`, so such a name is matched
- * against the open documents, as VS Code's own command does.
- * @param {string} file
- * @returns {import('vscode').Uri}
- */
-function to_uri(file) {
-	if (!file.startsWith('^/')) return vscode.Uri.file(file);
-	const open = vscode.workspace.textDocuments.find(({ uri }) => in_memory_name(uri) === file);
-	if (open) return open.uri;
-	const [, scheme, authority, path] = /^\^\/([^/]+)\/([^/]*)\/(.+)$/.exec(file) ?? [];
-	if (!scheme) return vscode.Uri.file(file);
-	return vscode.Uri.parse(`${scheme}://${authority === NUL_AUTHORITY ? '' : authority}/${path}`);
-}
-
-/**
- * The name VS Code gives tsserver for a document that is not on disk.
- * @param {import('vscode').Uri} uri
- */
-function in_memory_name(uri) {
-	const path = uri.path.startsWith('/') ? uri.path : `/${uri.path}`;
-	const fragment = uri.fragment ? `#${uri.fragment}` : '';
-	return `^/${uri.scheme}/${uri.authority || NUL_AUTHORITY}${path}${fragment}`;
+	return response.body.refs.map(tsserver_location);
 }
 
 /**
@@ -148,5 +125,3 @@ async function show_in_references_view(uri, locations) {
 		await config.update('preferredLocation', workspace_value, vscode.ConfigurationTarget.Workspace);
 	}
 }
-
-/** @typedef {{ line: number, offset: number }} TsserverPosition One-based, as tsserver counts. */

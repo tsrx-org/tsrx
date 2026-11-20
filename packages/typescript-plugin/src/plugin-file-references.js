@@ -22,6 +22,10 @@ export function register_file_references_command(session) {
 	if (!session || sessions.has(session) || typeof get_file_references !== 'function') return;
 	sessions.add(session);
 	try {
+		// The session's method rather than `session.executeCommand` with `fileReferences`:
+		// tsserver runs this handler inside `executeCommand` already, and a nested call fails
+		// its check that one request runs at a time ("Debug Failure. False expression.", on
+		// TypeScript 5.9 and 6).
 		session.addProtocolHandler(FILE_REFERENCES_COMMAND, (request) => ({
 			// `true`: the protocol's line and offset, as tsserver's own `fileReferences` answers.
 			response: get_file_references.call(session, request.arguments, true),
