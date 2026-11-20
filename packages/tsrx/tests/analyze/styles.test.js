@@ -1385,6 +1385,48 @@ describe('scoped style analysis', () => {
 				expect(render(css, [pruned], true), selector).toBe(`${minified} { color: red; }`);
 			}
 		});
+
+		it('escapes each comment end in a selector it comments out of a list', () => {
+			/** @type {Array<[selector: string, pruned: string[], expected: string, minified: string]>} */
+			const cases = [
+				['.u /* c */, .z', ['.u'], '/* (unused) .u \\/* c *\\/,*/ .z', ' .z'],
+				['.u[title="*/"], .z', ['.u[title="*/"]'], '/* (unused) .u[title="*\\/"],*/ .z', ' .z'],
+				['.z, .u[title="*/"]', ['.u[title="*/"]'], '.z /* (unused) .u[title="*\\/"]*/', '.z'],
+				[
+					'.z, .u /* a */, .v[title="*/"], .y',
+					['.u', '.v[title="*/"]'],
+					'.z /* (unused) .u \\/* a *\\/, .v[title="*\\/"]*/, .y',
+					'.z, .y',
+				],
+				['.y:is(.u /* c */, .z)', ['.u'], '.y:is(/* (unused) .u \\/* c *\\/,*/ .z)', '.y:is( .z)'],
+				// A `*` that dropping `:global(` and `)` puts next to a `/`.
+				['.u :global(*)/* c */, .z', ['.u :global(*)'], '/* (unused) .u *\\/* c *\\/,*/ .z', ' .z'],
+				// The comma that ends the pruned selectors, not one in a comment.
+				['.u, /* , */ .z', ['.u'], '/* (unused) .u,*/ /* , */ .z', ' /* , */ .z'],
+				// CSS comments don't nest: the second `/*` is part of the comment.
+				['.u, /* a, /* b */ .z', ['.u'], '/* (unused) .u,*/ /* a, /* b */ .z', ' /* a, /* b */ .z'],
+				['.u <!-- , -->, .z', ['.u'], '/* (unused) .u <!-- , -->,*/ .z', ' .z'],
+				['.u <!-- /* -->, .z', ['.u'], '/* (unused) .u <!-- \\/* -->,*/ .z', ' .z'],
+				// A comma in an HTML comment after it is taken as on main.
+				['.u, <!-- , --> .z', ['.u'], '/* (unused) .u, <!-- ,*/ --> .z', ' --> .z'],
+			];
+
+			for (const [selector, pruned, expected, minified] of cases) {
+				const css = `${selector} { color: red; }`;
+				expect(render(css, pruned, false), selector).toBe(`${expected} { color: red; }`);
+				expect(render(css, pruned, true), selector).toBe(`${minified} { color: red; }`);
+			}
+		});
+
+		it('finds the comma after a pruned selector in time linear in the comments before the next one', () => {
+			for (const comment of ['/* , */', '<!-- -->']) {
+				const css = `.u,${comment.repeat(100_000)}.z { color: red; }`;
+				const start = performance.now();
+				const out = render(css, ['.u'], false);
+				expect(performance.now() - start, comment).toBeLessThan(2000);
+				expect(out.startsWith('/* (unused) .u,*/'), comment).toBe(true);
+			}
+		});
 	});
 
 	describe('assigned blocks are themes', () => {
