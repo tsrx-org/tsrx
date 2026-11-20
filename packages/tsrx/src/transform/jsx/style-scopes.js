@@ -59,6 +59,7 @@ import {
 } from '../style-ref.js';
 import { clone_ast_node, create_generated_identifier } from './ast-builders.js';
 import { set_node_path_metadata } from './helpers.js';
+import { source_mentions_identifier } from './source-names.js';
 
 /**
  * @typedef {'statement' | 'expression'} DescendMode
@@ -511,8 +512,13 @@ function applies_of(blocks, state) {
  * @returns {string}
  */
 function create_style_ref_temp_name(ctx) {
-	ctx.local_statement_component_index += 1;
-	return `_tsrx_style_ref_${ctx.local_statement_component_index}`;
+	/** @type {string} */
+	let name;
+	do {
+		ctx.local_statement_component_index += 1;
+		name = `_tsrx_style_ref_${ctx.local_statement_component_index}`;
+	} while (source_mentions_identifier(ctx.source, name));
+	return name;
 }
 
 /**

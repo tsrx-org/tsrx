@@ -53,6 +53,7 @@ import {
 	rewrite_class_name_attributes,
 } from '../scoping.js';
 import { prepare_style_scopes, type_only_style } from './style-scopes.js';
+import { source_mentions_identifier } from './source-names.js';
 import {
 	build_style_class_map,
 	create_style_class_map_from_stylesheet,
@@ -79,6 +80,7 @@ import {
 } from '../../utils/ast.js';
 import { is_reference } from '../../utils/is-reference.js';
 
+export { source_mentions_identifier };
 export const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
 export const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
 const LEADING_INLINE_WHITESPACE = /^[ \t]+/;
@@ -1018,8 +1020,7 @@ function lower_dynamic_jsx_element(node, transform_context) {
 	if (factory) {
 		// Bind the tag expression to a scoped component const and reference it
 		// like an ordinary component.
-		transform_context.local_statement_component_index += 1;
-		const local = `${DYNAMIC_IMPORT_LOCAL}_${transform_context.local_statement_component_index}`;
+		const local = create_dynamic_alias_name(transform_context);
 		const local_id = b.jsx_id(local);
 		transform_context.needs_dynamic_factory = true;
 
@@ -2435,8 +2436,31 @@ function add_type_only_style_anchor(node, transform_context) {
  * @returns {string}
  */
 function create_style_anchor_name(transform_context) {
-	transform_context.local_statement_component_index += 1;
-	return `_tsrx_style_anchor_${transform_context.local_statement_component_index}`;
+	/** @type {string} */
+	let name;
+	do {
+		transform_context.local_statement_component_index += 1;
+		name = `_tsrx_style_anchor_${transform_context.local_statement_component_index}`;
+	} while (source_mentions_identifier(transform_context.source, name));
+	return name;
+}
+
+/**
+ * The name of the `const` a dynamic tag's expression is bound to
+ * (`TsrxDynamic_1`). Like the other generated names, it skips any name the
+ * source uses, so it can't redeclare or shadow one the author wrote.
+ *
+ * @param {TransformContext} transform_context
+ * @returns {string}
+ */
+export function create_dynamic_alias_name(transform_context) {
+	/** @type {string} */
+	let name;
+	do {
+		transform_context.local_statement_component_index += 1;
+		name = `${DYNAMIC_IMPORT_LOCAL}_${transform_context.local_statement_component_index}`;
+	} while (source_mentions_identifier(transform_context.source, name));
+	return name;
 }
 
 /**
@@ -6238,7 +6262,11 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		return;
 	}
 
-	if (node.type === 'ReturnStatement') {
+	if (
+		node.type === 'ReturnStatement' &&
+		!node.metadata?.invalid_directive_jump &&
+		!node.metadata?.invalid_tsrx_template_return
+	) {
 		error(
 			TSRX_ERRORS.FOR_RETURN_STATEMENT,
 			transform_context.filename,
@@ -6307,7 +6335,11 @@ function validate_if_body_control_flow(node, transform_context) {
 		return;
 	}
 
-	if (node.type === 'ReturnStatement') {
+	if (
+		node.type === 'ReturnStatement' &&
+		!node.metadata?.invalid_directive_jump &&
+		!node.metadata?.invalid_tsrx_template_return
+	) {
 		error(
 			TSRX_ERRORS.IF_RETURN_STATEMENT,
 			transform_context.filename,
@@ -6464,19 +6496,24 @@ function collect_directive_declarations(node, parent, in_body, found) {
  * a loop, `switch` or label outside it; the output wouldn't parse. This
  * reports each such jump once, in source order. A `break` that leaves an
  * `@switch` case is `SWITCH_CASE_BREAK_STATEMENT`, which the parser reports
- * for a `break` right in the case. A jump in an `@if` body, or in an `@for`
- * body outside a loop there, is the `@if` or `@for` check's to report; a
- * jump in a loop in an `@for` body that leaves the body, which that check
- * doesn't see, is reported here with the `@for` check's errors, and so is
- * one that leaves an `@else if` body, or the `@else` after one, with the
- * `@if` check's.
+ * for a `break` right in the case, and a `return` in a case, outside a
+ * function and a directive body there, is `SWITCH_CASE_RETURN_STATEMENT`,
+ * which the parser reports for a `return` right in the case: it would only
+ * end the function the case runs in, and its value would replace the
+ * `@switch`, not end the component. A jump in an `@if` body, or in an `@for`
+ * body outside a loop there, is the `@if` or `@for` check's to report; a jump
+ * in a loop in an `@for` body that leaves the body, which that check doesn't
+ * see, is reported here with the `@for` check's errors, and so is one that
+ * leaves an `@else if` body, or the `@else` after one, with the `@if` check's,
+ * as is a `return` there (`IF_RETURN_STATEMENT`), which that check doesn't
+ * see either.
  *
  * @param {AST.Program} program
  * @param {TransformContext} transform_context
  * @returns {void}
  */
 function validate_directive_jumps(program, transform_context) {
-	/** @type {Array<{ node: AST.BreakStatement | AST.ContinueStatement, kind: JumpScope['kind'] }>} */
+	/** @type {Array<{ node: AST.BreakStatement | AST.ContinueStatement | AST.ReturnStatement, kind: JumpScope['kind'] }>} */
 	const found = [];
 	collect_directive_jumps(program, null, NO_JUMP_SCOPE, found);
 	found.sort(
@@ -6485,6 +6522,16 @@ function validate_directive_jumps(program, transform_context) {
 			/** @type {AST.NodeWithLocation} */ (b.node).start,
 	);
 	for (const { node, kind } of found) {
+		if (node.type === 'ReturnStatement') {
+			error(
+				kind === 'if' ? TSRX_ERRORS.IF_RETURN_STATEMENT : TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				transform_context.filename,
+				node,
+				transform_context.errors,
+				transform_context.comments,
+			);
+			continue;
+		}
 		const is_break = node.type === 'BreakStatement';
 		const diagnostic =
 			kind === 'for'
@@ -6534,10 +6581,23 @@ function validate_directive_jumps(program, transform_context) {
  * @param {AST.Node} node
  * @param {AST.Node | null} parent
  * @param {JumpScope} scope
- * @param {Array<{ node: AST.BreakStatement | AST.ContinueStatement, kind: JumpScope['kind'] }>} found
+ * @param {Array<{ node: AST.BreakStatement | AST.ContinueStatement | AST.ReturnStatement, kind: JumpScope['kind'] }>} found
  * @returns {void}
  */
 function collect_directive_jumps(node, parent, scope, found) {
+	// The parser reports a `return` in an `@try`, `@pending` or `@catch` body or
+	// a nested `@{ … }` block, also one in an `@switch` there.
+	if (
+		node.type === 'ReturnStatement' &&
+		(scope.kind === 'case' || scope.kind === 'if') &&
+		!node.metadata?.invalid_tsrx_template_return
+	) {
+		// The `@if` and `@for` checks, which see a `return` in an `@switch` in
+		// their bodies, and Solid's, which sees an `@else if` body, leave it to
+		// this one.
+		node.metadata = { ...node.metadata, invalid_directive_jump: true };
+		found.push({ node, kind: scope.kind });
+	}
 	if (node.type === 'BreakStatement' || node.type === 'ContinueStatement') {
 		const is_break = node.type === 'BreakStatement';
 		const label = node.label?.name ?? null;
@@ -7833,7 +7893,9 @@ function build_render_switch_statement(switch_node, transform_context) {
 		let has_terminal = false;
 
 		for (const child of own_body) {
-			if (child.type === 'ReturnStatement') {
+			// A `return` the parser reported (TSRX2009) is kept as a statement, so
+			// the code after it stays in a collecting compile's output.
+			if (child.type === 'ReturnStatement' && !child.metadata?.invalid_tsrx_template_return) {
 				case_body.push(child);
 				has_terminal = true;
 				break;
@@ -8199,20 +8261,6 @@ function create_spread_props_name(transform_context) {
 		}
 	} while (source_mentions_identifier(transform_context.source, name));
 	return name;
-}
-
-/**
- * Whether `source` has `name` as a whole identifier anywhere, so a generated
- * binding of that name could shadow or redeclare one the author wrote.
- *
- * @param {string} source
- * @param {string} name a name of identifier characters only
- * @returns {boolean}
- */
-export function source_mentions_identifier(source, name) {
-	// `$` is an identifier character and a regex anchor.
-	const escaped = name.replace(/\$/g, '\\$');
-	return new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`).test(source);
 }
 
 /**

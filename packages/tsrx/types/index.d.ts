@@ -392,6 +392,8 @@ declare module 'estree' {
 		metadata: BaseNodeMetaData & {
 			invalid_tsrx_template_return?: boolean;
 			generated_loop_continue_return?: boolean;
+			/** A `return` in an `@switch` case the directive jump check reported, which the `@if` and `@for` checks then leave alone. */
+			invalid_directive_jump?: boolean;
 		};
 	}
 
