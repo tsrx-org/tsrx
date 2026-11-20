@@ -474,8 +474,17 @@ function lift_out_of_style_rules(node, path, state) {
 	const wrappers = /** @type {AST.CSS.Atrule[]} */ (
 		path.slice(outer + 1).filter((ancestor) => ancestor.type === 'Atrule')
 	);
-	// One in an at-rule that moves already moves with it.
-	if (wrappers.some((wrapper) => is_unnestable_at_rule(wrapper))) return;
+	// One in an at-rule that moves already moves with it. A `@layer` written
+	// again elsewhere would change the order of layers, or be a layer of its
+	// own if it has no name, so one in a layer stays where it is.
+	if (
+		wrappers.some(
+			(wrapper) =>
+				is_unnestable_at_rule(wrapper) || remove_css_prefix(wrapper.name.toLowerCase()) === 'layer',
+		)
+	) {
+		return;
+	}
 
 	for (const wrapper of wrappers.reverse()) {
 		const prelude = state.code.original.slice(

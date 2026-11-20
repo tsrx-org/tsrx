@@ -1231,6 +1231,13 @@ describe('scoped style analysis', () => {
 				],
 				// @import can only start a stylesheet, which moving doesn't give it.
 				['.p { @import "a.css"; }', '.p.H { @import "a.css"; }', '.p.H { @import "a.css"; }'],
+				// A @layer written again before the rule would come first in the order
+				// of layers (a nameless one would be another layer).
+				[
+					'.p { @layer a { color: red; } @layer b { @font-face { font-family: x; } } }',
+					'.p.H { @layer a { color: red; } @layer b { @font-face { font-family: x; } } }',
+					'.p.H { @layer a { color: red; } @layer b { @font-face { font-family: x; } } }',
+				],
 			];
 			for (const [css, expected, minified] of cases) {
 				for (const minify of [false, true]) {
