@@ -20,11 +20,9 @@ non-breaking space on one line prints as one literal too: their compilers read
 each as written, as the literal keeps it. Solid's and Vue's compilers read
 those as HTML, so the text keeps its split edges there.
 
-A text with a reference to half of a surrogate pair (`&#55296;&#56320;`) keeps
-its split edges again, on one line too, where #1381 printed one literal: the
-compilers read it differently (oxc and vue-jsx-vapor leave it as written,
-TypeScript and esbuild decode the pair, Solid's template reads U+FFFD for each,
-and SWC fails to compile it, as it does any such reference in JSX text).
+References to the two halves of a surrogate pair (`&#55296;&#56320;`) read as
+the one character they make (`𐀀`), on every target, as they have on one line
+since #1381.
 
 A JSX platform says how its compiled JSX reads text with the new
 `jsx.textReading` option (`lines: 'join' | 'keep'`, `html: true`).

@@ -1300,7 +1300,13 @@ export function convert_source_map_to_mappings(
 		if (text[at] !== '@') return;
 		const lines = text.slice(at).split(/\r?\n/);
 		let verbatim = lines[0].split(/[\\'"&]/)[0];
-		if (lines.length > 1 && verbatim === lines[0]) verbatim = verbatim.replace(/[ \t]+$/, '');
+		if (lines.length > 1 && verbatim === lines[0]) {
+			// From the end: a regular expression ending in `$` tries each start in
+			// a long run of spaces
+			let length = verbatim.length;
+			while (verbatim[length - 1] === ' ' || verbatim[length - 1] === '\t') length--;
+			verbatim = verbatim.slice(0, length);
+		}
 		const offset = generated_code.indexOf(verbatim, start);
 		if (offset === -1 || offset + verbatim.length > end) return;
 		mappings.push({

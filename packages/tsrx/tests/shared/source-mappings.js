@@ -4265,6 +4265,25 @@ export function A() {
 			}
 			expect(shown).toEqual([`TS2322 ${text}`]);
 		});
+
+		// The `@` completion mapping reads the spaces after the `@` from their
+		// end: a regular expression ending in `$` took about 5 seconds here
+		it('maps a long run of spaces after an `@` that starts a text over lines in linear time', () => {
+			const text = ' @a' + ' '.repeat(100_000) + 'b\nc ';
+			const source = `export function A() {\n\treturn <div><b>${text}</b></div>;\n}`;
+			const start = performance.now();
+			const result = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(performance.now() - start).toBeLessThan(2000);
+			const cursor = source.indexOf('@') + 1;
+			expect(
+				result.mappings.some(
+					(mapping) =>
+						mapping.data.completion &&
+						cursor >= mapping.sourceOffsets[0] &&
+						cursor <= mapping.sourceOffsets[0] + mapping.lengths[0],
+				),
+			).toBe(true);
+		});
 	});
 
 	describe(`[${name}] input AST immutability`, () => {

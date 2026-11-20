@@ -8305,6 +8305,12 @@ export const b2 = {
 			],
 			['an element, for a plain `&` before a name', '<b> &&copy; </b>', "<b>{' &© '}</b>"],
 			['an element, for `&#38;` before a name', '<b> &#38;amp; </b>', "<b>{' &amp; '}</b>"],
+			// The two references make one character, which every target reads
+			[
+				'an element, for references to the halves of a surrogate pair',
+				'<b> &#55296;&#56320; a </b>',
+				"<b>{' \u{10000} a '}</b>",
+			],
 			[
 				'an element, for a zero-width space on one line',
 				'<b> a\u200bb </b>',
@@ -8394,6 +8400,12 @@ export const b2 = {
 				"<textarea>{' a\u200bb\\n\t\tc '}</textarea>",
 			],
 			[
+				'an element, for hex references to the halves of a surrogate pair',
+				'<b> &#xD800;&#xDC00;\n\t\ta </b>',
+				"<b>{' \u{10000} a '}</b>",
+				"<b>{' \u{10000}\\n\t\ta '}</b>",
+			],
+			[
 				'an element, for zero-width spaces at its start and end',
 				'<b> \u200ba\n\t\tb\u200b </b>',
 				"<b>{' \u200ba b\u200b '}</b>",
@@ -8480,17 +8492,6 @@ export const b2 = {
 				'text over lines with zero-width spaces among spaces before a CRLF',
 				'<b> a\u200b \t\u200b\r\nb </b>',
 				"<b>{' '}a\u200b \t\u200b\r\nb{' '}</b>",
-			],
-			// oxc leaves each as written, and an HTML template reads each as U+FFFD
-			[
-				'references to the halves of a surrogate pair',
-				'<b> &#55296;&#56320; a </b>',
-				"<b>{' '}&#55296;&#56320; a{' '}</b>",
-			],
-			[
-				'hex references to the halves of a surrogate pair, over lines',
-				'<b> &#xD800;&#xDC00;\n\t\ta </b>',
-				"<b>{' '}&#xD800;&#xDC00;\n\t\ta{' '}</b>",
 			],
 			// SWC and Babel trim a line after they decode it, and vue-jsx-vapor a
 			// text's edges, so a space or line feed written as a reference at a line

@@ -5608,7 +5608,7 @@ export function wrap_edge_whitespace(nodes, in_element = false, reading = {}) {
  * - a reference to, or a character that is, a control character other than a
  *   tab or a line feed (a CR that isn't before a line feed, which Solid's
  *   compiler drops, and `&#128;`, which an HTML template reads as `€`), a
- *   surrogate half, which oxc leaves as written, or U+2028, U+2029 or U+FEFF,
+ *   lone surrogate, which oxc leaves as written, or U+2028, U+2029 or U+FEFF,
  *   which the literal would print as is: JavaScript reads the first two as
  *   line breaks where the source map doesn't
  *
@@ -5672,10 +5672,6 @@ function value_offsets(raw, value, html) {
 		offsets.push(at);
 		if (match[1] === undefined) {
 			const code = match[2] === undefined ? parseInt(match[3], 16) : Number(match[2]);
-			// A reference to a surrogate half, which oxc leaves as written and an
-			// HTML template reads as U+FFFD. Two of them make one character in
-			// `value`, which the check for a lone surrogate there doesn't see.
-			if (code >= 0xd800 && code <= 0xdfff) return null;
 			at += String.fromCodePoint(code).length;
 		} else if (match[1] !== 'amp' && value.startsWith(match[0], at)) {
 			if (html) return null;
