@@ -28,7 +28,8 @@ export interface TsrxErrorBoundaryComponent {
 	__setup(props?: unknown, ctx?: unknown): void;
 	/**
 	 * Marks it a Vapor component, also to an app with Vue's VDOM interop. Set
-	 * only where Vue's Vapor renderer is present, not on the server.
+	 * only where Vue's Vapor renderer is present, which Vue's Node build, on
+	 * the server, is not.
 	 */
 	__vapor?: true;
 }
@@ -49,7 +50,8 @@ export interface TsrxPendingBodyComponent {
 	props: string[];
 	/**
 	 * Marks it a Vapor component, also to an app with Vue's VDOM interop. Set
-	 * only where Vue's Vapor renderer is present, not on the server.
+	 * only where Vue's Vapor renderer is present, which Vue's Node build, on
+	 * the server, is not.
 	 */
 	__vapor?: true;
 }

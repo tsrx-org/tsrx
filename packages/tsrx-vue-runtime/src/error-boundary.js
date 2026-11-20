@@ -597,10 +597,11 @@ TsrxErrorBoundary.props = ['fallback', 'content', 'sharesCatch'];
 // made while an app without interop, such as one that hydrates, rendered the
 // boundary told a later app with interop to mount it as a VDOM component,
 // which printed its blocks as text. Its own flag answers the same in each.
-// Only where Vapor renders it: Vue's server renderer calls it as a
-// functional VDOM component, and wraps the slots of what an owner with
-// `__vapor` creates as Vapor slots, which loses what a component adds to a
-// cloned slot child.
+// Only where Vue's Vapor renderer is present, as `TsrxErrorBoundary`
+// decides between its client and server paths: with Vue's Node build the
+// server renderer calls it as a functional VDOM component, and it wraps the
+// slots of what an owner with `__vapor` creates as Vapor slots, which loses
+// what a component adds to a cloned slot child.
 if (typeof vapor.renderEffect === 'function') TsrxErrorBoundary.__vapor = true;
 
 /**
