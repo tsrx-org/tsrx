@@ -1172,6 +1172,27 @@ export function convert_source_map_to_mappings(
 	/** @type {Set<string>} */
 	const mapped_comments = new Set();
 
+	// TypeScript reads a triple-slash directive only before the file's first
+	// statement; after one, it is an ordinary comment.
+	const first_statement_start =
+		/** @type {AST.Program} */ (ast_from_source).body?.[0]?.start ?? Infinity;
+
+	/**
+	 * A triple-slash directive printed as written that TypeScript reads as one in
+	 * the source too. The output can print it before any statement where the
+	 * source has one before it (`;` prints nothing), and there it would be read
+	 * as a directive.
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function is_source_directive(comment) {
+		return (
+			is_triple_slash_directive(comment) &&
+			comment.value.startsWith('/') &&
+			comment.end <= first_statement_start
+		);
+	}
+
 	/**
 	 * @param {AST.Node | null | undefined} node
 	 * @returns {void}
@@ -1212,7 +1233,7 @@ export function convert_source_map_to_mappings(
 					data: {
 						...(!as_written
 							? mapping_data_verify_only
-							: is_triple_slash_directive(comment) && comment.value.startsWith('/')
+							: is_source_directive(comment)
 								? mapping_data_reference_directive
 								: mapping_data_verify_complete),
 						customData: {},

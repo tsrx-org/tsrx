@@ -4125,6 +4125,20 @@ export function A() @{
 			}
 		});
 
+		it('maps no navigation for a `/// <reference path>` after a statement, which TypeScript reads as a comment', () => {
+			// The output prints nothing for `;`, so the comment would start the file there.
+			for (const source of [
+				`;\n/// <reference path="./Other.tsrx" />\nexport const a = 1;`,
+				`export const a = 1;\n/// <reference path="./Other.tsrx" />\nexport const b = 2;`,
+			]) {
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const comment = '/// <reference path="./Other.tsrx" />';
+				for (const mapping of mappings_at(result, source.indexOf(comment), comment.length)) {
+					expect(mapping.data.navigation, source).toBeFalsy();
+				}
+			}
+		});
+
 		it('writes only a comment that starts with `///` as a triple-slash directive', () => {
 			// TypeScript reads a directive only from a `///` that starts the comment.
 			const source = `// /<reference path="./Other.tsrx" />

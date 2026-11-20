@@ -123,18 +123,18 @@ describe('tsserver plugin: a `/// <reference path>` in a .tsrx file', () => {
 			oldFilePath: path.join(workspace, 'src/Target.tsrx'),
 			newFilePath: path.join(workspace, 'src/Moved.tsrx'),
 		});
-		expect(
-			located(
-				response.body.flatMap((/** @type {any} */ edit) =>
-					edit.textChanges.map((/** @type {any} */ change) => ({ file: edit.fileName, ...change })),
-				),
-			),
-		).toEqual([
+		const changes = response.body.flatMap((/** @type {any} */ edit) =>
+			edit.textChanges.map((/** @type {any} */ change) => ({ file: edit.fileName, ...change })),
+		);
+		expect(located(changes)).toEqual([
 			'src/Refs.tsrx:1:22 ./Target.tsrx',
 			'src/Refs.tsrx:2:25 ./Target.tsrx',
 			'src/refs.ts:1:22 ./Target.tsrx',
 			'src/refs.ts:2:25 ./Target.tsrx',
 		]);
+		expect(new Set(changes.map((/** @type {any} */ change) => change.newText))).toEqual(
+			new Set(['./Moved.tsrx']),
+		);
 	}, 60_000);
 	it('completes the path of a `/// <reference path>` in a .tsrx file', async () => {
 		for (const file of /** @type {const} */ (['src/Refs.tsrx', 'src/refs.ts'])) {
