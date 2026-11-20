@@ -1094,6 +1094,32 @@ export async function App() @{
 						],
 			);
 		});
+
+		it.each([
+			['a comment', 'export function* gen(v: any) {\n\tyield /* c */ * (v, v);\n}\n'],
+			['spaces', 'export function* gen(v: any) {\n\tyield \t * (v, v);\n}\n'],
+		])('maps a `yield*` with %s before the `*` from its own text in the editor', (_, source) => {
+			// The editor output prints with esrap's `tokens`, which map `yield` and
+			// `*` from their own source tokens as they are written.
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.code).toContain('yield* (v, v);');
+			const keyword = source.indexOf('yield');
+			const texts = result.mappings
+				.filter((mapping) => mapping.sourceOffsets[0] >= keyword)
+				.map((mapping) => [
+					source.slice(mapping.sourceOffsets[0], mapping.sourceOffsets[0] + mapping.lengths[0]),
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths ?? mapping.lengths)[0],
+					),
+				]);
+			expect(texts).toContainEqual(['yield', 'yield']);
+			expect(texts).toContainEqual(['(v, v)', '(v, v)']);
+			expect(texts.filter(([text]) => text === 'v')).toEqual([
+				['v', 'v'],
+				['v', 'v'],
+			]);
+		});
 	});
 
 	describe(`[${name}] text with a comment and characters JSX text can't hold`, () => {
