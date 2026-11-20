@@ -263,6 +263,76 @@ export class C extends Base {
 		},
 	);
 
+	it('maps each of two names a pass prints from one source name, in order', () => {
+		// A pass that adds `void re` with a copy of the annotated parameter `re`
+		// prints two `re`s from one source position. The parameter's location
+		// ends after its annotation and the copy's text ends at the name, but
+		// each token still takes its own position.
+		const source = 'export function f(re: number) {}\n';
+		/** @type {CompileError[]} */
+		const errors = [];
+		/** @type {AST.CommentWithLocation[]} */
+		const comments = [];
+		const ast = parseModule(source, 'App.tsrx', {
+			collect: true,
+			loose: true,
+			preserveParens: true,
+			keywordTokens: true,
+			errors,
+			comments,
+		});
+		analyzeTsrx(ast, 'App.tsrx', { collect: true, loose: true, typeOnly: true, errors, comments });
+		const fn = /** @type {any} */ (ast.body[0]).declaration;
+		const param = fn.params[0];
+		fn.body.body.push({
+			type: 'ExpressionStatement',
+			expression: {
+				type: 'UnaryExpression',
+				operator: 'void',
+				prefix: true,
+				argument: {
+					type: 'Identifier',
+					name: 're',
+					start: param.start,
+					end: param.end,
+					loc: param.loc,
+					metadata: { path: [] },
+				},
+				metadata: { path: [] },
+			},
+			metadata: { path: [] },
+		});
+		const transformed = createJsxTransform(PLATFORM)(ast, source, 'App.tsrx', {
+			collect: true,
+			loose: true,
+			typeOnly: true,
+			errors,
+			comments,
+		});
+		const { mappings } = createVolarMappingsResult({
+			ast: transformed.ast,
+			ast_from_source: ast,
+			source,
+			generated_code: transformed.code,
+			source_map: transformed.map,
+			errors,
+		});
+		expect(transformed.code).toContain('void re');
+		const offsets = mappings
+			.filter(
+				(mapping) =>
+					mapping.sourceOffsets[0] === source.indexOf('re:') &&
+					mapping.lengths[0] === 2 &&
+					mapping.data.completion,
+			)
+			.map((mapping) => mapping.generatedOffsets[0])
+			.sort((a, b) => a - b);
+		expect(offsets).toEqual([
+			transformed.code.indexOf('re:'),
+			transformed.code.indexOf('void re') + 'void '.length,
+		]);
+	});
+
 	it('maps a member expression whose object a pass also wrapped from its own text, or keeps its mapping', () => {
 		// `a.b.c.d` with each member wrapped prints `read(read(read(a.b).c).d)`.
 		// `a.b` maps from its own text. `a.b.c.d` prints differently from its

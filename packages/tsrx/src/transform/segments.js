@@ -578,6 +578,21 @@ export function convert_source_map_to_mappings(
 
 	/** @type {Map<string, number>} */
 	const generated_position_indexes = new Map();
+	/**
+	 * How many tokens start at each source position with each text, counted
+	 * before the tokens are mapped.
+	 * @type {Map<string, number>}
+	 */
+	const token_counts = new Map();
+
+	/**
+	 * @param {MappingToken} token
+	 * @returns {string}
+	 */
+	function token_key(token) {
+		const { start } = token.generatedLoc ?? token.loc;
+		return `${start.line}:${start.column}:${token.generated}`;
+	}
 
 	/**
 	 * When a transform expands one source identifier into multiple generated
@@ -590,7 +605,9 @@ export function convert_source_map_to_mappings(
 	 * AST pass can make (#1392), starts at the same source position, and its
 	 * callee can start with the token's text: `read(re)`, `count(count)`,
 	 * `a.read(a.re)` for `a`. The node itself also maps its end there, so the
-	 * positions whose text ends where the token's source ends are taken first.
+	 * positions whose text ends where the token's source ends are taken first,
+	 * for a token that no other token shares its start and text with. Tokens
+	 * that do keep taking the positions in order, one each.
 	 * @param {MappingToken} token
 	 * @returns {{ line: number; column: number }}
 	 */
@@ -608,7 +625,7 @@ export function convert_source_map_to_mappings(
 		});
 		const end = generated_loc.end;
 		const end_offsets =
-			matching_positions.length > 1 && end
+			matching_positions.length > 1 && end && token_counts.get(token_key(token)) === 1
 				? new Set(
 						(src_to_gen_map.get(`${end.line}:${end.column}`) ?? []).map((position) =>
 							loc_to_offset(position.line, position.column, gen_line_offsets),
@@ -629,7 +646,7 @@ export function convert_source_map_to_mappings(
 				: matching_positions.length > 0
 					? matching_positions
 					: positions;
-		const index_key = `${key}:${token.generated}`;
+		const index_key = token_key(token);
 		const index = generated_position_indexes.get(index_key) ?? 0;
 		generated_position_indexes.set(index_key, index + 1);
 
@@ -3539,6 +3556,10 @@ export function convert_source_map_to_mappings(
 		},
 	});
 
+	for (const token of tokens) {
+		const key = token_key(token);
+		token_counts.set(key, (token_counts.get(key) ?? 0) + 1);
+	}
 	for (const token of tokens) {
 		const source_text = token.source ?? '';
 		const gen_text = token.generated;
