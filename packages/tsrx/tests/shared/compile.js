@@ -2953,6 +2953,41 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			).toThrow(error_with(TSRX_ERRORS.IF_RETURN_STATEMENT));
 		});
 
+		it('rejects a `return` in an `@else if` body, or the `@else` after one, strictly and when collecting', () => {
+			// The `@if` check covers the first body and a plain `@else`; the chain's
+			// other bodies run in functions of their own too.
+			for (const template of [
+				'@if (ready) { <b /> } @else if (items.length) { if (ready) RETURN; <i /> }',
+				'@if (ready) { <b /> } @else if (items.length) { for (const item of items) { if (item) RETURN; } <i /> }',
+				'@if (ready) { <b /> } @else if (items.length) { <i /> } @else { if (ready) RETURN; <u /> }',
+				'@if (ready) { <b /> } @else if (items.length) { <i /> } @else if (items.length > 1) { if (ready) RETURN; <u /> }',
+			]) {
+				const source = `export function App({ ready, items }: { ready: boolean; items: string[] }) @{
+					<div>${template.replace('RETURN', 'return <s />')}</div>
+				}`;
+				const start = source.indexOf('return <s />;');
+				const expected = expect.objectContaining({
+					code: TSRX_ERRORS.IF_RETURN_STATEMENT.code,
+					pos: start,
+					end: start + 'return <s />;'.length,
+				});
+
+				expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
+			}
+		});
+
+		it('allows a `return` in a function in an `@else if` body', () => {
+			const { errors } = compile(
+				`export function App({ ready }: { ready: boolean }) @{
+					<div>@if (ready) { <b /> } @else if (!ready) { const label = () => { return 'no'; }; <i>{label()}</i> }</div>
+				}`,
+				'App.tsrx',
+				{ collect: true },
+			);
+			expect(errors).toEqual([]);
+		});
+
 		it('rejects nested exits inside @if template blocks', () => {
 			for (const [statement, expected] of [
 				['return null', TSRX_ERRORS.IF_RETURN_STATEMENT],
