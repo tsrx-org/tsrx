@@ -8455,6 +8455,21 @@ export const b2 = {
 				"<b>{' '}a&#10;\n\t\tb{' '}</b>",
 			],
 			[
+				'a space written as a hex reference before a CRLF',
+				'<b> a&#x20;\r\nb </b>',
+				"<b>{' '}a&#x20;\r\nb{' '}</b>",
+			],
+			[
+				'a tab written as a reference after a CRLF',
+				'<b> a\r\n&#9;b </b>',
+				"<b>{' '}a\r\n&#9;b{' '}</b>",
+			],
+			[
+				'a non-breaking space written as a reference before a CRLF',
+				'<b> a&nbsp;\r\nb </b>',
+				"<b>{' '}a&nbsp;\r\nb{' '}</b>",
+			],
+			[
 				'a reference longer than the parser reads',
 				'<b> &#0000000000000065; </b>',
 				"<b>{' '}&#0000000000000065;{' '}</b>",

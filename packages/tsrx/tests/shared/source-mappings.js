@@ -4238,6 +4238,33 @@ export function A() {
 					),
 			).toEqual([name === 'vue' ? "{' a\\n\t\tb '}" : "{' a b '}"]);
 		});
+
+		it('shows the error on the literal at the text, for references, astral characters and a CRLF', () => {
+			const text = ' &#x1F600;&amp;\u00e9\r\n b&#x1F601; ';
+			const source = `function Num(props: { children: number }) {\n\treturn null;\n}\nexport function A() {\n\treturn <div><Num>${text}</Num></div>;\n}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(result.code).toContain(
+				name === 'vue'
+					? "<Num>{' \u{1F600}&\u00e9\\r\\n b\u{1F601} '}</Num>"
+					: "<Num>{' \u{1F600}&\u00e9 b\u{1F601} '}</Num>",
+			);
+			const map = new SourceMap(result.mappings);
+			/** @type {string[]} */
+			const shown = [];
+			for (const diagnostic of type_diagnostics(result.code + jsx_types, '/output.tsx')) {
+				const start = /** @type {number} */ (diagnostic.start);
+				for (const [source_start, source_end] of map.toSourceRange(
+					start,
+					start + /** @type {number} */ (diagnostic.length),
+					true,
+					isDiagnosticsEnabled,
+				)) {
+					shown.push(`TS${diagnostic.code} ${source.slice(source_start, source_end)}`);
+					break;
+				}
+			}
+			expect(shown).toEqual([`TS2322 ${text}`]);
+		});
 	});
 
 	describe(`[${name}] input AST immutability`, () => {
