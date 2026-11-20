@@ -37,6 +37,9 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
  * @property {boolean} removes_fallback whether the render that is running
  * removes the fallback, as after a reset, rather than the content: what
  * tearing that down throws isn't the content's
+ * @property {number | null} rendered_from while `removes_fallback`, a
+ * component uid taken as the render began: what the content it renders
+ * creates has later ones
  * @property {boolean} unmounting whether the boundary's teardown has begun
  * @property {unknown} dropped_by the boundary whose render removed this one,
  * as its teardown began: the one around it showing other content, such as
@@ -232,6 +235,28 @@ function thrown_by_fallback(source, boundary) {
 }
 
 /**
+ * Whether the error from `source` comes from what `boundary`'s render is
+ * removing: the content, as it swaps in the fallback, or the fallback, as it
+ * renders the content again after a reset. What the content it renders then
+ * throws, such as a watcher the removal sets off, is the boundary's own.
+ *
+ * @param {unknown} source
+ * @param {ComponentInternalInstance} boundary
+ * @param {BoundaryState} state
+ * @returns {boolean}
+ */
+function torn_down_by_render(source, boundary, state) {
+	if (dropping !== boundary) return false;
+	if (state.caught !== null) return true;
+	if (!state.removes_fallback) return false;
+	const from = state.rendered_from;
+	if (from == null) return true;
+	const chain = chain_to(source, boundary);
+	const top = /** @type {{ uid?: number } | undefined} */ (chain[chain.length - 1]);
+	return !(typeof top?.uid === 'number' && top.uid > from);
+}
+
+/**
  * Whether `source`'s error was thrown by the fallback of a boundary inside
  * `boundary` that renders the same `@catch` (`sharesCatch`), with no other
  * boundary between them. A `@try` with `@pending` renders its `@catch` from
@@ -269,7 +294,7 @@ function thrown_by_twin_fallback(source, boundary) {
 			if (state.dropped_by !== boundary || is_gone(boundary)) return true;
 		} else if (i === 0 && !state.shows_content) {
 			return true;
-		} else if (dropping === inner && (state.caught !== null || state.removes_fallback)) {
+		} else if (torn_down_by_render(source, inner, state)) {
 			// Torn down as the inner one swaps in the same `@catch`, or removes
 			// it after a reset: it went on from there, and goes on from here too.
 			return true;
@@ -559,7 +584,10 @@ function create_boundary_nodes(render, instance) {
 		const outer = re_rendering;
 		re_rendering = instance;
 		const state = instance && boundary_states.get(instance);
-		if (state) state.removes_fallback = !state.shows_content;
+		if (state) {
+			state.removes_fallback = scope !== undefined && !state.shows_content;
+			state.rendered_from = state.removes_fallback ? take_uid() : null;
+		}
 		try {
 			if (scope) dropping_for(instance, () => /** @type {EffectScope} */ (scope).stop());
 			scope = new EffectScope();
@@ -582,15 +610,6 @@ function create_boundary_nodes(render, instance) {
 let dropping = null;
 
 /**
- * What the boundaries' error hooks were handed while one of them removed what
- * it showed before. Vue reported it, and throws it again in development when
- * nothing took it.
- *
- * @type {Set<unknown>}
- */
-const reported_while_dropping = new Set();
-
-/**
  * Runs `remove` as `instance`'s removal of what it showed before.
  *
  * What it throws, such as an `onScopeDispose` callback that throws as a
@@ -611,16 +630,14 @@ function dropping_for(instance, remove) {
 		remove();
 	} catch (error) {
 		if (!instance) throw error;
-		// Thrown, it would end the render. One Vue reported already, such as
-		// from an `onBeforeUnmount`, it threw again because nothing took it:
-		// log it, as it does in production.
-		if (reported_while_dropping.has(error)) console.error(error);
 		// Logged, not thrown, in development when nothing takes it, as Vue
-		// does with a failed async component it shows an error component for.
-		else handleError(error, instance, ErrorCodes.COMPONENT_UPDATE, false);
+		// does with a failed async component it shows an error component for:
+		// thrown, it would end the render. That includes one Vue reported
+		// already and threw again, such as from an `onBeforeUnmount`, which
+		// Vue's scheduler reports again too, without a `@try`.
+		handleError(error, instance, ErrorCodes.COMPONENT_UPDATE, false);
 	} finally {
 		dropping = outer;
-		if (outer === null) reported_while_dropping.clear();
 	}
 }
 
@@ -802,6 +819,7 @@ function create_boundary_state() {
 		fallback_from: null,
 		shows_content: false,
 		removes_fallback: false,
+		rendered_from: null,
 		unmounting: false,
 		dropped_by: null,
 		epoch: 0,
@@ -840,7 +858,6 @@ function initialize_boundary_state(instance) {
 	 * @returns {false | undefined}
 	 */
 	const capture = (captured_error, source) => {
-		if (dropping) reported_while_dropping.add(captured_error);
 		if (passes_to_twin(instance)) return;
 		// The boundary inside this one that renders the same `@catch` let this
 		// error from that `@catch` go on: let it go on too.
@@ -868,7 +885,7 @@ function initialize_boundary_state(instance) {
 		// own render removes, as it updates, is the content's, as before.
 		if (
 			(is_gone(instance, state) && !replaced_by_twin(instance, state)) ||
-			(dropping === instance && (state.caught !== null || state.removes_fallback))
+			torn_down_by_render(source, instance, state)
 		) {
 			return;
 		}
@@ -1009,7 +1026,6 @@ function take_own_errors(instance, state, capture) {
 		// it has none, as a Vapor one doesn't.
 		const source = /** @type {unknown} */ (proxy);
 		if (source !== instance && source !== instance.proxy) return;
-		if (dropping) reported_while_dropping.add(captured_error);
 		if (!state.shows_content || state.unmounting || instance.isUnmounted) return;
 		const suspense = /** @type {{ suspense?: SuspenseState | null }} */ (instance).suspense;
 		// Also in the branch a `Suspense` (`timeout: -1`) keeps showing while
