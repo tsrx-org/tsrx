@@ -1,5 +1,30 @@
 # @tsrx/typescript-plugin
 
+## 0.7.10
+
+### Patch Changes
+
+- [#1429](https://github.com/tsrx-org/tsrx/pull/1429)
+  [`ce4150b`](https://github.com/tsrx-org/tsrx/commit/ce4150b5e6adc18f336584877f8b4e70a902183c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Add **Find File
+  References** for `.tsrx` files in VS Code on TypeScript 5.9 and 6. Right-click a
+  `.tsrx` file in the Explorer or its editor tab, or run **TSRX: Find File
+  References**, to list the `.ts`, `.js` and `.tsrx` files that import it in the
+  References view, as VS Code's own command does for `.ts` files (that command
+  refuses `.tsrx` files). With no folder open, they show where
+  `references.preferredLocation` says. `@tsrx/typescript-plugin` adds the
+  `_tsrx:fileReferences` request for it, which runs tsserver's `fileReferences`
+  and gives the references in `.tsrx` importers at their source positions.
+  TypeScript 7 has no Find File References yet (microsoft/TypeScript#63806), so
+  there the command says so.
+- Updated dependencies
+  [[`f0039f8`](https://github.com/tsrx-org/tsrx/commit/f0039f8aa08ccb58516b34ac2d5e99b22b50eae5)]:
+  - @tsrx/solid@0.4.10
+  - @tsrx/content-mapper@0.1.4
+  - @tsrx/preact@0.4.10
+  - @tsrx/react@0.5.10
+  - @tsrx/vue@0.4.10
+
 ## 0.7.9
 
 ### Patch Changes

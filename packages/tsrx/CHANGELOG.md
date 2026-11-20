@@ -1,5 +1,47 @@
 # @tsrx/core
 
+## 0.7.0
+
+### Minor Changes
+
+- [#1424](https://github.com/tsrx-org/tsrx/pull/1424)
+  [`4d4c40e`](https://github.com/tsrx-org/tsrx/commit/4d4c40e54fbe83c47001234aad7679ef18f7fed7)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A selector list in
+  which a selector that starts with a bare `:global` (no parentheses, as in
+  `:global .note` or a nested `:global.open`) sits beside one that needs scoping
+  is now reported as `TSRX3011` on every target. Such a selector leaves its whole
+  rule unscoped, so the other selectors lost their hash and matched outside the
+  component (`:global .w, .z` compiled to `.w, .z`), or the rule was read as a
+  `:global { ... }` block and its selector dropped, putting its declarations in
+  the parent rule (`.p { .z, :global.w { color: red; } }` turned `.p` red). A lone
+  `:global` in such a list outside any rule, where it has no rule to stand for, is
+  the same error. A list still compiles when each of its other selectors, and the
+  rules nested in it, would get no hash on its own anyway, or only one that
+  narrows a `:not()` or repeats the hash an `&` already has in a `:where()`
+  (`:global.w, :global(.a)`, `.p { :global .a, &.b { ... } }`,
+  `:global .note, :root :global .x`, `.p { :global.x, &:not(.z) { ... } }`), when
+  the rule styles nothing (no declarations, and no `@keyframes` whose name would
+  get the hash), and when a lone `:global` sits in a rule
+  (`.card { :global.open, :global { ... } }` gives `&.open, &`).
+
+  Migration: move the other selectors to a rule of their own:
+  `.card, :global .note { … }` becomes `.card { … } :global .note { … }`.
+
+  Some bare `:global` output changes too. `:global(.a), :global.w` now compiles to
+  `.a, .w` instead of being read as a `:global { ... }` block, and a global block
+  that styles nothing but holds at-rules a style rule can't hold
+  (`:root, :global.w { @keyframes -global-k { ... } }`, or a `@font-face` in a
+  `@media`) drops its selector so the at-rule is valid. A `:global` modifier whose
+  only parent rule is a `:global { ... }` block no longer gets an `&`:
+  `:global { :global.w { ... } }` compiles to `.w { ... }`, where it gave a
+  top-level `&.w`, which matches the root element. The `&` stays where the
+  selector would otherwise start with a combinator:
+  `:global { :global > .w { ... } }` gives `& > .w`, and so does
+  `:global > .w { ... }` at the top level, which gave `> .w`, invalid CSS that
+  styled nothing, and now matches the root element's children. A comment or a
+  string with `*/` in a selector the output drops, or in a rule it comments out as
+  unused, no longer ends the comment the output puts around it.
+
 ## 0.6.9
 
 ### Patch Changes
