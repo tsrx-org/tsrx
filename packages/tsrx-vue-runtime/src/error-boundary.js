@@ -36,6 +36,8 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
  * @property {boolean} unmounting whether the boundary's teardown has begun
  * @property {number} epoch bumped when the boundary resets or shows an error:
  * a swap still waiting from before then no longer applies
+ * @property {number} waits counts the swaps that waited: only the latest one
+ * still applies, as the latest error would have shown
  * @property {unknown} rendered the blocks the boundary renders into
  * @property {() => void} reset
  */
@@ -566,6 +568,7 @@ function create_boundary_state() {
 		shows_content: false,
 		unmounting: false,
 		epoch: 0,
+		waits: 0,
 		rendered: undefined,
 		reset() {
 			state.caught = null;
@@ -689,6 +692,14 @@ function initialize_boundary_state(instance) {
 			show();
 		} else {
 			const at = state.epoch;
+			const ticket = ++state.waits;
+			// Whether this swap still applies: no reset or other error since,
+			// and no later error waiting, and the boundary still there.
+			const current = () =>
+				state.epoch === at &&
+				state.waits === ticket &&
+				!state.unmounting &&
+				!(/** @type {{ isUnmounted?: boolean }} */ (instance).isUnmounted);
 			/** @param {Promise<unknown>[]} setups */
 			const wait = (setups) => {
 				const suspense = /** @type {{ suspense?: PendingSuspense | null }} */ (instance).suspense;
@@ -697,7 +708,7 @@ function initialize_boundary_state(instance) {
 				const next = () => {
 					if (settled) return;
 					settled = true;
-					if (state.epoch !== at) return;
+					if (!current()) return;
 					const more = loading();
 					if (more.length > 0) wait(more);
 					else show();
@@ -707,7 +718,7 @@ function initialize_boundary_state(instance) {
 				// starts a new round, stops counting these setups, and one of them
 				// may never settle: look again then.
 				const recheck = () => {
-					if (settled) return;
+					if (settled || !current()) return;
 					if (!suspense?.pendingBranch || suspense.pendingId !== round) next();
 					else setTimeout(recheck, ROUND_RECHECK_MS);
 				};

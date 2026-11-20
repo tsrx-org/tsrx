@@ -77,6 +77,49 @@ function ActiveTryWithCounted() @{
 	}
 }
 
+const order_first = ref(false);
+const order_second = ref(false);
+const order_one = ref(false);
+const order_two = ref(false);
+const order_release: Array<() => void> = [];
+const order_finish: Array<(component: unknown) => void> = [];
+
+function OrderThrower() @{
+	watch(order_first, async () => {
+		await new Promise<void>((resolve) => (order_release[0] = resolve));
+		throw new Error('first');
+	});
+	watch(order_second, async () => {
+		await new Promise<void>((resolve) => (order_release[1] = resolve));
+		throw new Error('second');
+	});
+	<p>{'ok'}</p>
+}
+
+function OrderLoading(props: { id: number }) @{
+	const Async = defineVaporAsyncComponent(
+		() => new Promise<any>((resolve) => (order_finish[props.id] = resolve)),
+	);
+	<Async />
+}
+
+// Two errors wait for loading components; the first waits longer.
+function OrderTry() @{
+	@try {
+		<>
+			<OrderThrower />
+			@if (order_one.value) {
+				<OrderLoading id={0} />
+			}
+			@if (order_two.value) {
+				<OrderLoading id={1} />
+			}
+		</>
+	} @catch (err) {
+		<b class="active-caught">{String(err)}</b>
+	}
+}
+
 /**
  * Mounts `component` as the first branch of a keyed `Suspense` that keeps it
  * on screen while a second branch loads, and switches to that branch.
@@ -154,6 +197,53 @@ describe('tsrx-vue a @try in the branch a pending Suspense still shows', () => {
 		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: active body');
 		expect(handled).toEqual([]);
 		finish_counted(LateFine);
+		finish();
+		app.unmount();
+	});
+
+	it('stops checking a waiting @catch once the app unmounts', async () => {
+		active_broken.value = false;
+		counted_shown.value = false;
+		const { app, finish } = await mount_kept(ActiveTryWithCounted);
+		counted_shown.value = true;
+		await flush();
+		active_broken.value = true;
+		await flush();
+		finish();
+		app.unmount();
+		await flush();
+		const set_timeout = vi.spyOn(globalThis, 'setTimeout');
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		const checks = set_timeout.mock.calls.filter((call) => call[1] === 50);
+		set_timeout.mockRestore();
+		expect(checks).toEqual([]);
+		finish_counted(LateFine);
+	});
+
+	it('shows the later of two errors that wait for loading components', async () => {
+		order_first.value = false;
+		order_second.value = false;
+		order_one.value = false;
+		order_two.value = false;
+		const { app, handled, finish } = await mount_kept(OrderTry);
+		order_one.value = true;
+		await flush();
+		order_first.value = true;
+		order_second.value = true;
+		await flush();
+		order_release[0]();
+		await flush();
+		order_two.value = true;
+		await flush();
+		order_release[1]();
+		await flush();
+		order_finish[0](LateFine);
+		await flush();
+		order_finish[1]?.(LateFine);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await flush();
+		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: second');
+		expect(handled).toEqual([]);
 		finish();
 		app.unmount();
 	});
