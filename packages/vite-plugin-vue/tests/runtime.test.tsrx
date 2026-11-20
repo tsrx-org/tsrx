@@ -5073,6 +5073,73 @@ function PendingSiblingThrows() @{
 	}
 }
 
+function RenderThrows() @{
+	throw new Error('render body');
+	<p />
+}
+
+// A component beside a loading one throws as the @pending body first renders.
+function PendingRenderThrows() @{
+	const AsyncChild = defineVaporAsyncComponent(pending_loader);
+	@try {
+		<>
+			<AsyncChild />
+			<RenderThrows />
+		</>
+	} @pending {
+		<i class="pending-loading">{'loading'}</i>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
+const pending_rerender_broken = ref(false);
+
+function pending_rerender_label(): string {
+	if (pending_rerender_broken.value) throw new Error('body render');
+	return 'ok';
+}
+
+// The body's own setup code throws as the body renders again, while a
+// component in it loads.
+function PendingRerenderThrows() @{
+	const AsyncChild = defineVaporAsyncComponent(pending_loader);
+	@try {
+		const label = pending_rerender_label();
+		<>
+			<AsyncChild />
+			<p class="pending-label">{label}</p>
+		</>
+	} @pending {
+		<i class="pending-loading">{'loading'}</i>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
+function PendingFineChild() @{
+	<p class="pending-child">{'child'}</p>
+}
+
+const pending_child_throws = ref(false);
+
+// As the body renders again, while a component in it loads, it creates a
+// component that throws in setup.
+function PendingRerenderChildThrows() @{
+	const AsyncChild = defineVaporAsyncComponent(pending_loader);
+	@try {
+		const Child = pending_child_throws.value ? RenderThrows : PendingFineChild;
+		<>
+			<AsyncChild />
+			<Child />
+		</>
+	} @pending {
+		<i class="pending-loading">{'loading'}</i>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
 let reject_first: (error: unknown) => void = () => {};
 
 // One async component rejects while another is still loading.
@@ -5298,6 +5365,47 @@ describe('tsrx-vue a @try whose body throws while its Suspense is pending', () =
 
 	// With @pending, the boundary around the Suspense shows the @catch and
 	// replaces the whole Suspense, as React's does.
+	it('shows the @catch for a component that throws as the body first renders beside a loading one', async () => {
+		const { app, handled } = await mount(PendingRenderThrows);
+		await settle();
+		expect(text('.pending-caught')).toBe('Error: render body');
+		expect(container.querySelector('.pending-loading')).toBeNull();
+		pending_finish(ResolvedFine);
+		await settle();
+		expect(text('.pending-caught')).toBe('Error: render body');
+		expect(container.querySelector('.pending-resolved')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('shows the @catch for a component that throws as the body renders again while another loads', async () => {
+		pending_child_throws.value = false;
+		const { app, handled } = await mount(PendingRerenderChildThrows);
+		expect(text('.pending-loading')).toBe('loading');
+		pending_child_throws.value = true;
+		await settle();
+		pending_finish(ResolvedFine);
+		await settle();
+		expect(text('.pending-caught')).toBe('Error: render body');
+		expect(container.querySelector('.pending-loading')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('shows the @catch for the body throwing as it renders again while a component in it loads', async () => {
+		pending_rerender_broken.value = false;
+		const { app, handled } = await mount(PendingRerenderThrows);
+		expect(text('.pending-loading')).toBe('loading');
+		pending_rerender_broken.value = true;
+		await settle();
+		pending_finish(ResolvedFine);
+		await settle();
+		expect(text('.pending-caught')).toBe('Error: body render');
+		expect(container.querySelector('.pending-loading')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
 	it.each([
 		['', PendingResolvesToThrower],
 		[' inside an element', PendingResolvesToThrowerInElement],

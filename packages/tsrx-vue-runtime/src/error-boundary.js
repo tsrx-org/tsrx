@@ -219,6 +219,31 @@ function shows_content_of(source, own) {
 	return inner;
 }
 
+/**
+ * Whether `instance` is the boundary inside a `@pending` `Suspense` that
+ * renders the same `@catch` as the one around it (`sharesCatch`), while that
+ * `Suspense` is pending. It lets an error go on then, from a render too, and
+ * the one around it shows the `@catch`, as React's error boundary around a
+ * `Suspense` does: it replaces the whole `Suspense`. Swapping inside would
+ * unmount part of the branch the `Suspense` waits for. One that is gone,
+ * after a reset rendered a new pair, keeps its error, as before: the `@catch`
+ * around it now shows the new body.
+ *
+ * @param {ComponentInternalInstance} instance
+ * @returns {boolean}
+ */
+function passes_to_twin(instance) {
+	const suspense =
+		/** @type {{ suspense?: (PendingSuspense & { isUnmounted?: boolean }) | null }} */ (instance)
+			.suspense;
+	return (
+		!!props_of(instance)?.sharesCatch &&
+		!!suspense?.pendingBranch &&
+		!suspense.isUnmounted &&
+		!(/** @type {{ isUnmounted?: boolean }} */ (instance).isUnmounted)
+	);
+}
+
 /** How often a waiting swap checks whether its `Suspense` stopped waiting. */
 const ROUND_RECHECK_MS = 50;
 
@@ -470,6 +495,14 @@ export function TsrxErrorBoundary(props, ctx) {
 		if (frame.errors.length === 0) {
 			return content;
 		}
+		if (instance && state.rendered && passes_to_twin(instance)) {
+			// Rendering again: hand the error to the boundary around the
+			// `Suspense`, which replaces it. Keep what this one showed: the
+			// fallback would unmount it, and with it a component the `Suspense`
+			// still waits for. A first render that throws mounted nothing yet.
+			handleError(frame.errors[0], instance, ErrorCodes.RENDER_FUNCTION);
+			return /** @type {unknown[] | undefined} */ (state.rendered)?.[0] ?? null;
+		}
 		// Not a reactive write: this render already shows the fallback.
 		state.caught = { error: frame.errors[0] };
 		state.epoch++;
@@ -597,24 +630,7 @@ function initialize_boundary_state(instance) {
 	});
 
 	onErrorCaptured((captured_error, source) => {
-		// The boundary inside a `@pending` `Suspense` that renders the same
-		// `@catch` as the one around it: while that `Suspense` is pending, let
-		// the one around it show the `@catch`, as React's error boundary
-		// around a `Suspense` does. It replaces the whole `Suspense`; swapping
-		// here would unmount part of the branch the `Suspense` waits for.
-		// One that is gone, after a reset rendered a new pair, keeps its error,
-		// as before: the `@catch` around it now shows the new body.
-		const twin_suspense =
-			/** @type {{ suspense?: (PendingSuspense & { isUnmounted?: boolean }) | null }} */ (instance)
-				.suspense;
-		if (
-			props_of(instance)?.sharesCatch &&
-			twin_suspense?.pendingBranch &&
-			!twin_suspense.isUnmounted &&
-			!(/** @type {{ isUnmounted?: boolean }} */ (instance).isUnmounted)
-		) {
-			return;
-		}
+		if (passes_to_twin(instance)) return;
 		// The boundary inside this one that renders the same `@catch` let this
 		// error from that `@catch` go on: let it go on too.
 		if (thrown_by_twin_fallback(source, instance)) return;
