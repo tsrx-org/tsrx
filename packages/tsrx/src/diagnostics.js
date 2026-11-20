@@ -708,6 +708,10 @@ export const TSRX_ERRORS = {
 		'CSS_GLOBAL_PLACEMENT',
 		':global(...) can be at the start or end of a selector sequence, but not in the middle.',
 	),
+	CSS_GLOBAL_SELECTOR_LIST: tsrx(
+		'CSS_GLOBAL_PLACEMENT',
+		':global(...) can hold a selector list only as the whole selector, as in :global(.a, .b) { ... }: elsewhere the output drops its parentheses, which splits the selector around the list. Write a selector for each, as in :global(.a) .c, :global(.b) .c.',
+	),
 	CSS_GLOBAL_BLOCK_IN_MIXED_LIST: tsrx(
 		'CSS_GLOBAL_PLACEMENT',
 		'A selector that starts with a bare :global makes its whole rule unscoped, so the other selectors in its list, and the rules nested in it, would lose their scoping. Move the other selectors to a rule of their own.',

@@ -16,6 +16,7 @@ import {
 	TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR,
 	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
 	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
+	TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
 	TSRX_CSS_IMPORT_ERROR,
 	TSRX_STYLE_APPLY_DUPLICATE_ERROR,
 	TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR,
@@ -1129,6 +1130,46 @@ describe('scoped style analysis', () => {
 			expect(errors.map((error) => error.type)).toEqual(['usage', 'usage']);
 			expect_anchored_on(errors[0], source, ':global(.b)');
 			expect_anchored_on(errors[1], source, ':global(.e)');
+		});
+
+		it('reports a :global(...) selector list in a longer selector', () => {
+			/** @type {Array<[css: string, anchor: string | null]>} */
+			const cases = [
+				[':global(.a, .b) .c, .d { color: red; }', ':global(.a, .b)'],
+				['.c :global(.a, .b) { color: red; }', ':global(.a, .b)'],
+				['.c:global(.a,.b) { color: red; }', ':global(.a,.b)'],
+				[':global(::before, ::after) { content: "x"; }', null],
+				['.p:global(::before, ::after) { content: "x"; }', ':global(::before, ::after)'],
+				[':global(.a, .b):hover .c { color: red; }', ':global(.a, .b)'],
+				['.p { > :global(.a, .b) { color: red; } }', ':global(.a, .b)'],
+				['.p:has(> :global(.a, .b)) { color: red; }', ':global(.a, .b)'],
+				['.p { :global(.a, &.b):not(.z) { color: red; } }', ':global(.a, &.b)'],
+			];
+			for (const [css, anchor] of cases) {
+				const source = `const t = <style>${css}</style>;`;
+				const thrown = analyze_thrown(first_stylesheet(source));
+				if (anchor === null) {
+					expect(thrown, css).toBeNull();
+					continue;
+				}
+				const pos = source.indexOf(anchor);
+
+				expect(thrown?.code, css).toBe(DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT);
+				expect(thrown?.message, css).toBe(TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR);
+				expect([thrown?.pos, thrown?.end], css).toEqual([pos, pos + anchor.length]);
+			}
+		});
+
+		it('allows a :global(...) selector list as the whole selector', () => {
+			for (const css of [
+				':global(.a, .b) { color: red; }',
+				'.p { :global(.a, &.b) { color: red; } }',
+				':is(:global(.a, .b)) .c { color: red; }',
+				'.p:has(:global(> .a, > .b)) { color: red; }',
+				':global(.a) .c, :global(.b) .c { color: red; }',
+			]) {
+				expect(analyze_thrown(parse_stylesheet(css)), css).toBeNull();
+			}
 		});
 
 		it('takes the filename from options over the sheet', () => {

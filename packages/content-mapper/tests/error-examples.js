@@ -740,6 +740,20 @@ export {};
 `,
 	},
 	{
+		error: TSRX_ERRORS.CSS_GLOBAL_SELECTOR_LIST,
+		source: `export function C() @{
+	<>
+		<style>
+			:global(.a, .b) .c {
+				color: red;
+			}
+		</style>
+		<div class="c" />
+	</>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.CSS_GLOBAL_BLOCK_IN_MIXED_LIST,
 		source: `export function C() @{
 	<>
