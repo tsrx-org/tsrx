@@ -1,0 +1,5 @@
+---
+'@tsrx/vue-runtime': patch
+---
+
+On the Vue target, a `@try` now shows its `@catch` for an error its body's own inline code throws after the first render: an expression that throws on an update, such as `{props.item.price.amount}` once `price` is gone, or an event handler written in the body. Before, Vue passed such an error over the `@try`, because that code belongs to the boundary that renders the body, and Vue starts at that instance's parent. The error went to `app.config.errorHandler` while the body kept its last output, or a `@try` inside another one's body lost it to the outer `@catch`; the same code in a child component was caught. Each boundary now puts a hook first among its parent's error hooks, and that hook takes the errors the boundary itself is the source of while it shows its content. A `@try` inside a `Suspense` in a `@catch`, whose inline code throws while that `Suspense` is pending, shows its own `@catch` once the `Suspense` resolves, instead of passing the error to `app.config.errorHandler`. What the `@catch`'s own inline code throws, or what the body throws while the `@try` unmounts, still goes to the next `@try` out, as before.

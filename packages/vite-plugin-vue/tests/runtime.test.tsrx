@@ -4712,7 +4712,7 @@ describe('tsrx-vue a @catch that throws', () => {
 		app.unmount();
 	});
 
-	it('lets a Suspense in the @catch resolve after a @try inside it throws while pending', async () => {
+	it('shows a @try inside a Suspense in the @catch once the Suspense resolves', async () => {
 		const app = await mount(SuspendedTryInCatch, {});
 		expect(text('.hidden-loading')).toBe('loading');
 		nested_broken.value = true;
@@ -4722,7 +4722,8 @@ describe('tsrx-vue a @catch that throws', () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		await flush();
 		expect(container.querySelector('.hidden-loading')).toBeNull();
-		expect(handled).toEqual(['nested body']);
+		expect(text('.nested-caught')).toBe('Error: nested body');
+		expect(handled).toEqual([]);
 		app.unmount();
 	});
 
@@ -5571,6 +5572,121 @@ describe('tsrx-vue a @try whose body throws while its Suspense is pending', () =
 		pending_finish(ResolvedFine);
 		await settle();
 		expect(text('.stale-caught')).toBe('Error: newer');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+});
+
+const inline_obj = ref<{ x?: { y: string } }>({ x: { y: 'ok' } });
+
+// The body's inline code throws on an update.
+function InlineUpdateThrows() @{
+	@try {
+		<p class="inline-body">{(inline_obj.value.x as { y: string }).y}</p>
+	} @catch (err) {
+		<b class="inline-caught">{String(err)}</b>
+	}
+}
+
+// The body's inline click handler throws.
+function InlineClickThrows() @{
+	@try {
+		<button
+			class="inline-click"
+			onClick={() => {
+				throw new Error('inline click');
+			}}
+		>
+			{'click'}
+		</button>
+	} @catch (err) {
+		<b class="inline-caught">{String(err)}</b>
+	}
+}
+
+// A @try inside another one's body, whose inline code throws on an update.
+function InlineUpdateThrowsNested() @{
+	@try {
+		<section>
+			@try {
+				<p class="inline-body">{(inline_obj.value.x as { y: string }).y}</p>
+			} @catch (err) {
+				<b class="inline-caught">{String(err)}</b>
+			}
+		</section>
+	} @catch (err) {
+		<p class="inline-outer">{String(err)}</p>
+	}
+}
+
+let finish_inline_async: (component: unknown) => void = () => {};
+
+// A @try with @pending whose inline body code, inside an element beside a
+// loading async component, throws on an update.
+function InlinePendingInElement() @{
+	const AsyncChild = defineVaporAsyncComponent(
+		() => new Promise<any>((resolve) => (finish_inline_async = resolve)),
+	);
+	@try {
+		<div>
+			<AsyncChild />
+			<p class="inline-body">{(inline_obj.value.x as { y: string }).y}</p>
+		</div>
+	} @pending {
+		<i class="inline-loading">{'loading'}</i>
+	} @catch (err) {
+		<b class="inline-caught">{String(err)}</b>
+	}
+}
+
+describe("tsrx-vue a @try body's inline code", () => {
+	async function mount(component: unknown) {
+		const handled: string[] = [];
+		const app = createVaporApp(component as Parameters<typeof createVaporApp>[0]);
+		app.config.errorHandler = (error) => {
+			handled.push(String(error));
+		};
+		app.mount(container);
+		await flush();
+		return { app, handled };
+	}
+
+	it.each([
+		['', InlineUpdateThrows],
+		[' inside another @try', InlineUpdateThrowsNested],
+	])('shows an error it throws on an update in the @catch%s', async (_name, component) => {
+		inline_obj.value = { x: { y: 'ok' } };
+		const { app, handled } = await mount(component);
+		expect(text('.inline-body')).toBe('ok');
+		inline_obj.value = {};
+		await flush();
+		expect(text('.inline-caught')).toMatch(/^TypeError: /);
+		expect(container.querySelector('.inline-body')).toBeNull();
+		expect(container.querySelector('.inline-outer')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('shows an error it throws while a @pending Suspense loads, and lets that Suspense go', async () => {
+		inline_obj.value = { x: { y: 'ok' } };
+		const { app, handled } = await mount(InlinePendingInElement);
+		expect(text('.inline-loading')).toBe('loading');
+		inline_obj.value = {};
+		await flush();
+		finish_inline_async(CatchResolved);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await flush();
+		expect(text('.inline-caught')).toMatch(/^TypeError: /);
+		expect(container.querySelector('.inline-loading')).toBeNull();
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('shows an error its click handler throws in the @catch', async () => {
+		const { app, handled } = await mount(InlineClickThrows);
+		(container.querySelector('.inline-click') as HTMLElement).click();
+		await flush();
+		expect(text('.inline-caught')).toBe('Error: inline click');
 		expect(handled).toEqual([]);
 		app.unmount();
 	});

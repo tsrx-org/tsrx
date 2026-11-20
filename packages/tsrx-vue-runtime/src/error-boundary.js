@@ -197,31 +197,6 @@ function thrown_by_twin_fallback(source, boundary) {
 }
 
 /**
- * The state of `source` when it is a mounted boundary, other than the one
- * `own` belongs to, whose last render showed its content: an error it is the
- * source of came from its content's inline code. A boundary that renders the
- * same `@catch` as the one around it (`sharesCatch`) is left to that one,
- * which shows the same `@catch` and can replace a pending `Suspense`. So is
- * one inside a `Suspense` that is still pending: its fallback would render in
- * the hidden branch, and the `Suspense` would never resolve.
- *
- * @param {unknown} source
- * @param {BoundaryState} own
- * @returns {BoundaryState | undefined}
- */
-function shows_content_of(source, own) {
-	const instance = /** @type {ComponentInternalInstance} */ (source);
-	const inner = boundary_states.get(instance);
-	if (!inner || inner === own || !inner.shows_content || inner.unmounting) return undefined;
-	if (/** @type {{ isUnmounted?: boolean }} */ (source).isUnmounted) return undefined;
-	if (props_of(instance)?.sharesCatch) return undefined;
-	const suspense = /** @type {{ suspense?: { pendingBranch?: unknown } | null }} */ (source)
-		.suspense;
-	if (suspense?.pendingBranch) return undefined;
-	return inner;
-}
-
-/**
  * Whether `instance` is the boundary inside a `@pending` `Suspense` that
  * renders the same `@catch` as the one around it (`sharesCatch`), while that
  * `Suspense` is pending. It lets an error go on then, from a render too, and
@@ -630,7 +605,12 @@ function initialize_boundary_state(instance) {
 		state.unmounting = true;
 	});
 
-	onErrorCaptured((captured_error, source) => {
+	/**
+	 * @param {unknown} captured_error
+	 * @param {unknown} source
+	 * @returns {false | undefined}
+	 */
+	const capture = (captured_error, source) => {
 		if (passes_to_twin(instance)) return;
 		// The boundary inside this one that renders the same `@catch` let this
 		// error from that `@catch` go on: let it go on too.
@@ -653,19 +633,9 @@ function initialize_boundary_state(instance) {
 		// does with a render error. Showing the fallback again would throw again, until Vue
 		// stopped the loop. An error from the content, which can still come
 		// while or after the fallback shows, is the boundary's own, as before.
-		if (from_fallback) {
-			// Unless a `@try` the fallback rendered is the source and shows its
-			// content: its content's inline code threw, on an update or from a
-			// handler. Vue starts at the parent of the instance that threw, which
-			// skipped that boundary's own hook, so show the error there, as the
-			// fallback rendering again used to.
-			const inner = shows_content_of(source, state);
-			if (!inner) return;
-			inner.caught = { error: captured_error };
-			inner.epoch++;
-			inner.version.value++;
-			return false;
-		}
+		// A `@try` the fallback rendered takes what its own content's inline
+		// code throws before this hook runs (`take_own_errors`).
+		if (from_fallback) return;
 		// Thrown outside a render: swap in the fallback.
 		const show = () => {
 			state.caught = { error: captured_error };
@@ -752,9 +722,50 @@ function initialize_boundary_state(instance) {
 			wait(first);
 		}
 		return false;
-	});
+	};
+	onErrorCaptured(capture);
+	take_own_errors(instance, state, capture);
 
 	return state;
+}
+
+/**
+ * Has `capture` take the errors `instance` itself is the source of, while it
+ * shows its content.
+ *
+ * Vue hands an error to the hooks of the parents of the instance it came
+ * from, never to that instance's own. A `@try` body's inline code, an
+ * expression that updates or an event handler, belongs to the boundary that
+ * renders it, so what it throws after the first render skipped the
+ * boundary's hook: it went to the next `@try` out, or to
+ * `app.config.errorHandler`. A hook put first among the parent's, where Vue
+ * starts, takes those errors to the boundary. One the fallback's inline code
+ * throws, or one while the boundary unmounts, goes on as before.
+ *
+ * @param {ComponentInternalInstance} instance
+ * @param {BoundaryState} state
+ * @param {(captured_error: unknown, source: unknown) => false | undefined} capture
+ */
+function take_own_errors(instance, state, capture) {
+	const parent = /** @type {{ ec?: Function[] | null } | null} */ (
+		/** @type {unknown} */ (instance.parent)
+	);
+	if (!parent) return;
+	onErrorCaptured((captured_error, proxy) => {
+		// Vue passes the instance's public proxy, or the instance itself when
+		// it has none, as a Vapor one doesn't.
+		const source = /** @type {unknown} */ (proxy);
+		if (source !== instance && source !== instance.proxy) return;
+		if (!state.shows_content || state.unmounting || instance.isUnmounted) return;
+		return capture(captured_error, instance);
+	}, /** @type {ComponentInternalInstance} */ (/** @type {unknown} */ (parent)));
+	const hooks = /** @type {Function[]} */ (parent.ec);
+	const hook = /** @type {Function} */ (hooks.pop());
+	hooks.unshift(hook);
+	onBeforeUnmount(() => {
+		const index = hooks.indexOf(hook);
+		if (index !== -1) hooks.splice(index, 1);
+	});
 }
 
 /**
