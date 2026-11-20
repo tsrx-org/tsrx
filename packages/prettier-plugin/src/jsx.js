@@ -406,15 +406,16 @@ function printOnlyText(path, options, print, edges) {
 		.filter((/** @type {string} */ word) => word !== '');
 	const breaks = wordsCanBreak(text);
 	// `print` isn't called on the text, so print the cursor around it, its
-	// edges too, when it is inside it (as `printJsxElementInternal` does).
+	// edges too, as Prettier's `mainPrint` prints it around a node: around the
+	// text that holds it, after the text before it, and before the text after it.
 	const cursorOptions = /** @type {Record<string, any>} */ (options);
 	const [first, last] =
 		cursorOptions.cursorNode === text
 			? [cursor, cursor]
 			: cursorOptions.nodeBeforeCursor === text
-				? [cursor, '']
+				? ['', cursor]
 				: cursorOptions.nodeAfterCursor === text
-					? ['', cursor]
+					? [cursor, '']
 					: ['', ''];
 	/** @type {Doc[]} */
 	const parts = breaks ? join(line, words) : [words.join(' ')];

@@ -1771,6 +1771,23 @@ const b = (
 		}
 	});
 
+	test('keeps the cursor at either end of the text', async () => {
+		for (const [source, printWidth] of /** @type {const} */ ([
+			['const a = <p> alpha beta </p>;', 80],
+			['const a = <p> alpha beta gamma delta </p>;', 20],
+		])) {
+			for (const before of ['</p>', ' alpha']) {
+				const { formatted, cursorOffset } = await prettier.formatWithCursor(source, {
+					parser: 'tsrx',
+					plugins: [plugin],
+					printWidth,
+					cursorOffset: source.indexOf(before),
+				});
+				expect(formatted.slice(cursorOffset).startsWith(before), `${source} ${before}`).toBe(true);
+			}
+		}
+	});
+
 	test('takes linear time in a long run of spaces', async () => {
 		const run = ' '.repeat(100_000);
 		for (const [source, expected] of [
