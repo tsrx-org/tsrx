@@ -2088,6 +2088,79 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('reports an & with no rule around it instead of crashing on it', () => {
+			/** @type {Array<[rule: string, code: string]>} */
+			const cases = [
+				['& { color: red; }', DIAGNOSTIC_CODES.CSS_NESTING_SELECTOR_PLACEMENT],
+				[':global.w, & { color: red; }', DIAGNOSTIC_CODES.CSS_NESTING_SELECTOR_PLACEMENT],
+				['.p:has(> &) { color: red; }', DIAGNOSTIC_CODES.CSS_NESTING_SELECTOR_PLACEMENT],
+				[':global { &.p { color: red; } }', DIAGNOSTIC_CODES.CSS_NESTING_SELECTOR_PLACEMENT],
+				[':global { color: red; }', DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT],
+			];
+			for (const [rule, code] of cases) {
+				const source = `export function App() @{
+					<>
+						<style>${rule}</style>
+						<div ${attr}="p"><i ${attr}="z" /></div>
+					</>
+				}`;
+
+				expect(
+					compile(source, 'App.tsrx', { collect: true }).errors.map((error) => error.code),
+					rule,
+				).toEqual([code]);
+				expect(() => compile(source, 'App.tsrx'), rule).toThrow(expect.objectContaining({ code }));
+			}
+		});
+
+		it("scopes an & directly in a @scope as it scopes :scope, the scope's root", () => {
+			/** @param {string} body */
+			const css_of = (body) =>
+				compile(
+					`export function App() @{
+						<>
+							<style>@scope (.c) { ${body} }</style>
+							<div ${attr}="c"><p ${attr}="p" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				).css.replace(/tsrx-[0-9a-f]+/g, 'H');
+
+			expect(css_of('& { color: red; }')).toContain('&.H { color: red; }');
+			expect(css_of('& > .p { margin: 0; }')).toContain('&.H > .p:where(.H) { margin: 0; }');
+			// `:global(&)` keeps the & as written: the root of any such scope.
+			expect(css_of(':global(&) { color: red; }')).toContain('& { color: red; }');
+			// A :global(...) compound with the & stays as written, as with :scope.
+			expect(css_of(':global(div)& { color: red; }')).toContain('div& { color: red; }');
+			// Its arguments are global too, kept as written.
+			expect(css_of(':global(.c)&:not(.zz) { color: red; }')).toContain(
+				'.c&:not(.zz) { color: red; }',
+			);
+			// Every spelling compiles as it does with :scope, its hash after the &
+			// instead of before :scope, and is pruned alike.
+			for (const body of [
+				'& { color: red; }',
+				'&:hover { color: red; }',
+				'& > .p { margin: 0; }',
+				'&.dark .p { color: blue; }',
+				'.p & { padding: 0; }',
+				':is(&) .p { color: red; }',
+				':root& { color: red; }',
+				'.p& .p { color: red; }',
+				':global.w, :root& { color: red; }',
+				':global(div)& { color: red; }',
+				':global(.p)&:hover { color: red; }',
+				':global.w, :global(.p)& { color: red; }',
+				':global(.c)&:not(.zz) { color: red; }',
+				':global(.c)&:has(> .zz) { color: red; }',
+			]) {
+				const scope = css_of(body.replaceAll('&', ':scope'))
+					.replace(/(\.H|:where\(\.H\)):scope/g, '&$1')
+					.replaceAll(':scope', '&');
+				expect(css_of(body), body).toBe(scope);
+			}
+		});
+
 		it('reports a bare :global list exactly when the other selector would be scoped on its own', () => {
 			/**
 			 * The CSS of `css` in a component's `<style>`, which prunes what matches

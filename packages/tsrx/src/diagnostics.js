@@ -151,6 +151,8 @@ export const DIAGNOSTIC_CODES = {
 	CSS_SYNTAX: 'TSRX3013',
 	/** A `<style>` block in a child expression container (`{<style>…</style>}`), which renders its class map. */
 	STYLE_IN_EXPRESSION_CONTAINER: 'TSRX3014',
+	/** An `&` with no rule around it in the output, which would match the page's root element. */
+	CSS_NESTING_SELECTOR_PLACEMENT: 'TSRX3015',
 
 	/** A recognized `import.meta.env.platform.*` flag is used without a selected platform. */
 	PLATFORM_REQUIRED: 'TSRX4001',
@@ -719,6 +721,14 @@ export const TSRX_ERRORS = {
 	CSS_GLOBAL_BLOCK_NOT_ALONE: tsrx(
 		'CSS_GLOBAL_PLACEMENT',
 		'A lone :global, as in :global { ... }, stands for the rule around it, so outside a rule it cannot share a selector list with other selectors. Move the other selectors to a rule of their own.',
+	),
+	CSS_NESTING_SELECTOR_WITHOUT_RULE: tsrx(
+		'CSS_NESTING_SELECTOR_PLACEMENT',
+		"An & stands for the rule around it, so outside a rule, or in a :global { ... } block outside a rule, it would match the page's root element. Nest this rule in the rule the & refers to, or write :root, or :global(&) to keep the &.",
+	),
+	CSS_GLOBAL_BLOCK_DECLARATION: tsrx(
+		'CSS_GLOBAL_PLACEMENT',
+		'A :global { ... } block outside a rule is dropped from the output, so its declarations would have no rule of yours around them: invalid CSS outside every rule, or, directly in a @scope, a style for the root of every such scope on the page. Move them into a rule in the block, as in :global { body { ... } }, or nest the block in a rule.',
 	),
 	CSS_IMPORT: tsrx(
 		'CSS_IMPORT',

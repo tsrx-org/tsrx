@@ -5,7 +5,7 @@
 import { walk } from 'zimmerframe';
 import { error } from '../errors.js';
 import { TSRX_ERRORS } from '../diagnostics.js';
-import { css_node_source_position } from '../parse/style.js';
+import { css_node_source_position, unescape_css } from '../parse/style.js';
 
 /**
  * True if is `:global` without arguments
@@ -22,8 +22,10 @@ function is_global_block_selector(simple_selector) {
 /**
  * True if is `:global(...)` or `:global` and no pseudo class that is scoped.
  * @param {AST.CSS.RelativeSelector} relative_selector
+ * @param {boolean} [scope_root] whether an `&` in it stands for a `@scope`'s
+ *   root, and so counts as the `:scope` pseudo-class
  */
-function is_global(relative_selector) {
+function is_global(relative_selector, scope_root = false) {
 	const first = relative_selector.selectors[0];
 
 	return (
@@ -34,7 +36,9 @@ function is_global(relative_selector) {
 			// :global(button).x means that the selector is still scoped because of the .x
 			relative_selector.selectors.every(
 				(selector) =>
-					selector.type === 'PseudoClassSelector' || selector.type === 'PseudoElementSelector',
+					selector.type === 'PseudoClassSelector' ||
+					selector.type === 'PseudoElementSelector' ||
+					(scope_root && selector.type === 'NestingSelector'),
 			))
 	);
 }
@@ -130,9 +134,14 @@ function is_unscoped(selector, subject_hashed = false) {
 		}
 		if (after_bare_global) return selectors.every((simple) => arguments_unscoped(simple));
 		const [first] = selectors;
+		// An `&` for a `@scope`'s root is the `:scope` it stands for: it gets the
+		// hash as `:scope` does.
+		const scope_root = is_scope_root_ampersand(selector.metadata.rule);
 		const pseudo = (/** @type {AST.CSS.SimpleSelector} */ simple) =>
-			simple.type === 'PseudoClassSelector' || simple.type === 'PseudoElementSelector';
-		const nesting = selectors.some((simple) => simple.type === 'NestingSelector');
+			simple.type === 'PseudoClassSelector' ||
+			simple.type === 'PseudoElementSelector' ||
+			(scope_root && simple.type === 'NestingSelector');
+		const nesting = !scope_root && selectors.some((simple) => simple.type === 'NestingSelector');
 		return (
 			((first.type === 'PseudoClassSelector' &&
 				(first.name === 'root' || first.name === 'host') &&
@@ -258,7 +267,7 @@ function compute_subject_hashed(rule) {
 		const [first] = selectors;
 		if (metadata.is_global || metadata.is_global_like) return false;
 		if (selectors.some((simple) => simple.type === 'NestingSelector')) {
-			return ampersand_hashed(rule);
+			return is_scope_root_ampersand(rule) || ampersand_hashed(rule);
 		}
 		return !(
 			selectors.length === 1 &&
@@ -442,10 +451,156 @@ export function has_parent_rule_in_output(rule) {
 }
 
 /**
+ * Whether an `&` in `rule`'s selectors stands for a `@scope`'s root: the rule
+ * is directly in a `@scope`, with no rule around it. CSS reads that `&` as
+ * `:where(:scope)`, so the output scopes it as it scopes `:scope`.
+ *
+ * @param {AST.CSS.Rule | null | undefined} rule
+ * @returns {boolean}
+ */
+export function is_scope_root_ampersand(rule) {
+	return !!rule && !rule.metadata.parent_rule && scope_root_rules.has(rule);
+}
+
+/**
+ * Whether the output has something around `rule` for an `&` in its selectors
+ * to stand for: a rule (the rules in a `:global { ... }` block the output
+ * drops belong to the rule around it), or a `@scope`, whose root it is.
+ * Outside both, an `&` would match the page's root element.
+ *
+ * Runs once the whole sheet has its metadata: whether a rule drops its
+ * selector depends on the rules nested in it.
+ *
+ * @param {AST.CSS.Rule} rule
+ * @returns {boolean}
+ */
+function has_ampersand_target(rule) {
+	for (
+		let current = /** @type {AST.CSS.Rule | null} */ (rule);
+		current;
+		current = current.metadata.parent_rule
+	) {
+		if (scope_root_rules.has(current)) return true;
+		const parent = current.metadata.parent_rule;
+		if (parent && !drops_selector(parent)) return true;
+	}
+	return false;
+}
+
+/**
+ * The `&`s in `rule`'s selectors, in their `:is()`, `:where()`, `:not()` and
+ * `:has()` arguments too, but not in a `:global(...)`, which keeps what it
+ * holds as written.
+ *
+ * @param {AST.CSS.Rule} rule
+ * @returns {AST.CSS.NestingSelector[]}
+ */
+function nesting_selectors(rule) {
+	/** @type {AST.CSS.NestingSelector[]} */
+	const found = [];
+	walk(/** @type {AST.CSS.Node} */ (rule.prelude), null, {
+		PseudoClassSelector(node, context) {
+			if (node.name !== 'global') context.next();
+		},
+		NestingSelector(node) {
+			found.push(node);
+		},
+	});
+	return found;
+}
+
+/**
+ * At-rules that hold rules, and declarations only in a style rule: a group
+ * rule such as `@media`, or `@scope`, which a declaration outside every rule
+ * still is in.
+ */
+const GROUP_AT_RULES = [
+	'media',
+	'supports',
+	'container',
+	'layer',
+	'scope',
+	'starting-style',
+	'when',
+	'else',
+	'document',
+];
+
+/**
+ * `at_rule`'s name as CSS reads it, with its escapes decoded (`@s\63ope` is
+ * `@scope`), in lowercase and without a vendor prefix.
+ *
+ * @param {AST.CSS.Atrule} at_rule
+ * @returns {string}
+ */
+function decoded_at_rule_name(at_rule) {
+	return unescape_css(at_rule.name)
+		.toLowerCase()
+		.replace(/^-((webkit)|(moz)|(o)|(ms))-/, '');
+}
+
+/**
+ * Rules in an at-rule other than a group rule (`@font-face`, or one this
+ * doesn't know), whose declarations belong to that at-rule.
+ *
+ * @type {WeakSet<AST.CSS.Rule>}
+ */
+const declaration_at_rule_rules = new WeakSet();
+
+/**
+ * The first declaration in `block` that the output puts straight into what
+ * is around it: one in the block itself, or in a group rule in it (`@media`),
+ * not in a rule or another at-rule.
+ *
+ * @param {AST.CSS.Block | null} block
+ * @returns {AST.CSS.Declaration | null}
+ */
+function first_bare_declaration(block) {
+	for (const child of block?.children ?? []) {
+		if (child.type === 'Declaration') return child;
+		if (child.type === 'Atrule' && GROUP_AT_RULES.includes(decoded_at_rule_name(child))) {
+			const declaration = first_bare_declaration(child.block);
+			if (declaration) return declaration;
+		}
+	}
+	return null;
+}
+
+/**
+ * Report what would be left outside every rule in the output: an `&` with
+ * no rule or `@scope` around it, which would match the page's root element,
+ * and the declarations of a `:global { ... }` block the output drops with no
+ * rule around it, which would be invalid CSS.
+ *
+ * @param {AST.CSS.Rule[]} rules every rule of the sheet, in source order
+ * @param {(diagnostic: Diagnostic, node: AST.CSS.Node) => void} report
+ */
+function check_rules_without_parent(rules, report) {
+	for (const rule of rules) {
+		// A selector the output drops (`:global & { @font-face { ... } }`)
+		// leaves no & behind.
+		if (!drops_selector(rule) && !has_ampersand_target(rule)) {
+			for (const nesting of nesting_selectors(rule)) {
+				report(TSRX_ERRORS.CSS_NESTING_SELECTOR_WITHOUT_RULE, nesting);
+			}
+		}
+		if (
+			drops_selector(rule) &&
+			!has_parent_rule_in_output(rule) &&
+			!declaration_at_rule_rules.has(rule)
+		) {
+			const declaration = first_bare_declaration(rule.block);
+			if (declaration) report(TSRX_ERRORS.CSS_GLOBAL_BLOCK_DECLARATION, declaration);
+		}
+	}
+}
+
+/**
  * Analyze CSS and set metadata for global selectors.
  *
  * `:global` placement problems are reported through `error()` with the
- * `CSS_GLOBAL_PLACEMENT` code: pushed onto `errors` when given (and skipped
+ * `CSS_GLOBAL_PLACEMENT` code, and an `&` with no rule around it with
+ * `CSS_NESTING_SELECTOR_PLACEMENT`: pushed onto `errors` when given (and skipped
  * over a suppressing comment when `comments` is given too), thrown otherwise.
  * When `css` is a sheet parsed with a `body` origin (every sheet `parseModule`
  * produces), the diagnostic carries file-relative `pos` / `end` / `loc`; the
@@ -476,18 +631,30 @@ export function analyze_css(css, options = {}) {
 		);
 	}
 
+	/** @type {AST.CSS.Rule[]} */
+	const rules = [];
+
 	walk(css, /** @type {{ rule: AST.CSS.Rule | null }} */ ({ rule: null }), {
 		Rule(node, context) {
 			node.metadata.parent_rule = context.state.rule;
+			rules.push(node);
 			// The nearest rule or `@scope` around it: in a `@scope`, `&` stands for
 			// the scope's root.
 			for (let i = context.path.length - 1; i >= 0; i--) {
 				const ancestor = context.path[i];
 				if (ancestor.type === 'Rule') break;
-				if (ancestor.type === 'Atrule' && at_rule_name(ancestor) === 'scope') {
+				if (ancestor.type === 'Atrule' && decoded_at_rule_name(ancestor) === 'scope') {
 					scope_root_rules.add(node);
 					break;
 				}
+			}
+			if (
+				context.path.some(
+					(ancestor) =>
+						ancestor.type === 'Atrule' && !GROUP_AT_RULES.includes(decoded_at_rule_name(ancestor)),
+				)
+			) {
+				declaration_at_rule_rules.add(node);
 			}
 
 			// Check for :global blocks
@@ -547,7 +714,8 @@ export function analyze_css(css, options = {}) {
 					if (bare) report(TSRX_ERRORS.CSS_GLOBAL_IN_PSEUDOCLASS, bare);
 				}
 
-				const global = node.children.find(is_global);
+				const scope_root = is_scope_root_ampersand(context.state.rule);
+				const global = node.children.find((child) => is_global(child, scope_root));
 
 				if (global) {
 					const idx = node.children.indexOf(global);
@@ -555,7 +723,7 @@ export function analyze_css(css, options = {}) {
 					if (first.args !== null && idx !== 0 && idx !== node.children.length - 1) {
 						// ensure `:global(...)` is not used in the middle of a selector (but multiple `global(...)` in sequence are ok)
 						for (let i = idx + 1; i < node.children.length; i++) {
-							if (!is_global(node.children[i])) {
+							if (!is_global(node.children[i], scope_root)) {
 								report(TSRX_ERRORS.CSS_GLOBAL_IN_MIDDLE, first);
 								break;
 							}
@@ -605,14 +773,18 @@ export function analyze_css(css, options = {}) {
 		},
 		RelativeSelector(node, context) {
 			// Check if this selector is a :global selector
-			node.metadata.is_global = node.selectors.length >= 1 && is_global(node);
+			// An `&` for a `@scope`'s root counts as the `:scope` it stands for.
+			const scope_root = is_scope_root_ampersand(context.state.rule);
+			node.metadata.is_global = node.selectors.length >= 1 && is_global(node, scope_root);
 
-			// Check for :root and other global-like selectors
+			// Check for :root and other global-like selectors.
 			if (
 				node.selectors.length >= 1 &&
 				node.selectors.every(
 					(selector) =>
-						selector.type === 'PseudoClassSelector' || selector.type === 'PseudoElementSelector',
+						selector.type === 'PseudoClassSelector' ||
+						selector.type === 'PseudoElementSelector' ||
+						(scope_root && selector.type === 'NestingSelector'),
 				)
 			) {
 				const first = node.selectors[0];
@@ -624,4 +796,6 @@ export function analyze_css(css, options = {}) {
 			context.next();
 		},
 	});
+
+	check_rules_without_parent(rules, report);
 }

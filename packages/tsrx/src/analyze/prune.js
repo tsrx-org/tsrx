@@ -898,8 +898,14 @@ function is_global(selector, rule) {
 		}
 
 		if (s.type === 'NestingSelector') {
-			owner = /** @type {AST.CSS.Rule} */ (rule.metadata.parent_rule);
-			selector_list = owner.prelude;
+			if (rule.metadata.parent_rule) {
+				owner = rule.metadata.parent_rule;
+				selector_list = owner.prelude;
+			} else {
+				// With no rule around it, `&` stands for a `@scope`'s root, as `:scope`
+				// does.
+				can_be_global = true;
+			}
 		}
 
 		const has_global_selectors = !!selector_list?.children.some((complex_selector) => {
@@ -1020,6 +1026,10 @@ function attribute_matches(node, name, expected_value, operator, case_insensitiv
  * @returns {boolean}
  */
 function is_outer_global(relative_selector) {
+	// The analyzer also reads an `&` for a `@scope`'s root as the `:scope` it
+	// stands for (`:global(.x)&`).
+	if (relative_selector.metadata.is_global) return true;
+
 	const first = relative_selector.selectors[0];
 
 	return (
@@ -1258,7 +1268,10 @@ function relative_selector_might_apply_to_node(relative_selector, rule, element,
 			case 'NestingSelector': {
 				let matched = false;
 
-				const parent = /** @type {AST.CSS.Rule} */ (rule.metadata.parent_rule);
+				const parent = rule.metadata.parent_rule;
+				// A `@scope`'s root, with no rule around: possibly any element, as
+				// for `:scope`.
+				if (!parent) break;
 
 				for (const complex_selector of parent.prelude.children) {
 					if (

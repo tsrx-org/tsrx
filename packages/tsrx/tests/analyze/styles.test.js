@@ -13,12 +13,14 @@ import {
 	renderStylesheets,
 } from '../../src/index.js';
 import {
+	TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
 	TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 	TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR,
 	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
 	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
 	TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
 	TSRX_CSS_IMPORT_ERROR,
+	TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR,
 	TSRX_STYLE_APPLY_DUPLICATE_ERROR,
 	TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR,
 	TSRX_STYLE_APPLY_VALUE_ERROR,
@@ -975,6 +977,12 @@ describe('scoped style analysis', () => {
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 					0,
 				],
+				// Directly in a @scope, & gets the hash, as :scope does.
+				[
+					'@scope (.q) { :global.w, & { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
+					0,
+				],
 				// A nested keyframes name would get the hash.
 				[
 					':global.w, :root { color: red; @keyframes k { from { opacity: 0; } } }',
@@ -1090,6 +1098,108 @@ describe('scoped style analysis', () => {
 			}
 		});
 
+		it('reports an & or declarations that would be left outside every rule', () => {
+			// `anchor` is the text the error covers and `nth` which occurrence of it.
+			/** @type {Array<[css: string, message: string, anchor: string, nth: number]>} */
+			const cases = [
+				['& { color: red; }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				['.p & { color: red; }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				[':is(&) .p { color: red; }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				['.p:has(> &) { color: red; }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				[':global.w, & { color: red; }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				['@media print { &.p {} }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				// The output drops the :global { ... } block, so no rule is left for the &.
+				[':global { &.w { color: red; } }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				[
+					':global { :global { & .w { color: red; } } }',
+					TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR,
+					'&',
+					0,
+				],
+				[':global { color: red; }', TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR, 'color: red', 0],
+				[
+					':global { .a { color: red; } color: blue; }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: blue',
+					0,
+				],
+				[
+					':global { @media print { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: red',
+					0,
+				],
+				[
+					'@media print { :global { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: red',
+					0,
+				],
+				[
+					':global { :global { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: red',
+					0,
+				],
+				// A @scope holds rules, not declarations, though & stands for its root.
+				[
+					'@scope (.c) { :global { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: red',
+					0,
+				],
+				[
+					'@when supports(display: grid) { :global { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: red',
+					0,
+				],
+			];
+			for (const [css, message, anchor, nth] of cases) {
+				const source = `const t = <style>${css}</style>;`;
+				const thrown = analyze_thrown(first_stylesheet(source));
+				let pos = -1;
+				for (let i = 0; i <= nth; i++) pos = source.indexOf(anchor, pos + 1);
+
+				expect(thrown?.code, css).toBe(
+					message === TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR
+						? DIAGNOSTIC_CODES.CSS_NESTING_SELECTOR_PLACEMENT
+						: DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
+				);
+				expect(thrown?.message, css).toBe(message);
+				expect([thrown?.pos, thrown?.end], css).toEqual([pos, pos + anchor.length]);
+			}
+		});
+
+		it('allows an & with a rule or @scope around it in the output', () => {
+			for (const css of [
+				'.p { & { color: red; } }',
+				'.p { @media print { &.k { color: red; } } }',
+				'.p { :global { &.w { color: red; } } }',
+				'.p { :global { :global { & .w { color: red; } } } }',
+				// In a @scope, & stands for the scope's root.
+				'@scope (.c) { & { color: red; } }',
+				'@scope (.c) { .p &, & > .q { color: red; } }',
+				'@scope (.c) { :global { &.w { color: red; } } }',
+				// :global(...) keeps the & as written.
+				':global(&) { color: red; }',
+				':global(&.w) .p { color: red; }',
+				// An escaped name is still @scope.
+				String.raw`@s\63ope (.c) { & { color: red; } }`,
+				// The output drops this selector, & and all.
+				':global & { @font-face { font-family: x; } }',
+				// A rule around a dropped :global { ... } block takes its declarations,
+				// and so does an at-rule that holds descriptors.
+				'.p { :global { color: red; } }',
+				'.p { :global { :global { color: red; } } }',
+				'@font-face { :global { font-family: x; } }',
+				':global { .a { color: red; } @font-face { font-family: x; } }',
+				String.raw`:global { @font-\66 ace { font-family: x; } }`,
+			]) {
+				expect(analyze_thrown(parse_stylesheet(css)), css).toBeNull();
+			}
+		});
+
 		it('checks deep nests of :global lists without repeating the work for each level', () => {
 			for (const css of [
 				`${':global, :global.w {'.repeat(60)}@font-face { font-family: x; }${'}'.repeat(60)}`,
@@ -1196,6 +1306,18 @@ describe('scoped style analysis', () => {
 			analyzeCss(parse_stylesheet('.a :global(.b) .c .d .e { color: red; }'), { errors });
 
 			expect(errors).toHaveLength(1);
+		});
+
+		it("reads a :global(...)& compound as global only where the & is a @scope's root", () => {
+			// There it is `:global(.x):scope`, which can't be in the middle.
+			expect(
+				analyze_thrown(parse_stylesheet('@scope (.c) { .p :global(.x)& .k { color: red; } }'))
+					?.code,
+			).toBe(DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT);
+			// In a rule, the & is that rule, a compound of its own.
+			expect(
+				analyze_thrown(parse_stylesheet('.c { .p :global(.x)& .k { color: red; } }')),
+			).toBeNull();
 		});
 
 		it('positions a sheet parsed directly with a body origin', () => {

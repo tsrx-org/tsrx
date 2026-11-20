@@ -9,6 +9,7 @@ import { unescape_css } from '../parse/style.js';
 import {
 	drops_selector,
 	has_parent_rule_in_output,
+	is_scope_root_ampersand,
 	is_unnestable_at_rule,
 } from '../analyze/css-analyze.js';
 
@@ -855,7 +856,12 @@ const visitors = {
 					}
 				}
 
-				if (relative_selector.selectors.some((s) => s.type === 'NestingSelector')) {
+				// An `&` stands for the rule around it, which has the hash already,
+				// except directly in a `@scope`, where it is the scope's root.
+				if (
+					relative_selector.selectors.some((s) => s.type === 'NestingSelector') &&
+					!is_scope_root_ampersand(node.metadata.rule)
+				) {
 					continue;
 				}
 
@@ -870,6 +876,13 @@ const visitors = {
 				let i = relative_selector.selectors.length;
 				while (i--) {
 					const selector = relative_selector.selectors[i];
+
+					// An `&` for a `@scope`'s root takes the hash as the `:scope` it
+					// stands for would, written after it: `&.H`, `:root&`.
+					if (selector.type === 'NestingSelector') {
+						if (i === 0) context.state.code.appendLeft(selector.end, modifier);
+						continue;
+					}
 
 					if (
 						selector.type === 'PseudoElementSelector' ||
