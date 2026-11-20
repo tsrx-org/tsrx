@@ -40,6 +40,131 @@ function is_global(relative_selector) {
 }
 
 /**
+ * A selector that starts with a bare `:global` makes its rule a global block:
+ * the output scopes nothing in it, its selectors and the rules nested in it
+ * alike. So report, as Svelte does:
+ *
+ * - a lone `:global` (the `:global { ... }` block) in a list of several, whose
+ *   selector can't be dropped on its own (`:global, .a { ... }`), and
+ * - outside another global block, a selector that doesn't start with a bare
+ *   `:global` beside one that does, when it or a rule nested in the rule would
+ *   be scoped on its own (`.a, :global .b`). `:global.a, :global(.b)` and
+ *   `.p { :global .a, &.b { ... } }` compile.
+ *
+ * Runs once the rule's selectors and nested rules have their metadata.
+ *
+ * @param {AST.CSS.Rule} rule
+ * @param {(diagnostic: Diagnostic, node: AST.CSS.Node) => void} report
+ */
+function check_global_block_list(rule, report) {
+	const selectors = rule.prelude.children;
+	if (selectors.length < 2) return;
+	const leading = selectors.map((selector) => {
+		const first = selector.children[0]?.selectors[0];
+		return first && is_global_block_selector(first) ? first : null;
+	});
+	const lone = selectors.findIndex(
+		(selector, index) =>
+			leading[index] &&
+			selector.children.length === 1 &&
+			selector.children[0].selectors.length === 1,
+	);
+	if (lone !== -1) {
+		report(TSRX_ERRORS.CSS_GLOBAL_BLOCK_NOT_ALONE, /** @type {AST.CSS.Node} */ (leading[lone]));
+		return;
+	}
+	if (!leading.includes(null)) return;
+	for (let parent = rule.metadata.parent_rule; parent; parent = parent.metadata.parent_rule) {
+		if (parent.metadata.is_global_block) return;
+	}
+	if (
+		(has_declaration(rule.block) &&
+			selectors.some((selector, index) => !leading[index] && !is_unscoped(selector))) ||
+		nests_scoped(rule.block)
+	) {
+		report(
+			TSRX_ERRORS.CSS_GLOBAL_BLOCK_IN_MIXED_LIST,
+			/** @type {AST.CSS.Node} */ (leading.find((first) => first)),
+		);
+	}
+}
+
+/** Pseudo-classes whose selector arguments the output scopes. */
+const SELECTOR_ARGUMENTS = ['is', 'where', 'not', 'has'];
+
+/**
+ * Whether the output gives no part of `selector` a scope hash outside a global
+ * block. A compound gets none when it is `:global(...)` (with its arguments
+ * kept as written), `:root` or `:host` with only pseudo-classes, has an `&`,
+ * or is a lone `:is()` or `:where()`; the arguments of its `:is()`, `:where()`,
+ * `:not()` and `:has()` are scoped as selectors of their own.
+ *
+ * @param {AST.CSS.ComplexSelector} selector
+ * @returns {boolean}
+ */
+function is_unscoped(selector) {
+	return selector.children.every(({ selectors, metadata }) => {
+		if (metadata.is_global) return true;
+		const [first] = selectors;
+		const pseudo = (/** @type {AST.CSS.SimpleSelector} */ simple) =>
+			simple.type === 'PseudoClassSelector' || simple.type === 'PseudoElementSelector';
+		return (
+			((first.type === 'PseudoClassSelector' &&
+				(first.name === 'root' || first.name === 'host') &&
+				selectors.every(pseudo)) ||
+				selectors.some((simple) => simple.type === 'NestingSelector') ||
+				(selectors.length === 1 &&
+					first.type === 'PseudoClassSelector' &&
+					(first.name === 'is' || first.name === 'where'))) &&
+			selectors.every(
+				(simple) =>
+					simple.type !== 'PseudoClassSelector' ||
+					!simple.args ||
+					!SELECTOR_ARGUMENTS.includes(simple.name) ||
+					simple.args.children.every(is_unscoped),
+			)
+		);
+	});
+}
+
+/**
+ * Whether a rule in `block`, or in an at-rule in it, at any depth, would be
+ * scoped outside a global block, or a `@keyframes` name would. A rule with no
+ * declarations in it puts no style in the output either way.
+ *
+ * @param {AST.CSS.Block | null} block
+ * @returns {boolean}
+ */
+function nests_scoped(block) {
+	return !!block?.children.some((child) => {
+		if (child.type === 'Rule') {
+			return (
+				!child.metadata.is_global_block &&
+				((has_declaration(child.block) && !child.prelude.children.every(is_unscoped)) ||
+					nests_scoped(child.block))
+			);
+		}
+		if (child.type !== 'Atrule') return false;
+		if (child.name.replace(/^-((webkit)|(moz)|(o)|(ms))-/, '') === 'keyframes') {
+			// The name, as the stylesheet transform reads it: after any comments.
+			const name = child.prelude.replace(/^(\s|\/\*[^]*?\*\/)*/, '');
+			return !/^['"]?-global-/.test(name);
+		}
+		return nests_scoped(child.block);
+	});
+}
+
+/**
+ * @param {AST.CSS.Block | null} block
+ * @returns {boolean}
+ */
+function has_declaration(block) {
+	return !!block?.children.some(
+		(child) => child.type === 'Declaration' || has_declaration(child.block),
+	);
+}
+
+/**
  * Analyze CSS and set metadata for global selectors.
  *
  * `:global` placement problems are reported through `error()` with the
@@ -116,6 +241,7 @@ export function analyze_css(css, options = {}) {
 			const state = { rule: node };
 			context.visit(node.prelude, state);
 			context.visit(node.block, state);
+			if (node.metadata.is_global_block) check_global_block_list(node, report);
 		},
 
 		ComplexSelector(node, context) {

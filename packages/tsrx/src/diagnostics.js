@@ -708,6 +708,14 @@ export const TSRX_ERRORS = {
 		'CSS_GLOBAL_PLACEMENT',
 		':global(...) can be at the start or end of a selector sequence, but not in the middle.',
 	),
+	CSS_GLOBAL_BLOCK_IN_MIXED_LIST: tsrx(
+		'CSS_GLOBAL_PLACEMENT',
+		'A selector that starts with a bare :global makes its whole rule unscoped, so the other selectors in its list, and the rules nested in it, would lose their scoping. Move the other selectors to a rule of their own.',
+	),
+	CSS_GLOBAL_BLOCK_NOT_ALONE: tsrx(
+		'CSS_GLOBAL_PLACEMENT',
+		'A lone :global, as in :global { ... }, must be the only selector in its list. Move the other selectors to a rule of their own.',
+	),
 	CSS_IMPORT: tsrx(
 		'CSS_IMPORT',
 		"@import is not supported in <style> blocks: the imported rules would not be scoped. Share scoped styles with an assigned block (const theme = <style>…</style>) and apply={theme}. For global CSS, use :global in the block, or import the stylesheet in JavaScript: import './global.css'.",

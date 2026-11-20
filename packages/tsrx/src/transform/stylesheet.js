@@ -266,6 +266,35 @@ function is_used(rule) {
 }
 
 /**
+ * Whether `rule` is a lone `:global { ... }` block, which the output drops,
+ * leaving its selector behind as a comment, while keeping what's in it.
+ *
+ * @param {AST.CSS.Rule} rule
+ */
+function is_lone_global_block(rule) {
+	const selectors = rule.prelude.children;
+	return (
+		rule.metadata.is_global_block &&
+		selectors.length === 1 &&
+		selectors[0].children.length === 1 &&
+		selectors[0].children[0].selectors.length === 1
+	);
+}
+
+/**
+ * Whether the output keeps a rule around `rule` for an `&` to refer to. The
+ * rules in a lone `:global { ... }` block belong to the rule around the block,
+ * if there is one.
+ *
+ * @param {AST.CSS.Rule | null} rule
+ */
+function has_parent_rule_in_output(rule) {
+	let parent = rule?.metadata.parent_rule;
+	while (parent && is_lone_global_block(parent)) parent = parent.metadata.parent_rule;
+	return !!parent;
+}
+
+/**
  * @param {Array<AST.CSS.Node>} path
  */
 function is_in_global_block(path) {
@@ -503,26 +532,22 @@ const visitors = {
 			return;
 		}
 
-		if (node.metadata.is_global_block) {
-			const selector = node.prelude.children[0];
+		if (is_lone_global_block(node)) {
+			// `:global {...}`
+			if (state.minify) {
+				state.code.remove(node.start, node.block.start + 1);
+				state.code.remove(node.block.end - 1, node.end);
+			} else {
+				state.code.prependRight(node.start, '/* ');
+				state.code.appendLeft(node.block.start + 1, '*/');
 
-			if (selector.children.length === 1 && selector.children[0].selectors.length === 1) {
-				// `:global {...}`
-				if (state.minify) {
-					state.code.remove(node.start, node.block.start + 1);
-					state.code.remove(node.block.end - 1, node.end);
-				} else {
-					state.code.prependRight(node.start, '/* ');
-					state.code.appendLeft(node.block.start + 1, '*/');
-
-					state.code.prependRight(node.block.end - 1, '/*');
-					state.code.appendLeft(node.block.end, '*/');
-				}
-
-				// don't recurse into selectors but visit the body
-				visit(node.block);
-				return;
+				state.code.prependRight(node.block.end - 1, '/*');
+				state.code.appendLeft(node.block.end, '*/');
 			}
+
+			// don't recurse into selectors but visit the body
+			visit(node.block);
+			return;
 		}
 
 		next();
@@ -655,11 +680,13 @@ const visitors = {
 				remove_global_pseudo_class(global, relative_selector.combinator, context.state);
 
 				if (
-					node.metadata.rule?.metadata.parent_rule &&
+					has_parent_rule_in_output(node.metadata.rule) &&
 					global.args === null &&
 					relative_selector.combinator === null
 				) {
-					// div { :global.x { ... } } becomes div { &.x { ... } }
+					// div { :global.x { ... } } becomes div { &.x { ... } }, but
+					// :global { :global.x { ... } } becomes .x { ... }: the block is
+					// dropped, so no rule is left for an `&`.
 					context.state.code.prependRight(global.start, '&');
 				}
 				continue;
