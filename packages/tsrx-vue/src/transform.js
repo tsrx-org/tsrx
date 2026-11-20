@@ -351,13 +351,70 @@ function create_pending_body(fallback_expression, ctx) {
 			[
 				b.jsx_attribute(
 					b.jsx_id('content'),
-					to_jsx_expression_container(b.arrow([], fallback_expression)),
+					to_jsx_expression_container(b.arrow([], with_reactive_output(fallback_expression))),
 				),
 			],
 			true,
 		),
 		null,
 		[],
+	);
+}
+
+/**
+ * A `@pending` body whose output follows what it reads. `TsrxPendingBody`
+ * calls its content once, as a component's setup, so output that isn't an
+ * element or a fragment, such as the choice of a lone `@if`, a `@switch` or a
+ * loop through `map_iterable`, would keep what it rendered first. In a
+ * fragment, vue-jsx-vapor renders it reactively: a choice becomes a
+ * `createIf`, which switches when its condition does, and anything else is
+ * evaluated in an effect. The body's statements still run once.
+ *
+ * @param {AST.Expression} expression
+ * @returns {AST.Expression}
+ */
+function with_reactive_output(expression) {
+	// The shared lowering's `(() => { …statements; return output; })()`.
+	if (
+		expression.type === 'CallExpression' &&
+		expression.arguments.length === 0 &&
+		expression.callee.type === 'ArrowFunctionExpression' &&
+		expression.callee.body.type === 'BlockStatement'
+	) {
+		const callee = expression.callee;
+		const body = /** @type {AST.BlockStatement} */ (callee.body);
+		return {
+			...expression,
+			callee: {
+				...callee,
+				body: {
+					...body,
+					body: body.body.map((statement) =>
+						statement.type === 'ReturnStatement' && statement.argument
+							? { ...statement, argument: in_fragment_unless_node(statement.argument) }
+							: statement,
+					),
+				},
+			},
+		};
+	}
+	return in_fragment_unless_node(expression);
+}
+
+/**
+ * @param {AST.Expression} expression
+ * @returns {AST.Expression}
+ */
+function in_fragment_unless_node(expression) {
+	if (
+		expression.type === 'JSXElement' ||
+		expression.type === 'JSXFragment' ||
+		(expression.type === 'Literal' && expression.value === null)
+	) {
+		return expression;
+	}
+	return /** @type {AST.Expression} */ (
+		/** @type {unknown} */ (b.jsx_fragment([to_jsx_expression_container(expression)]))
 	);
 }
 
