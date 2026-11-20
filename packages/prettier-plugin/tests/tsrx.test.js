@@ -1914,6 +1914,22 @@ const b = (
 		expect(cursorOffset).toBe(formatted.indexOf('alpha'));
 	});
 
+	test('keeps a `{…}` comment after a text ending in `@` off its line', async () => {
+		await expectFormat(
+			`const a = <textarea> a b c@
+{/* c */}</textarea>;
+const b = <textarea> a b c@
+/* c */</textarea>;`,
+			`const a = (
+  <textarea> a b c@
+    {/* c */}
+  </textarea>
+);
+const b = <textarea> a b c@/* c */</textarea>;
+`,
+		);
+	});
+
 	test('takes linear time in a long run of comments', async () => {
 		const source = `const a = <p>${'{/* c */}'.repeat(4000)} ${'word '.repeat(4000)}</p>;`;
 		const start = performance.now();

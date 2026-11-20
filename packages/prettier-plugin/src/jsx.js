@@ -463,8 +463,11 @@ function printOnlyText(path, options, print, edges) {
 	const after = [];
 	// The comments around the text; text that renders nothing (a line break and
 	// indentation) is left out, as the compiler leaves it out.
+	/** @type {Node | undefined} */
+	let firstAfter;
 	path.each((childPath, index) => {
 		if (index === edges.index || isLayoutWhitespace(childPath.node)) return;
+		if (index > edges.index) firstAfter ??= childPath.node;
 		(index < edges.index ? before : after).push(print());
 	}, 'children');
 	const words = getRaw(text)
@@ -499,7 +502,14 @@ function printOnlyText(path, options, print, edges) {
 			// comment.
 			edges.start ? [first, ' '] : before.length ? first : [edgeBreak, first],
 			fill(parts),
-			edges.end || after.length === 0 ? '' : [edgeBreak, ...after],
+			edges.end || after.length === 0
+				? ''
+				: // A `{…}` comment after a text that ends in `@` stays on its own
+					// line: `@{` would start a code block.
+					[
+						words.at(-1)?.endsWith('@') && !firstAfter?.tsrxComment ? hardline : edgeBreak,
+						...after,
+					],
 		]),
 		edges.end ? '' : [edgeBreak, closingLines],
 	]);
