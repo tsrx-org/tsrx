@@ -570,7 +570,13 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 
 				if (endWhitespace !== undefined) {
 					if (/\n/u.test(endWhitespace)) {
-						pushLine(separatorWithWhitespace(isFacebookTranslationTag, prevPart, node, next));
+						// TSRX: the line break between an `@` and a `{` stays, where `@{`
+						// would start a code block.
+						pushLine(
+							endsWithAt(prevPart) && next?.type === 'JSXExpressionContainer' && !next.tsrxComment
+								? hardline
+								: separatorWithWhitespace(isFacebookTranslationTag, prevPart, node, next),
+						);
 					} else {
 						pushLine(whitespace);
 					}

@@ -1882,17 +1882,38 @@ const b = (
 		);
 	});
 
-	test('starts the next line at the end of a text the compiler splits', async () => {
+	test('starts the next line at the end of a text beside other children', async () => {
 		await expectFormat(
-			`const a = <p className="label">$\n  \u00a0@ </p>;`,
+			`const a = <p><b>x</b> Lorem ipsum dolor sit amet consectetur adipiscing elit sed at@ </p>;`,
 			`const a = (
-  <p className="label">
-    $ \u00a0@
+  <p>
+    <b>x</b> Lorem ipsum dolor sit amet consectetur adipiscing elit sed at@
     {" "}
   </p>
 );
 `,
-			{ printWidth: 24 },
+		);
+	});
+
+	test('keeps the line break between an `@` and a `{`', async () => {
+		await expectFormat(
+			`const a = <p>@
+{"x"}</p>;
+const b = <>a@
+{/* c */}</>;`,
+			`const a = (
+  <p>
+    @
+    {"x"}
+  </p>
+);
+const b = (
+  <>
+    a@
+    {/* c */}
+  </>
+);
+`,
 		);
 	});
 
