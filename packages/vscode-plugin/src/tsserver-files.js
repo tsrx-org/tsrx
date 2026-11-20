@@ -7,15 +7,26 @@ import vscode from 'vscode';
  */
 
 /**
- * Whether VS Code's TypeScript gives tsserver this document: one on disk or an unsaved
- * one, the semantic schemes a `.tsrx` file can have. For any other, such as a `git:` tab,
+ * The schemes of the documents VS Code's TypeScript never gives tsserver (`disabledSchemes`
+ * in its `fileSchemes.ts`), such as a `git:` tab.
+ */
+const UNSERVED_SCHEMES = new Set([
+	'git',
+	'vsls',
+	'github',
+	'azurerepos',
+	'chat-editing-text-model',
+]);
+
+/**
+ * Whether VS Code's TypeScript gives tsserver this document. For one it doesn't,
  * `typescript.tsserverRequest` sends no `file` and tsserver fails with "Cannot read
  * properties of undefined"; VS Code's own commands say "Unknown file type." there.
  * @param {import('vscode').Uri} uri
  * @returns {boolean}
  */
 export function served_by_tsserver(uri) {
-	return uri.scheme === 'file' || uri.scheme === 'untitled';
+	return !UNSERVED_SCHEMES.has(uri.scheme);
 }
 
 /** What VS Code names a missing authority in the file names it gives tsserver. */

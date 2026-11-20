@@ -329,14 +329,19 @@ describe('Find File References', () => {
 		expect(host.executeCommand).not.toHaveBeenCalled();
 	});
 
-	it('finds the references of an unsaved .tsrx file', async () => {
-		const untitled = { scheme: 'untitled', path: 'Untitled-1' };
-		await run(untitled);
-		expect(host.executeCommand).toHaveBeenCalledWith(
-			'typescript.tsserverRequest',
-			'_tsrx:fileReferences',
-			{ file: untitled },
-		);
+	it('finds the references of an unsaved .tsrx file or one in a virtual workspace', async () => {
+		for (const uri of [
+			{ scheme: 'untitled', path: 'Untitled-1' },
+			{ scheme: 'vscode-vfs', path: '/github/owner/repo/src/App.tsrx' },
+		]) {
+			await run(uri);
+			expect(host.executeCommand).toHaveBeenCalledWith(
+				'typescript.tsserverRequest',
+				'_tsrx:fileReferences',
+				{ file: uri },
+			);
+		}
+		expect(host.showErrorMessage).not.toHaveBeenCalled();
 	});
 
 	it('changes the setting for one run at a time', async () => {
@@ -376,9 +381,10 @@ describe('Find File References', () => {
 		host.extensions.add('typescriptteam.native-preview');
 		host.showInformationMessage.mockResolvedValue('Learn More');
 		await run();
-		await run(LIB);
+		await run({ scheme: 'git', path: '/project/src/Lib.tsrx' });
 		expect(host.executeCommand).not.toHaveBeenCalled();
 		expect(host.openTextDocument).not.toHaveBeenCalled();
+		expect(host.showErrorMessage).not.toHaveBeenCalled();
 		expect(host.showInformationMessage).toHaveBeenCalledTimes(2);
 		expect(host.showInformationMessage).toHaveBeenCalledWith(
 			'Find File References does not work in .tsrx files with TypeScript 7 yet.',

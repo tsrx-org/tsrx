@@ -195,6 +195,18 @@ describe('Go to Source Definition', () => {
 		expect(host.executeCommand).not.toHaveBeenCalled();
 	});
 
+	it('asks for the source definition in a virtual workspace document', async () => {
+		host.editor.document.uri = { scheme: 'vscode-vfs', path: '/github/owner/repo/src/App.tsrx' };
+		host.response = { type: 'response', body: [] };
+		await command()();
+		expect(host.showErrorMessage).not.toHaveBeenCalled();
+		expect(host.executeCommand).toHaveBeenCalledWith(
+			'typescript.tsserverRequest',
+			'_tsrx:findSourceDefinition',
+			{ file: host.editor.document.uri, line: 5, offset: 11 },
+		);
+	});
+
 	it('reports a failed request', async () => {
 		host.executeCommand.mockImplementation(async () => {
 			throw new Error('Unrecognized JSON command: _tsrx:findSourceDefinition');
@@ -207,6 +219,8 @@ describe('Go to Source Definition', () => {
 
 	it('opens the definition on TypeScript 7 and says why, once', async () => {
 		host.use_tsgo = true;
+		// Not a document VS Code's tsserver serves: that check is for VS Code's own TypeScript.
+		host.editor.document.uri = { scheme: 'git', path: '/project/src/App.tsrx' };
 		host.extensions.add('typescriptteam.native-preview');
 		const target = {
 			targetUri: { path: '/project/node_modules/@types/react/index.d.ts' },
@@ -238,5 +252,6 @@ describe('Go to Source Definition', () => {
 			'No definition found.',
 		);
 		expect(host.showInformationMessage).toHaveBeenCalledOnce();
+		expect(host.showErrorMessage).not.toHaveBeenCalled();
 	});
 });
