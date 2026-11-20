@@ -450,6 +450,9 @@ function escape_comment_close(node, code) {
 /** At-rules that are valid only at the start of a stylesheet, not just outside a style rule. */
 const leading_at_rules = new Set(['import', 'charset', 'namespace']);
 
+/** Group rules that can't be written again around a moved at-rule. */
+const fixed_wrappers = new Set(['layer', 'when', 'else']);
+
 /**
  * Move an at-rule a style rule can't hold, such as `@keyframes` or
  * `@font-face`, out of the style rules around it in the output, which would
@@ -476,12 +479,13 @@ function lift_out_of_style_rules(node, path, state) {
 	);
 	// One in an at-rule that moves already moves with it. A `@layer` written
 	// again elsewhere would change the order of layers, or be a layer of its
-	// own if it has no name, so one in a layer stays where it is.
+	// own if it has no name, and an `@else` (or the `@when` before one) belongs
+	// to the chain of conditions it is in, so one in those stays where it is.
 	if (
 		wrappers.some(
 			(wrapper) =>
 				is_unnestable_at_rule(wrapper) ||
-				remove_css_prefix(unescape_css(wrapper.name).toLowerCase()) === 'layer',
+				fixed_wrappers.has(remove_css_prefix(unescape_css(wrapper.name).toLowerCase())),
 		)
 	) {
 		return;

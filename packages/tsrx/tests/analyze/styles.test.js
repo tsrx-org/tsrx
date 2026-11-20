@@ -1243,6 +1243,12 @@ describe('scoped style analysis', () => {
 					String.raw`.p.H { @\6c ayer { @font-face { font-family: x; } } }`,
 					String.raw`.p.H { @\6c ayer { @font-face { font-family: x; } } }`,
 				],
+				// An @else is written after the condition before it.
+				[
+					'.p { @when media(print) { color: red; } @else { @font-face { font-family: x; } } }',
+					'.p.H { @when media(print) { color: red; } @else { @font-face { font-family: x; } } }',
+					'.p.H { @when media(print) { color: red; } @else { @font-face { font-family: x; } } }',
+				],
 			];
 			for (const [css, expected, minified] of cases) {
 				for (const minify of [false, true]) {
