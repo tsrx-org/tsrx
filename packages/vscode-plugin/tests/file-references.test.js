@@ -25,6 +25,8 @@ const host = vi.hoisted(() => ({
 	openExternal: vi.fn(),
 	/** @type {{ document: { uri: { path: string } } } | undefined} */
 	editor: { document: { uri: { path: '/project/src/App.tsrx' } } },
+	/** @type {Array<{ uri: { scheme: string, authority: string, path: string, fragment: string } }>} */
+	documents: [],
 }));
 
 vi.mock('vscode', () => {
@@ -62,6 +64,9 @@ vi.mock('vscode', () => {
 			ConfigurationTarget: { Global: 1, Workspace: 2, WorkspaceFolder: 3 },
 			workspace: {
 				openTextDocument: host.openTextDocument,
+				get textDocuments() {
+					return host.documents;
+				},
 				getConfiguration: (/** @type {string} */ section) => ({
 					inspect: (/** @type {string} */ key) =>
 						section === 'references' && key === 'preferredLocation'
@@ -142,6 +147,7 @@ beforeEach(() => {
 	host.preferred_location = {};
 	host.shown_with = [];
 	host.editor = { document: { uri: APP } };
+	host.documents = [];
 	vi.clearAllMocks();
 	host.update.mockImplementation(async (_key, /** @type {string | undefined} */ value) => {
 		host.preferred_location.workspaceValue = value;
@@ -268,11 +274,48 @@ describe('Find File References', () => {
 		expect(host.update).not.toHaveBeenCalled();
 	});
 
-	it('shows nothing when the request is cancelled', async () => {
-		host.response = { type: 'cancelled' };
-		await run();
-		expect(host.executeCommand).toHaveBeenCalledOnce();
+	it('shows nothing when the request is cancelled or gets no answer', async () => {
+		for (const response of [
+			{ type: 'cancelled' },
+			{ type: 'noServer' },
+			{ type: 'noContent' },
+			undefined,
+		]) {
+			host.response = response;
+			host.executeCommand.mockClear();
+			await run();
+			expect(host.executeCommand).toHaveBeenCalledOnce();
+		}
 		expect(host.showErrorMessage).not.toHaveBeenCalled();
+		expect(host.update).not.toHaveBeenCalled();
+	});
+
+	it('finds an unsaved importer by the name VS Code gave tsserver for it', async () => {
+		const untitled = { scheme: 'untitled', authority: '', path: 'Untitled-1', fragment: '' };
+		host.documents = [{ uri: untitled }];
+		const span = { start: { line: 1, offset: 22 }, end: { line: 1, offset: 32 } };
+		host.response = {
+			type: 'response',
+			body: {
+				refs: [
+					{ file: '^/untitled/ts-nul-authority/Untitled-1', ...span },
+					// No longer open: the URI the name spells, as VS Code's own command makes it.
+					{ file: '^/vscode-vfs/github/owner/repo/src/main.ts', ...span },
+				],
+				symbolName: '"/project/src/App.tsrx"',
+			},
+		};
+		await run();
+		const range = { start: { line: 0, character: 21 }, end: { line: 0, character: 31 } };
+		expect(host.executeCommand).toHaveBeenLastCalledWith(
+			'editor.action.showReferences',
+			APP,
+			{ line: 0, character: 0 },
+			[
+				{ uri: untitled, range },
+				{ uri: { value: 'vscode-vfs://github/owner/repo/src/main.ts' }, range },
+			],
+		);
 	});
 
 	it('does nothing without a file', async () => {

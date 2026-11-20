@@ -46,10 +46,13 @@ and JavaScript files.
 To list the files that import a `.tsrx` file, right-click the file in the Explorer
 or its editor tab and choose **Find File References**, or run **TSRX: Find File
 References** from the Command Palette. The importers show in the References view:
-`.ts`, `.js` and `.tsrx` files, with static imports, re-exports and `import()`. VS
-Code's own **TypeScript: Find File References** only runs in TypeScript and
-JavaScript files. This works on TypeScript 5.9 and 6. TypeScript 7 cannot find
-file references yet
+`.ts`, `.js` and `.tsrx` files, with static imports, re-exports and `import()`.
+Like VS Code's own command, it sets `references.preferredLocation` to `view` in
+the workspace settings while it shows them. With no folder open, there are no
+workspace settings, so the importers show where that setting says (a peek by
+default). VS Code's own **TypeScript: Find File References** only runs in
+TypeScript and JavaScript files. This works on TypeScript 5.9 and 6. TypeScript 7
+cannot find file references yet
 ([microsoft/TypeScript#63806](https://github.com/microsoft/TypeScript/issues/63806)),
 so there the command says so.
 

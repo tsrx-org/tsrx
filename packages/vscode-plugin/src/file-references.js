@@ -53,7 +53,7 @@ export function register_file_references_command() {
  * tsserver's file references, through `@tsrx/typescript-plugin`'s request.
  * @param {import('vscode').Uri} uri
  * @returns {Promise<import('vscode').Location[] | undefined>} `undefined` when the request
- *   failed (after saying so) or was cancelled.
+ *   failed (after saying so), was cancelled or got no answer, as when no server runs.
  */
 async function file_references(uri) {
 	/** @type {{ type?: string, body?: { refs: Array<{ file: string, start: TsserverPosition, end: TsserverPosition }> } } | undefined} */
@@ -72,11 +72,12 @@ async function file_references(uri) {
 		vscode.window.showErrorMessage(`Find File References failed: ${message}`);
 		return undefined;
 	}
-	if (response?.type === 'cancelled') return undefined;
-	return (response?.body?.refs ?? []).map(
+	// As VS Code's own command: `cancelled`, `noContent` and `noServer` show nothing.
+	if (response?.type !== 'response' || !response.body) return undefined;
+	return response.body.refs.map(
 		(reference) =>
 			new vscode.Location(
-				vscode.Uri.file(reference.file),
+				to_uri(reference.file),
 				new vscode.Range(
 					reference.start.line - 1,
 					reference.start.offset - 1,
@@ -85,6 +86,35 @@ async function file_references(uri) {
 				),
 			),
 	);
+}
+
+/** What VS Code names a missing authority in the file names it gives tsserver. */
+const NUL_AUTHORITY = 'ts-nul-authority';
+
+/**
+ * The URI of a file tsserver names. VS Code gives tsserver a document that is not on disk,
+ * such as an unsaved one, as `^/<scheme>/<authority>/<path>`, so such a name is matched
+ * against the open documents, as VS Code's own command does.
+ * @param {string} file
+ * @returns {import('vscode').Uri}
+ */
+function to_uri(file) {
+	if (!file.startsWith('^/')) return vscode.Uri.file(file);
+	const open = vscode.workspace.textDocuments.find(({ uri }) => in_memory_name(uri) === file);
+	if (open) return open.uri;
+	const [, scheme, authority, path] = /^\^\/([^/]+)\/([^/]*)\/(.+)$/.exec(file) ?? [];
+	if (!scheme) return vscode.Uri.file(file);
+	return vscode.Uri.parse(`${scheme}://${authority === NUL_AUTHORITY ? '' : authority}/${path}`);
+}
+
+/**
+ * The name VS Code gives tsserver for a document that is not on disk.
+ * @param {import('vscode').Uri} uri
+ */
+function in_memory_name(uri) {
+	const path = uri.path.startsWith('/') ? uri.path : `/${uri.path}`;
+	const fragment = uri.fragment ? `#${uri.fragment}` : '';
+	return `^/${uri.scheme}/${uri.authority || NUL_AUTHORITY}${path}${fragment}`;
 }
 
 /**

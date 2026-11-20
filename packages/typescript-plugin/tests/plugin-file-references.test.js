@@ -83,7 +83,7 @@ describe('tsserver plugin: Find File References for .tsrx files', () => {
 		expect(response.body.symbolName).toBe(`"${path.join(workspace, file)}"`);
 		return response.body.refs
 			.map((/** @type {any} */ ref) => {
-				const name = path.relative(workspace, ref.file);
+				const name = path.relative(workspace, ref.file).split(path.sep).join('/');
 				const lines = FILES[/** @type {keyof typeof FILES} */ (name)].split('\n');
 				expect(ref.start.line).toBe(ref.end.line);
 				const text = lines[ref.start.line - 1].slice(ref.start.offset - 1, ref.end.offset - 1);
