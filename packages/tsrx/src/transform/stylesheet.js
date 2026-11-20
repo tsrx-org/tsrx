@@ -775,6 +775,13 @@ const visitors = {
 				while (i--) {
 					const selector = relative_selector.selectors[i];
 
+					// An `&` for a `@scope`'s root takes the hash as the `:scope` it
+					// stands for would, written after it: `&.H`, `:root&`.
+					if (selector.type === 'NestingSelector') {
+						if (i === 0) context.state.code.appendLeft(selector.end, modifier);
+						continue;
+					}
+
 					if (
 						selector.type === 'PseudoElementSelector' ||
 						selector.type === 'PseudoClassSelector'

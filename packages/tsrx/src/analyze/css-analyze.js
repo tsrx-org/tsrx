@@ -130,12 +130,14 @@ function is_unscoped(selector, subject_hashed = false) {
 		}
 		if (after_bare_global) return selectors.every((simple) => arguments_unscoped(simple));
 		const [first] = selectors;
+		// An `&` for a `@scope`'s root is the `:scope` it stands for: it gets the
+		// hash as `:scope` does.
+		const scope_root = is_scope_root_ampersand(selector.metadata.rule);
 		const pseudo = (/** @type {AST.CSS.SimpleSelector} */ simple) =>
-			simple.type === 'PseudoClassSelector' || simple.type === 'PseudoElementSelector';
-		// An `&` for a `@scope`'s root gets the hash, as `:scope` does.
-		const nesting =
-			selectors.some((simple) => simple.type === 'NestingSelector') &&
-			!is_scope_root_ampersand(selector.metadata.rule);
+			simple.type === 'PseudoClassSelector' ||
+			simple.type === 'PseudoElementSelector' ||
+			(scope_root && simple.type === 'NestingSelector');
+		const nesting = !scope_root && selectors.some((simple) => simple.type === 'NestingSelector');
 		return (
 			((first.type === 'PseudoClassSelector' &&
 				(first.name === 'root' || first.name === 'host') &&
@@ -748,12 +750,16 @@ export function analyze_css(css, options = {}) {
 			// Check if this selector is a :global selector
 			node.metadata.is_global = node.selectors.length >= 1 && is_global(node);
 
-			// Check for :root and other global-like selectors
+			// Check for :root and other global-like selectors. An `&` for a
+			// `@scope`'s root counts as the `:scope` it stands for.
+			const scope_root = is_scope_root_ampersand(context.state.rule);
 			if (
 				node.selectors.length >= 1 &&
 				node.selectors.every(
 					(selector) =>
-						selector.type === 'PseudoClassSelector' || selector.type === 'PseudoElementSelector',
+						selector.type === 'PseudoClassSelector' ||
+						selector.type === 'PseudoElementSelector' ||
+						(scope_root && selector.type === 'NestingSelector'),
 				)
 			) {
 				const first = node.selectors[0];

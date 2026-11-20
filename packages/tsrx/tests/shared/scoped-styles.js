@@ -1911,6 +1911,9 @@ export function runSharedScopedStyleTests({
 				'&.dark .p { color: blue; }',
 				'.p & { padding: 0; }',
 				':is(&) .p { color: red; }',
+				':root& { color: red; }',
+				'.p& .p { color: red; }',
+				':global.w, :root& { color: red; }',
 			]) {
 				const scope = css_of(body.replaceAll('&', ':scope'))
 					.replace(/(\.H|:where\(\.H\)):scope/g, '&$1')
