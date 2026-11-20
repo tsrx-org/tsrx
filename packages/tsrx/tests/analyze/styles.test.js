@@ -1385,6 +1385,36 @@ describe('scoped style analysis', () => {
 				expect(render(css, [pruned], true), selector).toBe(`${minified} { color: red; }`);
 			}
 		});
+
+		it('escapes each comment end in a selector it comments out of a list', () => {
+			/** @type {Array<[selector: string, pruned: string[], expected: string, minified: string]>} */
+			const cases = [
+				['.u /* c */, .z', ['.u'], '/* (unused) .u \\/* c *\\/,*/ .z', ' .z'],
+				['.u[title="*/"], .z', ['.u[title="*/"]'], '/* (unused) .u[title="*\\/"],*/ .z', ' .z'],
+				['.z, .u[title="*/"]', ['.u[title="*/"]'], '.z /* (unused) .u[title="*\\/"]*/', '.z'],
+				[
+					'.z, .u /* a */, .v[title="*/"], .y',
+					['.u', '.v[title="*/"]'],
+					'.z /* (unused) .u \\/* a *\\/, .v[title="*\\/"]*/, .y',
+					'.z, .y',
+				],
+				['.y:is(.u /* c */, .z)', ['.u'], '.y:is(/* (unused) .u \\/* c *\\/,*/ .z)', '.y:is( .z)'],
+				// A `*` that dropping `:global(` and `)` puts next to a `/`.
+				['.u :global(*)/* c */, .z', ['.u :global(*)'], '/* (unused) .u *\\/* c *\\/,*/ .z', ' .z'],
+				// The comma that ends the pruned selectors, not one in a comment.
+				['.u, /* , */ .z', ['.u'], '/* (unused) .u,*/ /* , */ .z', ' /* , */ .z'],
+				['.u <!-- , -->, .z', ['.u'], '/* (unused) .u <!-- , -->,*/ .z', ' .z'],
+				['.u <!-- /* -->, .z', ['.u'], '/* (unused) .u <!-- \\/* -->,*/ .z', ' .z'],
+				// A comma in an HTML comment after it is taken as on main.
+				['.u, <!-- , --> .z', ['.u'], '/* (unused) .u, <!-- ,*/ --> .z', ' --> .z'],
+			];
+
+			for (const [selector, pruned, expected, minified] of cases) {
+				const css = `${selector} { color: red; }`;
+				expect(render(css, pruned, false), selector).toBe(`${expected} { color: red; }`);
+				expect(render(css, pruned, true), selector).toBe(`${minified} { color: red; }`);
+			}
+		});
 	});
 
 	describe('assigned blocks are themes', () => {

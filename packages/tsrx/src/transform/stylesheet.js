@@ -261,6 +261,44 @@ function remove_preceding_whitespace(end, state) {
 	if (start < end) state.code.remove(start, end);
 }
 
+/**
+ * Escape each `/` in the text from `start` to `end`, which the output puts
+ * inside a comment, so that no `*` before it ends the comment: the end of a
+ * comment or a string in the text, or a `*` the output moves next to it by
+ * dropping `:global(`, `)` or `:global` in between.
+ *
+ * @param {number} start
+ * @param {number} end
+ * @param {MagicString} code
+ */
+function escape_comment_ends(start, end, code) {
+	for (let i = start; i < end; i++) {
+		if (code.original[i] === '/') code.prependRight(i, '\\');
+	}
+}
+
+/**
+ * The comma between two selectors of a list: the last one before the next
+ * selector, past any CSS comment, which can hold a comma too.
+ *
+ * @param {string} source
+ * @param {number} start the end of the selector before it
+ * @param {number} end the start of the selector after it
+ * @returns {number}
+ */
+function separator_comma(source, start, end) {
+	for (let i = end - 1; i >= start; i--) {
+		if (source[i] === ',') return i;
+		if (source[i] === '/' && source[i - 1] === '*') {
+			const open = source.lastIndexOf('/*', i - 2);
+			if (open >= start) i = open;
+		}
+	}
+	let i = end;
+	while (source[i] !== ',') i--;
+	return i;
+}
+
 /** @param {AST.CSS.Rule} rule */
 function is_used(rule) {
 	return rule.prelude.children.some((selector) => selector.metadata.used);
@@ -546,21 +584,24 @@ const visitors = {
 			let prune_start = children[0].start;
 			let last = prune_start;
 			let has_previous_used = false;
+			// Where the text in the `/* (unused) ... */` comment starts.
+			let comment_start = prune_start;
 
 			for (let i = 0; i < children.length; i += 1) {
 				const selector = children[i];
 
 				if (selector.metadata.used === pruning) {
 					if (pruning) {
-						let i = selector.start;
-						while (state.code.original[i] !== ',') i--;
+						const i = separator_comma(state.code.original, last, selector.start);
 
 						if (state.minify) {
 							state.code.remove(prune_start, has_previous_used ? i : i + 1);
 						} else {
 							state.code.appendRight(has_previous_used ? i : i + 1, '*/');
+							escape_comment_ends(comment_start, has_previous_used ? i : i + 1, state.code);
 						}
 					} else {
+						comment_start = selector.start;
 						if (i === 0) {
 							if (state.minify) {
 								prune_start = selector.start;
@@ -591,6 +632,7 @@ const visitors = {
 					state.code.remove(prune_start, last);
 				} else {
 					state.code.appendLeft(last, '*/');
+					escape_comment_ends(comment_start, last, state.code);
 				}
 			}
 		}

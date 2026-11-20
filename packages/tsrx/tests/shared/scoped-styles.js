@@ -1752,6 +1752,44 @@ export function runSharedScopedStyleTests({
 			expect(css).not.toContain('(unused)');
 		});
 
+		it('keeps a comment end in a pruned selector inside the comment over it', () => {
+			// An early end would leave the rest of the selector as CSS, an invalid
+			// selector, so the browser would drop the rule and `.y` its style.
+			/** @type {Array<[string, (hash: string) => string]>} */
+			const cases = [
+				['.z /* c */, .y { color: red; }', (hash) => `/* (unused) .z \\/* c *\\/,*/ .y.${hash} {`],
+				[
+					'.z[title="*/"], .y { color: red; }',
+					(hash) => `/* (unused) .z[title="*\\/"],*/ .y.${hash} {`,
+				],
+				[
+					'.y, .z[title="*/"] { color: red; }',
+					(hash) => `.y.${hash} /* (unused) .z[title="*\\/"]*/ {`,
+				],
+				['.z, /* , */ .y { color: red; }', (hash) => `/* (unused) .z,*/ /* , */ .y.${hash} {`],
+			];
+			for (const [rule, expected] of cases) {
+				const { css, cssHash } = compile(
+					`export function App() @{
+						<>
+							<style>
+								${rule}
+								.y { font-weight: bold; }
+							</style>
+							<i ${attr}="y" />
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				const hash = hashes_of(cssHash)[0];
+				expect(css, rule).toContain(expected(hash));
+				const uncommented = css.replace(/\/\*[^]*?\*\//g, '');
+				expect(uncommented, rule).not.toMatch(/\/\*|\*\//);
+				expect(uncommented, rule).toContain(`.y.${hash} { font-weight: bold; }`);
+			}
+		});
+
 		it('closes the comment over a pruned selector that touches a :global() selector', () => {
 			/** @type {Array<[string, (hash: string) => string]>} */
 			const cases = [
