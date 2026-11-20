@@ -143,7 +143,7 @@ export const DIAGNOSTIC_CODES = {
 	STYLE_STANDALONE_NEEDS_FRAGMENT: 'TSRX3009',
 	/** A `<style>` attribute other than `ref` and `apply`. */
 	STYLE_UNKNOWN_ATTRIBUTE: 'TSRX3010',
-	/** `:global` used where the scoping rules do not allow it. */
+	/** `:global` or `&` used where the scoping rules do not allow it. */
 	CSS_GLOBAL_PLACEMENT: 'TSRX3011',
 	/** An `@import` rule in a `<style>` block, whose rules would not be scoped. */
 	CSS_IMPORT: 'TSRX3012',
@@ -715,6 +715,14 @@ export const TSRX_ERRORS = {
 	CSS_GLOBAL_BLOCK_NOT_ALONE: tsrx(
 		'CSS_GLOBAL_PLACEMENT',
 		'A lone :global, as in :global { ... }, stands for the rule around it, so outside a rule it cannot share a selector list with other selectors. Move the other selectors to a rule of their own.',
+	),
+	CSS_NESTING_SELECTOR_WITHOUT_RULE: tsrx(
+		'CSS_GLOBAL_PLACEMENT',
+		"An & stands for the rule around it, so outside a rule, or in a :global { ... } block outside a rule, it would match the page's root element. Nest this rule in the rule the & refers to, or write :root, or :global(&) to keep the &.",
+	),
+	CSS_GLOBAL_BLOCK_DECLARATION: tsrx(
+		'CSS_GLOBAL_PLACEMENT',
+		'A :global { ... } block outside a rule is dropped from the output, so its declarations would be left outside any rule. Move them into a rule in the block, as in :global { body { ... } }, or nest the block in a rule.',
 	),
 	CSS_IMPORT: tsrx(
 		'CSS_IMPORT',

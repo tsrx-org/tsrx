@@ -770,6 +770,34 @@ export {};
 `,
 	},
 	{
+		error: TSRX_ERRORS.CSS_NESTING_SELECTOR_WITHOUT_RULE,
+		source: `export function C() @{
+	<>
+		<style>
+			& {
+				color: red;
+			}
+		</style>
+		<div class="a" />
+	</>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.CSS_GLOBAL_BLOCK_DECLARATION,
+		source: `export function C() @{
+	<>
+		<style>
+			:global {
+				color: red;
+			}
+		</style>
+		<div class="a" />
+	</>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.CSS_IMPORT,
 		source: `export function C() @{
 	<>

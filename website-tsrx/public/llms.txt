@@ -1256,6 +1256,12 @@ with CSS nesting:
 - Block `:global { .toast { ... } body { ... } }` -> `.toast { ... } body { ... }`:
   the wrapper is dropped (left behind as a comment) and everything inside is
   unscoped. Several page-wide rules at once.
+- An `&` stands for the rule around it, or, directly in a `@scope`, for the
+  scope's root. With no rule around it, or in a `:global { ... }` block outside
+  a rule (the output drops the block), it would match the page's root element,
+  so it is the `TSRX3011` error; write `:root`, or `:global(&)` to keep the `&`.
+  A declaration in such a block is the same error: it would be left outside any
+  rule.
 - Nested block `.card { :global { .note { ... } .tag { ... } } }` ->
   `.card.<hash> { .note { ... } .tag { ... } }`: the same reach as the prefixed
   form, with the scoped prefix written once. `.card { :global(.note) { ... } }`

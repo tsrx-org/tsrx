@@ -12,11 +12,13 @@ import {
 	renderStylesheets,
 } from '../../src/index.js';
 import {
+	TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
 	TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 	TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR,
 	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
 	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
 	TSRX_CSS_IMPORT_ERROR,
+	TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR,
 	TSRX_STYLE_APPLY_DUPLICATE_ERROR,
 	TSRX_STYLE_APPLY_UNSUPPORTED_HOST_ERROR,
 	TSRX_STYLE_APPLY_VALUE_ERROR,
@@ -1076,6 +1078,84 @@ describe('scoped style analysis', () => {
 				':global { .a, .b { color: red; } }',
 				'.y, .z:global { color: red; }',
 				'.y, :global(.w) { color: red; }',
+			]) {
+				expect(analyze_thrown(parse_stylesheet(css)), css).toBeNull();
+			}
+		});
+
+		it('reports an & or declarations that would be left outside every rule', () => {
+			// `anchor` is the text the error covers and `nth` which occurrence of it.
+			/** @type {Array<[css: string, message: string, anchor: string, nth: number]>} */
+			const cases = [
+				['& { color: red; }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				['.p & { color: red; }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				[':is(&) .p { color: red; }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				['.p:has(> &) { color: red; }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				[':global.w, & { color: red; }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				['@media print { &.p {} }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				// The output drops the :global { ... } block, so no rule is left for the &.
+				[':global { &.w { color: red; } }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR, '&', 0],
+				[
+					':global { :global { & .w { color: red; } } }',
+					TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR,
+					'&',
+					0,
+				],
+				[':global { color: red; }', TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR, 'color: red', 0],
+				[
+					':global { .a { color: red; } color: blue; }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: blue',
+					0,
+				],
+				[
+					':global { @media print { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: red',
+					0,
+				],
+				[
+					'@media print { :global { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: red',
+					0,
+				],
+				[
+					':global { :global { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: red',
+					0,
+				],
+			];
+			for (const [css, message, anchor, nth] of cases) {
+				const source = `const t = <style>${css}</style>;`;
+				const thrown = analyze_thrown(first_stylesheet(source));
+				let pos = -1;
+				for (let i = 0; i <= nth; i++) pos = source.indexOf(anchor, pos + 1);
+
+				expect(thrown?.code, css).toBe(DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT);
+				expect(thrown?.message, css).toBe(message);
+				expect([thrown?.pos, thrown?.end], css).toEqual([pos, pos + anchor.length]);
+			}
+		});
+
+		it('allows an & with a rule or @scope around it in the output', () => {
+			for (const css of [
+				'.p { & { color: red; } }',
+				'.p { @media print { &.k { color: red; } } }',
+				'.p { :global { &.w { color: red; } } }',
+				'.p { :global { :global { & .w { color: red; } } } }',
+				// In a @scope, & stands for the scope's root.
+				'@scope (.c) { & { color: red; } }',
+				'@scope (.c) { .p &, & > .q { color: red; } }',
+				'@scope (.c) { :global { &.w { color: red; } } }',
+				// :global(...) keeps the & as written.
+				':global(&) { color: red; }',
+				':global(&.w) .p { color: red; }',
+				// A rule around a dropped :global { ... } block takes its declarations.
+				'.p { :global { color: red; } }',
+				'.p { :global { :global { color: red; } } }',
+				':global { .a { color: red; } @font-face { font-family: x; } }',
 			]) {
 				expect(analyze_thrown(parse_stylesheet(css)), css).toBeNull();
 			}

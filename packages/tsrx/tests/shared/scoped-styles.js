@@ -1860,6 +1860,59 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('reports an & with no rule around it instead of crashing on it', () => {
+			for (const rule of [
+				'& { color: red; }',
+				':global.w, & { color: red; }',
+				'.p:has(> &) { color: red; }',
+				':global { &.p { color: red; } }',
+				':global { color: red; }',
+			]) {
+				const source = `export function App() @{
+					<>
+						<style>${rule}</style>
+						<div ${attr}="p"><i ${attr}="z" /></div>
+					</>
+				}`;
+
+				expect(
+					compile(source, 'App.tsrx', { collect: true }).errors.map((error) => error.code),
+					rule,
+				).toEqual([DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT]);
+				expect(() => compile(source, 'App.tsrx'), rule).toThrow(
+					expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT }),
+				);
+			}
+		});
+
+		it("reads an & directly in a @scope as the scope's root", () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							@scope (.c) {
+								& { color: red; }
+								&.dark .p { color: blue; }
+								& > .p { margin: 0; }
+								.p & { padding: 0; }
+							}
+						</style>
+						<div ${attr}="c"><p ${attr}="p" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			// The scope's root can be any element, in the scope or not, and its
+			// selector is the @scope's, so the & gets no hash and isn't pruned.
+			expect(css).toContain('& { color: red; }');
+			expect(css).toContain(`&.dark .p.${hash} { color: blue; }`);
+			expect(css).toContain(`& > .p.${hash} { margin: 0; }`);
+			expect(css).toContain(`.p.${hash} & { padding: 0; }`);
+			expect(css).not.toContain('(unused)');
+		});
+
 		it('reports a bare :global list exactly when the other selector would be scoped on its own', () => {
 			/**
 			 * The CSS of `css` in a component's `<style>`, which prunes what matches
