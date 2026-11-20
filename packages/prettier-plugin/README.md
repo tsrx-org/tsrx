@@ -4,7 +4,9 @@ A Prettier plugin for formatting [TSRX](https://tsrx.dev) files.
 
 The goal is Prettier's output wherever TSRX is TSX, so TSRX only differs where its
 syntax does: `@{ … }` blocks, `@if`/`@for`/`@switch`/`@try`, `{value}` shorthand
-props, `<style>`/`<script>` bodies, and comments between JSX children.
+props, `<style>`/`<script>` bodies, and comments between JSX children. It also
+differs where the compiler reads markup differently: an element's only text keeps
+a space at its edge beside its tag, so the element still gets one child.
 
 ## Usage
 
@@ -111,7 +113,21 @@ config (step 2).
   Prettier's `printJsxElementInternal` and `printJsxChildren` with the two rules a
   bare comment needs: a line comment ends its line, and it keeps whitespace before
   it after text or a comment (touching them, `//` is text); text that starts with
-  `//` right after a block comment stays on its line. Every other element is
+  `//` right after a block comment stays on its line. An element whose only child
+  is text with a space or tab at an edge is laid out by the plugin too, when the
+  compiler prints that text as one literal (`{' a '}`, so that a `<textarea>`, a
+  `<title>` or a component that takes `children: string` gets one string):
+  Prettier would move the space into a `{" "}` child once the element breaks. The
+  space stays beside its tag (`<p> Some text…`, `…more text </p>`), and the words
+  fill the lines between. A text that the compiler would split over lines (with a
+  non-breaking space, U+200B or a reference to whitespace) stays on one line, and
+  a text it splits anyway prints as before. On Vue, whose compiler keeps a text's
+  line breaks, a text the formatter fills renders with them, and keeping the space
+  beside the opening tag fills some texts that Prettier's layout left on a line of
+  their own: a text that fits on a line by itself but not after its tag, as in a
+  `<textarea className="notes">`, renders a line break and the next line's
+  indentation on Vue. Prettier's layout kept such a text on one line on Vue, but
+  gave the element two or three children on every target. Every other element is
   printed by Prettier itself. Keep the copy in step with Prettier when upgrading.
 
 The plugin needs no other Prettier plugin, including in `prettier/standalone`,
@@ -190,7 +206,8 @@ run with 3.6.0.
 - `tests/prettier-overrides.js` holds the cases where TSRX deliberately differs
   from Prettier, each with its reason. An override skips the case (for example,
   syntax that is only a proposal), expects Prettier's output for the input as a
-  `.tsx` file, or replaces the input or the expected output.
+  `.tsx` file, replaces the input or the expected output, or replaces a few lines
+  of the expected output (`replace`).
 
 The files in `tests/prettier/` come from Prettier and are under
 [Prettier's MIT license](tests/prettier/LICENSE).

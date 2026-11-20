@@ -2,14 +2,16 @@
  * Prettier's layout of a JSX element's children, for the elements whose
  * children include TSRX comments (`// …` and `/* … *\/` between children,
  * which TSX reads as text, and which `parse.js` gives Prettier as the `{…}`
- * children `{/* … *\/}` would be), and for an element that keeps its
- * parentheses at the start of a statement (`keepStatementParens`). Every other
- * element is printed by Prettier itself.
+ * children `{/* … *\/}` would be), for an element whose only child is text
+ * that the compiler prints as one literal (`onlyTextEdges`), and for an
+ * element that keeps its parentheses at the start of a statement
+ * (`keepStatementParens`). Every other element is printed by Prettier itself.
  *
  * `printJsxElementInternal` and `printJsxChildren` are copied from Prettier
  * 3.9.9 (`src/language-js/print/jsx.js`, MIT license, Copyright © James Long and
- * contributors). The only changes, marked `TSRX:`, are in `printJsxChildren`,
- * where a bare `//` differs from `{// … }`: a `//` is a comment only after
+ * contributors). The only changes are marked `TSRX:`. An element's only text
+ * keeps the spaces at its edges (`printOnlyText`). In `printJsxChildren`, a
+ * bare `//` differs from `{// … }`: a `//` is a comment only after
  * whitespace (or at the start of a line, or right after a tag), and it runs to
  * the end of its line. So a line comment ends its line, keeps whitespace
  * between it and text or a comment before it, and text that starts with `//`
@@ -20,6 +22,7 @@
  * @import { Node } from './parse.js'
  */
 
+import { wrapEdgeWhitespace } from '@tsrx/core';
 import { builders, utils } from 'prettier/doc';
 
 const {
@@ -31,6 +34,7 @@ const {
 	hardline,
 	ifBreak,
 	indent,
+	join,
 	line,
 	softline,
 } = builders;
@@ -138,6 +142,10 @@ export function printJsxElementInternal(path, options, print) {
 	if (node.type === 'JSXElement' && isEmptyJsxElement(node)) {
 		return [print('openingElement'), print('closingElement')];
 	}
+
+	// TSRX: an element's only text keeps the spaces at its edges.
+	const edges = onlyTextEdges(node);
+	if (edges) return printOnlyText(path, options, print, edges);
 
 	const openingLines =
 		node.type === 'JSXElement' ? print('openingElement') : print('openingFragment');
@@ -328,6 +336,115 @@ export function printJsxElementInternal(path, options, print) {
 	}
 
 	return conditionalGroup([group([openingLines, ...children, closingLines]), multiLineElem]);
+}
+
+/**
+ * TSRX: where an element's only child is text that the compiler prints as one
+ * literal (`{' a '}`, `wrapEdgeWhitespace` in `@tsrx/core`), which of its edges
+ * have a space or tab (no line break in the whitespace there). The compiler
+ * does that for an element's only text with a space or tab at an edge, so a
+ * `<textarea>`, a `<title>` or a component that takes `children: string` gets
+ * one string (#1368). Prettier would print such an edge as a `{" "}` child once
+ * the element breaks, which gives the element two or three children. `null`
+ * for any other element, and so for a fragment, whose only text the compiler
+ * splits, and for a text the compiler splits anyway, which Prettier prints as
+ * before. The compiler is asked with the reading of React, Preact and Hono;
+ * Solid and Vue keep the split for more texts.
+ * @param {Node} node
+ * @returns {{ start: boolean, end: boolean } | null}
+ */
+export function onlyTextEdges(node) {
+	if (node.type !== 'JSXElement' || node.children.length !== 1) return null;
+	const [text] = node.children;
+	if (text.type !== 'JSXText') return null;
+	const raw = getRaw(text);
+	// Counted from each end: a regular expression ending in `$` tries every start
+	// in a long run of whitespace.
+	let start = 0;
+	while (start < raw.length && isJsxWhitespaceCharacter(raw[start])) start++;
+	let end = raw.length;
+	while (end > start && isJsxWhitespaceCharacter(raw[end - 1])) end--;
+	const edges = {
+		start: start > 0 && !raw.slice(0, start).includes('\n'),
+		end: end < raw.length && !raw.slice(end).includes('\n'),
+	};
+	if (start === end || !(edges.start || edges.end)) return null;
+	const compiled = wrapEdgeWhitespace(
+		[{ type: 'JSXText', raw, value: text.value, metadata: { path: [] } }],
+		true,
+	);
+	return compiled.length === 1 && compiled[0].type === 'JSXExpressionContainer' ? edges : null;
+}
+
+/** @param {string} character */
+const isJsxWhitespaceCharacter = (character) =>
+	character === ' ' || character === '\n' || character === '\r' || character === '\t';
+
+/**
+ * TSRX: an element's only text that the compiler prints as one literal
+ * (`onlyTextEdges`), which stays one text. Its words fill lines as Prettier
+ * fills text, and a space at an edge stays one, beside its tag: the opening
+ * tag, the space and the first word start a line, and the last word, the
+ * space and the closing tag end one. An edge without one breaks as Prettier
+ * breaks it. A text whose words can't go on separate lines (`wordsCanBreak`)
+ * stays on one line with its tags. Where the element fits on one line, it
+ * stays there, as Prettier prints it, except that several attributes don't
+ * break it.
+ * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
+ * @param {Print} print
+ * @param {{ start: boolean, end: boolean }} edges
+ * @returns {Doc}
+ */
+function printOnlyText(path, options, print, edges) {
+	const { node } = path;
+	const [text] = node.children;
+	const openingLines = print('openingElement');
+	const closingLines = print('closingElement');
+	const words = getRaw(text)
+		.split(/[ \n\r\t]+/u)
+		.filter((/** @type {string} */ word) => word !== '');
+	const breaks = wordsCanBreak(text);
+	// `print` isn't called on the text, so print the cursor around it, its
+	// edges too, as Prettier's `mainPrint` prints it around a node: around the
+	// text that holds it, after the text before it, and before the text after it.
+	const cursorOptions = /** @type {Record<string, any>} */ (options);
+	const [first, last] =
+		cursorOptions.cursorNode === text
+			? [cursor, cursor]
+			: cursorOptions.nodeBeforeCursor === text
+				? ['', cursor]
+				: cursorOptions.nodeAfterCursor === text
+					? [cursor, '']
+					: ['', ''];
+	/** @type {Doc[]} */
+	const parts = breaks ? join(line, words) : [words.join(' ')];
+	parts.push([/** @type {Doc} */ (parts.pop()), edges.end ? [' ', last, closingLines] : last]);
+	const edgeBreak = breaks ? softline : '';
+	return group([
+		openingLines,
+		indent([edges.start ? [first, ' '] : [edgeBreak, first], fill(parts)]),
+		edges.end ? '' : [edgeBreak, closingLines],
+	]);
+}
+
+/**
+ * TSRX: whether the compiler still prints the text as one literal when it
+ * spans lines. There it keeps the split where compilers trim a line's edge
+ * differently (`only_text_value` in `@tsrx/core`): for whitespace other than
+ * spaces, tabs and line breaks anywhere in the text, and for U+200B or a
+ * reference to whitespace (`&#32;`, `&nbsp;`) next to a line break. A text
+ * that has any of these stays on one line, where it compiles to one literal.
+ * A reference to a space, tab or line break shows as whitespace that the
+ * decoded text has and the text as written doesn't.
+ * @param {Node} text
+ * @returns {boolean}
+ */
+function wordsCanBreak(text) {
+	if (/[^\S \t\n\r]|\u200b/u.test(text.value)) return false;
+	/** @param {string} value */
+	const whitespace = (value) => value.replaceAll('\r\n', '\n').replace(/[^ \t\n\r]/gu, '').length;
+	return whitespace(text.value) === whitespace(getRaw(text));
 }
 
 /**
