@@ -484,6 +484,80 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 		});
 	});
 
+	describe(`[${name}] a return the parser reports, in the editor`, () => {
+		it.each([
+			['a case', '<div>@switch (s) { @case 1: { return null; } @default: { <i /> } }</div>'],
+			[
+				'a case in an `@catch`',
+				'@try { <p /> } @catch (e) { <div>@switch (s) { @case 1: { return null; } @default: { <i /> } }</div> }',
+			],
+			[
+				'a case in an `@try` body',
+				'@try { <div>@switch (s) { @case 1: { return null; } @default: { <i /> } }</div> } @catch (e) { <i /> }',
+			],
+		])('is reported once in %s, and the rest of the file maps', (_, template) => {
+			const source = `export function App({ s }: { s: number }) @{\n\t${template}\n}\nexport const after = 1;\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const start = source.indexOf('return null;');
+			expect(result.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				[TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code, start, start + 'return'.length],
+			]);
+			expect(result.code).toContain('export const after = 1;');
+		});
+
+		it('keeps the code after a return right in an @switch case in the output', () => {
+			const source = `export function App({ s }: { s: number }) @{\n\t<div>@switch (s) { @case 1: { return null;\n\t\tconst bad: number = 1;\n\t\t<b>{bad}</b> } @default: { <i /> } }</div>\n}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => error.code)).toEqual([
+				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code,
+			]);
+			expect(result.code).toContain('const bad: number = 1;');
+			expect(result.code).toContain('<b>{bad}</b>');
+		});
+
+		it.each([
+			[
+				'an `@switch` in an `@if` body',
+				'<div>@if (s) { <p>@switch (s) { @case 1: { return null; } @default: { <i /> } }</p> }</div>',
+				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+			],
+			[
+				'an `@switch` in an `@for` body',
+				'<ul>@for (const y of items) { <li>@switch (s) { @case 1: { return null; } @default: { <i /> } }</li> }</ul>',
+				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+			],
+			[
+				'an `@switch` in an `@else if` body',
+				'<div>@if (s) { <b /> } @else if (s > 1) { <p>@switch (s) { @case 1: { return null; } @default: { <i /> } }</p> }</div>',
+				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+			],
+			[
+				'an `@try` in an `@if` body',
+				'<div>@if (s) { <p>@try { if (s) return null; <b /> } @catch (e) { <i /> }</p> }</div>',
+				TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+			],
+			[
+				'an `@try` in an `@for` body',
+				'<ul>@for (const y of items) { <li>@try { if (s) return null; <b /> } @catch (e) { <i /> }</li> }</ul>',
+				TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+			],
+		])('reports a return the parser reported in %s once', (_, template, error) => {
+			const source = `export function App({ s, items }: { s: number; items: number[] }) @{\n\t${template}\n}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => error.code)).toEqual([error.code]);
+		});
+
+		it('reports a `return` in a nested `@{ … }` in an `@try` body once', () => {
+			// The parser checks both bodies; the outer check skips a `return` the
+			// inner one reported.
+			const source = `export function App({ s }: { s: number }) @{\n\t@try { <div>{@{ if (s) return null; <b /> }}</div> } @catch (e) { <i /> }\n}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => error.code)).toEqual([
+				TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code,
+			]);
+		});
+	});
+
 	describe(`[${name}] class index signatures in virtual code`, () => {
 		it('keeps static on a class index signature', () => {
 			expect_static_index_signatures(

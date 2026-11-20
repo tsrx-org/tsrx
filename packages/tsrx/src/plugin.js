@@ -4870,8 +4870,9 @@ export function TSRXPlugin(config) {
 					if (/^break\b/.test(raw)) {
 						this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT);
 					}
-					if (/^return\b/.test(raw)) {
-						this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT);
+					const direct_return = /^return\b/.test(raw);
+					if (direct_return) {
+						this.#reportSwitchCaseReturn(this.start + String(this.value ?? '').length - raw.length);
 					}
 					this.#filterTemplateScriptContexts();
 					this.pos = this.start;
@@ -4884,7 +4885,7 @@ export function TSRXPlugin(config) {
 					try {
 						this.#suppressTemplateRawTextToken = true;
 						this.next();
-						consequent.push(this.parseStatement(null));
+						consequent.push(this.#markSwitchCaseReturn(this.parseStatement(null), direct_return));
 					} finally {
 						this.#parsingJSXSwitchCaseScriptStatementDepth--;
 					}
@@ -4948,8 +4949,9 @@ export function TSRXPlugin(config) {
 				if (label === 'break') {
 					this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT);
 				}
-				if (label === 'return') {
-					this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT);
+				const direct_return = label === 'return';
+				if (direct_return) {
+					this.#reportSwitchCaseReturn(this.start);
 				}
 				if (label === 'continue' || label === 'throw') {
 					consequent.push(this.parseStatement(null));
@@ -4978,7 +4980,7 @@ export function TSRXPlugin(config) {
 				}
 				this.#parsingJSXSwitchCaseScriptStatementDepth++;
 				try {
-					consequent.push(this.parseStatement(null));
+					consequent.push(this.#markSwitchCaseReturn(this.parseStatement(null), direct_return));
 				} finally {
 					this.#parsingJSXSwitchCaseScriptStatementDepth--;
 				}
@@ -5593,6 +5595,35 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * A `return` right in an `@switch` case body (TSRX2009). A collecting or
+			 * loose parse records it and reads the statement on, as it does a
+			 * `return` in an `@try` body, so the editor keeps the rest of the file.
+			 * @param {number} start the `return` keyword's offset
+			 */
+			#reportSwitchCaseReturn(start) {
+				this.#report_recoverable_error_range(
+					start,
+					start + 'return'.length,
+					TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				);
+			}
+
+			/**
+			 * Marks a `return` `#reportSwitchCaseReturn` reported, so the template
+			 * return checks (here and in the transform) don't report it again.
+			 * @template {AST.Node} T
+			 * @param {T} statement
+			 * @param {boolean} reported
+			 * @returns {T}
+			 */
+			#markSwitchCaseReturn(statement, reported) {
+				if (reported && statement.type === 'ReturnStatement') {
+					statement.metadata = { ...statement.metadata, invalid_tsrx_template_return: true };
+				}
+				return statement;
+			}
+
+			/**
 			 * @param {number} position
 			 * @param {number} end
 			 * @param {ReportedError} message
@@ -5818,7 +5849,12 @@ export function TSRXPlugin(config) {
 					inside_loop = true;
 				}
 
-				if (!inside_nested_function && !inside_loop && node.type === 'ReturnStatement') {
+				if (
+					!inside_nested_function &&
+					!inside_loop &&
+					node.type === 'ReturnStatement' &&
+					!node.metadata?.invalid_tsrx_template_return
+				) {
 					node.metadata = {
 						...node.metadata,
 						invalid_tsrx_template_return: true,

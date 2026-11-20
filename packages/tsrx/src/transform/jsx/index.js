@@ -6238,7 +6238,11 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		return;
 	}
 
-	if (node.type === 'ReturnStatement' && !node.metadata?.invalid_directive_jump) {
+	if (
+		node.type === 'ReturnStatement' &&
+		!node.metadata?.invalid_directive_jump &&
+		!node.metadata?.invalid_tsrx_template_return
+	) {
 		error(
 			TSRX_ERRORS.FOR_RETURN_STATEMENT,
 			transform_context.filename,
@@ -6307,7 +6311,11 @@ function validate_if_body_control_flow(node, transform_context) {
 		return;
 	}
 
-	if (node.type === 'ReturnStatement' && !node.metadata?.invalid_directive_jump) {
+	if (
+		node.type === 'ReturnStatement' &&
+		!node.metadata?.invalid_directive_jump &&
+		!node.metadata?.invalid_tsrx_template_return
+	) {
 		error(
 			TSRX_ERRORS.IF_RETURN_STATEMENT,
 			transform_context.filename,
@@ -7858,7 +7866,9 @@ function build_render_switch_statement(switch_node, transform_context) {
 		let has_terminal = false;
 
 		for (const child of own_body) {
-			if (child.type === 'ReturnStatement') {
+			// A `return` the parser reported (TSRX2009) is kept as a statement, so
+			// the code after it stays in a collecting compile's output.
+			if (child.type === 'ReturnStatement' && !child.metadata?.invalid_tsrx_template_return) {
 				case_body.push(child);
 				has_terminal = true;
 				break;
