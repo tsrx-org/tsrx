@@ -2319,6 +2319,27 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('ends the last declaration of a dropped :global { ... } block', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							.c { :global { color: red } .k { color: blue; } }
+							.c { :global { :global { margin: 0 /* c */ } } @media print { padding: 0; } }
+						</style>
+						<div ${attr}="c"><i ${attr}="k" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			const plain = css.replace(/\/\*[^]*?\*\//g, '').replace(/\s+/g, ' ');
+			// Without a ; the declaration ran into the rule after it, and both were lost.
+			expect(plain).toContain(`.c.${hash} { color: red ; .k.${hash} { color: blue; } }`);
+			expect(plain).toContain(`.c.${hash} { margin: 0 ; @media print { padding: 0; } }`);
+		});
+
 		it('writes a :global modifier whose only parent is a :global { ... } block without an &', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{

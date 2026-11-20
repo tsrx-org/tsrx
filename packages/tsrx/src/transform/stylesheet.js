@@ -670,6 +670,15 @@ const visitors = {
 
 		if (drops_selector(node)) {
 			// `:global {...}`
+			// Without its braces, a last declaration with no `;` would run into
+			// what follows the block (`color: red .k { ... }`).
+			const last = node.block.children.at(-1);
+			if (
+				last?.type === 'Declaration' &&
+				/^\s*$/.test(state.code.original.slice(last.end, node.block.end - 1))
+			) {
+				state.code.appendLeft(last.end, ';');
+			}
 			if (state.minify) {
 				state.code.remove(node.start, node.block.start + 1);
 				state.code.remove(node.block.end - 1, node.end);
