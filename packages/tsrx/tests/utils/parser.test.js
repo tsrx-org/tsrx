@@ -13135,6 +13135,30 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			],
 			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
 		},
+		// `global` written with an escape, which TypeScript reads as `global`:
+		// TS1234, where the parser reported TS1184 for the `export`.
+		{
+			source: 'function f() {\n\texport declare glo\\u0062al {}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'export declare'],
+				[TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION, 'export declare'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			// A string's contents aren't read as words.
+			source: '{\n\timport "\\\\u{110000}";\n}',
+			errors: [[TS_ERRORS.NESTED_IMPORT, 'import']],
+			throws: [TS_ERRORS.NESTED_IMPORT, '2:1'],
+		},
+		{
+			source: '{\n\texport \\u0067lobal {}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'export \\u0067lobal'],
+				[TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION, 'export \\u0067lobal'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
 		{
 			source: 'function f() {\n\texport abstract namespace N {}\n}',
 			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'export abstract']],
