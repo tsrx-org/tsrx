@@ -5594,9 +5594,9 @@ export function wrap_edge_whitespace(nodes, in_element = false, reading = {}) {
  * - whitespace other than spaces and tabs in a text that spans lines: the
  *   compilers trim it at a line's edge differently (TypeScript and esbuild
  *   trim a non-breaking space there, SWC and Babel don't; TypeScript and oxc
- *   trim U+200B, which isn't in `\s`, and esbuild, SWC and Babel don't), and
- *   a reference to whitespace at a line break
- *   (`whitespace_reference_at_line_break`)
+ *   trim U+200B, which isn't in `\s`, and esbuild, SWC and Babel don't, so
+ *   it keeps the split at a line's edge), and a reference to whitespace at a
+ *   line break (`whitespace_reference_at_line_break`)
  * - an `&#` that doesn't start a short decimal or lowercase-hex reference
  *   ending in `;`, which the parser reads differently (esbuild and oxc read
  *   `&#+65;` as `A`; the parser decodes `&#X41;`, which they leave as
@@ -5629,7 +5629,8 @@ function only_text_value(text, reading) {
 	}
 	const lines = /[\n\r]/.test(raw);
 	if (/[^\S \t\n\r]/.test(raw) && (lines || reading.html)) return null;
-	if (lines && raw.includes('\u200b')) return null;
+	// TypeScript and oxc also trim U+200B, which isn't in `\s`, at a line's edge
+	if (lines && /\u200b[ \t\u200b]*\r?\n|\n[ \t\u200b]*\u200b/.test(raw)) return null;
 	if (/&#(?!\d{1,6};|x[\da-fA-F]{1,5};)/.test(raw)) return null;
 	if (reading.html && raw.replace(REFERENCE_OR_PLAIN_AMPERSAND, '').includes('&')) return null;
 	if (/[\0-\x08\v-\x1f\x7f-\x9f\u2028\u2029\ufeff]|\p{Cs}/u.test(value)) return null;

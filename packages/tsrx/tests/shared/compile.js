@@ -8386,6 +8386,13 @@ export const b2 = {
 				"<b>{' a  b c '}</b>",
 				"<b>{' a  b\\n\t\tc '}</b>",
 			],
+			// TypeScript and oxc trim it only at a line's edge
+			[
+				'an element, for a zero-width space inside a word',
+				'<textarea> a\u200bb\n\t\tc </textarea>',
+				"<textarea>{' a\u200bb c '}</textarea>",
+				"<textarea>{' a\u200bb\\n\t\tc '}</textarea>",
+			],
 			[
 				'an element, for a quote',
 				`<b> it's\n\t\t"q" </b>`,
@@ -8452,6 +8459,11 @@ export const b2 = {
 				'text over lines with a zero-width space at a line end',
 				'<b> a\u200b\n\t\tb </b>',
 				"<b>{' '}a\u200b\n\t\tb{' '}</b>",
+			],
+			[
+				'text over lines with a zero-width space at a line start, after a tab',
+				'<b> a\r\n\t\u200bb </b>',
+				"<b>{' '}a\r\n\t\u200bb{' '}</b>",
 			],
 			// oxc leaves each as written, and an HTML template reads each as U+FFFD
 			[
