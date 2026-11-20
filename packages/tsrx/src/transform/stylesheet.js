@@ -359,7 +359,10 @@ function remove_global_pseudo_class(selector, combinator, state) {
 }
 
 /**
- * @param {AST.CSS.Rule} node
+ * Escape the end of each comment in `node`'s text, which goes inside a
+ * comment the output adds around it.
+ *
+ * @param {{ start: number, end: number }} node
  * @param {MagicString} code
  */
 function escape_comment_close(node, code) {
@@ -512,6 +515,7 @@ const visitors = {
 			} else {
 				state.code.prependRight(node.start, '/* ');
 				state.code.appendLeft(node.block.start + 1, '*/');
+				escape_comment_close({ start: node.start, end: node.block.start }, state.code);
 
 				state.code.prependRight(node.block.end - 1, '/*');
 				state.code.appendLeft(node.block.end, '*/');
@@ -652,11 +656,11 @@ const visitors = {
 				remove_global_pseudo_class(global, relative_selector.combinator, context.state);
 
 				if (
-					node.metadata.rule?.metadata.parent_rule &&
 					global.args === null &&
 					relative_selector.combinator === null &&
 					(has_parent_rule_in_output(node.metadata.rule) ||
-						// Keep an `&` the selector would otherwise start with a combinator after.
+						// An `&` the selector would otherwise start with a combinator after,
+						// which is invalid; at the top level it stands for the root.
 						(relative_selector.selectors.length === 1 &&
 							!!node.children[1]?.combinator &&
 							node.children[1].combinator.name !== ' '))

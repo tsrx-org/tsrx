@@ -1236,6 +1236,13 @@ describe('scoped style analysis', () => {
 					'/* :global {*/ & > .w { color: red; } /*}*/',
 					'& > .w { color: red; }',
 				],
+				[':global + .w { color: red; }', '& + .w { color: red; }', '& + .w { color: red; }'],
+				// A comment in the dropped selector doesn't end the one around it.
+				[
+					':global /* c */ { .w { color: red; } }',
+					'/* :global /* c *\\/ {*/ .w { color: red; } /*}*/',
+					'.w { color: red; }',
+				],
 			];
 			for (const [css, expected, minified] of cases) {
 				expect(strip_hash(render(css, [], false)), css).toBe(expected);
