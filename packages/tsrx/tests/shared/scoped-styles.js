@@ -1273,6 +1273,32 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`.icon.${hash} { animation: none; color: gray; }`);
 		});
 
+		it('gives a rule with an animation that matches nothing the specificity a match gives it', () => {
+			const { css, cssHash } = compile(
+				`export function Spinner() @{
+					<>
+						<style>
+							@keyframes spin ${frames}
+							:root .spinning { animation: spin 1s infinite; }
+							:host .wrap .spinning { animation: spin 2s infinite; }
+							.spinning { animation: none; }
+						</style>
+						<div ${attr}="wrap"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			// No element has .spinning: as for a match, :root and :host take no
+			// hash and leave the class to the next compound, so the rule still wins
+			// over .spinning.
+			expect(css).toContain(`:root .spinning.${hash} { animation: ${hash}-spin 1s infinite; }`);
+			expect(css).toContain(
+				`:host .wrap.${hash} .spinning:where(.${hash}) { animation: ${hash}-spin 2s infinite; }`,
+			);
+		});
+
 		it('keeps the arguments of a :not() or a :global(...) compound in an animation rule as written', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{

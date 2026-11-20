@@ -689,7 +689,11 @@ function keep_not_arguments(selector) {
  */
 function assume_match(selectors) {
 	for (const selector of selectors) {
-		if (!is_outer_global(selector)) selector.metadata.scoped = true;
+		// A match leaves a global-like compound (`:root`, `:host`) unscoped too,
+		// so the specificity bump goes to the next compound.
+		if (!is_outer_global(selector) && !selector.metadata.is_global_like) {
+			selector.metadata.scoped = true;
+		}
 
 		for (const simple_selector of selector.selectors) {
 			if (simple_selector.type !== 'PseudoClassSelector' || !simple_selector.args) continue;
