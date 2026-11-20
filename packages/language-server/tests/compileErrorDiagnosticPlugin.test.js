@@ -73,27 +73,32 @@ export function App() @{
 		expect(document.getText(diagnostics[0].range)).toBe('themes.light');
 	});
 
-	it('reports CSS_GLOBAL_PLACEMENT on the style block that holds the :global', async () => {
-		// The type-only output has no tokens inside a CSS body, so the transform
-		// anchors the block's diagnostic on the `<style>` element (the mapped
-		// stand-in), not on the selector.
+	it('reports each CSS_GLOBAL_PLACEMENT on the :global it is about', async () => {
+		// The type-only output has no tokens inside a CSS body, so the diagnostic
+		// shows in the body's embedded CSS, which maps it whole.
 		const { document, diagnostics } = await diagnostics_for(
 			`export function App() @{
 	<>
 		<style>
 			.a :global(.b) .c { color: red; }
+			:is(:global .d) { color: blue; }
 		</style>
 		<div>{'x'}</div>
 	</>
-}`,
+}
+const theme = <style>.e :global(.f) .g { color: red; } @import 'x.css';</style>;`,
 		);
 
-		expect(diagnostics).toHaveLength(1);
-		const [diagnostic] = diagnostics;
-		expect(diagnostic.code).toBe('TSRX3011');
-		expect(document.getText(diagnostic.range)).toBe(
-			'<style>\n\t\t\t.a :global(.b) .c { color: red; }\n\t\t</style>',
-		);
+		expect(
+			[...diagnostics]
+				.sort((a, b) => document.offsetAt(a.range.start) - document.offsetAt(b.range.start))
+				.map((diagnostic) => [diagnostic.code, document.getText(diagnostic.range)]),
+		).toEqual([
+			['TSRX3011', ':global(.b)'],
+			['TSRX3011', ':global'],
+			['TSRX3011', ':global(.f)'],
+			['TSRX3012', "@import 'x.css';"],
+		]);
 	});
 
 	it('reports nothing for a valid apply', async () => {
@@ -146,14 +151,14 @@ export function App() @{
 	});
 
 	// The editor's compile reports a CSS syntax error (#1306). Its code has no
-	// `<style>` body, so an error on a line of the body with no code shows on
-	// the nearest code before it, the opening tag's `>`.
+	// `<style>` body, so the error shows in the body's embedded CSS, where the
+	// parser stopped.
 	it.each([
 		[
 			'on a line of its own',
 			'export function App() @{\n\t<div>\n\t\t<style>\n\t\t\t.a { color: red; }\n\t\t\t}\n\t\t</style>\n\t\t<p>x</p>\n\t</div>\n}\n',
-			'<style>',
-			'>',
+			'}\n\t\t</style>',
+			'}',
 		],
 		[
 			'on the line of the opening tag',
