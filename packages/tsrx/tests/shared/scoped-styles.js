@@ -1762,6 +1762,9 @@ export function runSharedScopedStyleTests({
 							.p { @media print { @supports (display: grid) {} } }
 							.p { @media print { color: red; } }
 							.p { @media print { .k { color: blue; } } }
+							.p { @m\\65 dia print { .y {} } }
+							.p { @media print { @layer base {} } }
+							.p { @layer base {} }
 						</style>
 						<div ${attr}="p"><i ${attr}="k" /></div>
 					</>
@@ -1777,6 +1780,10 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain('/* (empty) .p { @media print { @supports (display: grid) {} } }*/');
 			expect(css).toContain(`.p.${hash} { @media print { color: red; } }`);
 			expect(css).toContain(`.p.${hash} { @media print { .k.${hash} { color: blue; } } }`);
+			expect(css).toContain(String.raw`/* (empty) .p { @m\65 dia print { .y {} } }*/`);
+			// An empty layer block still sets the order of layers.
+			expect(css).toContain(`.p.${hash} { @media print { @layer base {} } }`);
+			expect(css).toContain(`.p.${hash} { @layer base {} }`);
 		});
 
 		it('keeps a comment end in a pruned selector inside the comment over it', () => {

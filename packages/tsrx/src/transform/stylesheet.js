@@ -467,7 +467,7 @@ function is_empty(rule, is_in_global_block) {
 /**
  * At-rules that only group what is in them, which keep nothing when it is all
  * empty. Not `@layer`: a layer block, even an empty one, puts its layer in the
- * cascade's order of layers.
+ * cascade's order of layers, so it always counts.
  */
 const group_at_rules = new Set([
 	'media',
@@ -502,8 +502,9 @@ function is_block_empty(block, is_in_global_block) {
 		}
 
 		if (child.type === 'Atrule') {
-			if (child.block === null) return false;
-			if (group_at_rules.has(remove_css_prefix(child.name.toLowerCase()))) {
+			const name = remove_css_prefix(unescape_css(child.name).toLowerCase());
+			if (child.block === null || name === 'layer') return false;
+			if (group_at_rules.has(name)) {
 				if (!is_block_empty(child.block, is_in_global_block)) return false;
 			} else if (child.block.children.length > 0) {
 				return false;
