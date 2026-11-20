@@ -366,14 +366,17 @@ export function onlyTextEdges(node) {
 	);
 	if (index === -1) return null;
 	const text = children[index];
+	let comments = false;
 	for (const [i, child] of children.entries()) {
 		if (i === index || isLayoutWhitespace(child)) continue;
-		// Beside a comment, a text whose words can't go on separate lines is left to
-		// Prettier: whether the compiler splits it depends on its line breaks, and
-		// Prettier's layout keeps the spaces beside a comment, so the next format
-		// would lay it out here.
-		if (!isInlineCommentContainer(child) || !wordsCanBreak(text)) return null;
+		if (!isInlineCommentContainer(child)) return null;
+		comments = true;
 	}
+	// Beside a comment, a text whose words can't go on separate lines is left to
+	// Prettier: whether the compiler splits it depends on its line breaks, and
+	// Prettier's layout keeps the spaces beside a comment, so the next format
+	// would lay it out here.
+	if (comments && !wordsCanBreak(text)) return null;
 	const raw = getRaw(text);
 	// Counted from each end: a regular expression ending in `$` tries every start
 	// in a long run of whitespace.
@@ -491,7 +494,10 @@ function printOnlyText(path, options, print, edges) {
 		openingLines,
 		indent([
 			...before,
-			edges.start ? [first, ' '] : [edgeBreak, first],
+			// A text right after a comment stays there: a TSRX `/* c */` before
+			// `// …` keeps the `//` text, which at the start of a line would be a
+			// comment.
+			edges.start ? [first, ' '] : before.length ? first : [edgeBreak, first],
 			fill(parts),
 			edges.end || after.length === 0 ? '' : [edgeBreak, ...after],
 		]),

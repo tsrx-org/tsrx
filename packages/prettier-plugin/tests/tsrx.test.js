@@ -1889,6 +1889,38 @@ const b = (
 		);
 	});
 
+	test('keeps a text right after a comment on its line, so a `//` there stays text', async () => {
+		await expectFormat(
+			`const a = <p>/* c */// alpha beta gamma delta </p>;
+const b = <p>/* c */alpha beta gamma delta </p>;`,
+			`const a = (
+  <p>/* c */// alpha beta
+    gamma delta </p>
+);
+const b = (
+  <p>/* c */alpha beta
+    gamma delta </p>
+);
+`,
+			{ printWidth: 26 },
+		);
+		const source = 'const b = <p>/* c */alpha beta gamma delta </p>;';
+		const { formatted, cursorOffset } = await prettier.formatWithCursor(source, {
+			parser: 'tsrx',
+			plugins: [plugin],
+			printWidth: 26,
+			cursorOffset: source.indexOf('alpha'),
+		});
+		expect(cursorOffset).toBe(formatted.indexOf('alpha'));
+	});
+
+	test('takes linear time in a long run of comments', async () => {
+		const source = `const a = <p>${'{/* c */}'.repeat(4000)} ${'word '.repeat(4000)}</p>;`;
+		const start = performance.now();
+		await format(source);
+		expect(performance.now() - start).toBeLessThan(2000);
+	});
+
 	test('compiles to the string the unformatted text compiles to', async () => {
 		const sources = [
 			'<textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>',
