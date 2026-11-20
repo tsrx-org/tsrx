@@ -72,6 +72,20 @@ export function App() @{
 	</div>
 }`,
 
+	'clone-slot.tsrx': `import { cloneVNode } from 'vue';
+const Clone = {
+	setup(_: unknown, { slots }: any) {
+		return () => cloneVNode(slots.default()[0], { id: 'injected' });
+	},
+};
+export function App() @{
+	@try {
+		<Clone><button>{'body'}</button></Clone>
+	} @catch (e) {
+		<b>{String(e)}</b>
+	}
+}`,
+
 	'child-throws.tsrx': `function Bad() @{
 	throw new Error('child');
 	<p />
@@ -149,6 +163,15 @@ describe('[vue] @try on the server', () => {
 
 	it('renders the body of a @try with @pending', async () => {
 		expect(await render('pending.tsrx')).toEqual({ html: '<div><p>body</p></div>', handled: [] });
+	});
+
+	// The boundary renders as a functional VDOM component there, so the slots
+	// of what it creates stay VDOM slots, which a component can clone.
+	it('keeps what a component in the body adds to a cloned slot child', async () => {
+		expect(await render('clone-slot.tsrx')).toEqual({
+			html: '<button id="injected">body</button>',
+			handled: [],
+		});
 	});
 
 	// Pins a limit: a component in the body throws as the server renders it,
