@@ -1250,6 +1250,28 @@ export function runSharedScopedStyleTests({
 			// Without an animation, a rule that matches nothing is pruned.
 			expect(css).toContain('/* (unused) .none { color: blue; }*/');
 		});
+
+		it('scopes a rule with an animation as matched when an element after the first matches it', () => {
+			const { css, cssHash } = compile(
+				`export function Spinner() @{
+					<>
+						<style>
+							@keyframes spin ${frames}
+							:root .icon { animation: spin 1s infinite; }
+							.icon { animation: none; color: gray; }
+						</style>
+						<div ${attr}="wrap"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			// The <div> doesn't match :root .icon, the <i> does: the rule keeps the
+			// specificity a match gives it, so it still wins over .icon.
+			expect(css).toContain(`:root .icon.${hash} { animation: ${hash}-spin 1s infinite; }`);
+			expect(css).toContain(`.icon.${hash} { animation: none; color: gray; }`);
+		});
 	});
 
 	describe(`[${name}] style themes and apply`, () => {

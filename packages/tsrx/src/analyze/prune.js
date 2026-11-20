@@ -1316,6 +1316,30 @@ function rule_has_animation(rule) {
 }
 
 /**
+ * The selectors of each sheet's rules with an animation that `prune_css` kept
+ * though no element it was given has matched them yet.
+ *
+ * @type {WeakMap<AST.CSS.StyleSheet, Set<AST.CSS.ComplexSelector>>}
+ */
+const unmatched_animation_selectors = new WeakMap();
+
+/**
+ * Scope the rules with an animation that no element matched, as if they
+ * matched, so a kept rule can't style elements outside the scope. Call once
+ * `prune_css` has been given every element. Without the call, such a rule is
+ * kept unscoped, as before.
+ *
+ * @param {AST.CSS.StyleSheet} css
+ * @returns {void}
+ */
+export function scope_unmatched_animation_rules(css) {
+	const pending = unmatched_animation_selectors.get(css);
+	if (!pending) return;
+	for (const node of pending) assume_match(get_relative_selectors(node));
+	unmatched_animation_selectors.delete(css);
+}
+
+/**
  * @param {AST.CSS.StyleSheet} css
  * @param {AST.TSRXElementNode} element
  * @param {StyleClasses} styleClasses
@@ -1345,10 +1369,16 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 
 			if (apply_selector(selectors, rule, element, BACKWARD)) {
 				node.metadata.used = true;
-			} else if (!node.metadata.used && rule_has_animation(rule)) {
-				// A rule with an animation is kept although it matches nothing, but
-				// scoped as if it matched, so it can't style elements outside.
-				assume_match(selectors);
+				unmatched_animation_selectors.get(css)?.delete(node);
+			} else if (rule_has_animation(rule)) {
+				// A rule with an animation is kept whatever it matches. Whether an
+				// element matches it is known only once every element is pruned, so
+				// `scope_unmatched_animation_rules` scopes it then, if none did.
+				if (!node.metadata.used) {
+					let pending = unmatched_animation_selectors.get(css);
+					if (!pending) unmatched_animation_selectors.set(css, (pending = new Set()));
+					pending.add(node);
+				}
 				node.metadata.used = true;
 			}
 
