@@ -531,7 +531,12 @@ function analyze_scope_css(block, sheet, state) {
 		return true;
 	} catch (thrown) {
 		const compile_error = /** @type {CompileError} */ (thrown);
-		if (compile_error?.code !== DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT) throw thrown;
+		if (
+			compile_error?.code !== DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT &&
+			compile_error?.code !== DIAGNOSTIC_CODES.CSS_NESTING_SELECTOR_PLACEMENT
+		) {
+			throw thrown;
+		}
 		error(
 			compile_error.message,
 			state.ctx.filename,

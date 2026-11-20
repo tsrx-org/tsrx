@@ -968,6 +968,12 @@ describe('scoped style analysis', () => {
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 					0,
 				],
+				// Directly in a @scope, & gets the hash, as :scope does.
+				[
+					'@scope (.q) { :global.w, & { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
+					0,
+				],
 				// A nested keyframes name would get the hash.
 				[
 					':global.w, :root { color: red; @keyframes k { from { opacity: 0; } } }',
@@ -1146,7 +1152,11 @@ describe('scoped style analysis', () => {
 				let pos = -1;
 				for (let i = 0; i <= nth; i++) pos = source.indexOf(anchor, pos + 1);
 
-				expect(thrown?.code, css).toBe(DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT);
+				expect(thrown?.code, css).toBe(
+					message === TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR
+						? DIAGNOSTIC_CODES.CSS_NESTING_SELECTOR_PLACEMENT
+						: DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
+				);
 				expect(thrown?.message, css).toBe(message);
 				expect([thrown?.pos, thrown?.end], css).toEqual([pos, pos + anchor.length]);
 			}

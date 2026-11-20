@@ -132,7 +132,10 @@ function is_unscoped(selector, subject_hashed = false) {
 		const [first] = selectors;
 		const pseudo = (/** @type {AST.CSS.SimpleSelector} */ simple) =>
 			simple.type === 'PseudoClassSelector' || simple.type === 'PseudoElementSelector';
-		const nesting = selectors.some((simple) => simple.type === 'NestingSelector');
+		// An `&` for a `@scope`'s root gets the hash, as `:scope` does.
+		const nesting =
+			selectors.some((simple) => simple.type === 'NestingSelector') &&
+			!is_scope_root_ampersand(selector.metadata.rule);
 		return (
 			((first.type === 'PseudoClassSelector' &&
 				(first.name === 'root' || first.name === 'host') &&
@@ -258,7 +261,7 @@ function compute_subject_hashed(rule) {
 		const [first] = selectors;
 		if (metadata.is_global || metadata.is_global_like) return false;
 		if (selectors.some((simple) => simple.type === 'NestingSelector')) {
-			return ampersand_hashed(rule);
+			return is_scope_root_ampersand(rule) || ampersand_hashed(rule);
 		}
 		return !(
 			selectors.length === 1 &&
@@ -442,6 +445,18 @@ export function has_parent_rule_in_output(rule) {
 }
 
 /**
+ * Whether an `&` in `rule`'s selectors stands for a `@scope`'s root: the rule
+ * is directly in a `@scope`, with no rule around it. CSS reads that `&` as
+ * `:where(:scope)`, so the output scopes it as it scopes `:scope`.
+ *
+ * @param {AST.CSS.Rule | null | undefined} rule
+ * @returns {boolean}
+ */
+export function is_scope_root_ampersand(rule) {
+	return !!rule && !rule.metadata.parent_rule && scope_root_rules.has(rule);
+}
+
+/**
  * Whether the output has something around `rule` for an `&` in its selectors
  * to stand for: a rule (the rules in a `:global { ... }` block the output
  * drops belong to the rule around it), or a `@scope`, whose root it is.
@@ -578,7 +593,8 @@ function check_rules_without_parent(rules, report) {
  * Analyze CSS and set metadata for global selectors.
  *
  * `:global` placement problems are reported through `error()` with the
- * `CSS_GLOBAL_PLACEMENT` code: pushed onto `errors` when given (and skipped
+ * `CSS_GLOBAL_PLACEMENT` code, and an `&` with no rule around it with
+ * `CSS_NESTING_SELECTOR_PLACEMENT`: pushed onto `errors` when given (and skipped
  * over a suppressing comment when `comments` is given too), thrown otherwise.
  * When `css` is a sheet parsed with a `body` origin (every sheet `parseModule`
  * produces), the diagnostic carries file-relative `pos` / `end` / `loc`; the
@@ -731,19 +747,6 @@ export function analyze_css(css, options = {}) {
 		RelativeSelector(node, context) {
 			// Check if this selector is a :global selector
 			node.metadata.is_global = node.selectors.length >= 1 && is_global(node);
-
-			// With no rule around it, an `&` directly in a `@scope` stands for the
-			// scope's root, which the output doesn't scope: like `:root`, its
-			// compound can match any element, in the scope's elements or not.
-			const rule = context.state.rule;
-			if (
-				rule &&
-				!rule.metadata.parent_rule &&
-				scope_root_rules.has(rule) &&
-				node.selectors.some((selector) => selector.type === 'NestingSelector')
-			) {
-				node.metadata.is_global_like = true;
-			}
 
 			// Check for :root and other global-like selectors
 			if (

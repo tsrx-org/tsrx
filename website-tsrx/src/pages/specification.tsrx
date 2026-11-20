@@ -297,11 +297,9 @@ const STYLE_STATIC_CONSTRAINTS = [
 	'  is an error, unless leaving the hash out can only make it match fewer',
 	'  elements (in a :not() argument). A lone :global stands for the rule around',
 	'  it; outside a rule, it must be the only selector in a list whose rule has',
-	'  declarations. An & stands for the rule around it, or directly in a @scope',
-	'  for the root of the scope; outside both, or in a :global { ... } block',
-	'  outside a rule, which the output drops, an & is an error (one in',
-	'  :global(...) is kept as written), and so is a declaration such a block',
-	'  leaves outside every rule and every at-rule that holds declarations.',
+	'  declarations. A declaration in a :global { ... } block outside a rule,',
+	'  which the output drops, is an error, unless an at-rule that holds',
+	'  declarations (@font-face) is around it.',
 	'TSRX3012',
 	'  A style body must not contain an @import rule; the imported rules would not',
 	'  be scoped.',
@@ -309,6 +307,11 @@ const STYLE_STATIC_CONSTRAINTS = [
 	'  A style element must not be rendered as an expression child: the expression of',
 	'  a child expression container, directly or as a branch of a conditional or',
 	'  logical expression. There it evaluates to its class map and styles nothing.',
+	'TSRX3015',
+	'  An & stands for the rule around it, or directly in a @scope for the root of',
+	'  the scope, which the output scopes as it scopes :scope. Outside both, or in',
+	'  a :global { ... } block outside a rule, which the output drops, an & is an',
+	'  error; one in :global(...) is kept as written.',
 	'',
 	'Emission order (normative): outer scope before inner scope; applied block',
 	'before the block that applies it; source order within one scope, later wins.',
@@ -677,6 +680,8 @@ const TSRX_ERROR_CODES = [
 	'          <style>p { color: red; </style>',
 	'TSRX3014  A <style> block inside an expression container, such as {<style>…</style>}, evaluates to its class map, so as a child it styles nothing.',
 	'          <div>{<style>p {}</style>}</div>',
+	'TSRX3015  An & stands for the rule around it, so outside a rule, or in a :global { ... } block outside a rule, it would match the root element of the page.',
+	'          <style>& { color: red; }</style>',
 	'TSRX4001  Platform flag usage requires a configured TSRX platform.',
 	'          import.meta.env.platform.web  (without tsrx.platform)',
 	'TSRX4002  Cannot declare a variable named "_$_x" as identifiers starting with "_$_" are reserved',
@@ -1778,6 +1783,13 @@ export function SpecificationPage() @{
 									<code class="inline-code">TSRX3014</code>: it evaluates to its class map, which
 									styles nothing as a child. A style element whose value is used, such as an
 									attribute value or a member read, is an assigned block.
+								</li>
+								<li>
+									Within a style body, an <code class="inline-code">&amp;</code> with no rule around
+									it, or in a <code class="inline-code">{':global { ... }'}</code> block outside a
+									rule, is <code class="inline-code">TSRX3015</code>. Directly in a{' '}
+									<code class="inline-code">@scope</code> it stands for the root of the scope and is
+									scoped as <code class="inline-code">:scope</code> is.
 								</li>
 							</ul>
 							<p class="section-body">

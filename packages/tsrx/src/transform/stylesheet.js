@@ -6,7 +6,11 @@
 import MagicString from 'magic-string';
 import { walk } from 'zimmerframe';
 import { unescape_css } from '../parse/style.js';
-import { drops_selector, has_parent_rule_in_output } from '../analyze/css-analyze.js';
+import {
+	drops_selector,
+	has_parent_rule_in_output,
+	is_scope_root_ampersand,
+} from '../analyze/css-analyze.js';
 
 const regex_css_browser_prefix = /^-((webkit)|(moz)|(o)|(ms))-/;
 const regex_css_ident_start = /^(-?([a-zA-Z_\\]|[^\x00-\x7f])|--)/;
@@ -750,7 +754,12 @@ const visitors = {
 					}
 				}
 
-				if (relative_selector.selectors.some((s) => s.type === 'NestingSelector')) {
+				// An `&` stands for the rule around it, which has the hash already,
+				// except directly in a `@scope`, where it is the scope's root.
+				if (
+					relative_selector.selectors.some((s) => s.type === 'NestingSelector') &&
+					!is_scope_root_ampersand(node.metadata.rule)
+				) {
 					continue;
 				}
 

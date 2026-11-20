@@ -898,9 +898,9 @@ function is_global(selector, rule) {
 				owner = rule.metadata.parent_rule;
 				selector_list = owner.prelude;
 			} else {
-				// With no rule around it, `&` stands for a `@scope`'s root, which
-				// the output doesn't scope.
-				can_be_global = explicitly_global = true;
+				// With no rule around it, `&` stands for a `@scope`'s root, as `:scope`
+				// does.
+				can_be_global = true;
 			}
 		}
 
@@ -1261,7 +1261,8 @@ function relative_selector_might_apply_to_node(relative_selector, rule, element,
 				let matched = false;
 
 				const parent = rule.metadata.parent_rule;
-				// A `@scope`'s root, with no rule around: possibly any element.
+				// A `@scope`'s root, with no rule around: possibly any element, as
+				// for `:scope`.
 				if (!parent) break;
 
 				for (const complex_selector of parent.prelude.children) {
