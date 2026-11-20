@@ -689,7 +689,11 @@ function keep_not_arguments(selector) {
  */
 function assume_match(selectors) {
 	for (const selector of selectors) {
-		if (!is_outer_global(selector)) selector.metadata.scoped = true;
+		// A match leaves a global-like compound (`:root`, `:host`) unscoped too,
+		// so the specificity bump goes to the next compound.
+		if (!is_outer_global(selector) && !selector.metadata.is_global_like) {
+			selector.metadata.scoped = true;
+		}
 
 		for (const simple_selector of selector.selectors) {
 			if (simple_selector.type !== 'PseudoClassSelector' || !simple_selector.args) continue;
@@ -1316,6 +1320,33 @@ function rule_has_animation(rule) {
 }
 
 /**
+ * The selectors of each sheet's rules with an animation that `prune_css` kept
+ * though no element it was given has matched them yet.
+ *
+ * @type {WeakMap<AST.CSS.StyleSheet, Set<AST.CSS.ComplexSelector>>}
+ */
+const unmatched_animation_selectors = new WeakMap();
+
+/**
+ * Scope the rules with an animation that no element matched, as if they
+ * matched, so a kept rule can't style elements outside the scope. Call once
+ * `prune_css` has been given every element. Without the call, such a rule is
+ * kept unscoped, as before.
+ *
+ * @param {AST.CSS.StyleSheet} css
+ * @returns {void}
+ */
+export function scope_unmatched_animation_rules(css) {
+	const pending = unmatched_animation_selectors.get(css);
+	if (!pending) return;
+	for (const node of pending) assume_match(get_relative_selectors(node));
+	unmatched_animation_selectors.delete(css);
+	// `assume_match` scopes the `:is()`, `:where()` and `:has()` arguments of a
+	// global compound too, which stay as written.
+	keep_global_compound_arguments(css);
+}
+
+/**
  * @param {AST.CSS.StyleSheet} css
  * @param {AST.TSRXElementNode} element
  * @param {StyleClasses} styleClasses
@@ -1343,7 +1374,21 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 
 			const rule = /** @type {AST.CSS.Rule} */ (node.metadata.rule);
 
-			if (apply_selector(selectors, rule, element, BACKWARD) || rule_has_animation(rule)) {
+			if (apply_selector(selectors, rule, element, BACKWARD)) {
+				node.metadata.used = true;
+				unmatched_animation_selectors.get(css)?.delete(node);
+			} else if (rule_has_animation(rule)) {
+				// A rule with an animation is kept whatever it matches. Whether an
+				// element matches it is known only once every element is pruned, so
+				// `scope_unmatched_animation_rules` scopes it then, if none did. Only
+				// the rule's own selectors: `assume_match` scopes their arguments as
+				// a match would, and an argument of a selector that matched stays
+				// as `prune_css` left it.
+				if (!node.metadata.used && rule.prelude.children.includes(node)) {
+					let pending = unmatched_animation_selectors.get(css);
+					if (!pending) unmatched_animation_selectors.set(css, (pending = new Set()));
+					pending.add(node);
+				}
 				node.metadata.used = true;
 			}
 
