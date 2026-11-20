@@ -1490,6 +1490,11 @@ export function keep_global_compound_arguments(css) {
 							relative_selector.metadata.scoped = false;
 							context.next();
 						},
+						// In a :root or :host compound's argument, a :has() still looks at
+						// descendants (`:root:not(:root:has(.icon))`), scoped as before.
+						PseudoClassSelector(pseudo_class, context) {
+							if (global || pseudo_class.name !== 'has') context.next();
+						},
 					});
 				}
 			}

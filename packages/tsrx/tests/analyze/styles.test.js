@@ -1076,6 +1076,9 @@ describe('scoped style analysis', () => {
 				':global.w, :root:not(:root:not(.x)) { color: red; }',
 				':global.w, :host:is(.a) { color: red; }',
 				':global.w, :root:where(.a .b) { color: red; }',
+				'.p { :global.w, &:not(:root:not(.x)) { color: red; } }',
+				'.p { :global.w, &:where(:root:is(.a)) { color: red; } }',
+				':global.w, :root :global :root:is(.a) { color: red; }',
 				// The & already has the hash, and :where() adds no specificity.
 				'.p { :global.w, &:where(.p) { color: red; } }',
 				'@scope (.q) { .p { :global.w, &:where(.p) { color: red; } } }',

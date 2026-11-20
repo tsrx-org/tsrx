@@ -2446,17 +2446,22 @@ export function runSharedScopedStyleTests({
 				expect(component.css, selector).toContain(kept);
 				expect(component.css, selector).not.toContain('(unused)');
 			}
-			// Those of its :has() are its descendants, scoped.
+			// Those of its :has() are its descendants, scoped, in such an argument too.
 			const { css, cssHash } = compile(
 				`export function App() @{
 					<>
-						<style>:root:has(.icon):not(.dark) { color: red; }</style>
+						<style>
+							:root:has(.icon):not(.dark) { color: red; }
+							:root:not(:root:has(.icon)) .wrap { color: blue; }
+						</style>
 						<div ${attr}="wrap"><i ${attr}="icon" /></div>
 					</>
 				}`,
 				'App.tsrx',
 			);
-			expect(css).toContain(`:root:has(.icon.${hashes_of(cssHash)[0]}):not(.dark) {`);
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`:root:has(.icon.${hash}):not(.dark) {`);
+			expect(css).toContain(`:root:not(:root:has(.icon:where(.${hash}))) .wrap.${hash} {`);
 		});
 
 		it('keeps the arguments of a :global() compound in a scope without elements', () => {
