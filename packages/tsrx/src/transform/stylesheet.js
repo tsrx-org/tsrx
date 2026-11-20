@@ -290,24 +290,23 @@ function escape_comment_ends(start, end, code) {
  * @returns {number}
  */
 function separator_comma(source, start, end) {
-	/** @type {Array<[number, number]>} */
-	const comments = [];
+	let comma = -1;
 	for (let i = start; i < end;) {
 		if (source.startsWith('/*', i)) {
 			const close = source.indexOf('*/', i + 2);
-			const stop = close === -1 ? end : Math.min(close + 2, end);
-			comments.push([i, stop]);
-			i = stop;
+			i = close === -1 ? end : Math.min(close + 2, end);
 		} else if (source.startsWith('<!--', i)) {
 			const close = source.indexOf('-->', i + 4);
-			i = close === -1 ? end : Math.min(close + 3, end);
+			const stop = close === -1 ? end : Math.min(close + 3, end);
+			const inner = source.lastIndexOf(',', stop - 1);
+			if (inner >= i) comma = inner;
+			i = stop;
 		} else {
+			if (source[i] === ',') comma = i;
 			i++;
 		}
 	}
-	for (let i = end - 1; i >= start; i--) {
-		if (source[i] === ',' && !comments.some(([from, to]) => i >= from && i < to)) return i;
-	}
+	if (comma !== -1) return comma;
 	let i = end;
 	while (source[i] !== ',') i--;
 	return i;
