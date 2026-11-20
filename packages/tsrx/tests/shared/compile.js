@@ -7600,7 +7600,7 @@ export function App({ items }: { items: string[] }) @{
 			expect(run_result(code)).toBe('div');
 		});
 
-		it.each(['_tsrx_spread_props_1', 'App__spread_props1'])(
+		it.each(['_tsrx_spread_props_1', 'App__spread_props1', 'App__spread_props\\u{31}'])(
 			'names the spread temporary of a component inside a method apart from a %s the author wrote',
 			(user_name) => {
 				const { code } = compile(
@@ -7620,6 +7620,33 @@ export function App({ items }: { items: string[] }) @{
 					'App.tsrx',
 				);
 				expect(run_result(code)).toEqual(['spread', 'mine']);
+			},
+		);
+
+		it.each([
+			[
+				'two spreads',
+				'App__spread_props\\u0031',
+				'<div {...props.a} {...props.b} ref={props.r} title={NAME} />',
+				'App__spread_props1',
+			],
+			[
+				'a spread after its own ref',
+				'App__r\\u0065f1',
+				'<input ref={props.r} {...props.a} title={NAME} />',
+				'App__ref1',
+			],
+		])(
+			'names the temporaries of %s apart from an authored name written with a Unicode escape',
+			(_case, authored, element, printed) => {
+				// The printer spells the authored name without the escape
+				const { code } = compile(
+					`export function App(props: any) {\n\tconst ${authored} = 'mine';\n\treturn ${element.replace('NAME', authored)};\n}`,
+					'App.tsrx',
+				);
+				expect(code.match(new RegExp(`\\b(?:const|let|var) ${printed}\\b`, 'g'))).toEqual([
+					`const ${printed}`,
+				]);
 			},
 		);
 
@@ -7691,6 +7718,12 @@ export function App({ items }: { items: string[] }) @{
 				"export function $App() {\n\tconst $App__static1 = 'local';\n\treturn <>{<div>static</div>}{$App__static1}</>;\n}\nexport const result = () => $App().props.children.map((child: any) => (typeof child === 'object' ? child.type : child));",
 				['$App__static2'],
 				['div', 'local'],
+			],
+			[
+				'written with Unicode escapes',
+				"const App__st\\u0061tic1 = 'module';\nexport function App() {\n\tconst App__static\\u{32} = 'local';\n\treturn <>{<div>static</div>}<b>bare</b>{App__st\\u0061tic1}{App__static\\u{32}}</>;\n}\nexport const result = () => App().props.children.map((child: any) => (typeof child === 'object' ? child.type : child));",
+				['App__static3', 'App__static4'],
+				['div', 'b', 'module', 'local'],
 			],
 		])(
 			'names a static apart from an authored static name %s',
@@ -7765,6 +7798,19 @@ export function App({ items }: { items: string[] }) @{
 				).toEqual(hoistsStaticJsx ? statics : []);
 			},
 		);
+
+		it('renames a colliding static apart from an authored name written with a Unicode escape', () => {
+			// The second arrow's folded static collides with the first one's, and
+			// the next id, 3, is the authored `TSRXTemplate__static3`.
+			const { code } = compile(
+				"const TSRXTemplate__static\\u0033 = 'mine';\nexport const list = [() => @{ <b /> }, () => @{ <><i /><u /></> }];\nexport const result = () => [list[0]().type, TSRXTemplate__st\\u0061tic3];",
+				'App.tsrx',
+			);
+			expect([...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1])).toEqual(
+				hoistsStaticJsx ? ['TSRXTemplate__static1', 'TSRXTemplate__static4'] : [],
+			);
+			expect(run_result(code)).toEqual(['b', 'mine']);
+		});
 
 		it('hoists an intrinsic tag that shares its name with a later binding', () => {
 			const { code } = compile(

@@ -4127,6 +4127,199 @@ function PendingCatchThrowsAlone(props: { promise: CatchLoader }) @{
 	}
 }
 
+function count_catch_pattern(): string {
+	catch_runs++;
+	return '!';
+}
+
+function SyncThrow() @{
+	throw new Error('sync body');
+	<p />
+}
+
+// The body throws as it renders, under @pending, and the @catch's parameter
+// pattern throws: it reads `status` from an error without a `response`.
+function SyncCatchPatternThrows() @{
+	@try {
+		@try {
+			<SyncThrow />
+		} @pending {
+			<p class="catch-pending">{'loading'}</p>
+		} @catch ({ seen = count_catch_pattern(), response: { status } }: any) {
+			<p class="inner-caught">{String(status) + seen}</p>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+// The same, without an outer @try.
+function SyncCatchPatternThrowsAlone() @{
+	@try {
+		<SyncThrow />
+	} @pending {
+		<p class="catch-pending">{'loading'}</p>
+	} @catch ({ seen = count_catch_pattern(), response: { status } }: any) {
+		<p class="inner-caught">{String(status) + seen}</p>
+	}
+}
+
+// The async child rejects, and the @catch's parameter pattern throws.
+function RejectedCatchPatternThrows(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		@try {
+			<AsyncChild value="hello" />
+		} @pending {
+			<p class="catch-pending">{'loading'}</p>
+		} @catch ({ seen = count_catch_pattern(), response: { status } }: any) {
+			<p class="inner-caught">{String(status) + seen}</p>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+// The async child appears after the Suspense resolved, then rejects, and the
+// @catch's parameter pattern throws.
+const catch_pattern_async_shown = ref(false);
+
+function LateRejectedCatchPatternThrows(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		@try {
+			<div>
+				@if (catch_pattern_async_shown.value) {
+					<AsyncChild value="hello" />
+				}
+			</div>
+		} @pending {
+			<p class="catch-pending">{'loading'}</p>
+		} @catch ({ seen = count_catch_pattern(), response: { status } }: any) {
+			<p class="inner-caught">{String(status) + seen}</p>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+// The body's first render throws while the Suspense is pending, and leaves a
+// watcher that throws later. The @catch resets, which replaces the boundary
+// inside the Suspense; the watcher then throws.
+const replaced_twin = { initial: true, release: () => {} };
+
+function fail_with(message: string): never {
+	throw new Error(message);
+}
+
+function arm_late_watcher(): string {
+	if (replaced_twin.initial) {
+		const gate = new Promise<void>((resolve) => (replaced_twin.release = resolve));
+		watchEffect(async () => {
+			await gate;
+			throw new Error('late');
+		});
+	}
+	return '';
+}
+
+function LateFromReplacedTwin(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<div>
+			@if (replaced_twin.initial) {
+				<AsyncChild value="hello" />
+			}
+			<span>{arm_late_watcher()}</span>
+			<span class="replaced-body">{replaced_twin.initial ? fail_with('body') : 'ok'}</span>
+		</div>
+	} @pending {
+		<i>{replaced_twin.initial ? fail_with('pending') : 'loading'}</i>
+	} @catch (err, reset) {
+		<button
+			class="replaced-reset"
+			onClick={() => {
+				replaced_twin.initial = false;
+				reset();
+			}}
+		>
+			{(err as Error).message}
+		</button>
+	}
+}
+
+// The body registers an unmount hook that throws, then throws as it renders,
+// so the @catch shows; the hook throws when the @try goes away.
+function arm_teardown(): string {
+	onBeforeUnmount(() => {
+		throw new Error('teardown');
+	});
+	return '';
+}
+
+function TeardownTwin() @{
+	@try {
+		<p>
+			{arm_teardown()}
+			{fail_with('body')}
+		</p>
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function TeardownPlain() @{
+	@try {
+		<p>
+			{arm_teardown()}
+			{fail_with('body')}
+		</p>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+// The same, while the body shows.
+function TeardownShowingTwin() @{
+	@try {
+		<p class="teardown-body">{arm_teardown()}</p>
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function TeardownShowingPlain() @{
+	@try {
+		<p class="teardown-body">{arm_teardown()}</p>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+// An enclosing @try shows its @catch, which removes the @try inside it.
+function EnclosingTeardown(props: { inner: unknown }) @{
+	const Inner = props.inner as typeof TeardownTwin;
+	@try {
+		<div>
+			<Inner />
+			<button
+				class="remove-inner"
+				onClick={() => {
+					throw new Error('remove');
+				}}
+			>
+				{'remove'}
+			</button>
+		</div>
+	} @catch (err) {
+		<b class="enclosing-caught">{(err as Error).message}</b>
+	}
+}
+
 function throw_content(error: unknown): never {
 	throw error;
 }
@@ -4575,6 +4768,113 @@ describe('tsrx-vue a @catch that throws', () => {
 		const app = await mount(PendingCatchThrows, { promise: never_loads() });
 		expect(text('.outer-caught')).toBe('catch boom after pending boom');
 		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it.each([
+		['as the body renders', false],
+		['after a rejection', true],
+	])(
+		'runs a @catch parameter pattern that throws once, %s, and passes its error to the next @catch out',
+		async (_name, rejects) => {
+			let app;
+			if (rejects) {
+				let reject!: (error: Error) => void;
+				const promise: CatchLoader = new Promise((_resolve, fail) => (reject = fail));
+				app = await mount(RejectedCatchPatternThrows, { promise });
+				reject(new Error('rejected'));
+				await flush();
+			} else {
+				app = await mount(SyncCatchPatternThrows, {});
+			}
+			expect(text('.outer-caught')).toBe("Cannot read properties of undefined (reading 'status')");
+			// The boundary around the Suspense, which renders the same @catch, let
+			// the error go on without running the pattern again.
+			expect(catch_runs).toBe(1);
+			expect(handled).toEqual([]);
+			app.unmount();
+		},
+	);
+
+	it('runs a @catch parameter pattern that throws once after a rejection once the Suspense resolved', async () => {
+		catch_pattern_async_shown.value = false;
+		let reject!: (error: Error) => void;
+		const promise: CatchLoader = new Promise((_resolve, fail) => (reject = fail));
+		const app = await mount(LateRejectedCatchPatternThrows, { promise });
+		catch_pattern_async_shown.value = true;
+		await flush();
+		reject(new Error('rejected'));
+		await flush();
+		expect(text('.outer-caught')).toBe("Cannot read properties of undefined (reading 'status')");
+		expect(catch_runs).toBe(1);
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('keeps a later error from the body a reset replaced in its @catch', async () => {
+		replaced_twin.initial = true;
+		const app = await mount(LateFromReplacedTwin, { promise: never_loads() });
+		expect(text('.replaced-reset')).toBe('pending');
+		(container.querySelector('.replaced-reset') as HTMLElement).click();
+		await flush();
+		expect(text('.replaced-body')).toBe('ok');
+		replaced_twin.release();
+		await flush();
+		// As without @pending: the @catch around the body shows it.
+		expect(text('.replaced-reset')).toBe('late');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('passes on a later error from the body a reset replaced once the @try unmounts', async () => {
+		replaced_twin.initial = true;
+		const app = await mount(LateFromReplacedTwin, { promise: never_loads() });
+		(container.querySelector('.replaced-reset') as HTMLElement).click();
+		await flush();
+		expect(text('.replaced-body')).toBe('ok');
+		app.unmount();
+		replaced_twin.release();
+		await flush();
+		// As without @pending, it goes to errorHandler.
+		expect(handled).toEqual(['late']);
+	});
+
+	it.each([
+		['with @pending', TeardownTwin, 'body'],
+		['without @pending', TeardownPlain, 'body'],
+		['with @pending, the body showing', TeardownShowingTwin, null],
+		['without @pending, the body showing', TeardownShowingPlain, null],
+	])(
+		'passes on what its body throws as the @try unmounts, %s',
+		async (_name, component, caught) => {
+			const app = await mount(component, {});
+			expect(container.querySelector('.teardown-caught')?.textContent ?? null).toBe(caught);
+			app.unmount();
+			expect(handled).toEqual(['teardown']);
+		},
+	);
+
+	it.each([
+		['with @pending', TeardownTwin],
+		['without @pending', TeardownPlain],
+	])(
+		'passes on what its body throws as an enclosing @catch removes the @try %s',
+		async (_name, inner) => {
+			const app = await mount(EnclosingTeardown, { inner });
+			expect(text('.teardown-caught')).toBe('body');
+			(container.querySelector('.remove-inner') as HTMLElement).click();
+			await flush();
+			expect(text('.enclosing-caught')).toBe('teardown');
+			expect(handled).toEqual([]);
+			app.unmount();
+		},
+	);
+
+	it('runs a @catch parameter pattern that throws once, and passes its error to app.config.errorHandler', async () => {
+		const app = await mount(SyncCatchPatternThrowsAlone, {});
+		expect(handled).toEqual(["Cannot read properties of undefined (reading 'status')"]);
+		expect(catch_runs).toBe(1);
+		expect(container.querySelector('.inner-caught')).toBeNull();
 		app.unmount();
 	});
 
