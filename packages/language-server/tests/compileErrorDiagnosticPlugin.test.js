@@ -4,6 +4,7 @@
 import { TS_ERRORS, TSRX_ERRORS } from '@tsrx/core';
 import { DIAGNOSTIC_SOURCE } from '@tsrx/core/diagnostics';
 import { describe, expect, it } from 'vitest';
+import { TextDocument as TextDocumentStub } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity } from '@volar/language-server';
 import { createCompileErrorDiagnosticPlugin } from '../src/compileErrorDiagnosticPlugin.js';
 import { createTypeScriptDiagnosticFilterPlugin } from '../src/typescriptDiagnosticPlugin.js';
@@ -99,6 +100,72 @@ const theme = <style>.e :global(.f) .g { color: red; } @import 'x.css';</style>;
 			['TSRX3011', ':global(.f)'],
 			['TSRX3012', "@import 'x.css';"],
 		]);
+	});
+
+	it('keeps an error on the TSRX document when its <style> body shares an id', async () => {
+		// Volar keeps one embedded code of an id and gives every document of that
+		// id that code, so the body whose id another body shares has no document
+		// of its own: its error stays on the TSRX document, and no other body's
+		// document takes it.
+		const source = 'x'.repeat(120);
+		/**
+		 * @param {string} id
+		 * @param {number} start
+		 */
+		const css = (id, start) => ({
+			id,
+			languageId: 'css',
+			mappings: [{ sourceOffsets: [start], generatedOffsets: [0], lengths: [20], data: {} }],
+			embeddedCodes: [],
+		});
+		const shared_a = css('style-shared', 10);
+		const shared_b = css('style-shared', 50);
+		const own = css('style-own', 90);
+		/** @param {number} pos */
+		const usage_error = (pos) => ({
+			pos,
+			end: pos + 5,
+			message: 'm',
+			code: 'TSRX3011',
+			type: 'usage',
+		});
+		const root = {
+			id: 'root',
+			languageId: 'tsrx',
+			embeddedCodes: [shared_a, shared_b, own],
+			fatalErrors: [],
+			usageErrors: [usage_error(55), usage_error(95)],
+			mappings: [],
+			originalCode: source,
+			findMappingBySourceRange: () => null,
+			findGeneratedRangeBySourceRange: () => null,
+		};
+		const codes = new Map([
+			['root', root],
+			['style-shared', shared_b],
+			['style-own', own],
+		]);
+		const context = /** @type {any} */ ({
+			decodeEmbeddedDocumentUri: (/** @type {{ path: string }} */ uri) => [uri, uri.path.slice(1)],
+			language: {
+				scripts: { get: () => ({ generated: { root, embeddedCodes: codes } }) },
+				maps: { get: () => undefined },
+			},
+		});
+		const plugin = createCompileErrorDiagnosticPlugin().create(context);
+		/** @param {string} id */
+		const shown = async (id) =>
+			(
+				await plugin.provideDiagnostics?.(
+					TextDocumentStub.create(`file:///${id}`, 'css', 0, source),
+					/** @type {any} */ ({ isCancellationRequested: false }),
+				)
+			)?.map((diagnostic) => [diagnostic.range.start.character, diagnostic.range.end.character]);
+
+		expect(await shown('style-shared')).toEqual([]);
+		expect(await shown('style-own')).toEqual([[5, 10]]);
+		// The shared body's error, at the start of the file for want of a mapping.
+		expect(await shown('root')).toEqual([[0, 1]]);
 	});
 
 	it('reports nothing for a valid apply', async () => {

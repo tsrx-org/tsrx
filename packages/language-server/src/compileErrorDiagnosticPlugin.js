@@ -40,7 +40,7 @@ export function createCompileErrorDiagnosticPlugin() {
 						const root = /** @type {TSRXVirtualCodeInstance | undefined} */ (
 							sourceScript?.generated?.root
 						);
-						return root?.languageId === 'tsrx'
+						return root?.languageId === 'tsrx' && has_own_id(virtualCode, root)
 							? css_region_diagnostics(root, virtualCode, document)
 							: [];
 					}
@@ -57,10 +57,9 @@ export function createCompileErrorDiagnosticPlugin() {
 					let typescript_diagnostics;
 
 					for (const error of [...virtualCode.fatalErrors, ...virtualCode.usageErrors]) {
-						// Shown in the embedded CSS of the `<style>` body it is in, when the
-						// editor has that code (it keeps one code of an id).
+						// Shown in the embedded CSS of the `<style>` body it is in.
 						const css = error.type === 'fatal' ? null : css_region_of(error, virtualCode);
-						if (css && sourceScript?.generated?.embeddedCodes.get(css.id) === css) continue;
+						if (css && has_own_id(css, virtualCode)) continue;
 
 						const diagnostic = parseCompilationErrorWithDocument(
 							error,
@@ -115,6 +114,18 @@ function css_region_of(error, root) {
 		if (region && region[0] <= error.pos && end <= region[1]) return code;
 	}
 	return null;
+}
+
+/**
+ * Whether `code` is the only embedded code of `root` with its id. Volar keeps
+ * one code of an id and gives every document of that id that code, so an error
+ * in a code whose id another shares stays on the TSRX document.
+ * @param {import('@volar/language-server').VirtualCode} code
+ * @param {TSRXVirtualCodeInstance} root
+ * @returns {boolean}
+ */
+function has_own_id(code, root) {
+	return (root.embeddedCodes ?? []).filter((other) => other.id === code.id).length === 1;
 }
 
 /**
