@@ -643,7 +643,7 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		return;
 	}
 
-	if (current.type === 'ReturnStatement') {
+	if (current.type === 'ReturnStatement' && !current.metadata?.invalid_directive_jump) {
 		error(
 			TSRX_ERRORS.FOR_RETURN_STATEMENT,
 			transform_context.filename,
@@ -716,7 +716,7 @@ function validate_if_body_control_flow(node, transform_context) {
 		return;
 	}
 
-	if (current.type === 'ReturnStatement') {
+	if (current.type === 'ReturnStatement' && !current.metadata?.invalid_directive_jump) {
 		error(
 			TSRX_ERRORS.IF_RETURN_STATEMENT,
 			transform_context.filename,

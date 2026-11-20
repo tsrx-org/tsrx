@@ -6238,7 +6238,7 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		return;
 	}
 
-	if (node.type === 'ReturnStatement') {
+	if (node.type === 'ReturnStatement' && !node.metadata?.invalid_directive_jump) {
 		error(
 			TSRX_ERRORS.FOR_RETURN_STATEMENT,
 			transform_context.filename,
@@ -6307,7 +6307,7 @@ function validate_if_body_control_flow(node, transform_context) {
 		return;
 	}
 
-	if (node.type === 'ReturnStatement') {
+	if (node.type === 'ReturnStatement' && !node.metadata?.invalid_directive_jump) {
 		error(
 			TSRX_ERRORS.IF_RETURN_STATEMENT,
 			transform_context.filename,
@@ -6464,19 +6464,22 @@ function collect_directive_declarations(node, parent, in_body, found) {
  * a loop, `switch` or label outside it; the output wouldn't parse. This
  * reports each such jump once, in source order. A `break` that leaves an
  * `@switch` case is `SWITCH_CASE_BREAK_STATEMENT`, which the parser reports
- * for a `break` right in the case. A jump in an `@if` body, or in an `@for`
- * body outside a loop there, is the `@if` or `@for` check's to report; a
- * jump in a loop in an `@for` body that leaves the body, which that check
- * doesn't see, is reported here with the `@for` check's errors, and so is
- * one that leaves an `@else if` body, or the `@else` after one, with the
- * `@if` check's.
+ * for a `break` right in the case, and a `return` in a case, outside a
+ * function and a directive body there, is `SWITCH_CASE_RETURN_STATEMENT`,
+ * which the parser reports for a `return` right in the case: it would only
+ * end the function the case runs in, and its value would replace the
+ * `@switch`, not end the component. A jump in an `@if` body, or in an `@for`
+ * body outside a loop there, is the `@if` or `@for` check's to report; a jump
+ * in a loop in an `@for` body that leaves the body, which that check doesn't
+ * see, is reported here with the `@for` check's errors, and so is one that
+ * leaves an `@else if` body, or the `@else` after one, with the `@if` check's.
  *
  * @param {AST.Program} program
  * @param {TransformContext} transform_context
  * @returns {void}
  */
 function validate_directive_jumps(program, transform_context) {
-	/** @type {Array<{ node: AST.BreakStatement | AST.ContinueStatement, kind: JumpScope['kind'] }>} */
+	/** @type {Array<{ node: AST.BreakStatement | AST.ContinueStatement | AST.ReturnStatement, kind: JumpScope['kind'] }>} */
 	const found = [];
 	collect_directive_jumps(program, null, NO_JUMP_SCOPE, found);
 	found.sort(
@@ -6485,6 +6488,16 @@ function validate_directive_jumps(program, transform_context) {
 			/** @type {AST.NodeWithLocation} */ (b.node).start,
 	);
 	for (const { node, kind } of found) {
+		if (node.type === 'ReturnStatement') {
+			error(
+				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				transform_context.filename,
+				node,
+				transform_context.errors,
+				transform_context.comments,
+			);
+			continue;
+		}
 		const is_break = node.type === 'BreakStatement';
 		const diagnostic =
 			kind === 'for'
@@ -6534,10 +6547,22 @@ function validate_directive_jumps(program, transform_context) {
  * @param {AST.Node} node
  * @param {AST.Node | null} parent
  * @param {JumpScope} scope
- * @param {Array<{ node: AST.BreakStatement | AST.ContinueStatement, kind: JumpScope['kind'] }>} found
+ * @param {Array<{ node: AST.BreakStatement | AST.ContinueStatement | AST.ReturnStatement, kind: JumpScope['kind'] }>} found
  * @returns {void}
  */
 function collect_directive_jumps(node, parent, scope, found) {
+	// The parser reports a `return` in an `@try`, `@pending` or `@catch` body or
+	// a nested `@{ … }` block, also one in an `@switch` there.
+	if (
+		node.type === 'ReturnStatement' &&
+		scope.kind === 'case' &&
+		!node.metadata?.invalid_tsrx_template_return
+	) {
+		// The `@if` and `@for` checks, which see a `return` in an `@switch` in
+		// their bodies, leave it to this one.
+		node.metadata = { ...node.metadata, invalid_directive_jump: true };
+		found.push({ node, kind: scope.kind });
+	}
 	if (node.type === 'BreakStatement' || node.type === 'ContinueStatement') {
 		const is_break = node.type === 'BreakStatement';
 		const label = node.label?.name ?? null;
