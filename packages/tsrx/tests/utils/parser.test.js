@@ -3596,6 +3596,37 @@ foo();`;
 		).toThrow(error_with(TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT));
 	});
 
+	it('records a return right in a JSX switch case when collecting, and reads on', () => {
+		for (const [statement, also] of [
+			['return;', ''],
+			['return <path />;', ''],
+			['const d = 1; return d;', ''],
+			['return null;', " @case 'g': { return; }"],
+		]) {
+			/** @type {any[]} */
+			const errors = [];
+			const source = `function App() { return @switch (tag) {
+					@case 'path': {
+						${statement}
+					}${also}
+				}; }
+				export const after = 1;`;
+			const program = parseModule(source, 'App.tsrx', { collect: true, loose: true, errors });
+			const starts = [...source.matchAll(/\breturn\b/g)].map((match) => match.index).slice(1);
+			expect(
+				errors.map((error) => [error.code, error.pos, error.end]),
+				statement,
+			).toEqual(
+				starts.map((start) => [
+					TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code,
+					start,
+					start + 'return'.length,
+				]),
+			);
+			expect(program.body.at(-1)?.type, statement).toBe('ExportNamedDeclaration');
+		}
+	});
+
 	it('scopes switch case setup locals to their own case block', () => {
 		expect(() =>
 			parseModule(

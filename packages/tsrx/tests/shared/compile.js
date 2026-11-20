@@ -484,6 +484,38 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 		});
 	});
 
+	describe(`[${name}] a return right in an @switch case in the editor`, () => {
+		it.each([
+			['a case', '<div>@switch (s) { @case 1: { return null; } @default: { <i /> } }</div>'],
+			[
+				'a case in an `@catch`',
+				'@try { <p /> } @catch (e) { <div>@switch (s) { @case 1: { return null; } @default: { <i /> } }</div> }',
+			],
+			[
+				'a case in an `@try` body',
+				'@try { <div>@switch (s) { @case 1: { return null; } @default: { <i /> } }</div> } @catch (e) { <i /> }',
+			],
+		])('is reported once in %s, and the rest of the file maps', (_, template) => {
+			const source = `export function App({ s }: { s: number }) @{\n\t${template}\n}\nexport const after = 1;\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const start = source.indexOf('return null;');
+			expect(result.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				[TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code, start, start + 'return'.length],
+			]);
+			expect(result.code).toContain('export const after = 1;');
+		});
+
+		it('reports a `return` in a nested `@{ … }` in an `@try` body once', () => {
+			// The parser checks both bodies; the outer check skips a `return` the
+			// inner one reported.
+			const source = `export function App({ s }: { s: number }) @{\n\t@try { <div>{@{ if (s) return null; <b /> }}</div> } @catch (e) { <i /> }\n}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => error.code)).toEqual([
+				TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code,
+			]);
+		});
+	});
+
 	describe(`[${name}] class index signatures in virtual code`, () => {
 		it('keeps static on a class index signature', () => {
 			expect_static_index_signatures(
