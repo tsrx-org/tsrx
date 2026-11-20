@@ -236,7 +236,9 @@ function thrown_by_fallback(source, boundary) {
  * That includes an error the inner one is itself the source of while it
  * shows the `@catch`, such as one from the `@catch`'s parameter pattern,
  * which runs as the boundary calls its fallback. A boundary without a twin
- * lets such an error go on too (`take_own_errors`).
+ * lets such an error go on too (`take_own_errors`). An inner one that a reset
+ * of the outer one replaced is gone, and what still comes from it is the
+ * body's, as before.
  *
  * @param {unknown} source
  * @param {ComponentInternalInstance} boundary
@@ -250,7 +252,14 @@ function thrown_by_twin_fallback(source, boundary) {
 		if (!state) continue;
 		// The nearest boundary inside this one.
 		if (!props_of(inner)?.sharesCatch) return false;
-		if (i === 0 && !state.shows_content) return true;
+		if (
+			i === 0 &&
+			!state.shows_content &&
+			!state.unmounting &&
+			!(/** @type {{ isUnmounted?: boolean }} */ (inner).isUnmounted)
+		) {
+			return true;
+		}
 		return thrown_by_fallback(source, inner);
 	}
 	return false;

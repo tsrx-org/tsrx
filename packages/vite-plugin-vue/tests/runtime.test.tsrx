@@ -4180,6 +4180,74 @@ function RejectedCatchPatternThrows(props: { promise: CatchLoader }) @{
 	}
 }
 
+// The async child appears after the Suspense resolved, then rejects, and the
+// @catch's parameter pattern throws.
+const catch_pattern_async_shown = ref(false);
+
+function LateRejectedCatchPatternThrows(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		@try {
+			<div>
+				@if (catch_pattern_async_shown.value) {
+					<AsyncChild value="hello" />
+				}
+			</div>
+		} @pending {
+			<p class="catch-pending">{'loading'}</p>
+		} @catch ({ seen = count_catch_pattern(), response: { status } }: any) {
+			<p class="inner-caught">{String(status) + seen}</p>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+// The body's first render throws while the Suspense is pending, and leaves a
+// watcher that throws later. The @catch resets, which replaces the boundary
+// inside the Suspense; the watcher then throws.
+const replaced_twin = { initial: true, release: () => {} };
+
+function fail_with(message: string): never {
+	throw new Error(message);
+}
+
+function arm_late_watcher(): string {
+	if (replaced_twin.initial) {
+		const gate = new Promise<void>((resolve) => (replaced_twin.release = resolve));
+		watchEffect(async () => {
+			await gate;
+			throw new Error('late');
+		});
+	}
+	return '';
+}
+
+function LateFromReplacedTwin(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<div>
+			@if (replaced_twin.initial) {
+				<AsyncChild value="hello" />
+			}
+			<span>{arm_late_watcher()}</span>
+			<span class="replaced-body">{replaced_twin.initial ? fail_with('body') : 'ok'}</span>
+		</div>
+	} @pending {
+		<i>{replaced_twin.initial ? fail_with('pending') : 'loading'}</i>
+	} @catch (err, reset) {
+		<button
+			class="replaced-reset"
+			onClick={() => {
+				replaced_twin.initial = false;
+				reset();
+			}}
+		>
+			{(err as Error).message}
+		</button>
+	}
+}
+
 function throw_content(error: unknown): never {
 	throw error;
 }
@@ -4657,6 +4725,36 @@ describe('tsrx-vue a @catch that throws', () => {
 			app.unmount();
 		},
 	);
+
+	it('runs a @catch parameter pattern that throws once after a rejection once the Suspense resolved', async () => {
+		catch_pattern_async_shown.value = false;
+		let reject!: (error: Error) => void;
+		const promise: CatchLoader = new Promise((_resolve, fail) => (reject = fail));
+		const app = await mount(LateRejectedCatchPatternThrows, { promise });
+		catch_pattern_async_shown.value = true;
+		await flush();
+		reject(new Error('rejected'));
+		await flush();
+		expect(text('.outer-caught')).toBe("Cannot read properties of undefined (reading 'status')");
+		expect(catch_runs).toBe(1);
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it('keeps a later error from the body a reset replaced in its @catch', async () => {
+		replaced_twin.initial = true;
+		const app = await mount(LateFromReplacedTwin, { promise: never_loads() });
+		expect(text('.replaced-reset')).toBe('pending');
+		(container.querySelector('.replaced-reset') as HTMLElement).click();
+		await flush();
+		expect(text('.replaced-body')).toBe('ok');
+		replaced_twin.release();
+		await flush();
+		// As without @pending: the @catch around the body shows it.
+		expect(text('.replaced-reset')).toBe('late');
+		expect(handled).toEqual([]);
+		app.unmount();
+	});
 
 	it('runs a @catch parameter pattern that throws once, and passes its error to app.config.errorHandler', async () => {
 		const app = await mount(SyncCatchPatternThrowsAlone, {});
