@@ -1,6 +1,7 @@
 import {
 	createVaporApp,
 	defineVaporAsyncComponent,
+	defineVaporComponent as makeVaporComponent,
 	onBeforeUnmount,
 	onErrorCaptured,
 	ref,
@@ -245,6 +246,44 @@ function MountsThenFails() @{
 	}
 }
 
+let finish_live_setup: () => void = () => {};
+
+// An async setup that creates a @try before it settles.
+const AsyncLive = makeVaporComponent(() => {
+	const content = <LiveTry />;
+	return new Promise<any>((resolve) => (finish_live_setup = () => resolve(content))) as never;
+});
+
+function PendingLive() @{
+	<Suspense
+		v-slots={{
+			default: () => <AsyncLive />,
+			fallback: () => <i class="live-loading">{'loading'}</i>,
+		}}
+	/>
+}
+
+function mount_pending_live(): void {
+	const target = document.createElement('div');
+	target.className = 'live-target';
+	document.body.append(target);
+	live_app = createVaporApp(PendingLive);
+	live_app.config.errorHandler = (error) => {
+		live_handled.push(String(error));
+	};
+	live_app.mount(target);
+}
+
+// The @catch mounts an app whose Suspense waits, then throws as it renders.
+function MountsPendingThenFails() @{
+	@try {
+		<p>{outer_fails()}</p>
+	} @catch (_err) {
+		mount_pending_live();
+		<span>{fallback_fails()}</span>
+	}
+}
+
 const dropped_rows = ref<number[]>([]);
 let rows_owner: { ec?: unknown[] | null } | null = null;
 
@@ -454,6 +493,26 @@ describe("tsrx-vue a @try body's inline code, more cases", () => {
 		live_handled.length = 0;
 		const { app } = await mount(MountsThenFails);
 		const target = document.querySelector('.live-target') as HTMLElement;
+		expect(target.querySelector('.live-body')?.textContent).toBe('live');
+		live_broken.value = true;
+		await flush();
+		expect(target.querySelector('.live-caught')?.textContent).toBe('Error: live inline');
+		expect(live_handled).toEqual([]);
+		live_app?.unmount();
+		live_app = null;
+		target.remove();
+		app.unmount();
+	});
+
+	it('keeps the hook of a @try that a pending app mounted from a failing @catch render creates', async () => {
+		live_broken.value = false;
+		live_handled.length = 0;
+		const { app } = await mount(MountsPendingThenFails);
+		const target = document.querySelector('.live-target') as HTMLElement;
+		expect(target.querySelector('.live-loading')?.textContent).toBe('loading');
+		finish_live_setup();
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await flush();
 		expect(target.querySelector('.live-body')?.textContent).toBe('live');
 		live_broken.value = true;
 		await flush();

@@ -76,13 +76,23 @@ const boundary_states = new WeakMap();
 const rendering = [];
 
 /**
- * For each boundary render in progress, innermost last, how to remove the
- * hooks that the boundaries it creates add to their parents
+ * @typedef {object} CreatingFrame
+ * @property {unknown} owner the instance current while the boundary renders
+ * @property {Array<() => void>} created how to remove the hooks that the
+ * boundaries it creates right under `owner` added to it
+ */
+
+/**
+ * For each boundary render in progress, innermost last, the hooks that the
+ * boundaries it creates add to the instance it renders as
  * (`take_own_errors`). Content that throws as it renders is dropped before it
  * mounts, and Vue doesn't dispose of what it created, so the boundary removes
- * those hooks itself; so it does when its fallback throws as it renders.
+ * those hooks itself; so it does when its fallback throws as it renders. Only
+ * those right under it count: a boundary further down hangs its hook on a
+ * component that is dropped too, and one in another app that the render
+ * mounted stays.
  *
- * @type {Array<Array<() => void>>}
+ * @type {CreatingFrame[]}
  */
 const creating = [];
 
@@ -97,7 +107,7 @@ const creating = [];
 function track_created(render) {
 	/** @type {Array<() => void>} */
 	const created = [];
-	creating.push(created);
+	creating.push({ owner: vapor.currentInstance, created });
 	let done = false;
 	try {
 		const result = render(created);
@@ -823,11 +833,8 @@ function take_own_errors(instance, state, capture) {
 	// one it dropped before it mounted, such as one in a `@for` row that threw
 	// as it rendered, which runs no unmount hooks.
 	onScopeDispose(remove);
-	// A render that throws drops what it created, unless it mounted already,
-	// as an app mounted from inside that render can be.
-	creating[creating.length - 1]?.push(() => {
-		if (!(/** @type {{ isMounted?: boolean }} */ (instance).isMounted)) remove();
-	});
+	const frame = creating[creating.length - 1];
+	if (frame && frame.owner === instance.parent) frame.created.push(remove);
 }
 
 /**
