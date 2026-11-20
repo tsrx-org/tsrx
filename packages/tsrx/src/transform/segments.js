@@ -30,6 +30,7 @@ import {
 	mapping_data,
 	mapping_data_verify_only,
 	mapping_data_verify_complete,
+	mapping_data_reference_directive,
 	mapping_data_completion_only,
 	mapping_data_string_span,
 	build_line_offsets,
@@ -578,6 +579,23 @@ export function convert_source_map_to_mappings(
 
 	/** @type {Map<string, number>} */
 	const generated_position_indexes = new Map();
+	/**
+	 * How many tokens start at each source position with each text, counted
+	 * before the tokens are mapped. A token with a `generatedLoc` stands for
+	 * another source position of a name printed once (a dynamic tag's closing
+	 * name), so it isn't counted.
+	 * @type {Map<string, number>}
+	 */
+	const token_counts = new Map();
+
+	/**
+	 * @param {MappingToken} token
+	 * @returns {string}
+	 */
+	function token_key(token) {
+		const { start } = token.generatedLoc ?? token.loc;
+		return `${start.line}:${start.column}:${token.generated}`;
+	}
 
 	/**
 	 * When a transform expands one source identifier into multiple generated
@@ -585,6 +603,14 @@ export function convert_source_map_to_mappings(
 	 * _$_server_$_.foo`), esrap records multiple generated positions for the
 	 * same source location. Keep token mappings in generated-order by consuming
 	 * the next matching generated token instead of always using the first one.
+	 *
+	 * A call printed around a node with the node's location, as a platform's
+	 * AST pass can make (#1392), starts at the same source position, and its
+	 * callee can start with the token's text: `read(re)`, `count(count)`,
+	 * `a.read(a.re)` for `a`. The node itself also maps its end there, so the
+	 * positions whose text ends where the token's source ends are taken first,
+	 * for a token that no other token shares its start and text with. Tokens
+	 * that do keep taking the positions in order, one each.
 	 * @param {MappingToken} token
 	 * @returns {{ line: number; column: number }}
 	 */
@@ -600,8 +626,30 @@ export function convert_source_map_to_mappings(
 			const offset = loc_to_offset(position.line, position.column, gen_line_offsets);
 			return generated_code.startsWith(token.generated, offset);
 		});
-		const candidates = matching_positions.length > 0 ? matching_positions : positions;
-		const index_key = `${key}:${token.generated}`;
+		const end = generated_loc.end;
+		const end_offsets =
+			matching_positions.length > 1 && end && (token_counts.get(token_key(token)) ?? 0) <= 1
+				? new Set(
+						(src_to_gen_map.get(`${end.line}:${end.column}`) ?? []).map((position) =>
+							loc_to_offset(position.line, position.column, gen_line_offsets),
+						),
+					)
+				: null;
+		const own_positions = end_offsets
+			? matching_positions.filter((position) =>
+					end_offsets.has(
+						loc_to_offset(position.line, position.column, gen_line_offsets) +
+							token.generated.length,
+					),
+				)
+			: [];
+		const candidates =
+			own_positions.length > 0
+				? own_positions
+				: matching_positions.length > 0
+					? matching_positions
+					: positions;
+		const index_key = token_key(token);
 		const index = generated_position_indexes.get(index_key) ?? 0;
 		generated_position_indexes.set(index_key, index + 1);
 
@@ -1170,6 +1218,58 @@ export function convert_source_map_to_mappings(
 	/** @type {Set<string>} */
 	const mapped_comments = new Set();
 
+	/** @type {number | undefined} */
+	let header_end;
+
+	/**
+	 * Whether a comment printed as written is a `/// <reference …/>` that
+	 * TypeScript reads as one in the source: a file's leading comments are its
+	 * directives. After a statement it is an ordinary comment, yet the output can
+	 * still print it first (`;` prints nothing, and a platform guard can be
+	 * specialized away), where it would be read as a directive. Read from the
+	 * source text, which the specialized tree doesn't keep.
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function is_source_reference_directive(comment) {
+		if (comment.type !== 'Line' || !/^\/\s*<reference\s.*\/>/.test(comment.value)) return false;
+		header_end ??= leading_comments_end();
+		return comment.end <= header_end;
+	}
+
+	/**
+	 * Where the source's leading comments end: past a hashbang, whitespace and
+	 * comments, at its first token.
+	 * @returns {number}
+	 */
+	function leading_comments_end() {
+		let at = source.startsWith('#!') ? line_end(2) : 0;
+		while (at < source.length) {
+			if (regex_whitespace.test(source[at])) {
+				at++;
+			} else if (source.startsWith('//', at)) {
+				at = line_end(at + 2);
+			} else if (source.startsWith('/*', at)) {
+				const close = source.indexOf('*/', at + 2);
+				if (close === -1) return at;
+				at = close + 2;
+			} else {
+				break;
+			}
+		}
+		return at;
+	}
+
+	/**
+	 * Where the line holding `at` ends.
+	 * @param {number} at
+	 * @returns {number}
+	 */
+	function line_end(at) {
+		while (at < source.length && !'\n\r\u2028\u2029'.includes(source[at])) at++;
+		return at;
+	}
+
 	/**
 	 * @param {AST.Node | null | undefined} node
 	 * @returns {void}
@@ -1198,7 +1298,9 @@ export function convert_source_map_to_mappings(
 				// source coordinate. The printer writes this exact formatted text.
 				if (start === undefined) continue;
 				// TypeScript completes inside a comment printed as written, such as
-				// the `/** */` template after `/**` and JSDoc tags (#1066).
+				// the `/** */` template after `/**` and JSDoc tags (#1066), and
+				// navigates from the path of a triple-slash directive printed as
+				// written (`mapping_data_reference_directive`).
 				const as_written = text === source.slice(comment.start, comment.end);
 				mappings.push({
 					sourceOffsets: [comment.start],
@@ -1206,7 +1308,11 @@ export function convert_source_map_to_mappings(
 					generatedOffsets: [start],
 					generatedLengths: [text.length],
 					data: {
-						...(as_written ? mapping_data_verify_complete : mapping_data_verify_only),
+						...(!as_written
+							? mapping_data_verify_only
+							: is_source_reference_directive(comment)
+								? mapping_data_reference_directive
+								: mapping_data_verify_complete),
 						customData: {},
 					},
 				});
@@ -3527,6 +3633,11 @@ export function convert_source_map_to_mappings(
 		},
 	});
 
+	for (const token of tokens) {
+		if (token.generatedLoc) continue;
+		const key = token_key(token);
+		token_counts.set(key, (token_counts.get(key) ?? 0) + 1);
+	}
 	for (const token of tokens) {
 		const source_text = token.source ?? '';
 		const gen_text = token.generated;

@@ -518,6 +518,77 @@ function ThrowingCatchInElementApp() @{
 	}
 }
 
+// A @pending body that is only a choice, a @switch or a loop: `TsrxPendingBody`
+// renders it once, so it must still follow what it reads.
+const pending_on = ref(false);
+const pending_case = ref(1);
+const pending_items = ref([1, 2]);
+
+function PendingCounter(props: { label: string }) @{
+	const count = ref(0);
+	<button class="pending-count" onClick={() => count.value++}>
+		{props.label + ':' + count.value}
+	</button>
+}
+
+function PendingIfApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		const label = pending_label();
+		@if (pending_on.value) {
+			<PendingCounter label={label + ' ' + pending_case.value} />
+		} @else {
+			<i class="off">{'off'}</i>
+		}
+	}
+}
+
+function PendingSwitchApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		@switch (pending_case.value) {
+			@case 1: {
+				<i>{'one'}</i>
+			}
+			@default: {
+				<b>{'other'}</b>
+			}
+		}
+	}
+}
+
+function PendingLoopApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		@for (const item of pending_items.value) {
+			@if (item > 1) {
+				<i>{item}</i>
+			}
+		}
+	}
+}
+
+function PendingIfThrowsApp(props: { promise: Loader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		<AsyncChild value="hello" />
+	} @pending {
+		@if (pending_on.value) {
+			<BoomBody />
+		} @else {
+			<i class="off">{'off'}</i>
+		}
+	} @catch (err) {
+		<p class="caught">{(err as Error).message}</p>
+	}
+}
+
 function row_texts() {
 	return Array.from(
 		container.querySelectorAll('li'),
@@ -752,7 +823,8 @@ describe('tsrx-vue @pending', () => {
 		const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 		try {
 			await render(EmptyPendingApp, { promise: never() });
-			expect(html()).toBe('');
+			// The anchor of the `@if`'s `createIf`.
+			expect(html()).toBe('<!--if-->');
 			expect(warn.mock.calls.map((args) => String(args[0]))).toEqual([]);
 		} finally {
 			warn.mockRestore();
@@ -837,5 +909,63 @@ describe('tsrx-vue @pending', () => {
 		await flush();
 		expect(container.querySelector('.pending')).toBeNull();
 		expect(container.querySelector('.resolved')?.textContent).toBe('hello');
+	});
+
+	it('follows a @pending body that is only an @if, and keeps its branch while it stays chosen', async () => {
+		pending_on.value = false;
+		pending_case.value = 1;
+		const { promise, resolve } = deferred();
+		await render(PendingIfApp, { promise });
+		expect(html()).toBe('<i class="off">off</i><!--if-->');
+
+		pending_on.value = true;
+		await flush();
+		expect(html()).toBe('<button class="pending-count">loading 1:0</button><!--if-->');
+
+		(container.querySelector('.pending-count') as HTMLElement).click();
+		await flush();
+		pending_case.value = 2;
+		await flush();
+		expect(html()).toBe('<button class="pending-count">loading 2:1</button><!--if-->');
+
+		pending_on.value = false;
+		await flush();
+		expect(html()).toBe('<i class="off">off</i><!--if-->');
+		// The body's statements ran once, as before.
+		expect(pending_runs).toBe(1);
+
+		resolve(Resolved);
+		await flush();
+		expect(container.querySelector('.resolved')?.textContent).toBe('hello');
+	});
+
+	it('follows a @pending body that is only a @switch', async () => {
+		pending_case.value = 1;
+		await render(PendingSwitchApp, { promise: never() });
+		expect(html()).toBe('<i>one</i>');
+
+		pending_case.value = 2;
+		await flush();
+		expect(html()).toBe('<b>other</b>');
+	});
+
+	it('follows a @pending body that is only a loop through map_iterable', async () => {
+		pending_items.value = [1, 2];
+		await render(PendingLoopApp, { promise: never() });
+		expect(html()).toBe('<i>2</i>');
+
+		pending_items.value = [1, 2, 3];
+		await flush();
+		expect(html()).toBe('<i>2</i><i>3</i>');
+	});
+
+	it('shows the @catch when a @pending @if switches to a branch that throws', async () => {
+		pending_on.value = false;
+		await render(PendingIfThrowsApp, { promise: never() });
+		expect(html()).toBe('<i class="off">off</i><!--if-->');
+
+		pending_on.value = true;
+		await flush();
+		expect(html()).toBe('<p class="caught">pending boom</p>');
 	});
 });

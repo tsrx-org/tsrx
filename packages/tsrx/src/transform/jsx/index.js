@@ -8203,7 +8203,11 @@ function create_spread_props_name(transform_context) {
 
 /**
  * Whether `source` has `name` as a whole identifier anywhere, so a generated
- * binding of that name could shadow or redeclare one the author wrote.
+ * binding of that name could shadow or redeclare one the author wrote. An
+ * identifier can spell its characters with Unicode escapes
+ * (`App__st\u0061tic1` is `App__static1`), so the source is also read with
+ * its escapes decoded. Decoding an escape in a string or a comment can only
+ * make a name count as used when it isn't, which costs nothing.
  *
  * @param {string} source
  * @param {string} name a name of identifier characters only
@@ -8212,7 +8216,38 @@ function create_spread_props_name(transform_context) {
 export function source_mentions_identifier(source, name) {
 	// `$` is an identifier character and a regex anchor.
 	const escaped = name.replace(/\$/g, '\\$');
-	return new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`).test(source);
+	const pattern = new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`);
+	return (
+		pattern.test(source) ||
+		(typeof source === 'string' &&
+			source.includes('\\u') &&
+			pattern.test(decode_unicode_escapes(source)))
+	);
+}
+
+const UNICODE_ESCAPE = /\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g;
+/** The last source `decode_unicode_escapes` decoded, and its result */
+let decoded_source = { source: '', decoded: '' };
+
+/**
+ * `source` with each `\uXXXX` and `\u{X…}` escape replaced by its character.
+ * A module's generated names are checked one after another against the same
+ * source, so the last result is kept.
+ *
+ * @param {string} source
+ * @returns {string}
+ */
+function decode_unicode_escapes(source) {
+	if (decoded_source.source !== source) {
+		decoded_source = {
+			source,
+			decoded: source.replace(UNICODE_ESCAPE, (escape, braced, short) => {
+				const code = parseInt(braced ?? short, 16);
+				return code <= 0x10ffff ? String.fromCodePoint(code) : escape;
+			}),
+		};
+	}
+	return decoded_source.decoded;
 }
 
 /**
