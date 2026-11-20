@@ -51,6 +51,11 @@ import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 const RETURN_KEYWORD = 'return';
 /** The longest node whose whole text `start_at_own_text` compares. */
 const OWN_TEXT_MAX_LENGTH = 1000;
+// A name as written: identifier characters and `\uXXXX` / `\u{X}` escapes,
+// after an optional `#` for a private name.
+const regex_written_name =
+	/#?(?:[\p{ID_Continue}$\u200c\u200d]|\\u[\da-fA-F]{4}|\\u\{[\da-fA-F]+\})+/uy;
+const regex_name_escape = /\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g;
 /** A fragment's `<>`, with any whitespace or comments between its `<` and `>`. */
 const regex_opening_fragment = /^<(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*>$/;
 const EXPORT_KEYWORD = 'export';
@@ -1479,6 +1484,29 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * The length of a name as the source writes it at `loc`, when it spells a
+	 * character with a Unicode escape (`\u0061` for `a`). The printer writes
+	 * the name itself, so its token maps all of the escaped spelling: a rename
+	 * then replaces the whole name, and a diagnostic on it covers all of it.
+	 * @param {AST.SourceLocation} loc
+	 * @param {string} name The authored name, decoded: `#a` for a private name,
+	 *   `className` for an attribute a target prints as `class`.
+	 * @returns {number | undefined} `undefined` for a name written without escapes.
+	 */
+	function escaped_name_length(loc, name) {
+		const start = loc_to_offset(loc.start.line, loc.start.column, src_line_offsets);
+		if (source.startsWith(name, start)) return;
+		regex_written_name.lastIndex = start;
+		const written = regex_written_name.exec(source)?.[0];
+		if (!written?.includes('\\')) return;
+		const decoded = written.replace(regex_name_escape, (escape, braced, short) => {
+			const code = Number.parseInt(braced ?? short, 16);
+			return code <= 0x10ffff ? String.fromCodePoint(code) : escape;
+		});
+		return decoded === name ? written.length : undefined;
+	}
+
+	/**
 	 * @param {AST.Identifier | ESTreeJSX.JSXIdentifier} generated_node
 	 * @returns {void}
 	 */
@@ -1515,7 +1543,13 @@ export function convert_source_map_to_mappings(
 		if (!has_location(node)) return;
 
 		const text = `#${node.name}`;
-		tokens.push({ source: text, generated: text, loc: node.loc, metadata: {} });
+		tokens.push({
+			source: text,
+			generated: text,
+			loc: node.loc,
+			metadata: {},
+			sourceLength: escaped_name_length(node.loc, text),
+		});
 		for (const source_node of node.metadata?.extra_source_mappings ?? []) {
 			if (!has_location(source_node)) continue;
 			tokens.push({
@@ -1551,7 +1585,9 @@ export function convert_source_map_to_mappings(
 							generated: node.name,
 							loc: node.loc,
 							metadata: {},
-							sourceLength: node.metadata.source_length,
+							sourceLength:
+								escaped_name_length(node.loc, node.metadata.source_name) ??
+								node.metadata.source_length,
 						};
 					} else {
 						token = {
@@ -1559,7 +1595,8 @@ export function convert_source_map_to_mappings(
 							generated: node.name,
 							loc: node.loc,
 							metadata: {},
-							sourceLength: node.metadata?.source_length,
+							sourceLength:
+								node.metadata?.source_length ?? escaped_name_length(node.loc, node.name),
 						};
 					}
 
@@ -1597,7 +1634,9 @@ export function convert_source_map_to_mappings(
 						generated: node.name,
 						loc: node.loc,
 						metadata: {},
-						sourceLength: node.metadata?.source_length,
+						sourceLength:
+							escaped_name_length(node.loc, node.metadata?.source_name ?? node.name) ??
+							node.metadata?.source_length,
 					};
 					if (node.metadata?.disable_verification) {
 						token.mappingData = { ...mapping_data, verification: false };
