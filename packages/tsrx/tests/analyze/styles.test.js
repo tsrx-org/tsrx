@@ -1126,6 +1126,13 @@ describe('scoped style analysis', () => {
 					'color: red',
 					0,
 				],
+				// A @scope holds rules, not declarations, though & stands for its root.
+				[
+					'@scope (.c) { :global { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: red',
+					0,
+				],
 			];
 			for (const [css, message, anchor, nth] of cases) {
 				const source = `const t = <style>${css}</style>;`;
@@ -1152,10 +1159,15 @@ describe('scoped style analysis', () => {
 				// :global(...) keeps the & as written.
 				':global(&) { color: red; }',
 				':global(&.w) .p { color: red; }',
-				// A rule around a dropped :global { ... } block takes its declarations.
+				// An escaped name is still @scope.
+				String.raw`@s\63ope (.c) { & { color: red; } }`,
+				// A rule around a dropped :global { ... } block takes its declarations,
+				// and so does an at-rule that holds descriptors.
 				'.p { :global { color: red; } }',
 				'.p { :global { :global { color: red; } } }',
+				'@font-face { :global { font-family: x; } }',
 				':global { .a { color: red; } @font-face { font-family: x; } }',
+				String.raw`:global { @font-\66 ace { font-family: x; } }`,
 			]) {
 				expect(analyze_thrown(parse_stylesheet(css)), css).toBeNull();
 			}

@@ -5,7 +5,7 @@
 import { walk } from 'zimmerframe';
 import { error } from '../errors.js';
 import { TSRX_ERRORS } from '../diagnostics.js';
-import { css_node_source_position } from '../parse/style.js';
+import { css_node_source_position, unescape_css } from '../parse/style.js';
 
 /**
  * True if is `:global` without arguments
@@ -489,9 +489,37 @@ function nesting_selectors(rule) {
 }
 
 /**
- * The first declaration in `block` that the output puts straight into the
- * rule around it: one in the block itself, or in an at-rule in it that can
- * be nested (`@media`), not in a rule.
+ * At-rules that hold rules, and declarations only in a style rule: a group
+ * rule such as `@media`, or `@scope`, which a declaration outside every rule
+ * still is in.
+ */
+const GROUP_AT_RULES = ['media', 'supports', 'container', 'layer', 'scope', 'starting-style'];
+
+/**
+ * `at_rule`'s name as CSS reads it, with its escapes decoded (`@s\63ope` is
+ * `@scope`), in lowercase and without a vendor prefix.
+ *
+ * @param {AST.CSS.Atrule} at_rule
+ * @returns {string}
+ */
+function decoded_at_rule_name(at_rule) {
+	return unescape_css(at_rule.name)
+		.toLowerCase()
+		.replace(/^-((webkit)|(moz)|(o)|(ms))-/, '');
+}
+
+/**
+ * Rules in an at-rule other than a group rule (`@font-face`, or one this
+ * doesn't know), whose declarations belong to that at-rule.
+ *
+ * @type {WeakSet<AST.CSS.Rule>}
+ */
+const declaration_at_rule_rules = new WeakSet();
+
+/**
+ * The first declaration in `block` that the output puts straight into what
+ * is around it: one in the block itself, or in a group rule in it (`@media`),
+ * not in a rule or another at-rule.
  *
  * @param {AST.CSS.Block | null} block
  * @returns {AST.CSS.Declaration | null}
@@ -499,7 +527,7 @@ function nesting_selectors(rule) {
 function first_bare_declaration(block) {
 	for (const child of block?.children ?? []) {
 		if (child.type === 'Declaration') return child;
-		if (child.type === 'Atrule' && !is_unnestable_at_rule(child)) {
+		if (child.type === 'Atrule' && GROUP_AT_RULES.includes(decoded_at_rule_name(child))) {
 			const declaration = first_bare_declaration(child.block);
 			if (declaration) return declaration;
 		}
@@ -523,7 +551,11 @@ function check_rules_without_parent(rules, report) {
 				report(TSRX_ERRORS.CSS_NESTING_SELECTOR_WITHOUT_RULE, nesting);
 			}
 		}
-		if (drops_selector(rule) && !has_parent_rule_in_output(rule)) {
+		if (
+			drops_selector(rule) &&
+			!has_parent_rule_in_output(rule) &&
+			!declaration_at_rule_rules.has(rule)
+		) {
 			const declaration = first_bare_declaration(rule.block);
 			if (declaration) report(TSRX_ERRORS.CSS_GLOBAL_BLOCK_DECLARATION, declaration);
 		}
@@ -577,10 +609,18 @@ export function analyze_css(css, options = {}) {
 			for (let i = context.path.length - 1; i >= 0; i--) {
 				const ancestor = context.path[i];
 				if (ancestor.type === 'Rule') break;
-				if (ancestor.type === 'Atrule' && at_rule_name(ancestor) === 'scope') {
+				if (ancestor.type === 'Atrule' && decoded_at_rule_name(ancestor) === 'scope') {
 					scope_root_rules.add(node);
 					break;
 				}
+			}
+			if (
+				context.path.some(
+					(ancestor) =>
+						ancestor.type === 'Atrule' && !GROUP_AT_RULES.includes(decoded_at_rule_name(ancestor)),
+				)
+			) {
+				declaration_at_rule_rules.add(node);
 			}
 
 			// Check for :global blocks
