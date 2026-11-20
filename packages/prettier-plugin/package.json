@@ -1,6 +1,6 @@
 {
   "name": "@tsrx/prettier-plugin",
-  "version": "0.7.10",
+  "version": "0.7.11",
   "description": "TSRX plugin for Prettier",
   "type": "module",
   "module": "src/index.js",
