@@ -1,6 +1,12 @@
 // TSRX syntax, which Prettier's own tests don't cover.
 
-import { parseModule, TS_ERRORS, TSRX_ERRORS, wrapEdgeWhitespace } from '@tsrx/core';
+import {
+	parseModule,
+	renderChildren,
+	TS_ERRORS,
+	TSRX_ERRORS,
+	wrapEdgeWhitespace,
+} from '@tsrx/core';
 import * as prettier from 'prettier';
 import * as standalone from 'prettier/standalone';
 import { describe, expect, test } from 'vitest';
@@ -1588,7 +1594,11 @@ function onlyTextLiteral(code, tag, reading) {
 		}
 	};
 	find(parseModule(code, 'Fixture.tsrx'));
-	const children = wrapEdgeWhitespace(element.children, true, reading);
+	const children = wrapEdgeWhitespace(
+		/** @type {any[]} */ (renderChildren(element)),
+		true,
+		reading,
+	);
 	const [child] = children;
 	return children.length === 1 &&
 		child.type === 'JSXExpressionContainer' &&
@@ -1801,9 +1811,89 @@ const b = (
 		}
 	});
 
+	// The compiler leaves out a comment-only `{}` (or a TSRX `/* */`) before or
+	// after an element's only text (`renderChildren`), so that text is still its
+	// only child.
+	test('keeps comments beside the text they surround', async () => {
+		await expectFormat(
+			`const a = <textarea>{/* c */} Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>;
+const b = <textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor {/* c */}</textarea>;
+const c = <textarea>/* c */ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor /* d */</textarea>;
+const d = <textarea>
+  {/* a */}
+  {/* b */} Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>;
+const e = <textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor{/* c */}</textarea>;`,
+			`const a = (
+  <textarea>{/* c */} Lorem ipsum dolor sit amet, consectetur adipiscing elit,
+    sed do eiusmod tempor </textarea>
+);
+const b = (
+  <textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
+    eiusmod tempor {/* c */}</textarea>
+);
+const c = (
+  <textarea>/* c */ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed
+    do eiusmod tempor /* d */</textarea>
+);
+const d = (
+  <textarea>{/* a */}{/* b */} Lorem ipsum dolor sit amet, consectetur
+    adipiscing elit, sed do eiusmod tempor </textarea>
+);
+const e = (
+  <textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
+    eiusmod tempor
+    {/* c */}
+  </textarea>
+);
+`,
+		);
+	});
+
+	// The compiler keeps these, so the text isn't the element's only child.
+	test('prints as Prettier does a comment the compiler keeps beside the text', async () => {
+		await expectFormat(
+			`const a = <textarea>{/* @ts-expect-error */} Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>;
+const b = <textarea>// c
+  Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>;`,
+			`const a = (
+  <textarea>
+    {/* @ts-expect-error */} Lorem ipsum dolor sit amet, consectetur adipiscing
+    elit, sed do eiusmod tempor{" "}
+  </textarea>
+);
+const b = (
+  <textarea>
+    // c
+    Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod
+    tempor{" "}
+  </textarea>
+);
+`,
+		);
+	});
+
+	// Whether the compiler splits such a text depends on where its lines break,
+	// and Prettier's layout keeps the space beside a comment as it is, so laying
+	// it out here would change the next format's output.
+	test("leaves to Prettier a text beside a comment whose words can't go on separate lines", async () => {
+		await expectFormat(
+			`const a = <title id="a">{/* c */} one two\u200b
+  three four five six seven eight nine ten eleven twelve thirteen fourteen /* d */</title>;`,
+			`const a = (
+  <title id="a">
+    {/* c */} one two\u200b three four five six seven eight nine ten eleven twelve
+    thirteen fourteen /* d */
+  </title>
+);
+`,
+		);
+	});
+
 	test('compiles to the string the unformatted text compiles to', async () => {
 		const sources = [
 			'<textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>',
+			'<textarea>{/* c */} Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>',
+			'<textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor /* c */</textarea>',
 			'<textarea>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>',
 			'<textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor</textarea>',
 			'<textarea className="a" id="b"> one two </textarea>',

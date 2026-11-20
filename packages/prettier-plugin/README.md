@@ -114,9 +114,10 @@ config (step 2).
   bare comment needs: a line comment ends its line, and it keeps whitespace before
   it after text or a comment (touching them, `//` is text); text that starts with
   `//` right after a block comment stays on its line. An element whose only child
-  is text with a space or tab at an edge is laid out by the plugin too, when the
-  compiler prints that text as one literal (`{' a '}`, so that a `<textarea>`, a
-  `<title>` or a component that takes `children: string` gets one string):
+  is text with a space or tab at an edge (besides comments, which the compiler
+  leaves out, and which stay beside the text) is laid out by the plugin too, when
+  the compiler prints that text as one literal (`{' a '}`, so that a `<textarea>`,
+  a `<title>` or a component that takes `children: string` gets one string):
   Prettier would move the space into a `{" "}` child once the element breaks. The
   space stays beside its tag (`<p> Some text…`, `…more text </p>`), and the words
   fill the lines between. A text that the compiler would split over lines (with a
