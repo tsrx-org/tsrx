@@ -7474,16 +7474,32 @@ export function App({ items }: { items: string[] }) @{
 			},
 		);
 
-		it('names the temporaries of two spreads apart from an authored name written with a Unicode escape', () => {
-			// The printer spells the authored name `App__spread_props1`
-			const { code } = compile(
-				"export function App(props: any) {\n\tconst App__spread_props\\u0031 = 'mine';\n\treturn <div {...props.a} {...props.b} ref={props.r} title={App__spread_props\\u{31}} />;\n}",
-				'App.tsrx',
-			);
-			expect(code.match(/\b(?:const|let|var) App__spread_props1\b/g)).toEqual([
-				'const App__spread_props1',
-			]);
-		});
+		it.each([
+			[
+				'two spreads',
+				'App__spread_props\\u0031',
+				'<div {...props.a} {...props.b} ref={props.r} title={NAME} />',
+				'App__spread_props1',
+			],
+			[
+				'a spread after its own ref',
+				'App__r\\u0065f1',
+				'<input ref={props.r} {...props.a} title={NAME} />',
+				'App__ref1',
+			],
+		])(
+			'names the temporaries of %s apart from an authored name written with a Unicode escape',
+			(_case, authored, element, printed) => {
+				// The printer spells the authored name without the escape
+				const { code } = compile(
+					`export function App(props: any) {\n\tconst ${authored} = 'mine';\n\treturn ${element.replace('NAME', authored)};\n}`,
+					'App.tsrx',
+				);
+				expect(code.match(new RegExp(`\\b(?:const|let|var) ${printed}\\b`, 'g'))).toEqual([
+					`const ${printed}`,
+				]);
+			},
+		);
 
 		it.each([
 			[
