@@ -4281,6 +4281,45 @@ function TeardownPlain() @{
 	}
 }
 
+// The same, while the body shows.
+function TeardownShowingTwin() @{
+	@try {
+		<p class="teardown-body">{arm_teardown()}</p>
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function TeardownShowingPlain() @{
+	@try {
+		<p class="teardown-body">{arm_teardown()}</p>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+// An enclosing @try shows its @catch, which removes the @try inside it.
+function EnclosingTeardown(props: { inner: unknown }) @{
+	const Inner = props.inner as typeof TeardownTwin;
+	@try {
+		<div>
+			<Inner />
+			<button
+				class="remove-inner"
+				onClick={() => {
+					throw new Error('remove');
+				}}
+			>
+				{'remove'}
+			</button>
+		</div>
+	} @catch (err) {
+		<b class="enclosing-caught">{(err as Error).message}</b>
+	}
+}
+
 function throw_content(error: unknown): never {
 	throw error;
 }
@@ -4748,9 +4787,7 @@ describe('tsrx-vue a @catch that throws', () => {
 			} else {
 				app = await mount(SyncCatchPatternThrows, {});
 			}
-			expect(text('.outer-caught')).toBe(
-				"Cannot read properties of undefined (reading 'status')",
-			);
+			expect(text('.outer-caught')).toBe("Cannot read properties of undefined (reading 'status')");
 			// The boundary around the Suspense, which renders the same @catch, let
 			// the error go on without running the pattern again.
 			expect(catch_runs).toBe(1);
@@ -4790,14 +4827,35 @@ describe('tsrx-vue a @catch that throws', () => {
 	});
 
 	it.each([
+		['with @pending', TeardownTwin, 'body'],
+		['without @pending', TeardownPlain, 'body'],
+		['with @pending, the body showing', TeardownShowingTwin, null],
+		['without @pending, the body showing', TeardownShowingPlain, null],
+	])(
+		'passes on what its body throws as the @try unmounts, %s',
+		async (_name, component, caught) => {
+			const app = await mount(component, {});
+			expect(container.querySelector('.teardown-caught')?.textContent ?? null).toBe(caught);
+			app.unmount();
+			expect(handled).toEqual(['teardown']);
+		},
+	);
+
+	it.each([
 		['with @pending', TeardownTwin],
 		['without @pending', TeardownPlain],
-	])('passes on what its body throws as the @try %s unmounts', async (_name, component) => {
-		const app = await mount(component, {});
-		expect(text('.teardown-caught')).toBe('body');
-		app.unmount();
-		expect(handled).toEqual(['teardown']);
-	});
+	])(
+		'passes on what its body throws as an enclosing @catch removes the @try %s',
+		async (_name, inner) => {
+			const app = await mount(EnclosingTeardown, { inner });
+			expect(text('.teardown-caught')).toBe('body');
+			(container.querySelector('.remove-inner') as HTMLElement).click();
+			await flush();
+			expect(text('.enclosing-caught')).toBe('teardown');
+			expect(handled).toEqual([]);
+			app.unmount();
+		},
+	);
 
 	it('runs a @catch parameter pattern that throws once, and passes its error to app.config.errorHandler', async () => {
 		const app = await mount(SyncCatchPatternThrowsAlone, {});
