@@ -15,8 +15,11 @@
  * whitespace (or at the start of a line, or right after a tag), and it runs to
  * the end of its line. So a line comment ends its line, keeps whitespace
  * between it and text or a comment before it, and text that starts with `//`
- * (right after a block comment) stays on that line. Keep the rest in step with
- * Prettier when upgrading.
+ * (right after a block comment) stays on that line. And a `{" "}` never
+ * follows an `@`, where TSRX would read `@{` as the start of a code block
+ * (`endsWithAt`); an element whose text has an `@` before whitespace is printed
+ * here for that (`hasAtBeforeWhitespace`). Keep the rest in step with Prettier
+ * when upgrading.
  *
  * @import { AstPath, Doc, ParserOptions } from 'prettier'
  * @import { Node } from './parse.js'
@@ -274,7 +277,9 @@ export function printJsxElementInternal(path, options, print) {
 
 			if (i === children.length - 1) {
 				// Trailing whitespace
-				multilineChildren.push([/** @type {Doc} */ (multilineChildren.pop()), rawJsxWhitespace]);
+				const previous = /** @type {Doc} */ (multilineChildren.pop());
+				// TSRX: not right after an `@`, where `@{` would start a code block.
+				multilineChildren.push([previous, endsWithAt(previous) ? hardline : '', rawJsxWhitespace]);
 				continue;
 			}
 
@@ -291,6 +296,10 @@ export function printJsxElementInternal(path, options, print) {
 		if (i % 2 === 0) {
 			// non-line-like
 			multilineChildren.push([/** @type {Doc} */ (multilineChildren.pop()), child]);
+		} else if (child === whitespace && endsWithAt(/** @type {Doc} */ (multilineChildren.at(-1)))) {
+			// TSRX: a `{" "}` right after an `@` would start an `@{ … }` code block, so
+			// where the line breaks, it starts the next line.
+			multilineChildren.push(ifBreak([softline, rawJsxWhitespace], ' '), '');
 		} else {
 			// line-like
 			multilineChildren.push(child, '');
@@ -445,6 +454,33 @@ function wordsCanBreak(text) {
 	/** @param {string} value */
 	const whitespace = (value) => value.replaceAll('\r\n', '\n').replace(/[^ \t\n\r]/gu, '').length;
 	return whitespace(text.value) === whitespace(getRaw(text));
+}
+
+/**
+ * TSRX: whether the text a doc prints ends with `@`. TSRX reads `@{` in
+ * markup as the start of a code block, so a `{" "}` can't follow it.
+ * @param {Doc} doc
+ * @returns {boolean}
+ */
+function endsWithAt(doc) {
+	while (Array.isArray(doc)) {
+		const last = doc.findLast((part) => part !== '');
+		if (last === undefined) return false;
+		doc = last;
+	}
+	return typeof doc === 'string' && doc.endsWith('@');
+}
+
+/**
+ * TSRX: whether an element's or fragment's text has an `@` before whitespace,
+ * where Prettier could print a `{" "}` (`printJsxElementInternal`).
+ * @param {Node} node
+ * @returns {boolean}
+ */
+export function hasAtBeforeWhitespace(node) {
+	return node.children.some(
+		(/** @type {Node} */ child) => child.type === 'JSXText' && /@[ \n\r\t]/u.test(getRaw(child)),
+	);
 }
 
 /**
