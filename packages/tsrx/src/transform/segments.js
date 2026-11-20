@@ -1171,33 +1171,46 @@ export function convert_source_map_to_mappings(
 	/** @type {Set<string>} */
 	const mapped_comments = new Set();
 
+	/** @type {number | undefined} */
+	let header_end;
+
 	/**
 	 * Whether a comment printed as written is a `/// <reference …/>` that
-	 * TypeScript reads as one in the source: only comments come before it. After
-	 * a statement it is an ordinary comment, yet the output can still print it
-	 * first (`;` prints nothing, and a platform guard can be specialized away),
-	 * where it would be read as a directive. Read from the source text, which the
-	 * specialized tree doesn't keep.
+	 * TypeScript reads as one in the source: a file's leading comments are its
+	 * directives. After a statement it is an ordinary comment, yet the output can
+	 * still print it first (`;` prints nothing, and a platform guard can be
+	 * specialized away), where it would be read as a directive. Read from the
+	 * source text, which the specialized tree doesn't keep.
 	 * @param {AST.CommentWithLocation} comment
 	 * @returns {boolean}
 	 */
 	function is_source_reference_directive(comment) {
-		if (comment.type !== 'Line' || !/^\/\s*<reference\s/.test(comment.value)) return false;
+		if (comment.type !== 'Line' || !/^\/\s*<reference\s.*\/>/.test(comment.value)) return false;
+		header_end ??= leading_comments_end();
+		return comment.end <= header_end;
+	}
+
+	/**
+	 * Where the source's leading comments end: past a hashbang, whitespace and
+	 * comments, at its first token.
+	 * @returns {number}
+	 */
+	function leading_comments_end() {
 		let at = source.startsWith('#!') ? line_end(2) : 0;
-		while (at < comment.start) {
+		while (at < source.length) {
 			if (regex_whitespace.test(source[at])) {
 				at++;
 			} else if (source.startsWith('//', at)) {
 				at = line_end(at + 2);
 			} else if (source.startsWith('/*', at)) {
 				const close = source.indexOf('*/', at + 2);
-				if (close === -1) return false;
+				if (close === -1) return at;
 				at = close + 2;
 			} else {
-				return false;
+				break;
 			}
 		}
-		return at === comment.start;
+		return at;
 	}
 
 	/**

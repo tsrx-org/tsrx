@@ -4141,17 +4141,32 @@ export function A() @{
 					{ platform: 'ios' },
 				],
 				[`/// <reference-extra path="./Other.tsrx" />\nexport const a = 1;`, undefined, {}],
+				[`/// <reference path="./Other.tsrx">\nexport const a = 1;`, undefined, {}],
 			])) {
 				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true, ...options });
-				const text = source.startsWith('/// <reference-extra')
-					? '/// <reference-extra path="./Other.tsrx" />'
-					: comment;
+				const text = source.slice(
+					source.indexOf('///'),
+					source.indexOf('\n', source.indexOf('///')),
+				);
 				const mappings = mappings_at(result, source.indexOf(text), text.length);
 				if (navigation) expect(mappings.length, source).toBeGreaterThan(0);
 				for (const mapping of mappings) {
 					expect(mapping.data.navigation, source).toBe(navigation);
 				}
 			}
+		});
+
+		it('reads the leading comments once, however many directives follow them', () => {
+			const source = `// ${'a'.repeat(500_000)}\n${Array.from(
+				{ length: 1000 },
+				(_, i) => `/// <reference path="./Other${i}.tsrx" />`,
+			).join('\n')}\nexport const a = 1;`;
+			const start = performance.now();
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(performance.now() - start).toBeLessThan(2000);
+			const last = '/// <reference path="./Other999.tsrx" />';
+			const [mapping] = mappings_at(result, source.indexOf(last), last.length);
+			expect(mapping.data.navigation).toBe(true);
 		});
 
 		it('writes only a comment that starts with `///` as a triple-slash directive', () => {
