@@ -1765,6 +1765,8 @@ export function runSharedScopedStyleTests({
 							.p { @m\\65 dia print { .y {} } }
 							.p { @media print { @layer base {} } }
 							.p { @layer base {} }
+							.p { @media all { @keyframes k {} } }
+							.p { @media all { @-webkit-keyframes w {} } }
 						</style>
 						<div ${attr}="p"><i ${attr}="k" /></div>
 					</>
@@ -1784,6 +1786,9 @@ export function runSharedScopedStyleTests({
 			// An empty layer block still sets the order of layers.
 			expect(css).toContain(`.p.${hash} { @media print { @layer base {} } }`);
 			expect(css).toContain(`.p.${hash} { @layer base {} }`);
+			// An empty @keyframes still defines its name, so the scoped one stays.
+			expect(css).toContain(`.p.${hash} { @media all { @keyframes ${hash}-k {} } }`);
+			expect(css).toContain(`.p.${hash} { @media all { @-webkit-keyframes ${hash}-w {} } }`);
 		});
 
 		it('keeps a comment end in a pruned selector inside the comment over it', () => {

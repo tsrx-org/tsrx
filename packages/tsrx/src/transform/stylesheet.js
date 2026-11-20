@@ -503,7 +503,9 @@ function is_block_empty(block, is_in_global_block) {
 
 		if (child.type === 'Atrule') {
 			const name = remove_css_prefix(unescape_css(child.name).toLowerCase());
-			if (child.block === null || name === 'layer') return false;
+			// A layer block sets the order of layers, and a `@keyframes` defines
+			// its name (over an earlier one of the name) even when empty.
+			if (child.block === null || name === 'layer' || name === 'keyframes') return false;
 			if (group_at_rules.has(name)) {
 				if (!is_block_empty(child.block, is_in_global_block)) return false;
 			} else if (child.block.children.length > 0) {
