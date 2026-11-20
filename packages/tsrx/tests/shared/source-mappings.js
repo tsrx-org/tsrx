@@ -1232,6 +1232,23 @@ export async function App() @{
 			// Solid compares a copy of the discriminant with each case's test, so it
 			// reports the discriminant's error once per case.
 			expect([...new Set(shown)].sort()).toEqual([at(1), at(2), at(3)].sort());
+			// An `@switch` maps its ends from its `@`, for an error over all of it
+			// (TS7027 on an unreachable one). Solid prints `<Switch>` instead.
+			const switch_start = source.indexOf('@switch');
+			expect(
+				result.mappings
+					.filter(
+						(mapping) =>
+							mapping.sourceOffsets.length === 2 &&
+							mapping.sourceOffsets[0] === switch_start &&
+							isDiagnosticsEnabled(mapping.data),
+					)
+					.map((mapping) => [
+						result.code.slice(mapping.generatedOffsets[0], mapping.generatedOffsets[0] + 6),
+						result.code[mapping.generatedOffsets[1] - 1],
+						source[mapping.sourceOffsets[1] - 1],
+					]),
+			).toEqual(name === 'solid' ? [] : [['switch', '}', '}']]);
 		});
 
 		it('reports a fallthrough, unreachable code and an unreachable switch where they are', () => {
