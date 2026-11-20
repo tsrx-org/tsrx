@@ -34,6 +34,9 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
  * @property {boolean} shows_content whether the boundary last rendered its
  * content rather than its fallback; `reset` doesn't change it, the render
  * after it does
+ * @property {boolean} removes_fallback whether the render that is running
+ * removes the fallback, as after a reset, rather than the content: what
+ * tearing that down throws isn't the content's
  * @property {boolean} unmounting whether the boundary's teardown has begun
  * @property {unknown} dropped_by the boundary whose render removed this one,
  * as its teardown began: the one around it showing other content, such as
@@ -266,9 +269,9 @@ function thrown_by_twin_fallback(source, boundary) {
 			if (state.dropped_by !== boundary || is_gone(boundary)) return true;
 		} else if (i === 0 && !state.shows_content) {
 			return true;
-		} else if (dropping === inner && state.caught !== null) {
-			// Torn down as the inner one swaps in the same `@catch`: it went on
-			// from there, and goes on from here too.
+		} else if (dropping === inner && (state.caught !== null || state.removes_fallback)) {
+			// Torn down as the inner one swaps in the same `@catch`, or removes
+			// it after a reset: it went on from there, and goes on from here too.
 			return true;
 		}
 		return thrown_by_fallback(source, inner);
@@ -555,6 +558,8 @@ function create_boundary_nodes(render, instance) {
 	vapor.renderEffect(() => {
 		const outer = re_rendering;
 		re_rendering = instance;
+		const state = instance && boundary_states.get(instance);
+		if (state) state.removes_fallback = !state.shows_content;
 		try {
 			if (scope) dropping_for(instance, () => /** @type {EffectScope} */ (scope).stop());
 			scope = new EffectScope();
@@ -577,6 +582,15 @@ function create_boundary_nodes(render, instance) {
 let dropping = null;
 
 /**
+ * What the boundaries' error hooks were handed while one of them removed what
+ * it showed before. Vue reported it, and throws it again in development when
+ * nothing took it.
+ *
+ * @type {Set<unknown>}
+ */
+const reported_while_dropping = new Set();
+
+/**
  * Runs `remove` as `instance`'s removal of what it showed before.
  *
  * What it throws, such as an `onScopeDispose` callback that throws as a
@@ -597,9 +611,16 @@ function dropping_for(instance, remove) {
 		remove();
 	} catch (error) {
 		if (!instance) throw error;
-		handleError(error, instance, ErrorCodes.COMPONENT_UPDATE);
+		// Thrown, it would end the render. One Vue reported already, such as
+		// from an `onBeforeUnmount`, it threw again because nothing took it:
+		// log it, as it does in production.
+		if (reported_while_dropping.has(error)) console.error(error);
+		// Logged, not thrown, in development when nothing takes it, as Vue
+		// does with a failed async component it shows an error component for.
+		else handleError(error, instance, ErrorCodes.COMPONENT_UPDATE, false);
 	} finally {
 		dropping = outer;
+		if (outer === null) reported_while_dropping.clear();
 	}
 }
 
@@ -780,6 +801,7 @@ function create_boundary_state() {
 		caught: null,
 		fallback_from: null,
 		shows_content: false,
+		removes_fallback: false,
 		unmounting: false,
 		dropped_by: null,
 		epoch: 0,
@@ -818,6 +840,7 @@ function initialize_boundary_state(instance) {
 	 * @returns {false | undefined}
 	 */
 	const capture = (captured_error, source) => {
+		if (dropping) reported_while_dropping.add(captured_error);
 		if (passes_to_twin(instance)) return;
 		// The boundary inside this one that renders the same `@catch` let this
 		// error from that `@catch` go on: let it go on too.
@@ -840,11 +863,12 @@ function initialize_boundary_state(instance) {
 		// teardown error. It goes on to the next boundary out, or to
 		// `app.config.errorHandler`, as without the `@try`. Taking it would show
 		// it in a `@catch` that is going away and lose it, or replace the error
-		// the `@catch` was just swapped in for. What the content's own render
-		// removes, as it updates, is the content's, as before.
+		// the `@catch` was just swapped in for. The same goes for the `@catch`
+		// a reset removes, as for what the `@catch` throws. What the content's
+		// own render removes, as it updates, is the content's, as before.
 		if (
 			(is_gone(instance, state) && !replaced_by_twin(instance, state)) ||
-			(dropping === instance && state.caught !== null)
+			(dropping === instance && (state.caught !== null || state.removes_fallback))
 		) {
 			return;
 		}
@@ -985,6 +1009,7 @@ function take_own_errors(instance, state, capture) {
 		// it has none, as a Vapor one doesn't.
 		const source = /** @type {unknown} */ (proxy);
 		if (source !== instance && source !== instance.proxy) return;
+		if (dropping) reported_while_dropping.add(captured_error);
 		if (!state.shows_content || state.unmounting || instance.isUnmounted) return;
 		const suspense = /** @type {{ suspense?: SuspenseState | null }} */ (instance).suspense;
 		// Also in the branch a `Suspense` (`timeout: -1`) keeps showing while

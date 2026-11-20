@@ -6,6 +6,7 @@ import {
 	defineVaporAsyncComponent,
 	inject,
 	onBeforeUnmount,
+	onErrorCaptured,
 	onMounted,
 	onScopeDispose,
 	onUnmounted,
@@ -4468,6 +4469,26 @@ function ResetScopeTeardown() @{
 	}
 }
 
+// The same, with the component in a Suspense, which Vue tears down as the
+// @try removes the @catch, after the content rendered again.
+function ResetSuspenseScopeTeardown() @{
+	@try {
+		<ScopeResetBody />
+	} @catch (err, reset) {
+		<>
+			<Suspense
+				v-slots={{
+					default: () => <ScopeTeardown />,
+					fallback: () => <i>{'wait'}</i>,
+				}}
+			/>
+			<button class="scope-reset" onClick={reset}>
+				{(err as Error).message}
+			</button>
+		</>
+	}
+}
+
 // The body's async component rejects while the Suspense is pending, so the
 // boundary around the Suspense swaps in the @catch and removes the body,
 // whose other component throws as it is torn down.
@@ -5185,6 +5206,71 @@ describe('tsrx-vue a @catch that throws', () => {
 			app.unmount();
 		},
 	);
+
+	it('shows the @catch in development with no app.config.errorHandler, and logs what an onScopeDispose throws', async () => {
+		const logged: unknown[] = [];
+		const error_spy = vi.spyOn(console, 'error').mockImplementation((error) => {
+			logged.push(error);
+		});
+		const app = createVaporApp(SwapScopeTeardownPlain);
+		app.config.warnHandler = () => {};
+		try {
+			app.mount(container);
+			await flush();
+			(container.querySelector('.scope-click') as HTMLElement).click();
+			await flush();
+			expect(text('.teardown-caught')).toBe('click');
+			expect(container.querySelector('.scope-teardown')).toBeNull();
+			expect(logged.map((error) => (error as Error).message)).toEqual(['scope teardown']);
+		} finally {
+			app.unmount();
+			error_spy.mockRestore();
+		}
+	});
+
+	it('passes on what an onScopeDispose in a Suspense in the @catch throws as a reset removes it', async () => {
+		scope_reset_fails.value = true;
+		const app = await mount(ResetSuspenseScopeTeardown, {});
+		expect(text('.scope-reset')).toBe('first');
+		scope_reset_fails.value = false;
+		(container.querySelector('.scope-reset') as HTMLElement).click();
+		await flush();
+		expect(text('.scope-reset-body')).toBe('ok');
+		expect(texts('.scope-reset')).not.toContain('scope teardown');
+		expect(handled).toEqual(['scope teardown']);
+		app.unmount();
+	});
+
+	it('logs, without passing it on again, what an onBeforeUnmount throws that nothing took in development', async () => {
+		const logged: unknown[] = [];
+		const observed: string[] = [];
+		const error_spy = vi.spyOn(console, 'error').mockImplementation((error) => {
+			logged.push(error);
+		});
+		const Host = defineVaporComponent(() => {
+			onErrorCaptured((error, _source, info) => {
+				observed.push(`${(error as Error).message} / ${info}`);
+			});
+			return <SwapTeardownPlain />;
+		});
+		const app = createVaporApp(Host);
+		app.config.warnHandler = () => {};
+		try {
+			app.mount(container);
+			await flush();
+			(container.querySelector('.click-then-teardown') as HTMLElement).click();
+			await flush();
+			expect(text('.teardown-caught')).toBe('click');
+			expect(observed[0]).toBe('child teardown / beforeUnmount hook');
+			expect(observed.every((entry) => entry === observed[0])).toBe(true);
+			expect(logged.map((error) => (error as Error).message)).toEqual(
+				observed.map(() => 'child teardown'),
+			);
+		} finally {
+			app.unmount();
+			error_spy.mockRestore();
+		}
+	});
 
 	it('shows in the @catch around it what an onScopeDispose throws as an @if removes it', async () => {
 		for (const host of [IfRemovesTeardown, IfRemovesTeardownAtRoot]) {
