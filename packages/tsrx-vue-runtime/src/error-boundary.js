@@ -256,9 +256,15 @@ function torn_down_by_render(error, source, boundary, state) {
 	if (dropping !== boundary) return false;
 	if (state.removes_for_catch) return true;
 	if (!state.removes_fallback) return false;
-	// What the removal itself threw (`dropping_for`), not what a hook it
-	// reaches sets off.
-	if (reporting?.boundary === boundary && reporting.error === error) return true;
+	// What the removal itself threw, which the boundary reports as its own
+	// (`dropping_for`), not what a hook that error reaches sets off.
+	if (
+		reporting?.boundary === boundary &&
+		Object.is(reporting.error, error) &&
+		(source === boundary || source === boundary.proxy)
+	) {
+		return true;
+	}
 	// A component the fallback showed. Without uids, as before, the content's.
 	const from = state.rendered_from;
 	if (from == null) return false;

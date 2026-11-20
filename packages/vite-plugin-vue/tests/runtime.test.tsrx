@@ -4660,30 +4660,43 @@ function RenderSwapPlain() @{
 	}
 }
 
-// A reset removes a @catch whose component's scope dispose callback throws,
-// once; a hook above that sees that error sets off a watcher in the new
-// content.
+// A reset removes a @catch whose component's scope dispose callback throws
+// `scope_teardown_value`, once; a hook above that sees that value sets off a
+// watcher in the new content.
 let scope_teardown_armed = true;
+let scope_teardown_value: unknown = null;
 
 function ScopeTeardownOnce() @{
 	onScopeDispose(() => {
 		if (!scope_teardown_armed) return;
 		scope_teardown_armed = false;
-		throw new Error('scope teardown');
+		throw scope_teardown_value;
 	});
 	<span>{'scope'}</span>
 }
 
-function ObservedResetWatcher() @{
-	onErrorCaptured((error) => {
-		if ((error as Error).message === 'scope teardown') reset_signal.value++;
-	});
-	<ResetWatcherWithThrowingCatch />
+// The same value, thrown again by the new content's watcher.
+function WatchesResetSignalSameValue() @{
+	watch(
+		reset_signal,
+		() => {
+			throw scope_teardown_value;
+		},
+		{ flush: 'sync' },
+	);
+	<p class="scope-reset-body">{'ok'}</p>
 }
 
-function ResetWatcherWithThrowingCatch() @{
+function ObservedResetWatcher(props: { body: unknown }) @{
+	onErrorCaptured((error) => {
+		if (error === scope_teardown_value) reset_signal.value++;
+	});
+	<ResetWatcherWithThrowingCatch body={props.body} />
+}
+
+function ResetWatcherWithThrowingCatch(props: { body: unknown }) @{
 	@try {
-		<ResetWatcherBody body={WatchesResetSignal} />
+		<ResetWatcherBody body={props.body} />
 	} @catch (err, reset) {
 		<>
 			<Suspense
@@ -4693,7 +4706,7 @@ function ResetWatcherWithThrowingCatch() @{
 				}}
 			/>
 			<button class="scope-reset" onClick={reset}>
-				{(err as Error).message}
+				{err instanceof Error ? err.message : String(err)}
 			</button>
 		</>
 	}
@@ -5537,19 +5550,41 @@ describe('tsrx-vue a @catch that throws', () => {
 		},
 	);
 
-	it('keeps with the content a reset renders what a hook that sees a teardown error sets off', async () => {
+	it.each([
+		['its own error', WatchesResetSignal, 'new content watcher'],
+		['the same error', WatchesResetSignalSameValue, 'Error: scope teardown'],
+	])(
+		'keeps with the content a reset renders what a hook that sees a teardown error sets off, throwing %s',
+		async (_name, body, shown) => {
+			scope_teardown_armed = true;
+			scope_teardown_value = new Error('scope teardown');
+			scope_reset_fails.value = true;
+			reset_signal.value = 0;
+			const app = await mount(ObservedResetWatcher, { body });
+			expect(text('.scope-reset')).toBe('first');
+			scope_reset_fails.value = false;
+			(container.querySelector('.scope-reset') as HTMLElement).click();
+			await flush();
+			// The old @catch can stay beside it: Vue's teardown of what the
+			// Suspense held stopped at the throw.
+			expect(texts('.scope-reset')).toContain(shown.replace('Error: ', ''));
+			expect(handled).toEqual(['scope teardown']);
+			app.unmount();
+		},
+	);
+
+	it('passes on a teardown error whatever the value, also NaN', async () => {
 		scope_teardown_armed = true;
+		scope_teardown_value = Number.NaN;
 		scope_reset_fails.value = true;
 		reset_signal.value = 0;
-		const app = await mount(ObservedResetWatcher, {});
-		expect(text('.scope-reset')).toBe('first');
+		const app = await mount(ResetWatcherWithThrowingCatch, { body: WatchesResetSignal });
 		scope_reset_fails.value = false;
 		(container.querySelector('.scope-reset') as HTMLElement).click();
 		await flush();
-		// The old @catch can stay beside it: Vue's teardown of what the
-		// Suspense held stopped at the throw.
-		expect(texts('.scope-reset')).toContain('new content watcher');
-		expect(handled).toEqual(['scope teardown']);
+		expect(text('.scope-reset-body')).toBe('ok');
+		expect(texts('.scope-reset')).not.toContain('NaN');
+		expect(handled).toHaveLength(1);
 		app.unmount();
 	});
 
