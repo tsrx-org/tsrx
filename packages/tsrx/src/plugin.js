@@ -653,6 +653,22 @@ function decode_identifier_escapes(name) {
 	);
 }
 
+/**
+ * `word`, a word with escapes in it, decoded, or `null` when an escape is out
+ * of range or a surrogate, or the decoded word isn't a name.
+ * @param {string} word
+ * @returns {string | null}
+ */
+function decode_identifier_name(word) {
+	for (const [, braced, plain] of word.matchAll(regex_identifier_escape)) {
+		const code = Number.parseInt(braced ?? plain, 16);
+		// A surrogate isn't a character of a name on its own.
+		if (code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return null;
+	}
+	const decoded = decode_identifier_escapes(word);
+	return regex_plain_name.test(decoded) ? decoded : null;
+}
+
 // A name, without escapes, that TypeScript's parser reads as an identifier
 // where an expression starts: not one of the reserved words acorn reads as
 // one (see `semicolon`).
@@ -708,9 +724,10 @@ const NAMES_WITH_OWN_MISSING_SEMICOLON_ERROR = new Set([
 	'namespace',
 	'type',
 ]);
-// A word, or any other character, after whitespace and comments.
+// A word, or any other character, after whitespace and comments. A word may
+// have identifier escapes in it, and is read up to 64 characters at a time.
 const regex_next_token =
-	/(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\/)*([\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*|\S)/uy;
+	/(?:\s|\/\/[^\n\r\u2028\u2029]*|\/\*[\s\S]*?\*\/)*((?:[\p{ID_Start}$_]|\\u[\da-fA-F]{4}|\\u\{[\da-fA-F]{1,6}\})(?:[\p{ID_Continue}$\u200c\u200d]|\\u[\da-fA-F]{4}|\\u\{[\da-fA-F]{1,6}\}){0,63}|\S)/uy;
 
 /**
  * TypeScript's error for the import or export at `position` inside a block,
@@ -728,7 +745,20 @@ function nested_import_export_error(input, position) {
 	const tokens = [];
 	regex_next_token.lastIndex = position;
 	for (let match; tokens.length < 6 && (match = regex_next_token.exec(input));) {
-		tokens.push(match[1]);
+		let word = match[1];
+		const escape = word.indexOf('\\');
+		if (escape !== -1) {
+			// TypeScript reads `glo\u0062al` as `global`. An escape that doesn't
+			// make a name (`as\u0020`) ends the word before it, as without escapes.
+			const decoded = decode_identifier_name(word);
+			if (decoded === null) {
+				word = word.slice(0, escape) || '\\';
+				regex_next_token.lastIndex = match.index + match[0].length - match[1].length + word.length;
+			} else {
+				word = decoded;
+			}
+		}
+		tokens.push(word);
 	}
 	const [keyword, first, second, third] = tokens;
 	if (keyword === 'import' || first === 'import') return TS_ERRORS.NESTED_IMPORT;
