@@ -1202,14 +1202,6 @@ const leading_async_modifiers = new WeakMap();
  */
 const members_with_modifier_errors = new WeakSet();
 
-/**
- * The codes of the errors of a field that TypeScript reports only when its
- * modifiers have none: a private name with an access modifier (TS18010) or
- * with `abstract` or `declare` (TS18019), and an initializer in an ambient
- * context (TS1039).
- */
-const FIELD_ERRORS_AFTER_MODIFIERS = new Set(['TS18010', 'TS18019', 'TS1039']);
-
 /** The access modifiers. */
 const ACCESSIBILITY_MODIFIERS = new Set(['public', 'protected', 'private']);
 
@@ -8244,6 +8236,14 @@ export function TSRXPlugin(config) {
 			 * Babel reject there, where esrap's order compiled: a strict parse throws
 			 * it at the source instead.
 			 *
+			 * It's reported before the field is read, as acorn-typescript reports the
+			 * modifiers' errors it checks. So a syntax error in the initializer comes
+			 * after it, where TypeScript reports only that one, and acorn-typescript's
+			 * error for a private name (TS18010, TS18019) or an ambient initializer
+			 * (TS1039) is also recorded, where TypeScript reports only the first.
+			 * Holding those until the field is read reorders the errors of the code
+			 * in the initializer instead, and some of those can't be held.
+			 *
 			 * On a decorated `declare` or `abstract` property, TypeScript reports the
 			 * decorators first (TS1206) unless `experimentalDecorators` is on, which
 			 * the parser can't tell: it reports the modifiers' error, TypeScript's
@@ -8252,28 +8252,11 @@ export function TSRXPlugin(config) {
 			 */
 			parseClassField(field) {
 				const member = /** @type {AST.PropertyDefinition} */ (field);
-				const found =
-					member.accessor && !members_with_modifier_errors.has(field)
-						? this.#accessorModifierError(member)
-						: null;
-				if (!found) return super.parseClassField(field);
-				// Once the field is read, so that a syntax error in it comes first, as
-				// in TypeScript, which then reports none of the field's errors that it
-				// checks after the modifiers' (TS18010, TS18019, TS1039).
-				/** @type {CompileError[]} */
-				const held = [];
-				const result = this.#holdingErrors(held, () => super.parseClassField(field));
-				this.#raiseCheckerError(found.start, found.error);
-				// The field's own, not those of code in its initializer.
-				const value_start = member.value?.start ?? Infinity;
-				this.#releaseErrors(
-					held.filter(
-						(error) =>
-							(error.pos ?? 0) >= value_start ||
-							!FIELD_ERRORS_AFTER_MODIFIERS.has(error.code ?? ''),
-					),
-				);
-				return result;
+				if (member.accessor && !members_with_modifier_errors.has(field)) {
+					const found = this.#accessorModifierError(member);
+					if (found) this.#raiseCheckerError(found.start, found.error);
+				}
+				return super.parseClassField(field);
 			}
 
 			/**
