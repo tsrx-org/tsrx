@@ -478,7 +478,7 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			}`;
 			expect(
 				compile_to_volar_mappings(source, 'App.tsrx', { loose: true }).errors.map(
-					(/** @type {{ code: string }} */ error) => error.code,
+					(error) => error.code,
 				),
 			).toEqual([TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code]);
 		});
