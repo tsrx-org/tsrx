@@ -23,8 +23,8 @@ const host = vi.hoisted(() => ({
 	showErrorMessage: vi.fn(),
 	showInformationMessage: vi.fn(async () => /** @type {string | undefined} */ (undefined)),
 	openExternal: vi.fn(),
-	/** @type {{ document: { uri: { path: string } } } | undefined} */
-	editor: { document: { uri: { path: '/project/src/App.tsrx' } } },
+	/** @type {{ document: { uri: { scheme: string, path: string } } } | undefined} */
+	editor: { document: { uri: { scheme: 'file', path: '/project/src/App.tsrx' } } },
 	/** @type {Array<{ uri: { scheme: string, authority: string, path: string, fragment: string } }>} */
 	documents: [],
 }));
@@ -107,8 +107,8 @@ vi.mock('vscode', () => {
 	};
 });
 
-const APP = { path: '/project/src/App.tsrx' };
-const LIB = { path: '/project/src/Lib.tsrx' };
+const APP = { scheme: 'file', path: '/project/src/App.tsrx' };
+const LIB = { scheme: 'file', path: '/project/src/Lib.tsrx' };
 
 /** The references `beforeEach` has tsserver return, as VS Code locations (zero-based). */
 const LIB_LOCATION = {
@@ -316,6 +316,52 @@ describe('Find File References', () => {
 				{ uri: { value: 'vscode-vfs://github/owner/repo/src/main.ts' }, range },
 			],
 		);
+	});
+
+	it("says VS Code's own words for a tab that VS Code's TypeScript doesn't serve, such as a git: one", async () => {
+		// `typescript.tsserverRequest` would send no `file`, and tsserver would answer "Cannot
+		// read properties of undefined (reading 'includes')".
+		await run({ scheme: 'git', path: '/project/src/App.tsrx' });
+		expect(host.showErrorMessage).toHaveBeenCalledExactlyOnceWith(
+			'Find File References failed: Unknown file type.',
+		);
+		expect(host.openTextDocument).not.toHaveBeenCalled();
+		expect(host.executeCommand).not.toHaveBeenCalled();
+	});
+
+	it('finds the references of an unsaved .tsrx file', async () => {
+		const untitled = { scheme: 'untitled', path: 'Untitled-1' };
+		await run(untitled);
+		expect(host.executeCommand).toHaveBeenCalledWith(
+			'typescript.tsserverRequest',
+			'_tsrx:fileReferences',
+			{ file: untitled },
+		);
+	});
+
+	it('changes the setting for one run at a time', async () => {
+		/** @type {string[]} */
+		const events = [];
+		host.update.mockImplementation(async (_key, /** @type {string | undefined} */ value) => {
+			events.push(`write ${value}`);
+			await new Promise((resolve) => setTimeout(resolve, 1));
+			host.preferred_location.workspaceValue = value;
+		});
+		host.executeCommand.mockImplementation(async (/** @type {string} */ command) => {
+			if (command === 'typescript.tsserverRequest') return host.response;
+			if (command === 'editor.action.showReferences') {
+				events.push(`show with ${host.preferred_location.workspaceValue}`);
+			}
+		});
+		await Promise.all([run(APP), run(LIB)]);
+		expect(events).toEqual([
+			'write view',
+			'show with view',
+			'write undefined',
+			'write view',
+			'show with view',
+			'write undefined',
+		]);
 	});
 
 	it('does nothing without a file', async () => {

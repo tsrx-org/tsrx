@@ -1,6 +1,7 @@
 import vscode from 'vscode';
 import { SOURCE_DEFINITION_COMMAND } from '@tsrx/typescript-plugin/src/plugin-source-definition.js';
 import { TYPESCRIPT_7_TRACKING_URL } from '@tsrx/typescript-plugin/src/typescript-version.js';
+import { served_by_tsserver, tsserver_location } from './tsserver-files.js';
 import { typescript_7_on } from './typescript-7.js';
 
 export const GO_TO_SOURCE_DEFINITION_COMMAND = 'tsrx.goToSourceDefinition';
@@ -58,6 +59,9 @@ export function register_source_definition_command() {
 			}
 			locations = await definitions(document.uri, position);
 			not_found = 'No definition found.';
+		} else if (!served_by_tsserver(document.uri)) {
+			vscode.window.showErrorMessage('Go to Source Definition failed: Unknown file type.');
+			return;
 		} else {
 			locations = await vscode.window.withProgress(
 				{ location: vscode.ProgressLocation.Window, title: 'Finding source definitions' },
@@ -85,7 +89,7 @@ export function register_source_definition_command() {
  *   failed (after saying so) or was cancelled.
  */
 async function source_definitions(uri, position) {
-	/** @type {{ type?: string, body?: Array<{ file: string, start: TsserverPosition, end: TsserverPosition }> } | undefined} */
+	/** @type {{ type?: string, body?: import('./tsserver-files.js').TsserverSpan[] } | undefined} */
 	let response;
 	try {
 		response = await vscode.commands.executeCommand(
@@ -99,18 +103,7 @@ async function source_definitions(uri, position) {
 		return undefined;
 	}
 	if (response?.type === 'cancelled') return undefined;
-	return (response?.body ?? []).map(
-		(span) =>
-			new vscode.Location(
-				vscode.Uri.file(span.file),
-				new vscode.Range(
-					span.start.line - 1,
-					span.start.offset - 1,
-					span.end.line - 1,
-					span.end.offset - 1,
-				),
-			),
-	);
+	return (response?.body ?? []).map(tsserver_location);
 }
 
 /**
@@ -135,5 +128,3 @@ async function definitions(uri, position) {
 			: definition,
 	);
 }
-
-/** @typedef {{ line: number, offset: number }} TsserverPosition One-based, as tsserver counts. */
