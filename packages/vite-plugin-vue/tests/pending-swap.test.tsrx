@@ -32,6 +32,15 @@ function ActiveTry() @{
 	}
 }
 
+// The same, where the body's own inline code throws.
+function ActiveInlineTry() @{
+	@try {
+		<p class="active-body">{active_label()}</p>
+	} @catch (err) {
+		<b class="active-caught">{String(err)}</b>
+	}
+}
+
 const late_shown = ref(false);
 let finish_late: (component: unknown) => void = () => {};
 
@@ -206,6 +215,18 @@ describe('tsrx-vue a @try in the branch a pending Suspense still shows', () => {
 		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: active body');
 		expect(handled).toEqual([]);
 		finish_late(LateFine);
+		finish();
+		app.unmount();
+	});
+
+	it('shows its @catch at once for an error its own inline code throws', async () => {
+		active_broken.value = false;
+		const { app, handled, finish } = await mount_kept(ActiveInlineTry);
+		expect(container.querySelector('.active-body')?.textContent).toBe('ok');
+		active_broken.value = true;
+		await flush();
+		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: active body');
+		expect(handled).toEqual([]);
 		finish();
 		app.unmount();
 	});

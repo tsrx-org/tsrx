@@ -79,9 +79,8 @@ const rendering = [];
  * For each boundary render in progress, innermost last, how to remove the
  * hooks that the boundaries it creates add to their parents
  * (`take_own_errors`). Content that throws as it renders is dropped before it
- * mounts, so nothing unmounts what it created; the boundary removes those
- * hooks itself. A boundary whose own render throws passes the error out, and
- * the boundary around it, if any, drops it with the hooks on it.
+ * mounts, and Vue doesn't dispose of what it created, so the boundary removes
+ * those hooks itself; so it does when its fallback throws as it renders.
  *
  * @type {Array<Array<() => void>>}
  */
@@ -99,10 +98,14 @@ function track_created(render) {
 	/** @type {Array<() => void>} */
 	const created = [];
 	creating.push(created);
+	let done = false;
 	try {
-		return render(created);
+		const result = render(created);
+		done = true;
+		return result;
 	} finally {
 		creating.pop();
+		if (!done) for (const remove of created) remove();
 	}
 }
 
@@ -779,9 +782,9 @@ function initialize_boundary_state(instance) {
  *
  * Some still go on, as before: what the fallback's inline code throws; what
  * comes while the boundary unmounts; and what comes while the boundary's
- * `Suspense` is pending, since swapping could unmount a component in an
- * element of the body that the `Suspense` waits for, which the boundary
- * can't find (see `pending_setups`).
+ * `Suspense` is pending and the boundary is in the branch it waits for, since
+ * swapping could unmount a component in an element of the body that the
+ * `Suspense` waits for, which the boundary can't find (see `pending_setups`).
  *
  * The hook is removed when Vue disposes of the boundary, as it unmounts or
  * after it was dropped before it mounted, or when the boundary render that
@@ -802,10 +805,18 @@ function take_own_errors(instance, state, capture) {
 		const source = /** @type {unknown} */ (proxy);
 		if (source !== instance && source !== instance.proxy) return;
 		if (!state.shows_content || state.unmounting || instance.isUnmounted) return;
-		const suspense =
-			/** @type {{ suspense?: (PendingSuspense & { isUnmounted?: boolean }) | null }} */ (instance)
-				.suspense;
-		if (suspense?.pendingBranch && !suspense.isUnmounted) return;
+		const suspense = /** @type {{ suspense?: SuspenseState | null, suspenseId?: number }} */ (
+			instance
+		).suspense;
+		// Only for a boundary in the branch the `Suspense` waits for, created
+		// in its current round: one in the branch a `Suspense` (`timeout: -1`)
+		// keeps showing takes its errors, as it does a component's.
+		if (
+			suspense?.pendingBranch &&
+			!suspense.isUnmounted &&
+			/** @type {{ suspenseId?: number }} */ (instance).suspenseId === suspense.pendingId
+		)
+			return;
 		return capture(captured_error, instance);
 	}, /** @type {ComponentInternalInstance} */ (/** @type {unknown} */ (parent)));
 	const hooks = /** @type {Function[]} */ (parent.ec);

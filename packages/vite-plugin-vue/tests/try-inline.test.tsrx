@@ -174,6 +174,38 @@ function DiscardedInner() @{
 	}
 }
 
+const fallback_tick = ref(0);
+let fallback_owner: { ec?: unknown[] | null } | null = null;
+
+function remember_fallback_owner() {
+	fallback_owner = (Vue as unknown as { currentInstance: { ec?: unknown[] | null } })
+		.currentInstance;
+}
+
+function fallback_fails(): string {
+	throw new Error('fallback');
+}
+
+// The @catch reads a ref, renders a @try, then throws as it renders.
+function FallbackFails() @{
+	<div>
+		@try {
+			<p>{outer_fails()}</p>
+		} @catch (_err) {
+			void fallback_tick.value;
+			remember_fallback_owner();
+			<>
+				@try {
+					<p>{'inner'}</p>
+				} @catch (err) {
+					<b>{String(err)}</b>
+				}
+				<span>{fallback_fails()}</span>
+			</>
+		}
+	</div>
+}
+
 const dropped_rows = ref<number[]>([]);
 let rows_owner: { ec?: unknown[] | null } | null = null;
 
@@ -362,6 +394,21 @@ describe("tsrx-vue a @try body's inline code, more cases", () => {
 			app.unmount();
 		},
 	);
+
+	it('removes the hook of a @try a @catch rendered before it threw', async () => {
+		fallback_tick.value = 0;
+		const { app, handled } = await mount(FallbackFails);
+		const counts: number[] = [];
+		for (let i = 0; i < 4; i++) {
+			counts.push(fallback_owner?.ec?.length ?? 0);
+			fallback_tick.value++;
+			await flush();
+		}
+		expect(handled.length).toBeGreaterThan(0);
+		expect(new Set(handled)).toEqual(new Set(['Error: fallback']));
+		expect(counts).toEqual([1, 1, 1, 1]);
+		app.unmount();
+	});
 
 	it('removes its hook from the component around it when it unmounts', async () => {
 		toggled_shown.value = true;
