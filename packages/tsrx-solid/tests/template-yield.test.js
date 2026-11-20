@@ -286,6 +286,20 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 			'textContent beside a call to an `import … =` binding, which babel does not fold',
 			`import String = Foo.Bar;\n${returning('<div title={String(1)} textContent={yield t} />')}`,
 		],
+		// Babel calls only an own property of `Math`, `Number` or `String`, and
+		// only a method a literal has.
+		[
+			'textContent beside a call to a method Math only inherits, which babel does not fold',
+			returning('<div title={Math.toString()} textContent={yield t} />'),
+		],
+		[
+			'textContent beside a call to a method Number only inherits',
+			returning("<div title={Number.hasOwnProperty('x')} textContent={yield t} />"),
+		],
+		[
+			'textContent beside a call to a method a string literal lacks',
+			returning("<div title={'a'.missing()} textContent={yield t} />"),
+		],
 	])('reports each yield in %s in a server build only', (_label, source) => {
 		const yields = [...source.matchAll(/\byield\b/g)].map((match) => match.index);
 		expect(() => compile(source, 'App.tsrx', { ssr: true })).toThrow(
@@ -389,6 +403,24 @@ describe("a yield in a template Solid's SSR output evaluates in an arrow (#1291)
 		[
 			'textContent beside a call to a global a parameter property has the name of',
 			'class C {\n\tconstructor(public String: any) {\n\t\tfunction* f(t: any) {\n\t\t\treturn <div title={String(1)} textContent={yield t} />;\n\t\t}\n\t}\n}',
+		],
+		// Babel calls `Math.max` from its own globals whatever binds `Math`.
+		[
+			'textContent beside a call to a method of a Math a const shadows, which babel still folds',
+			`const Math = { max: (a: number, b: number) => a };\n${returning('<div title={Math.max(1, 2)} textContent={yield t} />')}`,
+		],
+		[
+			'textContent beside a call to an own method of a String a parameter shadows',
+			'export function* f(bag: any, t: any, String: any) {\n\treturn <div title={String.fromCharCode(65)} textContent={yield t} />;\n}',
+		],
+		// A child is inserted on its own, so it ends a run of grouped values.
+		[
+			'textContent after a dynamic child that follows a dynamic attribute',
+			returning('<div><b title={bag.x} />{bag.y}<p textContent={yield t} /></div>'),
+		],
+		[
+			'textContent before a dynamic child and a dynamic attribute',
+			returning('<div><p textContent={yield t} />{bag.y}<b title={bag.x} /></div>'),
 		],
 		// Babel's scope doesn't bind these, so it still folds `String(1)`.
 		...['namespace String {}', 'enum String { A }', 'declare class String {}'].map(
