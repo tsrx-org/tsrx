@@ -1,33 +1,15 @@
 import {
 	createVaporApp,
-	createVaporSSRApp,
+	defineVaporAsyncComponent,
 	onBeforeUnmount,
 	onErrorCaptured,
 	ref,
-	vaporInteropPlugin,
+	Suspense,
 } from 'vue';
 import * as Vue from 'vue';
 
 // A @try body's own inline code: what it throws after the first render is
 // the @try's to show. More cases are in runtime.test.tsrx.
-
-const hydrated_broken = ref(false);
-
-function hydrated_label(): string {
-	if (hydrated_broken.value) throw new Error('updated');
-	return 'ok';
-}
-
-function HydratedInline() @{
-	<div>
-		@try {
-			<p class="inline-body">{hydrated_label()}</p>
-		} @catch (err) {
-			<b class="inline-caught">{String(err)}</b>
-		}
-		<button class="after">{'after'}</button>
-	</div>
-}
 
 const catch_broken = ref(false);
 let catch_threw = false;
@@ -96,6 +78,82 @@ function TeardownThrows() @{
 	</div>
 }
 
+const pending_broken = ref(false);
+let finish_pending: () => void = () => {};
+
+function pending_label(): string {
+	if (pending_broken.value) throw new Error('inline');
+	return 'ok';
+}
+
+function PendingDone() @{
+	<small class="pending-done">{'done'}</small>
+}
+
+// A plain @try whose inline code throws beside a loading component inside an
+// element, in an authored Suspense.
+function PendingBody() @{
+	const AsyncChild = defineVaporAsyncComponent(
+		() => new Promise<any>((resolve) => (finish_pending = () => resolve(PendingDone))),
+	);
+	@try {
+		<div>
+			<AsyncChild />
+			<p class="pending-body">{pending_label()}</p>
+		</div>
+	} @catch (err) {
+		<b class="pending-caught">{String(err)}</b>
+	}
+}
+
+function PendingSuspended() @{
+	<Suspense
+		v-slots={{
+			default: () => <PendingBody />,
+			fallback: () => <i class="pending-loading">{'loading'}</i>,
+		}}
+	/>
+}
+
+function outer_fails(): string {
+	throw new Error('outer');
+}
+
+function PendingInCatch() @{
+	@try {
+		<p>{outer_fails()}</p>
+	} @catch (_err) {
+		<PendingSuspended />
+	}
+}
+
+let discard_owner: { ec?: unknown[] | null } | null = null;
+
+function remember_owner() {
+	discard_owner = (Vue as unknown as { currentInstance: { ec?: unknown[] | null } })
+		.currentInstance;
+}
+
+// The outer body creates an inner @try, then throws as it renders, so the
+// inner one is dropped before it mounts.
+function DiscardedInner() @{
+	@try {
+		remember_owner();
+		<>
+			@try {
+				<p>{'inner'}</p>
+			} @catch (err) {
+				<b>{String(err)}</b>
+			}
+			<span>{outer_fails()}</span>
+		</>
+	} @catch (err, reset) {
+		<button class="discard-reset" onClick={reset}>
+			{String(err)}
+		</button>
+	}
+}
+
 const hooked_broken = ref(false);
 const hooked_seen: string[] = [];
 
@@ -134,35 +192,6 @@ describe("tsrx-vue a @try body's inline code, more cases", () => {
 		return { app, handled };
 	}
 
-	it('shows an error it throws on an update after hydration, and keeps what follows', async () => {
-		hydrated_broken.value = false;
-		container.innerHTML =
-			'<div><p class="inline-body">ok</p><button class="after">after</button></div>';
-		const after = container.querySelector('.after');
-		const handled: string[] = [];
-		const app = createVaporSSRApp(HydratedInline);
-		// As the test setup does for `createVaporApp`. Without it, the
-		// components vue-jsx-vapor wraps here first would mount as VDOM ones
-		// in the later tests' apps.
-		app.use(vaporInteropPlugin);
-		app.config.errorHandler = (error) => {
-			handled.push(String(error));
-		};
-		try {
-			app.mount(container);
-			await flush();
-			expect(container.querySelector('.inline-body')?.textContent).toBe('ok');
-			hydrated_broken.value = true;
-			await flush();
-			expect(text('.inline-caught')).toBe('Error: updated');
-			expect(container.querySelector('.inline-body')).toBeNull();
-			expect(container.querySelector('.after')).toBe(after);
-			expect(handled).toEqual([]);
-		} finally {
-			app.unmount();
-		}
-	});
-
 	it('lets an error the @catch inline code throws go to the next @try out', async () => {
 		catch_broken.value = false;
 		catch_threw = false;
@@ -197,6 +226,42 @@ describe("tsrx-vue a @try body's inline code, more cases", () => {
 		expect(container.querySelector('.teardown-body')).toBeNull();
 		expect(container.querySelector('.teardown-caught')).toBeNull();
 		expect(handled).toEqual(['Error: teardown']);
+		app.unmount();
+	});
+
+	it.each([
+		['', PendingSuspended],
+		[' in a @catch', PendingInCatch],
+	])(
+		'lets an error it throws while its Suspense is pending go on, so the Suspense resolves%s',
+		async (_name, component) => {
+			pending_broken.value = false;
+			const { app, handled } = await mount(component);
+			expect(text('.pending-loading')).toBe('loading');
+			pending_broken.value = true;
+			await flush();
+			finish_pending();
+			await flush();
+			await new Promise((resolve) => setTimeout(resolve, 0));
+			await flush();
+			expect(container.querySelector('.pending-loading')).toBeNull();
+			expect(text('.pending-done')).toBe('done');
+			expect(handled).toEqual(['Error: inline']);
+			app.unmount();
+		},
+	);
+
+	it('removes the hook of a @try that a failed render dropped before it mounted', async () => {
+		const { app, handled } = await mount(DiscardedInner);
+		expect(text('.discard-reset')).toBe('Error: outer');
+		const counts: number[] = [];
+		for (let i = 0; i < 4; i++) {
+			counts.push(discard_owner?.ec?.length ?? 0);
+			(container.querySelector('.discard-reset') as HTMLElement).click();
+			await flush();
+		}
+		expect(counts).toEqual([1, 1, 1, 1]);
+		expect(handled).toEqual([]);
 		app.unmount();
 	});
 

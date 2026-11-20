@@ -4712,7 +4712,7 @@ describe('tsrx-vue a @catch that throws', () => {
 		app.unmount();
 	});
 
-	it('shows a @try inside a Suspense in the @catch once the Suspense resolves', async () => {
+	it('lets a Suspense in the @catch resolve after a @try inside it throws while pending', async () => {
 		const app = await mount(SuspendedTryInCatch, {});
 		expect(text('.hidden-loading')).toBe('loading');
 		nested_broken.value = true;
@@ -4722,8 +4722,7 @@ describe('tsrx-vue a @catch that throws', () => {
 		await new Promise((resolve) => setTimeout(resolve, 0));
 		await flush();
 		expect(container.querySelector('.hidden-loading')).toBeNull();
-		expect(text('.nested-caught')).toBe('Error: nested body');
-		expect(handled).toEqual([]);
+		expect(handled).toEqual(['nested body']);
 		app.unmount();
 	});
 
