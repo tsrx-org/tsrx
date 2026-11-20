@@ -1022,6 +1022,10 @@ function attribute_matches(node, name, expected_value, operator, case_insensitiv
  * @returns {boolean}
  */
 function is_outer_global(relative_selector) {
+	// The analyzer also reads an `&` for a `@scope`'s root as the `:scope` it
+	// stands for (`:global(.x)&`).
+	if (relative_selector.metadata.is_global) return true;
+
 	const first = relative_selector.selectors[0];
 
 	return (
