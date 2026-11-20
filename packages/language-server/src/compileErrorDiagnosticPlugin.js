@@ -57,8 +57,10 @@ export function createCompileErrorDiagnosticPlugin() {
 					let typescript_diagnostics;
 
 					for (const error of [...virtualCode.fatalErrors, ...virtualCode.usageErrors]) {
-						// Shown in the embedded CSS of the `<style>` body it is in.
-						if (error.type !== 'fatal' && css_region_of(error, virtualCode)) continue;
+						// Shown in the embedded CSS of the `<style>` body it is in, when the
+						// editor has that code (it keeps one code of an id).
+						const css = error.type === 'fatal' ? null : css_region_of(error, virtualCode);
+						if (css && sourceScript?.generated?.embeddedCodes.get(css.id) === css) continue;
 
 						const diagnostic = parseCompilationErrorWithDocument(
 							error,
@@ -98,11 +100,11 @@ export function createCompileErrorDiagnosticPlugin() {
 }
 
 /**
- * The source range of the embedded CSS code (a `<style>` body) that holds all
- * of `error`'s range, if one does.
+ * The embedded CSS code (a `<style>` body) that holds all of `error`'s range,
+ * if one does.
  * @param {CompileError} error
  * @param {TSRXVirtualCodeInstance} root
- * @returns {[start: number, end: number] | null}
+ * @returns {import('@volar/language-server').VirtualCode | null}
  */
 function css_region_of(error, root) {
 	if (error.pos === undefined) return null;
@@ -110,7 +112,7 @@ function css_region_of(error, root) {
 	for (const code of root.embeddedCodes ?? []) {
 		if (code.languageId !== 'css') continue;
 		const region = css_region_range(code);
-		if (region && region[0] <= error.pos && end <= region[1]) return region;
+		if (region && region[0] <= error.pos && end <= region[1]) return code;
 	}
 	return null;
 }
@@ -140,8 +142,7 @@ function css_region_diagnostics(root, css, document) {
 	/** @type {Diagnostic[]} */
 	const diagnostics = [];
 	for (const error of root.usageErrors) {
-		const in_region = css_region_of(error, root);
-		if (!in_region || in_region[0] !== region[0]) continue;
+		if (css_region_of(error, root) !== css) continue;
 		const start = /** @type {number} */ (error.pos) - region[0];
 		const end = get_end_offset_from_error(error, /** @type {number} */ (error.pos)) - region[0];
 		diagnostics.push({
