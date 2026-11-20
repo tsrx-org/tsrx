@@ -1343,7 +1343,12 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 
 			const rule = /** @type {AST.CSS.Rule} */ (node.metadata.rule);
 
-			if (apply_selector(selectors, rule, element, BACKWARD) || rule_has_animation(rule)) {
+			if (apply_selector(selectors, rule, element, BACKWARD)) {
+				node.metadata.used = true;
+			} else if (!node.metadata.used && rule_has_animation(rule)) {
+				// A rule with an animation is kept although it matches nothing, but
+				// scoped as if it matched, so it can't style elements outside.
+				assume_match(selectors);
 				node.metadata.used = true;
 			}
 

@@ -1221,6 +1221,35 @@ export function runSharedScopedStyleTests({
 				`animation: ${hash}-constructor 1s, "toString" 2s, ${hash}-__proto__ 3s, hasOwnProperty 4s;`,
 			);
 		});
+
+		it('scopes a rule with an animation that matches nothing', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							@keyframes fade ${frames}
+							.box { animation: fade 1s; }
+							.none { color: red; animation: fade 1s; }
+							.box .none { animation-name: fade; }
+							.none, .box { animation: fade 2s; }
+							.none { color: blue; }
+						</style>
+						<div ${attr}="box" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`.box.${hash} { animation: ${hash}-fade 1s; }`);
+			// Kept, as before, but no longer unscoped: these matched every .none on
+			// the page.
+			expect(css).toContain(`.none.${hash} { color: red; animation: ${hash}-fade 1s; }`);
+			expect(css).toContain(`.box.${hash} .none:where(.${hash}) { animation-name: ${hash}-fade; }`);
+			expect(css).toContain(`.none.${hash}, .box.${hash} { animation: ${hash}-fade 2s; }`);
+			// Without an animation, a rule that matches nothing is pruned.
+			expect(css).toContain('/* (unused) .none { color: blue; }*/');
+		});
 	});
 
 	describe(`[${name}] style themes and apply`, () => {
