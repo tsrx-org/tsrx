@@ -32,10 +32,19 @@ function ActiveTry() @{
 	}
 }
 
-// The same, where the body's own inline code throws.
-function ActiveInlineTry() @{
+// The same, where the body's own inline code throws beside a component
+// that appears in the new round inside an element.
+function ActiveInlineInElement() @{
+	const Counted = defineVaporAsyncComponent(
+		() => new Promise<any>((resolve) => (finish_counted = resolve)),
+	);
 	@try {
-		<p class="active-body">{active_label()}</p>
+		<div>
+			@if (counted_shown.value) {
+				<Counted />
+			}
+			<p class="active-body">{active_label()}</p>
+		</div>
 	} @catch (err) {
 		<b class="active-caught">{String(err)}</b>
 	}
@@ -219,15 +228,22 @@ describe('tsrx-vue a @try in the branch a pending Suspense still shows', () => {
 		app.unmount();
 	});
 
-	it('shows its @catch at once for an error its own inline code throws', async () => {
+	// Swapping in the @catch would unmount the component the new round counts.
+	it('passes on an error its own inline code throws, as before, so the new branch resolves', async () => {
 		active_broken.value = false;
-		const { app, handled, finish } = await mount_kept(ActiveInlineTry);
-		expect(container.querySelector('.active-body')?.textContent).toBe('ok');
+		counted_shown.value = false;
+		const { app, handled, finish } = await mount_kept(ActiveInlineInElement);
+		counted_shown.value = true;
+		await flush();
 		active_broken.value = true;
 		await flush();
-		expect(container.querySelector('.active-caught')?.textContent).toBe('Error: active body');
-		expect(handled).toEqual([]);
+		expect(handled).toEqual(['Error: active body']);
+		expect(container.querySelector('.active-caught')).toBeNull();
 		finish();
+		finish_counted(LateFine);
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		await flush();
+		expect(container.textContent).toBe('new');
 		app.unmount();
 	});
 

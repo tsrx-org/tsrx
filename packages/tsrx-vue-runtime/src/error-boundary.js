@@ -782,9 +782,9 @@ function initialize_boundary_state(instance) {
  *
  * Some still go on, as before: what the fallback's inline code throws; what
  * comes while the boundary unmounts; and what comes while the boundary's
- * `Suspense` is pending and the boundary is in the branch it waits for, since
- * swapping could unmount a component in an element of the body that the
- * `Suspense` waits for, which the boundary can't find (see `pending_setups`).
+ * `Suspense` is pending, since swapping could unmount a component in an
+ * element of the body that the `Suspense` waits for, which the boundary
+ * can't find (see `pending_setups`).
  *
  * The hook is removed when Vue disposes of the boundary, as it unmounts or
  * after it was dropped before it mounted, or when the boundary render that
@@ -805,18 +805,11 @@ function take_own_errors(instance, state, capture) {
 		const source = /** @type {unknown} */ (proxy);
 		if (source !== instance && source !== instance.proxy) return;
 		if (!state.shows_content || state.unmounting || instance.isUnmounted) return;
-		const suspense = /** @type {{ suspense?: SuspenseState | null, suspenseId?: number }} */ (
-			instance
-		).suspense;
-		// Only for a boundary in the branch the `Suspense` waits for, created
-		// in its current round: one in the branch a `Suspense` (`timeout: -1`)
-		// keeps showing takes its errors, as it does a component's.
-		if (
-			suspense?.pendingBranch &&
-			!suspense.isUnmounted &&
-			/** @type {{ suspenseId?: number }} */ (instance).suspenseId === suspense.pendingId
-		)
-			return;
+		const suspense = /** @type {{ suspense?: SuspenseState | null }} */ (instance).suspense;
+		// Also in the branch a `Suspense` (`timeout: -1`) keeps showing while
+		// a new one loads: a component that appeared there in the new round,
+		// inside an element, is counted too, and the boundary can't find it.
+		if (suspense?.pendingBranch && !suspense.isUnmounted) return;
 		return capture(captured_error, instance);
 	}, /** @type {ComponentInternalInstance} */ (/** @type {unknown} */ (parent)));
 	const hooks = /** @type {Function[]} */ (parent.ec);
@@ -830,7 +823,11 @@ function take_own_errors(instance, state, capture) {
 	// one it dropped before it mounted, such as one in a `@for` row that threw
 	// as it rendered, which runs no unmount hooks.
 	onScopeDispose(remove);
-	creating[creating.length - 1]?.push(remove);
+	// A render that throws drops what it created, unless it mounted already,
+	// as an app mounted from inside that render can be.
+	creating[creating.length - 1]?.push(() => {
+		if (!(/** @type {{ isMounted?: boolean }} */ (instance).isMounted)) remove();
+	});
 }
 
 /**

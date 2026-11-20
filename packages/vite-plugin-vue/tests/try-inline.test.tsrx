@@ -206,6 +206,45 @@ function FallbackFails() @{
 	</div>
 }
 
+const live_broken = ref(false);
+
+function live_label(): string {
+	if (live_broken.value) throw new Error('live inline');
+	return 'live';
+}
+
+function LiveTry() @{
+	@try {
+		<p class="live-body">{live_label()}</p>
+	} @catch (err) {
+		<b class="live-caught">{String(err)}</b>
+	}
+}
+
+let live_app: ReturnType<typeof createVaporApp> | null = null;
+const live_handled: string[] = [];
+
+function mount_live(): void {
+	const target = document.createElement('div');
+	target.className = 'live-target';
+	document.body.append(target);
+	live_app = createVaporApp(LiveTry);
+	live_app.config.errorHandler = (error) => {
+		live_handled.push(String(error));
+	};
+	live_app.mount(target);
+}
+
+// The @catch mounts another app, then throws as it renders.
+function MountsThenFails() @{
+	@try {
+		<p>{outer_fails()}</p>
+	} @catch (_err) {
+		mount_live();
+		<span>{fallback_fails()}</span>
+	}
+}
+
 const dropped_rows = ref<number[]>([]);
 let rows_owner: { ec?: unknown[] | null } | null = null;
 
@@ -407,6 +446,22 @@ describe("tsrx-vue a @try body's inline code, more cases", () => {
 		expect(handled.length).toBeGreaterThan(0);
 		expect(new Set(handled)).toEqual(new Set(['Error: fallback']));
 		expect(counts).toEqual([1, 1, 1, 1]);
+		app.unmount();
+	});
+
+	it('keeps the hook of a @try that an app mounted from a failing @catch render', async () => {
+		live_broken.value = false;
+		live_handled.length = 0;
+		const { app } = await mount(MountsThenFails);
+		const target = document.querySelector('.live-target') as HTMLElement;
+		expect(target.querySelector('.live-body')?.textContent).toBe('live');
+		live_broken.value = true;
+		await flush();
+		expect(target.querySelector('.live-caught')?.textContent).toBe('Error: live inline');
+		expect(live_handled).toEqual([]);
+		live_app?.unmount();
+		live_app = null;
+		target.remove();
 		app.unmount();
 	});
 
