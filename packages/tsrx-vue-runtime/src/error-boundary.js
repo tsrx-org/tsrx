@@ -107,7 +107,8 @@ const creating = [];
 function track_created(render) {
 	/** @type {Array<() => void>} */
 	const created = [];
-	creating.push({ owner: vapor.currentInstance, created });
+	const owner = vapor.currentInstance;
+	creating.push({ owner, created });
 	let done = false;
 	try {
 		const result = render(created);
@@ -116,6 +117,12 @@ function track_created(render) {
 	} finally {
 		creating.pop();
 		if (!done) for (const remove of created) remove();
+		else {
+			// A boundary called as a plain function renders as the instance
+			// around it, and what it created goes if that render drops it.
+			const outer = creating[creating.length - 1];
+			if (outer && outer.owner === owner) outer.created.push(...created);
+		}
 	}
 }
 
