@@ -428,6 +428,14 @@ export function A({ items }) @{
 		]);
 	});
 
+	it('reports a return right in an @switch case as a parse error', () => {
+		expect(
+			lint(
+				'export function App({ s }) @{\n\t<div>@switch (s) { @case 1: { return null; } @default: { <i /> } }</div>\n}\n',
+			),
+		).toEqual(['2: null: Parsing error: `return` is invalid inside `@switch` cases.']);
+	});
+
 	it('reports a plain try with only a pending block as a parse error', () => {
 		const code = `export function App() @{
 	try { <p>a</p> } pending { <p>loading</p> }
