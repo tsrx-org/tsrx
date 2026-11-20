@@ -26,6 +26,11 @@ export interface TsrxErrorBoundaryComponent {
 	(props: TsrxErrorBoundaryProps, ctx?: unknown): Block;
 	props: string[];
 	__setup(props?: unknown, ctx?: unknown): void;
+	/**
+	 * Marks it a Vapor component, also to an app with Vue's VDOM interop:
+	 * `true` where Vue's Vapor renderer and a DOM are present, not on a server.
+	 */
+	__vapor?: boolean;
 }
 
 export const TsrxErrorBoundary: TsrxErrorBoundaryComponent;
@@ -42,6 +47,11 @@ export interface TsrxPendingBodyComponent {
 	 */
 	(props: TsrxPendingBodyProps, ctx?: unknown): Block;
 	props: string[];
+	/**
+	 * Marks it a Vapor component, also to an app with Vue's VDOM interop:
+	 * `true` where Vue's Vapor renderer and a DOM are present, not on a server.
+	 */
+	__vapor?: boolean;
 }
 
 export const TsrxPendingBody: TsrxPendingBodyComponent;

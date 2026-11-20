@@ -471,11 +471,108 @@ function virtual_semantic_diagnostics(code, extra_options = {}) {
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] a template return in the editor`, () => {
+		it('reports a `return` in an `@switch` case inside an `@try` body once in the editor', () => {
+			const source = `export function App({ log }: { log: unknown }) @{
+				@try { <div>@switch (log) { @case 1: { if (log) return null; <b /> } @default: { <i /> } }</div> } @catch (e) { <i /> }
+			}`;
+			expect(
+				compile_to_volar_mappings(source, 'App.tsrx', { loose: true }).errors.map(
+					(error) => error.code,
+				),
+			).toEqual([TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code]);
+		});
+	});
+
+	describe(`[${name}] a return the parser reports, in the editor`, () => {
+		it.each([
+			['a case', '<div>@switch (s) { @case 1: { return null; } @default: { <i /> } }</div>'],
+			[
+				'a case in an `@catch`',
+				'@try { <p /> } @catch (e) { <div>@switch (s) { @case 1: { return null; } @default: { <i /> } }</div> }',
+			],
+			[
+				'a case in an `@try` body',
+				'@try { <div>@switch (s) { @case 1: { return null; } @default: { <i /> } }</div> } @catch (e) { <i /> }',
+			],
+		])('is reported once in %s, and the rest of the file maps', (_, template) => {
+			const source = `export function App({ s }: { s: number }) @{\n\t${template}\n}\nexport const after = 1;\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const start = source.indexOf('return null;');
+			expect(result.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				[TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code, start, start + 'return'.length],
+			]);
+			expect(result.code).toContain('export const after = 1;');
+		});
+
+		it('keeps the code after a return right in an @switch case in the output', () => {
+			const source = `export function App({ s }: { s: number }) @{\n\t<div>@switch (s) { @case 1: { return null;\n\t\tconst bad: number = 1;\n\t\t<b>{bad}</b> } @default: { <i /> } }</div>\n}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => error.code)).toEqual([
+				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code,
+			]);
+			expect(result.code).toContain('const bad: number = 1;');
+			expect(result.code).toContain('<b>{bad}</b>');
+		});
+
+		it.each([
+			[
+				'an `@switch` in an `@if` body',
+				'<div>@if (s) { <p>@switch (s) { @case 1: { return null; } @default: { <i /> } }</p> }</div>',
+				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+			],
+			[
+				'an `@switch` in an `@for` body',
+				'<ul>@for (const y of items) { <li>@switch (s) { @case 1: { return null; } @default: { <i /> } }</li> }</ul>',
+				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+			],
+			[
+				'an `@switch` in an `@else if` body',
+				'<div>@if (s) { <b /> } @else if (s > 1) { <p>@switch (s) { @case 1: { return null; } @default: { <i /> } }</p> }</div>',
+				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+			],
+			[
+				'an `@try` in an `@if` body',
+				'<div>@if (s) { <p>@try { if (s) return null; <b /> } @catch (e) { <i /> }</p> }</div>',
+				TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+			],
+			[
+				'an `@try` in an `@for` body',
+				'<ul>@for (const y of items) { <li>@try { if (s) return null; <b /> } @catch (e) { <i /> }</li> }</ul>',
+				TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+			],
+		])('reports a return the parser reported in %s once', (_, template, error) => {
+			const source = `export function App({ s, items }: { s: number; items: number[] }) @{\n\t${template}\n}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => error.code)).toEqual([error.code]);
+		});
+
+		it('reports a `return` in a nested `@{ … }` in an `@try` body once', () => {
+			// The parser checks both bodies; the outer check skips a `return` the
+			// inner one reported.
+			const source = `export function App({ s }: { s: number }) @{\n\t@try { <div>{@{ if (s) return null; <b /> }}</div> } @catch (e) { <i /> }\n}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => error.code)).toEqual([
+				TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code,
+			]);
+		});
+	});
+
 	describe(`[${name}] class index signatures in virtual code`, () => {
 		it('keeps static on a class index signature', () => {
 			expect_static_index_signatures(
 				compile_to_volar_mappings(STATIC_INDEX_SIGNATURES, 'App.tsrx', { loose: true }).code,
 			);
+		});
+	});
+
+	describe(`[${name}] a style block's editor anchor`, () => {
+		it('is named apart from a name the source uses', () => {
+			const source =
+				'const _tsrx_style_anchor_1 = 0;\nexport const theme = <style>.x { color: red; }</style>;\nexport const n = _tsrx_style_anchor_1;\n';
+			const { code } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(code.match(/\bconst _tsrx_style_anchor_1\b/g)).toEqual(['const _tsrx_style_anchor_1']);
+			expect(code).toMatch(/\bconst _tsrx_style_anchor_2 = <style>/);
 		});
 	});
 
@@ -2940,6 +3037,41 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			).toThrow(error_with(TSRX_ERRORS.IF_RETURN_STATEMENT));
 		});
 
+		it('rejects a `return` in an `@else if` body, or the `@else` after one, strictly and when collecting', () => {
+			// The `@if` check covers the first body and a plain `@else`; the chain's
+			// other bodies run in functions of their own too.
+			for (const template of [
+				'@if (ready) { <b /> } @else if (items.length) { if (ready) RETURN; <i /> }',
+				'@if (ready) { <b /> } @else if (items.length) { for (const item of items) { if (item) RETURN; } <i /> }',
+				'@if (ready) { <b /> } @else if (items.length) { <i /> } @else { if (ready) RETURN; <u /> }',
+				'@if (ready) { <b /> } @else if (items.length) { <i /> } @else if (items.length > 1) { if (ready) RETURN; <u /> }',
+			]) {
+				const source = `export function App({ ready, items }: { ready: boolean; items: string[] }) @{
+					<div>${template.replace('RETURN', 'return <s />')}</div>
+				}`;
+				const start = source.indexOf('return <s />;');
+				const expected = expect.objectContaining({
+					code: TSRX_ERRORS.IF_RETURN_STATEMENT.code,
+					pos: start,
+					end: start + 'return <s />;'.length,
+				});
+
+				expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
+			}
+		});
+
+		it('allows a `return` in a function in an `@else if` body', () => {
+			const { errors } = compile(
+				`export function App({ ready }: { ready: boolean }) @{
+					<div>@if (ready) { <b /> } @else if (!ready) { const label = () => { return 'no'; }; <i>{label()}</i> }</div>
+				}`,
+				'App.tsrx',
+				{ collect: true },
+			);
+			expect(errors).toEqual([]);
+		});
+
 		it('rejects nested exits inside @if template blocks', () => {
 			for (const [statement, expected] of [
 				['return null', TSRX_ERRORS.IF_RETURN_STATEMENT],
@@ -3041,6 +3173,68 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
 				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
 			}
+		});
+
+		it('rejects a `return` in an `@switch` case outside a function, strictly and when collecting', () => {
+			// Every target runs a case in a function of its own, so the `return`
+			// left only that function, and its value replaced the `@switch`. A
+			// `return` right in the case is the parser's error.
+			for (const template of [
+				'<div>@switch (log) { @case 1: { if (log) RETURN; <b /> } @default: { <i /> } }</div>',
+				'<div>@switch (log) { @case 1: { <b /> } @default: { if (log) { RETURN; } <i /> } }</div>',
+				'<div>@switch (log) { @case 1: { for (const x of items) { if (x) RETURN; } <b /> } @default: { <i /> } }</div>',
+				'<div>@switch (log) { @case 1: { switch (log) { case 2: RETURN; } <b /> } @default: { <i /> } }</div>',
+				'<div>@switch (log) { @case 1: { L: { RETURN; } <b /> } @default: { <i /> } }</div>',
+				'<div>@switch (log) { @case 1: { try { RETURN; } finally {} <b /> } @default: { <i /> } }</div>',
+				// The `@if` and `@for` checks also see an `@switch` in their bodies.
+				'<div>@if (log) { <p>@switch (log) { @case 1: { if (log) RETURN; <b /> } @default: { <i /> } }</p> }</div>',
+				'<ul>@for (const x of items) { <li>@switch (x) { @case 1: { if (log) RETURN; <b /> } @default: { <i /> } }</li> }</ul>',
+				// A nested `@{ … }` with no setup is checked by the parser only before its output.
+				'<div>{@{ <p>@switch (log) { @case 1: { if (log) RETURN; <b /> } @default: { <i /> } }</p> }}</div>',
+			]) {
+				const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
+					${template.replace('RETURN', 'return null')}
+				}`;
+				const start = source.indexOf('return null;');
+				const expected = expect.objectContaining({
+					code: TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code,
+					pos: start,
+					end: start + 'return null;'.length,
+				});
+
+				expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
+			}
+		});
+
+		it('reports a `return` in an `@switch` case inside an `@try` body once, as the template return', () => {
+			// The parser reports any `return` in an `@try`, `@pending` or `@catch`
+			// body or a nested `@{ … }` block, also one in an `@switch` there.
+			for (const template of [
+				'@try { <div>@switch (log) { @case 1: { if (log) return null; <b /> } @default: { <i /> } }</div> } @catch (e) { <i /> }',
+				'@try { <b /> } @catch (e) { <div>@switch (log) { @case 1: { if (log) return null; <b /> } @default: { <i /> } }</div> }',
+			]) {
+				const source = `export function App({ log }: { log: unknown }) @{
+					${template}
+				}`;
+				const start = source.indexOf('return null;');
+				const expected = expect.objectContaining({
+					code: TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code,
+					pos: start,
+				});
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
+			}
+		});
+
+		it('allows a `return` in a function in an `@switch` case', () => {
+			const { errors } = compile(
+				`export function App({ log }: { log: unknown }) @{
+					<div>@switch (log) { @case 1: { const label = () => { return 'one'; }; <b>{label()}</b> } @default: { <i /> } }</div>
+				}`,
+				'App.tsrx',
+				{ collect: true },
+			);
+			expect(errors).toEqual([]);
 		});
 
 		it('reports a jump out of an `@try` in an `@for` or `@if` body once, as leaving the `@try`', () => {
@@ -7451,7 +7645,7 @@ export function App({ items }: { items: string[] }) @{
 			expect(run_result(code)).toBe('div');
 		});
 
-		it.each(['_tsrx_spread_props_1', 'App__spread_props1'])(
+		it.each(['_tsrx_spread_props_1', 'App__spread_props1', 'App__spread_props\\u{31}'])(
 			'names the spread temporary of a component inside a method apart from a %s the author wrote',
 			(user_name) => {
 				const { code } = compile(
@@ -7471,6 +7665,33 @@ export function App({ items }: { items: string[] }) @{
 					'App.tsrx',
 				);
 				expect(run_result(code)).toEqual(['spread', 'mine']);
+			},
+		);
+
+		it.each([
+			[
+				'two spreads',
+				'App__spread_props\\u0031',
+				'<div {...props.a} {...props.b} ref={props.r} title={NAME} />',
+				'App__spread_props1',
+			],
+			[
+				'a spread after its own ref',
+				'App__r\\u0065f1',
+				'<input ref={props.r} {...props.a} title={NAME} />',
+				'App__ref1',
+			],
+		])(
+			'names the temporaries of %s apart from an authored name written with a Unicode escape',
+			(_case, authored, element, printed) => {
+				// The printer spells the authored name without the escape
+				const { code } = compile(
+					`export function App(props: any) {\n\tconst ${authored} = 'mine';\n\treturn ${element.replace('NAME', authored)};\n}`,
+					'App.tsrx',
+				);
+				expect(code.match(new RegExp(`\\b(?:const|let|var) ${printed}\\b`, 'g'))).toEqual([
+					`const ${printed}`,
+				]);
 			},
 		);
 
@@ -7543,6 +7764,12 @@ export function App({ items }: { items: string[] }) @{
 				['$App__static2'],
 				['div', 'local'],
 			],
+			[
+				'written with Unicode escapes',
+				"const App__st\\u0061tic1 = 'module';\nexport function App() {\n\tconst App__static\\u{32} = 'local';\n\treturn <>{<div>static</div>}<b>bare</b>{App__st\\u0061tic1}{App__static\\u{32}}</>;\n}\nexport const result = () => App().props.children.map((child: any) => (typeof child === 'object' ? child.type : child));",
+				['App__static3', 'App__static4'],
+				['div', 'b', 'module', 'local'],
+			],
 		])(
 			'names a static apart from an authored static name %s',
 			(_case, source, statics, expected) => {
@@ -7553,6 +7780,38 @@ export function App({ items }: { items: string[] }) @{
 				expect(run_result(code)).toEqual(expected);
 			},
 		);
+
+		it.each(['TsrxDynamic_1', 'TsrxDyn\\u0061mic_1'])(
+			'names a dynamic tag alias apart from a %s the author wrote',
+			(authored) => {
+				const { code } = compile(
+					`export function App({ as }: any) {\n\tconst ${authored} = 'mine';\n\treturn <div><{as} title={${authored}} /></div>;\n}`,
+					'App.tsrx',
+				);
+				// The authored name keeps its one declaration, and the tag reads another
+				expect(code.match(/\b(?:const|let|var) TsrxDynamic_1\b/g)).toEqual(['const TsrxDynamic_1']);
+				expect(code).not.toMatch(/<TsrxDynamic_1\b/);
+				expect(code).toContain('title={TsrxDynamic_1}');
+			},
+		);
+
+		it.each([
+			[
+				'a dynamic tag alias in a keyed `@for` row',
+				'TsrxDynamic_1',
+				`export function App({ items }: any) @{\n\t<ul>\n\t\t@for (const { id, Tag } of items; key id) {\n\t\t\tconst TsrxDynamic_1 = 'mine';\n\t\t\t<Tag title={TsrxDynamic_1} />\n\t\t}\n\t</ul>\n}`,
+			],
+			[
+				"a style block's ref temporary",
+				'_tsrx_style_ref_1',
+				`export function App({ getRef }: any) @{\n\tconst _tsrx_style_ref_1 = 'mine';\n\t<><style ref={getRef(_tsrx_style_ref_1)} /><div /></>\n}`,
+			],
+		])('names %s apart from a name the author wrote', (_case, name, source) => {
+			const { code } = compile(source, 'App.tsrx');
+			expect(code.match(new RegExp(`\\b(?:const|let|var) ${name}\\b`, 'g'))).toEqual([
+				`const ${name}`,
+			]);
+		});
 
 		it.each([
 			[
@@ -7616,6 +7875,19 @@ export function App({ items }: { items: string[] }) @{
 				).toEqual(hoistsStaticJsx ? statics : []);
 			},
 		);
+
+		it('renames a colliding static apart from an authored name written with a Unicode escape', () => {
+			// The second arrow's folded static collides with the first one's, and
+			// the next id, 3, is the authored `TSRXTemplate__static3`.
+			const { code } = compile(
+				"const TSRXTemplate__static\\u0033 = 'mine';\nexport const list = [() => @{ <b /> }, () => @{ <><i /><u /></> }];\nexport const result = () => [list[0]().type, TSRXTemplate__st\\u0061tic3];",
+				'App.tsrx',
+			);
+			expect([...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1])).toEqual(
+				hoistsStaticJsx ? ['TSRXTemplate__static1', 'TSRXTemplate__static4'] : [],
+			);
+			expect(run_result(code)).toEqual(['b', 'mine']);
+		});
 
 		it('hoists an intrinsic tag that shares its name with a later binding', () => {
 			const { code } = compile(

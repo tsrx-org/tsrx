@@ -197,6 +197,7 @@ export {
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	return_value_body_to_expression as returnValueBodyToExpression,
 	source_mentions_identifier as sourceMentionsIdentifier,
+	create_dynamic_alias_name as createDynamicAliasName,
 	SPREAD_REF_BAGS_INTERNAL_NAME,
 	SUSPENSE_INTERNAL_NAME,
 	switch_statement_to_jsx_child as switchStatementToJsxChild,
