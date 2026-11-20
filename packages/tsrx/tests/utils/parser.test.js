@@ -12182,6 +12182,108 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: first_member,
 			match: { accessibility: 'private', accessor: true, abstract: true },
 		},
+		// The same for the modifiers of any other member: an access modifier with
+		// `abstract`, and `accessor` on a method, which acorn-typescript doesn't
+		// check either.
+		{
+			source: 'abstract class A { private abstract m(): void; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'abstract m']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:27'],
+			pick: first_member,
+			match: { accessibility: 'private', abstract: true, kind: 'method' },
+		},
+		{
+			source: 'abstract class A { abstract private x: number; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'private x']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:28'],
+			pick: first_member,
+			match: { accessibility: 'private', abstract: true },
+		},
+		{
+			source: 'abstract class A { abstract public m(): void; }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'public m']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:28'],
+			valid: 'abstract class A { public abstract m(): void; }',
+			pick: first_member,
+		},
+		{
+			source: 'abstract class A { abstract protected get g(): number; }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'protected get']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:28'],
+			valid: 'abstract class A { protected abstract get g(): number; }',
+			pick: first_member,
+		},
+		{
+			// With decorators too: TypeScript reports a method's modifiers first.
+			source: 'class B { m() {} }\nclass A extends B { @dec override accessor m() {} }',
+			errors: [[TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, 'accessor m']],
+			throws: [TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, '2:34'],
+			pick: last,
+			match: { body: { body: [{ override: true, kind: 'method' }] } },
+		},
+		{
+			source: 'class B { m() {} }\nclass A extends B { override accessor m() {} }',
+			errors: [[TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, 'accessor m']],
+			throws: [TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, '2:29'],
+			pick: last,
+			match: { body: { body: [{ override: true, kind: 'method', value: { body: {} } }] } },
+		},
+		// `abstract` on a constructor is TS1242, where acorn-typescript threw TS1245
+		// for its body, or reported TS1244 outside an abstract class, and nothing
+		// for one without a body.
+		{
+			source: 'abstract class A { abstract constructor() {} }',
+			errors: [[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract constructor']],
+			throws: [TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:19'],
+			pick: first_member,
+			match: { kind: 'constructor', abstract: true, value: { body: { type: 'BlockStatement' } } },
+		},
+		{
+			source: "class A { public abstract 'constructor'(public x: number) {} }",
+			errors: [[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract']],
+			throws: [TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:17'],
+			pick: first_member,
+			match: { kind: 'constructor', abstract: true, accessibility: 'public' },
+		},
+		{
+			source: 'abstract class A { abstract constructor(); }',
+			errors: [[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract constructor']],
+			throws: [TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:19'],
+			pick: first_member,
+			match: { kind: 'constructor', abstract: true },
+		},
+		// Also before an `async`, where acorn's error for an `async` constructor
+		// goes too, and with a line continuation in the name.
+		{
+			source: 'class A { abstract async constructor() {} }',
+			errors: [[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract async']],
+			throws: [TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:10'],
+			pick: first_member,
+			match: { kind: 'constructor', abstract: true, value: { async: true } },
+		},
+		{
+			source: "abstract class A { abstract 'construc\\\ntor'() {} }",
+			errors: [[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract']],
+			throws: [TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:19'],
+			pick: first_member,
+			match: { kind: 'constructor', abstract: true },
+		},
+		// The first error of the modifiers of a `static` constructor, which
+		// TypeScript reports instead of TS1089 for `static`.
+		{
+			source: 'class A { static accessor constructor() {} }',
+			errors: [[TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, 'accessor constructor']],
+			throws: [TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, '1:17'],
+			pick: first_member,
+			match: { static: true },
+		},
+		{
+			source: 'class A { static public constructor() {} }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'public constructor']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:17'],
+			pick: first_member,
+			match: { static: true, accessibility: 'public' },
+		},
 		// An `async` constructor, at the `async`, where acorn threw `Constructor
 		// can't be an async method` at the name. It stays async, as TypeScript
 		// reads it.
