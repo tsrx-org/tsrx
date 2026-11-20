@@ -591,6 +591,14 @@ function take_uid() {
 // one's `content`.
 TsrxErrorBoundary.props = ['fallback', 'content', 'sharesCatch'];
 
+// A Vapor component, also to an app with Vue's VDOM interop. vue-jsx-vapor
+// renders a function component through one proxy per function, cached for
+// every app, whose `__vapor` the app that first made it decides: a proxy
+// made while an app without interop, such as one that hydrates, rendered the
+// boundary told a later app with interop to mount it as a VDOM component,
+// which printed its blocks as text. Its own flag answers the same in each.
+TsrxErrorBoundary.__vapor = true;
+
 /**
  * @param {unknown} _props
  * @param {unknown} [ctx]
@@ -881,3 +889,5 @@ export function TsrxPendingBody(props, ctx) {
 }
 
 TsrxPendingBody.props = ['content'];
+// A Vapor component in every app (see `TsrxErrorBoundary.__vapor`).
+TsrxPendingBody.__vapor = true;
