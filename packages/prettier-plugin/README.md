@@ -121,8 +121,14 @@ config (step 2).
   space stays beside its tag (`<p> Some text…`, `…more text </p>`), and the words
   fill the lines between. A text that the compiler would split over lines (with a
   non-breaking space, U+200B or a reference to whitespace) stays on one line, and
-  a text it splits anyway prints as before. Every other element is printed by
-  Prettier itself. Keep the copy in step with Prettier when upgrading.
+  a text it splits anyway prints as before. On Vue, whose compiler keeps a text's
+  line breaks, a text the formatter fills renders with them, and keeping the space
+  beside the opening tag fills some texts that Prettier's layout left on a line of
+  their own: a text that fits on a line by itself but not after its tag, as in a
+  `<textarea className="notes">`, renders a line break and the next line's
+  indentation on Vue. Prettier's layout kept such a text on one line on Vue, but
+  gave the element two or three children on every target. Every other element is
+  printed by Prettier itself. Keep the copy in step with Prettier when upgrading.
 
 The plugin needs no other Prettier plugin, including in `prettier/standalone`,
 except to format JSON, HTML, or Markdown `<script>` bodies there.
