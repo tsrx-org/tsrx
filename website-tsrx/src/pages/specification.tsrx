@@ -1134,11 +1134,12 @@ export function SpecificationPage() @{
 								<code class="inline-code">{'{}'}</code> template block. Cases are isolated: they do
 								not fall through to later cases, a <code class="inline-code">return</code> in a case
 								is an error, also inside a block, an <code class="inline-code">if</code> or a loop
-								there (a case runs in a function of its own, so the{' '}
-								<code class="inline-code">return</code> would only end the case), and a{' '}
-								<code class="inline-code">break</code> or <code class="inline-code">continue</code>{' '}
-								in a case can only reach a loop, a <code class="inline-code">switch</code> (
-								<code class="inline-code">break</code> only) or a label inside the case.
+								there, unless it is in a function declared in the case (a case runs in a function of
+								its own, so the <code class="inline-code">return</code> would only end the case),
+								and a <code class="inline-code">break</code> or{' '}
+								<code class="inline-code">continue</code> in a case can only reach a loop, a{' '}
+								<code class="inline-code">switch</code> (<code class="inline-code">break</code>{' '}
+								only) or a label inside the case.
 							</p>
 							<p class="section-body">
 								Every target runs an <code class="inline-code">@try</code> body, its{' '}
