@@ -3043,6 +3043,47 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			}
 		});
 
+		it('rejects a `return` in an `@switch` case outside a function, strictly and when collecting', () => {
+			// Every target runs a case in a function of its own, so the `return`
+			// left only that function, and the case rendered nothing. A `return`
+			// right in the case is the parser's error.
+			for (const template of [
+				'<div>@switch (log) { @case 1: { if (log) RETURN; <b /> } @default: { <i /> } }</div>',
+				'<div>@switch (log) { @case 1: { <b /> } @default: { if (log) { RETURN; } <i /> } }</div>',
+				'<div>@switch (log) { @case 1: { for (const x of items) { if (x) RETURN; } <b /> } @default: { <i /> } }</div>',
+				'<div>@switch (log) { @case 1: { switch (log) { case 2: RETURN; } <b /> } @default: { <i /> } }</div>',
+				'<div>@switch (log) { @case 1: { L: { RETURN; } <b /> } @default: { <i /> } }</div>',
+				'<div>@switch (log) { @case 1: { try { RETURN; } finally {} <b /> } @default: { <i /> } }</div>',
+				// The `@if` and `@for` checks also see an `@switch` in their bodies.
+				'<div>@if (log) { <p>@switch (log) { @case 1: { if (log) RETURN; <b /> } @default: { <i /> } }</p> }</div>',
+				'<ul>@for (const x of items) { <li>@switch (x) { @case 1: { if (log) RETURN; <b /> } @default: { <i /> } }</li> }</ul>',
+			]) {
+				const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
+					${template.replace('RETURN', 'return null')}
+				}`;
+				const start = source.indexOf('return null;');
+				const expected = expect.objectContaining({
+					code: TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code,
+					pos: start,
+					end: start + 'return null;'.length,
+				});
+
+				expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
+			}
+		});
+
+		it('allows a `return` in a function in an `@switch` case', () => {
+			const { errors } = compile(
+				`export function App({ log }: { log: unknown }) @{
+					<div>@switch (log) { @case 1: { const label = () => { return 'one'; }; <b>{label()}</b> } @default: { <i /> } }</div>
+				}`,
+				'App.tsrx',
+				{ collect: true },
+			);
+			expect(errors).toEqual([]);
+		});
+
 		it('reports a jump out of an `@try` in an `@for` or `@if` body once, as leaving the `@try`', () => {
 			// The `@for` check also sees a jump in an `@try` in its body.
 			for (const source of [
