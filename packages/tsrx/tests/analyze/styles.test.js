@@ -950,7 +950,7 @@ describe('scoped style analysis', () => {
 				[':global.w, :is(.a) { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
 				// Without its hashes, a :not() in a :not() matches more.
 				[
-					':global.w, :root:not(:root:not(.x)) { color: red; }',
+					'.p { :global.w, &:not(&:not(.x)) { color: red; } }',
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 					0,
 				],
@@ -1071,6 +1071,11 @@ describe('scoped style analysis', () => {
 				// A :not() argument without the hash only makes it match fewer elements.
 				'.p { :global.x, &:not(.z) { color: red; } }',
 				':global.w, :root:not(.x) { color: red; }',
+				// The :not(), :is() and :where() arguments of a :root or :host compound
+				// are kept as written.
+				':global.w, :root:not(:root:not(.x)) { color: red; }',
+				':global.w, :host:is(.a) { color: red; }',
+				':global.w, :root:where(.a .b) { color: red; }',
 				// The & already has the hash, and :where() adds no specificity.
 				'.p { :global.w, &:where(.p) { color: red; } }',
 				'@scope (.q) { .p { :global.w, &:where(.p) { color: red; } } }',

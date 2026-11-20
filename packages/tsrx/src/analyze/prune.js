@@ -1457,13 +1457,20 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
  * written: they are global too, so none is pruned or scoped, whatever matching
  * the compound against the component's elements found (#1314).
  *
+ * So are the arguments of the `:not()`, `:is()` and `:where()` of a compound
+ * with `:root` or `:host` (`:root:not(.dark)`): they are about the page's root
+ * element or the shadow host, never one of the component's elements. Pruning
+ * them left an empty `:not()`, which is invalid. Those of its `:has()` are the
+ * element's descendants, scoped as before.
+ *
  * @param {AST.CSS.Node} css
  * @returns {void}
  */
 export function keep_global_compound_arguments(css) {
 	walk(css, null, {
 		RelativeSelector(node, { next }) {
-			if (!is_outer_global(node)) return next();
+			const global = is_outer_global(node);
+			if (!global && !node.selectors.some(is_root_or_host)) return next();
 
 			for (const selector of node.selectors) {
 				if (
@@ -1472,7 +1479,7 @@ export function keep_global_compound_arguments(css) {
 					(selector.name === 'not' ||
 						selector.name === 'is' ||
 						selector.name === 'where' ||
-						selector.name === 'has')
+						(global && selector.name === 'has'))
 				) {
 					walk(/** @type {AST.CSS.Node} */ (selector.args), null, {
 						ComplexSelector(complex_selector, context) {
@@ -1486,6 +1493,21 @@ export function keep_global_compound_arguments(css) {
 					});
 				}
 			}
+			// The arguments of a :root or :host compound's :has() may hold more.
+			if (!global) next();
 		},
 	});
+}
+
+/**
+ * Whether `simple` is `:root` or `:host` (`:host(...)` too), which match the
+ * page's root element or the shadow host.
+ *
+ * @param {AST.CSS.SimpleSelector} simple
+ * @returns {boolean}
+ */
+function is_root_or_host(simple) {
+	return (
+		simple.type === 'PseudoClassSelector' && (simple.name === 'root' || simple.name === 'host')
+	);
 }

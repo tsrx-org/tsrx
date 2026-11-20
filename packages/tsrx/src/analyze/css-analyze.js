@@ -114,6 +114,9 @@ const SELECTOR_ARGUMENTS = ['is', 'where', 'not', 'has'];
  * arguments of its `:is()`, `:where()`, `:not()` and `:has()` are scoped as
  * selectors of their own, except that:
  *
+ * - those of the `:is()`, `:where()` and `:not()` of a compound with `:root`
+ *   or `:host` are kept as written, and
+ *
  * - a `:not()` argument without its hashes only makes the `:not()` match
  *   fewer elements (a `:not()` within it is checked again), and
  * - with `subject_hashed`, the `&` of a compound stands for an element that
@@ -150,7 +153,17 @@ function is_unscoped(selector, subject_hashed = false) {
 				(selectors.length === 1 &&
 					first.type === 'PseudoClassSelector' &&
 					(first.name === 'is' || first.name === 'where'))) &&
-			selectors.every((simple) => arguments_unscoped(simple, nesting && subject_hashed))
+			selectors.every((simple) =>
+				arguments_unscoped(
+					simple,
+					nesting && subject_hashed,
+					selectors.some(
+						(other) =>
+							other.type === 'PseudoClassSelector' &&
+							(other.name === 'root' || other.name === 'host'),
+					),
+				),
+			)
 		);
 	});
 }
@@ -158,13 +171,16 @@ function is_unscoped(selector, subject_hashed = false) {
 /**
  * @param {AST.CSS.SimpleSelector} simple
  * @param {boolean} [subject_hashed] whether the compound's element has the hash
+ * @param {boolean} [root_or_host] whether the compound has `:root` or `:host`,
+ *   whose `:not()`, `:is()` and `:where()` arguments are kept as written
  * @returns {boolean}
  */
-function arguments_unscoped(simple, subject_hashed = false) {
+function arguments_unscoped(simple, subject_hashed = false, root_or_host = false) {
 	if (
 		simple.type !== 'PseudoClassSelector' ||
 		!simple.args ||
-		!SELECTOR_ARGUMENTS.includes(simple.name)
+		!SELECTOR_ARGUMENTS.includes(simple.name) ||
+		(root_or_host && simple.name !== 'has')
 	) {
 		return true;
 	}
