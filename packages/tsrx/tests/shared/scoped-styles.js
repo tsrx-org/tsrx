@@ -2024,6 +2024,29 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain('.note, :root .x { color: black; }');
 		});
 
+		it('reports a :global(...) selector list that the output would split', () => {
+			for (const rule of [
+				':global(.a, .b) .z { color: red; }',
+				'.p :global(.a, .b) { color: red; }',
+				'.p:global(::before, ::after) { content: "x"; }',
+			]) {
+				const source = `export function App() @{
+					<>
+						<style>${rule}</style>
+						<div ${attr}="p"><i ${attr}="z" /></div>
+					</>
+				}`;
+
+				expect(
+					compile(source, 'App.tsrx', { collect: true }).errors.map((error) => error.code),
+					rule,
+				).toEqual([DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT]);
+				expect(() => compile(source, 'App.tsrx'), rule).toThrow(
+					expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT }),
+				);
+			}
+		});
+
 		it('writes a :global modifier whose only parent is a :global { ... } block without an &', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{

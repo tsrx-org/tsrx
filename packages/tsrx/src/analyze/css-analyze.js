@@ -564,6 +564,25 @@ export function analyze_css(css, options = {}) {
 				}
 			}
 
+			// The output drops the parentheses of `:global(...)`, so a selector list
+			// in it is only kept whole as the whole selector (`:global(.a, .b)`):
+			// `:global(.a, .b) .c` would give `.a, .b .c`, a page-wide `.a`.
+			for (const relative_selector of node.children) {
+				for (const selector of relative_selector.selectors) {
+					if (
+						selector.type === 'PseudoClassSelector' &&
+						selector.name === 'global' &&
+						selector.args &&
+						selector.args.children.length > 1 &&
+						(node.children.length > 1 ||
+							relative_selector.selectors.length > 1 ||
+							relative_selector.combinator)
+					) {
+						report(TSRX_ERRORS.CSS_GLOBAL_SELECTOR_LIST, selector);
+					}
+				}
+			}
+
 			// Set is_global metadata
 			node.metadata.is_global = node.children.every(
 				({ metadata }) => metadata.is_global || metadata.is_global_like,
