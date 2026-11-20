@@ -4127,6 +4127,59 @@ function PendingCatchThrowsAlone(props: { promise: CatchLoader }) @{
 	}
 }
 
+function count_catch_pattern(): string {
+	catch_runs++;
+	return '!';
+}
+
+function SyncThrow() @{
+	throw new Error('sync body');
+	<p />
+}
+
+// The body throws as it renders, under @pending, and the @catch's parameter
+// pattern throws: it reads `status` from an error without a `response`.
+function SyncCatchPatternThrows() @{
+	@try {
+		@try {
+			<SyncThrow />
+		} @pending {
+			<p class="catch-pending">{'loading'}</p>
+		} @catch ({ seen = count_catch_pattern(), response: { status } }: any) {
+			<p class="inner-caught">{String(status) + seen}</p>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
+// The same, without an outer @try.
+function SyncCatchPatternThrowsAlone() @{
+	@try {
+		<SyncThrow />
+	} @pending {
+		<p class="catch-pending">{'loading'}</p>
+	} @catch ({ seen = count_catch_pattern(), response: { status } }: any) {
+		<p class="inner-caught">{String(status) + seen}</p>
+	}
+}
+
+// The async child rejects, and the @catch's parameter pattern throws.
+function RejectedCatchPatternThrows(props: { promise: CatchLoader }) @{
+	const AsyncChild = defineVaporAsyncComponent(() => props.promise);
+	@try {
+		@try {
+			<AsyncChild value="hello" />
+		} @pending {
+			<p class="catch-pending">{'loading'}</p>
+		} @catch ({ seen = count_catch_pattern(), response: { status } }: any) {
+			<p class="inner-caught">{String(status) + seen}</p>
+		}
+	} @catch (err) {
+		<p class="outer-caught">{(err as Error).message}</p>
+	}
+}
+
 function throw_content(error: unknown): never {
 	throw error;
 }
@@ -4575,6 +4628,41 @@ describe('tsrx-vue a @catch that throws', () => {
 		const app = await mount(PendingCatchThrows, { promise: never_loads() });
 		expect(text('.outer-caught')).toBe('catch boom after pending boom');
 		expect(handled).toEqual([]);
+		app.unmount();
+	});
+
+	it.each([
+		['as the body renders', false],
+		['after a rejection', true],
+	])(
+		'runs a @catch parameter pattern that throws once, %s, and passes its error to the next @catch out',
+		async (_name, rejects) => {
+			let app;
+			if (rejects) {
+				let reject!: (error: Error) => void;
+				const promise: CatchLoader = new Promise((_resolve, fail) => (reject = fail));
+				app = await mount(RejectedCatchPatternThrows, { promise });
+				reject(new Error('rejected'));
+				await flush();
+			} else {
+				app = await mount(SyncCatchPatternThrows, {});
+			}
+			expect(text('.outer-caught')).toBe(
+				"Cannot read properties of undefined (reading 'status')",
+			);
+			// The boundary around the Suspense, which renders the same @catch, let
+			// the error go on without running the pattern again.
+			expect(catch_runs).toBe(1);
+			expect(handled).toEqual([]);
+			app.unmount();
+		},
+	);
+
+	it('runs a @catch parameter pattern that throws once, and passes its error to app.config.errorHandler', async () => {
+		const app = await mount(SyncCatchPatternThrowsAlone, {});
+		expect(handled).toEqual(["Cannot read properties of undefined (reading 'status')"]);
+		expect(catch_runs).toBe(1);
+		expect(container.querySelector('.inner-caught')).toBeNull();
 		app.unmount();
 	});
 

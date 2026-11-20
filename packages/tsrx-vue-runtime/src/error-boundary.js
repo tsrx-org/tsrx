@@ -233,6 +233,11 @@ function thrown_by_fallback(source, boundary) {
  * one lets an error from that `@catch` go on, the outer one has to as well,
  * so the `@catch` runs once and the error reaches the next `@try` out.
  *
+ * That includes an error the inner one is itself the source of while it
+ * shows the `@catch`, such as one from the `@catch`'s parameter pattern,
+ * which runs as the boundary calls its fallback. A boundary without a twin
+ * lets such an error go on too (`take_own_errors`).
+ *
  * @param {unknown} source
  * @param {ComponentInternalInstance} boundary
  * @returns {boolean}
@@ -241,9 +246,12 @@ function thrown_by_twin_fallback(source, boundary) {
 	const chain = chain_to(source, boundary);
 	for (let i = chain.length - 1; i >= 0; i--) {
 		const inner = /** @type {ComponentInternalInstance} */ (/** @type {unknown} */ (chain[i]));
-		if (!boundary_states.has(inner)) continue;
+		const state = boundary_states.get(inner);
+		if (!state) continue;
 		// The nearest boundary inside this one.
-		return !!props_of(inner)?.sharesCatch && thrown_by_fallback(source, inner);
+		if (!props_of(inner)?.sharesCatch) return false;
+		if (i === 0 && !state.shows_content) return true;
+		return thrown_by_fallback(source, inner);
 	}
 	return false;
 }
