@@ -1,6 +1,12 @@
 // TSRX syntax, which Prettier's own tests don't cover.
 
-import { TS_ERRORS, TSRX_ERRORS } from '@tsrx/core';
+import {
+	parseModule,
+	renderChildren,
+	TS_ERRORS,
+	TSRX_ERRORS,
+	wrapEdgeWhitespace,
+} from '@tsrx/core';
 import * as prettier from 'prettier';
 import * as standalone from 'prettier/standalone';
 import { describe, expect, test } from 'vitest';
@@ -1564,6 +1570,406 @@ const u = <div>/* c */</div>; /* trail */
 	});
 });
 
+/**
+ * The string the compiler gives the only child of the first `tag` element in
+ * `code` (`wrapEdgeWhitespace` in an element, read as `reading`), or `null`
+ * when it keeps the text's edges as children of their own.
+ * @param {string} code
+ * @param {string} tag
+ * @param {Parameters<typeof wrapEdgeWhitespace>[2]} [reading]
+ * @returns {string | null}
+ */
+function onlyTextLiteral(code, tag, reading) {
+	/** @type {any} */
+	let element;
+	/** @param {any} node */
+	const find = (node) => {
+		if (element || !node || typeof node !== 'object') return;
+		if (node.type === 'JSXElement' && node.openingElement.name.name === tag) {
+			element = node;
+			return;
+		}
+		for (const [key, value] of Object.entries(node)) {
+			if (key !== 'metadata' && key !== 'loc') find(value);
+		}
+	};
+	find(parseModule(code, 'Fixture.tsrx'));
+	const children = wrapEdgeWhitespace(
+		/** @type {any[]} */ (renderChildren(element)),
+		true,
+		reading,
+	);
+	const [child] = children;
+	return children.length === 1 &&
+		child.type === 'JSXExpressionContainer' &&
+		child.expression.type === 'Literal'
+		? /** @type {string} */ (child.expression.value)
+		: null;
+}
+
+// The compiler prints an element's only text with a space or tab at an edge
+// as one literal (`{' a '}`), so a `<textarea>`, a `<title>` or a component
+// that takes `children: string` gets one string (#1368). Prettier moves such
+// a space into a `{" "}` child once the element breaks, which gives the
+// element two or three children; the plugin keeps it beside its tag.
+describe("an element's only text with a space at an edge (#1368)", () => {
+	test('keeps the space beside its tag when the words fill lines', async () => {
+		await expectFormat(
+			`const a = <textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>;
+export function B() @{
+  <Upper> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </Upper>
+}`,
+			`const a = (
+  <textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
+    eiusmod tempor </textarea>
+);
+export function B() @{
+  <Upper> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
+    eiusmod tempor </Upper>
+}
+`,
+		);
+	});
+
+	test('breaks an edge without one as Prettier does', async () => {
+		await expectFormat(
+			`const a = <p>
+  Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </p>;
+const b = <p> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor
+</p>;`,
+			`const a = (
+  <p>
+    Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod
+    tempor </p>
+);
+const b = (
+  <p> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod
+    tempor
+  </p>
+);
+`,
+		);
+	});
+
+	test('stays on one line with several attributes, and after an opening tag that breaks', async () => {
+		await expectFormat(
+			`const a = <label htmlFor="name" className="label"> Name </label>;
+const b = <label htmlFor="name" className="label">Name </label>;
+const c = <textarea className="aaaaaaaaaaaaaaaa" id="bbbbbbbbbbbbbbbbbbbbbb" rows={3}> hello </textarea>;`,
+			`const a = <label htmlFor="name" className="label"> Name </label>;
+const b = <label htmlFor="name" className="label">Name </label>;
+const c = (
+  <textarea
+    className="aaaaaaaaaaaaaaaa"
+    id="bbbbbbbbbbbbbbbbbbbbbb"
+    rows={3}
+  > hello </textarea>
+);
+`,
+		);
+	});
+
+	// Over lines, the compiler keeps the split for these (`only_text_value`):
+	// compilers trim such a character or reference at a line's edge
+	// differently.
+	test('keeps on one line a text that compiles differently over lines', async () => {
+		await expectFormat(
+			`const a = <p> one two three four </p>;
+const b = <p> one two&nbsp; three four </p>;
+const c = <p> one two&#32; three four </p>;
+const d = <p> one two​ three four </p>;
+const e = <p>
+  one &#10;two three four </p>;`,
+			`const a = (
+  <p> one two three four </p>
+);
+const b = (
+  <p> one two&nbsp; three four </p>
+);
+const c = (
+  <p> one two&#32; three four </p>
+);
+const d = (
+  <p> one two​ three four </p>
+);
+const e = (
+  <p>one &#10;two three four </p>
+);
+`,
+			{ printWidth: 20 },
+		);
+	});
+
+	test('fills lines with references to other characters', async () => {
+		await expectFormat(
+			`const a = <p> one &amp; two R&amp;D three four </p>;`,
+			`const a = (
+  <p> one &amp; two
+    R&amp;D three
+    four </p>
+);
+`,
+			{ printWidth: 20 },
+		);
+	});
+
+	test("prints as Prettier does where the compiler splits the text's edges", async () => {
+		await expectFormat(
+			`const a = <> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </>;
+const b = <p> Lorem ipsum dolor sit amet, <b>consectetur</b> adipiscing elit, sed do eiusmod tempor </p>;`,
+			`const a = (
+  <>
+    {" "}
+    Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod
+    tempor{" "}
+  </>
+);
+const b = (
+  <p>
+    {" "}
+    Lorem ipsum dolor sit amet, <b>consectetur</b> adipiscing elit, sed do
+    eiusmod tempor{" "}
+  </p>
+);
+`,
+		);
+	});
+
+	// The compiler keeps the split for these over lines, so they print as
+	// Prettier prints them: `{" "}` children where the element breaks.
+	test('prints as Prettier does a text the compiler splits', async () => {
+		await expectFormat(
+			`const a = <p> one
+&#32;two </p>;
+const b = <p> one\u00a0two
+three </p>;`,
+			`const a = (
+  <p>
+    {" "}
+    one
+    &#32;two{" "}
+  </p>
+);
+const b = (
+  <p>
+    {" "}
+    one\u00a0two
+    three{" "}
+  </p>
+);
+`,
+			{ printWidth: 20 },
+		);
+	});
+
+	test('keeps the cursor on the word it was before', async () => {
+		const source = 'const a = <p>alpha beta gamma </p>;';
+		for (const word of ['alpha', 'beta']) {
+			const { formatted, cursorOffset } = await prettier.formatWithCursor(source, {
+				parser: 'tsrx',
+				plugins: [plugin],
+				printWidth: 20,
+				cursorOffset: source.indexOf(word),
+			});
+			expect(formatted).toBe(`const a = (
+  <p>
+    alpha beta
+    gamma </p>
+);
+`);
+			expect(cursorOffset, word).toBe(formatted.indexOf(word));
+		}
+	});
+
+	test('keeps the cursor at either end of the text', async () => {
+		for (const [source, printWidth] of /** @type {const} */ ([
+			['const a = <p> alpha beta </p>;', 80],
+			['const a = <p> alpha beta gamma delta </p>;', 20],
+		])) {
+			for (const before of ['</p>', ' alpha']) {
+				const { formatted, cursorOffset } = await prettier.formatWithCursor(source, {
+					parser: 'tsrx',
+					plugins: [plugin],
+					printWidth,
+					cursorOffset: source.indexOf(before),
+				});
+				expect(formatted.slice(cursorOffset).startsWith(before), `${source} ${before}`).toBe(true);
+			}
+		}
+	});
+
+	test('takes linear time in a long run of spaces', async () => {
+		const run = ' '.repeat(100_000);
+		for (const [source, expected] of [
+			[`const a = <p>a${run}b</p>;`, 'const a = <p>a b</p>;\n'],
+			[`const a = <p> a${run}b </p>;`, 'const a = <p> a b </p>;\n'],
+			[`const a = <p>${run}a b </p>;`, 'const a = <p> a b </p>;\n'],
+		]) {
+			const start = performance.now();
+			expect(await format(source)).toBe(expected);
+			expect(performance.now() - start).toBeLessThan(2000);
+		}
+	});
+
+	// The compiler leaves out a comment-only `{}` (or a TSRX `/* */`) before or
+	// after an element's only text (`renderChildren`), so that text is still its
+	// only child.
+	test('keeps comments beside the text they surround', async () => {
+		await expectFormat(
+			`const a = <textarea>{/* c */} Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>;
+const b = <textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor {/* c */}</textarea>;
+const c = <textarea>/* c */ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor /* d */</textarea>;
+const d = <textarea>
+  {/* a */}
+  {/* b */} Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>;
+const e = <textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor{/* c */}</textarea>;`,
+			`const a = (
+  <textarea>{/* c */} Lorem ipsum dolor sit amet, consectetur adipiscing elit,
+    sed do eiusmod tempor </textarea>
+);
+const b = (
+  <textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
+    eiusmod tempor {/* c */}</textarea>
+);
+const c = (
+  <textarea>/* c */ Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed
+    do eiusmod tempor /* d */</textarea>
+);
+const d = (
+  <textarea>{/* a */}{/* b */} Lorem ipsum dolor sit amet, consectetur
+    adipiscing elit, sed do eiusmod tempor </textarea>
+);
+const e = (
+  <textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do
+    eiusmod tempor
+    {/* c */}
+  </textarea>
+);
+`,
+		);
+	});
+
+	// The compiler keeps these, so the text isn't the element's only child.
+	test('prints as Prettier does a comment the compiler keeps beside the text', async () => {
+		await expectFormat(
+			`const a = <textarea>{/* @ts-expect-error */} Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>;
+const b = <textarea>// c
+  Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>;`,
+			`const a = (
+  <textarea>
+    {/* @ts-expect-error */} Lorem ipsum dolor sit amet, consectetur adipiscing
+    elit, sed do eiusmod tempor{" "}
+  </textarea>
+);
+const b = (
+  <textarea>
+    // c
+    Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod
+    tempor{" "}
+  </textarea>
+);
+`,
+		);
+	});
+
+	// Whether the compiler splits such a text depends on where its lines break,
+	// and Prettier's layout keeps the space beside a comment as it is, so laying
+	// it out here would change the next format's output.
+	test("leaves to Prettier a text beside a comment whose words can't go on separate lines", async () => {
+		await expectFormat(
+			`const a = <title id="a">{/* c */} one two\u200b
+  three four five six seven eight nine ten eleven twelve thirteen fourteen /* d */</title>;`,
+			`const a = (
+  <title id="a">
+    {/* c */} one two\u200b three four five six seven eight nine ten eleven twelve
+    thirteen fourteen /* d */
+  </title>
+);
+`,
+		);
+	});
+
+	test('keeps a text right after a comment on its line, so a `//` there stays text', async () => {
+		await expectFormat(
+			`const a = <p>/* c */// alpha beta gamma delta </p>;
+const b = <p>/* c */alpha beta gamma delta </p>;`,
+			`const a = (
+  <p>/* c */// alpha beta
+    gamma delta </p>
+);
+const b = (
+  <p>/* c */alpha beta
+    gamma delta </p>
+);
+`,
+			{ printWidth: 26 },
+		);
+		const source = 'const b = <p>/* c */alpha beta gamma delta </p>;';
+		const { formatted, cursorOffset } = await prettier.formatWithCursor(source, {
+			parser: 'tsrx',
+			plugins: [plugin],
+			printWidth: 26,
+			cursorOffset: source.indexOf('alpha'),
+		});
+		expect(cursorOffset).toBe(formatted.indexOf('alpha'));
+	});
+
+	test('keeps a `{…}` comment after a text ending in `@` off its line', async () => {
+		await expectFormat(
+			`const a = <textarea> a b c@
+{/* c */}</textarea>;
+const b = <textarea> a b c@
+/* c */</textarea>;`,
+			`const a = (
+  <textarea> a b c@
+    {/* c */}
+  </textarea>
+);
+const b = <textarea> a b c@/* c */</textarea>;
+`,
+		);
+	});
+
+	test('takes linear time in a long run of comments', async () => {
+		const source = `const a = <p>${'{/* c */}'.repeat(4000)} ${'word '.repeat(4000)}</p>;`;
+		const start = performance.now();
+		await format(source);
+		expect(performance.now() - start).toBeLessThan(2000);
+	});
+
+	test('compiles to the string the unformatted text compiles to', async () => {
+		const sources = [
+			'<textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>',
+			'<textarea>{/* c */} Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>',
+			'<textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor /* c */</textarea>',
+			'<textarea>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>',
+			'<textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor</textarea>',
+			'<textarea className="a" id="b"> one two </textarea>',
+			'<textarea> one &amp; R&amp;D &#65; &#x42; té </textarea>',
+			'<textarea> one two three four </textarea>',
+			'<textarea> one two&nbsp; three &#32;four </textarea>',
+			'<textarea> one two​ three four </textarea>',
+		];
+		const readings = [{}, { html: true }, { lines: /** @type {const} */ ('keep'), html: true }];
+		for (const element of sources) {
+			const source = `const a = <div>${element}</div>;\n`;
+			for (const printWidth of [20, 40, 80]) {
+				const output = await format(source, { printWidth });
+				for (const reading of readings) {
+					const expected = onlyTextLiteral(source, 'textarea', reading);
+					if (!reading.html) expect(expected, source).not.toBeNull();
+					const actual = onlyTextLiteral(output, 'textarea', reading);
+					// vue-jsx-vapor keeps a text's lines, as it does for any text
+					// Prettier fills.
+					const read = (/** @type {string | null} */ value) =>
+						reading.lines === 'keep' ? value?.replace(/\n */g, ' ') : value;
+					expect(read(actual), `${output} ${JSON.stringify(reading)}`).toBe(read(expected));
+				}
+			}
+		}
+	});
+});
+
 // A `//` is a comment when whitespace comes right before it, it starts a line,
 // or it comes right after a tag, `}`, or a block; it runs to the end of its
 // line. Touching other text or a block comment, it's text (as in `https://…`).
@@ -1585,6 +1991,86 @@ describe('prettier-ignore between children', () => {
     <p x="1" />
   </div>
 }
+`,
+		);
+	});
+});
+
+// TSRX reads `@{` in markup as the start of a code block, so the `{" "}` that
+// Prettier prints for a space where a line breaks can't follow an `@`. It
+// starts the next line instead.
+describe('a space after an `@` in text', () => {
+	test('starts the next line where the line breaks', async () => {
+		await expectFormat(
+			`const a = <p>Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod at@ <b>x</b></p>;
+const b = <>Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod at@ <b>x</b></>;`,
+			`const a = (
+  <p>
+    Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod at@
+    {" "}<b>x</b>
+  </p>
+);
+const b = (
+  <>
+    Lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod at@
+    {" "}<b>x</b>
+  </>
+);
+`,
+		);
+	});
+
+	test('starts the next line at the end of a text beside other children', async () => {
+		await expectFormat(
+			`const a = <p><b>x</b> Lorem ipsum dolor sit amet consectetur adipiscing elit sed at@ </p>;`,
+			`const a = (
+  <p>
+    <b>x</b> Lorem ipsum dolor sit amet consectetur adipiscing elit sed at@
+    {" "}
+  </p>
+);
+`,
+		);
+	});
+
+	test('keeps the line break between an `@` and a `{`', async () => {
+		await expectFormat(
+			`const a = <p>@
+{"x"}</p>;
+const b = <>a@
+{/* c */}</>;
+const c = <p>@
+{...xs}</p>;`,
+			`const a = (
+  <p>
+    @
+    {"x"}
+  </p>
+);
+const b = (
+  <>
+    a@
+    {/* c */}
+  </>
+);
+const c = (
+  <p>
+    @
+    {...xs}
+  </p>
+);
+`,
+		);
+	});
+
+	test('stays a space where the line goes on', async () => {
+		await expectFormat(
+			`const a = <p>Write to us@ <a href="mailto:team@example.com">team</a> today.</p>;`,
+			`const a = (
+  <p>
+    Write to us@ <a href="mailto:team@example.com">team</a> today.
+  </p>
+);
 `,
 		);
 	});

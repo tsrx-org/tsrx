@@ -8,10 +8,12 @@ import {
 	ErrorCodes,
 	getCurrentInstance,
 	handleError,
+	inject,
 	onBeforeUnmount,
 	onErrorCaptured,
 	onScopeDispose,
 	shallowRef,
+	ssrContextKey,
 	warn,
 } from 'vue';
 
@@ -35,6 +37,10 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
  * content rather than its fallback; `reset` doesn't change it, the render
  * after it does
  * @property {boolean} unmounting whether the boundary's teardown has begun
+ * @property {unknown} dropped_by the boundary whose render removed this one,
+ * as its teardown began: the one around it showing other content, such as
+ * after a reset; null when nothing rendering removed it, as when the app
+ * unmounts
  * @property {number} epoch bumped when the boundary resets or shows an error:
  * a swap still waiting from before then no longer applies
  * @property {number} waits counts the swaps that waited: only the latest one
@@ -233,6 +239,17 @@ function thrown_by_fallback(source, boundary) {
  * one lets an error from that `@catch` go on, the outer one has to as well,
  * so the `@catch` runs once and the error reaches the next `@try` out.
  *
+ * That includes an error the inner one is itself the source of while it
+ * shows the `@catch`, such as one from the `@catch`'s parameter pattern,
+ * which runs as the boundary calls its fallback. A boundary without a twin
+ * lets such an error go on too (`take_own_errors`). So does what an inner
+ * one throws as it goes away with the `@try`, such as from an unmount hook
+ * its body registered, whatever it showed: the app unmounting, or a `@try`
+ * around it showing its `@catch`, removes it. One that the outer one's own
+ * render removed, after a reset, is replaced while the outer one stays, and
+ * what still comes from it is the body's, as before, until the outer one goes
+ * away too.
+ *
  * @param {unknown} source
  * @param {ComponentInternalInstance} boundary
  * @returns {boolean}
@@ -241,11 +258,31 @@ function thrown_by_twin_fallback(source, boundary) {
 	const chain = chain_to(source, boundary);
 	for (let i = chain.length - 1; i >= 0; i--) {
 		const inner = /** @type {ComponentInternalInstance} */ (/** @type {unknown} */ (chain[i]));
-		if (!boundary_states.has(inner)) continue;
+		const state = boundary_states.get(inner);
+		if (!state) continue;
 		// The nearest boundary inside this one.
-		return !!props_of(inner)?.sharesCatch && thrown_by_fallback(source, inner);
+		if (!props_of(inner)?.sharesCatch) return false;
+		if (i === 0) {
+			if (!is_gone(inner, state)) {
+				if (!state.shows_content) return true;
+			} else if (state.dropped_by !== boundary || is_gone(boundary)) {
+				return true;
+			}
+		}
+		return thrown_by_fallback(source, inner);
 	}
 	return false;
+}
+
+/**
+ * Whether the boundary `instance` is unmounting or has unmounted.
+ *
+ * @param {ComponentInternalInstance} instance
+ * @param {BoundaryState | undefined} [state]
+ * @returns {boolean}
+ */
+function is_gone(instance, state = boundary_states.get(instance)) {
+	return !!state?.unmounting || !!(/** @type {{ isUnmounted?: boolean }} */ (instance).isUnmounted);
 }
 
 /**
@@ -460,22 +497,38 @@ function resolve_value(current, value, anchor) {
 
 /**
  * @param {() => unknown} render
+ * @param {ComponentInternalInstance | null} instance the boundary, when it
+ * renders as a component
  * @returns {Array<VaporRenderedBlock | undefined>}
  */
-function create_boundary_nodes(render) {
+function create_boundary_nodes(render, instance) {
 	/** @type {Array<VaporRenderedBlock | undefined>} */
 	const nodes = [];
 	/** @type {EffectScope | undefined} */
 	let scope;
 
 	vapor.renderEffect(() => {
-		if (scope) scope.stop();
-		scope = new EffectScope();
-		nodes[0] = scope.run(() => resolve_value(nodes[0], render(), undefined));
+		const outer = re_rendering;
+		re_rendering = instance;
+		try {
+			if (scope) scope.stop();
+			scope = new EffectScope();
+			nodes[0] = scope.run(() => resolve_value(nodes[0], render(), undefined));
+		} finally {
+			re_rendering = outer;
+		}
 	});
 
 	return nodes;
 }
+
+/**
+ * The boundary whose render is running, which removes what it showed
+ * before (`BoundaryState.dropped_by`).
+ *
+ * @type {unknown}
+ */
+let re_rendering = null;
 
 /**
  * A reusable Vue error boundary component.
@@ -490,55 +543,57 @@ function create_boundary_nodes(render) {
  * or the fallback rendered
  */
 export function TsrxErrorBoundary(props, ctx) {
-	if (typeof vapor.renderEffect !== 'function') return render_on_server(props);
+	if (renders_on_server()) return render_on_server(props);
 	const instance = own_instance(ctx);
 	const state = instance ? initialize_boundary_state(instance) : create_boundary_state();
 
-	const nodes = create_boundary_nodes(() =>
-		track_created((created) => {
-			// Read so a reset, or an error caught after rendering, renders again.
-			void state.version.value;
-			if (state.caught) {
-				return render_fallback(state, props);
-			}
-			// The content renders again, after a reset: what the fallback created
-			// before is gone. Until now, what it throws still goes on, also right
-			// after its own call to `reset`.
-			state.fallback_from = null;
-			state.shows_content = true;
+	const nodes = create_boundary_nodes(
+		() =>
+			track_created((created) => {
+				// Read so a reset, or an error caught after rendering, renders again.
+				void state.version.value;
+				if (state.caught) {
+					return render_fallback(state, props);
+				}
+				// The content renders again, after a reset: what the fallback created
+				// before is gone. Until now, what it throws still goes on, also right
+				// after its own call to `reset`.
+				state.fallback_from = null;
+				state.shows_content = true;
 
-			/** @type {RenderFrame} */
-			const frame = { instance: vapor.currentInstance, errors: [] };
-			/** @type {unknown} */
-			let content;
-			rendering.push(frame);
-			try {
-				content = props.content();
-			} catch (caught_error) {
-				frame.errors.push(caught_error);
-			} finally {
-				rendering.pop();
-			}
-			if (frame.errors.length === 0) {
-				return content;
-			}
-			// The content is dropped before it mounts.
-			for (const remove of created.splice(0)) remove();
-			if (instance && state.rendered && passes_to_twin(instance)) {
-				// Rendering again: hand the error to the boundary around the
-				// `Suspense`, which replaces it. Keep what this one showed: the
-				// fallback would unmount it, and with it a component the `Suspense`
-				// still waits for. A first render that throws has mounted nothing,
-				// and shows this `@catch`, as before; a component in an element of
-				// what it dropped can still hold the `Suspense` until it settles.
-				handleError(frame.errors[0], instance, ErrorCodes.RENDER_FUNCTION);
-				return /** @type {unknown[] | undefined} */ (state.rendered)?.[0] ?? null;
-			}
-			// Not a reactive write: this render already shows the fallback.
-			state.caught = { error: frame.errors[0] };
-			state.epoch++;
-			return render_fallback(state, props);
-		}),
+				/** @type {RenderFrame} */
+				const frame = { instance: vapor.currentInstance, errors: [] };
+				/** @type {unknown} */
+				let content;
+				rendering.push(frame);
+				try {
+					content = props.content();
+				} catch (caught_error) {
+					frame.errors.push(caught_error);
+				} finally {
+					rendering.pop();
+				}
+				if (frame.errors.length === 0) {
+					return content;
+				}
+				// The content is dropped before it mounts.
+				for (const remove of created.splice(0)) remove();
+				if (instance && state.rendered && passes_to_twin(instance)) {
+					// Rendering again: hand the error to the boundary around the
+					// `Suspense`, which replaces it. Keep what this one showed: the
+					// fallback would unmount it, and with it a component the `Suspense`
+					// still waits for. A first render that throws has mounted nothing,
+					// and shows this `@catch`, as before; a component in an element of
+					// what it dropped can still hold the `Suspense` until it settles.
+					handleError(frame.errors[0], instance, ErrorCodes.RENDER_FUNCTION);
+					return /** @type {unknown[] | undefined} */ (state.rendered)?.[0] ?? null;
+				}
+				// Not a reactive write: this render already shows the fallback.
+				state.caught = { error: frame.errors[0] };
+				state.epoch++;
+				return render_fallback(state, props);
+			}),
+		instance,
 	);
 	state.rendered = nodes;
 	return nodes;
@@ -592,6 +647,69 @@ function take_uid() {
 TsrxErrorBoundary.props = ['fallback', 'content', 'sharesCatch'];
 
 /**
+ * Whether this realm can render Vapor: Vue's Vapor renderer and a DOM. Vue's
+ * Node build has no Vapor renderer, and a server that resolves its bundler
+ * build (an edge or worker runtime, or an SSR bundle) has no DOM. Read when
+ * Vue reads the flag, since a DOM can be set up after this module loads.
+ *
+ * @returns {boolean}
+ */
+function renders_vapor() {
+	return typeof vapor.renderEffect === 'function' && typeof document !== 'undefined';
+}
+
+/**
+ * Gives `component` a `__vapor` that reads `renders_vapor()`. It is
+ * enumerable, so a copy of the component (`Object.assign`, a spread) takes
+ * the value it reads then, and a write, such as Vue's HMR assigning a new
+ * definition over the old one, replaces it with that value.
+ *
+ * @param {Function} component
+ */
+function define_vapor_flag(component) {
+	Object.defineProperty(component, '__vapor', {
+		get: renders_vapor,
+		set(/** @type {unknown} */ value) {
+			Object.defineProperty(this, '__vapor', {
+				value,
+				writable: true,
+				enumerable: true,
+				configurable: true,
+			});
+		},
+		enumerable: true,
+		configurable: true,
+	});
+}
+
+// A Vapor component, also to an app with Vue's VDOM interop. vue-jsx-vapor
+// renders a function component through one proxy per function, cached for
+// every app, whose `__vapor` the app that first made it decides: a proxy
+// made while an app without interop, such as one that hydrates, rendered the
+// boundary told a later app with interop to mount it as a VDOM component,
+// which printed its blocks as text. Its own flag answers the same in each.
+// Only where Vapor can render it: the server renderer, which calls it as a
+// functional VDOM component, wraps the slots of what an owner with `__vapor`
+// creates as Vapor slots, which loses what a component adds to a cloned slot
+// child.
+define_vapor_flag(TsrxErrorBoundary);
+
+/**
+ * Whether the boundary renders on the server. Vue's server renderer provides
+ * an SSR context to the app it renders (`useSSRContext`). Vue's Node build
+ * has no Vapor renderer at all; its bundler build, which a server resolves
+ * without the `node` condition (an edge or worker runtime, or an SSR bundle),
+ * has one, so a missing `renderEffect` alone doesn't tell.
+ *
+ * @returns {boolean}
+ */
+function renders_on_server() {
+	if (typeof vapor.renderEffect !== 'function') return true;
+	if (!vapor.currentInstance && !getCurrentInstance()) return false;
+	return inject(ssrContextKey, null) != null;
+}
+
+/**
  * @param {unknown} _props
  * @param {unknown} [ctx]
  * @returns {void}
@@ -604,9 +722,9 @@ TsrxErrorBoundary.__setup = function setup(_props, ctx) {
 };
 
 /**
- * Renders the boundary on the server. Vue's server build has no Vapor
- * renderer: vue-jsx-vapor compiles a component for the server to VDOM, and the
- * server renderer calls the boundary as a functional component. It renders
+ * Renders the boundary on the server (`renders_on_server`): vue-jsx-vapor
+ * compiles a component for the server to VDOM, and the server renderer calls
+ * the boundary as a functional component. It renders
  * the content, or the fallback when the content throws as it renders. An
  * error from a component in the content comes later, as the server renders
  * that component, and goes to `app.config.errorHandler` as it does without a
@@ -632,6 +750,7 @@ function create_boundary_state() {
 		fallback_from: null,
 		shows_content: false,
 		unmounting: false,
+		dropped_by: null,
 		epoch: 0,
 		waits: 0,
 		rendered: undefined,
@@ -659,6 +778,7 @@ function initialize_boundary_state(instance) {
 	// Registered before anything the content registers, so it runs first.
 	onBeforeUnmount(() => {
 		state.unmounting = true;
+		state.dropped_by = re_rendering;
 	});
 
 	/**
@@ -881,3 +1001,5 @@ export function TsrxPendingBody(props, ctx) {
 }
 
 TsrxPendingBody.props = ['content'];
+// A Vapor component in every app (see `TsrxErrorBoundary.__vapor`).
+define_vapor_flag(TsrxPendingBody);

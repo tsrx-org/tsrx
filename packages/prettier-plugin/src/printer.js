@@ -7,7 +7,7 @@ import { isLayoutWhitespace } from '@tsrx/core';
 import { builders, utils } from 'prettier/doc';
 import * as estreePlugin from 'prettier/plugins/estree';
 import * as standalone from 'prettier/standalone';
-import { printJsxElementInternal } from './jsx.js';
+import { hasAtBeforeWhitespace, onlyTextEdges, printJsxElementInternal } from './jsx.js';
 import { TSRX_DIRECTIVES, isRawScriptElement } from './parse.js';
 
 const {
@@ -788,7 +788,14 @@ function printTsrx(path, options, print) {
 				return printRawTextKept(path, options, print);
 			}
 			if (huggedCodeBlock(node) !== -1) return printHuggedCodeBlock(path, options, print);
-			if (!node.tsrxPrintsChildren && !node.tsrxKeepParens) return null;
+			if (
+				!node.tsrxPrintsChildren &&
+				!node.tsrxKeepParens &&
+				!onlyTextEdges(node) &&
+				!hasAtBeforeWhitespace(node)
+			) {
+				return null;
+			}
 			return printElement(path, options, printJsxElementInternal(path, options, print));
 
 		case 'JSXExpressionContainer':

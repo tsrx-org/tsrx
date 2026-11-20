@@ -98,6 +98,7 @@ export {
 	is_statement_list_item as isStatementListItem,
 	is_statement_position as isStatementPosition,
 	is_layout_whitespace as isLayoutWhitespace,
+	render_children as renderChildren,
 } from './utils/ast.js';
 
 // Shared TSRX semantic analysis
@@ -197,6 +198,7 @@ export {
 	NORMALIZE_SPREAD_PROPS_INTERNAL_NAME,
 	return_value_body_to_expression as returnValueBodyToExpression,
 	source_mentions_identifier as sourceMentionsIdentifier,
+	create_dynamic_alias_name as createDynamicAliasName,
 	SPREAD_REF_BAGS_INTERNAL_NAME,
 	SUSPENSE_INTERNAL_NAME,
 	switch_statement_to_jsx_child as switchStatementToJsxChild,

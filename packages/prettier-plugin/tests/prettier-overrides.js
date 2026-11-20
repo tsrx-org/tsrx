@@ -5,6 +5,7 @@
  *   tsx?: boolean,
  *   input?: string,
  *   output?: string,
+ *   replace?: Array<[string, string]>,
  * }} Override
  */
 
@@ -74,11 +75,49 @@ const lineStartElement = {
 };
 
 /**
+ * An element whose only child is text with a space at an edge keeps that text
+ * as one child: the compiler prints it as one literal, so a `<textarea>`, a
+ * `<title>` or a component that takes `children: string` gets one string
+ * (#1368). Prettier moves the space into a `{" "}` child once the element
+ * breaks; TSRX keeps it beside its tag.
+ * @type {Override}
+ */
+const onlyTextEdgeSpace = {
+	reason:
+		'An element\'s only text keeps a space at an edge beside its tag, not as a `{" "}` child, so it stays one child (#1368)',
+	replace: [
+		[
+			`leading_whitespace = (
+  <div>
+    {" "}
+    First Second Third Fourth Fifth Sixth Seventh Eighth Ninth Tenth Eleventh
+    Twelfth Thirteenth Fourteenth
+  </div>
+);`,
+			`leading_whitespace = (
+  <div> First Second Third Fourth Fifth Sixth Seventh Eighth Ninth Tenth
+    Eleventh Twelfth Thirteenth Fourteenth
+  </div>
+);`,
+		],
+		[
+			`    Twelfth Thirteenth Fourteenth{" "}
+  </div>
+);`,
+			`    Twelfth Thirteenth Fourteenth </div>
+);`,
+		],
+	],
+};
+
+/**
  * Prettier test cases whose TSRX result deliberately differs from Prettier's
  * snapshot, keyed like `prettier-known-failures.json` (`<dir>/<snapshot
  * title>`). An override gives the reason, and then either skips the case,
- * expects what Prettier prints for the input as a `.tsx` file (`tsx`), or
- * replaces the input and/or the expected output.
+ * expects what Prettier prints for the input as a `.tsx` file (`tsx`),
+ * replaces the input and/or the expected output, or replaces each `[from, to]`
+ * text in the expected output (`replace`), for a case that differs in a few
+ * lines.
  *
  * @type {Record<string, Override>}
  */
@@ -99,6 +138,8 @@ export default {
 
 	'js/top-level-await/test.cjs format 1': commonJsAwait,
 	'typescript/top-level-await/test.cts format 1': commonJsAwait,
+
+	'jsx/text-wrap/test.js format 1': onlyTextEdgeSpace,
 
 	'typescript/call/callee-comments.ts format 1': lineStartElement,
 

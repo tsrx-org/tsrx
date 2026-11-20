@@ -2,24 +2,30 @@
  * Prettier's layout of a JSX element's children, for the elements whose
  * children include TSRX comments (`// …` and `/* … *\/` between children,
  * which TSX reads as text, and which `parse.js` gives Prettier as the `{…}`
- * children `{/* … *\/}` would be), and for an element that keeps its
- * parentheses at the start of a statement (`keepStatementParens`). Every other
- * element is printed by Prettier itself.
+ * children `{/* … *\/}` would be), for an element whose children render one
+ * text that the compiler prints as one literal (`onlyTextEdges`), and for an
+ * element that keeps its parentheses at the start of a statement
+ * (`keepStatementParens`). Every other element is printed by Prettier itself.
  *
  * `printJsxElementInternal` and `printJsxChildren` are copied from Prettier
  * 3.9.9 (`src/language-js/print/jsx.js`, MIT license, Copyright © James Long and
- * contributors). The only changes, marked `TSRX:`, are in `printJsxChildren`,
- * where a bare `//` differs from `{// … }`: a `//` is a comment only after
+ * contributors). The only changes are marked `TSRX:`. An element's only text
+ * keeps the spaces at its edges (`printOnlyText`). In `printJsxChildren`, a
+ * bare `//` differs from `{// … }`: a `//` is a comment only after
  * whitespace (or at the start of a line, or right after a tag), and it runs to
  * the end of its line. So a line comment ends its line, keeps whitespace
  * between it and text or a comment before it, and text that starts with `//`
- * (right after a block comment) stays on that line. Keep the rest in step with
- * Prettier when upgrading.
+ * (right after a block comment) stays on that line. And a `{" "}` never
+ * follows an `@`, where TSRX would read `@{` as the start of a code block
+ * (`endsWithAt`); an element whose text has an `@` before whitespace is printed
+ * here for that (`hasAtBeforeWhitespace`). Keep the rest in step with Prettier
+ * when upgrading.
  *
  * @import { AstPath, Doc, ParserOptions } from 'prettier'
  * @import { Node } from './parse.js'
  */
 
+import { isLayoutWhitespace, renderChildren, wrapEdgeWhitespace } from '@tsrx/core';
 import { builders, utils } from 'prettier/doc';
 
 const {
@@ -31,6 +37,7 @@ const {
 	hardline,
 	ifBreak,
 	indent,
+	join,
 	line,
 	softline,
 } = builders;
@@ -138,6 +145,10 @@ export function printJsxElementInternal(path, options, print) {
 	if (node.type === 'JSXElement' && isEmptyJsxElement(node)) {
 		return [print('openingElement'), print('closingElement')];
 	}
+
+	// TSRX: an element's only rendered text keeps the spaces at its edges.
+	const edges = onlyTextEdges(node);
+	if (edges) return printOnlyText(path, options, print, edges);
 
 	const openingLines =
 		node.type === 'JSXElement' ? print('openingElement') : print('openingFragment');
@@ -266,7 +277,9 @@ export function printJsxElementInternal(path, options, print) {
 
 			if (i === children.length - 1) {
 				// Trailing whitespace
-				multilineChildren.push([/** @type {Doc} */ (multilineChildren.pop()), rawJsxWhitespace]);
+				const previous = /** @type {Doc} */ (multilineChildren.pop());
+				// TSRX: not right after an `@`, where `@{` would start a code block.
+				multilineChildren.push([previous, endsWithAt(previous) ? hardline : '', rawJsxWhitespace]);
 				continue;
 			}
 
@@ -283,6 +296,10 @@ export function printJsxElementInternal(path, options, print) {
 		if (i % 2 === 0) {
 			// non-line-like
 			multilineChildren.push([/** @type {Doc} */ (multilineChildren.pop()), child]);
+		} else if (child === whitespace && endsWithAt(/** @type {Doc} */ (multilineChildren.at(-1)))) {
+			// TSRX: a `{" "}` right after an `@` would start an `@{ … }` code block, so
+			// where the line breaks, it starts the next line.
+			multilineChildren.push(ifBreak([softline, rawJsxWhitespace], ' '), '');
 		} else {
 			// line-like
 			multilineChildren.push(child, '');
@@ -328,6 +345,229 @@ export function printJsxElementInternal(path, options, print) {
 	}
 
 	return conditionalGroup([group([openingLines, ...children, closingLines]), multiLineElem]);
+}
+
+/**
+ * TSRX: where the children an element renders are one text that the compiler
+ * prints as one literal (`{' a '}`, `wrapEdgeWhitespace` in `@tsrx/core`),
+ * that text's index and which of its edges have a space or tab (no line break
+ * in the whitespace there). The compiler does that for an element's only text
+ * with a space or tab at an edge, so a `<textarea>`, a `<title>` or a
+ * component that takes `children: string` gets one string (#1368). A comment
+ * container before or after the text (`{/* c *\/}`, or a TSRX `/* c *\/`)
+ * renders nothing, and the compiler leaves it out (`renderChildren`), unless it
+ * holds a tooling comment such as `@ts-expect-error`. Prettier would print such
+ * an edge as a `{" "}` child once the element breaks, which gives the element
+ * two or three children. `null` for any other element, and so for a fragment,
+ * whose only text the compiler splits, and for a text the compiler splits
+ * anyway, which Prettier prints as before. The compiler is asked with the
+ * reading of React, Preact and Hono; Solid and Vue keep the split for more
+ * texts. Besides the text, only comments printed on its line are laid out: no
+ * other text, and no TSRX `//` comment, which ends its line.
+ * @param {Node} node
+ * @returns {{ index: number, start: boolean, end: boolean } | null}
+ */
+export function onlyTextEdges(node) {
+	if (node.type !== 'JSXElement') return null;
+	const children = /** @type {Node[]} */ (node.children);
+	const index = children.findIndex(
+		(/** @type {Node} */ child) => child.type === 'JSXText' && !isLayoutWhitespace(child),
+	);
+	if (index === -1) return null;
+	const text = children[index];
+	let comments = false;
+	for (const [i, child] of children.entries()) {
+		if (i === index || isLayoutWhitespace(child)) continue;
+		if (!isInlineCommentContainer(child)) return null;
+		comments = true;
+	}
+	// Beside a comment, a text whose words can't go on separate lines is left to
+	// Prettier: whether the compiler splits it depends on its line breaks, and
+	// Prettier's layout keeps the spaces beside a comment, so the next format
+	// would lay it out here.
+	if (comments && !wordsCanBreak(text)) return null;
+	const raw = getRaw(text);
+	// Counted from each end: a regular expression ending in `$` tries every start
+	// in a long run of whitespace.
+	let start = 0;
+	while (start < raw.length && isJsxWhitespaceCharacter(raw[start])) start++;
+	let end = raw.length;
+	while (end > start && isJsxWhitespaceCharacter(raw[end - 1])) end--;
+	const edges = {
+		index,
+		start: start > 0 && !raw.slice(0, start).includes('\n'),
+		end: end < raw.length && !raw.slice(end).includes('\n'),
+	};
+	if (start === end || !(edges.start || edges.end)) return null;
+	const compilerText = { type: 'JSXText', raw, value: text.value, metadata: { path: [] } };
+	const rendered = renderChildren(
+		/** @type {any} */ ({
+			type: 'JSXElement',
+			children: children.map((/** @type {Node} */ child) =>
+				child === text
+					? compilerText
+					: child.type === 'JSXText'
+						? child
+						: {
+								type: 'JSXExpressionContainer',
+								expression: {
+									type: 'JSXEmptyExpression',
+									innerComments: child.tsrxComment
+										? [child.tsrxComment]
+										: (child.expression.comments ?? []),
+								},
+							},
+			),
+		}),
+	);
+	if (rendered.length !== 1 || rendered[0] !== compilerText) return null;
+	const compiled = wrapEdgeWhitespace(/** @type {any[]} */ ([compilerText]), true);
+	return compiled.length === 1 && compiled[0].type === 'JSXExpressionContainer' ? edges : null;
+}
+
+/**
+ * TSRX: a child that holds only a comment printed on one line with what comes
+ * after it: `{/* c *\/}`, `{// c}` (whose `}` ends the line comment's line) or a
+ * TSRX `/* c *\/`. A TSRX `// c` ends its line, so the text can't follow it.
+ * @param {Node} child
+ * @returns {boolean}
+ */
+function isInlineCommentContainer(child) {
+	return (
+		child.type === 'JSXExpressionContainer' &&
+		child.expression.type === 'JSXEmptyExpression' &&
+		child.tsrxComment?.type !== 'Line'
+	);
+}
+
+/** @param {string} character */
+const isJsxWhitespaceCharacter = (character) =>
+	character === ' ' || character === '\n' || character === '\r' || character === '\t';
+
+/**
+ * TSRX: an element's only rendered text, which the compiler prints as one
+ * literal (`onlyTextEdges`) and which stays one text. Its words fill lines as
+ * Prettier fills text, and a space at an edge stays one, beside its tag: the
+ * opening tag, the space and the first word start a line, and the last word,
+ * the space and the closing tag end one. A comment before the text prints
+ * after the opening tag, and one after it before the closing tag. An edge
+ * without a space breaks as Prettier breaks it. A text whose words can't go on
+ * separate lines (`wordsCanBreak`) stays on one line with its tags. Where the
+ * element fits on one line, it stays there, as Prettier prints it, except that
+ * several attributes don't break it.
+ * @param {AstPath<Node>} path
+ * @param {ParserOptions<Node>} options
+ * @param {Print} print
+ * @param {{ index: number, start: boolean, end: boolean }} edges
+ * @returns {Doc}
+ */
+function printOnlyText(path, options, print, edges) {
+	const { node } = path;
+	const text = node.children[edges.index];
+	const openingLines = print('openingElement');
+	const closingLines = print('closingElement');
+	/** @type {Doc[]} */
+	const before = [];
+	/** @type {Doc[]} */
+	const after = [];
+	// The comments around the text; text that renders nothing (a line break and
+	// indentation) is left out, as the compiler leaves it out.
+	/** @type {Node | undefined} */
+	let firstAfter;
+	path.each((childPath, index) => {
+		if (index === edges.index || isLayoutWhitespace(childPath.node)) return;
+		if (index > edges.index) firstAfter ??= /** @type {Node} */ (childPath.node);
+		(index < edges.index ? before : after).push(print());
+	}, 'children');
+	const words = getRaw(text)
+		.split(/[ \n\r\t]+/u)
+		.filter((/** @type {string} */ word) => word !== '');
+	const breaks = wordsCanBreak(text);
+	// `print` isn't called on the text, so print the cursor around it, its
+	// edges too, as Prettier's `mainPrint` prints it around a node: around the
+	// text that holds it, after the text before it, and before the text after it.
+	const cursorOptions = /** @type {Record<string, any>} */ (options);
+	const [first, last] =
+		cursorOptions.cursorNode === text
+			? [cursor, cursor]
+			: cursorOptions.nodeBeforeCursor === text
+				? ['', cursor]
+				: cursorOptions.nodeAfterCursor === text
+					? [cursor, '']
+					: ['', ''];
+	/** @type {Doc[]} */
+	const parts = breaks ? join(line, words) : [words.join(' ')];
+	parts.push([
+		/** @type {Doc} */ (parts.pop()),
+		edges.end ? [' ', last, ...after, closingLines] : last,
+	]);
+	const edgeBreak = breaks ? softline : '';
+	return group([
+		openingLines,
+		indent([
+			...before,
+			// A text right after a comment stays there: a TSRX `/* c */` before
+			// `// …` keeps the `//` text, which at the start of a line would be a
+			// comment.
+			edges.start ? [first, ' '] : before.length ? first : [edgeBreak, first],
+			fill(parts),
+			edges.end || after.length === 0
+				? ''
+				: // A `{…}` comment after a text that ends in `@` stays on its own
+					// line: `@{` would start a code block.
+					[
+						words.at(-1)?.endsWith('@') && !firstAfter?.tsrxComment ? hardline : edgeBreak,
+						...after,
+					],
+		]),
+		edges.end ? '' : [edgeBreak, closingLines],
+	]);
+}
+
+/**
+ * TSRX: whether the compiler still prints the text as one literal when it
+ * spans lines. There it keeps the split where compilers trim a line's edge
+ * differently (`only_text_value` in `@tsrx/core`): for whitespace other than
+ * spaces, tabs and line breaks anywhere in the text, and for U+200B or a
+ * reference to whitespace (`&#32;`, `&nbsp;`) next to a line break. A text
+ * that has any of these stays on one line, where it compiles to one literal.
+ * A reference to a space, tab or line break shows as whitespace that the
+ * decoded text has and the text as written doesn't.
+ * @param {Node} text
+ * @returns {boolean}
+ */
+function wordsCanBreak(text) {
+	if (/[^\S \t\n\r]|\u200b/u.test(text.value)) return false;
+	/** @param {string} value */
+	const whitespace = (value) => value.replaceAll('\r\n', '\n').replace(/[^ \t\n\r]/gu, '').length;
+	return whitespace(text.value) === whitespace(getRaw(text));
+}
+
+/**
+ * TSRX: whether the text a doc prints ends with `@`. TSRX reads `@{` in
+ * markup as the start of a code block, so a `{" "}` can't follow it.
+ * @param {Doc} doc
+ * @returns {boolean}
+ */
+function endsWithAt(doc) {
+	while (Array.isArray(doc)) {
+		const last = doc.findLast((part) => part !== '');
+		if (last === undefined) return false;
+		doc = last;
+	}
+	return typeof doc === 'string' && doc.endsWith('@');
+}
+
+/**
+ * TSRX: whether an element's or fragment's text has an `@` before whitespace,
+ * where Prettier could print a `{" "}` (`printJsxElementInternal`).
+ * @param {Node} node
+ * @returns {boolean}
+ */
+export function hasAtBeforeWhitespace(node) {
+	return node.children.some(
+		(/** @type {Node} */ child) => child.type === 'JSXText' && /@[ \n\r\t]/u.test(getRaw(child)),
+	);
 }
 
 /**
@@ -417,7 +657,15 @@ function printJsxChildren(path, options, print, whitespace, isFacebookTranslatio
 
 				if (endWhitespace !== undefined) {
 					if (/\n/u.test(endWhitespace)) {
-						pushLine(separatorWithWhitespace(isFacebookTranslationTag, prevPart, node, next));
+						// TSRX: the line break between an `@` and a `{` stays, where `@{`
+						// would start a code block.
+						pushLine(
+							endsWithAt(prevPart) &&
+								((next?.type === 'JSXExpressionContainer' && !next.tsrxComment) ||
+									next?.type === 'JSXSpreadChild')
+								? hardline
+								: separatorWithWhitespace(isFacebookTranslationTag, prevPart, node, next),
+						);
 					} else {
 						pushLine(whitespace);
 					}

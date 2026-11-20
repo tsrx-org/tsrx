@@ -30,6 +30,7 @@ import {
 	mapping_data,
 	mapping_data_verify_only,
 	mapping_data_verify_complete,
+	mapping_data_reference_directive,
 	mapping_data_completion_only,
 	mapping_data_string_span,
 	build_line_offsets,
@@ -50,6 +51,11 @@ import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 const RETURN_KEYWORD = 'return';
 /** The longest node whose whole text `start_at_own_text` compares. */
 const OWN_TEXT_MAX_LENGTH = 1000;
+// A name as written: identifier characters and `\uXXXX` / `\u{X}` escapes,
+// after an optional `#` for a private name.
+const regex_written_name =
+	/#?(?:[\p{ID_Continue}$\u200c\u200d]|\\u[\da-fA-F]{4}|\\u\{[\da-fA-F]+\})+/uy;
+const regex_name_escape = /\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g;
 /** A fragment's `<>`, with any whitespace or comments between its `<` and `>`. */
 const regex_opening_fragment = /^<(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*>$/;
 const EXPORT_KEYWORD = 'export';
@@ -578,6 +584,23 @@ export function convert_source_map_to_mappings(
 
 	/** @type {Map<string, number>} */
 	const generated_position_indexes = new Map();
+	/**
+	 * How many tokens start at each source position with each text, counted
+	 * before the tokens are mapped. A token with a `generatedLoc` stands for
+	 * another source position of a name printed once (a dynamic tag's closing
+	 * name), so it isn't counted.
+	 * @type {Map<string, number>}
+	 */
+	const token_counts = new Map();
+
+	/**
+	 * @param {MappingToken} token
+	 * @returns {string}
+	 */
+	function token_key(token) {
+		const { start } = token.generatedLoc ?? token.loc;
+		return `${start.line}:${start.column}:${token.generated}`;
+	}
 
 	/**
 	 * When a transform expands one source identifier into multiple generated
@@ -585,6 +608,14 @@ export function convert_source_map_to_mappings(
 	 * _$_server_$_.foo`), esrap records multiple generated positions for the
 	 * same source location. Keep token mappings in generated-order by consuming
 	 * the next matching generated token instead of always using the first one.
+	 *
+	 * A call printed around a node with the node's location, as a platform's
+	 * AST pass can make (#1392), starts at the same source position, and its
+	 * callee can start with the token's text: `read(re)`, `count(count)`,
+	 * `a.read(a.re)` for `a`. The node itself also maps its end there, so the
+	 * positions whose text ends where the token's source ends are taken first,
+	 * for a token that no other token shares its start and text with. Tokens
+	 * that do keep taking the positions in order, one each.
 	 * @param {MappingToken} token
 	 * @returns {{ line: number; column: number }}
 	 */
@@ -600,8 +631,30 @@ export function convert_source_map_to_mappings(
 			const offset = loc_to_offset(position.line, position.column, gen_line_offsets);
 			return generated_code.startsWith(token.generated, offset);
 		});
-		const candidates = matching_positions.length > 0 ? matching_positions : positions;
-		const index_key = `${key}:${token.generated}`;
+		const end = generated_loc.end;
+		const end_offsets =
+			matching_positions.length > 1 && end && (token_counts.get(token_key(token)) ?? 0) <= 1
+				? new Set(
+						(src_to_gen_map.get(`${end.line}:${end.column}`) ?? []).map((position) =>
+							loc_to_offset(position.line, position.column, gen_line_offsets),
+						),
+					)
+				: null;
+		const own_positions = end_offsets
+			? matching_positions.filter((position) =>
+					end_offsets.has(
+						loc_to_offset(position.line, position.column, gen_line_offsets) +
+							token.generated.length,
+					),
+				)
+			: [];
+		const candidates =
+			own_positions.length > 0
+				? own_positions
+				: matching_positions.length > 0
+					? matching_positions
+					: positions;
+		const index_key = token_key(token);
 		const index = generated_position_indexes.get(index_key) ?? 0;
 		generated_position_indexes.set(index_key, index + 1);
 
@@ -1018,6 +1071,43 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map a case clause's head, `case 1:` or `default:`, as the two points of
+	 * one mapping, for diagnostics only: TypeScript reports a fallthrough
+	 * (TS7029) from the clause's start to the end of its `:`, and the points
+	 * hold no range inside the test.
+	 * @param {AST.SwitchCase} node
+	 * @returns {void}
+	 */
+	function push_case_head_mapping(node) {
+		if (!has_location(node)) return;
+		const keyword = node.test ? 'case' : 'default';
+		const generated_start = generated_offset_for_text(node.loc.start, keyword);
+		if (generated_start === undefined) return;
+		const colon = find_source_token(source_tokens, ':', node.test?.end ?? node.start, 'after');
+		if (!colon || colon.end > node.end) return;
+		let generated_after = generated_start + keyword.length;
+		if (node.test) {
+			if (!has_location(node.test)) return;
+			const { line, column } = node.test.loc.end;
+			const end = (src_to_gen_map.get(`${line}:${column}`) ?? [])
+				.map((position) => loc_to_offset(position.line, position.column, gen_line_offsets))
+				.find((offset) => offset >= generated_start);
+			if (end === undefined) return;
+			generated_after = end;
+		}
+		const generated_colon = generated_code.indexOf(':', generated_after);
+		if (generated_colon < 0 || generated_code.slice(generated_after, generated_colon).trim())
+			return;
+		mappings.push({
+			sourceOffsets: [node.start, colon.end],
+			generatedOffsets: [generated_start, generated_colon + 1],
+			lengths: [0, 0],
+			generatedLengths: [0, 0],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
+	}
+
+	/**
 	 * Map the `}` that ends a block, for diagnostics only, so that unreachable
 	 * code (TS7027) that ends with the block keeps its end.
 	 * @param {AST.Node | null | undefined} node
@@ -1170,6 +1260,58 @@ export function convert_source_map_to_mappings(
 	/** @type {Set<string>} */
 	const mapped_comments = new Set();
 
+	/** @type {number | undefined} */
+	let header_end;
+
+	/**
+	 * Whether a comment printed as written is a `/// <reference …/>` that
+	 * TypeScript reads as one in the source: a file's leading comments are its
+	 * directives. After a statement it is an ordinary comment, yet the output can
+	 * still print it first (`;` prints nothing, and a platform guard can be
+	 * specialized away), where it would be read as a directive. Read from the
+	 * source text, which the specialized tree doesn't keep.
+	 * @param {AST.CommentWithLocation} comment
+	 * @returns {boolean}
+	 */
+	function is_source_reference_directive(comment) {
+		if (comment.type !== 'Line' || !/^\/\s*<reference\s.*\/>/.test(comment.value)) return false;
+		header_end ??= leading_comments_end();
+		return comment.end <= header_end;
+	}
+
+	/**
+	 * Where the source's leading comments end: past a hashbang, whitespace and
+	 * comments, at its first token.
+	 * @returns {number}
+	 */
+	function leading_comments_end() {
+		let at = source.startsWith('#!') ? line_end(2) : 0;
+		while (at < source.length) {
+			if (regex_whitespace.test(source[at])) {
+				at++;
+			} else if (source.startsWith('//', at)) {
+				at = line_end(at + 2);
+			} else if (source.startsWith('/*', at)) {
+				const close = source.indexOf('*/', at + 2);
+				if (close === -1) return at;
+				at = close + 2;
+			} else {
+				break;
+			}
+		}
+		return at;
+	}
+
+	/**
+	 * Where the line holding `at` ends.
+	 * @param {number} at
+	 * @returns {number}
+	 */
+	function line_end(at) {
+		while (at < source.length && !'\n\r\u2028\u2029'.includes(source[at])) at++;
+		return at;
+	}
+
 	/**
 	 * @param {AST.Node | null | undefined} node
 	 * @returns {void}
@@ -1198,7 +1340,9 @@ export function convert_source_map_to_mappings(
 				// source coordinate. The printer writes this exact formatted text.
 				if (start === undefined) continue;
 				// TypeScript completes inside a comment printed as written, such as
-				// the `/** */` template after `/**` and JSDoc tags (#1066).
+				// the `/** */` template after `/**` and JSDoc tags (#1066), and
+				// navigates from the path of a triple-slash directive printed as
+				// written (`mapping_data_reference_directive`).
 				const as_written = text === source.slice(comment.start, comment.end);
 				mappings.push({
 					sourceOffsets: [comment.start],
@@ -1206,7 +1350,11 @@ export function convert_source_map_to_mappings(
 					generatedOffsets: [start],
 					generatedLengths: [text.length],
 					data: {
-						...(as_written ? mapping_data_verify_complete : mapping_data_verify_only),
+						...(!as_written
+							? mapping_data_verify_only
+							: is_source_reference_directive(comment)
+								? mapping_data_reference_directive
+								: mapping_data_verify_complete),
 						customData: {},
 					},
 				});
@@ -1373,6 +1521,29 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * The length of a name as the source writes it at `loc`, when it spells a
+	 * character with a Unicode escape (`\u0061` for `a`). The printer writes
+	 * the name itself, so its token maps all of the escaped spelling: a rename
+	 * then replaces the whole name, and a diagnostic on it covers all of it.
+	 * @param {AST.SourceLocation} loc
+	 * @param {string} name The authored name, decoded: `#a` for a private name,
+	 *   `className` for an attribute a target prints as `class`.
+	 * @returns {number | undefined} `undefined` for a name written without escapes.
+	 */
+	function escaped_name_length(loc, name) {
+		const start = loc_to_offset(loc.start.line, loc.start.column, src_line_offsets);
+		if (source.startsWith(name, start)) return;
+		regex_written_name.lastIndex = start;
+		const written = regex_written_name.exec(source)?.[0];
+		if (!written?.includes('\\')) return;
+		const decoded = written.replace(regex_name_escape, (escape, braced, short) => {
+			const code = Number.parseInt(braced ?? short, 16);
+			return code <= 0x10ffff ? String.fromCodePoint(code) : escape;
+		});
+		return decoded === name ? written.length : undefined;
+	}
+
+	/**
 	 * @param {AST.Identifier | ESTreeJSX.JSXIdentifier} generated_node
 	 * @returns {void}
 	 */
@@ -1409,7 +1580,13 @@ export function convert_source_map_to_mappings(
 		if (!has_location(node)) return;
 
 		const text = `#${node.name}`;
-		tokens.push({ source: text, generated: text, loc: node.loc, metadata: {} });
+		tokens.push({
+			source: text,
+			generated: text,
+			loc: node.loc,
+			metadata: {},
+			sourceLength: escaped_name_length(node.loc, text),
+		});
 		for (const source_node of node.metadata?.extra_source_mappings ?? []) {
 			if (!has_location(source_node)) continue;
 			tokens.push({
@@ -1445,7 +1622,9 @@ export function convert_source_map_to_mappings(
 							generated: node.name,
 							loc: node.loc,
 							metadata: {},
-							sourceLength: node.metadata.source_length,
+							sourceLength:
+								escaped_name_length(node.loc, node.metadata.source_name) ??
+								node.metadata.source_length,
 						};
 					} else {
 						token = {
@@ -1453,7 +1632,8 @@ export function convert_source_map_to_mappings(
 							generated: node.name,
 							loc: node.loc,
 							metadata: {},
-							sourceLength: node.metadata?.source_length,
+							sourceLength:
+								node.metadata?.source_length ?? escaped_name_length(node.loc, node.name),
 						};
 					}
 
@@ -1491,7 +1671,9 @@ export function convert_source_map_to_mappings(
 						generated: node.name,
 						loc: node.loc,
 						metadata: {},
-						sourceLength: node.metadata?.source_length,
+						sourceLength:
+							escaped_name_length(node.loc, node.metadata?.source_name ?? node.name) ??
+							node.metadata?.source_length,
 					};
 					if (node.metadata?.disable_verification) {
 						token.mappingData = { ...mapping_data, verification: false };
@@ -1718,12 +1900,28 @@ export function convert_source_map_to_mappings(
 					return;
 				}
 				if (has_location(node)) {
-					const mapping = get_mapping_from_node(
+					let mapping = get_mapping_from_node(
 						node,
 						src_to_gen_map,
 						gen_line_offsets,
 						mapping_data_verify_only,
 					);
+					// A container the compiler makes around an expression can have the
+					// expression's location (Solid's `when={…}` from an `@if` test, or
+					// `keyed={(item) => …}` from a `@for` key). Its first generated
+					// position is then the `{`, or the arrow before the expression, so
+					// the mapping starts where the expression is printed instead, and
+					// an error on the expression doesn't shift by that prefix. A
+					// container the author wrote, whose expression starts after its
+					// `{`, keeps its mapping: one printed as a dynamic tag's `is={…}`
+					// maps the `is` that TypeScript reports a wrong tag type on.
+					const expression_start = /** @type {AST.NodeWithLocation} */ (node.expression)?.start;
+					if (
+						source[node.start] !== '{' ||
+						!(typeof expression_start === 'number' && expression_start > node.start)
+					) {
+						mapping = start_at_own_text(mapping, node);
+					}
 					if (errors.length > 0 && holds_recovered_closing(node)) {
 						// A mapping of the whole container would cover the closing tag
 						// that loose recovery adds to a tag left unclosed in it (#978),
@@ -2583,10 +2781,18 @@ export function convert_source_map_to_mappings(
 					}
 				}
 
+				// For diagnostics, only its ends, as a loop's: a mapping over the whole
+				// statement would map every range inside it by offset, which is wrong
+				// where the printed switch differs from the source (an `@switch` or
+				// `@case` loses its `@`, a case body its braces), and it would hold
+				// both ends of an expression inside it, such as `props.n as string`,
+				// before the expression's own tokens do.
+				push_statement_points_mapping(node, 'switch');
+				// TypeScript 7 reads no points. Its content mapper keeps the edges of
+				// a mapping over the whole statement, which Volar ignores when it has
+				// no feature at all (see `push_literal_mappings`).
 				if (has_location(node)) {
-					mappings.push(
-						get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, mapping_data_verify_only),
-					);
+					mappings.push(get_mapping_from_node(node, src_to_gen_map, gen_line_offsets, {}));
 				}
 
 				return;
@@ -2599,6 +2805,14 @@ export function convert_source_map_to_mappings(
 					for (const statement of node.consequent) {
 						visit(statement);
 					}
+				}
+				// Its ends, as the switch's, for unreachable code (TS7027) that ends
+				// with the clause, and its head for a fallthrough (TS7029). An `@case`
+				// or `@default` arm of a template doesn't fall through, and its body
+				// is the compiler's: it claims no source.
+				if (has_location(node) && source[node.start] !== '@') {
+					push_statement_points_mapping(node, node.test ? 'case' : 'default');
+					push_case_head_mapping(node);
 				}
 				return;
 			} else if (node.type === 'ClassDeclaration' || node.type === 'ClassExpression') {
@@ -3512,6 +3726,11 @@ export function convert_source_map_to_mappings(
 	});
 
 	for (const token of tokens) {
+		if (token.generatedLoc) continue;
+		const key = token_key(token);
+		token_counts.set(key, (token_counts.get(key) ?? 0) + 1);
+	}
+	for (const token of tokens) {
 		const source_text = token.source ?? '';
 		const gen_text = token.generated;
 		const source_start = loc_to_offset(
@@ -3766,11 +3985,46 @@ function add_diagnostic_mappings(
 		if (start === undefined) continue;
 		const end = error.end && error.end > start ? error.end : start + 1;
 		if (has_exact_source_map_position(error, src_to_gen_map)) {
+			if (!is_unclosed_fragment_error(error, source)) {
+				// An error on code that no mapping covers any of, at the start of a
+				// printed node, gets an anchor: on the word itself where the editor's
+				// code prints it as written without mapping it, and otherwise on the
+				// whitespace before the node (`accessor` before a method's name).
+				if (!maps_any_of(mappings, start, end)) {
+					const loc = /** @type {{ line: number, column: number }} */ (error.loc?.start);
+					const positions = (src_to_gen_map.get(`${loc.line}:${loc.column}`) ?? []).map(
+						(position) => loc_to_offset(position.line, position.column, gen_line_offsets),
+					);
+					// The word printed as written and not mapped (`async` in `declare
+					// async function f(): void;`): an anchor on it, as a mapping of it.
+					const text = source.slice(start, end);
+					const printed = positions.find((generated) => generated_code.startsWith(text, generated));
+					/** @type {CodeMapping | null | undefined} */
+					const anchor =
+						printed !== undefined
+							? {
+									sourceOffsets: [start],
+									generatedOffsets: [printed],
+									lengths: [text.length],
+									generatedLengths: [text.length],
+									data: {
+										...mapping_data_verify_only,
+										customData: { diagnosticAnchor: true },
+									},
+								}
+							: positions
+									.map((generated) =>
+										anchor_before(start, end, generated, mappings, generated_code),
+									)
+									.find(Boolean);
+					if (anchor) diagnostic_mappings.push(anchor);
+				}
+				continue;
+			}
 			// The mapping walker gives a fragment's `<>` no mapping, so an unclosed
 			// `<>` that the editor's code prints, where esrap records its position,
 			// gets an anchor on that `<>`, and one it leaves out gets an anchor as
 			// any error does (#1322).
-			if (!is_unclosed_fragment_error(error, source)) continue;
 			const fragment = unclosed_fragment_anchor(
 				error,
 				generated_code,
@@ -3790,18 +4044,67 @@ function add_diagnostic_mappings(
 			gen_line_offsets,
 			generated_code,
 		);
-		if (generated_start === null) continue;
+		if (generated_start === null) {
+			// Nothing before it on its line is printed, as for a modifier the
+			// editor's code leaves out at the start of a statement (`abstract` in
+			// `abstract namespace N {}`): an anchor on the space before the code
+			// after it on the line.
+			const loc = error.loc?.start;
+			const following = loc
+				? get_following_source_line_generated_position(
+						source_line_generated_map,
+						loc.line,
+						loc.column,
+					)
+				: null;
+			const anchor =
+				following &&
+				anchor_before(
+					start,
+					end,
+					loc_to_offset(following.line, following.column, gen_line_offsets),
+					mappings,
+					generated_code,
+				);
+			if (anchor) diagnostic_mappings.push(anchor);
+			continue;
+		}
 
-		// The anchor stays on its generated line. The source token isn't in the
-		// generated code, so running past the line would map unrelated code.
-		const line_end = generated_code.indexOf('\n', generated_start);
-		const room = (line_end === -1 ? generated_code.length : line_end) - generated_start;
+		// On code that no mapping covers any of, an anchor on the whitespace
+		// before the code after it on its line, where there is one (see
+		// `anchor_before`).
+		const loc = error.loc?.start;
+		const following =
+			loc && !maps_any_of(mappings, start, end)
+				? get_following_source_line_generated_position(
+						source_line_generated_map,
+						loc.line,
+						loc.column,
+					)
+				: null;
+		const before =
+			following &&
+			anchor_before(
+				start,
+				end,
+				loc_to_offset(following.line, following.column, gen_line_offsets),
+				mappings,
+				generated_code,
+			);
+		if (before) {
+			diagnostic_mappings.push(before);
+			continue;
+		}
 
+		// The anchor covers one character of the generated code: the source
+		// token isn't in it, so any more would map unrelated code, which
+		// TypeScript's errors on that code would then show at the token. The
+		// editor maps the error's one character back to its whole range.
 		diagnostic_mappings.push({
 			sourceOffsets: [start],
 			generatedOffsets: [generated_start],
 			lengths: [length],
-			generatedLengths: [generated_code.length === 0 ? 0 : Math.max(1, Math.min(length, room))],
+			generatedLengths: [generated_code.length === 0 ? 0 : 1],
 			data: {
 				...mapping_data_verify_only,
 				customData: { diagnosticAnchor: true },
@@ -3809,7 +4112,90 @@ function add_diagnostic_mappings(
 		});
 	}
 
+	// Anchors on code, of errors with other ranges, at one generated character
+	// would map each error back through the first: each takes as much of its
+	// line as its range then, as such an anchor did before. One on whitespace
+	// stays there.
+	for (const anchor of diagnostic_mappings) {
+		const generated = anchor.generatedOffsets[0];
+		if (
+			anchor.generatedLengths?.[0] !== 1 ||
+			regex_whitespace.test(generated_code[generated]) ||
+			!diagnostic_mappings.some(
+				(other) =>
+					other !== anchor &&
+					other.generatedOffsets[0] === generated &&
+					other.lengths[0] !== anchor.lengths[0],
+			)
+		) {
+			continue;
+		}
+		const line_end = generated_code.indexOf('\n', generated);
+		const room = (line_end === -1 ? generated_code.length : line_end) - generated;
+		anchor.generatedLengths = [Math.max(1, Math.min(anchor.lengths[0], room))];
+	}
+
 	mappings.unshift(...diagnostic_mappings);
+}
+
+/**
+ * Whether a mapping that reports diagnostics covers any of the source range.
+ * @param {CodeMapping[]} mappings
+ * @param {number} start
+ * @param {number} end
+ * @returns {boolean}
+ */
+function maps_any_of(mappings, start, end) {
+	return mappings.some(
+		(mapping) =>
+			mapping.data?.verification &&
+			mapping.sourceOffsets.some(
+				(offset, i) => offset < end && start < offset + mapping.lengths[i],
+			),
+	);
+}
+
+/**
+ * An anchor from the source range of an error on code that the editor's code
+ * leaves out or doesn't map to whitespace before `generated`, where the code
+ * after it starts in the editor's code, or `null` when there isn't two
+ * characters of whitespace there or code is mapped there. Volar maps a
+ * diagnostic that starts where a mapping ends through that mapping, so the
+ * anchor goes on the first of the two: TypeScript reports no error at
+ * whitespace, so its errors on the code after it still show on that code.
+ * @param {number} start
+ * @param {number} end
+ * @param {number} generated
+ * @param {CodeMapping[]} mappings
+ * @param {string} generated_code
+ * @returns {CodeMapping | null}
+ */
+function anchor_before(start, end, generated, mappings, generated_code) {
+	const before = generated - 2;
+	if (
+		before < 0 ||
+		!regex_whitespace.test(generated_code[before]) ||
+		!regex_whitespace.test(generated_code[before + 1])
+	) {
+		return null;
+	}
+	const taken = mappings.some((mapping) =>
+		mapping.generatedOffsets.some(
+			(offset, i) =>
+				offset <= before + 1 && before < offset + (mapping.generatedLengths ?? mapping.lengths)[i],
+		),
+	);
+	if (taken) return null;
+	return {
+		sourceOffsets: [start],
+		generatedOffsets: [before],
+		lengths: [end - start],
+		generatedLengths: [1],
+		data: {
+			...mapping_data_verify_only,
+			customData: { diagnosticAnchor: true },
+		},
+	};
 }
 
 /**
@@ -4018,6 +4404,22 @@ function get_nearest_source_line_generated_position(source_line_generated_map, l
 	const entry = line_positions[best];
 	const position = entry.position;
 	return { line: position.line, column: position.column, sourceColumn: entry.column };
+}
+
+/**
+ * The generated position of the first code printed after `column` on the
+ * source line, or `null`.
+ * @param {Map<number, Array<{ column: number, position: { line: number, column: number } }>>} source_line_generated_map
+ * @param {number} line
+ * @param {number} column
+ * @returns {{ line: number, column: number } | null}
+ */
+function get_following_source_line_generated_position(source_line_generated_map, line, column) {
+	let found = null;
+	for (const entry of source_line_generated_map.get(line) ?? []) {
+		if (entry.column > column && (!found || entry.column < found.column)) found = entry;
+	}
+	return found?.position ?? null;
 }
 
 /**

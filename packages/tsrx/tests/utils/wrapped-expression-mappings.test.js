@@ -50,8 +50,9 @@ const WRAPPED_TYPES = new Set([
  * @param {string} [wrapper] the wrapping call's callee, a name or a dotted path
  * @param {boolean} [nested] also wrap each member expression's object that is
  * a member expression, from the innermost out
+ * @param {Set<string>} [wrapped_types] the expression types to wrap
  */
-function compile_wrapped(source, wrapper = 'read', nested = false) {
+function compile_wrapped(source, wrapper = 'read', nested = false, wrapped_types = WRAPPED_TYPES) {
 	/** @type {CompileError[]} */
 	const errors = [];
 	/** @type {AST.CommentWithLocation[]} */
@@ -103,7 +104,7 @@ function compile_wrapped(source, wrapper = 'read', nested = false) {
 			node.forEach(wrap);
 			return;
 		}
-		if (node.type === 'JSXExpressionContainer' && WRAPPED_TYPES.has(node.expression?.type)) {
+		if (node.type === 'JSXExpressionContainer' && wrapped_types.has(node.expression?.type)) {
 			node.expression = wrap_call(nested ? wrap_objects(node.expression) : node.expression);
 		}
 		for (const key of Object.keys(node)) {
@@ -228,6 +229,161 @@ export class C extends Base {
 			expect(mapped_texts(source, expression, wrapper)).toEqual([printed]);
 		},
 	);
+
+	it.each([
+		// The wrapper's callee starts with the name.
+		['re', 'read'],
+		// The wrapper's callee is the name.
+		['count', 'count'],
+		// The wrapper's callee starts with the member expression's object.
+		['a.re', 'a.read'],
+	])(
+		'maps the name in `{%s}` in a `%s(…)` call from the argument, not the callee',
+		(expression, wrapper) => {
+			const source = `${DECLARATIONS}declare const count: number;\nexport function App() @{ <p>{${expression}}</p> }\n`;
+			const { code, mappings } = compile_wrapped(
+				source,
+				wrapper,
+				false,
+				new Set(['Identifier', ...WRAPPED_TYPES]),
+			);
+			const name = expression.split('.')[0];
+			const start = source.lastIndexOf(`{${expression}}`) + 1;
+			const argument = code.indexOf(`${wrapper}(${expression})`) + wrapper.length + 1;
+			// The name's own mapping, with completion, hover and navigation
+			const offsets = mappings
+				.filter(
+					(mapping) =>
+						mapping.sourceOffsets[0] === start &&
+						mapping.lengths[0] === name.length &&
+						mapping.data.completion,
+				)
+				.map((mapping) => mapping.generatedOffsets[0]);
+			expect(offsets).toEqual([argument]);
+		},
+	);
+
+	it('maps each of two names a pass prints from one source name, in order', () => {
+		// A pass that adds `void re` with a copy of the annotated parameter `re`
+		// prints two `re`s from one source position. The parameter's location
+		// ends after its annotation and the copy's text ends at the name, but
+		// each token still takes its own position.
+		const source = 'export function f(re: number) {}\n';
+		/** @type {CompileError[]} */
+		const errors = [];
+		/** @type {AST.CommentWithLocation[]} */
+		const comments = [];
+		const ast = parseModule(source, 'App.tsrx', {
+			collect: true,
+			loose: true,
+			preserveParens: true,
+			keywordTokens: true,
+			errors,
+			comments,
+		});
+		analyzeTsrx(ast, 'App.tsrx', { collect: true, loose: true, typeOnly: true, errors, comments });
+		const fn = /** @type {any} */ (ast.body[0]).declaration;
+		const param = fn.params[0];
+		fn.body.body.push({
+			type: 'ExpressionStatement',
+			expression: {
+				type: 'UnaryExpression',
+				operator: 'void',
+				prefix: true,
+				argument: {
+					type: 'Identifier',
+					name: 're',
+					start: param.start,
+					end: param.end,
+					loc: param.loc,
+					metadata: { path: [] },
+				},
+				metadata: { path: [] },
+			},
+			metadata: { path: [] },
+		});
+		const transformed = createJsxTransform(PLATFORM)(ast, source, 'App.tsrx', {
+			collect: true,
+			loose: true,
+			typeOnly: true,
+			errors,
+			comments,
+		});
+		const { mappings } = createVolarMappingsResult({
+			ast: transformed.ast,
+			ast_from_source: ast,
+			source,
+			generated_code: transformed.code,
+			source_map: transformed.map,
+			errors,
+		});
+		expect(transformed.code).toContain('void re');
+		const offsets = mappings
+			.filter(
+				(mapping) =>
+					mapping.sourceOffsets[0] === source.indexOf('re:') &&
+					mapping.lengths[0] === 2 &&
+					mapping.data.completion,
+			)
+			.map((mapping) => mapping.generatedOffsets[0])
+			.sort((a, b) => a - b);
+		expect(offsets).toEqual([
+			transformed.code.indexOf('re:'),
+			transformed.code.indexOf('void re') + 'void '.length,
+		]);
+	});
+
+	it('maps both names of a dynamic tag that a pass wraps after lowering from the argument', () => {
+		// The closing `{re}` maps through the opening name's generated `re`
+		// (`extra_source_mappings`), which a pass then wraps in `read(…)`.
+		const source = `${DECLARATIONS}export function App() @{ <div><{re}>{'x'}</{re}></div> }\n`;
+		const { ast, transformed } = compile_wrapped(source, 'read', false, new Set());
+		walk(/** @type {any} */ (transformed.ast), null, {
+			JSXAttribute(node, { next }) {
+				const value = /** @type {any} */ (node).value;
+				if (node.name.name === 'is' && value?.expression?.type === 'Identifier') {
+					const inner = value.expression;
+					value.expression = {
+						type: 'CallExpression',
+						callee: { type: 'Identifier', name: 'read', metadata: { path: [] } },
+						arguments: [inner],
+						optional: false,
+						start: inner.start,
+						end: inner.end,
+						loc: inner.loc,
+						metadata: { path: [] },
+					};
+				}
+				next();
+			},
+		});
+		const output = print(
+			/** @type {any} */ (transformed.ast),
+			tsx_with_ts_locations(true, undefined, null, source),
+			{ sourceMapSource: 'App.tsrx', sourceMapContent: source },
+		);
+		expect(output.code).toContain('is={read(re)}');
+		const { mappings } = createVolarMappingsResult({
+			ast: transformed.ast,
+			ast_from_source: ast,
+			source,
+			generated_code: output.code,
+			source_map: output.map,
+			errors: [],
+		});
+		const argument = output.code.indexOf('read(re)') + 'read('.length;
+		for (const start of [source.indexOf('{re}>') + 1, source.indexOf('</{re}>') + 3]) {
+			const offsets = mappings
+				.filter(
+					(mapping) =>
+						mapping.sourceOffsets[0] === start &&
+						mapping.lengths[0] === 2 &&
+						mapping.data.completion,
+				)
+				.map((mapping) => mapping.generatedOffsets[0]);
+			expect(offsets, String(start)).toEqual([argument]);
+		}
+	});
 
 	it('maps a member expression whose object a pass also wrapped from its own text, or keeps its mapping', () => {
 		// `a.b.c.d` with each member wrapped prints `read(read(read(a.b).c).d)`.

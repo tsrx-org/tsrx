@@ -1,5 +1,5 @@
 import { decode } from '@jridgewell/sourcemap-codec';
-import { isCodeActionsEnabled, isDiagnosticsEnabled } from '@volar/language-core';
+import { isCodeActionsEnabled, isDiagnosticsEnabled, isRenameEnabled } from '@volar/language-core';
 import { SourceMap } from '@volar/source-map';
 import ts from 'typescript';
 import { walk } from 'zimmerframe';
@@ -41,11 +41,13 @@ function output_type_errors(code) {
  *
  * @param {string} code
  * @param {string} file_name
+ * @param {ts.CompilerOptions} [extra_options]
  * @returns {ts.Diagnostic[]}
  */
-function type_diagnostics(code, file_name) {
+function type_diagnostics(code, file_name, extra_options = {}) {
 	/** @type {ts.CompilerOptions} */
 	const options = {
+		...extra_options,
 		target: ts.ScriptTarget.ESNext,
 		module: ts.ModuleKind.ESNext,
 		moduleResolution: ts.ModuleResolutionKind.Bundler,
@@ -1064,6 +1066,62 @@ export async function App() @{
 			const generated = mapping.generatedOffsets[0];
 			expect(result.code.slice(generated, generated + mapping.generatedLengths[0])).toBe(text);
 		});
+
+		it.each([
+			['a comment', 'export function* gen(v: any) {\n\tyield /* c */ * v;\n}\n'],
+			['spaces', 'export function* gen(v: any) {\n\tyield \t * v;\n}\n'],
+			['nothing', 'export function* gen(v: any) {\n\tyield* v;\n}\n'],
+		])('maps the `*` of a `yield*` with %s before it from the source `*`', (label, source) => {
+			// esrap writes `yield*` as one token and maps its end to the keyword's
+			// start plus six, which is past the `*` only in `yield*`.
+			const result = compile(source, 'App.tsrx');
+			const line = result.code.split('\n').findIndex((text) => text.includes('yield* v'));
+			const column = result.code.split('\n')[line].indexOf('yield* v');
+			const keyword = source.indexOf('yield');
+			const star = source.indexOf('* v');
+			expect(
+				source_map_lines(result, source)
+					[line].filter((segment) => segment.column >= column && segment.column <= column + 6)
+					.map((segment) => [segment.column - column, segment.offset]),
+			).toEqual(
+				label === 'nothing'
+					? [
+							[0, keyword],
+							[6, star + 1],
+						]
+					: [
+							[0, keyword],
+							[5, star],
+							[6, star + 1],
+						],
+			);
+		});
+
+		it.each([
+			['a comment', 'export function* gen(v: any) {\n\tyield /* c */ * (v, v);\n}\n'],
+			['spaces', 'export function* gen(v: any) {\n\tyield \t * (v, v);\n}\n'],
+		])('maps a `yield*` with %s before the `*` from its own text in the editor', (_, source) => {
+			// The editor output prints with esrap's `tokens`, which map `yield` and
+			// `*` from their own source tokens as they are written.
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.code).toContain('yield* (v, v);');
+			const keyword = source.indexOf('yield');
+			const texts = result.mappings
+				.filter((mapping) => mapping.sourceOffsets[0] >= keyword)
+				.map((mapping) => [
+					source.slice(mapping.sourceOffsets[0], mapping.sourceOffsets[0] + mapping.lengths[0]),
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths ?? mapping.lengths)[0],
+					),
+				]);
+			expect(texts).toContainEqual(['yield', 'yield']);
+			expect(texts).toContainEqual(['(v, v)', '(v, v)']);
+			expect(texts.filter(([text]) => text === 'v')).toEqual([
+				['v', 'v'],
+				['v', 'v'],
+			]);
+		});
 	});
 
 	describe(`[${name}] text with a comment and characters JSX text can't hold`, () => {
@@ -1123,6 +1181,146 @@ export async function App() @{
 		});
 	});
 
+	describe(`[${name}] diagnostics in a switch`, () => {
+		it('reports an error on a whole discriminant or case test on that expression', () => {
+			const source = `export function App(props: { n: number; s: string }) @{
+	<div>
+		@switch (props.n as string) {
+			@case 'a': {
+				<b />
+			}
+			@case props.n as string: {
+				<i />
+			}
+		}
+		@switch (props.s) {
+			@case 'b': {
+				<b />
+			}
+			@default: {
+				<u>{props.n as string}</u>
+			}
+		}
+	</div>
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const map = new SourceMap(result.mappings);
+			/** @type {string[]} */
+			const shown = [];
+			for (const diagnostic of type_diagnostics(result.code, '/output.tsx')) {
+				if (diagnostic.code !== 2352) continue;
+				const start = /** @type {number} */ (diagnostic.start);
+				for (const [source_start, source_end] of map.toSourceRange(
+					start,
+					start + /** @type {number} */ (diagnostic.length),
+					true,
+					isDiagnosticsEnabled,
+				)) {
+					shown.push(`${source_start}:${source.slice(source_start, source_end)}`);
+					break;
+				}
+			}
+			const at = (/** @type {number} */ occurrence) => {
+				let index = -1;
+				for (let count = 0; count < occurrence; count++) {
+					index = source.indexOf('props.n as string', index + 1);
+				}
+				return `${index}:props.n as string`;
+			};
+			// Solid compares a copy of the discriminant with each case's test, so it
+			// reports the discriminant's error once per case.
+			expect([...new Set(shown)].sort()).toEqual([at(1), at(2), at(3)].sort());
+			// An `@switch` maps its ends from its `@`, for an error over all of it
+			// (TS7027 on an unreachable one). Solid prints `<Switch>` instead.
+			const switch_start = source.indexOf('@switch');
+			expect(
+				result.mappings
+					.filter(
+						(mapping) =>
+							mapping.sourceOffsets.length === 2 &&
+							mapping.sourceOffsets[0] === switch_start &&
+							isDiagnosticsEnabled(mapping.data),
+					)
+					.map((mapping) => [
+						result.code.slice(mapping.generatedOffsets[0], mapping.generatedOffsets[0] + 6),
+						result.code[mapping.generatedOffsets[1] - 1],
+						source[mapping.sourceOffsets[1] - 1],
+					]),
+			).toEqual(name === 'solid' ? [] : [['switch', '}', '}']]);
+		});
+
+		it('reports a fallthrough, unreachable code and an unreachable switch where they are', () => {
+			// The printer respaces `switch  (x)` and `case  0 :`, so mapping by offset
+			// from the statement's start would move each of these.
+			const source = `export function f(x: number) {
+	switch  (x) {
+		case  0 :
+			x++;
+
+		case 1:
+			return;
+			class D {}
+		default:
+			return;
+			label: { x++; }
+	}
+}
+export function g(x: number) {
+	return;
+	switch  (x) {
+		case  1 : break;
+	}
+}
+export function App() @{
+	<p />
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const map = new SourceMap(result.mappings);
+			const diagnostics = type_diagnostics(result.code, '/output.tsx', {
+				noFallthroughCasesInSwitch: true,
+				allowUnreachableCode: false,
+			});
+			/** @type {string[]} */
+			const shown = [];
+			for (const diagnostic of diagnostics) {
+				if (diagnostic.code !== 7027 && diagnostic.code !== 7029) continue;
+				const start = /** @type {number} */ (diagnostic.start);
+				for (const [source_start, source_end] of map.toSourceRange(
+					start,
+					start + /** @type {number} */ (diagnostic.length),
+					true,
+					isDiagnosticsEnabled,
+				)) {
+					shown.push(`TS${diagnostic.code} ${source.slice(source_start, source_end)}`);
+					break;
+				}
+			}
+			expect(shown.sort()).toEqual(
+				[
+					'TS7029 case  0 :',
+					'TS7027 class D {}',
+					'TS7027 label: { x++; }',
+					'TS7027 switch  (x) {\n\t\tcase  1 : break;\n\t}',
+				].sort(),
+			);
+			// The TypeScript 7 content mapper reads no points: it keeps the edges of
+			// a mapping over each whole switch that has no Volar feature at all.
+			const whole = result.mappings.filter(
+				(mapping) =>
+					source.startsWith('switch', mapping.sourceOffsets[0]) &&
+					mapping.lengths[0] > 0 &&
+					Object.entries(mapping.data).every(([key, value]) => key === 'customData' || !value),
+			);
+			expect(
+				whole.map((mapping) => source[mapping.sourceOffsets[0] + mapping.lengths[0] - 1]),
+			).toEqual(['}', '}']);
+		});
+	});
+
 	describe(`[${name}] whitespace or a comment after an element's \`<\``, () => {
 		it('maps the element from its `<`, not from the gap', () => {
 			const source = [
@@ -1163,6 +1361,83 @@ export async function App() @{
 					expect(result.code[generated], open).toMatch(/[<{(]/);
 				}
 			}
+		});
+	});
+
+	describe(`[${name}] a name written with a Unicode escape`, () => {
+		// The printer writes the names the escapes spell, `a` and `b`. Each
+		// name's token maps all of its escaped spelling, so a rename replaces
+		// the whole name and a diagnostic on it covers all of it.
+		const backslash = String.fromCharCode(92);
+		const a = `${backslash}u0061`;
+		const b = `${backslash}u{62}`;
+		const source = [
+			'export function App(props: { a: boolean }) @{',
+			`\tconst ${b} = props.${a};`,
+			`\tfunction twice(${a}: number) { return ${a} * 2; }`,
+			`\tclass Box { #${a} = 1; get() { return this.#${a}; } }`,
+			'\t<div>',
+			`\t\t@if (props.${a}) {`,
+			`\t\t\t<b ${backslash}u0074itle="t" ${backslash}u0063lassName="c">{${b}}{twice(1)}{new Box().get()}</b>`,
+			'\t\t}',
+			'\t</div>',
+			'}',
+			'',
+		].join('\n');
+		// A whole name with at least one escape in it.
+		const escape = `${backslash}${backslash}u(?:${backslash}{[0-9a-f]+${backslash}}|[0-9a-f]{4})`;
+		const escaped_name = new RegExp(`#?[${backslash}w$]*(?:${escape}[${backslash}w$]*)+`, 'g');
+
+		it('maps each escaped name whole to the printed name', () => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const map = new SourceMap(result.mappings);
+			const names = [...source.matchAll(escaped_name)].map((match) => {
+				const start = /** @type {number} */ (match.index);
+				const end = start + match[0].length;
+				const token = result.mappings.find(
+					(mapping) =>
+						mapping.sourceOffsets[0] === start &&
+						mapping.lengths[0] === match[0].length &&
+						isRenameEnabled(mapping.data),
+				);
+				if (!token) return { written: match[0], printed: null };
+				const generated_start = token.generatedOffsets[0];
+				const generated_end = generated_start + (token.generatedLengths ?? token.lengths)[0];
+				// A rename edit on the printed name, mapped back as Volar maps it.
+				const [edit] = [
+					...map.toSourceRange(generated_start, generated_end, true, isRenameEnabled),
+				];
+				return {
+					written: match[0],
+					printed: result.code.slice(generated_start, generated_end),
+					edit: edit && source.slice(edit[0], edit[1]),
+					covers: edit?.[0] === start && edit?.[1] === end,
+				};
+			});
+			expect(names).toEqual([
+				{ written: b, printed: 'b', edit: b, covers: true },
+				{ written: a, printed: 'a', edit: a, covers: true },
+				{ written: a, printed: 'a', edit: a, covers: true },
+				{ written: a, printed: 'a', edit: a, covers: true },
+				{ written: `#${a}`, printed: '#a', edit: `#${a}`, covers: true },
+				{ written: `#${a}`, printed: '#a', edit: `#${a}`, covers: true },
+				{ written: a, printed: 'a', edit: a, covers: true },
+				{
+					written: `${backslash}u0074itle`,
+					printed: 'title',
+					edit: `${backslash}u0074itle`,
+					covers: true,
+				},
+				// Solid and Vue print an authored `className` on an element as `class`.
+				{
+					written: `${backslash}u0063lassName`,
+					printed: expect.stringMatching(/^class(Name)?$/),
+					edit: `${backslash}u0063lassName`,
+					covers: true,
+				},
+				{ written: b, printed: 'b', edit: b, covers: true },
+			]);
 		});
 	});
 
@@ -2616,6 +2891,55 @@ ${members.map((member) => `\t${member}`).join('\n')}
 		});
 	});
 
+	describe(`[${name}] an expression in a container the compiler makes around it`, () => {
+		// Solid prints an `@if` test as `when={…}` and a `@for` key as
+		// `keyed={(item) => …}`, in a container with the expression's location.
+		// The container's mapping started at the `{`, so TypeScript's error on
+		// the expression was reported one character, or the arrow's length, later
+		// in the source.
+		const wrap = (/** @type {string} */ directive) =>
+			`export function App(props: { n: number; items: number[] }) @{\n\t<ul>\n\t\t${directive} {\n\t\t\t<li />\n\t\t}\n\t</ul>\n}\n`;
+		it.each([
+			['an `@if` test', '@if (props.n as string)', 'props.n as string'],
+			[
+				'an `@if` test that starts with an object',
+				'@if ({ n: props.n } as string)',
+				'{ n: props.n } as string',
+			],
+			[
+				'a `@for` key',
+				'@for (const item of props.items; key props.n as string)',
+				'props.n as string',
+			],
+			[
+				'a `@for` key in parentheses',
+				'@for (const item of props.items; key (props.n as string))',
+				'props.n as string',
+			],
+		])('reports an error on %s on the expression', (_, directive, text) => {
+			const source = wrap(directive);
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const map = new SourceMap(result.mappings);
+			/** @type {string[]} */
+			const shown = [];
+			for (const diagnostic of type_diagnostics(result.code, '/output.tsx')) {
+				if (diagnostic.code !== 2352) continue;
+				const start = /** @type {number} */ (diagnostic.start);
+				for (const [source_start, source_end] of map.toSourceRange(
+					start,
+					start + /** @type {number} */ (diagnostic.length),
+					true,
+					isDiagnosticsEnabled,
+				)) {
+					shown.push(source.slice(source_start, source_end));
+					break;
+				}
+			}
+			expect(shown).toEqual([text]);
+		});
+	});
+
 	describe(`[${name}] a member expression where other code starts at the same position (#1392)`, () => {
 		// The printer can write other code that starts at the same source position
 		// before a member expression: the `(` of a parenthesized sequence, or a key
@@ -2632,9 +2956,9 @@ ${members.map((member) => `\t${member}`).join('\n')}
 				'a `@for` key',
 				'export function App(props: { items: { id: number }[] }) @{\n\t<ul>\n\t\t@for (const item of props.items; key item.id) {\n\t\t\t<li />\n\t\t}\n\t</ul>\n}\n',
 				'item.id',
-				// Solid also maps the key function it makes from the key, as a whole
-				// arrow function, from the `{` before it.
-				name === 'solid' ? ['{(item) => item.id'] : [],
+				// Solid also maps the `keyed={…}` it makes around the key function,
+				// which has the key's location, from where the key is printed.
+				name === 'solid' ? ['item.id'] : [],
 			],
 		])('maps %s from its own text', (_, source, text, others) => {
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
@@ -4097,6 +4421,86 @@ export function A() @{
 			const directive = '//@ts-expect-error';
 			const [mapping] = mappings_at(result, source.indexOf(directive), directive.length);
 			expect(mapping.data.completion).toBeFalsy();
+		});
+
+		it('maps a `/// <reference path>` it writes as written for navigation, and a JSDoc comment without', () => {
+			// TypeScript gives the path of a `/// <reference path>` as a file reference
+			// and a definition. A JSDoc `{@link}` resolves in the scope where the
+			// comment is printed, which isn't the source's on every target, so it gets
+			// no navigation.
+			const source = `/// <reference path="./Other.tsrx" />
+import { Other } from './Other.tsrx';
+
+/** Shows {@link Other}. */
+export function A() @{
+	<Other />
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const [comment, navigation] of /** @type {const} */ ([
+				['/// <reference path="./Other.tsrx" />', true],
+				['/** Shows {@link Other}. */', undefined],
+			])) {
+				const offset = source.indexOf(comment);
+				expect(generated_at(result, offset, comment.length)).toEqual([comment]);
+				const [mapping] = mappings_at(result, offset, comment.length);
+				expect(mapping.data.navigation, comment).toBe(navigation);
+				expect(mapping.data.completion, comment).toBe(true);
+			}
+		});
+
+		it('maps navigation only for a `/// <reference>` that TypeScript reads as one in the source', () => {
+			// After a statement, TypeScript reads it as a comment, but the output can
+			// print it first: it prints nothing for `;`, and a platform guard is
+			// specialized away.
+			const comment = '/// <reference path="./Other.tsrx" />';
+			for (const [source, navigation, options] of /** @type {const} */ ([
+				[`/* license */\n// note\n${comment}\nexport const a = 1;`, true, {}],
+				[`#!/usr/bin/env node\n${comment}\nexport const a = 1;`, true, {}],
+				[`;\n${comment}\nexport const a = 1;`, undefined, {}],
+				[`export const a = 1;\n${comment}\nexport const b = 2;`, undefined, {}],
+				[
+					`if (import.meta.env.platform.web) {}\n${comment}\nexport const a = 1;`,
+					undefined,
+					{ platform: 'ios' },
+				],
+				[`/// <reference-extra path="./Other.tsrx" />\nexport const a = 1;`, undefined, {}],
+				[`/// <reference path="./Other.tsrx">\nexport const a = 1;`, undefined, {}],
+			])) {
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true, ...options });
+				const text = source.slice(
+					source.indexOf('///'),
+					source.indexOf('\n', source.indexOf('///')),
+				);
+				const mappings = mappings_at(result, source.indexOf(text), text.length);
+				if (navigation) expect(mappings.length, source).toBeGreaterThan(0);
+				for (const mapping of mappings) {
+					expect(mapping.data.navigation, source).toBe(navigation);
+				}
+			}
+		});
+
+		it('reads the leading comments once, however many directives follow them', () => {
+			const source = `// ${'a'.repeat(500_000)}\n${Array.from(
+				{ length: 1000 },
+				(_, i) => `/// <reference path="./Other${i}.tsrx" />`,
+			).join('\n')}\nexport const a = 1;`;
+			const start = performance.now();
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(performance.now() - start).toBeLessThan(2000);
+			const last = '/// <reference path="./Other999.tsrx" />';
+			const [mapping] = mappings_at(result, source.indexOf(last), last.length);
+			expect(mapping.data.navigation).toBe(true);
+		});
+
+		it('writes only a comment that starts with `///` as a triple-slash directive', () => {
+			// TypeScript reads a directive only from a `///` that starts the comment.
+			const source = `// /<reference path="./Other.tsrx" />
+export function A() @{
+	<p />
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.code).not.toMatch(/^\/\/\//m);
 		});
 
 		it.each([
