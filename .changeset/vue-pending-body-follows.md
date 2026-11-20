@@ -1,5 +1,0 @@
----
-'@tsrx/vue': patch
----
-
-A `@pending` body that is only an `@if`, a `@switch`, or a loop that renders through `map_iterable` (one with setup statements, or one that can skip rows without a key) now follows what it reads while it shows. `TsrxPendingBody` renders the body once, so such a body kept the branch, case or rows it rendered first: `@pending { @if (slow.value) { <p>{'Still loading'}</p> } }` never showed its message. The body's output is now put in a fragment, so vue-jsx-vapor renders it as it renders a fragment's child. An `@if` becomes a `createIf`, which switches when its condition does and keeps its branch's components while the branch stays chosen; a branch that throws when it is chosen reaches the `@catch`. A `@switch`, a `map_iterable` loop or a nested `@{ }` block is evaluated in an effect, so, as in an element, it renders again, components and all, whenever what it reads changes, even when the same case or rows stay. The body's own statements still run once, and a body that is one element or fragment, such as a keyed loop through `VaporFor`, is unchanged. An `@if` there now leaves Vue's `<!--if-->` anchor comment, as it does in an element.

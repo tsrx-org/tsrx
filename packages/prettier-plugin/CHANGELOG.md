@@ -1,5 +1,86 @@
 # @tsrx/prettier-plugin
 
+## 0.7.12
+
+### Patch Changes
+
+- [#1468](https://github.com/tsrx-org/tsrx/pull/1468)
+  [`97fcab0`](https://github.com/tsrx-org/tsrx/commit/97fcab08bcd9da332808c2fd8bcdc6f9d36c328b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Never print `{" "}`
+  right after an `@` in text. Where Prettier breaks a line at a space after a word
+  that ends in `@` (`… contact us@ <a>…`, or `handle@ ` at the end of a text), it
+  printed `us@{" "}`, which TSRX reads as an `@{ … }` code block: the text lost
+  its `@` and the space, and formatting again turned it into `@{ (" "); }`. The
+  `{" "}` now starts the next line (`us@` and then `{" "}<a>…`), which keeps the
+  text and the space. Likewise a line break between an `@` and a `{` (`@⏎{value}`)
+  stays, where Prettier joined them into `@{value}`.
+
+- [#1461](https://github.com/tsrx-org/tsrx/pull/1461)
+  [`a8a9594`](https://github.com/tsrx-org/tsrx/commit/a8a9594ec7b5a0b171eb076543c0c550c740cc9f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Keep an element's only
+  text one child when a comment sits before or after it. The compiler leaves out a
+  comment-only `{/* … */}` (or a TSRX `/* … */`) at either end of an element's
+  children, so `<textarea>{/* note */} Some text </textarea>` still gives the
+  `<textarea>` one string. The formatter laid such an element out as Prettier does
+  once it broke, with the edge spaces as `{" "}` children, which gave it three
+  children again. The comments now stay beside the text, and the text keeps its
+  edge spaces as an element's only text does. A comment the compiler keeps (a
+  `@ts-expect-error` or a JSDoc comment), a TSRX `// …` comment, which ends its
+  line, and a text beside a comment whose words can't go on separate lines (one
+  with a non-breaking space, U+200B or a reference to whitespace) print as before.
+  `@tsrx/core` exports `renderChildren`, the children a compiler renders for a
+  template node, which the formatter uses to decide, and it now takes linear time
+  in a long run of comment-only `{}` children, where it took quadratic time.
+
+- [#1439](https://github.com/tsrx-org/tsrx/pull/1439)
+  [`1da8a6c`](https://github.com/tsrx-org/tsrx/commit/1da8a6cf3c2e86d5f5d175909726ba1a1a86f385)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Keep an element's only
+  text one child when the element breaks. The compiler prints an element's only
+  text with a space or tab at an edge as one literal (`{' a '}`), so a
+  `<textarea>`, a `<title>` or a component that takes `children: string` gets one
+  string. The formatter, as Prettier does, moved such a space into a `{" "}` child
+  once the element didn't fit on a line or had several attributes, which gave the
+  element two or three children again: React's `<textarea>` threw, `<title>`
+  rendered empty, and a `children: string` component got an array. The space now
+  stays beside its tag (`<textarea> Lorem ipsum …` and `… tempor </textarea>`),
+  with the words filling the lines between, and a short text with several
+  attributes stays on one line. A text the compiler would split over lines (one
+  with a non-breaking space, U+200B or a reference to whitespace) stays on one
+  line. A fragment's only text, text beside other children and a text the compiler
+  splits anyway print as before. On Vue, which keeps a text's line breaks, a text
+  that now fills from beside its opening tag can render a line break and
+  indentation where Prettier's layout kept it on one line (in a `<textarea>` or
+  `<pre>`, or with `white-space: pre`).
+- Updated dependencies
+  [[`b9e55da`](https://github.com/tsrx-org/tsrx/commit/b9e55da4b35b99b981e085bb231628ce2bc657c3),
+  [`2965749`](https://github.com/tsrx-org/tsrx/commit/29657498701b5c93bd7f92f03203421b7e0ad06e),
+  [`c2051bd`](https://github.com/tsrx-org/tsrx/commit/c2051bd0e3409ea1c952e049c9aaf789a979dcb5),
+  [`3ed006b`](https://github.com/tsrx-org/tsrx/commit/3ed006bf3bba08b893f749f7a17218c688071e98),
+  [`bc5e182`](https://github.com/tsrx-org/tsrx/commit/bc5e1825001afa784668cd7091b06eaab32384b3),
+  [`86b8fe7`](https://github.com/tsrx-org/tsrx/commit/86b8fe7c8694496a8e64eaee1097247f6a4e204f),
+  [`f02bc13`](https://github.com/tsrx-org/tsrx/commit/f02bc134ec12097349548a8c202edf7c1458ee0f),
+  [`5e703a2`](https://github.com/tsrx-org/tsrx/commit/5e703a20767752361fabc7c8289e1e70eda120fc),
+  [`65f20ad`](https://github.com/tsrx-org/tsrx/commit/65f20ad82c42326878d284eb9f911a719de444ef),
+  [`9a4858c`](https://github.com/tsrx-org/tsrx/commit/9a4858ceb495407888d5b2ab16976f3b4c3e9e07),
+  [`1f443c2`](https://github.com/tsrx-org/tsrx/commit/1f443c20e584e08f96f1768a0d8c14fe2e384aa8),
+  [`235b523`](https://github.com/tsrx-org/tsrx/commit/235b523881dbad29fb600471443863394ab48159),
+  [`1d3775c`](https://github.com/tsrx-org/tsrx/commit/1d3775c51c564488947c63658d1556e8e8cc9fc2),
+  [`2541160`](https://github.com/tsrx-org/tsrx/commit/254116003f3a86d4d96cbbff2e662e3be1f80bc4),
+  [`c121dcf`](https://github.com/tsrx-org/tsrx/commit/c121dcfc055462ffdc0bd3647c1961b9dc7fc6ca),
+  [`8472671`](https://github.com/tsrx-org/tsrx/commit/847267193be0ed678ba7bef840c7207c6044b652),
+  [`6f2eaea`](https://github.com/tsrx-org/tsrx/commit/6f2eaea34119c9ccaf5af22608d8f66930e03c04),
+  [`bc099a7`](https://github.com/tsrx-org/tsrx/commit/bc099a772a31729395ba5d2b052e57015d1eb6ed),
+  [`a15572e`](https://github.com/tsrx-org/tsrx/commit/a15572ea8e40497c1019d02e5e1a076bb994eb30),
+  [`97384af`](https://github.com/tsrx-org/tsrx/commit/97384af9250bec5cb987bf36bac9e70852525821),
+  [`a1c5c04`](https://github.com/tsrx-org/tsrx/commit/a1c5c047b9b7dfebfe0dd0b3ab78cbc307932db5),
+  [`a8a9594`](https://github.com/tsrx-org/tsrx/commit/a8a9594ec7b5a0b171eb076543c0c550c740cc9f),
+  [`f282066`](https://github.com/tsrx-org/tsrx/commit/f2820665ceee6ee99ec454e788e50590e2ec4fac),
+  [`b6a8d06`](https://github.com/tsrx-org/tsrx/commit/b6a8d060582e4b8ff952beec13b13e9229108cb2),
+  [`14720c8`](https://github.com/tsrx-org/tsrx/commit/14720c84ff9e737dddeebb2ae0dbfeb19e22129d),
+  [`4415b25`](https://github.com/tsrx-org/tsrx/commit/4415b2513a9d7067aca211cf90c97ceb0403a483),
+  [`dcaf9b1`](https://github.com/tsrx-org/tsrx/commit/dcaf9b1fe7352933b59dde7c1b3f97f482df48e1)]:
+  - @tsrx/core@0.8.0
+
 ## 0.7.11
 
 ### Patch Changes
