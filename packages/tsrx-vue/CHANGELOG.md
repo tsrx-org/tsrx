@@ -1,5 +1,17 @@
 # @tsrx/vue
 
+## 0.4.9
+
+### Patch Changes
+
+- Updated dependencies
+  [[`c795641`](https://github.com/tsrx-org/tsrx/commit/c795641ae2677dde316f91dade4fa0131ab60a40),
+  [`4137330`](https://github.com/tsrx-org/tsrx/commit/413733092ce7291b792c656ac30a7958ff3643d9),
+  [`5724d86`](https://github.com/tsrx-org/tsrx/commit/5724d86747970f313178fb88154c1253e636136b),
+  [`62f4625`](https://github.com/tsrx-org/tsrx/commit/62f4625dc32eeed9307909cee158c3ce1808d893)]:
+  - @tsrx/core@0.6.9
+  - @tsrx/vue-runtime@0.2.5
+
 ## 0.4.8
 
 ### Patch Changes
