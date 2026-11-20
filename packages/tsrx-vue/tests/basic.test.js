@@ -3243,6 +3243,14 @@ export function Card(${params}: any) @{
 					${try_block.replace('{StatementBodyHook1}', '{App__StatementBodyHook1}')}
 				}`,
 			],
+			[
+				// The printer spells the name without the escape
+				'written with a Unicode escape',
+				`const App__St\\u0061tementBodyHook1 = 'mine';
+				export function App() @{
+					${try_block.replace('{StatementBodyHook1}', '{App__St\\u0061tementBodyHook1}')}
+				}`,
+			],
 		])('skipping a prefixed name the source already uses, %s', (_label, source) => {
 			const { code } = compile(source, 'App.tsrx');
 
