@@ -281,7 +281,10 @@ export {
 
 // Analyze
 export { analyze_css as analyzeCss } from './analyze/css-analyze.js';
-export { prune_css as pruneCss } from './analyze/prune.js';
+export {
+	prune_css as pruneCss,
+	scope_unmatched_animation_rules as scopeUnmatchedAnimationRules,
+} from './analyze/prune.js';
 export { create_scope_root as createScopeRoot } from './transform/jsx/style-scopes.js';
 export {
 	TSRX_DO_WHILE_STATEMENT_ERROR,

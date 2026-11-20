@@ -1210,6 +1210,61 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`-webkit-animation-name: ${hash}-fade;`);
 		});
 
+		it('moves an at-rule a style rule cannot hold out of the rules around it', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							.box {
+								color: red;
+								@keyframes fade ${frames}
+								animation: fade 1s;
+								@media print {
+									.tag {
+										@font-face { font-family: x; }
+									}
+								}
+							}
+						</style>
+						<div ${attr}="box"><i ${attr}="tag" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			const plain = css.replace(/\s+/g, ' ');
+			// Before the outermost rule, in the @media it was in; CSS drops a
+			// @keyframes or @font-face nested in a style rule.
+			expect(plain).toContain(
+				`@keyframes ${hash}-fade { from { opacity: 0; } to { opacity: 1; } } @media print { @font-face { font-family: x; } } .box.${hash} {`,
+			);
+			expect(plain).toContain(
+				`.box.${hash} { color: red; animation: ${hash}-fade 1s; @media print { .tag.${hash} { } } }`,
+			);
+		});
+
+		it('reads a @keyframes name in any case', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							@keyframes -global-fade { from { opacity: 0; } to { opacity: 0; } }
+							.c { @KEYFRAMES fade { from { opacity: 1; } to { opacity: 1; } } animation: fade 1s; }
+						</style>
+						<div ${attr}="c" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			// Scoped, with its frames, so it can't replace the global fade.
+			expect(css).toContain(`@KEYFRAMES ${hash}-fade { from { opacity: 1; } to { opacity: 1; } }`);
+			expect(css).toContain(`animation: ${hash}-fade 1s;`);
+			expect(css).not.toContain('(unused)');
+		});
+
 		it('handles names that are also Object.prototype keys', () => {
 			const { css, hash } = compile_keyframes(
 				`@keyframes "constructor" ${frames} @keyframes __proto__ ${frames}
@@ -1220,6 +1275,110 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(
 				`animation: ${hash}-constructor 1s, "toString" 2s, ${hash}-__proto__ 3s, hasOwnProperty 4s;`,
 			);
+		});
+
+		it('scopes a rule with an animation that matches nothing', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							@keyframes fade ${frames}
+							.box { animation: fade 1s; }
+							.none { color: red; animation: fade 1s; }
+							.box .none { animation-name: fade; }
+							.none, .box { animation: fade 2s; }
+							.none { color: blue; }
+						</style>
+						<div ${attr}="box" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`.box.${hash} { animation: ${hash}-fade 1s; }`);
+			// Kept, as before, but no longer unscoped: these matched every .none on
+			// the page.
+			expect(css).toContain(`.none.${hash} { color: red; animation: ${hash}-fade 1s; }`);
+			expect(css).toContain(`.box.${hash} .none:where(.${hash}) { animation-name: ${hash}-fade; }`);
+			expect(css).toContain(`.none.${hash}, .box.${hash} { animation: ${hash}-fade 2s; }`);
+			// Without an animation, a rule that matches nothing is pruned.
+			expect(css).toContain('/* (unused) .none { color: blue; }*/');
+		});
+
+		it('scopes a rule with an animation as matched when an element after the first matches it', () => {
+			const { css, cssHash } = compile(
+				`export function Spinner() @{
+					<>
+						<style>
+							@keyframes spin ${frames}
+							:root .icon { animation: spin 1s infinite; }
+							.icon { animation: none; color: gray; }
+						</style>
+						<div ${attr}="wrap"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			// The <div> doesn't match :root .icon, the <i> does: the rule keeps the
+			// specificity a match gives it, so it still wins over .icon.
+			expect(css).toContain(`:root .icon.${hash} { animation: ${hash}-spin 1s infinite; }`);
+			expect(css).toContain(`.icon.${hash} { animation: none; color: gray; }`);
+		});
+
+		it('gives a rule with an animation that matches nothing the specificity a match gives it', () => {
+			const { css, cssHash } = compile(
+				`export function Spinner() @{
+					<>
+						<style>
+							@keyframes spin ${frames}
+							:root .spinning { animation: spin 1s infinite; }
+							:host .wrap .spinning { animation: spin 2s infinite; }
+							.spinning { animation: none; }
+						</style>
+						<div ${attr}="wrap"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			// No element has .spinning: as for a match, :root and :host take no
+			// hash and leave the class to the next compound, so the rule still wins
+			// over .spinning.
+			expect(css).toContain(`:root .spinning.${hash} { animation: ${hash}-spin 1s infinite; }`);
+			expect(css).toContain(
+				`:host .wrap.${hash} .spinning:where(.${hash}) { animation: ${hash}-spin 2s infinite; }`,
+			);
+		});
+
+		it('keeps the arguments of a :not() or a :global(...) compound in an animation rule as written', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							:global(.x):not(.zz) .k { animation: a 1s; }
+							:global(.x):has(.zz) { animation: a 1s; }
+							:root:not(.zz) { animation: a 1s; }
+							:is(.k, #never) { animation: a 1s; }
+							:is(.zz, #never) { animation: a 1s; }
+						</style>
+						<i ${attr}="k" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`.x:not(.zz) .k.${hash} { animation: a 1s; }`);
+			expect(css).toContain('.x:has(.zz) { animation: a 1s; }');
+			expect(css).toContain(':root:not(.zz) { animation: a 1s; }');
+			// An argument of a selector that matched stays as the pruner left it;
+			// a selector no element matched is scoped as matched, arguments too.
+			expect(css).toContain(`:is(.k.${hash}, #never) { animation: a 1s; }`);
+			expect(css).toContain(`:is(.zz.${hash}, #never.${hash}) { animation: a 1s; }`);
 		});
 	});
 
@@ -1750,6 +1909,46 @@ export function runSharedScopedStyleTests({
 			// Plain nesting scopes both parts.
 			expect(plain_css).toContain(`.card.${hash} { .title.${hash} { color: black; } }`);
 			expect(css).not.toContain('(unused)');
+		});
+
+		it('comments out a rule whose group rules hold nothing the output keeps', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							.p { @media print { .y {} } }
+							.p { @supports (display: grid) { .none { color: red; } } }
+							.p { @media print { @supports (display: grid) {} } }
+							.p { @media print { color: red; } }
+							.p { @media print { .k { color: blue; } } }
+							.p { @m\\65 dia print { .y {} } }
+							.p { @media print { @layer base {} } }
+							.p { @layer base {} }
+							.p { @media all { @keyframes k {} } }
+							.p { @media all { @-webkit-keyframes w {} } }
+						</style>
+						<div ${attr}="p"><i ${attr}="k" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain('/* (empty) .p { @media print { .y {} } }*/');
+			expect(css).toContain(
+				'/* (empty) .p { @supports (display: grid) { .none { color: red; } } }*/',
+			);
+			expect(css).toContain('/* (empty) .p { @media print { @supports (display: grid) {} } }*/');
+			expect(css).toContain(`.p.${hash} { @media print { color: red; } }`);
+			expect(css).toContain(`.p.${hash} { @media print { .k.${hash} { color: blue; } } }`);
+			expect(css).toContain(String.raw`/* (empty) .p { @m\65 dia print { .y {} } }*/`);
+			// An empty layer block still sets the order of layers.
+			expect(css).toContain(`.p.${hash} { @media print { @layer base {} } }`);
+			expect(css).toContain(`.p.${hash} { @layer base {} }`);
+			// An empty @keyframes still defines its name, so the scoped one stays.
+			expect(css).toContain(`@keyframes ${hash}-k {}`);
+			expect(css).toContain(`@-webkit-keyframes ${hash}-w {}`);
+			expect(css).not.toContain('/* (empty) .p { @media all');
 		});
 
 		it('keeps a comment end in a pruned selector inside the comment over it', () => {

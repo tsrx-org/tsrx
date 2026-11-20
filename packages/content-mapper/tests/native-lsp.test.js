@@ -1113,13 +1113,40 @@ export function Tag() @{
 }
 `;
 
+/**
+ * Bare names as the test of an `@if` with an `@else if` (Solid's `<Match>`),
+ * the test of an `@if` alone (`<Show>`) and a `@for` key. Solid prints each in
+ * an expression container (`when={a}`, `keyed={({ id }) => id}`) whose
+ * mapping covers the same text as the name's own.
+ */
+const SHOWN_TSRX = `declare const a: boolean;
+export function Shown(props: { items: { id: number }[]; on: boolean }) @{
+	const shown = props.on;
+	const alone = props.items.length > 0;
+	<div>
+		@if (a) {
+			<b />
+		} @else if (shown) {
+			<i />
+		}
+		@if (alone) {
+			<u />
+		}
+		@for (const { id } of props.items; key id) {
+			<li />
+		}
+	</div>
+}
+`;
+
 describe.each(Object.keys(target_dependencies))('native language server on %s', (target) => {
 	/** @type {Record<string, string>} */
 	const files = {
 		'main.ts':
-			"import { List } from './List.tsrx';\nimport { Tag } from './Names.tsrx';\n\nexport const list = [List, Tag];\n",
+			"import { List } from './List.tsrx';\nimport { Tag } from './Names.tsrx';\nimport { Shown } from './Shown.tsrx';\n\nexport const list = [List, Tag, Shown];\n",
 		'List.tsrx': for_source(target),
 		'Names.tsrx': NAMES_TSRX,
+		'Shown.tsrx': SHOWN_TSRX,
 	};
 	/** @type {ReturnType<typeof create_native_workspace>} */
 	let workspace;
@@ -1145,6 +1172,7 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 		await client.wait_for_registration('content-mapper-did-open');
 		client.open('List.tsrx', files['List.tsrx']);
 		client.open('Names.tsrx', files['Names.tsrx']);
+		client.open('Shown.tsrx', files['Shown.tsrx']);
 	});
 
 	afterAll(async () => {
@@ -1266,6 +1294,54 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 			definition: [`Names.tsrx ${declared}:name`],
 			references: [`Names.tsrx ${declared}:name`, `Names.tsrx ${subscript}:name`],
 			rename: [`Names.tsrx ${declared}:name -> renamed`, `Names.tsrx ${subscript}:name -> renamed`],
+			completes: true,
+		});
+	});
+
+	it('keeps the features of a bare @if test, @else if test and @for key', async () => {
+		const source = SHOWN_TSRX;
+		expect((await client.diagnostics('Shown.tsrx')).filter((d) => d.severity === 1)).toEqual([]);
+		const declared_a = source.indexOf('a:');
+		const test_a = source.indexOf('a)');
+		expect(await features_at('Shown.tsrx', '@if (a)', 5, 'a')).toEqual({
+			hover: `${test_a}:a const a: boolean`,
+			definition: [`Shown.tsrx ${declared_a}:a`],
+			references: [`Shown.tsrx ${declared_a}:a`, `Shown.tsrx ${test_a}:a`],
+			rename: [`Shown.tsrx ${declared_a}:a -> renamed`, `Shown.tsrx ${test_a}:a -> renamed`],
+			completes: true,
+		});
+		const declared_shown = source.indexOf('shown =');
+		const test_shown = source.indexOf('shown)');
+		expect(await features_at('Shown.tsrx', '@else if (shown)', 10, 'shown')).toEqual({
+			hover: `${test_shown}:shown const shown: boolean`,
+			definition: [`Shown.tsrx ${declared_shown}:shown`],
+			references: [`Shown.tsrx ${declared_shown}:shown`, `Shown.tsrx ${test_shown}:shown`],
+			rename: [
+				`Shown.tsrx ${declared_shown}:shown -> renamed`,
+				`Shown.tsrx ${test_shown}:shown -> renamed`,
+			],
+			completes: true,
+		});
+		const declared_alone = source.indexOf('alone =');
+		const test_alone = source.indexOf('alone)');
+		expect(await features_at('Shown.tsrx', '@if (alone)', 5, 'alone')).toEqual({
+			hover: `${test_alone}:alone const alone: boolean`,
+			definition: [`Shown.tsrx ${declared_alone}:alone`],
+			references: [`Shown.tsrx ${declared_alone}:alone`, `Shown.tsrx ${test_alone}:alone`],
+			rename: [
+				`Shown.tsrx ${declared_alone}:alone -> renamed`,
+				`Shown.tsrx ${test_alone}:alone -> renamed`,
+			],
+			completes: true,
+		});
+		const declared_id = source.indexOf('id }');
+		const key_id = source.indexOf('id)');
+		expect(await features_at('Shown.tsrx', 'key id', 4, 'id')).toEqual({
+			hover: `${key_id}:id (parameter) id: number`,
+			definition: [`Shown.tsrx ${declared_id}:id`],
+			references: [`Shown.tsrx ${declared_id}:id`, `Shown.tsrx ${key_id}:id`],
+			// The binding keeps the property it destructures.
+			rename: [`Shown.tsrx ${declared_id}:id -> id: renamed`, `Shown.tsrx ${key_id}:id -> renamed`],
 			completes: true,
 		});
 	});

@@ -10,6 +10,7 @@ import {
 	drops_selector,
 	has_parent_rule_in_output,
 	is_scope_root_ampersand,
+	is_unnestable_at_rule,
 } from '../analyze/css-analyze.js';
 
 const regex_css_browser_prefix = /^-((webkit)|(moz)|(o)|(ms))-/;
@@ -72,7 +73,18 @@ const fallback_functions = new Set(['var', 'env']);
  */
 
 /** @param {AST.CSS.Atrule} node */
-const is_keyframes_node = (node) => remove_css_prefix(node.name) === 'keyframes';
+const is_keyframes_node = (node) =>
+	remove_css_prefix(ascii_lowercase(unescape_css(node.name))) === 'keyframes';
+
+/**
+ * `text` with ASCII letters lowercased, as CSS compares at-rule names: unlike
+ * `toLowerCase`, it leaves letters such as the Kelvin sign (U+212A) alone.
+ * @param {string} text
+ * @returns {string}
+ */
+function ascii_lowercase(text) {
+	return text.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+}
 
 /**
  * The index after the escape at `index`: up to six hex digits and one
@@ -447,6 +459,62 @@ function escape_comment_close(node, code) {
 	}
 }
 
+/** At-rules that are valid only at the start of a stylesheet, not just outside a style rule. */
+const leading_at_rules = new Set(['import', 'charset', 'namespace']);
+
+/** Group rules that can't be written again around a moved at-rule. */
+const fixed_wrappers = new Set(['layer', 'when', 'else']);
+
+/**
+ * Move an at-rule a style rule can't hold, such as `@keyframes` or
+ * `@font-face`, out of the style rules around it in the output, which would
+ * leave it invalid, to just before the outermost of them. The group rules
+ * between (`@media`) are written around it again, so it keeps their
+ * conditions. Its own edits, such as a keyframes name's hash, move with it.
+ *
+ * @param {AST.CSS.Atrule} node
+ * @param {AST.CSS.Node[]} path
+ * @param {StylesheetRenderState} state
+ */
+function lift_out_of_style_rules(node, path, state) {
+	if (
+		!is_unnestable_at_rule(node) ||
+		leading_at_rules.has(remove_css_prefix(node.name.toLowerCase()))
+	) {
+		return;
+	}
+	// The rules whose selector the output drops (`:global { ... }`) leave none.
+	const outer = path.findIndex((ancestor) => ancestor.type === 'Rule' && !drops_selector(ancestor));
+	if (outer === -1) return;
+	const wrappers = /** @type {AST.CSS.Atrule[]} */ (
+		path.slice(outer + 1).filter((ancestor) => ancestor.type === 'Atrule')
+	);
+	// One in an at-rule that moves already moves with it. A `@layer` written
+	// again elsewhere would change the order of layers, or be a layer of its
+	// own if it has no name, and an `@else` (or the `@when` before one) belongs
+	// to the chain of conditions it is in, so one in those stays where it is.
+	if (
+		wrappers.some(
+			(wrapper) =>
+				is_unnestable_at_rule(wrapper) ||
+				fixed_wrappers.has(remove_css_prefix(unescape_css(wrapper.name).toLowerCase())),
+		)
+	) {
+		return;
+	}
+
+	for (const wrapper of wrappers.reverse()) {
+		const prelude = state.code.original.slice(
+			wrapper.start,
+			/** @type {AST.CSS.Block} */ (wrapper.block).start + 1,
+		);
+		state.code.prependRight(node.start, `${prelude} `);
+		state.code.appendLeft(node.end, ' }');
+	}
+	if (!state.minify) state.code.appendLeft(node.end, ' ');
+	state.code.move(node.start, node.end, path[outer].start);
+}
+
 /**
  * @param {StylesheetRenderState} state
  * @param {number} index
@@ -465,24 +533,56 @@ function is_empty(rule, is_in_global_block) {
 	}
 
 	// Rules with :global in the middle (like `div :global p`) should treat nested rules as global
-	const has_mid_global = has_global_in_middle(rule);
+	return is_block_empty(rule.block, is_in_global_block || has_global_in_middle(rule));
+}
 
-	for (const child of rule.block.children) {
+/**
+ * At-rules that only group what is in them, which keep nothing when it is all
+ * empty. Not `@layer`: a layer block, even an empty one, puts its layer in the
+ * cascade's order of layers, so it always counts.
+ */
+const group_at_rules = new Set([
+	'media',
+	'supports',
+	'container',
+	'scope',
+	'starting-style',
+	'when',
+	'else',
+	'document',
+]);
+
+/**
+ * Whether `block` puts nothing in the output: no declaration, no rule that is
+ * used and not empty itself, and no at-rule with something in it. A group
+ * rule (`@media`) has something in it only when what it holds isn't empty.
+ *
+ * @param {AST.CSS.Block} block
+ * @param {boolean} is_in_global_block whether every rule in it is kept
+ * @returns {boolean}
+ */
+function is_block_empty(block, is_in_global_block) {
+	for (const child of block.children) {
 		if (child.type === 'Declaration') {
 			return false;
 		}
 
 		if (child.type === 'Rule') {
-			if (
-				(is_used(child) || is_in_global_block || has_mid_global) &&
-				!is_empty(child, is_in_global_block || has_mid_global)
-			) {
+			if ((is_used(child) || is_in_global_block) && !is_empty(child, is_in_global_block)) {
 				return false;
 			}
 		}
 
 		if (child.type === 'Atrule') {
-			if (child.block === null || child.block.children.length > 0) return false;
+			const name = remove_css_prefix(unescape_css(child.name).toLowerCase());
+			// A layer block sets the order of layers, and a `@keyframes` defines
+			// its name (over an earlier one of the name) even when empty.
+			if (child.block === null || name === 'layer' || name === 'keyframes') return false;
+			if (group_at_rules.has(name)) {
+				if (!is_block_empty(child.block, is_in_global_block)) return false;
+			} else if (child.block.children.length > 0) {
+				return false;
+			}
 		}
 	}
 
@@ -497,6 +597,8 @@ const visitors = {
 		context.next();
 	},
 	Atrule(node, { state, next, path }) {
+		lift_out_of_style_rules(node, path, state);
+
 		if (is_keyframes_node(node)) {
 			const prelude = tokenize_css_value(
 				state.code.original,
