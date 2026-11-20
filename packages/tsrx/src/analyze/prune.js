@@ -1337,6 +1337,9 @@ export function scope_unmatched_animation_rules(css) {
 	if (!pending) return;
 	for (const node of pending) assume_match(get_relative_selectors(node));
 	unmatched_animation_selectors.delete(css);
+	// `assume_match` scopes the `:is()`, `:where()` and `:has()` arguments of a
+	// global compound too, which stay as written.
+	keep_global_compound_arguments(css);
 }
 
 /**
@@ -1373,8 +1376,11 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 			} else if (rule_has_animation(rule)) {
 				// A rule with an animation is kept whatever it matches. Whether an
 				// element matches it is known only once every element is pruned, so
-				// `scope_unmatched_animation_rules` scopes it then, if none did.
-				if (!node.metadata.used) {
+				// `scope_unmatched_animation_rules` scopes it then, if none did. Only
+				// the rule's own selectors: `assume_match` scopes their arguments as
+				// a match would, and an argument of a selector that matched stays
+				// as `prune_css` left it.
+				if (!node.metadata.used && rule.prelude.children.includes(node)) {
 					let pending = unmatched_animation_selectors.get(css);
 					if (!pending) unmatched_animation_selectors.set(css, (pending = new Set()));
 					pending.add(node);

@@ -1272,6 +1272,33 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`:root .icon.${hash} { animation: ${hash}-spin 1s infinite; }`);
 			expect(css).toContain(`.icon.${hash} { animation: none; color: gray; }`);
 		});
+
+		it('keeps the arguments of a :not() or a :global(...) compound in an animation rule as written', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							:global(.x):not(.zz) .k { animation: a 1s; }
+							:global(.x):has(.zz) { animation: a 1s; }
+							:root:not(.zz) { animation: a 1s; }
+							:is(.k, #never) { animation: a 1s; }
+							:is(.zz, #never) { animation: a 1s; }
+						</style>
+						<i ${attr}="k" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`.x:not(.zz) .k.${hash} { animation: a 1s; }`);
+			expect(css).toContain('.x:has(.zz) { animation: a 1s; }');
+			expect(css).toContain(':root:not(.zz) { animation: a 1s; }');
+			// An argument of a selector that matched stays as the pruner left it;
+			// a selector no element matched is scoped as matched, arguments too.
+			expect(css).toContain(`:is(.k.${hash}, #never) { animation: a 1s; }`);
+			expect(css).toContain(`:is(.zz.${hash}, #never.${hash}) { animation: a 1s; }`);
+		});
 	});
 
 	describe(`[${name}] style themes and apply`, () => {
