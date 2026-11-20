@@ -946,6 +946,7 @@ describe('scoped style analysis', () => {
 					0,
 				],
 				[':global.w, :root .x { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
+				[':global.w, :root.dark .x { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
 				[':global.w, :root:has(.x) { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
 				[':global.w, :is(.a) { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
 				// Without its hashes, a :not() in a :not() matches more.
@@ -1048,6 +1049,10 @@ describe('scoped style analysis', () => {
 				':global.w, :global(.a) { color: red; }',
 				':global(.a), :global.w { color: red; }',
 				':global.w, :root { color: red; }',
+				// Nor does a compound with :root or :host, whatever else it has.
+				':global.w, :root.dark { color: red; }',
+				':global.w, .dark:root[lang] { color: red; }',
+				':global.w, :host.open { color: red; }',
 				':global.w, :root:has(:global(.x)) { color: red; }',
 				':global.w, :is(:global(.a)) { color: red; }',
 				'.p { :global .a, &.b { color: red; } }',

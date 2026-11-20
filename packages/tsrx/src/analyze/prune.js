@@ -312,19 +312,9 @@ function truncate(node) {
 		);
 	});
 
-	return node.children.slice(0, i + 1).map((child) => {
-		// In case of `:root.y:has(...)`, `y` is unscoped, but everything in `:has(...)` should be scoped (if not global).
-		// To properly accomplish that, we gotta filter out all selector types except `:has`.
-		const root = child.selectors.find((s) => s.type === 'PseudoClassSelector' && s.name === 'root');
-		if (!root || child.metadata.is_global_like) return child;
-
-		return {
-			...child,
-			selectors: child.selectors.filter(
-				(s) => s.type === 'PseudoClassSelector' && s.name === 'has',
-			),
-		};
-	});
+	// A compound with :root (`:root.y:has(...)`) is global-like, so it stays
+	// unscoped and only the arguments of its `:has()` are scoped.
+	return node.children.slice(0, i + 1);
 }
 
 /**

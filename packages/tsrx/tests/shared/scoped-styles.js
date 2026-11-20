@@ -2018,6 +2018,44 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('leaves a compound with :root or :host unscoped, whatever else it has', () => {
+			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
+			const cases = [
+				// The usual dark-mode rules: <html class="dark"> never has the hash.
+				[':root.dark', () => ':root.dark {'],
+				[':root.dark .icon', (hash) => `:root.dark .icon.${hash} {`],
+				[':root[data-theme="dark"] .icon', (hash) => `:root[data-theme="dark"] .icon.${hash} {`],
+				['.dark:root .icon', (hash) => `.dark:root .icon.${hash} {`],
+				[':root.dark .wrap .icon', (hash) => `:root.dark .wrap.${hash} .icon:where(.${hash}) {`],
+				// The arguments of its :has() are a selector of their own.
+				[
+					':root.dark:has(.icon) .wrap',
+					(hash) => `:root.dark:has(.icon:where(.${hash})) .wrap.${hash} {`,
+				],
+				[':host.open .icon', (hash) => `:host.open .icon.${hash} {`],
+				[':host(.open) .icon', (hash) => `:host(.open) .icon.${hash} {`],
+				// As after :root alone, the class bump goes to the next compound.
+				[':root .icon', (hash) => `:root .icon.${hash} {`],
+				[':host .icon', (hash) => `:host .icon.${hash} {`],
+			];
+			for (const [selector, expected] of cases) {
+				const rule = `${selector} { color: red; }`;
+				const theme = compile(`export const theme = <style>${rule}</style>;`, 'App.tsrx');
+				const component = compile(
+					`export function App() @{
+						<>
+							<style>${rule}</style>
+							<div ${attr}="wrap"><i ${attr}="icon" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(theme.css, selector).toContain(expected(hashes_of(theme.cssHash)[0]));
+				expect(component.css, selector).toContain(expected(hashes_of(component.cssHash)[0]));
+			}
+		});
+
 		it('closes the comment over a pruned selector that touches a :global() selector', () => {
 			/** @type {Array<[string, (hash: string) => string]>} */
 			const cases = [

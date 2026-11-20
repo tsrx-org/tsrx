@@ -852,8 +852,14 @@ const visitors = {
 				}
 			}
 
-			// Skip scoping if we're inside a global block
-			if (relative_selector.metadata.scoped && !is_in_global_block(context.path)) {
+			// Skip scoping if we're inside a global block. A compound with :root or
+			// :host never takes the hash, nor the specificity bump, which goes to
+			// the next compound as it does after :root alone.
+			if (
+				relative_selector.metadata.scoped &&
+				!relative_selector.metadata.is_global_like &&
+				!is_in_global_block(context.path)
+			) {
 				if (relative_selector.selectors.length === 1) {
 					// skip standalone :is/:where/& selectors
 					const selector = relative_selector.selectors[0];
