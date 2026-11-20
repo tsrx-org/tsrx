@@ -6480,7 +6480,9 @@ function collect_directive_declarations(node, parent, in_body, found) {
  * body outside a loop there, is the `@if` or `@for` check's to report; a jump
  * in a loop in an `@for` body that leaves the body, which that check doesn't
  * see, is reported here with the `@for` check's errors, and so is one that
- * leaves an `@else if` body, or the `@else` after one, with the `@if` check's.
+ * leaves an `@else if` body, or the `@else` after one, with the `@if` check's,
+ * as is a `return` there (`IF_RETURN_STATEMENT`), which that check doesn't
+ * see either.
  *
  * @param {AST.Program} program
  * @param {TransformContext} transform_context
@@ -6498,7 +6500,7 @@ function validate_directive_jumps(program, transform_context) {
 	for (const { node, kind } of found) {
 		if (node.type === 'ReturnStatement') {
 			error(
-				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				kind === 'if' ? TSRX_ERRORS.IF_RETURN_STATEMENT : TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
 				transform_context.filename,
 				node,
 				transform_context.errors,
@@ -6563,11 +6565,12 @@ function collect_directive_jumps(node, parent, scope, found) {
 	// a nested `@{ … }` block, also one in an `@switch` there.
 	if (
 		node.type === 'ReturnStatement' &&
-		scope.kind === 'case' &&
+		(scope.kind === 'case' || scope.kind === 'if') &&
 		!node.metadata?.invalid_tsrx_template_return
 	) {
 		// The `@if` and `@for` checks, which see a `return` in an `@switch` in
-		// their bodies, leave it to this one.
+		// their bodies, and Solid's, which sees an `@else if` body, leave it to
+		// this one.
 		node.metadata = { ...node.metadata, invalid_directive_jump: true };
 		found.push({ node, kind: scope.kind });
 	}
