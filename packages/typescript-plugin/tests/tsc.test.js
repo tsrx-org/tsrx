@@ -811,6 +811,41 @@ it('reports a fallthrough case at its case in .tsrx files', () => {
 	expect(result.output.match(/TS7029/g)).toHaveLength(2);
 });
 
+it("reports a class member's modifier errors in .tsrx files as in .ts files (#235)", () => {
+	const source = [
+		'export abstract class A {',
+		'\tabstract async m(): Promise<void>;',
+		'\tasync abstract n(): Promise<void>;',
+		'\tprivate abstract o(): void;',
+		'\taccessor static x = 1;',
+		'\tstatic public y = 1;',
+		'\tasync static p() {}',
+		'\tconstructor(readonly public z: number) {}',
+		'}',
+		'export declare class D {',
+		'\tasync m(): Promise<void>;',
+		'}',
+		'',
+	].join('\n');
+	fs.writeFileSync(path.join(workspace, 'modifiers.tsrx'), source);
+	fs.writeFileSync(path.join(workspace, 'plain.ts'), source);
+	const tsconfig_path = path.join(workspace, 'tsconfig.json');
+	const tsconfig = JSON.parse(fs.readFileSync(tsconfig_path, 'utf8'));
+	tsconfig.include = ['main.ts', 'modifiers.tsrx', 'plain.ts'];
+	fs.writeFileSync(tsconfig_path, JSON.stringify(tsconfig));
+	const result = run_cli('native');
+	/** @param {string} file */
+	const reported = (file) =>
+		result.output
+			.split(/\r?\n/)
+			.filter((line) => line.startsWith(`${file}(`))
+			.map((line) => line.slice(file.length));
+	// TS1243 three times, TS1029 four times, TS1040 once, each once.
+	expect(reported('plain.ts')).toHaveLength(8);
+	expect(reported('modifiers.tsrx')).toEqual(reported('plain.ts'));
+	expect(result.status).toBe(2);
+});
+
 it('reports a missing return on a primitive return type in .tsrx files', () => {
 	const line = 'export class Model { value(): number {} }';
 	fs.appendFileSync(path.join(workspace, 'layout.tsrx'), `${line}\n`);

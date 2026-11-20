@@ -589,6 +589,8 @@ export namespace Parse {
 		inType: boolean;
 		/** Whether @sveltejs/acorn-typescript is parsing an ambient (`declare`) context */
 		isAmbientContext: boolean;
+		/** Whether @sveltejs/acorn-typescript is parsing the body of an abstract class */
+		inAbstractClass: boolean;
 		/**
 		 * Whether @sveltejs/acorn-typescript is reading a list that can be an arrow
 		 * function's parameters: a parenthesized expression or a call's arguments
@@ -1489,6 +1491,8 @@ export namespace Parse {
 
 		/** Whether the current token is `static` followed by `{` (@sveltejs/acorn-typescript). */
 		tsIsStartOfStaticBlocks(): boolean;
+		/** Whether the tokens from a `[` are an index signature's, not a computed name */
+		tsIsUnambiguouslyIndexSignature(): boolean;
 
 		/** Whether the current token can be a literal property name (@sveltejs/acorn-typescript). */
 		isLiteralPropertyName(): boolean;

@@ -407,6 +407,29 @@ export function App() @{
 		]);
 	});
 
+	it("shows a class member's modifier errors once, where TypeScript reports them (#235)", async () => {
+		const source = `export abstract class A {
+	abstract async m(): Promise<void>;
+	async abstract n(): Promise<void>;
+	private abstract o(): void;
+	accessor static x = 1;
+	static public y = 1;
+	async static p() {}
+}`;
+		const { document, diagnostics } = await editor_diagnostics_for('ModifierErrors', source);
+
+		expect(reported(document, diagnostics, 'TS1243')).toEqual([
+			{ source: 'ts', text: 'async', offset: source.indexOf('async m') },
+			{ source: 'ts', text: 'async', offset: source.indexOf('async abstract') },
+			{ source: 'ts', text: 'abstract', offset: source.indexOf('abstract o') },
+		]);
+		expect(reported(document, diagnostics, 'TS1029')).toEqual([
+			{ source: 'ts', text: 'static', offset: source.indexOf('static x') },
+			{ source: 'ts', text: 'public', offset: source.indexOf('public y') },
+			{ source: 'ts', text: 'static', offset: source.indexOf('static p()') },
+		]);
+	});
+
 	it('leaves an empty attribute value to TypeScript (#1311)', async () => {
 		const { document, diagnostics } = await editor_diagnostics_for(
 			'EmptyAttributeValue',
