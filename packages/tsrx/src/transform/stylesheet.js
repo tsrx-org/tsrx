@@ -72,7 +72,8 @@ const fallback_functions = new Set(['var', 'env']);
  */
 
 /** @param {AST.CSS.Atrule} node */
-const is_keyframes_node = (node) => remove_css_prefix(node.name) === 'keyframes';
+const is_keyframes_node = (node) =>
+	remove_css_prefix(unescape_css(node.name).toLowerCase()) === 'keyframes';
 
 /**
  * The index after the escape at `index`: up to six hex digits and one

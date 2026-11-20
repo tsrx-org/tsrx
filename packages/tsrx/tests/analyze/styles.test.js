@@ -1243,6 +1243,12 @@ describe('scoped style analysis', () => {
 					String.raw`.p.H { @\6c ayer { @font-face { font-family: x; } } }`,
 					String.raw`.p.H { @\6c ayer { @font-face { font-family: x; } } }`,
 				],
+				// At-rule names are case-insensitive: the keyframes name gets the hash.
+				[
+					'.p { @KEYFRAMES k { to { opacity: 0; } } }',
+					'@KEYFRAMES H-k { to { opacity: 0; } } .p.H { }',
+					'@KEYFRAMES H-k { to { opacity: 0; } }.p.H { }',
+				],
 				// An @else is written after the condition before it.
 				[
 					'.p { @when media(print) { color: red; } @else { @font-face { font-family: x; } } }',

@@ -1244,6 +1244,27 @@ export function runSharedScopedStyleTests({
 			);
 		});
 
+		it('reads a @keyframes name in any case', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							@keyframes -global-fade { from { opacity: 0; } to { opacity: 0; } }
+							.c { @KEYFRAMES fade { from { opacity: 1; } to { opacity: 1; } } animation: fade 1s; }
+						</style>
+						<div ${attr}="c" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			// Scoped, with its frames, so it can't replace the global fade.
+			expect(css).toContain(`@KEYFRAMES ${hash}-fade { from { opacity: 1; } to { opacity: 1; } }`);
+			expect(css).toContain(`animation: ${hash}-fade 1s;`);
+			expect(css).not.toContain('(unused)');
+		});
+
 		it('handles names that are also Object.prototype keys', () => {
 			const { css, hash } = compile_keyframes(
 				`@keyframes "constructor" ${frames} @keyframes __proto__ ${frames}
