@@ -39,7 +39,6 @@ import {
 } from '../source-map-utils.js';
 import {
 	should_preserve_jsx_tooling_comment,
-	is_triple_slash_directive,
 	format_comment,
 	get_line_comments_after,
 } from '../comment-utils.js';
@@ -1172,25 +1171,43 @@ export function convert_source_map_to_mappings(
 	/** @type {Set<string>} */
 	const mapped_comments = new Set();
 
-	// TypeScript reads a triple-slash directive only before the file's first
-	// statement; after one, it is an ordinary comment.
-	const first_statement_start =
-		/** @type {AST.Program} */ (ast_from_source).body?.[0]?.start ?? Infinity;
-
 	/**
-	 * A triple-slash directive printed as written that TypeScript reads as one in
-	 * the source too. The output can print it before any statement where the
-	 * source has one before it (`;` prints nothing), and there it would be read
-	 * as a directive.
+	 * Whether a comment printed as written is a `/// <reference …/>` that
+	 * TypeScript reads as one in the source: only comments come before it. After
+	 * a statement it is an ordinary comment, yet the output can still print it
+	 * first (`;` prints nothing, and a platform guard can be specialized away),
+	 * where it would be read as a directive. Read from the source text, which the
+	 * specialized tree doesn't keep.
 	 * @param {AST.CommentWithLocation} comment
 	 * @returns {boolean}
 	 */
-	function is_source_directive(comment) {
-		return (
-			is_triple_slash_directive(comment) &&
-			comment.value.startsWith('/') &&
-			comment.end <= first_statement_start
-		);
+	function is_source_reference_directive(comment) {
+		if (comment.type !== 'Line' || !/^\/\s*<reference\s/.test(comment.value)) return false;
+		let at = source.startsWith('#!') ? line_end(2) : 0;
+		while (at < comment.start) {
+			if (regex_whitespace.test(source[at])) {
+				at++;
+			} else if (source.startsWith('//', at)) {
+				at = line_end(at + 2);
+			} else if (source.startsWith('/*', at)) {
+				const close = source.indexOf('*/', at + 2);
+				if (close === -1) return false;
+				at = close + 2;
+			} else {
+				return false;
+			}
+		}
+		return at === comment.start;
+	}
+
+	/**
+	 * Where the line holding `at` ends.
+	 * @param {number} at
+	 * @returns {number}
+	 */
+	function line_end(at) {
+		while (at < source.length && !'\n\r\u2028\u2029'.includes(source[at])) at++;
+		return at;
 	}
 
 	/**
@@ -1233,7 +1250,7 @@ export function convert_source_map_to_mappings(
 					data: {
 						...(!as_written
 							? mapping_data_verify_only
-							: is_source_directive(comment)
+							: is_source_reference_directive(comment)
 								? mapping_data_reference_directive
 								: mapping_data_verify_complete),
 						customData: {},

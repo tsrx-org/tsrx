@@ -34,11 +34,11 @@ export const mapping_data_verify_complete = {
 };
 
 /**
- * A triple-slash directive the editor output prints as written. TypeScript
- * checks it (a `/// <reference path>` to a missing file), completes its path
- * and navigates from that path: it is a file reference, has a definition, and
- * is edited when the file moves. Only a directive TypeScript reads as one in
- * the source gets it (before the file's first statement). Other comments get
+ * A `/// <reference …/>` directive the editor output prints as written.
+ * TypeScript checks it (a `/// <reference path>` to a missing file), completes
+ * its path and navigates from that path: it is a file reference, has a
+ * definition, and is edited when the file moves. Only a directive TypeScript
+ * reads as one in the source gets it (only comments before it). Other comments get
  * no navigation: a JSDoc `{@link}` resolves in the scope where the comment is
  * printed, which isn't the source's on every target (Vue prints a component's
  * JSDoc outside its function, Solid prints a template branch's inside a

@@ -4125,16 +4125,31 @@ export function A() @{
 			}
 		});
 
-		it('maps no navigation for a `/// <reference path>` after a statement, which TypeScript reads as a comment', () => {
-			// The output prints nothing for `;`, so the comment would start the file there.
-			for (const source of [
-				`;\n/// <reference path="./Other.tsrx" />\nexport const a = 1;`,
-				`export const a = 1;\n/// <reference path="./Other.tsrx" />\nexport const b = 2;`,
-			]) {
-				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-				const comment = '/// <reference path="./Other.tsrx" />';
-				for (const mapping of mappings_at(result, source.indexOf(comment), comment.length)) {
-					expect(mapping.data.navigation, source).toBeFalsy();
+		it('maps navigation only for a `/// <reference>` that TypeScript reads as one in the source', () => {
+			// After a statement, TypeScript reads it as a comment, but the output can
+			// print it first: it prints nothing for `;`, and a platform guard is
+			// specialized away.
+			const comment = '/// <reference path="./Other.tsrx" />';
+			for (const [source, navigation, options] of /** @type {const} */ ([
+				[`/* license */\n// note\n${comment}\nexport const a = 1;`, true, {}],
+				[`#!/usr/bin/env node\n${comment}\nexport const a = 1;`, true, {}],
+				[`;\n${comment}\nexport const a = 1;`, undefined, {}],
+				[`export const a = 1;\n${comment}\nexport const b = 2;`, undefined, {}],
+				[
+					`if (import.meta.env.platform.web) {}\n${comment}\nexport const a = 1;`,
+					undefined,
+					{ platform: 'ios' },
+				],
+				[`/// <reference-extra path="./Other.tsrx" />\nexport const a = 1;`, undefined, {}],
+			])) {
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true, ...options });
+				const text = source.startsWith('/// <reference-extra')
+					? '/// <reference-extra path="./Other.tsrx" />'
+					: comment;
+				const mappings = mappings_at(result, source.indexOf(text), text.length);
+				if (navigation) expect(mappings.length, source).toBeGreaterThan(0);
+				for (const mapping of mappings) {
+					expect(mapping.data.navigation, source).toBe(navigation);
 				}
 			}
 		});
