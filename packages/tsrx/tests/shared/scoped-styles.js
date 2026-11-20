@@ -1823,10 +1823,24 @@ export function runSharedScopedStyleTests({
 		});
 
 		it('reports a bare :global list exactly when the other selector would be scoped on its own', () => {
-			/** @param {string} css */
-			const theme_css = (css) => {
+			/**
+			 * The CSS of `css` in a component's `<style>`, which prunes what matches
+			 * nothing, or in an assigned theme, which keeps every selector.
+			 *
+			 * @param {string} css
+			 * @param {boolean} theme
+			 */
+			const css_of = (css, theme) => {
+				const source = theme
+					? `const theme = <style>${css}</style>;`
+					: `export function App() @{
+						<>
+							<style>${css}</style>
+							<div ${attr}="p b"><i ${attr}="a b x z" /><span /></div>
+						</>
+					}`;
 				try {
-					return compile(`const theme = <style>${css}</style>;`, 'Theme.tsrx').css;
+					return compile(source, 'App.tsrx').css;
 				} catch (error) {
 					return /** @type {{ code: string }} */ (error).code;
 				}
@@ -1839,6 +1853,7 @@ export function runSharedScopedStyleTests({
 				':root',
 				':root:has(.a)',
 				':root:has(:global(.a))',
+				':root:not(.a)',
 				':host:is(.a)',
 				':is(.a)',
 				':is(:global(.a))',
@@ -1850,36 +1865,46 @@ export function runSharedScopedStyleTests({
 				':global(.a).b',
 				':global(.a) .b',
 				':global(.a) :global(.b)',
+			];
+			// A theme also hashes the compounds after a bare :global later in a
+			// selector, which a component leaves unscoped; this follows a component.
+			const after_bare_global = [
 				':root :global .x',
+				':root :global .x:has(.a)',
+				':global(.a) :global .x',
 			];
 			const nested = [
 				'&',
 				'&.b',
 				'&:is(.a)',
 				'&:is(:global(.a))',
+				'&:not(.z)',
 				'&:nth-child(2)',
 				'& .b',
 				'& :global .x',
 			];
-			/** @type {Array<[string, (list: string) => string]>} */
-			const cases = [
-				...selectors.map(
-					(selector) =>
-						/** @type {[string, (list: string) => string]} */ ([selector, (list) => list]),
-				),
-				...[...selectors, ...nested].map(
-					(selector) =>
-						/** @type {[string, (list: string) => string]} */ ([
-							selector,
-							(list) => `.p { ${list} }`,
-						]),
-				),
-			];
-			for (const [selector, wrap] of cases) {
-				const alone = theme_css(wrap(`${selector} { color: red; }`));
-				const scoped = /tsrx-[0-9a-f]+/.test(alone.replace(/^\.p\.tsrx-[0-9a-f]+/, ''));
-				const mixed = theme_css(wrap(`:global.w, ${selector} { color: red; }`));
-				expect(mixed === DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT, wrap(selector)).toBe(scoped);
+			/** @type {Array<[selector: string, wrap: (list: string) => string, theme: boolean]>} */
+			const cases = [];
+			for (const theme of [false, true]) {
+				const top = theme ? selectors : [...selectors, ...after_bare_global];
+				for (const selector of top) cases.push([selector, (list) => list, theme]);
+				for (const selector of [...top, ...nested]) {
+					if (theme && selector.includes(':global .')) continue;
+					cases.push([selector, (list) => `.p { ${list} }`, theme]);
+				}
+			}
+			for (const [selector, wrap, theme] of cases) {
+				// A hash in a :not() argument only makes it match fewer elements.
+				const alone = css_of(wrap(`${selector} { color: red; }`), theme)
+					.replace(/^\.p\.tsrx-[0-9a-f]+/, '')
+					.replace(/:not\([^)]*\)/g, ':not()');
+				// Pruned on its own, it would be kept unscoped in the list.
+				const scoped = /tsrx-[0-9a-f]+|\((unused|empty)\)/.test(alone);
+				const mixed = css_of(wrap(`:global.w, ${selector} { color: red; }`), theme);
+				expect(
+					mixed === DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
+					`${theme ? 'theme' : 'component'}: ${wrap(selector)}`,
+				).toBe(scoped);
 			}
 		});
 
@@ -1891,6 +1916,8 @@ export function runSharedScopedStyleTests({
 							:global.w,:global .v { color: red; }
 							:global(.a), :global.w { color: green; }
 							.p { :global.w, :global .v, &.b { color: blue; } }
+							.p { :global.open, :global { color: gray; } }
+							:global .note, :root :global .x { color: black; }
 						</style>
 						<div ${attr}="p" />
 					</>
@@ -1903,6 +1930,9 @@ export function runSharedScopedStyleTests({
 			// Read as a :global { ... } block before, which dropped the selector.
 			expect(css).toContain('.a, .w { color: green; }');
 			expect(css).toContain(`.p.${hash} { &.w, & .v, &.b { color: blue; } }`);
+			// A lone :global in a rule stands for that rule.
+			expect(css).toContain(`.p.${hash} { &.open, & { color: gray; } }`);
+			expect(css).toContain('.note, :root .x { color: black; }');
 		});
 
 		it('writes a :global modifier whose only parent is a :global { ... } block without an &', () => {

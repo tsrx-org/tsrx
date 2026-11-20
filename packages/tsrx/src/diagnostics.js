@@ -714,7 +714,7 @@ export const TSRX_ERRORS = {
 	),
 	CSS_GLOBAL_BLOCK_NOT_ALONE: tsrx(
 		'CSS_GLOBAL_PLACEMENT',
-		'A lone :global, as in :global { ... }, must be the only selector in its list. Move the other selectors to a rule of their own.',
+		'A lone :global, as in :global { ... }, stands for the rule around it, so outside a rule it cannot share a selector list with other selectors. Move the other selectors to a rule of their own.',
 	),
 	CSS_IMPORT: tsrx(
 		'CSS_IMPORT',

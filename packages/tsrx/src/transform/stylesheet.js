@@ -6,6 +6,7 @@
 import MagicString from 'magic-string';
 import { walk } from 'zimmerframe';
 import { unescape_css } from '../parse/style.js';
+import { drops_selector, has_parent_rule_in_output } from '../analyze/css-analyze.js';
 
 const regex_css_browser_prefix = /^-((webkit)|(moz)|(o)|(ms))-/;
 const regex_css_ident_start = /^(-?([a-zA-Z_\\]|[^\x00-\x7f])|--)/;
@@ -266,35 +267,6 @@ function is_used(rule) {
 }
 
 /**
- * Whether `rule` is a lone `:global { ... }` block, which the output drops,
- * leaving its selector behind as a comment, while keeping what's in it.
- *
- * @param {AST.CSS.Rule} rule
- */
-function is_lone_global_block(rule) {
-	const selectors = rule.prelude.children;
-	return (
-		rule.metadata.is_global_block &&
-		selectors.length === 1 &&
-		selectors[0].children.length === 1 &&
-		selectors[0].children[0].selectors.length === 1
-	);
-}
-
-/**
- * Whether the output keeps a rule around `rule` for an `&` to refer to. The
- * rules in a lone `:global { ... }` block belong to the rule around the block,
- * if there is one.
- *
- * @param {AST.CSS.Rule | null} rule
- */
-function has_parent_rule_in_output(rule) {
-	let parent = rule?.metadata.parent_rule;
-	while (parent && is_lone_global_block(parent)) parent = parent.metadata.parent_rule;
-	return !!parent;
-}
-
-/**
  * @param {Array<AST.CSS.Node>} path
  */
 function is_in_global_block(path) {
@@ -532,7 +504,7 @@ const visitors = {
 			return;
 		}
 
-		if (is_lone_global_block(node)) {
+		if (drops_selector(node)) {
 			// `:global {...}`
 			if (state.minify) {
 				state.code.remove(node.start, node.block.start + 1);
@@ -680,9 +652,14 @@ const visitors = {
 				remove_global_pseudo_class(global, relative_selector.combinator, context.state);
 
 				if (
-					has_parent_rule_in_output(node.metadata.rule) &&
+					node.metadata.rule?.metadata.parent_rule &&
 					global.args === null &&
-					relative_selector.combinator === null
+					relative_selector.combinator === null &&
+					(has_parent_rule_in_output(node.metadata.rule) ||
+						// Keep an `&` the selector would otherwise start with a combinator after.
+						(relative_selector.selectors.length === 1 &&
+							!!node.children[1]?.combinator &&
+							node.children[1].combinator.name !== ' '))
 				) {
 					// div { :global.x { ... } } becomes div { &.x { ... } }, but
 					// :global { :global.x { ... } } becomes .x { ... }: the block is

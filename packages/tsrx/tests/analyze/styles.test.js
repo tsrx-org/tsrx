@@ -953,9 +953,10 @@ describe('scoped style analysis', () => {
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 					0,
 				],
-				// The compound after a bare :global later in a selector still gets a hash.
+				// The compound after a bare :global later in a selector is unscoped, but
+				// the arguments of its :is(), :where() and :has() aren't.
 				[
-					':global.w, :root :global .x { color: red; }',
+					':global.w, :root :global .x:has(.k) { color: red; }',
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 					0,
 				],
@@ -973,8 +974,13 @@ describe('scoped style analysis', () => {
 				[':global, .z { .a { color: red; } }', TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR, 0],
 				['.z, :global { .a { color: red; } }', TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR, 0],
 				[':global, :global .w { .a { color: red; } }', TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR, 0],
-				['.p { :global.w,:global { color: red; } }', TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR, 1],
+				// With no rule around it, a lone :global has nothing to stand for.
 				[':global { .b, :global { color: red; } }', TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR, 1],
+				[
+					'@media print { :global.w, :global { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR,
+					1,
+				],
 			];
 			for (const [css, message, nth] of cases) {
 				const source = `const t = <style>${css}</style>;`;
@@ -1012,6 +1018,19 @@ describe('scoped style analysis', () => {
 				':global.w, .x { .b {} }',
 				':global.w, :root { @keyframes -global-k { from { opacity: 0; } } }',
 				':global.w, :root { @keyframes /* k */ "-global-k" { from { opacity: 0; } } }',
+				// The compounds after a bare :global later in a selector are unscoped.
+				':global.w, :root :global .x { color: red; }',
+				'.p { :global .icon, & :global .label { color: red; } }',
+				':global .note, :global(.dark) :global .x { color: red; }',
+				// A :not() argument without the hash only makes it match fewer elements.
+				'.p { :global.x, &:not(.z) { color: red; } }',
+				':global.w, :root:not(.x) { color: red; }',
+				// A lone :global in a rule stands for that rule (`&`).
+				'.p { :global.w,:global { color: red; } }',
+				'.p { :global, :global.w { .k { color: red; } } }',
+				// A lone :global in a rule that styles nothing.
+				':global, .card {}',
+				'.card, :global { .k {} }',
 				// Nothing is scoped in another global block anyway.
 				':global .outer { :global .a, .b { .k { color: red; } } }',
 				':global { :global .a, .b { color: red; } }',
@@ -1172,6 +1191,9 @@ describe('scoped style analysis', () => {
 					':global .outer { .b, :global .a { color: red; } }',
 					'.outer { .b, & .a { color: red; } }',
 				],
+				// A lone :global stands for the rule around it.
+				['.p { :global.w, :global { color: red; } }', '.p { &.w, & { color: red; } }'],
+				['.p { :global, :global.w { color: red; } }', '.p { &, &.w { color: red; } }'],
 			];
 			for (const [css, expected] of cases) {
 				for (const minify of [false, true]) {
@@ -1207,6 +1229,38 @@ describe('scoped style analysis', () => {
 					'.p { :global { :global.w { color: red; } } }',
 					'.p { /* :global {*/ &.w { color: red; } /*}*/ }',
 					'.p { &.w { color: red; } }',
+				],
+				// An `&` the selector would otherwise start with a combinator after stays.
+				[
+					':global { :global > .w { color: red; } }',
+					'/* :global {*/ & > .w { color: red; } /*}*/',
+					'& > .w { color: red; }',
+				],
+			];
+			for (const [css, expected, minified] of cases) {
+				expect(strip_hash(render(css, [], false)), css).toBe(expected);
+				expect(strip_hash(render(css, [], true)), css).toBe(minified);
+			}
+		});
+
+		it('drops the selector of a global block that holds only at-rules a style rule cannot hold', () => {
+			/** @type {Array<[string, string, string]>} */
+			const cases = [
+				[
+					':root, :global.w { @keyframes -global-k { from { opacity: 0; } } }',
+					'/* :root, :global.w {*/ @keyframes k { from { opacity: 0; } } /*}*/',
+					'@keyframes k { from { opacity: 0; } }',
+				],
+				[
+					':global.w { @font-face { font-family: x; } }',
+					'/* :global.w {*/ @font-face { font-family: x; } /*}*/',
+					'@font-face { font-family: x; }',
+				],
+				// A @media can sit in a style rule.
+				[
+					':root, :global.w { @media print { color: red; } }',
+					':root, .w { @media print { color: red; } }',
+					':root, .w { @media print { color: red; } }',
 				],
 			];
 			for (const [css, expected, minified] of cases) {

@@ -42,14 +42,20 @@ function is_global(relative_selector) {
 /**
  * A selector that starts with a bare `:global` makes its rule a global block:
  * the output scopes nothing in it, its selectors and the rules nested in it
- * alike. So report, as Svelte does:
+ * alike. Report a list where that loses something, as Svelte reports such a
+ * list, but only where the output would differ from writing each selector in
+ * a rule of its own:
  *
- * - a lone `:global` (the `:global { ... }` block) in a list of several, whose
- *   selector can't be dropped on its own (`:global, .a { ... }`), and
+ * - a lone `:global` in a list of several with no rule around it for an `&`
+ *   to stand for (`:global, .a { color: red; }`), where the output had to drop
+ *   the selector or leave an empty one, and
  * - outside another global block, a selector that doesn't start with a bare
  *   `:global` beside one that does, when it or a rule nested in the rule would
  *   be scoped on its own (`.a, :global .b`). `:global.a, :global(.b)` and
  *   `.p { :global .a, &.b { ... } }` compile.
+ *
+ * A rule with no declarations in it, other than in an at-rule that can't be
+ * nested (`@keyframes`, `@font-face`), styles nothing either way.
  *
  * Runs once the rule's selectors and nested rules have their metadata.
  *
@@ -63,13 +69,14 @@ function check_global_block_list(rule, report) {
 		const first = selector.children[0]?.selectors[0];
 		return first && is_global_block_selector(first) ? first : null;
 	});
+	const styles = has_declaration(rule.block);
 	const lone = selectors.findIndex(
 		(selector, index) =>
 			leading[index] &&
 			selector.children.length === 1 &&
 			selector.children[0].selectors.length === 1,
 	);
-	if (lone !== -1) {
+	if (lone !== -1 && styles && !has_parent_rule_in_output(rule)) {
 		report(TSRX_ERRORS.CSS_GLOBAL_BLOCK_NOT_ALONE, /** @type {AST.CSS.Node} */ (leading[lone]));
 		return;
 	}
@@ -78,8 +85,7 @@ function check_global_block_list(rule, report) {
 		if (parent.metadata.is_global_block) return;
 	}
 	if (
-		(has_declaration(rule.block) &&
-			selectors.some((selector, index) => !leading[index] && !is_unscoped(selector))) ||
+		(styles && selectors.some((selector, index) => !leading[index] && !is_unscoped(selector))) ||
 		nests_scoped(rule.block)
 	) {
 		report(
@@ -89,22 +95,30 @@ function check_global_block_list(rule, report) {
 	}
 }
 
-/** Pseudo-classes whose selector arguments the output scopes. */
-const SELECTOR_ARGUMENTS = ['is', 'where', 'not', 'has'];
+/**
+ * Pseudo-classes whose selector arguments the output scopes. `:not()` is left
+ * out: an argument without the hash only makes it match fewer elements.
+ */
+const SELECTOR_ARGUMENTS = ['is', 'where', 'has'];
 
 /**
  * Whether the output gives no part of `selector` a scope hash outside a global
  * block. A compound gets none when it is `:global(...)` (with its arguments
  * kept as written), `:root` or `:host` with only pseudo-classes, has an `&`,
- * or is a lone `:is()` or `:where()`; the arguments of its `:is()`, `:where()`,
- * `:not()` and `:has()` are scoped as selectors of their own.
+ * is a lone `:is()` or `:where()`, or follows a bare `:global`; the arguments
+ * of its `:is()`, `:where()` and `:has()` are scoped as selectors of their own.
  *
  * @param {AST.CSS.ComplexSelector} selector
  * @returns {boolean}
  */
 function is_unscoped(selector) {
+	let after_bare_global = false;
 	return selector.children.every(({ selectors, metadata }) => {
-		if (metadata.is_global) return true;
+		if (after_bare_global) return selectors.every(arguments_unscoped);
+		if (metadata.is_global) {
+			if (is_global_block_selector(selectors[0])) after_bare_global = true;
+			return true;
+		}
 		const [first] = selectors;
 		const pseudo = (/** @type {AST.CSS.SimpleSelector} */ simple) =>
 			simple.type === 'PseudoClassSelector' || simple.type === 'PseudoElementSelector';
@@ -116,15 +130,22 @@ function is_unscoped(selector) {
 				(selectors.length === 1 &&
 					first.type === 'PseudoClassSelector' &&
 					(first.name === 'is' || first.name === 'where'))) &&
-			selectors.every(
-				(simple) =>
-					simple.type !== 'PseudoClassSelector' ||
-					!simple.args ||
-					!SELECTOR_ARGUMENTS.includes(simple.name) ||
-					simple.args.children.every(is_unscoped),
-			)
+			selectors.every(arguments_unscoped)
 		);
 	});
+}
+
+/**
+ * @param {AST.CSS.SimpleSelector} simple
+ * @returns {boolean}
+ */
+function arguments_unscoped(simple) {
+	return (
+		simple.type !== 'PseudoClassSelector' ||
+		!simple.args ||
+		!SELECTOR_ARGUMENTS.includes(simple.name) ||
+		simple.args.children.every(is_unscoped)
+	);
 }
 
 /**
@@ -145,7 +166,7 @@ function nests_scoped(block) {
 			);
 		}
 		if (child.type !== 'Atrule') return false;
-		if (child.name.replace(/^-((webkit)|(moz)|(o)|(ms))-/, '') === 'keyframes') {
+		if (at_rule_name(child) === 'keyframes') {
 			// The name, as the stylesheet transform reads it: after any comments.
 			const name = child.prelude.replace(/^(\s|\/\*[^]*?\*\/)*/, '');
 			return !/^['"]?-global-/.test(name);
@@ -155,13 +176,83 @@ function nests_scoped(block) {
 }
 
 /**
+ * Whether `block` puts a declaration in a style rule: directly, in a nested
+ * rule, or in an at-rule that can be nested (`@media`). The declarations of a
+ * `@keyframes` or `@font-face` style no element through the rule.
+ *
  * @param {AST.CSS.Block | null} block
  * @returns {boolean}
  */
 function has_declaration(block) {
 	return !!block?.children.some(
-		(child) => child.type === 'Declaration' || has_declaration(child.block),
+		(child) =>
+			child.type === 'Declaration' ||
+			(!(child.type === 'Atrule' && is_unnestable_at_rule(child)) && has_declaration(child.block)),
 	);
+}
+
+/** At-rules a style rule can hold (CSS Nesting's conditional group rules). */
+const NESTABLE_AT_RULES = ['media', 'supports', 'container', 'layer', 'scope', 'starting-style'];
+
+/**
+ * @param {AST.CSS.Atrule} at_rule
+ * @returns {string}
+ */
+function at_rule_name(at_rule) {
+	return at_rule.name.toLowerCase().replace(/^-((webkit)|(moz)|(o)|(ms))-/, '');
+}
+
+/**
+ * Whether `at_rule` can't sit in a style rule, as `@keyframes`, `@font-face`
+ * and `@property` can't.
+ *
+ * @param {AST.CSS.Atrule} at_rule
+ * @returns {boolean}
+ */
+export function is_unnestable_at_rule(at_rule) {
+	return !NESTABLE_AT_RULES.includes(at_rule_name(at_rule));
+}
+
+/**
+ * Whether the output drops `rule`'s selector, leaving it behind as a comment,
+ * and keeps what's in the rule: a lone `:global { ... }` block; a global block
+ * with a lone `:global` in its list and no rule around it for an `&` to stand
+ * for, which styles nothing (or is TSRX3011); and a global block that holds
+ * only at-rules a style rule can't hold (`@keyframes`, `@font-face`), which
+ * are valid only outside it.
+ *
+ * @param {AST.CSS.Rule} rule
+ * @returns {boolean}
+ */
+export function drops_selector(rule) {
+	if (!rule.metadata.is_global_block) return false;
+	const selectors = rule.prelude.children;
+	const lone = selectors.some(
+		(selector) =>
+			selector.children.length === 1 &&
+			selector.children[0].selectors.length === 1 &&
+			is_global_block_selector(selector.children[0].selectors[0]),
+	);
+	if (lone && (selectors.length === 1 || !has_parent_rule_in_output(rule))) return true;
+	const { children } = rule.block;
+	return (
+		children.length > 0 &&
+		children.every((child) => child.type === 'Atrule' && is_unnestable_at_rule(child))
+	);
+}
+
+/**
+ * Whether the output keeps a rule around `rule` for an `&` to refer to. The
+ * rules in a rule whose selector the output drops (`:global { ... }`) belong
+ * to the rule around it, if there is one.
+ *
+ * @param {AST.CSS.Rule | null} rule
+ * @returns {boolean}
+ */
+export function has_parent_rule_in_output(rule) {
+	let parent = rule?.metadata.parent_rule;
+	while (parent && drops_selector(parent)) parent = parent.metadata.parent_rule;
+	return !!parent;
 }
 
 /**

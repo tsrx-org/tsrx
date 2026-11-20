@@ -1250,8 +1250,8 @@ with CSS nesting:
   whole rule unscoped, so outside another such rule, a selector beside it in
   the list that would get a hash on its own, as in
   `.card, :global .note { ... }`, is the `TSRX3011` error, as is a rule nested
-  in it that would, and a lone `:global` in a list. Write `.card` in a rule of
-  its own.
+  in it that would, and a lone `:global` in a list outside any rule. Write
+  `.card` in a rule of its own.
 - Block `:global { .toast { ... } body { ... } }` -> `.toast { ... } body { ... }`:
   the wrapper is dropped (left behind as a comment) and everything inside is
   unscoped. Several page-wide rules at once.
