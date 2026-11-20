@@ -1064,6 +1064,36 @@ export async function App() @{
 			const generated = mapping.generatedOffsets[0];
 			expect(result.code.slice(generated, generated + mapping.generatedLengths[0])).toBe(text);
 		});
+
+		it.each([
+			['a comment', 'export function* gen(v: any) {\n\tyield /* c */ * v;\n}\n'],
+			['spaces', 'export function* gen(v: any) {\n\tyield \t * v;\n}\n'],
+			['nothing', 'export function* gen(v: any) {\n\tyield* v;\n}\n'],
+		])('maps the `*` of a `yield*` with %s before it from the source `*`', (label, source) => {
+			// esrap writes `yield*` as one token and maps its end to the keyword's
+			// start plus six, which is past the `*` only in `yield*`.
+			const result = compile(source, 'App.tsrx');
+			const line = result.code.split('\n').findIndex((text) => text.includes('yield* v'));
+			const column = result.code.split('\n')[line].indexOf('yield* v');
+			const keyword = source.indexOf('yield');
+			const star = source.indexOf('* v');
+			expect(
+				source_map_lines(result, source)
+					[line].filter((segment) => segment.column >= column && segment.column <= column + 6)
+					.map((segment) => [segment.column - column, segment.offset]),
+			).toEqual(
+				label === 'nothing'
+					? [
+							[0, keyword],
+							[6, star + 1],
+						]
+					: [
+							[0, keyword],
+							[5, star],
+							[6, star + 1],
+						],
+			);
+		});
 	});
 
 	describe(`[${name}] text with a comment and characters JSX text can't hold`, () => {
