@@ -41,9 +41,9 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
  * swaps in the fallback for a caught error, which the boundary held as it
  * began or the content threw as it rendered, rather than rendering the
  * content again
- * @property {number | null} rendered_from while a render after a reset
- * removes the fallback, a component uid taken as it began: what the content
- * it renders creates has later ones
+ * @property {number | null} rendered_from while a render removes the
+ * fallback, a component uid taken as it began: what the content it renders
+ * after a reset creates has later ones
  * @property {boolean} unmounting whether the boundary's teardown has begun
  * @property {unknown} dropped_by the boundary whose render removed this one,
  * as its teardown began: the one around it showing other content, such as
@@ -605,7 +605,7 @@ function create_boundary_nodes(render, instance) {
 		if (state) {
 			state.removes_fallback = scope !== undefined && !state.shows_content;
 			state.removes_for_catch = scope !== undefined && state.caught !== null;
-			state.rendered_from = state.removes_fallback && !state.removes_for_catch ? take_uid() : null;
+			state.rendered_from = state.removes_fallback ? take_uid() : null;
 		}
 		try {
 			if (scope) dropping_for(instance, () => /** @type {EffectScope} */ (scope).stop());
@@ -712,6 +712,9 @@ export function TsrxErrorBoundary(props, ctx) {
 				// after its own call to `reset`.
 				state.fallback_from = null;
 				state.shows_content = true;
+				// A reset can come as this render removes the fallback, from what
+				// that tears down: this render shows the content, not the fallback.
+				state.removes_for_catch = false;
 
 				/** @type {RenderFrame} */
 				const frame = { instance: vapor.currentInstance, errors: [] };

@@ -4712,6 +4712,37 @@ function ResetWatcherWithThrowingCatch(props: { body: unknown }) @{
 	}
 }
 
+// The @catch's own teardown resets the @try, as the @catch renders again
+// for a change it reads: that render shows the content, whose watcher the
+// rest of the teardown sets off.
+let cleanup_reset_fails = true;
+let cleanup_resets = false;
+const cleanup_revision = ref(0);
+
+function ResetDuringCleanup() @{
+	@try {
+		if (cleanup_reset_fails) throw new Error('first');
+		<WatchesResetSignal />
+	} @catch (err, reset) {
+		const detail = cleanup_revision.value + ': ' + (err as Error).message;
+		onScopeDispose(() => {
+			if (!cleanup_resets) return;
+			cleanup_resets = false;
+			cleanup_reset_fails = false;
+			reset();
+		});
+		<>
+			<Suspense
+				v-slots={{
+					default: () => <BumpsOnDispose />,
+					fallback: () => <i>{'wait'}</i>,
+				}}
+			/>
+			<b class="cleanup-caught">{detail}</b>
+		</>
+	}
+}
+
 // The body's async component rejects while the Suspense is pending, so the
 // boundary around the Suspense swaps in the @catch and removes the body,
 // whose other component throws as it is torn down.
@@ -5572,6 +5603,21 @@ describe('tsrx-vue a @catch that throws', () => {
 			app.unmount();
 		},
 	);
+
+	it('shows in its @catch what the content throws when the @catch resets the @try as it is torn down', async () => {
+		cleanup_reset_fails = true;
+		cleanup_resets = false;
+		reset_signal.value = 0;
+		const app = await mount(ResetDuringCleanup, {});
+		expect(text('.cleanup-caught')).toBe('0: first');
+		cleanup_resets = true;
+		cleanup_revision.value++;
+		await flush();
+		expect(texts('.cleanup-caught')).toContain('1: new content watcher');
+		expect(handled).toEqual([]);
+		cleanup_resets = false;
+		app.unmount();
+	});
 
 	it('passes on a teardown error whatever the value, also NaN', async () => {
 		scope_teardown_armed = true;
