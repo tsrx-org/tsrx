@@ -676,9 +676,9 @@ describe('@tsrx/vite-plugin-hono DOM runtime', () => {
 	it('gives a `<textarea>` its text over lines as one child, with its lines joined', () => {
 		render(<JsxTextOnlyApp />, container);
 
-		expect(
-			container.querySelector<HTMLTextAreaElement>('.only-text-textarea-lines')?.value,
-		).toBe(' a b ');
+		expect(container.querySelector<HTMLTextAreaElement>('.only-text-textarea-lines')?.value).toBe(
+			' a b ',
+		);
 	});
 
 	it('gives a `<textarea>` an `&` before a name as one child', () => {

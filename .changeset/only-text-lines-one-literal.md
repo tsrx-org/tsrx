@@ -25,4 +25,7 @@ A JSX platform says how its compiled JSX reads text with the new
 
 On Solid, a text over lines now reads as it does on React: a space or tab
 before the line break after its last line is dropped, where Solid's compiler
-kept one space, and a run of spaces or tabs inside it stays as written.
+kept one space, and a run of spaces or tabs inside it stays as written. On Vue,
+a reference after a bare `&` with no `;` between them now decodes in a text
+over lines, as it already does in a text on one line, where vue-jsx-vapor left
+it as written (`a &⏎&amp;`).

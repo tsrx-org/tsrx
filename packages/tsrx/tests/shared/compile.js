@@ -8356,6 +8356,13 @@ export const b2 = {
 				"<b>{' a'}</b>",
 				"<b>{' a'}</b>",
 			],
+			// Solid's compiler kept one space here, which JSX and vue-jsx-vapor drop
+			[
+				'an element, for a space before a line break at its end',
+				'<b> a \n\t</b>',
+				"<b>{' a'}</b>",
+				"<b>{' a'}</b>",
+			],
 			[
 				'an element, for a line break at its start',
 				'<b>\n\t\ta </b>',
@@ -8369,10 +8376,10 @@ export const b2 = {
 				"<pre>{'\\nx\\n\t\ty '}</pre>",
 			],
 			[
-				'an element, for a space written as a reference at the start of a line',
-				'<b> a\n\t\t&#32;b </b>',
-				"<b>{' a  b '}</b>",
-				"<b>{' a\\n\t\t b '}</b>",
+				'an element, for a space written as a reference inside a line',
+				'<b> a&#32;&#32;b\n\t\tc </b>',
+				"<b>{' a  b c '}</b>",
+				"<b>{' a  b\\n\t\tc '}</b>",
 			],
 			[
 				'an element, for a quote',
@@ -8434,6 +8441,19 @@ export const b2 = {
 			],
 			['text with a CR that is no CRLF', '<b> a\rb </b>', "<b>{' '}a\rb{' '}</b>"],
 			['text with a U+2028', '<b> a b </b>', "<b>{' '}a b{' '}</b>"],
+			// SWC and Babel trim a line after they decode it, and vue-jsx-vapor a
+			// text's edges, so a space or line feed written as a reference at a line
+			// break is gone there, where JSX keeps it
+			[
+				'a space written as a reference at the start of a line',
+				'<b> a\n\t\t&#32;b </b>',
+				"<b>{' '}a\n\t\t&#32;b{' '}</b>",
+			],
+			[
+				'a line feed written as a reference at the end of a line',
+				'<b> a&#10;\n\t\tb </b>',
+				"<b>{' '}a&#10;\n\t\tb{' '}</b>",
+			],
 			[
 				'a reference longer than the parser reads',
 				'<b> &#0000000000000065; </b>',

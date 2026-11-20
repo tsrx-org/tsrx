@@ -5591,7 +5591,8 @@ export function wrap_edge_whitespace(nodes, in_element = false, reading = {}) {
  *
  * - whitespace other than spaces and tabs in a text that spans lines: the
  *   compilers trim it at a line's edge differently (TypeScript trims a
- *   non-breaking space there, SWC and Babel don't)
+ *   non-breaking space there, SWC and Babel don't), and a reference to
+ *   whitespace at a line break (`whitespace_reference_at_line_break`)
  * - an `&#` that doesn't start a short decimal or lowercase-hex reference
  *   ending in `;`, which the parser reads differently (esbuild and oxc read
  *   `&#+65;` as `A`; the parser decodes `&#X41;`, which they leave as
@@ -5630,6 +5631,7 @@ function only_text_value(text, reading) {
 	const offsets = value_offsets(raw, value, !!reading.html);
 	if (!offsets) return null;
 	if (!lines) return value;
+	if (whitespace_reference_at_line_break(raw, value, offsets)) return null;
 	return reading.lines === 'keep'
 		? kept_lines(raw, value, offsets)
 		: joined_lines(raw, value, offsets);
@@ -5680,6 +5682,28 @@ function value_offsets(raw, value, html) {
 	plain(raw.length);
 	offsets.push(at);
 	return at === value.length ? offsets : null;
+}
+
+/**
+ * Whether a reference to whitespace (`&#32;`, `&#10;`) starts or ends a line
+ * at a line break in `raw`, past the spaces and tabs there. JSX trims a line
+ * as written, so it keeps such a reference, and so does the literal; SWC and
+ * Babel trim a line after they decode it, and vue-jsx-vapor the whitespace
+ * at a text's start or end, so they drop it from the split text.
+ *
+ * @param {string} raw
+ * @param {string} value
+ * @param {number[]} offsets `value_offsets`
+ * @returns {boolean}
+ */
+function whitespace_reference_at_line_break(raw, value, offsets) {
+	for (const found of raw.matchAll(/[ \t]*\r?\n[ \t]*/g)) {
+		const before = found.index;
+		const after = before + found[0].length;
+		if (raw[before - 1] === ';' && /\s/.test(value[offsets[before] - 1])) return true;
+		if (raw[after] === '&' && /\s/.test(value[offsets[after]] ?? '')) return true;
+	}
+	return false;
 }
 
 /**
