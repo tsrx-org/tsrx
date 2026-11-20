@@ -476,9 +476,7 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			const source =
 				'const _tsrx_style_anchor_1 = 0;\nexport const theme = <style>.x { color: red; }</style>;\nexport const n = _tsrx_style_anchor_1;\n';
 			const { code } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-			expect(code.match(/\bconst _tsrx_style_anchor_1\b/g)).toEqual([
-				'const _tsrx_style_anchor_1',
-			]);
+			expect(code.match(/\bconst _tsrx_style_anchor_1\b/g)).toEqual(['const _tsrx_style_anchor_1']);
 			expect(code).toMatch(/\bconst _tsrx_style_anchor_2 = <style>/);
 		});
 	});
@@ -7607,13 +7605,29 @@ export function App({ items }: { items: string[] }) @{
 					'App.tsrx',
 				);
 				// The authored name keeps its one declaration, and the tag reads another
-				expect(code.match(/\b(?:const|let|var) TsrxDynamic_1\b/g)).toEqual([
-					'const TsrxDynamic_1',
-				]);
+				expect(code.match(/\b(?:const|let|var) TsrxDynamic_1\b/g)).toEqual(['const TsrxDynamic_1']);
 				expect(code).not.toMatch(/<TsrxDynamic_1\b/);
 				expect(code).toContain('title={TsrxDynamic_1}');
 			},
 		);
+
+		it.each([
+			[
+				'a dynamic tag alias in a keyed `@for` row',
+				'TsrxDynamic_1',
+				`export function App({ items }: any) @{\n\t<ul>\n\t\t@for (const { id, Tag } of items; key id) {\n\t\t\tconst TsrxDynamic_1 = 'mine';\n\t\t\t<Tag title={TsrxDynamic_1} />\n\t\t}\n\t</ul>\n}`,
+			],
+			[
+				"a style block's ref temporary",
+				'_tsrx_style_ref_1',
+				`export function App({ getRef }: any) @{\n\tconst _tsrx_style_ref_1 = 'mine';\n\t<><style ref={getRef(_tsrx_style_ref_1)} /><div /></>\n}`,
+			],
+		])('names %s apart from a name the author wrote', (_case, name, source) => {
+			const { code } = compile(source, 'App.tsrx');
+			expect(code.match(new RegExp(`\\b(?:const|let|var) ${name}\\b`, 'g'))).toEqual([
+				`const ${name}`,
+			]);
+		});
 
 		it.each([
 			[
