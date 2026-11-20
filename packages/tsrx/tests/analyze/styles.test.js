@@ -1198,6 +1198,40 @@ describe('scoped style analysis', () => {
 		});
 	});
 
+	describe('a dropped :global { ... } block', () => {
+		it('ends its last declaration, normal and minified', () => {
+			/** @type {Array<[css: string, expected: string, minified: string]>} */
+			const cases = [
+				[
+					'.p { :global { color: red } .k { color: blue } }',
+					'.p.H { /* :global {*/ color: red ;/*}*/ .k.H { color: blue } }',
+					'.p.H { color: red ; .k.H { color: blue } }',
+				],
+				// One that ends with a ; or a rule is left as it is.
+				[
+					'.p { :global { color: red; } .k { color: blue } }',
+					'.p.H { /* :global {*/ color: red; /*}*/ .k.H { color: blue } }',
+					'.p.H { color: red; .k.H { color: blue } }',
+				],
+				[
+					'.p { :global { .x { color: red } } .k { color: blue } }',
+					'.p.H { /* :global {*/ .x { color: red } /*}*/ .k.H { color: blue } }',
+					'.p.H { .x { color: red } .k.H { color: blue } }',
+				],
+			];
+			for (const [css, expected, minified] of cases) {
+				for (const minify of [false, true]) {
+					const sheet = parseStyle(css, { filename, line: 1, column: 0 }, {});
+					analyzeCss(sheet);
+					const rendered = renderStylesheets([prepareStylesheetForRender(sheet, 'theme')], minify)
+						.replace(/tsrx-[0-9a-f]+/g, 'H')
+						.replace(/\s+/g, ' ');
+					expect(rendered, css).toBe(minify ? minified : expected);
+				}
+			}
+		});
+	});
+
 	describe('pruned selectors beside :global', () => {
 		/**
 		 * Render `css` with the complex selectors written as `pruned` unused, as
