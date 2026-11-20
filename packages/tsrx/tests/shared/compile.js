@@ -8412,8 +8412,8 @@ export const b2 = {
 				"<b>{' &check; b '}</b>",
 			],
 			// Solid's compiler turns it into a space
-			['a non-breaking space', '<b> a b </b>', "<b>{' a b '}</b>"],
-			['an ideographic space', '<b> a　b </b>', "<b>{' a　b '}</b>"],
+			['a non-breaking space', '<b> a\u00a0b </b>', "<b>{' a\u00a0b '}</b>"],
+			['an ideographic space', '<b> a\u3000b </b>', "<b>{' a\u3000b '}</b>"],
 		])(
 			'prints %s as one literal unless the target reads text as HTML',
 			(_case, element, printed) => {
@@ -8436,11 +8436,11 @@ export const b2 = {
 			// The targets' JSX compilers read these differently from the literal
 			[
 				'text over lines with a non-breaking space at a line start',
-				'<b> a\n b </b>',
-				"<b>{' '}a\n b{' '}</b>",
+				'<b> a\n\u00a0b </b>',
+				"<b>{' '}a\n\u00a0b{' '}</b>",
 			],
 			['text with a CR that is no CRLF', '<b> a\rb </b>', "<b>{' '}a\rb{' '}</b>"],
-			['text with a U+2028', '<b> a b </b>', "<b>{' '}a b{' '}</b>"],
+			['text with a U+2028', '<b> a\u2028b </b>', "<b>{' '}a\u2028b{' '}</b>"],
 			// SWC and Babel trim a line after they decode it, and vue-jsx-vapor a
 			// text's edges, so a space or line feed written as a reference at a line
 			// break is gone there, where JSX keeps it
