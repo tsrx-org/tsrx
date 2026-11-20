@@ -1219,6 +1219,29 @@ const METHOD_MODIFIERS = new Set([
 const MODIFIER_ERROR_CODES = new Set(['TS1028', 'TS1029', 'TS1030', 'TS1243']);
 
 /**
+ * The codes of the errors TypeScript's checker reports on a modifier, over all
+ * of it (`grammarErrorOnNode`, `grammarErrorOnFirstToken`), where the parser
+ * finds them at its start (see `#recordCheckerLevelError`).
+ */
+const MODIFIER_KEYWORD_ERROR_CODES = new Set([
+	...MODIFIER_ERROR_CODES,
+	'TS1024',
+	'TS1031',
+	'TS1038',
+	'TS1040',
+	'TS1042',
+	'TS1044',
+	'TS1079',
+	'TS1089',
+	'TS1184',
+	'TS1242',
+	'TS1275',
+	'TS1491',
+	'TS1495',
+	'TS2668',
+]);
+
+/**
  * The codes of the errors of a method's modifiers that acorn-typescript
  * raises at the method's start, once it has read them: `abstract` outside an
  * abstract class (TS1244).
@@ -6294,7 +6317,9 @@ export function TSRXPlugin(config) {
 			 * both when converting it and when validating it. An error recorded while
 			 * acorn-typescript tries a parse that it then abandons is dropped with the
 			 * rest of that parse's effects. While checker errors are held, it goes in
-			 * the held ones (see `#holdingErrors`).
+			 * the held ones (see `#holdingErrors`). An error at a modifier that ends
+			 * after the modifier's first character ends at its end, as TypeScript
+			 * reports it (see `MODIFIER_KEYWORD_ERROR_CODES`).
 			 * @param {number} start
 			 * @param {number} end
 			 * @param {ReportedError} error
@@ -6302,6 +6327,9 @@ export function TSRXPlugin(config) {
 			 *   `raise`, as a `SyntaxError` (see `#releaseErrors`)
 			 */
 			#recordCheckerLevelError(start, end, error, raised = false) {
+				if (end === start + 1 && MODIFIER_KEYWORD_ERROR_CODES.has(error.code ?? '')) {
+					end = word_end(this.input, start);
+				}
 				const held = this.#hold.held;
 				const errors = held ?? this.#errors;
 				if (errors) {

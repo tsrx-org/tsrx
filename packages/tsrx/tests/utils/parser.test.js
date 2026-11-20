@@ -14540,6 +14540,74 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it('records an error of a modifier over the whole modifier, as TypeScript reports it', async () => {
+		// The parser finds these at the modifier's start, and recorded them over
+		// its first character.
+		/** @type {Array<[source: string, error: ErrorKind, modifier: string]>} */
+		const modifier_cases = [
+			[
+				'declare namespace O { declare const x: number; }',
+				TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT,
+				'declare const',
+			],
+			[
+				'declare module "m" { declare function f(): void; }',
+				TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT,
+				'declare function',
+			],
+			[
+				'function f() { declare const x: number; }',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'declare',
+			],
+			[
+				'function f() { if (x) declare let y: number; }',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'declare',
+			],
+			['{ declare class C {} }', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'declare'],
+			['abstract namespace N {}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract'],
+			[
+				'namespace O { abstract namespace N {} }',
+				TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED,
+				'abstract',
+			],
+			['abstract function f() {}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract'],
+			['{ export global {} }', TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION, 'export'],
+			[
+				'declare module "m" { export global {} }',
+				TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION,
+				'export',
+			],
+			['class A { static public x = 1; }', TS_ERRORS.MODIFIER_MUST_PRECEDE, 'public'],
+			[
+				'abstract class A { static abstract x: number; }',
+				TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH,
+				'abstract x',
+			],
+			[
+				'class A { protected public x = 1; }',
+				TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
+				'public',
+			],
+			['public class A {}', TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT, 'public'],
+			['class A { async constructor() {} }', TS_ERRORS.MODIFIER_ON_CONSTRUCTOR, 'async'],
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			modifier_cases.flatMap(([source]) => collect_modes.map((options) => ({ source, options }))),
+		);
+		for (const [index, outcome] of outcomes.entries()) {
+			const [source, error, modifier] = modifier_cases[Math.floor(index / collect_modes.length)];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			const pos = source.indexOf(modifier);
+			const end = pos + modifier.split(' ')[0].length;
+			expect(
+				outcome.errors?.filter((other) => other.code === code_of(error)),
+				source,
+			).toEqual([{ code: code_of(error), pos, end }]);
+		}
+	});
+
 	it('reports the syntax error in a namespace named `as`, and not its place', () => {
 		// TypeScript reads a namespace named `as` and reports a syntax error in it
 		// instead (TS1005 `'{' expected.` at `any`, where this parser reports

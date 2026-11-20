@@ -718,8 +718,8 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 
 	// The editor's code leaves a repeated modifier out, but the compile anchors
 	// the error on the code it reads in its place, so the editor shows it on
-	// the modifier's first character, not on the code before it or at the start
-	// of the file.
+	// the modifier, as TypeScript does, not on the code before it or at the
+	// start of the file.
 	it.each([
 		[
 			'RepeatedAccessibility',
@@ -737,7 +737,63 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		const { document, diagnostics } = await editor_diagnostics_for(name, source);
 
 		expect(reported(document, diagnostics, code)).toEqual([
-			{ source: DIAGNOSTIC_SOURCE, text: at[0], offset: source.indexOf(at) },
+			{ source: DIAGNOSTIC_SOURCE, text: at.split(' ')[0], offset: source.indexOf(at) },
+		]);
+	});
+
+	// A modifier error on a word that the editor's code leaves out or doesn't
+	// map at the start of a statement or a member shows once on that word, where
+	// TypeScript reports it, not on the code before it: `abstract` before a
+	// namespace, `declare` before a class in a block, `accessor` before a
+	// method. Where the editor's code prints the word, TypeScript's own error
+	// on it shows, which the compile's leaves the place to.
+	it.each([
+		['AbstractNamespace', 'export {};\nabstract namespace N {}\n', 'TS1242', 'abstract'],
+		['AbstractFunction', 'export {};\nabstract function f() {}\n', 'TS1242', 'abstract'],
+		['DeclareClassInBlock', 'export {};\n{\n\tdeclare class C {}\n}\n', 'TS1184', 'declare'],
+		[
+			'DeclareFunctionInAmbient',
+			'export {};\ndeclare namespace O {\n\tdeclare function f(): void;\n}\n',
+			'TS1038',
+			'declare function',
+		],
+		['AccessorMethod', 'export class A {\n\taccessor m() {}\n}\n', 'TS1275', 'accessor'],
+	])('reports %s on the modifier', async (name, source, code, at) => {
+		const { document, diagnostics } = await editor_diagnostics_for(name, source);
+
+		expect(
+			reported(document, diagnostics, code).map(({ text, offset }) => ({ text, offset })),
+		).toEqual([{ text: at.split(' ')[0], offset: source.indexOf(at) }]);
+	});
+
+	// TypeScript also reports the decorators of a constructor on the editor's
+	// code: the error shows once, on the `@`, not again, empty, after it.
+	it('shows the decorators of a constructor once, on the `@`', async () => {
+		const source = 'declare const dec: any;\nexport class A {\n\t@dec constructor() {}\n}\n';
+		const { document, diagnostics } = await editor_diagnostics_for('DecoratedConstructor', source);
+
+		expect(
+			diagnostics
+				.filter((diagnostic) => String(diagnostic.code).endsWith('1206'))
+				.map((diagnostic) => ({
+					text: document.getText(diagnostic.range),
+					offset: document.offsetAt(diagnostic.range.start),
+				})),
+		).toEqual([{ text: '@', offset: source.indexOf('@') }]);
+	});
+
+	// The error's anchor covers one character of the editor's code, so
+	// TypeScript's error on the code after the modifier still shows there.
+	it("keeps TypeScript's error on the code after a modifier the editor's code leaves out", async () => {
+		const source =
+			'declare class B {\n\tg: number;\n}\nexport class A extends B {\n\tpublic accessor get g() {\n\t\treturn 1;\n\t}\n}\n';
+		const { document, diagnostics } = await editor_diagnostics_for('AccessorGetter', source);
+
+		expect(reported(document, diagnostics, 'TS1275')).toEqual([
+			{ source: DIAGNOSTIC_SOURCE, text: 'accessor', offset: source.indexOf('accessor') },
+		]);
+		expect(reported(document, diagnostics, 'TS2611')).toEqual([
+			{ source: 'ts', text: 'g', offset: source.indexOf('g()') },
 		]);
 	});
 
