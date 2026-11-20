@@ -72,7 +72,7 @@ for (const snapshotFile of snapshotFiles) {
 								parser: 'typescript',
 								filepath: 'Fixture.tsx',
 							})
-						: (override?.output ?? formatCase.output);
+						: (override?.output ?? replaced(formatCase.output, override?.replace));
 					const formatted = await formatAsHarness(text, {
 						...options,
 						parser: 'tsrx',
@@ -87,6 +87,20 @@ for (const snapshotFile of snapshotFiles) {
 			});
 		}
 	});
+}
+
+/**
+ * Prettier's output with each `[from, to]` text of an override replaced.
+ * @param {string} output
+ * @param {Array<[string, string]>} [replace]
+ * @returns {string}
+ */
+function replaced(output, replace = []) {
+	for (const [from, to] of replace) {
+		if (!output.includes(from)) throw new Error(`Not in Prettier's output: ${from}`);
+		output = output.replace(from, to);
+	}
+	return output;
 }
 
 test('overrides and known failures name imported cases', () => {

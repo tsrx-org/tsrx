@@ -19,9 +19,10 @@ export { is_style_element };
 /**
  * Mark selectors inside the stylesheet as "used" so `renderStylesheets` does
  * not comment them out, and mark every non-global relative selector as
- * scoped, except in the arguments of a global compound (see
- * `keep_global_compound_arguments`). Both render modes (D4) keep every
- * selector:
+ * scoped, except the compounds after a bare `:global` later in a selector
+ * (`div :global p`), which a component leaves unscoped too, and the arguments
+ * of a global compound (see `keep_global_compound_arguments`). Both render
+ * modes (D4) keep every selector:
  *
  * - `scope`: a standalone `<style>` block. Every selector is marked; we
  *   skip selector-pruning because component boundaries can be dynamic — any
@@ -48,8 +49,20 @@ export function prepare_stylesheet_for_render(stylesheet, mode = 'scope') {
 			_(node, { next }) {
 				if (node.type === 'ComplexSelector') {
 					node.metadata.used = true;
-				} else if (node.type === 'RelativeSelector' && !node.metadata.is_global) {
-					node.metadata.scoped = true;
+					// As in a component, the compounds the analysis marks global-like
+					// after a bare :global later in a rule's selector stay unscoped.
+					let after_bare_global = false;
+					for (const relative_selector of node.children) {
+						const { is_global, is_global_like } = relative_selector.metadata;
+						if (!is_global && !(after_bare_global && is_global_like)) {
+							relative_selector.metadata.scoped = true;
+						}
+						const [first] = relative_selector.selectors;
+						after_bare_global ||=
+							first?.type === 'PseudoClassSelector' &&
+							first.name === 'global' &&
+							first.args === null;
+					}
 				}
 				return next();
 			},

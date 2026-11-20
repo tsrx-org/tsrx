@@ -309,6 +309,99 @@ import b from './b';`;
 		]);
 	});
 
+	it('keeps the features of a mapping over the same ranges as one without', () => {
+		// A Vue `{item.label}` maps `item` twice: as the object of the member, for
+		// diagnostics only, and as the name. Either order keeps the name's features,
+		// and the container keeps its edges.
+		const original = '{item.label}';
+		const generated = '{item.value.label}';
+		const container = { ...m(0, 0, 12), generatedLengths: [18], data: verify_only };
+		for (const mappings of [
+			[container, m(1, 1, 4, { data: verify_only }), m(1, 1, 4)],
+			[container, m(1, 1, 4), m(1, 1, 4, { data: verify_only })],
+		]) {
+			expect(to_span_mappings(mappings, generated, original)).toEqual([
+				[0, 1, 0, 1, SpanMapKind.Verbatim, SpanMapFeature.None],
+				[1, 4, 1, 4, SpanMapKind.Verbatim, SpanMapFeature.All & ~SpanMapFeature.Formatting],
+				[11, 7, 5, 7, SpanMapKind.Verbatim, SpanMapFeature.None],
+			]);
+		}
+	});
+
+	it('keeps the first of two mappings with features over the same ranges', () => {
+		// Its features match the spans around it, which coalesce with it as before:
+		// an edit over the whole import (Organize Imports) still fits in one span.
+		const text = "import { B, A } from './lib';\n\nexport const a = A;\n";
+		const navigation = { navigation: true, completion: true, customData: {} };
+		const tokens = [...text.matchAll(/[\w$]+|'[^']*'|;/g)].map((token) =>
+			m(token.index, token.index, token[0].length, { data: navigation }),
+		);
+		const b = text.indexOf('B');
+		expect(
+			to_span_mappings(
+				[...tokens, m(b, b, 1, { data: { semantic: true, customData: {} } })],
+				text,
+				text,
+			),
+		).toEqual([
+			[
+				0,
+				text.length,
+				0,
+				text.length,
+				SpanMapKind.Verbatim,
+				features_from_mapping_data(navigation),
+			],
+		]);
+		// A CSS class name keeps Hover and Definition off for the TSRX server.
+		const css = { semantic: true, navigation: true, customData: { hover: 'css' } };
+		expect(
+			to_span_mappings(
+				[m(0, 0, 1, { data: css }), m(0, 0, 1, { data: { semantic: true, navigation: true } })],
+				'x',
+				'x',
+			),
+		).toEqual([[0, 1, 0, 1, SpanMapKind.Verbatim, features_from_mapping_data(css)]]);
+	});
+
+	it('keeps a span position-only while no mapping over the same ranges has a feature', () => {
+		// `if (a) break;`: the transform maps `break` for diagnostics and again with
+		// no feature for TypeScript 7, so it joins `a`, as unmapped text would.
+		const text = 'if (a) break;';
+		const position_only = { customData: {} };
+		const keyword = text.indexOf('break');
+		const all_but_format = SpanMapFeature.All & ~SpanMapFeature.Formatting;
+		for (const data of [
+			[position_only, verify_only],
+			[verify_only, position_only],
+		]) {
+			expect(
+				to_span_mappings(
+					[m(4, 4, 1), ...data.map((d) => m(keyword, keyword, 5, { data: d }))],
+					text,
+					text,
+				)[0],
+			).toEqual([4, 8, 4, 8, SpanMapKind.Verbatim, all_but_format]);
+		}
+		// With a feature of its own, it keeps it and stays apart.
+		const completion = { completion: true, customData: {} };
+		expect(
+			to_span_mappings(
+				[
+					m(4, 4, 1),
+					m(keyword, keyword, 5, { data: position_only }),
+					m(keyword, keyword, 5, { data: completion }),
+				],
+				text,
+				text,
+			).map((span) => [span[0], span[1], span[5]]),
+		).toEqual([
+			[4, 1, all_but_format],
+			[5, 2, SpanMapFeature.None],
+			[keyword, 5, features_from_mapping_data(completion)],
+		]);
+	});
+
 	it("keeps a dropped container's edges, so a diagnostic over the whole container maps to it", () => {
 		// The printed import type loses the source's inner spaces, so the container is
 		// an Atom that encloses the Verbatim specifier and loses to it.

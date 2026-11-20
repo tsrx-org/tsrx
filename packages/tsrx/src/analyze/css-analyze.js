@@ -705,18 +705,19 @@ export function analyze_css(css, options = {}) {
 			context.next(); // analyze relevant selectors first
 
 			{
+				// A bare :global anywhere in a pseudo-class's argument, not only one
+				// that starts a compound (`:is(.x:global)`, `:is(:global(.x) :global .y)`).
+				if (context.path.at(-2)?.type === 'PseudoClassSelector') {
+					const bare = node.children
+						.flatMap((relative_selector) => relative_selector.selectors)
+						.find(is_global_block_selector);
+					if (bare) report(TSRX_ERRORS.CSS_GLOBAL_IN_PSEUDOCLASS, bare);
+				}
+
 				const scope_root = is_scope_root_ampersand(context.state.rule);
 				const global = node.children.find((child) => is_global(child, scope_root));
 
 				if (global) {
-					const is_nested = context.path.at(-2)?.type === 'PseudoClassSelector';
-					if (
-						is_nested &&
-						!(/** @type {AST.CSS.PseudoClassSelector} */ (global.selectors[0]).args)
-					) {
-						report(TSRX_ERRORS.CSS_GLOBAL_IN_PSEUDOCLASS, global.selectors[0]);
-					}
-
 					const idx = node.children.indexOf(global);
 					const first = /** @type {AST.CSS.PseudoClassSelector} */ (global.selectors[0]);
 					if (first.args !== null && idx !== 0 && idx !== node.children.length - 1) {
@@ -727,6 +728,25 @@ export function analyze_css(css, options = {}) {
 								break;
 							}
 						}
+					}
+				}
+			}
+
+			// The output drops the parentheses of `:global(...)`, so a selector list
+			// in it is only kept whole as the whole selector (`:global(.a, .b)`):
+			// `:global(.a, .b) .c` would give `.a, .b .c`, a page-wide `.a`.
+			for (const relative_selector of node.children) {
+				for (const selector of relative_selector.selectors) {
+					if (
+						selector.type === 'PseudoClassSelector' &&
+						selector.name === 'global' &&
+						selector.args &&
+						selector.args.children.length > 1 &&
+						(node.children.length > 1 ||
+							relative_selector.selectors.length > 1 ||
+							relative_selector.combinator)
+					) {
+						report(TSRX_ERRORS.CSS_GLOBAL_SELECTOR_LIST, selector);
 					}
 				}
 			}

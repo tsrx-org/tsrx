@@ -710,6 +710,10 @@ export const TSRX_ERRORS = {
 		'CSS_GLOBAL_PLACEMENT',
 		':global(...) can be at the start or end of a selector sequence, but not in the middle.',
 	),
+	CSS_GLOBAL_SELECTOR_LIST: tsrx(
+		'CSS_GLOBAL_PLACEMENT',
+		':global(...) can hold a selector list only as the whole selector, as in :global(.a, .b) { ... }: elsewhere the output drops its parentheses, which splits the selector around the list. Write a selector for each, as in :global(.a) .c, :global(.b) .c.',
+	),
 	CSS_GLOBAL_BLOCK_IN_MIXED_LIST: tsrx(
 		'CSS_GLOBAL_PLACEMENT',
 		'A selector that starts with a bare :global makes its whole rule unscoped, so the other selectors in its list, and the rules nested in it, would lose their scoping. Move the other selectors to a rule of their own.',
@@ -944,6 +948,28 @@ export const TS_ERRORS = {
 	NESTED_GLOBAL_EXPORT: {
 		code: 'TS1316',
 		message: 'Global module exports may only appear at top level.',
+	},
+
+	// A `break` or `continue` with no target, which acorn reports as
+	// `Unsyntactic break` or `Unsyntactic continue`, as TypeScript's checker
+	// reports each (`checkGrammarBreakOrContinueStatement`)
+	JUMP_ACROSS_FUNCTION: { code: 'TS1107', message: 'Jump target cannot cross function boundary.' },
+	BREAK_OUTSIDE_LOOP: {
+		code: 'TS1105',
+		message:
+			"A 'break' statement can only be used within an enclosing iteration or switch statement.",
+	},
+	CONTINUE_OUTSIDE_LOOP: {
+		code: 'TS1104',
+		message: "A 'continue' statement can only be used within an enclosing iteration statement.",
+	},
+	BREAK_LABEL_NOT_FOUND: {
+		code: 'TS1116',
+		message: "A 'break' statement can only jump to a label of an enclosing statement.",
+	},
+	CONTINUE_LABEL_NOT_LOOP: {
+		code: 'TS1115',
+		message: "A 'continue' statement can only jump to a label of an enclosing iteration statement.",
 	},
 
 	// `await` outside an async function, where only a namespace makes it parse

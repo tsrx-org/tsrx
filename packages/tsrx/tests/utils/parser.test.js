@@ -3596,6 +3596,37 @@ foo();`;
 		).toThrow(error_with(TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT));
 	});
 
+	it('records a return right in a JSX switch case when collecting, and reads on', () => {
+		for (const [statement, also] of [
+			['return;', ''],
+			['return <path />;', ''],
+			['const d = 1; return d;', ''],
+			['return null;', " @case 'g': { return; }"],
+		]) {
+			/** @type {any[]} */
+			const errors = [];
+			const source = `function App() { return @switch (tag) {
+					@case 'path': {
+						${statement}
+					}${also}
+				}; }
+				export const after = 1;`;
+			const program = parseModule(source, 'App.tsrx', { collect: true, loose: true, errors });
+			const starts = [...source.matchAll(/\breturn\b/g)].map((match) => match.index).slice(1);
+			expect(
+				errors.map((error) => [error.code, error.pos, error.end]),
+				statement,
+			).toEqual(
+				starts.map((start) => [
+					TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code,
+					start,
+					start + 'return'.length,
+				]),
+			);
+			expect(program.body.at(-1)?.type, statement).toBe('ExportNamedDeclaration');
+		}
+	});
+
 	it('scopes switch case setup locals to their own case block', () => {
 		expect(() =>
 			parseModule(
@@ -12182,6 +12213,108 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			pick: first_member,
 			match: { accessibility: 'private', accessor: true, abstract: true },
 		},
+		// The same for the modifiers of any other member: an access modifier with
+		// `abstract`, and `accessor` on a method, which acorn-typescript doesn't
+		// check either.
+		{
+			source: 'abstract class A { private abstract m(): void; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'abstract m']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:27'],
+			pick: first_member,
+			match: { accessibility: 'private', abstract: true, kind: 'method' },
+		},
+		{
+			source: 'abstract class A { abstract private x: number; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'private x']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:28'],
+			pick: first_member,
+			match: { accessibility: 'private', abstract: true },
+		},
+		{
+			source: 'abstract class A { abstract public m(): void; }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'public m']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:28'],
+			valid: 'abstract class A { public abstract m(): void; }',
+			pick: first_member,
+		},
+		{
+			source: 'abstract class A { abstract protected get g(): number; }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'protected get']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:28'],
+			valid: 'abstract class A { protected abstract get g(): number; }',
+			pick: first_member,
+		},
+		{
+			// With decorators too: TypeScript reports a method's modifiers first.
+			source: 'class B { m() {} }\nclass A extends B { @dec override accessor m() {} }',
+			errors: [[TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, 'accessor m']],
+			throws: [TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, '2:34'],
+			pick: last,
+			match: { body: { body: [{ override: true, kind: 'method' }] } },
+		},
+		{
+			source: 'class B { m() {} }\nclass A extends B { override accessor m() {} }',
+			errors: [[TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, 'accessor m']],
+			throws: [TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, '2:29'],
+			pick: last,
+			match: { body: { body: [{ override: true, kind: 'method', value: { body: {} } }] } },
+		},
+		// `abstract` on a constructor is TS1242, where acorn-typescript threw TS1245
+		// for its body, or reported TS1244 outside an abstract class, and nothing
+		// for one without a body.
+		{
+			source: 'abstract class A { abstract constructor() {} }',
+			errors: [[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract constructor']],
+			throws: [TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:19'],
+			pick: first_member,
+			match: { kind: 'constructor', abstract: true, value: { body: { type: 'BlockStatement' } } },
+		},
+		{
+			source: "class A { public abstract 'constructor'(public x: number) {} }",
+			errors: [[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract']],
+			throws: [TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:17'],
+			pick: first_member,
+			match: { kind: 'constructor', abstract: true, accessibility: 'public' },
+		},
+		{
+			source: 'abstract class A { abstract constructor(); }',
+			errors: [[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract constructor']],
+			throws: [TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:19'],
+			pick: first_member,
+			match: { kind: 'constructor', abstract: true },
+		},
+		// Also before an `async`, where acorn's error for an `async` constructor
+		// goes too, and with a line continuation in the name.
+		{
+			source: 'class A { abstract async constructor() {} }',
+			errors: [[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract async']],
+			throws: [TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:10'],
+			pick: first_member,
+			match: { kind: 'constructor', abstract: true, value: { async: true } },
+		},
+		{
+			source: "abstract class A { abstract 'construc\\\ntor'() {} }",
+			errors: [[TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract']],
+			throws: [TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, '1:19'],
+			pick: first_member,
+			match: { kind: 'constructor', abstract: true },
+		},
+		// The first error of the modifiers of a `static` constructor, which
+		// TypeScript reports instead of TS1089 for `static`.
+		{
+			source: 'class A { static accessor constructor() {} }',
+			errors: [[TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, 'accessor constructor']],
+			throws: [TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, '1:17'],
+			pick: first_member,
+			match: { static: true },
+		},
+		{
+			source: 'class A { static public constructor() {} }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'public constructor']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:17'],
+			pick: first_member,
+			match: { static: true, accessibility: 'public' },
+		},
 		// An `async` constructor, at the `async`, where acorn threw `Constructor
 		// can't be an async method` at the name. It stays async, as TypeScript
 		// reads it.
@@ -13002,6 +13135,30 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			],
 			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
 		},
+		// `global` written with an escape, which TypeScript reads as `global`:
+		// TS1234, where the parser reported TS1184 for the `export`.
+		{
+			source: 'function f() {\n\texport declare glo\\u0062al {}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'export declare'],
+				[TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION, 'export declare'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			// A string's contents aren't read as words.
+			source: '{\n\timport "\\\\u{110000}";\n}',
+			errors: [[TS_ERRORS.NESTED_IMPORT, 'import']],
+			throws: [TS_ERRORS.NESTED_IMPORT, '2:1'],
+		},
+		{
+			source: '{\n\texport \\u0067lobal {}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'export \\u0067lobal'],
+				[TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION, 'export \\u0067lobal'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
 		{
 			source: 'function f() {\n\texport abstract namespace N {}\n}',
 			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'export abstract']],
@@ -13165,6 +13322,20 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			// The `await` after it is in the function, not the namespace (no TS1308).
 			source: 'async function f() {\n\tnamespace N {}\n\tawait g();\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			// An `await` in it is in the async function too, as TypeScript reads it:
+			// TS1308, TS1103 and TS2852 are only for a namespace outside any
+			// function.
+			source:
+				'async function f() {\n\tnamespace N {\n\t\tawait g();\n\t\tfor await (const x of y) {}\n\t\tnamespace M {\n\t\t\tawait using z = w;\n\t\t}\n\t}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace N']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			source: 'const f = async () => {\n\tnamespace N {\n\t\texport const x = await g();\n\t}\n};',
 			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
 			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
 		},
@@ -14438,13 +14609,111 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it("expects a namespace's `{` and a type alias's `=` as TypeScript does (TS1005)", async () => {
+		// acorn reported `Unexpected token` (TS1012) at the token in their place.
+		/** @type {Array<[source: string, token: string, at: string]>} */
+		const cases = [
+			['namespace N export const x = 1;', '{', 'export'],
+			['module N export {};', '{', 'export'],
+			['declare namespace N const x: number;', '{', 'const'],
+			['namespace A.B const x = 1;', '{', 'const'],
+			['namespace N;', '{', ';'],
+			['export namespace N\nconst x = 1;', '{', 'const'],
+			['export {};\nnamespace N', '{', ''],
+			['type T number;', '=', 'number'],
+			['type T<U> U;', '=', 'U;'],
+			['declare type T number;', '=', 'number'],
+			['export type T number;', '=', 'number'],
+			['type T\n= 1; type U;', '=', ';'],
+		];
+		const outcomes = await parse_in_worker(
+			cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
+		);
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, token, at]) => {
+				const pos = at === '' ? source.length : source.lastIndexOf(at);
+				return [
+					thrown(TS_ERRORS.TOKEN_EXPECTED(token), pos),
+					thrown(TS_ERRORS.TOKEN_EXPECTED(token), pos),
+				];
+			}),
+		);
+	});
+
+	it('records an error of a modifier over the whole modifier, as TypeScript reports it', async () => {
+		// The parser finds these at the modifier's start, and recorded them over
+		// its first character.
+		/** @type {Array<[source: string, error: ErrorKind, modifier: string]>} */
+		const modifier_cases = [
+			[
+				'declare namespace O { declare const x: number; }',
+				TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT,
+				'declare const',
+			],
+			[
+				'declare module "m" { declare function f(): void; }',
+				TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT,
+				'declare function',
+			],
+			[
+				'function f() { declare const x: number; }',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'declare',
+			],
+			[
+				'function f() { if (x) declare let y: number; }',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'declare',
+			],
+			['{ declare class C {} }', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, 'declare'],
+			['abstract namespace N {}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract'],
+			[
+				'namespace O { abstract namespace N {} }',
+				TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED,
+				'abstract',
+			],
+			['abstract function f() {}', TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED, 'abstract'],
+			['{ export global {} }', TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION, 'export'],
+			[
+				'declare module "m" { export global {} }',
+				TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION,
+				'export',
+			],
+			['class A { static public x = 1; }', TS_ERRORS.MODIFIER_MUST_PRECEDE, 'public'],
+			[
+				'abstract class A { static abstract x: number; }',
+				TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH,
+				'abstract x',
+			],
+			[
+				'class A { protected public x = 1; }',
+				TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN,
+				'public',
+			],
+			['public class A {}', TS_ERRORS.MODIFIER_ON_MODULE_ELEMENT, 'public'],
+			['class A { async constructor() {} }', TS_ERRORS.MODIFIER_ON_CONSTRUCTOR, 'async'],
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			modifier_cases.flatMap(([source]) => collect_modes.map((options) => ({ source, options }))),
+		);
+		for (const [index, outcome] of outcomes.entries()) {
+			const [source, error, modifier] = modifier_cases[Math.floor(index / collect_modes.length)];
+			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
+			const pos = source.indexOf(modifier);
+			const end = pos + modifier.split(' ')[0].length;
+			expect(
+				outcome.errors?.filter((other) => other.code === code_of(error)),
+				source,
+			).toEqual([{ code: code_of(error), pos, end }]);
+		}
+	});
+
 	it('reports the syntax error in a namespace named `as`, and not its place', () => {
 		// TypeScript reads a namespace named `as` and reports a syntax error in it
-		// instead (TS1005 `'{' expected.` at `any`, where this parser reports
-		// `Unexpected token`, as after any namespace's name).
+		// instead (TS1005 `'{' expected.` at `any`).
 		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
 		const cases = [
-			['{\n\tnamespace as any;\n}', TS_ERRORS.UNEXPECTED_TOKEN, 'any'],
+			['{\n\tnamespace as any;\n}', TS_ERRORS.TOKEN_EXPECTED('{'), 'any'],
 			[
 				'{\n\tnamespace as { readonly r: number };\n}',
 				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
@@ -14456,6 +14725,41 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				expect.objectContaining({ code: code_of(error), pos: source.indexOf(at) }),
 			);
 		}
+	});
+
+	it("reports a `break` or `continue` with no target with TypeScript's code for it", async () => {
+		// acorn reports `Unsyntactic break` or `Unsyntactic continue` (TS1105,
+		// TS1104 for any of them). TypeScript looks for the target up to the
+		// function or class `static` block around the statement.
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
+		const cases = [
+			['break;', TS_ERRORS.BREAK_OUTSIDE_LOOP, 'break'],
+			['continue;', TS_ERRORS.CONTINUE_OUTSIDE_LOOP, 'continue'],
+			['switch (a) { case 1: continue; }', TS_ERRORS.CONTINUE_OUTSIDE_LOOP, 'continue'],
+			['L: for (;;) { break M; }', TS_ERRORS.BREAK_LABEL_NOT_FOUND, 'break'],
+			['for (;;) { continue M; }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['L: { continue L; }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['M: { L: for (;;) { continue M; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['namespace N { break; }', TS_ERRORS.BREAK_OUTSIDE_LOOP, 'break'],
+			['function f() { break; }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			['function f() { L: for (;;) { break M; } }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			['L: for (;;) { const g = () => { break L; }; }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			[
+				'L: for (;;) { class K { static { continue L; } } }',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+				'continue',
+			],
+			['function f() { L: { continue L; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+		];
+		const outcomes = await parse_in_worker(
+			cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
+		);
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, error, at]) => [
+				thrown(error, source.indexOf(at)),
+				thrown(error, source.indexOf(at)),
+			]),
+		);
 	});
 
 	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {
@@ -15219,8 +15523,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// `TS_SYNTAX_ERROR_CODES`).
 			...[
 				['class A { m(public x) { label: label: ; } }', 'TS1114', 'label: ;'],
-				['class A { m(public x) { break; } }', 'TS1105', 'break'],
-				['class A { m(public x) { continue; } }', 'TS1104', 'continue'],
+				['class A { m(public x) { break; } }', 'TS1107', 'break'],
+				['class A { m(public x) { continue; } }', 'TS1107', 'continue'],
 				['class A { m(public x) { delete y; } }', 'TS1102', 'delete'],
 				['class A { m(public x) { arguments = 1; } }', 'TS1100', 'arguments'],
 				["class A { m(public x) { 'use strict'; } }", 'TS1347', '(public'],

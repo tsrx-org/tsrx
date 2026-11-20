@@ -98,6 +98,14 @@ export function features_from_mapping_data(data) {
  *   the span exactly show the authored name.
  * - Anything else → `Atom`.
  *
+ * Mappings over the same ranges in both files are one candidate. A container
+ * mapped for diagnostics only can cover exactly the text of the token inside
+ * it (`item` in a Vue `{item.label}`, a Solid `key i`), and the token keeps
+ * its hover and navigation whichever comes first: a mapping without features
+ * never takes the place of one with features. Of two with features, the first
+ * is kept, so the spans that coalesce stay the same. The candidate is
+ * position-only when one of its mappings is and none has a feature bit.
+ *
  * The transform emits container spans (statements, control-flow bodies) that
  * enclose token spans. TypeScript requires generated spans to be disjoint, so
  * candidates are ranked Verbatim first, then shorter before longer, and a
@@ -126,6 +134,13 @@ export function to_span_mappings(mappings, generated_text, original_text, option
 	const language_features = options.languageFeatures !== false;
 	/** @type {Candidate[]} */
 	const candidates = [];
+	/**
+	 * Candidates by their generated and original ranges. Kept apart, two
+	 * candidates over the same ranges would tie in the ranking below, and the
+	 * first in the transform's order would win even without features.
+	 * @type {Map<string, Candidate>}
+	 */
+	const by_ranges = new Map();
 
 	for (const mapping of mappings) {
 		const count = Math.min(mapping.sourceOffsets.length, mapping.generatedOffsets.length);
@@ -173,17 +188,30 @@ export function to_span_mappings(mappings, generated_text, original_text, option
 			} else {
 				kind = SpanMapKind.Atom;
 			}
-			candidates.push({
+			const features = language_features
+				? features_from_mapping_data(mapping.data)
+				: SpanMapFeature.None;
+			const position_only = is_position_only(mapping.data);
+			const key = `${generated_start},${generated_end},${original_start},${original_end}`;
+			const same = by_ranges.get(key);
+			if (same) {
+				if (same.features === SpanMapFeature.None) same.features = features;
+				same.positionOnly =
+					(same.positionOnly || position_only) && same.features === SpanMapFeature.None;
+				continue;
+			}
+			/** @type {Candidate} */
+			const candidate = {
 				generatedStart: generated_start,
 				generatedEnd: generated_end,
 				originalStart: original_start,
 				originalEnd: original_end,
 				kind,
-				features: language_features
-					? features_from_mapping_data(mapping.data)
-					: SpanMapFeature.None,
-				positionOnly: is_position_only(mapping.data),
-			});
+				features,
+				positionOnly: position_only,
+			};
+			by_ranges.set(key, candidate);
+			candidates.push(candidate);
 		}
 	}
 

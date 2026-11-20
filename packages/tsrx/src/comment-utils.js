@@ -209,10 +209,10 @@ export function get_hashbang(source) {
  */
 export function format_comment(comment) {
 	if (comment.type === 'Line') {
-		// Check if it's a triple-slash directive (value starts with /)
-		if (comment.value.trimStart().startsWith('/')) {
-			return `/// ${comment.value.trimStart().slice(1)}`;
-		}
+		// A triple-slash directive prints as written, so TypeScript reads it as in
+		// the source (only a `///` that starts the comment is a directive) and the
+		// editor maps the path of a `/// <reference path>` to the source.
+		if (comment.value.startsWith('/')) return `//${comment.value}`;
 		return `// ${comment.value.trim()}`;
 	}
 	// A block comment prints as written: TypeScript reads a JSDoc comment's

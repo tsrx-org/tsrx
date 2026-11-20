@@ -4,6 +4,7 @@
 import { TS_ERRORS, TSRX_ERRORS } from '@tsrx/core';
 import { DIAGNOSTIC_SOURCE } from '@tsrx/core/diagnostics';
 import { describe, expect, it } from 'vitest';
+import { TextDocument as TextDocumentStub } from 'vscode-languageserver-textdocument';
 import { DiagnosticSeverity } from '@volar/language-server';
 import { createCompileErrorDiagnosticPlugin } from '../src/compileErrorDiagnosticPlugin.js';
 import { createTypeScriptDiagnosticFilterPlugin } from '../src/typescriptDiagnosticPlugin.js';
@@ -73,27 +74,98 @@ export function App() @{
 		expect(document.getText(diagnostics[0].range)).toBe('themes.light');
 	});
 
-	it('reports CSS_GLOBAL_PLACEMENT on the style block that holds the :global', async () => {
-		// The type-only output has no tokens inside a CSS body, so the transform
-		// anchors the block's diagnostic on the `<style>` element (the mapped
-		// stand-in), not on the selector.
+	it('reports each CSS_GLOBAL_PLACEMENT on the :global it is about', async () => {
+		// The type-only output has no tokens inside a CSS body, so the diagnostic
+		// shows in the body's embedded CSS, which maps it whole.
 		const { document, diagnostics } = await diagnostics_for(
 			`export function App() @{
 	<>
 		<style>
 			.a :global(.b) .c { color: red; }
+			:is(:global .d) { color: blue; }
 		</style>
 		<div>{'x'}</div>
 	</>
-}`,
+}
+const theme = <style>.e :global(.f) .g { color: red; } @import 'x.css';</style>;`,
 		);
 
-		expect(diagnostics).toHaveLength(1);
-		const [diagnostic] = diagnostics;
-		expect(diagnostic.code).toBe('TSRX3011');
-		expect(document.getText(diagnostic.range)).toBe(
-			'<style>\n\t\t\t.a :global(.b) .c { color: red; }\n\t\t</style>',
-		);
+		expect(
+			[...diagnostics]
+				.sort((a, b) => document.offsetAt(a.range.start) - document.offsetAt(b.range.start))
+				.map((diagnostic) => [diagnostic.code, document.getText(diagnostic.range)]),
+		).toEqual([
+			['TSRX3011', ':global(.b)'],
+			['TSRX3011', ':global'],
+			['TSRX3011', ':global(.f)'],
+			['TSRX3012', "@import 'x.css';"],
+		]);
+	});
+
+	it('keeps an error on the TSRX document when its <style> body shares an id', async () => {
+		// Volar keeps one embedded code of an id and gives every document of that
+		// id that code, so the body whose id another body shares has no document
+		// of its own: its error stays on the TSRX document, and no other body's
+		// document takes it.
+		const source = 'x'.repeat(120);
+		/**
+		 * @param {string} id
+		 * @param {number} start
+		 */
+		const css = (id, start) => ({
+			id,
+			languageId: 'css',
+			mappings: [{ sourceOffsets: [start], generatedOffsets: [0], lengths: [20], data: {} }],
+			embeddedCodes: [],
+		});
+		const shared_a = css('style-shared', 10);
+		const shared_b = css('style-shared', 50);
+		const own = css('style-own', 90);
+		/** @param {number} pos */
+		const usage_error = (pos) => ({
+			pos,
+			end: pos + 5,
+			message: 'm',
+			code: 'TSRX3011',
+			type: 'usage',
+		});
+		const root = {
+			id: 'root',
+			languageId: 'tsrx',
+			embeddedCodes: [shared_a, shared_b, own],
+			fatalErrors: [],
+			usageErrors: [usage_error(55), usage_error(95)],
+			mappings: [],
+			originalCode: source,
+			findMappingBySourceRange: () => null,
+			findGeneratedRangeBySourceRange: () => null,
+		};
+		const codes = new Map([
+			['root', root],
+			['style-shared', shared_b],
+			['style-own', own],
+		]);
+		const context = /** @type {any} */ ({
+			decodeEmbeddedDocumentUri: (/** @type {{ path: string }} */ uri) => [uri, uri.path.slice(1)],
+			language: {
+				scripts: { get: () => ({ generated: { root, embeddedCodes: codes } }) },
+				maps: { get: () => undefined },
+			},
+		});
+		const plugin = createCompileErrorDiagnosticPlugin().create(context);
+		/** @param {string} id */
+		const shown = async (id) =>
+			(
+				await plugin.provideDiagnostics?.(
+					TextDocumentStub.create(`file:///${id}`, 'css', 0, source),
+					/** @type {any} */ ({ isCancellationRequested: false }),
+				)
+			)?.map((diagnostic) => [diagnostic.range.start.character, diagnostic.range.end.character]);
+
+		expect(await shown('style-shared')).toEqual([]);
+		expect(await shown('style-own')).toEqual([[5, 10]]);
+		// The shared body's error, at the start of the file for want of a mapping.
+		expect(await shown('root')).toEqual([[0, 1]]);
 	});
 
 	it('reports nothing for a valid apply', async () => {
@@ -146,14 +218,14 @@ export function App() @{
 	});
 
 	// The editor's compile reports a CSS syntax error (#1306). Its code has no
-	// `<style>` body, so an error on a line of the body with no code shows on
-	// the nearest code before it, the opening tag's `>`.
+	// `<style>` body, so the error shows in the body's embedded CSS, where the
+	// parser stopped.
 	it.each([
 		[
 			'on a line of its own',
 			'export function App() @{\n\t<div>\n\t\t<style>\n\t\t\t.a { color: red; }\n\t\t\t}\n\t\t</style>\n\t\t<p>x</p>\n\t</div>\n}\n',
-			'<style>',
-			'>',
+			'}\n\t\t</style>',
+			'}',
 		],
 		[
 			'on the line of the opening tag',
@@ -718,8 +790,8 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 
 	// The editor's code leaves a repeated modifier out, but the compile anchors
 	// the error on the code it reads in its place, so the editor shows it on
-	// the modifier's first character, not on the code before it or at the start
-	// of the file.
+	// the modifier, as TypeScript does, not on the code before it or at the
+	// start of the file.
 	it.each([
 		[
 			'RepeatedAccessibility',
@@ -737,7 +809,63 @@ describe('compile error diagnostic plugin — unclosed and mismatched tags', () 
 		const { document, diagnostics } = await editor_diagnostics_for(name, source);
 
 		expect(reported(document, diagnostics, code)).toEqual([
-			{ source: DIAGNOSTIC_SOURCE, text: at[0], offset: source.indexOf(at) },
+			{ source: DIAGNOSTIC_SOURCE, text: at.split(' ')[0], offset: source.indexOf(at) },
+		]);
+	});
+
+	// A modifier error on a word that the editor's code leaves out or doesn't
+	// map at the start of a statement or a member shows once on that word, where
+	// TypeScript reports it, not on the code before it: `abstract` before a
+	// namespace, `declare` before a class in a block, `accessor` before a
+	// method. Where the editor's code prints the word, TypeScript's own error
+	// on it shows, which the compile's leaves the place to.
+	it.each([
+		['AbstractNamespace', 'export {};\nabstract namespace N {}\n', 'TS1242', 'abstract'],
+		['AbstractFunction', 'export {};\nabstract function f() {}\n', 'TS1242', 'abstract'],
+		['DeclareClassInBlock', 'export {};\n{\n\tdeclare class C {}\n}\n', 'TS1184', 'declare'],
+		[
+			'DeclareFunctionInAmbient',
+			'export {};\ndeclare namespace O {\n\tdeclare function f(): void;\n}\n',
+			'TS1038',
+			'declare function',
+		],
+		['AccessorMethod', 'export class A {\n\taccessor m() {}\n}\n', 'TS1275', 'accessor'],
+	])('reports %s on the modifier', async (name, source, code, at) => {
+		const { document, diagnostics } = await editor_diagnostics_for(name, source);
+
+		expect(
+			reported(document, diagnostics, code).map(({ text, offset }) => ({ text, offset })),
+		).toEqual([{ text: at.split(' ')[0], offset: source.indexOf(at) }]);
+	});
+
+	// TypeScript also reports the decorators of a constructor on the editor's
+	// code: the error shows once, on the `@`, not again, empty, after it.
+	it('shows the decorators of a constructor once, on the `@`', async () => {
+		const source = 'declare const dec: any;\nexport class A {\n\t@dec constructor() {}\n}\n';
+		const { document, diagnostics } = await editor_diagnostics_for('DecoratedConstructor', source);
+
+		expect(
+			diagnostics
+				.filter((diagnostic) => String(diagnostic.code).endsWith('1206'))
+				.map((diagnostic) => ({
+					text: document.getText(diagnostic.range),
+					offset: document.offsetAt(diagnostic.range.start),
+				})),
+		).toEqual([{ text: '@', offset: source.indexOf('@') }]);
+	});
+
+	// The error's anchor covers one character of the editor's code, so
+	// TypeScript's error on the code after the modifier still shows there.
+	it("keeps TypeScript's error on the code after a modifier the editor's code leaves out", async () => {
+		const source =
+			'declare class B {\n\tg: number;\n}\nexport class A extends B {\n\tpublic accessor get g() {\n\t\treturn 1;\n\t}\n}\n';
+		const { document, diagnostics } = await editor_diagnostics_for('AccessorGetter', source);
+
+		expect(reported(document, diagnostics, 'TS1275')).toEqual([
+			{ source: DIAGNOSTIC_SOURCE, text: 'accessor', offset: source.indexOf('accessor') },
+		]);
+		expect(reported(document, diagnostics, 'TS2611')).toEqual([
+			{ source: 'ts', text: 'g', offset: source.indexOf('g()') },
 		]);
 	});
 
