@@ -467,7 +467,7 @@ function printOnlyText(path, options, print, edges) {
 	let firstAfter;
 	path.each((childPath, index) => {
 		if (index === edges.index || isLayoutWhitespace(childPath.node)) return;
-		if (index > edges.index) firstAfter ??= childPath.node;
+		if (index > edges.index) firstAfter ??= /** @type {Node} */ (childPath.node);
 		(index < edges.index ? before : after).push(print());
 	}, 'children');
 	const words = getRaw(text)
