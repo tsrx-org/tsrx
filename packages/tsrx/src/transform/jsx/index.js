@@ -53,6 +53,7 @@ import {
 	rewrite_class_name_attributes,
 } from '../scoping.js';
 import { prepare_style_scopes, type_only_style } from './style-scopes.js';
+import { source_mentions_identifier } from './source-names.js';
 import {
 	build_style_class_map,
 	create_style_class_map_from_stylesheet,
@@ -79,6 +80,7 @@ import {
 } from '../../utils/ast.js';
 import { is_reference } from '../../utils/is-reference.js';
 
+export { source_mentions_identifier };
 export const DYNAMIC_IMPORT_LOCAL = 'TsrxDynamic';
 export const DYNAMIC_FACTORY_LOCAL = '_tsrx_dynamic';
 const LEADING_INLINE_WHITESPACE = /^[ \t]+/;
@@ -1018,8 +1020,7 @@ function lower_dynamic_jsx_element(node, transform_context) {
 	if (factory) {
 		// Bind the tag expression to a scoped component const and reference it
 		// like an ordinary component.
-		transform_context.local_statement_component_index += 1;
-		const local = `${DYNAMIC_IMPORT_LOCAL}_${transform_context.local_statement_component_index}`;
+		const local = create_dynamic_alias_name(transform_context);
 		const local_id = b.jsx_id(local);
 		transform_context.needs_dynamic_factory = true;
 
@@ -2435,8 +2436,31 @@ function add_type_only_style_anchor(node, transform_context) {
  * @returns {string}
  */
 function create_style_anchor_name(transform_context) {
-	transform_context.local_statement_component_index += 1;
-	return `_tsrx_style_anchor_${transform_context.local_statement_component_index}`;
+	/** @type {string} */
+	let name;
+	do {
+		transform_context.local_statement_component_index += 1;
+		name = `_tsrx_style_anchor_${transform_context.local_statement_component_index}`;
+	} while (source_mentions_identifier(transform_context.source, name));
+	return name;
+}
+
+/**
+ * The name of the `const` a dynamic tag's expression is bound to
+ * (`TsrxDynamic_1`). Like the other generated names, it skips any name the
+ * source uses, so it can't redeclare or shadow one the author wrote.
+ *
+ * @param {TransformContext} transform_context
+ * @returns {string}
+ */
+export function create_dynamic_alias_name(transform_context) {
+	/** @type {string} */
+	let name;
+	do {
+		transform_context.local_statement_component_index += 1;
+		name = `${DYNAMIC_IMPORT_LOCAL}_${transform_context.local_statement_component_index}`;
+	} while (source_mentions_identifier(transform_context.source, name));
+	return name;
 }
 
 /**
@@ -8237,55 +8261,6 @@ function create_spread_props_name(transform_context) {
 		}
 	} while (source_mentions_identifier(transform_context.source, name));
 	return name;
-}
-
-/**
- * Whether `source` has `name` as a whole identifier anywhere, so a generated
- * binding of that name could shadow or redeclare one the author wrote. An
- * identifier can spell its characters with Unicode escapes
- * (`App__st\u0061tic1` is `App__static1`), so the source is also read with
- * its escapes decoded. Decoding an escape in a string or a comment can only
- * make a name count as used when it isn't, which costs nothing.
- *
- * @param {string} source
- * @param {string} name a name of identifier characters only
- * @returns {boolean}
- */
-export function source_mentions_identifier(source, name) {
-	// `$` is an identifier character and a regex anchor.
-	const escaped = name.replace(/\$/g, '\\$');
-	const pattern = new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`);
-	return (
-		pattern.test(source) ||
-		(typeof source === 'string' &&
-			source.includes('\\u') &&
-			pattern.test(decode_unicode_escapes(source)))
-	);
-}
-
-const UNICODE_ESCAPE = /\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g;
-/** The last source `decode_unicode_escapes` decoded, and its result */
-let decoded_source = { source: '', decoded: '' };
-
-/**
- * `source` with each `\uXXXX` and `\u{X…}` escape replaced by its character.
- * A module's generated names are checked one after another against the same
- * source, so the last result is kept.
- *
- * @param {string} source
- * @returns {string}
- */
-function decode_unicode_escapes(source) {
-	if (decoded_source.source !== source) {
-		decoded_source = {
-			source,
-			decoded: source.replace(UNICODE_ESCAPE, (escape, braced, short) => {
-				const code = parseInt(braced ?? short, 16);
-				return code <= 0x10ffff ? String.fromCodePoint(code) : escape;
-			}),
-		};
-	}
-	return decoded_source.decoded;
 }
 
 /**
