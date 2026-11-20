@@ -6466,13 +6466,13 @@ function collect_directive_declarations(node, parent, in_body, found) {
  * `@switch` case is `SWITCH_CASE_BREAK_STATEMENT`, which the parser reports
  * for a `break` right in the case, and a `return` in a case, outside a
  * function there, is `SWITCH_CASE_RETURN_STATEMENT`, which the parser
- * reports for a `return` right in the case: it would only leave the function
- * the case runs in, so the case would render nothing. A jump in an `@if` body, or in an `@for`
- * body outside a loop there, is the `@if` or `@for` check's to report; a
- * jump in a loop in an `@for` body that leaves the body, which that check
- * doesn't see, is reported here with the `@for` check's errors, and so is
- * one that leaves an `@else if` body, or the `@else` after one, with the
- * `@if` check's.
+ * reports for a `return` right in the case: it would only end the function
+ * the case runs in, and its value would replace the `@switch`, not end the
+ * component. A jump in an `@if` body, or in an `@for` body outside a loop
+ * there, is the `@if` or `@for` check's to report; a jump in a loop in an
+ * `@for` body that leaves the body, which that check doesn't see, is
+ * reported here with the `@for` check's errors, and so is one that leaves
+ * an `@else if` body, or the `@else` after one, with the `@if` check's.
  *
  * @param {AST.Program} program
  * @param {TransformContext} transform_context

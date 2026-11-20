@@ -3058,8 +3058,8 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 
 		it('rejects a `return` in an `@switch` case outside a function, strictly and when collecting', () => {
 			// Every target runs a case in a function of its own, so the `return`
-			// left only that function, and the case rendered nothing. A `return`
-			// right in the case is the parser's error.
+			// left only that function, and its value replaced the `@switch`. A
+			// `return` right in the case is the parser's error.
 			for (const template of [
 				'<div>@switch (log) { @case 1: { if (log) RETURN; <b /> } @default: { <i /> } }</div>',
 				'<div>@switch (log) { @case 1: { <b /> } @default: { if (log) { RETURN; } <i /> } }</div>',
