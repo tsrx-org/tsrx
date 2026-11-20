@@ -495,8 +495,8 @@ function uses_node(block, node) {
  * @param {VaporRenderedBlock | undefined} current
  * @param {unknown} value
  * @param {Node | undefined} anchor
- * @param {unknown} [owner] the boundary whose render this is, which removes
- * `current`
+ * @param {ComponentInternalInstance | null} [owner] the boundary whose render
+ * this is, which removes `current`
  * @returns {VaporRenderedBlock}
  */
 function resolve_value(current, value, anchor, owner = null) {
@@ -579,16 +579,25 @@ let dropping = null;
 /**
  * Runs `remove` as `instance`'s removal of what it showed before.
  *
- * @template T
- * @param {unknown} instance
- * @param {() => T} remove
- * @returns {T}
+ * What it throws, such as an `onScopeDispose` callback that throws as a
+ * component's scope stops, ends Vue's teardown of that component but not the
+ * boundary's render: it goes to the boundary's error hook as a teardown
+ * error, and the render goes on to show what it renders now. Thrown out of
+ * the render, it ended it before it read the boundary's state, which then
+ * no longer rendered it again: the old content stayed, and the error was
+ * lost.
+ *
+ * @param {ComponentInternalInstance | null} instance
+ * @param {() => void} remove
  */
 function dropping_for(instance, remove) {
 	const outer = dropping;
 	dropping = instance;
 	try {
-		return remove();
+		remove();
+	} catch (error) {
+		if (!instance) throw error;
+		handleError(error, instance, ErrorCodes.COMPONENT_UPDATE);
 	} finally {
 		dropping = outer;
 	}
