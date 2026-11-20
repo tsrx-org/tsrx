@@ -1050,6 +1050,9 @@ describe('scoped style analysis', () => {
 				':global.w, :root:not(.x) { color: red; }',
 				// The & already has the hash, and :where() adds no specificity.
 				'.p { :global.w, &:where(.p) { color: red; } }',
+				'@scope (.q) { .p { :global.w, &:where(.p) { color: red; } } }',
+				// A rule in a global block asking whether the block drops its selector.
+				':global.w { :global, :global.x {} }',
 				// A :global() compound keeps its arguments as written.
 				':global.w, :root:not(:global(.x):not(.a)) { color: red; }',
 				':global.w, :root :global :global(.x):has(.a) { color: red; }',
@@ -1321,6 +1324,11 @@ describe('scoped style analysis', () => {
 					':root, :global.w { @media print { :root, :global.x { @font-face { font-family: x; } } } }',
 					'/* :root, :global.w {*/ @media print { /* :root, :global.x {*/ @font-face { font-family: x; } /*}*/ } /*}*/',
 					'@media print { @font-face { font-family: x; } }',
+				],
+				[
+					':root, :global.w { @function --f() { result: red; } }',
+					'/* :root, :global.w {*/ @function --f() { result: red; } /*}*/',
+					'@function --f() { result: red; }',
 				],
 				// A @media, or a @when, can sit in a style rule.
 				[

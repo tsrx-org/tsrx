@@ -60,11 +60,9 @@ function is_global(relative_selector) {
  * Runs once the rule's selectors and nested rules have their metadata.
  *
  * @param {AST.CSS.Rule} rule
- * @param {boolean} in_scope whether the rule is in a `@scope`, where `&` stands
- *   for the scope's root rather than the rule around it
  * @param {(diagnostic: Diagnostic, node: AST.CSS.Node) => void} report
  */
-function check_global_block_list(rule, in_scope, report) {
+function check_global_block_list(rule, report) {
 	const selectors = rule.prelude.children;
 	if (selectors.length < 2) return;
 	const leading = selectors.map((selector) => {
@@ -89,9 +87,7 @@ function check_global_block_list(rule, in_scope, report) {
 	if (
 		(styles &&
 			selectors.some(
-				(selector, index) =>
-					!leading[index] &&
-					!is_unscoped(selector, !in_scope && subject_hashed(rule.metadata.parent_rule)),
+				(selector, index) => !leading[index] && !is_unscoped(selector, ampersand_hashed(rule)),
 			)) ||
 		nests_scoped(rule.block)
 	) {
@@ -217,6 +213,25 @@ function subject_hashed(rule) {
 const subject_hashed_cache = new WeakMap();
 
 /**
+ * Rules directly in a `@scope`, with no rule between.
+ *
+ * @type {WeakSet<AST.CSS.Rule>}
+ */
+const scope_root_rules = new WeakSet();
+
+/**
+ * Whether the element an `&` in `rule` stands for has the hash: the element
+ * of the rule around it, unless a `@scope` comes between (then the scope's
+ * root).
+ *
+ * @param {AST.CSS.Rule} rule
+ * @returns {boolean}
+ */
+function ampersand_hashed(rule) {
+	return !scope_root_rules.has(rule) && subject_hashed(rule.metadata.parent_rule);
+}
+
+/**
  * @param {AST.CSS.Rule} rule
  * @returns {boolean}
  */
@@ -238,7 +253,7 @@ function compute_subject_hashed(rule) {
 		const [first] = selectors;
 		if (metadata.is_global || metadata.is_global_like) return false;
 		if (selectors.some((simple) => simple.type === 'NestingSelector')) {
-			return subject_hashed(rule.metadata.parent_rule);
+			return ampersand_hashed(rule);
 		}
 		return !(
 			selectors.length === 1 &&
@@ -304,6 +319,9 @@ const UNNESTABLE_AT_RULES = [
 	'view-transition',
 	'position-try',
 	'color-profile',
+	'function',
+	'custom-media',
+	'custom-selector',
 	'namespace',
 	'import',
 	'charset',
@@ -345,6 +363,9 @@ const drops_selector_cache = new WeakMap();
 export function drops_selector(rule) {
 	let drops = drops_selector_cache.get(rule);
 	if (drops === undefined) {
+		// A rule in it can ask about it again (`:global.w { :global, :global.x {} }`):
+		// that inner question reads it as kept.
+		drops_selector_cache.set(rule, false);
 		drops = rule.metadata.is_global_block && compute_drops_selector(rule);
 		drops_selector_cache.set(rule, drops);
 	}
@@ -432,6 +453,16 @@ export function analyze_css(css, options = {}) {
 	walk(css, /** @type {{ rule: AST.CSS.Rule | null }} */ ({ rule: null }), {
 		Rule(node, context) {
 			node.metadata.parent_rule = context.state.rule;
+			// The nearest rule or `@scope` around it: in a `@scope`, `&` stands for
+			// the scope's root.
+			for (let i = context.path.length - 1; i >= 0; i--) {
+				const ancestor = context.path[i];
+				if (ancestor.type === 'Rule') break;
+				if (ancestor.type === 'Atrule' && at_rule_name(ancestor) === 'scope') {
+					scope_root_rules.add(node);
+					break;
+				}
+			}
 
 			// Check for :global blocks
 			// A global block is when the selector starts with :global and has no local selectors before it
@@ -471,12 +502,7 @@ export function analyze_css(css, options = {}) {
 			const state = { rule: node };
 			context.visit(node.prelude, state);
 			context.visit(node.block, state);
-			if (node.metadata.is_global_block) {
-				const in_scope = context.path.some(
-					(ancestor) => ancestor.type === 'Atrule' && at_rule_name(ancestor) === 'scope',
-				);
-				check_global_block_list(node, in_scope, report);
-			}
+			if (node.metadata.is_global_block) check_global_block_list(node, report);
 		},
 
 		ComplexSelector(node, context) {
