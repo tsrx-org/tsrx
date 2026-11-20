@@ -4,10 +4,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { FILE_REFERENCES_COMMAND } from '../src/plugin-file-references.js';
 import { create_tsserver_workspace, start_tsserver } from './tsserver.js';
 
-// A comment in a `.tsrx` file that TypeScript navigates from: the path of a
-// `/// <reference path>` is a file reference and has a definition, and a JSDoc
-// `{@link}` name is a reference to its symbol. The same file as `.ts` answers
-// each request, for comparison.
+// A `/// <reference path>` in a `.tsrx` file, which TypeScript navigates from:
+// its path is a file reference, has a definition, and is edited when the file
+// moves. The same file as `.ts` answers each request, for comparison.
 const FILES = {
 	'tsconfig.json': JSON.stringify({
 		compilerOptions: { jsx: 'preserve', module: 'esnext', moduleResolution: 'bundler', types: [] },
@@ -21,7 +20,6 @@ const FILES = {
 	'src/Refs.tsrx': `/// <reference path="./Target.tsrx" />
 import { Target } from './Target.tsrx';
 
-/** Wraps {@link Target}. */
 export function Refs() {
 	return <Target />;
 }
@@ -29,12 +27,16 @@ export function Refs() {
 	'src/refs.ts': `/// <reference path="./Target.tsrx" />
 import { Target } from './Target.tsrx';
 
-/** Wraps {@link Target}. */
 export const refs = Target;
+`,
+	'src/Missing.tsrx': `/// <reference path="./Nowhere.tsrx" />
+export function Missing() {
+	return <p />;
+}
 `,
 };
 
-describe('tsserver plugin: navigation from comments in .tsrx files', () => {
+describe('tsserver plugin: a `/// <reference path>` in a .tsrx file', () => {
 	/** @type {string} */
 	let workspace;
 	/** @type {ReturnType<typeof start_tsserver>} */
@@ -44,7 +46,7 @@ describe('tsserver plugin: navigation from comments in .tsrx files', () => {
 		const created = create_tsserver_workspace('tsrx-comment-navigation-', FILES);
 		workspace = created.workspace;
 		server = start_tsserver(workspace, created.probe_location);
-		for (const file of ['src/Target.tsrx', 'src/Refs.tsrx', 'src/refs.ts']) {
+		for (const file of ['src/Target.tsrx', 'src/Refs.tsrx', 'src/refs.ts', 'src/Missing.tsrx']) {
 			const full = path.join(workspace, file);
 			await server.request('open', {
 				file: full,
@@ -134,17 +136,24 @@ describe('tsserver plugin: navigation from comments in .tsrx files', () => {
 			'src/refs.ts:2:25 ./Target.tsrx',
 		]);
 	}, 60_000);
+	it('completes the path of a `/// <reference path>` in a .tsrx file', async () => {
+		for (const file of /** @type {const} */ (['src/Refs.tsrx', 'src/refs.ts'])) {
+			const response = await server.request('completionInfo', at(file, 'Target.tsrx'));
+			expect(
+				response.body?.entries.map((/** @type {any} */ entry) => entry.name),
+				file,
+			).toContain('Target.tsrx');
+		}
+	}, 60_000);
 
-	it('finds a JSDoc `{@link}` in a .tsrx file among the references to its symbol', async () => {
-		const response = await server.request('references', at('src/Target.tsrx', 'Target()'));
-		expect(located(response.body.refs)).toEqual([
-			'src/Refs.tsrx:2:10 Target',
-			'src/Refs.tsrx:4:18 Target',
-			'src/Refs.tsrx:6:10 Target',
-			'src/Target.tsrx:1:17 Target',
-			'src/refs.ts:2:10 Target',
-			'src/refs.ts:4:18 Target',
-			'src/refs.ts:5:21 Target',
+	it('reports a `/// <reference path>` to a missing file at its path', async () => {
+		const file = path.join(workspace, 'src/Missing.tsrx');
+		const diagnostics = [
+			...(await server.request('syntacticDiagnosticsSync', { file })).body,
+			...(await server.request('semanticDiagnosticsSync', { file })).body,
+		].filter((/** @type {any} */ diagnostic) => diagnostic.code === 6053);
+		expect(located(diagnostics.map((/** @type {any} */ d) => ({ file, ...d })))).toEqual([
+			'src/Missing.tsrx:1:22 ./Nowhere.tsrx',
 		]);
 	}, 60_000);
 });

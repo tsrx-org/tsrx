@@ -34,18 +34,19 @@ export const mapping_data_verify_complete = {
 };
 
 /**
- * A comment the editor output prints as written, so its offsets are the
- * source's. TypeScript checks it (a `/// <reference path>` to a missing file),
- * completes in it (the `/** *\/` template, JSDoc tags, a reference's path) and
- * navigates from it: the path of a `/// <reference path>` is a file reference
- * and has a definition, and a JSDoc `{@link}` name is a reference to its
- * symbol. Folding and formatting stay the source's.
+ * A triple-slash directive the editor output prints as written. TypeScript
+ * checks it (a `/// <reference path>` to a missing file), completes its path
+ * and navigates from that path: it is a file reference, has a definition, and
+ * is edited when the file moves. A directive is file-wide, so it means the same
+ * wherever the output prints it. Other comments get no navigation: a JSDoc
+ * `{@link}` resolves in the scope where the comment is printed, which isn't the
+ * source's on every target (Vue prints a component's JSDoc outside its
+ * function, Solid prints a template branch's inside a callback).
  * @type {Partial<VolarCodeMapping['data']>}
  */
-export const mapping_data_comment = {
+export const mapping_data_reference_directive = {
 	verification: true,
 	completion: true,
-	semantic: true,
 	navigation: true,
 };
 

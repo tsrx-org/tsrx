@@ -4099,9 +4099,11 @@ export function A() @{
 			expect(mapping.data.completion).toBeFalsy();
 		});
 
-		it('maps a comment it writes as written for navigation: a `/// <reference path>`, a JSDoc `{@link}`', () => {
+		it('maps a `/// <reference path>` it writes as written for navigation, and a JSDoc comment without', () => {
 			// TypeScript gives the path of a `/// <reference path>` as a file reference
-			// and a definition, and a `{@link}` name as a reference to its symbol.
+			// and a definition. A JSDoc `{@link}` resolves in the scope where the
+			// comment is printed, which isn't the source's on every target, so it gets
+			// no navigation.
 			const source = `/// <reference path="./Other.tsrx" />
 import { Other } from './Other.tsrx';
 
@@ -4111,14 +4113,14 @@ export function A() @{
 }`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			expect(result.errors).toEqual([]);
-			for (const comment of [
-				'/// <reference path="./Other.tsrx" />',
-				'/** Shows {@link Other}. */',
-			]) {
+			for (const [comment, navigation] of /** @type {const} */ ([
+				['/// <reference path="./Other.tsrx" />', true],
+				['/** Shows {@link Other}. */', undefined],
+			])) {
 				const offset = source.indexOf(comment);
 				expect(generated_at(result, offset, comment.length)).toEqual([comment]);
 				const [mapping] = mappings_at(result, offset, comment.length);
-				expect(mapping.data.navigation, comment).toBe(true);
+				expect(mapping.data.navigation, comment).toBe(navigation);
 				expect(mapping.data.completion, comment).toBe(true);
 			}
 		});
