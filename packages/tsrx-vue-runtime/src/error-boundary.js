@@ -39,7 +39,8 @@ const vapor = /** @type {VaporRuntime} */ (/** @type {unknown} */ (Vue));
  * tearing that down throws isn't the content's
  * @property {boolean} removes_for_catch whether the render that is running
  * swaps in the fallback for a caught error, which the boundary held as it
- * began, rather than rendering the content again
+ * began or the content threw as it rendered, rather than rendering the
+ * content again
  * @property {number | null} rendered_from while a render after a reset
  * removes the fallback, a component uid taken as it began: what the content
  * it renders creates has later ones
@@ -245,17 +246,19 @@ function thrown_by_fallback(source, boundary) {
  * off, in a component created since or in the boundary's own inline code, is
  * the boundary's own, as is what the content removes as it updates.
  *
+ * @param {unknown} error
  * @param {unknown} source
  * @param {ComponentInternalInstance} boundary
  * @param {BoundaryState} state
  * @returns {boolean}
  */
-function torn_down_by_render(source, boundary, state) {
+function torn_down_by_render(error, source, boundary, state) {
 	if (dropping !== boundary) return false;
 	if (state.removes_for_catch) return true;
 	if (!state.removes_fallback) return false;
-	// What the removal itself threw (`dropping_for`).
-	if (reporting === boundary) return true;
+	// What the removal itself threw (`dropping_for`), not what a hook it
+	// reaches sets off.
+	if (reporting?.boundary === boundary && reporting.error === error) return true;
 	// A component the fallback showed. Without uids, as before, the content's.
 	const from = state.rendered_from;
 	if (from == null) return false;
@@ -284,11 +287,12 @@ function torn_down_by_render(source, boundary, state) {
  * reset, is replaced while the outer one stays, and what still comes from it
  * is the body's, as before, until the outer one goes away too.
  *
+ * @param {unknown} error
  * @param {unknown} source
  * @param {ComponentInternalInstance} boundary
  * @returns {boolean}
  */
-function thrown_by_twin_fallback(source, boundary) {
+function thrown_by_twin_fallback(error, source, boundary) {
 	const chain = chain_to(source, boundary);
 	for (let i = chain.length - 1; i >= 0; i--) {
 		const inner = /** @type {ComponentInternalInstance} */ (/** @type {unknown} */ (chain[i]));
@@ -302,7 +306,7 @@ function thrown_by_twin_fallback(source, boundary) {
 			if (state.dropped_by !== boundary || is_gone(boundary)) return true;
 		} else if (i === 0 && !state.shows_content) {
 			return true;
-		} else if (torn_down_by_render(source, inner, state)) {
+		} else if (torn_down_by_render(error, source, inner, state)) {
 			// Torn down as the inner one swaps in the same `@catch`, or removes
 			// it after a reset: it went on from there, and goes on from here too.
 			return true;
@@ -619,10 +623,10 @@ function create_boundary_nodes(render, instance) {
 let dropping = null;
 
 /**
- * The boundary whose removal threw what it is handing to its error hook
- * (`dropping_for`).
+ * The boundary whose removal threw what it is handing to its error hook, and
+ * that error (`dropping_for`).
  *
- * @type {unknown}
+ * @type {{ boundary: unknown, error: unknown } | null}
  */
 let reporting = null;
 
@@ -653,7 +657,7 @@ function dropping_for(instance, remove) {
 		// already and threw again, such as from an `onBeforeUnmount`, which
 		// Vue's scheduler reports again too, without a `@try`.
 		const outer_reporting = reporting;
-		reporting = instance;
+		reporting = { boundary: instance, error };
 		try {
 			handleError(error, instance, ErrorCodes.COMPONENT_UPDATE, false);
 		} finally {
@@ -753,6 +757,9 @@ export function TsrxErrorBoundary(props, ctx) {
 function render_fallback(state, props) {
 	const caught = /** @type {{ error: unknown }} */ (state.caught);
 	state.shows_content = false;
+	// What this render removes next, to show the fallback, goes on, also when
+	// it began to render the content and the content threw.
+	state.removes_for_catch = true;
 	if (state.fallback_from === null) state.fallback_from = take_uid();
 	return props.fallback(caught.error, state.reset);
 }
@@ -885,7 +892,7 @@ function initialize_boundary_state(instance) {
 		if (passes_to_twin(instance)) return;
 		// The boundary inside this one that renders the same `@catch` let this
 		// error from that `@catch` go on: let it go on too.
-		if (thrown_by_twin_fallback(source, instance)) return;
+		if (thrown_by_twin_fallback(captured_error, source, instance)) return;
 		// An error from the fallback is for a boundary further out: one
 		// rendering around this one takes it here.
 		const from_fallback = thrown_by_fallback(source, instance);
@@ -909,7 +916,7 @@ function initialize_boundary_state(instance) {
 		// own render removes, as it updates, is the content's, as before.
 		if (
 			(is_gone(instance, state) && !replaced_by_twin(instance, state)) ||
-			torn_down_by_render(source, instance, state)
+			torn_down_by_render(captured_error, source, instance, state)
 		) {
 			return;
 		}
