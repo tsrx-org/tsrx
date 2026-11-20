@@ -4248,6 +4248,39 @@ function LateFromReplacedTwin(props: { promise: CatchLoader }) @{
 	}
 }
 
+// The body registers an unmount hook that throws, then throws as it renders,
+// so the @catch shows; the hook throws when the @try goes away.
+function arm_teardown(): string {
+	onBeforeUnmount(() => {
+		throw new Error('teardown');
+	});
+	return '';
+}
+
+function TeardownTwin() @{
+	@try {
+		<p>
+			{arm_teardown()}
+			{fail_with('body')}
+		</p>
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function TeardownPlain() @{
+	@try {
+		<p>
+			{arm_teardown()}
+			{fail_with('body')}
+		</p>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
 function throw_content(error: unknown): never {
 	throw error;
 }
@@ -4754,6 +4787,16 @@ describe('tsrx-vue a @catch that throws', () => {
 		expect(text('.replaced-reset')).toBe('late');
 		expect(handled).toEqual([]);
 		app.unmount();
+	});
+
+	it.each([
+		['with @pending', TeardownTwin],
+		['without @pending', TeardownPlain],
+	])('passes on what its body throws as the @try %s unmounts', async (_name, component) => {
+		const app = await mount(component, {});
+		expect(text('.teardown-caught')).toBe('body');
+		app.unmount();
+		expect(handled).toEqual(['teardown']);
 	});
 
 	it('runs a @catch parameter pattern that throws once, and passes its error to app.config.errorHandler', async () => {
