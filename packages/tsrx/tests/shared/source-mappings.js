@@ -1064,6 +1064,62 @@ export async function App() @{
 			const generated = mapping.generatedOffsets[0];
 			expect(result.code.slice(generated, generated + mapping.generatedLengths[0])).toBe(text);
 		});
+
+		it.each([
+			['a comment', 'export function* gen(v: any) {\n\tyield /* c */ * v;\n}\n'],
+			['spaces', 'export function* gen(v: any) {\n\tyield \t * v;\n}\n'],
+			['nothing', 'export function* gen(v: any) {\n\tyield* v;\n}\n'],
+		])('maps the `*` of a `yield*` with %s before it from the source `*`', (label, source) => {
+			// esrap writes `yield*` as one token and maps its end to the keyword's
+			// start plus six, which is past the `*` only in `yield*`.
+			const result = compile(source, 'App.tsrx');
+			const line = result.code.split('\n').findIndex((text) => text.includes('yield* v'));
+			const column = result.code.split('\n')[line].indexOf('yield* v');
+			const keyword = source.indexOf('yield');
+			const star = source.indexOf('* v');
+			expect(
+				source_map_lines(result, source)
+					[line].filter((segment) => segment.column >= column && segment.column <= column + 6)
+					.map((segment) => [segment.column - column, segment.offset]),
+			).toEqual(
+				label === 'nothing'
+					? [
+							[0, keyword],
+							[6, star + 1],
+						]
+					: [
+							[0, keyword],
+							[5, star],
+							[6, star + 1],
+						],
+			);
+		});
+
+		it.each([
+			['a comment', 'export function* gen(v: any) {\n\tyield /* c */ * (v, v);\n}\n'],
+			['spaces', 'export function* gen(v: any) {\n\tyield \t * (v, v);\n}\n'],
+		])('maps a `yield*` with %s before the `*` from its own text in the editor', (_, source) => {
+			// The editor output prints with esrap's `tokens`, which map `yield` and
+			// `*` from their own source tokens as they are written.
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.code).toContain('yield* (v, v);');
+			const keyword = source.indexOf('yield');
+			const texts = result.mappings
+				.filter((mapping) => mapping.sourceOffsets[0] >= keyword)
+				.map((mapping) => [
+					source.slice(mapping.sourceOffsets[0], mapping.sourceOffsets[0] + mapping.lengths[0]),
+					result.code.slice(
+						mapping.generatedOffsets[0],
+						mapping.generatedOffsets[0] + (mapping.generatedLengths ?? mapping.lengths)[0],
+					),
+				]);
+			expect(texts).toContainEqual(['yield', 'yield']);
+			expect(texts).toContainEqual(['(v, v)', '(v, v)']);
+			expect(texts.filter(([text]) => text === 'v')).toEqual([
+				['v', 'v'],
+				['v', 'v'],
+			]);
+		});
 	});
 
 	describe(`[${name}] text with a comment and characters JSX text can't hold`, () => {
@@ -4097,6 +4153,86 @@ export function A() @{
 			const directive = '//@ts-expect-error';
 			const [mapping] = mappings_at(result, source.indexOf(directive), directive.length);
 			expect(mapping.data.completion).toBeFalsy();
+		});
+
+		it('maps a `/// <reference path>` it writes as written for navigation, and a JSDoc comment without', () => {
+			// TypeScript gives the path of a `/// <reference path>` as a file reference
+			// and a definition. A JSDoc `{@link}` resolves in the scope where the
+			// comment is printed, which isn't the source's on every target, so it gets
+			// no navigation.
+			const source = `/// <reference path="./Other.tsrx" />
+import { Other } from './Other.tsrx';
+
+/** Shows {@link Other}. */
+export function A() @{
+	<Other />
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const [comment, navigation] of /** @type {const} */ ([
+				['/// <reference path="./Other.tsrx" />', true],
+				['/** Shows {@link Other}. */', undefined],
+			])) {
+				const offset = source.indexOf(comment);
+				expect(generated_at(result, offset, comment.length)).toEqual([comment]);
+				const [mapping] = mappings_at(result, offset, comment.length);
+				expect(mapping.data.navigation, comment).toBe(navigation);
+				expect(mapping.data.completion, comment).toBe(true);
+			}
+		});
+
+		it('maps navigation only for a `/// <reference>` that TypeScript reads as one in the source', () => {
+			// After a statement, TypeScript reads it as a comment, but the output can
+			// print it first: it prints nothing for `;`, and a platform guard is
+			// specialized away.
+			const comment = '/// <reference path="./Other.tsrx" />';
+			for (const [source, navigation, options] of /** @type {const} */ ([
+				[`/* license */\n// note\n${comment}\nexport const a = 1;`, true, {}],
+				[`#!/usr/bin/env node\n${comment}\nexport const a = 1;`, true, {}],
+				[`;\n${comment}\nexport const a = 1;`, undefined, {}],
+				[`export const a = 1;\n${comment}\nexport const b = 2;`, undefined, {}],
+				[
+					`if (import.meta.env.platform.web) {}\n${comment}\nexport const a = 1;`,
+					undefined,
+					{ platform: 'ios' },
+				],
+				[`/// <reference-extra path="./Other.tsrx" />\nexport const a = 1;`, undefined, {}],
+				[`/// <reference path="./Other.tsrx">\nexport const a = 1;`, undefined, {}],
+			])) {
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true, ...options });
+				const text = source.slice(
+					source.indexOf('///'),
+					source.indexOf('\n', source.indexOf('///')),
+				);
+				const mappings = mappings_at(result, source.indexOf(text), text.length);
+				if (navigation) expect(mappings.length, source).toBeGreaterThan(0);
+				for (const mapping of mappings) {
+					expect(mapping.data.navigation, source).toBe(navigation);
+				}
+			}
+		});
+
+		it('reads the leading comments once, however many directives follow them', () => {
+			const source = `// ${'a'.repeat(500_000)}\n${Array.from(
+				{ length: 1000 },
+				(_, i) => `/// <reference path="./Other${i}.tsrx" />`,
+			).join('\n')}\nexport const a = 1;`;
+			const start = performance.now();
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(performance.now() - start).toBeLessThan(2000);
+			const last = '/// <reference path="./Other999.tsrx" />';
+			const [mapping] = mappings_at(result, source.indexOf(last), last.length);
+			expect(mapping.data.navigation).toBe(true);
+		});
+
+		it('writes only a comment that starts with `///` as a triple-slash directive', () => {
+			// TypeScript reads a directive only from a `///` that starts the comment.
+			const source = `// /<reference path="./Other.tsrx" />
+export function A() @{
+	<p />
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.code).not.toMatch(/^\/\/\//m);
 		});
 
 		it.each([

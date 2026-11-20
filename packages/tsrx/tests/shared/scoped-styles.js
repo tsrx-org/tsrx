@@ -1790,6 +1790,35 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('leaves the compounds after a bare :global later in a selector unscoped in a theme too', () => {
+			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
+			const cases = [
+				['div :global p', (hash) => `div.${hash} p {`],
+				['div :global p span', (hash) => `div.${hash} p span {`],
+				['div :global.x p', (hash) => `div.${hash}.x p {`],
+				// The arguments of its :has() are a selector of their own.
+				['div :global p:has(.k)', (hash) => `div.${hash} p:has(.k:where(.${hash})) {`],
+				[':root :global .x', () => ':root .x {'],
+				['.p { & :global .x', (hash) => `.p.${hash} { & .x {`],
+			];
+			for (const [selector, expected] of cases) {
+				const rule = `${selector} { color: red; }${selector.startsWith('.p {') ? ' }' : ''}`;
+				const theme = compile(`export const theme = <style>${rule}</style>;`, 'App.tsrx');
+				const component = compile(
+					`export function App() @{
+						<>
+							<style>${rule}</style>
+							<div ${attr}="p"><p ${attr}="x"><span ${attr}="k" /></p></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(theme.css, selector).toContain(expected(hashes_of(theme.cssHash)[0]));
+				expect(component.css, selector).toContain(expected(hashes_of(component.cssHash)[0]));
+			}
+		});
+
 		it('closes the comment over a pruned selector that touches a :global() selector', () => {
 			/** @type {Array<[string, (hash: string) => string]>} */
 			const cases = [
@@ -1904,8 +1933,7 @@ export function runSharedScopedStyleTests({
 				':global(.a) .b',
 				':global(.a) :global(.b)',
 			];
-			// A theme also hashes the compounds after a bare :global later in a
-			// selector, which a component leaves unscoped; this follows a component.
+			// The compounds after a bare :global later in a selector are unscoped.
 			const after_bare_global = [
 				':root :global .x',
 				':root :global .x:has(.a)',
@@ -1924,10 +1952,9 @@ export function runSharedScopedStyleTests({
 			/** @type {Array<[selector: string, wrap: (list: string) => string, theme: boolean]>} */
 			const cases = [];
 			for (const theme of [false, true]) {
-				const top = theme ? selectors : [...selectors, ...after_bare_global];
+				const top = [...selectors, ...after_bare_global];
 				for (const selector of top) cases.push([selector, (list) => list, theme]);
 				for (const selector of [...top, ...nested]) {
-					if (theme && selector.includes(':global .')) continue;
 					cases.push([selector, (list) => `.p { ${list} }`, theme]);
 				}
 			}

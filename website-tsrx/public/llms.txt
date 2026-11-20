@@ -948,8 +948,11 @@ const StatusMessage = ({ status }: { status: string }) => @switch (status) {
 ```
 
 Each `@case` and `@default` body is a `{...}` template block. Cases are
-isolated and do not fall through. A `return` right in an `@switch` case body is
-invalid, and a `break` or `continue` in a case can only reach a loop, a `switch`
+isolated and do not fall through. A `return` in an `@switch` case body is
+invalid, also inside a block, an `if` or a loop there, unless it is in a function
+declared in the case (a case runs in a function of its own, so it would only end
+the case); one in an `@if`, `@for` or `@try` inside the case gets that block's
+error. A `break` or `continue` in a case can only reach a loop, a `switch`
 (`break` only) or a label inside the case.
 
 ### `try` / `catch` / `pending`

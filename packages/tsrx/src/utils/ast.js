@@ -114,6 +114,16 @@ export function render_children(node) {
 		child?.type === 'JSXExpressionContainer' &&
 		/** @type {any} */ (child).expression.type === 'JSXEmptyExpression' &&
 		!is_tooling_comment_container(child);
+	// The first child after each one that isn't a plain empty `{}`, found from
+	// the end, so a long run of them takes linear time
+	/** @type {Array<AST.Node | undefined>} */
+	const next_kept = [];
+	/** @type {AST.Node | undefined} */
+	let next;
+	for (let index = kept.length - 1; index >= 0; index--) {
+		next_kept[index] = next;
+		if (!is_plain_empty_container(kept[index])) next = kept[index];
+	}
 	/** @type {AST.Node[]} */
 	const result = [];
 	for (const [index, child] of kept.entries()) {
@@ -122,8 +132,9 @@ export function render_children(node) {
 			continue;
 		}
 		// One `{}` for a run of them between two texts
-		const next = kept.slice(index + 1).find((sibling) => !is_plain_empty_container(sibling));
-		if (result.at(-1)?.type === 'JSXText' && next?.type === 'JSXText') result.push(child);
+		if (result.at(-1)?.type === 'JSXText' && next_kept[index]?.type === 'JSXText') {
+			result.push(child);
+		}
 	}
 	return result;
 }
