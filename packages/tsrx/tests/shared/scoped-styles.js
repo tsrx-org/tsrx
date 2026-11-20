@@ -2056,6 +2056,32 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('prunes a selector whose :root or :host compound has a :has() that matches nothing', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							:root.dark:has(.missing), .icon { color: red; }
+							:root:has(.missing) { color: blue; }
+							:host.open:has(.missing, .icon) .wrap { color: green; }
+						</style>
+						<div ${attr}="wrap"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			// An empty :has() would make the browser drop the whole list, .icon too.
+			expect(css).toContain(
+				`/* (unused) :root.dark:has(.missing),*/ .icon.${hash} { color: red; }`,
+			);
+			expect(css).toContain('/* (unused) :root:has(.missing) { color: blue; }*/');
+			expect(css).toContain(
+				`:host.open:has(/* (unused) .missing,*/ .icon:where(.${hash})) .wrap.${hash} { color: green; }`,
+			);
+		});
+
 		it('closes the comment over a pruned selector that touches a :global() selector', () => {
 			/** @type {Array<[string, (hash: string) => string]>} */
 			const cases = [

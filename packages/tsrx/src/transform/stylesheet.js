@@ -327,6 +327,43 @@ function separator_comma(source, start, end) {
 	return i;
 }
 
+/**
+ * Mark a rule's selector unused when a compound of it with `:root` or `:host`
+ * has a `:has()` whose arguments all match nothing: the output would write
+ * an empty `:has()`, which is invalid and makes the browser drop the whole
+ * selector list, as `:root:has(.missing), .icon` would lose `.icon`. Such a
+ * selector can't match, as one whose other compounds' `:has()` matches
+ * nothing, which the pruner leaves unused. Global blocks aren't pruned.
+ *
+ * @param {AST.CSS.StyleSheet} stylesheet
+ */
+function unuse_selectors_with_emptied_has(stylesheet) {
+	walk(/** @type {AST.CSS.Node} */ (stylesheet), null, {
+		Rule(node, { next }) {
+			if (node.metadata.is_global_block) return;
+			for (const selector of node.prelude.children) {
+				if (
+					selector.metadata.used &&
+					selector.children.some(
+						({ metadata, selectors }) =>
+							metadata.is_global_like &&
+							selectors.some(
+								(simple) =>
+									simple.type === 'PseudoClassSelector' &&
+									simple.name === 'has' &&
+									simple.args !== null &&
+									simple.args.children.every((argument) => !argument.metadata.used),
+							),
+					)
+				) {
+					selector.metadata.used = false;
+				}
+			}
+			next();
+		},
+	});
+}
+
 /** @param {AST.CSS.Rule} rule */
 function is_used(rule) {
 	return rule.prelude.children.some((selector) => selector.metadata.used);
@@ -953,6 +990,7 @@ export function render_stylesheets(stylesheets, minify = false) {
 			},
 		};
 
+		unuse_selectors_with_emptied_has(stylesheet);
 		walk(stylesheet, state, visitors);
 		css += code.toString();
 	}
