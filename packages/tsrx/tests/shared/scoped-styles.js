@@ -1902,6 +1902,8 @@ export function runSharedScopedStyleTests({
 			expect(css_of('& > .p { margin: 0; }')).toContain('&.H > .p:where(.H) { margin: 0; }');
 			// `:global(&)` keeps the & as written: the root of any such scope.
 			expect(css_of(':global(&) { color: red; }')).toContain('& { color: red; }');
+			// A :global(...) compound with the & stays as written, as with :scope.
+			expect(css_of(':global(div)& { color: red; }')).toContain('div& { color: red; }');
 			// Every spelling compiles as it does with :scope, its hash after the &
 			// instead of before :scope, and is pruned alike.
 			for (const body of [
@@ -1914,6 +1916,9 @@ export function runSharedScopedStyleTests({
 				':root& { color: red; }',
 				'.p& .p { color: red; }',
 				':global.w, :root& { color: red; }',
+				':global(div)& { color: red; }',
+				':global(.p)&:hover { color: red; }',
+				':global.w, :global(.p)& { color: red; }',
 			]) {
 				const scope = css_of(body.replaceAll('&', ':scope'))
 					.replace(/(\.H|:where\(\.H\)):scope/g, '&$1')

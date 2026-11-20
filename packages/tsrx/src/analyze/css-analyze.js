@@ -22,8 +22,10 @@ function is_global_block_selector(simple_selector) {
 /**
  * True if is `:global(...)` or `:global` and no pseudo class that is scoped.
  * @param {AST.CSS.RelativeSelector} relative_selector
+ * @param {boolean} [scope_root] whether an `&` in it stands for a `@scope`'s
+ *   root, and so counts as the `:scope` pseudo-class
  */
-function is_global(relative_selector) {
+function is_global(relative_selector, scope_root = false) {
 	const first = relative_selector.selectors[0];
 
 	return (
@@ -34,7 +36,9 @@ function is_global(relative_selector) {
 			// :global(button).x means that the selector is still scoped because of the .x
 			relative_selector.selectors.every(
 				(selector) =>
-					selector.type === 'PseudoClassSelector' || selector.type === 'PseudoElementSelector',
+					selector.type === 'PseudoClassSelector' ||
+					selector.type === 'PseudoElementSelector' ||
+					(scope_root && selector.type === 'NestingSelector'),
 			))
 	);
 }
@@ -717,7 +721,7 @@ export function analyze_css(css, options = {}) {
 					if (first.args !== null && idx !== 0 && idx !== node.children.length - 1) {
 						// ensure `:global(...)` is not used in the middle of a selector (but multiple `global(...)` in sequence are ok)
 						for (let i = idx + 1; i < node.children.length; i++) {
-							if (!is_global(node.children[i])) {
+							if (!is_global(node.children[i], is_scope_root_ampersand(context.state.rule))) {
 								report(TSRX_ERRORS.CSS_GLOBAL_IN_MIDDLE, first);
 								break;
 							}
@@ -748,11 +752,11 @@ export function analyze_css(css, options = {}) {
 		},
 		RelativeSelector(node, context) {
 			// Check if this selector is a :global selector
-			node.metadata.is_global = node.selectors.length >= 1 && is_global(node);
-
-			// Check for :root and other global-like selectors. An `&` for a
-			// `@scope`'s root counts as the `:scope` it stands for.
+			// An `&` for a `@scope`'s root counts as the `:scope` it stands for.
 			const scope_root = is_scope_root_ampersand(context.state.rule);
+			node.metadata.is_global = node.selectors.length >= 1 && is_global(node, scope_root);
+
+			// Check for :root and other global-like selectors.
 			if (
 				node.selectors.length >= 1 &&
 				node.selectors.every(
