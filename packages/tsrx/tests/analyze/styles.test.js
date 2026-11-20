@@ -9,6 +9,7 @@ import {
 	DIAGNOSTIC_CODES,
 	parseModule,
 	parseStyle,
+	prepareStylesheetForRender,
 	renderStylesheets,
 } from '../../src/index.js';
 import {
@@ -2097,6 +2098,30 @@ ${theme}`;
 				);
 			},
 		);
+	});
+
+	describe('an assigned block after a bare :global', () => {
+		it('leaves only the compounds the analysis marks global-like unscoped', () => {
+			/** @type {Array<[string, string]>} */
+			const cases = [
+				['div :global p span { color: red; }', 'div.H p span { color: red; }'],
+				['.p { & :global .x { color: red; } }', '.p.H { & .x { color: red; } }'],
+				// A component scopes the selector in a pseudo-class's argument after a
+				// bare :global (which is TSRX3011 there), so a theme does too.
+				[':is(:global(.x) :global .y) { color: red; }', ':is(.x .y.H) { color: red; }'],
+			];
+			for (const [css, expected] of cases) {
+				for (const minify of [false, true]) {
+					const sheet = parseStyle(css, { filename, line: 1, column: 0 }, {});
+					analyzeCss(sheet, { errors: [] });
+					const rendered = renderStylesheets(
+						[prepareStylesheetForRender(sheet, 'theme')],
+						minify,
+					).replace(/tsrx-[0-9a-f]+/g, 'H');
+					expect(rendered, css).toBe(expected);
+				}
+			}
+		});
 	});
 
 	describe('@tsrx-ignore', () => {
