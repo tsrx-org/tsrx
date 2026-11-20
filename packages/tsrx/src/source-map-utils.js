@@ -34,6 +34,22 @@ export const mapping_data_verify_complete = {
 };
 
 /**
+ * A comment the editor output prints as written, so its offsets are the
+ * source's. TypeScript checks it (a `/// <reference path>` to a missing file),
+ * completes in it (the `/** *\/` template, JSDoc tags, a reference's path) and
+ * navigates from it: the path of a `/// <reference path>` is a file reference
+ * and has a definition, and a JSDoc `{@link}` name is a reference to its
+ * symbol. Folding and formatting stay the source's.
+ * @type {Partial<VolarCodeMapping['data']>}
+ */
+export const mapping_data_comment = {
+	verification: true,
+	completion: true,
+	semantic: true,
+	navigation: true,
+};
+
+/**
  * Completion only — no verification/hover/navigation. Used for positions that
  * should surface completions but must not be type-checked, e.g. a `@`-leading text
  * node that is an in-progress template directive (verifying it as code would raise

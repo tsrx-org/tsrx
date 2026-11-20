@@ -30,6 +30,7 @@ import {
 	mapping_data,
 	mapping_data_verify_only,
 	mapping_data_verify_complete,
+	mapping_data_comment,
 	mapping_data_completion_only,
 	mapping_data_string_span,
 	build_line_offsets,
@@ -1197,8 +1198,11 @@ export function convert_source_map_to_mappings(
 				// A stripped or moved comment must not claim another node's shared
 				// source coordinate. The printer writes this exact formatted text.
 				if (start === undefined) continue;
-				// TypeScript completes inside a comment printed as written, such as
-				// the `/** */` template after `/**` and JSDoc tags (#1066).
+				// A comment printed as written maps as written (`mapping_data_comment`):
+				// TypeScript completes in it, such as the `/** */` template after `/**`
+				// and JSDoc tags (#1066), and finds file references and definitions
+				// from the path of a `/// <reference path>` and references from a JSDoc
+				// `{@link}`.
 				const as_written = text === source.slice(comment.start, comment.end);
 				mappings.push({
 					sourceOffsets: [comment.start],
@@ -1206,7 +1210,7 @@ export function convert_source_map_to_mappings(
 					generatedOffsets: [start],
 					generatedLengths: [text.length],
 					data: {
-						...(as_written ? mapping_data_verify_complete : mapping_data_verify_only),
+						...(as_written ? mapping_data_comment : mapping_data_verify_only),
 						customData: {},
 					},
 				});

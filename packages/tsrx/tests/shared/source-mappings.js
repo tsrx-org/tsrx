@@ -4099,6 +4099,40 @@ export function A() @{
 			expect(mapping.data.completion).toBeFalsy();
 		});
 
+		it('maps a comment it writes as written for navigation: a `/// <reference path>`, a JSDoc `{@link}`', () => {
+			// TypeScript gives the path of a `/// <reference path>` as a file reference
+			// and a definition, and a `{@link}` name as a reference to its symbol.
+			const source = `/// <reference path="./Other.tsrx" />
+import { Other } from './Other.tsrx';
+
+/** Shows {@link Other}. */
+export function A() @{
+	<Other />
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const comment of [
+				'/// <reference path="./Other.tsrx" />',
+				'/** Shows {@link Other}. */',
+			]) {
+				const offset = source.indexOf(comment);
+				expect(generated_at(result, offset, comment.length)).toEqual([comment]);
+				const [mapping] = mappings_at(result, offset, comment.length);
+				expect(mapping.data.navigation, comment).toBe(true);
+				expect(mapping.data.completion, comment).toBe(true);
+			}
+		});
+
+		it('writes only a comment that starts with `///` as a triple-slash directive', () => {
+			// TypeScript reads a directive only from a `///` that starts the comment.
+			const source = `// /<reference path="./Other.tsrx" />
+export function A() @{
+	<p />
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.code).not.toMatch(/^\/\/\//m);
+		});
+
 		it.each([
 			['a tab', '\t', 1],
 			['spaces', '  ', 0],
