@@ -1,5 +1,5 @@
 import { decode } from '@jridgewell/sourcemap-codec';
-import { isCodeActionsEnabled, isDiagnosticsEnabled } from '@volar/language-core';
+import { isCodeActionsEnabled, isDiagnosticsEnabled, isRenameEnabled } from '@volar/language-core';
 import { SourceMap } from '@volar/source-map';
 import ts from 'typescript';
 import { walk } from 'zimmerframe';
@@ -1219,6 +1219,83 @@ export async function App() @{
 					expect(result.code[generated], open).toMatch(/[<{(]/);
 				}
 			}
+		});
+	});
+
+	describe(`[${name}] a name written with a Unicode escape`, () => {
+		// The printer writes the names the escapes spell, `a` and `b`. Each
+		// name's token maps all of its escaped spelling, so a rename replaces
+		// the whole name and a diagnostic on it covers all of it.
+		const backslash = String.fromCharCode(92);
+		const a = `${backslash}u0061`;
+		const b = `${backslash}u{62}`;
+		const source = [
+			'export function App(props: { a: boolean }) @{',
+			`\tconst ${b} = props.${a};`,
+			`\tfunction twice(${a}: number) { return ${a} * 2; }`,
+			`\tclass Box { #${a} = 1; get() { return this.#${a}; } }`,
+			'\t<div>',
+			`\t\t@if (props.${a}) {`,
+			`\t\t\t<b ${backslash}u0074itle="t" ${backslash}u0063lassName="c">{${b}}{twice(1)}{new Box().get()}</b>`,
+			'\t\t}',
+			'\t</div>',
+			'}',
+			'',
+		].join('\n');
+		// A whole name with at least one escape in it.
+		const escape = `${backslash}${backslash}u(?:${backslash}{[0-9a-f]+${backslash}}|[0-9a-f]{4})`;
+		const escaped_name = new RegExp(`#?[${backslash}w$]*(?:${escape}[${backslash}w$]*)+`, 'g');
+
+		it('maps each escaped name whole to the printed name', () => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const map = new SourceMap(result.mappings);
+			const names = [...source.matchAll(escaped_name)].map((match) => {
+				const start = /** @type {number} */ (match.index);
+				const end = start + match[0].length;
+				const token = result.mappings.find(
+					(mapping) =>
+						mapping.sourceOffsets[0] === start &&
+						mapping.lengths[0] === match[0].length &&
+						isRenameEnabled(mapping.data),
+				);
+				if (!token) return { written: match[0], printed: null };
+				const generated_start = token.generatedOffsets[0];
+				const generated_end = generated_start + (token.generatedLengths ?? token.lengths)[0];
+				// A rename edit on the printed name, mapped back as Volar maps it.
+				const [edit] = [
+					...map.toSourceRange(generated_start, generated_end, true, isRenameEnabled),
+				];
+				return {
+					written: match[0],
+					printed: result.code.slice(generated_start, generated_end),
+					edit: edit && source.slice(edit[0], edit[1]),
+					covers: edit?.[0] === start && edit?.[1] === end,
+				};
+			});
+			expect(names).toEqual([
+				{ written: b, printed: 'b', edit: b, covers: true },
+				{ written: a, printed: 'a', edit: a, covers: true },
+				{ written: a, printed: 'a', edit: a, covers: true },
+				{ written: a, printed: 'a', edit: a, covers: true },
+				{ written: `#${a}`, printed: '#a', edit: `#${a}`, covers: true },
+				{ written: `#${a}`, printed: '#a', edit: `#${a}`, covers: true },
+				{ written: a, printed: 'a', edit: a, covers: true },
+				{
+					written: `${backslash}u0074itle`,
+					printed: 'title',
+					edit: `${backslash}u0074itle`,
+					covers: true,
+				},
+				// Solid and Vue print an authored `className` on an element as `class`.
+				{
+					written: `${backslash}u0063lassName`,
+					printed: expect.stringMatching(/^class(Name)?$/),
+					edit: `${backslash}u0063lassName`,
+					covers: true,
+				},
+				{ written: b, printed: 'b', edit: b, covers: true },
+			]);
 		});
 	});
 
