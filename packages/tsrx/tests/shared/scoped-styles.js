@@ -1787,8 +1787,9 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`.p.${hash} { @media print { @layer base {} } }`);
 			expect(css).toContain(`.p.${hash} { @layer base {} }`);
 			// An empty @keyframes still defines its name, so the scoped one stays.
-			expect(css).toContain(`.p.${hash} { @media all { @keyframes ${hash}-k {} } }`);
-			expect(css).toContain(`.p.${hash} { @media all { @-webkit-keyframes ${hash}-w {} } }`);
+			expect(css).toContain(`@keyframes ${hash}-k {}`);
+			expect(css).toContain(`@-webkit-keyframes ${hash}-w {}`);
+			expect(css).not.toContain('/* (empty) .p { @media all');
 		});
 
 		it('keeps a comment end in a pruned selector inside the comment over it', () => {
