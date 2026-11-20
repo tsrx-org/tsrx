@@ -493,7 +493,17 @@ function nesting_selectors(rule) {
  * rule such as `@media`, or `@scope`, which a declaration outside every rule
  * still is in.
  */
-const GROUP_AT_RULES = ['media', 'supports', 'container', 'layer', 'scope', 'starting-style'];
+const GROUP_AT_RULES = [
+	'media',
+	'supports',
+	'container',
+	'layer',
+	'scope',
+	'starting-style',
+	'when',
+	'else',
+	'document',
+];
 
 /**
  * `at_rule`'s name as CSS reads it, with its escapes decoded (`@s\63ope` is
@@ -546,7 +556,9 @@ function first_bare_declaration(block) {
  */
 function check_rules_without_parent(rules, report) {
 	for (const rule of rules) {
-		if (!has_ampersand_target(rule)) {
+		// A selector the output drops (`:global & { @font-face { ... } }`)
+		// leaves no & behind.
+		if (!drops_selector(rule) && !has_ampersand_target(rule)) {
 			for (const nesting of nesting_selectors(rule)) {
 				report(TSRX_ERRORS.CSS_NESTING_SELECTOR_WITHOUT_RULE, nesting);
 			}

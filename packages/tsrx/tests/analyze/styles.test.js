@@ -1133,6 +1133,12 @@ describe('scoped style analysis', () => {
 					'color: red',
 					0,
 				],
+				[
+					'@when supports(display: grid) { :global { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+					'color: red',
+					0,
+				],
 			];
 			for (const [css, message, anchor, nth] of cases) {
 				const source = `const t = <style>${css}</style>;`;
@@ -1161,6 +1167,8 @@ describe('scoped style analysis', () => {
 				':global(&.w) .p { color: red; }',
 				// An escaped name is still @scope.
 				String.raw`@s\63ope (.c) { & { color: red; } }`,
+				// The output drops this selector, & and all.
+				':global & { @font-face { font-family: x; } }',
 				// A rule around a dropped :global { ... } block takes its declarations,
 				// and so does an at-rule that holds descriptors.
 				'.p { :global { color: red; } }',

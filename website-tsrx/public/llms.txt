@@ -1260,8 +1260,8 @@ with CSS nesting:
   scope's root. With no rule around it, or in a `:global { ... }` block outside
   a rule (the output drops the block), it would match the page's root element,
   so it is the `TSRX3011` error; write `:root`, or `:global(&)` to keep the `&`.
-  A declaration in such a block is the same error: it would be left outside any
-  rule.
+  A declaration such a block would leave outside every rule is the same error,
+  unless an at-rule that holds declarations, such as `@font-face`, is around it.
 - Nested block `.card { :global { .note { ... } .tag { ... } } }` ->
   `.card.<hash> { .note { ... } .tag { ... } }`: the same reach as the prefixed
   form, with the scoped prefix written once. `.card { :global(.note) { ... } }`
