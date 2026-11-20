@@ -471,6 +471,18 @@ function virtual_semantic_diagnostics(code, extra_options = {}) {
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] a style block's editor anchor`, () => {
+		it('is named apart from a name the source uses', () => {
+			const source =
+				'const _tsrx_style_anchor_1 = 0;\nexport const theme = <style>.x { color: red; }</style>;\nexport const n = _tsrx_style_anchor_1;\n';
+			const { code } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(code.match(/\bconst _tsrx_style_anchor_1\b/g)).toEqual([
+				'const _tsrx_style_anchor_1',
+			]);
+			expect(code).toMatch(/\bconst _tsrx_style_anchor_2 = <style>/);
+		});
+	});
+
 	describe(`[${name}] class index signatures in virtual code`, () => {
 		it('keeps static on a class index signature', () => {
 			expect_static_index_signatures(
@@ -7584,6 +7596,22 @@ export function App({ items }: { items: string[] }) @{
 					[...code.matchAll(/^const (\S+__static\d+) = </gm)].map((match) => match[1]),
 				).toEqual(hoistsStaticJsx ? statics : []);
 				expect(run_result(code)).toEqual(expected);
+			},
+		);
+
+		it.each(['TsrxDynamic_1', 'TsrxDyn\\u0061mic_1'])(
+			'names a dynamic tag alias apart from a %s the author wrote',
+			(authored) => {
+				const { code } = compile(
+					`export function App({ as }: any) {\n\tconst ${authored} = 'mine';\n\treturn <div><{as} title={${authored}} /></div>;\n}`,
+					'App.tsrx',
+				);
+				// The authored name keeps its one declaration, and the tag reads another
+				expect(code.match(/\b(?:const|let|var) TsrxDynamic_1\b/g)).toEqual([
+					'const TsrxDynamic_1',
+				]);
+				expect(code).not.toMatch(/<TsrxDynamic_1\b/);
+				expect(code).toContain('title={TsrxDynamic_1}');
 			},
 		);
 

@@ -1018,8 +1018,7 @@ function lower_dynamic_jsx_element(node, transform_context) {
 	if (factory) {
 		// Bind the tag expression to a scoped component const and reference it
 		// like an ordinary component.
-		transform_context.local_statement_component_index += 1;
-		const local = `${DYNAMIC_IMPORT_LOCAL}_${transform_context.local_statement_component_index}`;
+		const local = create_dynamic_alias_name(transform_context);
 		const local_id = b.jsx_id(local);
 		transform_context.needs_dynamic_factory = true;
 
@@ -2435,8 +2434,31 @@ function add_type_only_style_anchor(node, transform_context) {
  * @returns {string}
  */
 function create_style_anchor_name(transform_context) {
-	transform_context.local_statement_component_index += 1;
-	return `_tsrx_style_anchor_${transform_context.local_statement_component_index}`;
+	/** @type {string} */
+	let name;
+	do {
+		transform_context.local_statement_component_index += 1;
+		name = `_tsrx_style_anchor_${transform_context.local_statement_component_index}`;
+	} while (source_mentions_identifier(transform_context.source, name));
+	return name;
+}
+
+/**
+ * The name of the `const` a dynamic tag's expression is bound to
+ * (`TsrxDynamic_1`). Like the other generated names, it skips any name the
+ * source uses, so it can't redeclare or shadow one the author wrote.
+ *
+ * @param {TransformContext} transform_context
+ * @returns {string}
+ */
+export function create_dynamic_alias_name(transform_context) {
+	/** @type {string} */
+	let name;
+	do {
+		transform_context.local_statement_component_index += 1;
+		name = `${DYNAMIC_IMPORT_LOCAL}_${transform_context.local_statement_component_index}`;
+	} while (source_mentions_identifier(transform_context.source, name));
+	return name;
 }
 
 /**
@@ -8214,6 +8236,9 @@ function create_spread_props_name(transform_context) {
  * @returns {boolean}
  */
 export function source_mentions_identifier(source, name) {
+	if (typeof source === 'string' && WORD.test(name)) {
+		return read_source(source).words.has(name);
+	}
 	// `$` is an identifier character and a regex anchor.
 	const escaped = name.replace(/\$/g, '\\$');
 	const pattern = new RegExp(`(?<![\\w$])${escaped}(?![\\w$])`);
@@ -8221,33 +8246,52 @@ export function source_mentions_identifier(source, name) {
 		pattern.test(source) ||
 		(typeof source === 'string' &&
 			source.includes('\\u') &&
-			pattern.test(decode_unicode_escapes(source)))
+			pattern.test(read_source(source).decoded))
 	);
 }
 
+/** A name of the characters `read_source` splits on */
+const WORD = /^[\w$]+$/;
+const WORDS = /[\w$]+/g;
+/** The last source `read_source` read */
+let source_read = {
+	source: '',
+	decoded: '',
+	words: /** @type {Set<string>} */ (new Set()),
+};
+
+/**
+ * `source` with its escapes decoded, and the runs of `[\w$]` characters in
+ * both. A name of those characters is one of them exactly when the regular
+ * expression `(?<![\w$])name(?![\w$])` finds it, so each check is a lookup
+ * instead of a scan of the source. A module's generated names are checked one
+ * after another against the same source, so the last one read is kept.
+ *
+ * @param {string} source
+ */
+function read_source(source) {
+	if (source_read.source !== source) {
+		const decoded = source.includes('\\u') ? decode_unicode_escapes(source) : source;
+		const words = new Set(source.match(WORDS));
+		if (decoded !== source) for (const word of decoded.match(WORDS) ?? []) words.add(word);
+		source_read = { source, decoded, words };
+	}
+	return source_read;
+}
+
 const UNICODE_ESCAPE = /\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g;
-/** The last source `decode_unicode_escapes` decoded, and its result */
-let decoded_source = { source: '', decoded: '' };
 
 /**
  * `source` with each `\uXXXX` and `\u{X…}` escape replaced by its character.
- * A module's generated names are checked one after another against the same
- * source, so the last result is kept.
  *
  * @param {string} source
  * @returns {string}
  */
 function decode_unicode_escapes(source) {
-	if (decoded_source.source !== source) {
-		decoded_source = {
-			source,
-			decoded: source.replace(UNICODE_ESCAPE, (escape, braced, short) => {
-				const code = parseInt(braced ?? short, 16);
-				return code <= 0x10ffff ? String.fromCodePoint(code) : escape;
-			}),
-		};
-	}
-	return decoded_source.decoded;
+	return source.replace(UNICODE_ESCAPE, (escape, braced, short) => {
+		const code = parseInt(braced ?? short, 16);
+		return code <= 0x10ffff ? String.fromCodePoint(code) : escape;
+	});
 }
 
 /**
