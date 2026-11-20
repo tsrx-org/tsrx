@@ -2396,6 +2396,9 @@ export function TSRXPlugin(config) {
 			// starts a new `this.labels`, where none are outside.
 			/** @type {{ labels: Parse.Parser['labels'], length: number } | null} */
 			#labelFloor = null;
+			// The `break` or `continue` statement being read (see `raise`).
+			/** @type {AST.BreakStatement | AST.ContinueStatement | null} */
+			#jumpStatement = null;
 
 			/**
 			 * @type {Parse.Parser['finishNode']}
@@ -6076,6 +6079,12 @@ export function TSRXPlugin(config) {
 					// body (#784).
 					this.#raiseCheckerError(this.start, TS_ERRORS.AMBIENT_IMPLEMENTATION);
 					return /** @type {never} */ (undefined);
+				} else if (
+					(message === 'Unsyntactic break' || message === 'Unsyntactic continue') &&
+					this.#jumpStatement
+				) {
+					// TypeScript's code for the jump (see `#jumpError`).
+					message = kind = this.#jumpError(this.#jumpStatement, message === 'Unsyntactic break');
 				} else if (message === NESTED_IMPORT_EXPORT) {
 					// TypeScript reports each kind of import or export with its own error,
 					// on the `import` or `export` (`grammarErrorOnFirstToken`).
@@ -16439,6 +16448,54 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['parseBreakContinueStatement']}
 			 */
 			parseBreakContinueStatement(node, keyword) {
+				const outer = this.#jumpStatement;
+				const statement = /** @type {AST.BreakStatement | AST.ContinueStatement} */ (node);
+				this.#jumpStatement = statement;
+				try {
+					return this.#parseBreakContinueStatement(statement, keyword);
+				} finally {
+					this.#jumpStatement = outer;
+				}
+			}
+
+			/**
+			 * TypeScript's checker error for a `break` or `continue` with no target
+			 * (`checkGrammarBreakOrContinueStatement`), which acorn reports as
+			 * `Unsyntactic break` or `Unsyntactic continue` (TS1105, TS1104 for any
+			 * of them). TypeScript looks for the target in the statements around it
+			 * up to the function or class `static` block it's in, if any: past one,
+			 * TS1107; a `continue`'s label on a statement that isn't a loop, TS1115;
+			 * a label no statement around has, TS1116 for `break` and TS1115 for
+			 * `continue`; and none at all, TS1105 and TS1104. acorn's `labels` are
+			 * those up to the function or `static` block, and a namespace isn't one.
+			 * @param {AST.BreakStatement | AST.ContinueStatement} statement
+			 * @param {boolean} is_break
+			 * @returns {Diagnostic}
+			 */
+			#jumpError(statement, is_break) {
+				const label = statement.label?.name;
+				if (label !== undefined && !is_break && this.labels.some((other) => other.name === label)) {
+					return TS_ERRORS.CONTINUE_LABEL_NOT_LOOP;
+				}
+				for (let i = this.scopeStack.length - 1; i >= 0; i--) {
+					const { flags } = this.scopeStack[i];
+					if (flags & TS_SCOPE_TS_MODULE) continue;
+					if (flags & (SCOPE_FUNCTION | SCOPE_CLASS_STATIC_BLOCK)) {
+						return TS_ERRORS.JUMP_ACROSS_FUNCTION;
+					}
+				}
+				if (label !== undefined) {
+					return is_break ? TS_ERRORS.BREAK_LABEL_NOT_FOUND : TS_ERRORS.CONTINUE_LABEL_NOT_LOOP;
+				}
+				return is_break ? TS_ERRORS.BREAK_OUTSIDE_LOOP : TS_ERRORS.CONTINUE_OUTSIDE_LOOP;
+			}
+
+			/**
+			 * @param {AST.BreakStatement | AST.ContinueStatement} node
+			 * @param {string} keyword
+			 * @returns {AST.BreakStatement | AST.ContinueStatement}
+			 */
+			#parseBreakContinueStatement(node, keyword) {
 				const label = this.lookahead();
 				if (
 					label.type === tt.name ||

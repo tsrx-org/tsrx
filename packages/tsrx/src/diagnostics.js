@@ -936,6 +936,28 @@ export const TS_ERRORS = {
 		message: 'Global module exports may only appear at top level.',
 	},
 
+	// A `break` or `continue` with no target, which acorn reports as
+	// `Unsyntactic break` or `Unsyntactic continue`, as TypeScript's checker
+	// reports each (`checkGrammarBreakOrContinueStatement`)
+	JUMP_ACROSS_FUNCTION: { code: 'TS1107', message: 'Jump target cannot cross function boundary.' },
+	BREAK_OUTSIDE_LOOP: {
+		code: 'TS1105',
+		message:
+			"A 'break' statement can only be used within an enclosing iteration or switch statement.",
+	},
+	CONTINUE_OUTSIDE_LOOP: {
+		code: 'TS1104',
+		message: "A 'continue' statement can only be used within an enclosing iteration statement.",
+	},
+	BREAK_LABEL_NOT_FOUND: {
+		code: 'TS1116',
+		message: "A 'break' statement can only jump to a label of an enclosing statement.",
+	},
+	CONTINUE_LABEL_NOT_LOOP: {
+		code: 'TS1115',
+		message: "A 'continue' statement can only jump to a label of an enclosing iteration statement.",
+	},
+
 	// `await` outside an async function, where only a namespace makes it parse
 	AWAIT_EXPRESSION_NOT_ALLOWED: {
 		code: 'TS1308',
