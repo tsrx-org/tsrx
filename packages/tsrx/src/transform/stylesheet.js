@@ -480,7 +480,8 @@ function lift_out_of_style_rules(node, path, state) {
 	if (
 		wrappers.some(
 			(wrapper) =>
-				is_unnestable_at_rule(wrapper) || remove_css_prefix(wrapper.name.toLowerCase()) === 'layer',
+				is_unnestable_at_rule(wrapper) ||
+				remove_css_prefix(unescape_css(wrapper.name).toLowerCase()) === 'layer',
 		)
 	) {
 		return;

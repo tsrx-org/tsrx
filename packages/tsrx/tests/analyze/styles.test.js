@@ -1238,6 +1238,11 @@ describe('scoped style analysis', () => {
 					'.p.H { @layer a { color: red; } @layer b { @font-face { font-family: x; } } }',
 					'.p.H { @layer a { color: red; } @layer b { @font-face { font-family: x; } } }',
 				],
+				[
+					String.raw`.p { @\6c ayer { @font-face { font-family: x; } } }`,
+					String.raw`.p.H { @\6c ayer { @font-face { font-family: x; } } }`,
+					String.raw`.p.H { @\6c ayer { @font-face { font-family: x; } } }`,
+				],
 			];
 			for (const [css, expected, minified] of cases) {
 				for (const minify of [false, true]) {
