@@ -427,11 +427,18 @@ function has_global_in_middle(rule) {
  * a pruned selector starting with `:global(`, or the end of the comment over
  * the pruned selectors right before one.
  *
+ * A type selector can only start a compound, so one that starts the argument
+ * of a `:global(...)` after the start of its compound goes in an `:is()`:
+ * `.a:global(div.x)` becomes `.a:is(div).x`, which matches the same elements
+ * with the same specificity, where dropping the wrapper gave `.adiv.x`, with
+ * another class.
+ *
  * @param {AST.CSS.PseudoClassSelector} selector
  * @param {AST.CSS.Combinator | null} combinator
  * @param {StylesheetRenderState} state
+ * @param {boolean} [after_start] whether `selector` isn't the first of its compound
  */
-function remove_global_pseudo_class(selector, combinator, state) {
+function remove_global_pseudo_class(selector, combinator, state, after_start = false) {
 	if (selector.args === null) {
 		let start = selector.start;
 		if (combinator?.name === ' ') {
@@ -440,10 +447,22 @@ function remove_global_pseudo_class(selector, combinator, state) {
 		}
 		state.code.update(start, selector.start + ':global'.length, '');
 	} else {
-		state.code
-			.update(selector.start, selector.start + ':global('.length, '')
-			.update(selector.end - 1, selector.end, '');
+		const type = after_start ? leading_type_selector(selector.args) : null;
+		state.code.update(selector.start, selector.start + ':global('.length, type ? ':is(' : '');
+		if (type) state.code.appendLeft(type.end, ')');
+		state.code.update(selector.end - 1, selector.end, '');
 	}
+}
+
+/**
+ * The type selector (`div`, `*`, `svg|a`) `list` starts with, if any.
+ *
+ * @param {AST.CSS.SelectorList} list
+ * @returns {AST.CSS.TypeSelector | null}
+ */
+function leading_type_selector(list) {
+	const first = list.children[0]?.children[0]?.selectors[0];
+	return first?.type === 'TypeSelector' ? first : null;
 }
 
 /**
@@ -828,6 +847,12 @@ const visitors = {
 			if (relative_selector.metadata.is_global && !insideScopingPseudo) {
 				const global = /** @type {AST.CSS.PseudoClassSelector} */ (relative_selector.selectors[0]);
 				remove_global_pseudo_class(global, relative_selector.combinator, context.state);
+				// So is any other :global(...) of the compound (`:global(div):global(.x)`).
+				for (const selector of relative_selector.selectors.slice(1)) {
+					if (selector.type === 'PseudoClassSelector' && selector.name === 'global') {
+						remove_global_pseudo_class(selector, null, context.state, true);
+					}
+				}
 
 				if (
 					global.args === null &&
@@ -845,9 +870,9 @@ const visitors = {
 				continue;
 			} else {
 				// for any :global() or :global at the middle of compound selector
-				for (const selector of relative_selector.selectors) {
+				for (const [i, selector] of relative_selector.selectors.entries()) {
 					if (selector.type === 'PseudoClassSelector' && selector.name === 'global') {
-						remove_global_pseudo_class(selector, null, context.state);
+						remove_global_pseudo_class(selector, null, context.state, i > 0);
 					}
 				}
 			}

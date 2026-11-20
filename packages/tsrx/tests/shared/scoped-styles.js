@@ -1854,6 +1854,38 @@ export function runSharedScopedStyleTests({
 	});
 
 	describe(`[${name}] :global selectors`, () => {
+		it('puts a type selector that a :global(...) after the start of a compound holds in an :is()', () => {
+			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
+			const cases = [
+				// Dropping the wrapper ran the type selector into what came before it.
+				['.icon:global(i)', (hash) => `.icon.${hash}:is(i) {`],
+				[':root:global(html)', () => ':root:is(html) {'],
+				['.wrap:global(div.x) .icon', (hash) => `.wrap.${hash}:is(div).x .icon:where(.${hash}) {`],
+				['.wrap:global(*)', (hash) => `.wrap.${hash}:is(*) {`],
+				['.wrap:global(div::before)', (hash) => `.wrap.${hash}:is(div)::before {`],
+				['.wrap:not(.x:global(div))', (hash) => `.wrap.${hash}:not(.x:where(.${hash}):is(div)) {`],
+				['.wrap { &:global(div)', (hash) => `.wrap.${hash} { &:is(div) {`],
+				// A :global(...) after the first one of a global compound is dropped too.
+				[':global(div):global(.x)', () => 'div.x {'],
+				[':global(.x):global(div)', () => '.x:is(div) {'],
+				// At the start of its compound, or holding no type selector, it is dropped.
+				['.icon:global(.x)', (hash) => `.icon.${hash}.x {`],
+			];
+			for (const [selector, expected] of cases) {
+				const rule = `${selector} { color: red; }${selector.includes(' {') ? ' }' : ''}`;
+				const component = compile(
+					`export function App() @{
+						<>
+							<style>${rule}</style>
+							<div ${attr}="wrap x"><i ${attr}="icon x" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+				expect(component.css, selector).toContain(expected(hashes_of(component.cssHash)[0]));
+			}
+		});
+
 		it('global-forms: :global leaves the wrapped part unscoped and scopes the rest of the selector', () => {
 			const { code, css, cssHash } = compile(
 				`export function App() @{
