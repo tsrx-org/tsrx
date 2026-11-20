@@ -3072,7 +3072,7 @@ describe('a type alias named `as` or `satisfies` (sveltejs/acorn-typescript#145)
 		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
 		expect(outcomes).toEqual(
 			cases.flatMap(([source, at]) =>
-				thrown_in_every_mode(TS_ERRORS.UNEXPECTED_TOKEN, source.indexOf(at)),
+				thrown_in_every_mode(TS_ERRORS.TOKEN_EXPECTED('='), source.indexOf(at)),
 			),
 		);
 	});
@@ -4347,8 +4347,7 @@ describe('a TypeScript word as a label or an async arrow function parameter (sve
 	});
 
 	it('reports a label that no statement around has as for any other name', async () => {
-		// TypeScript reports TS1116 or TS1115 there, where this parser reports
-		// TS1105 or TS1104 for any label.
+		// TS1116 for `break` and TS1115 for `continue`, as for any label.
 		const sources = words.flatMap((word) => [
 			`for (;;) { break ${word}; }`,
 			`${word}: { continue ${word}; }`,

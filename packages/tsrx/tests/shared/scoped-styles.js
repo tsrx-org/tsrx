@@ -1973,6 +1973,30 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('reports a bare :global anywhere in a pseudo-class argument', () => {
+			for (const rule of [
+				':is(:global .w, .z) { color: red; }',
+				':is(.z:global, .p) { color: red; }',
+				'.p:not(.z:global.w) { color: red; }',
+				':is(:global(.p) :global .z) { color: red; }',
+			]) {
+				const source = `export function App() @{
+					<>
+						<style>${rule}</style>
+						<div ${attr}="p"><i ${attr}="z" /></div>
+					</>
+				}`;
+
+				expect(
+					compile(source, 'App.tsrx', { collect: true }).errors.map((error) => error.code),
+					rule,
+				).toEqual([DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT]);
+				expect(() => compile(source, 'App.tsrx'), rule).toThrow(
+					expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT }),
+				);
+			}
+		});
+
 		it('compiles a bare :global beside selectors that need no scoping', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{
@@ -1998,6 +2022,29 @@ export function runSharedScopedStyleTests({
 			// A lone :global in a rule stands for that rule.
 			expect(css).toContain(`.p.${hash} { &.open, & { color: gray; } }`);
 			expect(css).toContain('.note, :root .x { color: black; }');
+		});
+
+		it('reports a :global(...) selector list that the output would split', () => {
+			for (const rule of [
+				':global(.a, .b) .z { color: red; }',
+				'.p :global(.a, .b) { color: red; }',
+				'.p:global(::before, ::after) { content: "x"; }',
+			]) {
+				const source = `export function App() @{
+					<>
+						<style>${rule}</style>
+						<div ${attr}="p"><i ${attr}="z" /></div>
+					</>
+				}`;
+
+				expect(
+					compile(source, 'App.tsrx', { collect: true }).errors.map((error) => error.code),
+					rule,
+				).toEqual([DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT]);
+				expect(() => compile(source, 'App.tsrx'), rule).toThrow(
+					expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT }),
+				);
+			}
 		});
 
 		it('ends the last declaration of a dropped :global { ... } block', () => {
@@ -2255,6 +2302,40 @@ export function runSharedScopedStyleTests({
 			expect(() => compile(source, 'App.tsrx')).toThrow(
 				expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT }),
 			);
+		});
+
+		it('reports every :global placement error of a block, each on its selector', () => {
+			const source = `export function App() @{
+				<>
+					<style>
+						:is(:global .x) { color: blue; }
+						.a :global(.b) .c { color: red; }
+					</style>
+					<div ${attr}="a">{'a'}</div>
+				</>
+			}`;
+			const errors = compile(source, 'App.tsrx', { collect: true }).errors;
+
+			expect(errors.map((error) => [error.code, source.slice(error.pos, error.end)])).toEqual([
+				[DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT, ':global'],
+				[DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT, ':global(.b)'],
+			]);
+			const line = source.split('\n').findIndex((text) => text.includes(':global(.b)')) + 1;
+			expect(errors[1].loc?.start).toEqual({
+				line,
+				column: source.split('\n')[line - 1].indexOf(':global(.b)'),
+			});
+			// Outside collect mode, the first in the source.
+			expect(() => compile(source, 'App.tsrx')).toThrow(
+				expect.objectContaining({ pos: source.indexOf(':global .x') }),
+			);
+			// A suppressing comment before the block covers all of them.
+			const suppressed = source.replace(
+				'\t\t\t\t\t<style>',
+				'\t\t\t\t\t// @tsrx-ignore\n\t\t\t\t\t<style>',
+			);
+			expect(suppressed).not.toBe(source);
+			expect(compile(suppressed, 'App.tsrx', { collect: true }).errors).toEqual([]);
 		});
 
 		it('throws the coded diagnostic outside collect mode', () => {

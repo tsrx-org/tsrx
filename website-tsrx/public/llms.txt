@@ -1248,7 +1248,10 @@ with CSS nesting:
   `.theme-dark:not(.print) .card.<hash>`. The arguments of that `:not()`,
   `:is()`, `:where()` or `:has()` are kept as written, never scoped or pruned.
 - `:global` in the middle of a selector (`.card :global(.x) .title`) is the
-  `TSRX3011` error: it may only start or end a selector.
+  `TSRX3011` error: it may only start or end a selector. So is a selector list
+  in `:global(...)` anywhere but as the whole selector (`:global(.a, .b) .c`
+  would lose its parentheses and style every `.a`): write
+  `:global(.a) .c, :global(.b) .c`.
 - A selector that starts with a bare `:global` (`:global .note`) leaves its
   whole rule unscoped, so outside another such rule, a selector beside it in
   the list that would get a hash on its own, as in

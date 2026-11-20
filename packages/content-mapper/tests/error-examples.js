@@ -740,6 +740,20 @@ export {};
 `,
 	},
 	{
+		error: TSRX_ERRORS.CSS_GLOBAL_SELECTOR_LIST,
+		source: `export function C() @{
+	<>
+		<style>
+			:global(.a, .b) .c {
+				color: red;
+			}
+		</style>
+		<div class="c" />
+	</>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.CSS_GLOBAL_BLOCK_IN_MIXED_LIST,
 		source: `export function C() @{
 	<>
@@ -992,6 +1006,26 @@ let E;`,
 	{ error: TS_ERRORS.FOR_IN_INITIALIZER, source: `for (var a = 1 in b) {}` },
 	{ error: TS_ERRORS.FOR_OF_INITIALIZER, source: `for (let a = 1 of b) {}` },
 	{ error: TS_ERRORS.MISSING_CATCH_OR_FINALLY, source: `try {}` },
+	{ error: TS_ERRORS.BREAK_OUTSIDE_LOOP, source: `break;` },
+	{ error: TS_ERRORS.CONTINUE_OUTSIDE_LOOP, source: `continue;` },
+	{
+		error: TS_ERRORS.BREAK_LABEL_NOT_FOUND,
+		source: `for (;;) {
+	break a;
+}`,
+	},
+	{
+		error: TS_ERRORS.CONTINUE_LABEL_NOT_LOOP,
+		source: `a: {
+	continue a;
+}`,
+	},
+	{
+		error: TS_ERRORS.JUMP_ACROSS_FUNCTION,
+		source: `export function f() {
+	break;
+}`,
+	},
 	// A plain `try`'s `pending` block, which only `@tsrx/ripple` compiles
 	{
 		error: TS_ERRORS.CATCH_OR_FINALLY_EXPECTED,

@@ -14,6 +14,7 @@ import {
 	consumer_fixture_files,
 	create_native_workspace,
 	mapper_server_path,
+	repo_root,
 	typescript_mapper_code,
 } from './fixture-utils.js';
 import { parse_jsonc } from '@tsrx/typescript-plugin/src/jsonc.js';
@@ -1069,6 +1070,280 @@ import def from './mixed';
 			at(client, files, 'Panel.tsrx', '{label}', 1),
 		);
 		expect(hover.contents.value).toContain('const label: string');
+	});
+});
+
+/**
+ * Runtime and compiler packages of the target workspaces below, as in
+ * `targets.test.js`.
+ * @type {Record<string, Array<string | [string, string]>>}
+ */
+const target_dependencies = {
+	solid: ['@tsrx/solid', 'solid-js', '@solidjs/web'],
+	vue: ['@tsrx/vue', 'vue', ['vue-jsx-vapor', path.join(repo_root, 'packages', 'vite-plugin-vue')]],
+};
+
+/**
+ * A `@for` item and index used in the body and the key, where the transform
+ * maps the name twice over the same text, once for diagnostics only. Solid
+ * passes the item as an accessor.
+ * @param {string} target
+ */
+const for_source = (
+	target,
+) => `export function List(props: { items: { id: number; label: string }[] }) @{
+	<ul>
+		@for (const item of props.items; index i; key i) {
+			<li>{${target === 'solid' ? 'item()' : 'item'}.label}</li>
+		}
+	</ul>
+}
+`;
+
+/**
+ * Two more names mapped twice over the same text, each in an error that
+ * TypeScript reports around it: a return type (TS2355) and a dynamic tag's
+ * subscript (TS7053).
+ */
+const NAMES_TSRX = `declare const registry: Record<'b' | 'i', 'b' | 'i'>;
+declare const name: string;
+export function identity<T>(x: T): T {}
+export function Tag() @{
+	<{registry[name]} />
+}
+`;
+
+/**
+ * Bare names as the test of an `@if` with an `@else if` (Solid's `<Match>`),
+ * the test of an `@if` alone (`<Show>`) and a `@for` key. Solid prints each in
+ * an expression container (`when={a}`, `keyed={({ id }) => id}`) whose
+ * mapping covers the same text as the name's own.
+ */
+const SHOWN_TSRX = `declare const a: boolean;
+export function Shown(props: { items: { id: number }[]; on: boolean }) @{
+	const shown = props.on;
+	const alone = props.items.length > 0;
+	<div>
+		@if (a) {
+			<b />
+		} @else if (shown) {
+			<i />
+		}
+		@if (alone) {
+			<u />
+		}
+		@for (const { id } of props.items; key id) {
+			<li />
+		}
+	</div>
+}
+`;
+
+describe.each(Object.keys(target_dependencies))('native language server on %s', (target) => {
+	/** @type {Record<string, string>} */
+	const files = {
+		'main.ts':
+			"import { List } from './List.tsrx';\nimport { Tag } from './Names.tsrx';\nimport { Shown } from './Shown.tsrx';\n\nexport const list = [List, Tag, Shown];\n",
+		'List.tsrx': for_source(target),
+		'Names.tsrx': NAMES_TSRX,
+		'Shown.tsrx': SHOWN_TSRX,
+	};
+	/** @type {ReturnType<typeof create_native_workspace>} */
+	let workspace;
+	/** @type {NativeLspClient} */
+	let client;
+
+	beforeAll(async () => {
+		const tsconfig = /** @type {Record<string, unknown>} */ (
+			parse_jsonc(
+				fs.readFileSync(
+					new URL(`./fixtures/targets/${target}/tsconfig.json`, import.meta.url),
+					'utf8',
+				),
+			).value
+		);
+		tsconfig.contentMappers = [{ package: '@tsrx/content-mapper', extensions: ['.tsrx'] }];
+		tsconfig.include = ['*.ts', '*.tsrx'];
+		files['tsconfig.json'] = JSON.stringify(tsconfig, null, '\t');
+		workspace = create_native_workspace(files, { dependencies: target_dependencies[target] });
+		client = new NativeLspClient(workspace.dir);
+		await client.initialize({ runExternalCode: true });
+		client.open('main.ts', files['main.ts']);
+		await client.wait_for_registration('content-mapper-did-open');
+		client.open('List.tsrx', files['List.tsrx']);
+		client.open('Names.tsrx', files['Names.tsrx']);
+		client.open('Shown.tsrx', files['Shown.tsrx']);
+	});
+
+	afterAll(async () => {
+		await client?.shutdown();
+		workspace?.cleanup();
+	});
+
+	/**
+	 * A range in `file` as `offset:text`.
+	 * @param {string} file
+	 * @param {{ start: { line: number, character: number }, end: object }} range
+	 */
+	function where(file, range) {
+		const offset = files[file]
+			.split('\n')
+			.slice(0, range.start.line)
+			.reduce((sum, line) => sum + line.length + 1, range.start.character);
+		return `${offset}:${range_text(files[file], /** @type {any} */ (range))}`;
+	}
+
+	/** @param {string} a @param {string} b */
+	const by_offset = (a, b) => a.localeCompare(b, 'en', { numeric: true });
+
+	/**
+	 * The language features at a name: the hover's range and first line, each
+	 * definition, reference and rename edit as `file offset:text`, and whether
+	 * completion at the name's end offers it.
+	 * @param {string} file
+	 * @param {string} needle
+	 * @param {number} skip
+	 * @param {string} name
+	 */
+	async function features_at(file, needle, skip, name) {
+		const params = at(client, files, file, needle, skip);
+		const hover = await client.request('textDocument/hover', params);
+		const definition = await client.request('textDocument/definition', params);
+		const references = await client.request('textDocument/references', {
+			...params,
+			context: { includeDeclaration: true },
+		});
+		const rename = await client.request('textDocument/rename', { ...params, newName: 'renamed' });
+		const completion = await client.request(
+			'textDocument/completion',
+			at(client, files, file, needle, skip + name.length),
+		);
+		/** @param {{ uri: string, range: any }} location */
+		const located = (location) =>
+			`${path.basename(location.uri)} ${where(path.basename(location.uri), location.range)}`;
+		return {
+			hover: hover && `${where(file, hover.range)} ${hover.contents.value.split('\n')[1]}`,
+			definition: (definition ?? []).map(located),
+			references: (references ?? []).map(located).sort(by_offset),
+			rename: Object.entries(rename?.changes ?? {}).flatMap(([uri, edits]) =>
+				/** @type {Array<{ range: any, newText: string }>} */ (edits)
+					.map((e) => `${located({ uri, range: e.range })} -> ${e.newText}`)
+					.sort(by_offset),
+			),
+			completes: (completion?.items ?? completion ?? []).some(
+				(/** @type {{ label: string }} */ item) => item.label === name,
+			),
+		};
+	}
+
+	it('keeps the features of a @for item and index', async () => {
+		const source = files['List.tsrx'];
+		expect((await client.diagnostics('List.tsrx')).filter((d) => d.severity === 1)).toEqual([]);
+		const item = source.indexOf('item of');
+		const index = source.indexOf('i;');
+		const key = source.indexOf('i) {');
+		const body = source.indexOf('item', key);
+		expect(await features_at('List.tsrx', '<li>{', 5, 'item')).toEqual({
+			hover: expect.stringMatching(new RegExp(`^${body}:item .*\\bitem: `)),
+			definition: [`List.tsrx ${item}:item`],
+			references: [`List.tsrx ${item}:item`, `List.tsrx ${body}:item`],
+			rename: [`List.tsrx ${item}:item -> renamed`, `List.tsrx ${body}:item -> renamed`],
+			completes: true,
+		});
+		expect(await features_at('List.tsrx', 'key i', 4, 'i')).toEqual({
+			hover: `${key}:i (parameter) i: number`,
+			definition: [`List.tsrx ${index}:i`],
+			references: [`List.tsrx ${index}:i`, `List.tsrx ${key}:i`],
+			rename: [`List.tsrx ${index}:i -> renamed`, `List.tsrx ${key}:i -> renamed`],
+			completes: true,
+		});
+	});
+
+	it('keeps the features of a return type and a subscript, and the errors around them', async () => {
+		const source = NAMES_TSRX;
+		expect(
+			(await client.diagnostics('Names.tsrx'))
+				.filter((d) => d.severity === 1)
+				.map((d) => [d.code, where('Names.tsrx', d.range)]),
+		).toEqual([
+			[2355, `${source.indexOf('T {}')}:T`],
+			[7053, `${source.indexOf('registry[')}:registry[name]`],
+		]);
+		const type_parameter = source.indexOf('T>');
+		const parameter_type = source.indexOf('T)');
+		const return_type = source.indexOf('T {}');
+		expect(await features_at('Names.tsrx', 'T {}', 0, 'T')).toEqual({
+			hover: `${return_type}:T (type parameter) T in identity<T>(x: T): T`,
+			definition: [`Names.tsrx ${type_parameter}:T`],
+			references: [
+				`Names.tsrx ${type_parameter}:T`,
+				`Names.tsrx ${parameter_type}:T`,
+				`Names.tsrx ${return_type}:T`,
+			],
+			rename: [
+				`Names.tsrx ${type_parameter}:T -> renamed`,
+				`Names.tsrx ${parameter_type}:T -> renamed`,
+				`Names.tsrx ${return_type}:T -> renamed`,
+			],
+			completes: true,
+		});
+		const declared = source.indexOf('name:');
+		const subscript = source.indexOf('name]');
+		expect(await features_at('Names.tsrx', 'name]', 0, 'name')).toEqual({
+			hover: `${subscript}:name const name: string`,
+			definition: [`Names.tsrx ${declared}:name`],
+			references: [`Names.tsrx ${declared}:name`, `Names.tsrx ${subscript}:name`],
+			rename: [`Names.tsrx ${declared}:name -> renamed`, `Names.tsrx ${subscript}:name -> renamed`],
+			completes: true,
+		});
+	});
+
+	it('keeps the features of a bare @if test, @else if test and @for key', async () => {
+		const source = SHOWN_TSRX;
+		expect((await client.diagnostics('Shown.tsrx')).filter((d) => d.severity === 1)).toEqual([]);
+		const declared_a = source.indexOf('a:');
+		const test_a = source.indexOf('a)');
+		expect(await features_at('Shown.tsrx', '@if (a)', 5, 'a')).toEqual({
+			hover: `${test_a}:a const a: boolean`,
+			definition: [`Shown.tsrx ${declared_a}:a`],
+			references: [`Shown.tsrx ${declared_a}:a`, `Shown.tsrx ${test_a}:a`],
+			rename: [`Shown.tsrx ${declared_a}:a -> renamed`, `Shown.tsrx ${test_a}:a -> renamed`],
+			completes: true,
+		});
+		const declared_shown = source.indexOf('shown =');
+		const test_shown = source.indexOf('shown)');
+		expect(await features_at('Shown.tsrx', '@else if (shown)', 10, 'shown')).toEqual({
+			hover: `${test_shown}:shown const shown: boolean`,
+			definition: [`Shown.tsrx ${declared_shown}:shown`],
+			references: [`Shown.tsrx ${declared_shown}:shown`, `Shown.tsrx ${test_shown}:shown`],
+			rename: [
+				`Shown.tsrx ${declared_shown}:shown -> renamed`,
+				`Shown.tsrx ${test_shown}:shown -> renamed`,
+			],
+			completes: true,
+		});
+		const declared_alone = source.indexOf('alone =');
+		const test_alone = source.indexOf('alone)');
+		expect(await features_at('Shown.tsrx', '@if (alone)', 5, 'alone')).toEqual({
+			hover: `${test_alone}:alone const alone: boolean`,
+			definition: [`Shown.tsrx ${declared_alone}:alone`],
+			references: [`Shown.tsrx ${declared_alone}:alone`, `Shown.tsrx ${test_alone}:alone`],
+			rename: [
+				`Shown.tsrx ${declared_alone}:alone -> renamed`,
+				`Shown.tsrx ${test_alone}:alone -> renamed`,
+			],
+			completes: true,
+		});
+		const declared_id = source.indexOf('id }');
+		const key_id = source.indexOf('id)');
+		expect(await features_at('Shown.tsrx', 'key id', 4, 'id')).toEqual({
+			hover: `${key_id}:id (parameter) id: number`,
+			definition: [`Shown.tsrx ${declared_id}:id`],
+			references: [`Shown.tsrx ${declared_id}:id`, `Shown.tsrx ${key_id}:id`],
+			// The binding keeps the property it destructures.
+			rename: [`Shown.tsrx ${declared_id}:id -> id: renamed`, `Shown.tsrx ${key_id}:id -> renamed`],
+			completes: true,
+		});
 	});
 });
 

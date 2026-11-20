@@ -67,6 +67,13 @@ keeps every mapping with `verification` whole (zero-length points included) and 
 the transform's order, which is what Volar, and so `tsrx-tsc`, maps diagnostics
 through.
 
+- Mappings over the same generated and original ranges are one span. A container
+  mapped for diagnostics only can cover exactly its token's text (`item` in a Vue
+  `{item.label}`, a Solid `key i`), and the token keeps its features whichever
+  mapping comes first: a mapping without features never takes the place of one
+  with features. Of two with features, the first is kept. The span counts as one
+  from a mapping with no feature at all (below) when one of its mappings is one
+  and none has a feature bit.
 - Container spans lose to the token spans they enclose (Verbatim first, then
   shorter before longer, disjoint in generated space).
 - Neighbouring Verbatim spans with equal feature bits whose gap is identical text

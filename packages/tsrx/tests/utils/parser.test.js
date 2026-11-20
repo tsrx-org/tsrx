@@ -13135,6 +13135,30 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			],
 			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
 		},
+		// `global` written with an escape, which TypeScript reads as `global`:
+		// TS1234, where the parser reported TS1184 for the `export`.
+		{
+			source: 'function f() {\n\texport declare glo\\u0062al {}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'export declare'],
+				[TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION, 'export declare'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
+		{
+			// A string's contents aren't read as words.
+			source: '{\n\timport "\\\\u{110000}";\n}',
+			errors: [[TS_ERRORS.NESTED_IMPORT, 'import']],
+			throws: [TS_ERRORS.NESTED_IMPORT, '2:1'],
+		},
+		{
+			source: '{\n\texport \\u0067lobal {}\n}',
+			errors: [
+				[TS_ERRORS.NESTED_AMBIENT_MODULE, 'export \\u0067lobal'],
+				[TS_ERRORS.EXPORT_MODIFIER_ON_AUGMENTATION, 'export \\u0067lobal'],
+			],
+			throws: [TS_ERRORS.NESTED_AMBIENT_MODULE, '2:1'],
+		},
 		{
 			source: 'function f() {\n\texport abstract namespace N {}\n}',
 			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'export abstract']],
@@ -13298,6 +13322,20 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		{
 			// The `await` after it is in the function, not the namespace (no TS1308).
 			source: 'async function f() {\n\tnamespace N {}\n\tawait g();\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			// An `await` in it is in the async function too, as TypeScript reads it:
+			// TS1308, TS1103 and TS2852 are only for a namespace outside any
+			// function.
+			source:
+				'async function f() {\n\tnamespace N {\n\t\tawait g();\n\t\tfor await (const x of y) {}\n\t\tnamespace M {\n\t\t\tawait using z = w;\n\t\t}\n\t}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace N']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			source: 'const f = async () => {\n\tnamespace N {\n\t\texport const x = await g();\n\t}\n};',
 			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
 			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
 		},
@@ -14571,6 +14609,37 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
+	it("expects a namespace's `{` and a type alias's `=` as TypeScript does (TS1005)", async () => {
+		// acorn reported `Unexpected token` (TS1012) at the token in their place.
+		/** @type {Array<[source: string, token: string, at: string]>} */
+		const cases = [
+			['namespace N export const x = 1;', '{', 'export'],
+			['module N export {};', '{', 'export'],
+			['declare namespace N const x: number;', '{', 'const'],
+			['namespace A.B const x = 1;', '{', 'const'],
+			['namespace N;', '{', ';'],
+			['export namespace N\nconst x = 1;', '{', 'const'],
+			['export {};\nnamespace N', '{', ''],
+			['type T number;', '=', 'number'],
+			['type T<U> U;', '=', 'U;'],
+			['declare type T number;', '=', 'number'],
+			['export type T number;', '=', 'number'],
+			['type T\n= 1; type U;', '=', ';'],
+		];
+		const outcomes = await parse_in_worker(
+			cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
+		);
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, token, at]) => {
+				const pos = at === '' ? source.length : source.lastIndexOf(at);
+				return [
+					thrown(TS_ERRORS.TOKEN_EXPECTED(token), pos),
+					thrown(TS_ERRORS.TOKEN_EXPECTED(token), pos),
+				];
+			}),
+		);
+	});
+
 	it('records an error of a modifier over the whole modifier, as TypeScript reports it', async () => {
 		// The parser finds these at the modifier's start, and recorded them over
 		// its first character.
@@ -14641,11 +14710,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 
 	it('reports the syntax error in a namespace named `as`, and not its place', () => {
 		// TypeScript reads a namespace named `as` and reports a syntax error in it
-		// instead (TS1005 `'{' expected.` at `any`, where this parser reports
-		// `Unexpected token`, as after any namespace's name).
+		// instead (TS1005 `'{' expected.` at `any`).
 		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
 		const cases = [
-			['{\n\tnamespace as any;\n}', TS_ERRORS.UNEXPECTED_TOKEN, 'any'],
+			['{\n\tnamespace as any;\n}', TS_ERRORS.TOKEN_EXPECTED('{'), 'any'],
 			[
 				'{\n\tnamespace as { readonly r: number };\n}',
 				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
@@ -14657,6 +14725,41 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				expect.objectContaining({ code: code_of(error), pos: source.indexOf(at) }),
 			);
 		}
+	});
+
+	it("reports a `break` or `continue` with no target with TypeScript's code for it", async () => {
+		// acorn reports `Unsyntactic break` or `Unsyntactic continue` (TS1105,
+		// TS1104 for any of them). TypeScript looks for the target up to the
+		// function or class `static` block around the statement.
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
+		const cases = [
+			['break;', TS_ERRORS.BREAK_OUTSIDE_LOOP, 'break'],
+			['continue;', TS_ERRORS.CONTINUE_OUTSIDE_LOOP, 'continue'],
+			['switch (a) { case 1: continue; }', TS_ERRORS.CONTINUE_OUTSIDE_LOOP, 'continue'],
+			['L: for (;;) { break M; }', TS_ERRORS.BREAK_LABEL_NOT_FOUND, 'break'],
+			['for (;;) { continue M; }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['L: { continue L; }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['M: { L: for (;;) { continue M; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['namespace N { break; }', TS_ERRORS.BREAK_OUTSIDE_LOOP, 'break'],
+			['function f() { break; }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			['function f() { L: for (;;) { break M; } }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			['L: for (;;) { const g = () => { break L; }; }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			[
+				'L: for (;;) { class K { static { continue L; } } }',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+				'continue',
+			],
+			['function f() { L: { continue L; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+		];
+		const outcomes = await parse_in_worker(
+			cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
+		);
+		expect(outcomes).toEqual(
+			cases.flatMap(([source, error, at]) => [
+				thrown(error, source.indexOf(at)),
+				thrown(error, source.indexOf(at)),
+			]),
+		);
 	});
 
 	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {
@@ -15420,8 +15523,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// `TS_SYNTAX_ERROR_CODES`).
 			...[
 				['class A { m(public x) { label: label: ; } }', 'TS1114', 'label: ;'],
-				['class A { m(public x) { break; } }', 'TS1105', 'break'],
-				['class A { m(public x) { continue; } }', 'TS1104', 'continue'],
+				['class A { m(public x) { break; } }', 'TS1107', 'break'],
+				['class A { m(public x) { continue; } }', 'TS1107', 'continue'],
 				['class A { m(public x) { delete y; } }', 'TS1102', 'delete'],
 				['class A { m(public x) { arguments = 1; } }', 'TS1100', 'arguments'],
 				["class A { m(public x) { 'use strict'; } }", 'TS1347', '(public'],
