@@ -471,6 +471,19 @@ function virtual_semantic_diagnostics(code, extra_options = {}) {
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] a template return in the editor`, () => {
+		it('reports a `return` in an `@switch` case inside an `@try` body once in the editor', () => {
+			const source = `export function App({ log }: { log: unknown }) @{
+				@try { <div>@switch (log) { @case 1: { if (log) return null; <b /> } @default: { <i /> } }</div> } @catch (e) { <i /> }
+			}`;
+			expect(
+				compile_to_volar_mappings(source, 'App.tsrx', { loose: true }).errors.map(
+					(/** @type {{ code: string }} */ error) => error.code,
+				),
+			).toEqual([TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code]);
+		});
+	});
+
 	describe(`[${name}] class index signatures in virtual code`, () => {
 		it('keeps static on a class index signature', () => {
 			expect_static_index_signatures(
@@ -3057,6 +3070,8 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				// The `@if` and `@for` checks also see an `@switch` in their bodies.
 				'<div>@if (log) { <p>@switch (log) { @case 1: { if (log) RETURN; <b /> } @default: { <i /> } }</p> }</div>',
 				'<ul>@for (const x of items) { <li>@switch (x) { @case 1: { if (log) RETURN; <b /> } @default: { <i /> } }</li> }</ul>',
+				// A nested `@{ … }` with no setup is checked by the parser only before its output.
+				'<div>{@{ <p>@switch (log) { @case 1: { if (log) RETURN; <b /> } @default: { <i /> } }</p> }}</div>',
 			]) {
 				const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
 					${template.replace('RETURN', 'return null')}
@@ -3069,6 +3084,25 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				});
 
 				expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
+			}
+		});
+
+		it('reports a `return` in an `@switch` case inside an `@try` body once, as the template return', () => {
+			// The parser reports any `return` in an `@try`, `@pending` or `@catch`
+			// body or a nested `@{ … }` block, also one in an `@switch` there.
+			for (const template of [
+				'@try { <div>@switch (log) { @case 1: { if (log) return null; <b /> } @default: { <i /> } }</div> } @catch (e) { <i /> }',
+				'@try { <b /> } @catch (e) { <div>@switch (log) { @case 1: { if (log) return null; <b /> } @default: { <i /> } }</div> }',
+			]) {
+				const source = `export function App({ log }: { log: unknown }) @{
+					${template}
+				}`;
+				const start = source.indexOf('return null;');
+				const expected = expect.objectContaining({
+					code: TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code,
+					pos: start,
+				});
 				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
 			}
 		});

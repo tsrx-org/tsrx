@@ -6551,7 +6551,13 @@ function validate_directive_jumps(program, transform_context) {
  * @returns {void}
  */
 function collect_directive_jumps(node, parent, scope, found) {
-	if (node.type === 'ReturnStatement' && scope.kind === 'case') {
+	// The parser reports a `return` in an `@try`, `@pending` or `@catch` body or
+	// a nested `@{ … }` block, also one in an `@switch` there.
+	if (
+		node.type === 'ReturnStatement' &&
+		scope.kind === 'case' &&
+		!node.metadata?.invalid_tsrx_template_return
+	) {
 		// The `@if` and `@for` checks, which see a `return` in an `@switch` in
 		// their bodies, leave it to this one.
 		node.metadata = { ...node.metadata, invalid_directive_jump: true };
