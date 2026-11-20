@@ -13302,6 +13302,20 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
 		},
 		{
+			// An `await` in it is in the async function too, as TypeScript reads it:
+			// TS1308, TS1103 and TS2852 are only for a namespace outside any
+			// function.
+			source:
+				'async function f() {\n\tnamespace N {\n\t\tawait g();\n\t\tfor await (const x of y) {}\n\t\tnamespace M {\n\t\t\tawait using z = w;\n\t\t}\n\t}\n}',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace N']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
+			source: 'const f = async () => {\n\tnamespace N {\n\t\texport const x = await g();\n\t}\n};',
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],
+		},
+		{
 			source: 'export const view = @{\n\tnamespace N {}\n\t<b />\n};',
 			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
 			throws: [TS_ERRORS.NESTED_NAMESPACE, '2:1'],

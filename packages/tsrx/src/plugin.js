@@ -7717,14 +7717,18 @@ export function TSRXPlugin(config) {
 			get canAwait() {
 				const can_await = super.canAwait;
 				if (can_await) return can_await;
-				return this.#awaitContext() === 'namespace';
+				return this.#awaitContext() !== 'none';
 			}
 
 			/**
 			 * Whether `await` may be used here, going by acorn's `canAwait` with
-			 * namespace scopes looked through.
-			 * @returns {'none' | 'allowed' | 'namespace'} `namespace` when it may be
-			 * used only because a namespace scope was looked through
+			 * namespace scopes looked through. TypeScript allows it where the
+			 * function around it is async, in a namespace in that function too, and
+			 * reports one in a namespace outside any function (TS1308), where the
+			 * namespace's body isn't the module's top level.
+			 * @returns {'none' | 'allowed' | 'namespace'} `namespace` when it is read
+			 * only because a namespace scope was looked through, outside any
+			 * function, for TypeScript's error
 			 */
 			#awaitContext() {
 				let in_namespace = false;
@@ -7735,7 +7739,7 @@ export function TSRXPlugin(config) {
 					} else if (flags & (SCOPE_CLASS_STATIC_BLOCK | SCOPE_CLASS_FIELD_INIT)) {
 						return 'none';
 					} else if (flags & SCOPE_FUNCTION) {
-						return !(flags & SCOPE_ASYNC) ? 'none' : in_namespace ? 'namespace' : 'allowed';
+						return flags & SCOPE_ASYNC ? 'allowed' : 'none';
 					}
 				}
 				const allowed =
