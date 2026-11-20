@@ -6,7 +6,11 @@
 import MagicString from 'magic-string';
 import { walk } from 'zimmerframe';
 import { unescape_css } from '../parse/style.js';
-import { drops_selector, has_parent_rule_in_output } from '../analyze/css-analyze.js';
+import {
+	drops_selector,
+	has_parent_rule_in_output,
+	is_unnestable_at_rule,
+} from '../analyze/css-analyze.js';
 
 const regex_css_browser_prefix = /^-((webkit)|(moz)|(o)|(ms))-/;
 const regex_css_ident_start = /^(-?([a-zA-Z_\\]|[^\x00-\x7f])|--)/;
@@ -443,6 +447,48 @@ function escape_comment_close(node, code) {
 	}
 }
 
+/** At-rules that are valid only at the start of a stylesheet, not just outside a style rule. */
+const leading_at_rules = new Set(['import', 'charset', 'namespace']);
+
+/**
+ * Move an at-rule a style rule can't hold, such as `@keyframes` or
+ * `@font-face`, out of the style rules around it in the output, which would
+ * leave it invalid, to just before the outermost of them. The group rules
+ * between (`@media`) are written around it again, so it keeps their
+ * conditions. Its own edits, such as a keyframes name's hash, move with it.
+ *
+ * @param {AST.CSS.Atrule} node
+ * @param {AST.CSS.Node[]} path
+ * @param {StylesheetRenderState} state
+ */
+function lift_out_of_style_rules(node, path, state) {
+	if (
+		!is_unnestable_at_rule(node) ||
+		leading_at_rules.has(remove_css_prefix(node.name.toLowerCase()))
+	) {
+		return;
+	}
+	// The rules whose selector the output drops (`:global { ... }`) leave none.
+	const outer = path.findIndex((ancestor) => ancestor.type === 'Rule' && !drops_selector(ancestor));
+	if (outer === -1) return;
+	const wrappers = /** @type {AST.CSS.Atrule[]} */ (
+		path.slice(outer + 1).filter((ancestor) => ancestor.type === 'Atrule')
+	);
+	// One in an at-rule that moves already moves with it.
+	if (wrappers.some((wrapper) => is_unnestable_at_rule(wrapper))) return;
+
+	for (const wrapper of wrappers.reverse()) {
+		const prelude = state.code.original.slice(
+			wrapper.start,
+			/** @type {AST.CSS.Block} */ (wrapper.block).start + 1,
+		);
+		state.code.prependRight(node.start, `${prelude} `);
+		state.code.appendLeft(node.end, ' }');
+	}
+	if (!state.minify) state.code.appendLeft(node.end, ' ');
+	state.code.move(node.start, node.end, path[outer].start);
+}
+
 /**
  * @param {StylesheetRenderState} state
  * @param {number} index
@@ -493,6 +539,8 @@ const visitors = {
 		context.next();
 	},
 	Atrule(node, { state, next, path }) {
+		lift_out_of_style_rules(node, path, state);
+
 		if (is_keyframes_node(node)) {
 			const prelude = tokenize_css_value(
 				state.code.original,

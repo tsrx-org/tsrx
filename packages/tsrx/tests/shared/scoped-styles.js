@@ -1210,6 +1210,40 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`-webkit-animation-name: ${hash}-fade;`);
 		});
 
+		it('moves an at-rule a style rule cannot hold out of the rules around it', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							.box {
+								color: red;
+								@keyframes fade ${frames}
+								animation: fade 1s;
+								@media print {
+									.tag {
+										@font-face { font-family: x; }
+									}
+								}
+							}
+						</style>
+						<div ${attr}="box"><i ${attr}="tag" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			const plain = css.replace(/\s+/g, ' ');
+			// Before the outermost rule, in the @media it was in; CSS drops a
+			// @keyframes or @font-face nested in a style rule.
+			expect(plain).toContain(
+				`@keyframes ${hash}-fade { from { opacity: 0; } to { opacity: 1; } } @media print { @font-face { font-family: x; } } .box.${hash} {`,
+			);
+			expect(plain).toContain(
+				`.box.${hash} { color: red; animation: ${hash}-fade 1s; @media print { .tag.${hash} { } } }`,
+			);
+		});
+
 		it('handles names that are also Object.prototype keys', () => {
 			const { css, hash } = compile_keyframes(
 				`@keyframes "constructor" ${frames} @keyframes __proto__ ${frames}

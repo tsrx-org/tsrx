@@ -9,6 +9,7 @@ import {
 	DIAGNOSTIC_CODES,
 	parseModule,
 	parseStyle,
+	prepareStylesheetForRender,
 	renderStylesheets,
 } from '../../src/index.js';
 import {
@@ -1193,6 +1194,53 @@ describe('scoped style analysis', () => {
 				'.a:not(:global(.b)) { color: red; }',
 			]) {
 				expect(() => analyzeCss(parse_stylesheet(css)), css).not.toThrow();
+			}
+		});
+	});
+
+	describe('at-rules a style rule cannot hold', () => {
+		it('moves them before the outermost rule around them, in the group rules between', () => {
+			/** @type {Array<[css: string, expected: string, minified: string]>} */
+			const cases = [
+				[
+					'.p { color: red; @keyframes k { to { opacity: 0; } } }',
+					'@keyframes H-k { to { opacity: 0; } } .p.H { color: red; }',
+					'@keyframes H-k { to { opacity: 0; } }.p.H { color: red; }',
+				],
+				[
+					'@layer l { .p { .q { @media print { @font-face { font-family: x; } } } } }',
+					'@layer l { @media print { @font-face { font-family: x; } } .p.H { .q.H { @media print { } } } }',
+					'@layer l { @media print { @font-face { font-family: x; } }.p.H { .q.H { @media print { } } } }',
+				],
+				// The rules of a dropped :global { ... } block belong to the rule around it.
+				[
+					'.p { :global { @property --x { syntax: "*"; inherits: false; } } }',
+					'@property --x { syntax: "*"; inherits: false; } .p.H { /* :global {*/ /*}*/ }',
+					'@property --x { syntax: "*"; inherits: false; }.p.H { }',
+				],
+				// Nothing to move out of.
+				[
+					'@media print { @keyframes -global-k { to { opacity: 0; } } }',
+					'@media print { @keyframes k { to { opacity: 0; } } }',
+					'@media print { @keyframes k { to { opacity: 0; } } }',
+				],
+				[
+					':global { @font-face { font-family: x; } }',
+					'/* :global {*/ @font-face { font-family: x; } /*}*/',
+					' @font-face { font-family: x; } ',
+				],
+				// @import can only start a stylesheet, which moving doesn't give it.
+				['.p { @import "a.css"; }', '.p.H { @import "a.css"; }', '.p.H { @import "a.css"; }'],
+			];
+			for (const [css, expected, minified] of cases) {
+				for (const minify of [false, true]) {
+					const sheet = parseStyle(css, { filename, line: 1, column: 0 }, {});
+					analyzeCss(sheet);
+					const rendered = renderStylesheets([prepareStylesheetForRender(sheet, 'theme')], minify)
+						.replace(/tsrx-[0-9a-f]+/g, 'H')
+						.replace(/\s+/g, ' ');
+					expect(rendered, css).toBe(minify ? minified : expected);
+				}
 			}
 		});
 	});
