@@ -21,11 +21,21 @@ each as written, as the literal keeps it. Solid's and Vue's compilers read
 those as HTML, so the text keeps its split edges there.
 
 A JSX platform says how its compiled JSX reads text with the new
-`jsx.textReading` option (`lines: 'keep'`, `html: true`).
+`jsx.textReading` option (`lines: 'join' | 'keep'`, `html: true`).
 
-On Solid, a text over lines now reads as it does on React: a space or tab
-before the line break after its last line is dropped, where Solid's compiler
-kept one space, and a run of spaces or tabs inside it stays as written. On Vue,
-a reference after a bare `&` with no `;` between them now decodes in a text
-over lines, as it already does in a text on one line, where vue-jsx-vapor left
-it as written (`a &⏎&amp;`).
+The literal reads a text over lines as TypeScript, esbuild and oxc do, so some
+compilers now read such a text differently from before, as they already do for
+a text on one line:
+
+- SWC (the rspack and turbopack plugins) and Babel keep a line feed written as
+  `&#10;` as a line feed, where they split or trimmed the line there, and Babel
+  no longer turns a tab inside the text into a space.
+- On Solid, a space or tab before the line break after the text's last line is
+  dropped, where Solid's compiler kept one space, and a run of spaces or tabs
+  inside it stays as written.
+- On Vue, a `&#10;` at the text's start or end stays, where vue-jsx-vapor
+  dropped it, and a reference after a bare `&` with no `;` between them
+  decodes, where vue-jsx-vapor left it as written (`a &⏎&amp;`).
+- On Solid and Vue, `&lang;` and `&rang;` read as TypeScript reads them
+  (U+2329 and U+232A, not U+27E8 and U+27E9), and in a Solid component,
+  `&notin;` reads as `∉`, where Solid's decoder gave `¬in;`.

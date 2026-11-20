@@ -5582,17 +5582,21 @@ export function wrap_edge_whitespace(nodes, in_element = false, reading = {}) {
  * The string is the text as the target's compiled JSX reads it (`reading`).
  * By default that's how TypeScript, esbuild and oxc read it for React, Preact
  * and Hono: the value the parser decoded, with the lines of a text that spans
- * lines trimmed and joined with a space (`joined_lines`). Solid's compiler
- * joins lines the same way, and vue-jsx-vapor keeps them (`kept_lines`).
- * Solid's and Vue's compilers read some texts differently (a run of
- * whitespace, `&lang;`, a decoded line feed), and render the literal as
- * written. A text keeps the split when the literal could differ from that
- * reading:
+ * lines trimmed and joined with a space (`joined_lines`). vue-jsx-vapor keeps
+ * the lines (`kept_lines`). On Solid the literal joins them as JSX does too,
+ * which isn't how Solid's compiler reads JSX text: it doesn't trim the spaces
+ * and tabs before a line break, so one space is left where they end the last
+ * line, and it turns each run of whitespace into one space. Solid's and Vue's
+ * compilers read some other texts differently too (`&lang;`, a decoded line
+ * feed at the text's start or end), and render the literal as written. A text
+ * keeps the split when the literal could differ from that reading:
  *
  * - whitespace other than spaces and tabs in a text that spans lines: the
- *   compilers trim it at a line's edge differently (TypeScript trims a
- *   non-breaking space there, SWC and Babel don't), and a reference to
- *   whitespace at a line break (`whitespace_reference_at_line_break`)
+ *   compilers trim it at a line's edge differently (TypeScript and esbuild
+ *   trim a non-breaking space there, SWC and Babel don't; TypeScript and oxc
+ *   trim U+200B, which isn't in `\s`, and esbuild, SWC and Babel don't), and
+ *   a reference to whitespace at a line break
+ *   (`whitespace_reference_at_line_break`)
  * - an `&#` that doesn't start a short decimal or lowercase-hex reference
  *   ending in `;`, which the parser reads differently (esbuild and oxc read
  *   `&#+65;` as `A`; the parser decodes `&#X41;`, which they leave as
@@ -5604,8 +5608,8 @@ export function wrap_edge_whitespace(nodes, in_element = false, reading = {}) {
  *   breaks, which Solid's compiler turns into a space
  * - a reference to, or a character that is, a control character other than a
  *   tab or a line feed (a CR that isn't before a line feed, which Solid's
- *   compiler drops, and `&#128;`, which an HTML template reads as `€`), a lone
- *   surrogate, which oxc leaves as written, or U+2028, U+2029 or U+FEFF,
+ *   compiler drops, and `&#128;`, which an HTML template reads as `€`), a
+ *   surrogate half, which oxc leaves as written, or U+2028, U+2029 or U+FEFF,
  *   which the literal would print as is: JavaScript reads the first two as
  *   line breaks where the source map doesn't
  *
@@ -5625,6 +5629,7 @@ function only_text_value(text, reading) {
 	}
 	const lines = /[\n\r]/.test(raw);
 	if (/[^\S \t\n\r]/.test(raw) && (lines || reading.html)) return null;
+	if (lines && raw.includes('\u200b')) return null;
 	if (/&#(?!\d{1,6};|x[\da-fA-F]{1,5};)/.test(raw)) return null;
 	if (reading.html && raw.replace(REFERENCE_OR_PLAIN_AMPERSAND, '').includes('&')) return null;
 	if (/[\0-\x08\v-\x1f\x7f-\x9f\u2028\u2029\ufeff]|\p{Cs}/u.test(value)) return null;
@@ -5669,6 +5674,10 @@ function value_offsets(raw, value, html) {
 		offsets.push(at);
 		if (match[1] === undefined) {
 			const code = match[2] === undefined ? parseInt(match[3], 16) : Number(match[2]);
+			// A reference to a surrogate half, which oxc leaves as written and an
+			// HTML template reads as U+FFFD. Two of them make one character in
+			// `value`, which the check for a lone surrogate there doesn't see.
+			if (code >= 0xd800 && code <= 0xdfff) return null;
 			at += String.fromCodePoint(code).length;
 		} else if (match[1] !== 'amp' && value.startsWith(match[0], at)) {
 			if (html) return null;
@@ -5708,10 +5717,10 @@ function whitespace_reference_at_line_break(raw, value, offsets) {
 
 /**
  * A text that spans lines as JSX reads it (TypeScript's, esbuild's and oxc's
- * transforms, and Solid's compiler): each line loses the spaces and tabs that
- * touch a line break, a line with nothing else is left out, and the rest join
- * with a space. That happens to the text as written, so a decoded space or
- * line feed (`&#32;`, `&#10;`) stays.
+ * transforms): each line loses the spaces and tabs that touch a line break, a
+ * line with nothing else is left out, and the rest join with a space. That
+ * happens to the text as written, so a decoded space or line feed (`&#32;`,
+ * `&#10;`) stays.
  *
  * @param {string} raw
  * @param {string} value

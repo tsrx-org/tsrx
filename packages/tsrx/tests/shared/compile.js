@@ -8305,6 +8305,11 @@ export const b2 = {
 			],
 			['an element, for a plain `&` before a name', '<b> &&copy; </b>', "<b>{' &© '}</b>"],
 			['an element, for `&#38;` before a name', '<b> &#38;amp; </b>', "<b>{' &amp; '}</b>"],
+			[
+				'an element, for a zero-width space on one line',
+				'<b> a\u200bb </b>',
+				"<b>{' a\u200bb '}</b>",
+			],
 		])('prints the text of %s as one literal', (_case, element, printed) => {
 			for (const source of [
 				`${upper}export function A() {\n\treturn <div>${element}</div>;\n}`,
@@ -8441,6 +8446,24 @@ export const b2 = {
 			],
 			['text with a CR that is no CRLF', '<b> a\rb </b>', "<b>{' '}a\rb{' '}</b>"],
 			['text with a U+2028', '<b> a\u2028b </b>', "<b>{' '}a\u2028b{' '}</b>"],
+			// TypeScript and oxc trim it at a line's edge, and esbuild, SWC and Babel
+			// don't
+			[
+				'text over lines with a zero-width space at a line end',
+				'<b> a\u200b\n\t\tb </b>',
+				"<b>{' '}a\u200b\n\t\tb{' '}</b>",
+			],
+			// oxc leaves each as written, and an HTML template reads each as U+FFFD
+			[
+				'references to the halves of a surrogate pair',
+				'<b> &#55296;&#56320; a </b>',
+				"<b>{' '}&#55296;&#56320; a{' '}</b>",
+			],
+			[
+				'hex references to the halves of a surrogate pair, over lines',
+				'<b> &#xD800;&#xDC00;\n\t\ta </b>',
+				"<b>{' '}&#xD800;&#xDC00;\n\t\ta{' '}</b>",
+			],
 			// SWC and Babel trim a line after they decode it, and vue-jsx-vapor a
 			// text's edges, so a space or line feed written as a reference at a line
 			// break is gone there, where JSX keeps it

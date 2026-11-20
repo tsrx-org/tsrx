@@ -398,7 +398,8 @@ export interface JsxPlatformHooks {
  * How a target's compiled JSX reads JSX text (see `JsxPlatform['jsx']['textReading']`).
  */
 export interface JsxTextReading {
-	lines?: 'keep';
+	/** Default: `'join'`. */
+	lines?: 'join' | 'keep';
 	html?: boolean;
 }
 
@@ -733,6 +734,8 @@ export interface JsxPlatform {
 		 * and oxc read it: a text's lines are trimmed and joined with a space,
 		 * and its character references read as the TSRX parser decodes them.
 		 *
+		 * - `lines: 'join'` (default): a text's lines are trimmed and joined
+		 *   with a space, as TypeScript, esbuild and oxc join them.
 		 * - `lines: 'keep'`: a text keeps its lines as written, and loses only
 		 *   whitespace with a line break at its start or end, as
 		 *   vue-jsx-vapor reads it.
