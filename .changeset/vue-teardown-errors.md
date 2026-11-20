@@ -1,0 +1,5 @@
+---
+'@tsrx/vue-runtime': patch
+---
+
+On the Vue target, an error a component throws as it is torn down, such as from `onBeforeUnmount`, now goes on from a `@try` that is going away, to the next `@catch` out or to `app.config.errorHandler`, as it does without the `@try`. When the app unmounted, or a `@try` around showed its `@catch` and removed it, the boundary took the error and it was lost, also for a `@try` with `@pending`. An `@if` that removes a `@try` hands the error to the `@catch` around it, as it does for a component without the `@try`. And a `@try` whose `@catch` just replaced its content, with or without `@pending`, no longer shows what that content throws as it is torn down in place of the error it was swapped in for: that error goes on to the next `@catch` out or to `app.config.errorHandler`. A teardown error that comes later, from `onUnmounted` or an async `onBeforeUnmount`, still replaces it, and one from an `onScopeDispose` is still lost. A loader that a `@try` with `@pending` reset away still doesn't reach the new body.

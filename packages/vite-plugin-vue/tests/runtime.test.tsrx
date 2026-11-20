@@ -16,6 +16,7 @@ import {
 	VaporKeepAlive,
 	watchEffect,
 } from 'vue';
+import { defineVaporComponent } from 'vue-jsx-vapor';
 import * as Vue from 'vue';
 import { mergeRefs } from '@tsrx/vue/ref';
 import { for_items } from '@tsrx/vue/runtime/iterable';
@@ -4300,6 +4301,162 @@ function TeardownShowingPlain() @{
 	}
 }
 
+// A component in the body whose unmount hook throws.
+function ChildTeardown() @{
+	onBeforeUnmount(() => {
+		throw new Error('child teardown');
+	});
+	<span class="child-teardown">{'child'}</span>
+}
+
+function ChildTeardownTwin() @{
+	@try {
+		<ChildTeardown />
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function ChildTeardownPlain() @{
+	@try {
+		<ChildTeardown />
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function ChildTeardownNoTry() @{
+	<div>
+		<ChildTeardown />
+	</div>
+}
+
+const child_teardown_shown = ref(true);
+
+// An @if removes the inner part while the @try around it stays.
+function IfRemovesTeardown(props: { inner: unknown }) @{
+	const Inner = props.inner as typeof ChildTeardownPlain;
+	@try {
+		<div>
+			@if (child_teardown_shown.value) {
+				<Inner />
+			}
+		</div>
+	} @catch (err) {
+		<b class="if-caught">{(err as Error).message}</b>
+	}
+}
+
+// The same, with the @if as the whole body of the @try around it, which
+// renders its content again to remove it.
+function IfRemovesTeardownAtRoot(props: { inner: unknown }) @{
+	const Inner = props.inner as typeof ChildTeardownPlain;
+	@try {
+		@if (child_teardown_shown.value) {
+			<Inner />
+		}
+	} @catch (err) {
+		<b class="if-caught">{(err as Error).message}</b>
+	}
+}
+
+// A body component whose click throws, and whose unmount hook throws as
+// the @catch replaces it.
+function ClickThenTeardown() @{
+	onBeforeUnmount(() => {
+		throw new Error('child teardown');
+	});
+	<button
+		class="click-then-teardown"
+		onClick={() => {
+			throw new Error('click');
+		}}
+	>
+		{'fail'}
+	</button>
+}
+
+function SwapTeardownTwin() @{
+	@try {
+		<ClickThenTeardown />
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+function SwapTeardownPlain() @{
+	@try {
+		<ClickThenTeardown />
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+// The body's async component rejects while the Suspense is pending, so the
+// boundary around the Suspense swaps in the @catch and removes the body,
+// whose other component throws as it is torn down.
+let reject_beside_teardown: (error: Error) => void = () => {};
+
+function BesideTeardownBody() @{
+	const Loader = defineVaporAsyncComponent(
+		() => new Promise<any>((_resolve, fail) => (reject_beside_teardown = fail)),
+	);
+	<div>
+		<ChildTeardown />
+		<Loader />
+	</div>
+}
+
+function PendingSwapTeardown() @{
+	@try {
+		<BesideTeardownBody />
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="teardown-caught">{(err as Error).message}</b>
+	}
+}
+
+// A component whose setup never settles, so it counts as pending, with an
+// unmount hook that throws.
+const PendingSetupTeardown = defineVaporComponent(() => {
+	onBeforeUnmount(() => {
+		throw new Error('pending teardown');
+	});
+	return new Promise<never>(() => {});
+});
+
+function PendingSetupInTry() @{
+	@try {
+		<PendingSetupTeardown />
+	} @catch (err) {
+		<b>{String(err)}</b>
+	}
+}
+
+function ThrowsOnRender() @{
+	throw new Error('render');
+	<span />
+}
+
+// The outer @try drops its content, with the inner @try, before it mounts.
+function DropsBeforeMount() @{
+	@try {
+		<>
+			<PendingSetupInTry />
+			<ThrowsOnRender />
+		</>
+	} @pending {
+		<i>{'wait'}</i>
+	} @catch (err) {
+		<b class="dropped-caught">{(err as Error).message}</b>
+	}
+}
+
 // An enclosing @try shows its @catch, which removes the @try inside it.
 function EnclosingTeardown(props: { inner: unknown }) @{
 	const Inner = props.inner as typeof TeardownTwin;
@@ -4864,11 +5021,97 @@ describe('tsrx-vue a @catch that throws', () => {
 			expect(text('.teardown-caught')).toBe('body');
 			(container.querySelector('.remove-inner') as HTMLElement).click();
 			await flush();
-			expect(text('.enclosing-caught')).toBe('teardown');
-			expect(handled).toEqual([]);
+			// The enclosing @catch keeps the error it was swapped in for; the
+			// teardown error goes to errorHandler.
+			expect(text('.enclosing-caught')).toBe('remove');
+			expect(handled).toEqual(['teardown']);
 			app.unmount();
 		},
 	);
+
+	it.each([
+		['with @pending', ChildTeardownTwin],
+		['without @pending', ChildTeardownPlain],
+		['with no @try', ChildTeardownNoTry],
+	])(
+		"passes on what a component's unmount hook throws as the app unmounts, %s",
+		async (_name, component) => {
+			const app = await mount(component, {});
+			expect(text('.child-teardown')).toBe('child');
+			app.unmount();
+			expect(handled).toEqual(['child teardown']);
+		},
+	);
+
+	it.each([
+		['with @pending', ChildTeardownTwin],
+		['without @pending', ChildTeardownPlain],
+		['with no @try', ChildTeardownNoTry],
+	])(
+		"passes on what a component's unmount hook throws as an enclosing @catch removes it, %s",
+		async (_name, inner) => {
+			const app = await mount(EnclosingTeardown, { inner });
+			expect(text('.child-teardown')).toBe('child');
+			(container.querySelector('.remove-inner') as HTMLElement).click();
+			await flush();
+			expect(text('.enclosing-caught')).toBe('remove');
+			expect(handled).toEqual(['child teardown']);
+			app.unmount();
+		},
+	);
+
+	it.each([
+		['the @try', ChildTeardownPlain],
+		['the component, with no @try', ChildTeardownNoTry],
+	])(
+		"shows in the @catch around it what a component's unmount hook throws as an @if removes %s",
+		async (_name, inner) => {
+			for (const host of [IfRemovesTeardown, IfRemovesTeardownAtRoot]) {
+				child_teardown_shown.value = true;
+				handled = [];
+				const app = await mount(host, { inner });
+				expect(text('.child-teardown')).toBe('child');
+				child_teardown_shown.value = false;
+				await flush();
+				expect(text('.if-caught')).toBe('child teardown');
+				expect(handled).toEqual([]);
+				app.unmount();
+			}
+		},
+	);
+
+	it.each([
+		['with @pending', SwapTeardownTwin],
+		['without @pending', SwapTeardownPlain],
+	])(
+		'keeps the error the @catch was swapped in for over what the removed content throws, %s',
+		async (_name, component) => {
+			const app = await mount(component, {});
+			(container.querySelector('.click-then-teardown') as HTMLElement).click();
+			await flush();
+			expect(text('.teardown-caught')).toBe('click');
+			expect(handled).toEqual(['child teardown']);
+			app.unmount();
+		},
+	);
+
+	it('passes on what the body throws as the @catch of a pending @try replaces it', async () => {
+		const app = await mount(PendingSwapTeardown, {});
+		reject_beside_teardown(new Error('rejected'));
+		await flush();
+		await flush();
+		expect(text('.teardown-caught')).toBe('rejected');
+		expect(handled).toEqual(['child teardown']);
+		app.unmount();
+	});
+
+	it('passes on what a component throws as a @try dropped before it mounted is disposed of', async () => {
+		const app = await mount(DropsBeforeMount, {});
+		expect(text('.dropped-caught')).toBe('render');
+		app.unmount();
+		await flush();
+		expect(handled).toEqual(['pending teardown']);
+	});
 
 	it('runs a @catch parameter pattern that throws once, and passes its error to app.config.errorHandler', async () => {
 		const app = await mount(SyncCatchPatternThrowsAlone, {});

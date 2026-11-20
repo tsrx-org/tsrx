@@ -241,12 +241,12 @@ function thrown_by_fallback(source, boundary) {
  * shows the `@catch`, such as one from the `@catch`'s parameter pattern,
  * which runs as the boundary calls its fallback. A boundary without a twin
  * lets such an error go on too (`take_own_errors`). So does what an inner
- * one throws as it goes away with the `@try`, such as from an unmount hook
- * its body registered, whatever it showed: the app unmounting, or a `@try`
- * around it showing its `@catch`, removes it. One that the outer one's own
- * render removed, after a reset, is replaced while the outer one stays, and
- * what still comes from it is the body's, as before, until the outer one goes
- * away too.
+ * one, or a component in it, throws as it goes away with the `@try`, such as
+ * from an unmount hook, whatever it showed: the app unmounting, or a `@try`
+ * around it showing its `@catch`, removes it, possibly before the outer one
+ * has begun to go. One that the outer one's own render removed, after a
+ * reset, is replaced while the outer one stays, and what still comes from it
+ * is the body's, as before, until the outer one goes away too.
  *
  * @param {unknown} source
  * @param {ComponentInternalInstance} boundary
@@ -260,12 +260,16 @@ function thrown_by_twin_fallback(source, boundary) {
 		if (!state) continue;
 		// The nearest boundary inside this one.
 		if (!props_of(inner)?.sharesCatch) return false;
-		if (i === 0) {
-			if (!is_gone(inner, state)) {
-				if (!state.shows_content) return true;
-			} else if (state.dropped_by !== boundary || is_gone(boundary)) {
-				return true;
-			}
+		if (is_gone(inner, state)) {
+			// Going away with the `@try`: what it or a component in it throws
+			// goes on.
+			if (state.dropped_by !== boundary || is_gone(boundary)) return true;
+		} else if (i === 0 && !state.shows_content) {
+			return true;
+		} else if (dropping === inner && state.caught !== null) {
+			// Torn down as the inner one swaps in the same `@catch`: it went on
+			// from there, and goes on from here too.
+			return true;
 		}
 		return thrown_by_fallback(source, inner);
 	}
@@ -273,14 +277,55 @@ function thrown_by_twin_fallback(source, boundary) {
 }
 
 /**
- * Whether the boundary `instance` is unmounting or has unmounted.
+ * Whether `instance`, the boundary inside a `@pending` `Suspense`, was
+ * replaced by its twin around the `Suspense`, which stays: by a reset, or by
+ * swapping in the `@catch` for the whole `Suspense`. What the content it
+ * showed still throws later, such as a loader it started rejecting, is
+ * stale: it doesn't reach the new body (#1421) or replace the error the
+ * `@catch` shows, and its error hook keeps taking it, as before.
+ *
+ * @param {ComponentInternalInstance} instance
+ * @param {BoundaryState} state
+ * @returns {boolean}
+ */
+function replaced_by_twin(instance, state) {
+	if (!props_of(instance)?.sharesCatch || !state.dropped_by) return false;
+	/** @type {InstanceLink | null | undefined} */
+	let current = /** @type {InstanceLink} */ (/** @type {unknown} */ (instance)).parent;
+	for (; current; current = current.parent) {
+		if (
+			boundary_states.has(
+				/** @type {ComponentInternalInstance} */ (/** @type {unknown} */ (current)),
+			)
+		) {
+			const twin = /** @type {ComponentInternalInstance} */ (/** @type {unknown} */ (current));
+			// Except while the twin removes it to swap in its `@catch`: what
+			// is torn down then goes on, as for any boundary swapping.
+			return (
+				current === state.dropped_by &&
+				!is_gone(twin) &&
+				!(dropping === twin && boundary_states.get(twin)?.caught)
+			);
+		}
+	}
+	return false;
+}
+
+/**
+ * Whether the boundary `instance` is unmounting or has unmounted, or is
+ * being disposed of before it mounted.
  *
  * @param {ComponentInternalInstance} instance
  * @param {BoundaryState | undefined} [state]
  * @returns {boolean}
  */
 function is_gone(instance, state = boundary_states.get(instance)) {
-	return !!state?.unmounting || !!(/** @type {{ isUnmounted?: boolean }} */ (instance).isUnmounted);
+	const link = /** @type {{ isUnmounted?: boolean, scope?: { active: boolean } }} */ (
+		/** @type {unknown} */ (instance)
+	);
+	// A boundary dropped before it mounted runs no unmount hooks: its scope
+	// stopping is what shows it going.
+	return !!state?.unmounting || !!link.isUnmounted || link.scope?.active === false;
 }
 
 /**
@@ -450,9 +495,11 @@ function uses_node(block, node) {
  * @param {VaporRenderedBlock | undefined} current
  * @param {unknown} value
  * @param {Node | undefined} anchor
+ * @param {unknown} [owner] the boundary whose render this is, which removes
+ * `current`
  * @returns {VaporRenderedBlock}
  */
-function resolve_value(current, value, anchor) {
+function resolve_value(current, value, anchor, owner = null) {
 	anchor = anchor || (current instanceof Node && current.nodeType === 3 ? current : undefined);
 	const node = normalize_block(value, anchor);
 	// The same block again is already in place.
@@ -463,12 +510,12 @@ function resolve_value(current, value, anchor) {
 			const old_anchor = current.anchor;
 			if (old_anchor && old_anchor.parentNode) {
 				const parent = old_anchor.parentNode;
-				vapor.remove(current.nodes, parent);
+				dropping_for(owner, () => vapor.remove(current.nodes, parent));
 				vapor.insert(node, parent, old_anchor);
 				// Unless the new block holds that node, the old anchor would stay
 				// behind outside every block, also after unmount.
 				if (!uses_node(node, old_anchor)) parent.removeChild(old_anchor);
-				if (current.scope) current.scope.stop();
+				if (current.scope) dropping_for(owner, () => current.scope?.stop());
 			}
 		} else if (current instanceof Node) {
 			if (current.nodeType === 3 && (!(node instanceof Node) || node.nodeType !== 3)) {
@@ -509,15 +556,42 @@ function create_boundary_nodes(render, instance) {
 		const outer = re_rendering;
 		re_rendering = instance;
 		try {
-			if (scope) scope.stop();
+			if (scope) dropping_for(instance, () => /** @type {EffectScope} */ (scope).stop());
 			scope = new EffectScope();
-			nodes[0] = scope.run(() => resolve_value(nodes[0], render(), undefined));
+			nodes[0] = scope.run(() => resolve_value(nodes[0], render(), undefined, instance));
 		} finally {
 			re_rendering = outer;
 		}
 	});
 
 	return nodes;
+}
+
+/**
+ * The boundary whose render is removing what it showed before, which tears
+ * down the components in it: what they throw then is a teardown error
+ * (see the boundary's error hook).
+ *
+ * @type {unknown}
+ */
+let dropping = null;
+
+/**
+ * Runs `remove` as `instance`'s removal of what it showed before.
+ *
+ * @template T
+ * @param {unknown} instance
+ * @param {() => T} remove
+ * @returns {T}
+ */
+function dropping_for(instance, remove) {
+	const outer = dropping;
+	dropping = instance;
+	try {
+		return remove();
+	} finally {
+		dropping = outer;
+	}
 }
 
 /**
@@ -751,6 +825,19 @@ function initialize_boundary_state(instance) {
 		if (frame) {
 			frame.errors.push(captured_error);
 			return false;
+		}
+		// Thrown as the boundary goes away, or as its render that swaps in the
+		// `@catch` removes the content, such as from an unmount hook: a
+		// teardown error. It goes on to the next boundary out, or to
+		// `app.config.errorHandler`, as without the `@try`. Taking it would show
+		// it in a `@catch` that is going away and lose it, or replace the error
+		// the `@catch` was just swapped in for. What the content's own render
+		// removes, as it updates, is the content's, as before.
+		if (
+			(is_gone(instance, state) && !replaced_by_twin(instance, state)) ||
+			(dropping === instance && state.caught !== null)
+		) {
+			return;
 		}
 		// Thrown by the fallback, with no boundary rendering around it: it goes
 		// on to the next boundary out, or to `app.config.errorHandler`, as React
