@@ -8540,6 +8540,20 @@ export const b2 = {
 				expect(compile(source, 'A.tsrx').code).toContain(printed);
 			}
 		});
+
+		// A run of whitespace is read from its ends, not tried from each of its
+		// characters: with 100,000 of them, each regular expression that did
+		// that took 5 to 10 seconds on a fast machine, alone
+		it.each([
+			['U+200B before a letter, over lines', String.fromCharCode(0x200b)],
+			['spaces before a letter, over lines', ' '],
+			['tabs before a letter, over lines', '\t'],
+		])('compiles a long run of %s in linear time', (_case, char) => {
+			const text = ' a' + char.repeat(100_000) + 'b\nc ';
+			const start = performance.now();
+			compile(`export function A() {\n\treturn <div><b>${text}</b></div>;\n}`, 'A.tsrx');
+			expect(performance.now() - start).toBeLessThan(2000);
+		});
 	});
 
 	describe(`[${name}] native raw HTML props`, () => {
