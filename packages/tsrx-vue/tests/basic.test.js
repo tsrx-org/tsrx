@@ -3147,7 +3147,9 @@ export function Card(${params}: any) @{
 		expect(code).toContain(
 			"content={() => (() => {\n\t\t\tconst label = 'Loading...';\n\n\t\t\treturn <>{on.value ? <div>{label}</div> : null}</>;\n\t\t})()}",
 		);
-		expect(code).toMatch(/content=\{\(\) => \(\(\) => \{\n\t\t\treturn <>\{\(\(\) => \{\n\t+switch \(n\.value\)/);
+		expect(code).toMatch(
+			/content=\{\(\) => \(\(\) => \{\n\t\t\treturn <>\{\(\(\) => \{\n\t+switch \(n\.value\)/,
+		);
 		// An element renders reactively as it is.
 		expect(code).toContain(
 			"content={() => (() => {\n\t\t\treturn <div>{'Loading...'}</div>;\n\t\t})()}",
