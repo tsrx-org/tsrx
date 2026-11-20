@@ -6,6 +6,7 @@
 import MagicString from 'magic-string';
 import { walk } from 'zimmerframe';
 import { unescape_css } from '../parse/style.js';
+import { drops_selector, has_parent_rule_in_output } from '../analyze/css-analyze.js';
 
 const regex_css_browser_prefix = /^-((webkit)|(moz)|(o)|(ms))-/;
 const regex_css_ident_start = /^(-?([a-zA-Z_\\]|[^\x00-\x7f])|--)/;
@@ -266,6 +267,28 @@ function is_used(rule) {
 }
 
 /**
+ * Whether `selector`, which starts with a lone bare `:global`, starts with a
+ * combinator once that and the lone bare `:global`s after it are dropped.
+ *
+ * @param {AST.CSS.ComplexSelector} selector
+ * @returns {boolean}
+ */
+function starts_with_combinator(selector) {
+	for (const relative_selector of selector.children.slice(1)) {
+		const { combinator, selectors } = relative_selector;
+		if (combinator && combinator.name !== ' ') return true;
+		const [first] = selectors;
+		const bare_global =
+			selectors.length === 1 &&
+			first.type === 'PseudoClassSelector' &&
+			first.name === 'global' &&
+			first.args === null;
+		if (!bare_global) return false;
+	}
+	return false;
+}
+
+/**
  * @param {Array<AST.CSS.Node>} path
  */
 function is_in_global_block(path) {
@@ -358,29 +381,15 @@ function remove_global_pseudo_class(selector, combinator, state) {
 }
 
 /**
- * @param {AST.CSS.Rule} node
+ * Escape each `*` and `/` pair in `node`'s text, which goes inside a comment
+ * the output adds around it: the end of a comment in it, or of a string.
+ *
+ * @param {{ start: number, end: number }} node
  * @param {MagicString} code
  */
 function escape_comment_close(node, code) {
-	let escaped = false;
-	let in_comment = false;
-
-	for (let i = node.start; i < node.end; i++) {
-		if (escaped) {
-			escaped = false;
-		} else {
-			const char = code.original[i];
-			if (in_comment) {
-				if (char === '*' && code.original[i + 1] === '/') {
-					code.prependRight(++i, '\\');
-					in_comment = false;
-				}
-			} else if (char === '\\') {
-				escaped = true;
-			} else if (char === '/' && code.original[++i] === '*') {
-				in_comment = true;
-			}
-		}
+	for (let i = node.start; i < node.end - 1; i++) {
+		if (code.original[i] === '*' && code.original[i + 1] === '/') code.prependRight(i + 1, '\\');
 	}
 }
 
@@ -503,26 +512,23 @@ const visitors = {
 			return;
 		}
 
-		if (node.metadata.is_global_block) {
-			const selector = node.prelude.children[0];
+		if (drops_selector(node)) {
+			// `:global {...}`
+			if (state.minify) {
+				state.code.remove(node.start, node.block.start + 1);
+				state.code.remove(node.block.end - 1, node.end);
+			} else {
+				state.code.prependRight(node.start, '/* ');
+				state.code.appendLeft(node.block.start + 1, '*/');
+				escape_comment_close({ start: node.start, end: node.block.start }, state.code);
 
-			if (selector.children.length === 1 && selector.children[0].selectors.length === 1) {
-				// `:global {...}`
-				if (state.minify) {
-					state.code.remove(node.start, node.block.start + 1);
-					state.code.remove(node.block.end - 1, node.end);
-				} else {
-					state.code.prependRight(node.start, '/* ');
-					state.code.appendLeft(node.block.start + 1, '*/');
-
-					state.code.prependRight(node.block.end - 1, '/*');
-					state.code.appendLeft(node.block.end, '*/');
-				}
-
-				// don't recurse into selectors but visit the body
-				visit(node.block);
-				return;
+				state.code.prependRight(node.block.end - 1, '/*');
+				state.code.appendLeft(node.block.end, '*/');
 			}
+
+			// don't recurse into selectors but visit the body
+			visit(node.block);
+			return;
 		}
 
 		next();
@@ -655,11 +661,16 @@ const visitors = {
 				remove_global_pseudo_class(global, relative_selector.combinator, context.state);
 
 				if (
-					node.metadata.rule?.metadata.parent_rule &&
 					global.args === null &&
-					relative_selector.combinator === null
+					relative_selector.combinator === null &&
+					(has_parent_rule_in_output(node.metadata.rule) ||
+						// An `&` the selector would otherwise start with a combinator after,
+						// which is invalid; at the top level it stands for the root.
+						(relative_selector.selectors.length === 1 && starts_with_combinator(node)))
 				) {
-					// div { :global.x { ... } } becomes div { &.x { ... } }
+					// div { :global.x { ... } } becomes div { &.x { ... } }, but
+					// :global { :global.x { ... } } becomes .x { ... }: the block is
+					// dropped, so no rule is left for an `&`.
 					context.state.code.prependRight(global.start, '&');
 				}
 				continue;

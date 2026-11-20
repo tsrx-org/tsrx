@@ -740,6 +740,36 @@ export {};
 `,
 	},
 	{
+		error: TSRX_ERRORS.CSS_GLOBAL_BLOCK_IN_MIXED_LIST,
+		source: `export function C() @{
+	<>
+		<style>
+			.a, :global .b {
+				color: red;
+			}
+		</style>
+		<div class="a" />
+	</>
+}
+`,
+	},
+	{
+		error: TSRX_ERRORS.CSS_GLOBAL_BLOCK_NOT_ALONE,
+		source: `export function C() @{
+	<>
+		<style>
+			.a, :global {
+				.b {
+					color: red;
+				}
+			}
+		</style>
+		<div class="a" />
+	</>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.CSS_IMPORT,
 		source: `export function C() @{
 	<>

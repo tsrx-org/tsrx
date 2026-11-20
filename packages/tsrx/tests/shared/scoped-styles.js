@@ -1794,6 +1794,172 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('reports a bare :global whose list holds a selector that would lose its scoping', () => {
+			// The :global makes the whole rule unscoped: `.z` lost its hash, or its
+			// selector with the rule's declarations.
+			for (const rule of [
+				'.z, :global .w { color: red; }',
+				':global .w, .z { color: red; }',
+				'.p { .z,:global.w { color: red; } }',
+				'.p { :global.w,.z { color: red; } }',
+				':global.w, :global(.a) { .z { color: red; } }',
+				':global, .z { .w { color: red; } }',
+			]) {
+				const source = `export function App() @{
+					<>
+						<style>${rule}</style>
+						<div ${attr}="p"><i ${attr}="z" /></div>
+					</>
+				}`;
+
+				expect(
+					compile(source, 'App.tsrx', { collect: true }).errors.map((error) => error.code),
+					rule,
+				).toEqual([DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT]);
+				expect(() => compile(source, 'App.tsrx'), rule).toThrow(
+					expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT }),
+				);
+			}
+		});
+
+		it('reports a bare :global list exactly when the other selector would be scoped on its own', () => {
+			/**
+			 * The CSS of `css` in a component's `<style>`, which prunes what matches
+			 * nothing, or in an assigned theme, which keeps every selector.
+			 *
+			 * @param {string} css
+			 * @param {boolean} theme
+			 */
+			const css_of = (css, theme) => {
+				const source = theme
+					? `const theme = <style>${css}</style>;`
+					: `export function App() @{
+						<>
+							<style>${css}</style>
+							<div ${attr}="p b"><i ${attr}="a b x z" /><span /></div>
+						</>
+					}`;
+				try {
+					return compile(source, 'App.tsrx').css;
+				} catch (error) {
+					return /** @type {{ code: string }} */ (error).code;
+				}
+			};
+			const selectors = [
+				'.a',
+				'div',
+				':hover',
+				'::before',
+				':root',
+				':root:has(.a)',
+				':root:has(:global(.a))',
+				':root:not(.a)',
+				':host:is(.a)',
+				':is(.a)',
+				':is(:global(.a))',
+				':where(:global(.a), :global(.b))',
+				':not(:global(.a))',
+				':has(.a)',
+				':global(.a)',
+				':global(.a):is(.b)',
+				':global(.a).b',
+				':global(.a) .b',
+				':global(.a) :global(.b)',
+			];
+			// A theme also hashes the compounds after a bare :global later in a
+			// selector, which a component leaves unscoped; this follows a component.
+			const after_bare_global = [
+				':root :global .x',
+				':root :global .x:has(.a)',
+				':global(.a) :global .x',
+			];
+			const nested = [
+				'&',
+				'&.b',
+				'&:is(.a)',
+				'&:is(:global(.a))',
+				'&:not(.z)',
+				'&:nth-child(2)',
+				'& .b',
+				'& :global .x',
+			];
+			/** @type {Array<[selector: string, wrap: (list: string) => string, theme: boolean]>} */
+			const cases = [];
+			for (const theme of [false, true]) {
+				const top = theme ? selectors : [...selectors, ...after_bare_global];
+				for (const selector of top) cases.push([selector, (list) => list, theme]);
+				for (const selector of [...top, ...nested]) {
+					if (theme && selector.includes(':global .')) continue;
+					cases.push([selector, (list) => `.p { ${list} }`, theme]);
+				}
+			}
+			for (const [selector, wrap, theme] of cases) {
+				// A hash in a :not() argument only makes it match fewer elements.
+				const alone = css_of(wrap(`${selector} { color: red; }`), theme)
+					.replace(/^\.p\.tsrx-[0-9a-f]+/, '')
+					.replace(/:not\([^)]*\)/g, ':not()');
+				// Pruned on its own, it would be kept unscoped in the list.
+				const scoped = /tsrx-[0-9a-f]+|\((unused|empty)\)/.test(alone);
+				const mixed = css_of(wrap(`:global.w, ${selector} { color: red; }`), theme);
+				expect(
+					mixed === DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT,
+					`${theme ? 'theme' : 'component'}: ${wrap(selector)}`,
+				).toBe(scoped);
+			}
+		});
+
+		it('compiles a bare :global beside selectors that need no scoping', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							:global.w,:global .v { color: red; }
+							:global(.a), :global.w { color: green; }
+							.p { :global.w, :global .v, &.b { color: blue; } }
+							.p { :global.open, :global { color: gray; } }
+							:global .note, :root :global .x { color: black; }
+						</style>
+						<div ${attr}="p" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain('.w, .v { color: red; }');
+			// Read as a :global { ... } block before, which dropped the selector.
+			expect(css).toContain('.a, .w { color: green; }');
+			expect(css).toContain(`.p.${hash} { &.w, & .v, &.b { color: blue; } }`);
+			// A lone :global in a rule stands for that rule.
+			expect(css).toContain(`.p.${hash} { &.open, & { color: gray; } }`);
+			expect(css).toContain('.note, :root .x { color: black; }');
+		});
+
+		it('writes a :global modifier whose only parent is a :global { ... } block without an &', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							:global { :global.w { color: red; } }
+							@media print { :global { :global .v { color: green; } } }
+							.p { :global { :global.k { color: blue; } } }
+						</style>
+						<div ${attr}="p" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			const plain_css = css.replace(/\/\*[^]*?\*\//g, '').replace(/\s+/g, ' ');
+			// A top-level & matches the root, not .w.
+			expect(plain_css).toContain(' .w { color: red; }');
+			expect(plain_css).toContain('@media print { .v { color: green; } }');
+			expect(plain_css).not.toMatch(/&\.w|& \.v/);
+			// Under a kept rule, the & still refers to it.
+			expect(plain_css).toContain(`.p.${hash} { &.k { color: blue; } }`);
+		});
+
 		it('keeps the :not(), :is(), :where() and :has() arguments of a :global() compound as written', () => {
 			const alone = `<i ${attr}="y" />`;
 			const in_parent = `<div><i ${attr}="y" /></div>`;
