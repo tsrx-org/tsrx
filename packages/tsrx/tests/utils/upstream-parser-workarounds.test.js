@@ -35,6 +35,16 @@ function parse(source) {
 }
 
 /**
+ * The end of the word at `pos` in `source`: TypeScript reports an error of a
+ * modifier on all of it.
+ * @param {string} source
+ * @param {number} pos
+ */
+function keywordEnd(source, pos) {
+	return pos + (/^[\w$]+/.exec(source.slice(pos))?.[0].length ?? 1);
+}
+
+/**
  * @param {AST.Expression | AST.PrivateIdentifier} key
  */
 function keyName(key) {
@@ -621,7 +631,9 @@ describe("a repeated modifier's error (sveltejs/acorn-typescript#129)", () => {
 			const [source, modifier, error] = cases[index];
 			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
 			const pos = source.indexOf(modifier);
-			expect(outcome.errors, source).toEqual([{ code: code_of(error), pos, end: pos + 1 }]);
+			expect(outcome.errors, source).toEqual([
+				{ code: code_of(error), pos, end: keywordEnd(source, pos) },
+			]);
 		}
 		const public_protected = outcomes[1];
 		if (!public_protected.ok) throw new Error('public protected threw');
@@ -677,7 +689,9 @@ describe("a modifier order or compatibility error's position (sveltejs/acorn-typ
 			const [source, modifier, error] = cases[index];
 			if (!outcome.ok) throw new Error(`${JSON.stringify(source)} threw ${outcome.message}`);
 			const pos = source.indexOf(modifier);
-			expect(outcome.errors, source).toEqual([{ code: code_of(error), pos, end: pos + 1 }]);
+			expect(outcome.errors, source).toEqual([
+				{ code: code_of(error), pos, end: keywordEnd(source, pos) },
+			]);
 		}
 	});
 });
@@ -2649,7 +2663,11 @@ describe('`abstract`, `module`, `namespace` or `type` after `export` that starts
 			expect(strict, source).toEqual(thrown(error, pos));
 			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
 			// The declaration, without `abstract`, which the formatter refuses.
-			expect(collect.errors?.[0], source).toEqual({ code: error.code, pos, end: pos + 1 });
+			expect(collect.errors?.[0], source).toEqual({
+				code: error.code,
+				pos,
+				end: keywordEnd(source, pos),
+			});
 			const [statement] = collect.ast.body;
 			assert_type(statement, 'ExportNamedDeclaration');
 			expect(statement.declaration?.type, source).toBe(cases[index][1]);
@@ -2925,7 +2943,7 @@ describe('`abstract` before a declaration other than a class (sveltejs/acorn-typ
 			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
 			// The declaration, without `abstract`, which the formatter refuses.
 			expect(collect.errors, source).toEqual([
-				{ code: TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED.code, pos, end: pos + 1 },
+				{ code: TS_ERRORS.ABSTRACT_MODIFIER_NOT_ALLOWED.code, pos, end: keywordEnd(source, pos) },
 			]);
 			const [statement] = collect.ast.body;
 			expect(declarationOf(statement)?.type, source).toBe(cases[index][1]);
@@ -3138,7 +3156,9 @@ describe('a global augmentation after `export` (sveltejs/acorn-typescript#146)',
 			const pos = source.indexOf('export');
 			expect(strict, source).toEqual(thrown(error, pos));
 			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
-			expect(collect.errors, source).toEqual([{ code: error.code, pos, end: pos + 1 }]);
+			expect(collect.errors, source).toEqual([
+				{ code: error.code, pos, end: keywordEnd(source, pos) },
+			]);
 			const [exported] = moduleStatements(collect.ast);
 			assert_type(exported, 'ExportNamedDeclaration');
 			const declare = cases[index][1];
@@ -3661,7 +3681,11 @@ class A {}`,
 			const [, pos, error, type] = cases[index];
 			expect(strict, source).toEqual(thrown(error, pos));
 			if (!collect.ok) throw new Error(`${JSON.stringify(source)} threw ${collect.message}`);
-			expect(collect.errors?.[0], source).toEqual({ code: code_of(error), pos, end: pos + 1 });
+			expect(collect.errors?.[0], source).toEqual({
+				code: code_of(error),
+				pos,
+				end: keywordEnd(source, pos),
+			});
 			expect(collect.ast.body[0].type, source).toBe(type);
 		}
 	});
