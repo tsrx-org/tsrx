@@ -279,7 +279,10 @@ function escape_comment_ends(start, end, code) {
 
 /**
  * The comma between two selectors of a list: the last one before the next
- * selector, past any CSS comment, which can hold a comma too.
+ * selector that isn't in a CSS comment, which can hold a comma too. Comments
+ * are found from the start, as CSS reads them (they don't nest), past the
+ * HTML comments the parser also skips; a comma in an HTML comment still
+ * counts, as it did before.
  *
  * @param {string} source
  * @param {number} start the end of the selector before it
@@ -287,12 +290,23 @@ function escape_comment_ends(start, end, code) {
  * @returns {number}
  */
 function separator_comma(source, start, end) {
-	for (let i = end - 1; i >= start; i--) {
-		if (source[i] === ',') return i;
-		if (source[i] === '/' && source[i - 1] === '*') {
-			const open = source.lastIndexOf('/*', i - 2);
-			if (open >= start) i = open;
+	/** @type {Array<[number, number]>} */
+	const comments = [];
+	for (let i = start; i < end;) {
+		if (source.startsWith('/*', i)) {
+			const close = source.indexOf('*/', i + 2);
+			const stop = close === -1 ? end : Math.min(close + 2, end);
+			comments.push([i, stop]);
+			i = stop;
+		} else if (source.startsWith('<!--', i)) {
+			const close = source.indexOf('-->', i + 4);
+			i = close === -1 ? end : Math.min(close + 3, end);
+		} else {
+			i++;
 		}
+	}
+	for (let i = end - 1; i >= start; i--) {
+		if (source[i] === ',' && !comments.some(([from, to]) => i >= from && i < to)) return i;
 	}
 	let i = end;
 	while (source[i] !== ',') i--;

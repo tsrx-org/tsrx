@@ -1403,6 +1403,8 @@ describe('scoped style analysis', () => {
 				['.u :global(*)/* c */, .z', ['.u :global(*)'], '/* (unused) .u *\\/* c *\\/,*/ .z', ' .z'],
 				// The comma that ends the pruned selectors, not one in a comment.
 				['.u, /* , */ .z', ['.u'], '/* (unused) .u,*/ /* , */ .z', ' /* , */ .z'],
+				// CSS comments don't nest: the second `/*` is part of the comment.
+				['.u, /* a, /* b */ .z', ['.u'], '/* (unused) .u,*/ /* a, /* b */ .z', ' /* a, /* b */ .z'],
 				['.u <!-- , -->, .z', ['.u'], '/* (unused) .u <!-- , -->,*/ .z', ' .z'],
 				['.u <!-- /* -->, .z', ['.u'], '/* (unused) .u <!-- \\/* -->,*/ .z', ' .z'],
 				// A comma in an HTML comment after it is taken as on main.
