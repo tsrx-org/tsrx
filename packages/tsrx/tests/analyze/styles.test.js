@@ -954,6 +954,23 @@ describe('scoped style analysis', () => {
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 					0,
 				],
+				// A :has() in the kept arguments of a :root compound is still scoped.
+				[
+					':global.w, :root:is(:root:has(.x)) { color: red; }',
+					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
+					0,
+				],
+				[
+					':global.w, :root:not(:root:not(:root:has(.x))) { color: red; }',
+					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
+					0,
+				],
+				// So is an & for a @scope's root.
+				[
+					'@scope (.q) { :global.w, :root:is(&) { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
+					0,
+				],
 				// :is() adds the specificity of the hash; the & of :global(.y) has no hash.
 				[
 					'.p { :global.w, &:is(.p) { color: red; } }',
@@ -1079,6 +1096,7 @@ describe('scoped style analysis', () => {
 				'.p { :global.w, &:not(:root:not(.x)) { color: red; } }',
 				'.p { :global.w, &:where(:root:is(.a)) { color: red; } }',
 				':global.w, :root :global :root:is(.a) { color: red; }',
+				':global.w, :root:not(:root:has(.x)) { color: red; }',
 				// The & already has the hash, and :where() adds no specificity.
 				'.p { :global.w, &:where(.p) { color: red; } }',
 				'@scope (.q) { .p { :global.w, &:where(.p) { color: red; } } }',

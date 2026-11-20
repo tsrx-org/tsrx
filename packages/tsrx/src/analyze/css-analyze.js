@@ -175,10 +175,12 @@ function arguments_unscoped(simple, subject_hashed = false, root_or_host = false
 	if (
 		simple.type !== 'PseudoClassSelector' ||
 		!simple.args ||
-		!SELECTOR_ARGUMENTS.includes(simple.name) ||
-		(root_or_host && simple.name !== 'has')
+		!SELECTOR_ARGUMENTS.includes(simple.name)
 	) {
 		return true;
+	}
+	if (root_or_host && simple.name !== 'has') {
+		return kept_arguments_unscoped(simple.args, simple.name === 'not');
 	}
 	return simple.args.children.every((argument) => {
 		if (simple.name === 'not') return negation_unscoped(argument);
@@ -214,11 +216,47 @@ function negation_unscoped(selector) {
 					simple.type !== 'PseudoClassSelector' ||
 					!simple.args ||
 					!SELECTOR_ARGUMENTS.includes(simple.name) ||
-					(simple.name !== 'has' && has_root_or_host(selectors)) ||
-					simple.args.children.every((argument) =>
-						simple.name === 'not' ? is_unscoped(argument) : negation_unscoped(argument),
-					),
+					(simple.name !== 'has' && has_root_or_host(selectors)
+						? kept_arguments_unscoped(simple.args, simple.name !== 'not')
+						: simple.args.children.every((argument) =>
+								simple.name === 'not' ? is_unscoped(argument) : negation_unscoped(argument),
+							)),
 			),
+	);
+}
+
+/**
+ * Whether the arguments a `:root` or `:host` compound keeps as written (those
+ * of its `:is()`, `:where()` and `:not()`) can't match more without hashes:
+ * only a `:has()` in them still looks at the component's elements, and an `&`
+ * for a `@scope`'s root keeps the hash `:scope` gets.
+ *
+ * @param {AST.CSS.SelectorList} list
+ * @param {boolean} negated whether a match there makes the selector match less
+ * @returns {boolean}
+ */
+function kept_arguments_unscoped(list, negated) {
+	return list.children.every((argument) =>
+		argument.children.every(({ selectors }) =>
+			selectors.every((simple) => {
+				if (simple.type === 'NestingSelector') {
+					return negated || !is_scope_root_ampersand(argument.metadata.rule);
+				}
+				if (
+					simple.type !== 'PseudoClassSelector' ||
+					!simple.args ||
+					!SELECTOR_ARGUMENTS.includes(simple.name)
+				) {
+					return true;
+				}
+				if (simple.name === 'has') {
+					return simple.args.children.every((inner) =>
+						negated ? negation_unscoped(inner) : is_unscoped(inner),
+					);
+				}
+				return kept_arguments_unscoped(simple.args, simple.name === 'not' ? !negated : negated);
+			}),
+		),
 	);
 }
 

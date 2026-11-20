@@ -1487,11 +1487,18 @@ export function keep_global_compound_arguments(css) {
 							context.next();
 						},
 						RelativeSelector(relative_selector, context) {
-							relative_selector.metadata.scoped = false;
+							// In a :root or :host compound's argument, an `&` still stands for
+							// the rule around it, or a `@scope`'s root, scoped as before.
+							if (
+								global ||
+								!relative_selector.selectors.some((simple) => simple.type === 'NestingSelector')
+							) {
+								relative_selector.metadata.scoped = false;
+							}
 							context.next();
 						},
-						// In a :root or :host compound's argument, a :has() still looks at
-						// descendants (`:root:not(:root:has(.icon))`), scoped as before.
+						// There, a :has() still looks at descendants
+						// (`:root:not(:root:has(.icon))`), scoped as before.
 						PseudoClassSelector(pseudo_class, context) {
 							if (global || pseudo_class.name !== 'has') context.next();
 						},
