@@ -468,6 +468,28 @@ export function tsx_with_ts_locations(
 				context,
 			);
 		},
+		// esrap writes a delegating `yield*` as one token and maps its end to the
+		// keyword's start plus six, which is past the `*` only when the source
+		// writes `yield*`. With a space or a comment before the `*`, the `*` maps
+		// from where the source has it, and what follows from after it.
+		YieldExpression: (node, context) => {
+			const star = delegate_star_position(node, source);
+			if (!star) {
+				/** @type {NonNullable<typeof base.YieldExpression>} */ (base.YieldExpression)(
+					node,
+					context,
+				);
+				return;
+			}
+			context.write('yield');
+			context.location(star.line, star.column);
+			context.write('*');
+			context.location(star.line, star.column + 1);
+			if (node.argument) {
+				context.write(' ');
+				context.visit(node.argument);
+			}
+		},
 		// esrap's tsx printer writes `<T,>` for every one-parameter list, but
 		// only an arrow needs it: TSX reads `<T>(…) => …` as a JSX tag. Other
 		// lists print as written.
@@ -1191,6 +1213,28 @@ function source_offset(source, position) {
 	const line_start = line_starts_of.line_starts[position.line - 1];
 	const offset = line_start === undefined ? -1 : line_start + position.column;
 	return offset <= source.length ? offset : -1;
+}
+
+/** Spaces and comments with no line break in them */
+const regex_inline_gap = /(?:[^\S\n\r\u2028\u2029]|\/\*(?:(?!\*\/)[^\n\r\u2028\u2029])*\*\/)*/y;
+
+/**
+ * Where the source has the `*` of a delegating `yield` that spaces or a
+ * comment part from the keyword (`yield * it`), or `null` for any other
+ * `yield`. A line break can't stand there.
+ * @param {AST.YieldExpression} node
+ * @param {string | undefined} source
+ * @returns {AST.Position | null}
+ */
+function delegate_star_position(node, source) {
+	if (!node.delegate || !node.loc || source === undefined) return null;
+	const start = source_offset(source, node.loc.start);
+	if (start < 0 || !source.startsWith('yield', start)) return null;
+	regex_inline_gap.lastIndex = start + 5;
+	const star = start + 5 + (regex_inline_gap.exec(source)?.[0].length ?? 0);
+	if (star === start + 5 || source[star] !== '*') return null;
+	const { line, column } = node.loc.start;
+	return { line, column: column + star - start };
 }
 
 /**
