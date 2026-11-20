@@ -87,11 +87,6 @@ async function hydrate(component: unknown, markup: string) {
 }
 
 describe('tsrx-vue a page that hydrates, then mounts another app', () => {
-	it('marks the boundaries Vapor components', () => {
-		expect(TsrxErrorBoundary.__vapor).toBe(true);
-		expect(TsrxPendingBody.__vapor).toBe(true);
-	});
-
 	it('renders a @pending body in an app with interop after one without rendered it', async () => {
 		// \`Vue.createVaporApp\` through the namespace gets no \`vaporInteropPlugin\`
 		// from the plugin, unlike the named import.
@@ -131,5 +126,10 @@ describe('tsrx-vue a page that hydrates, then mounts another app', () => {
 				host.remove();
 			}
 		}
+	});
+	// Last: the tests above rendered both through Vapor.
+	it('marks the boundaries Vapor components once Vapor renders them', () => {
+		expect(TsrxErrorBoundary.__vapor).toBe(true);
+		expect(TsrxPendingBody.__vapor).toBe(true);
 	});
 });
