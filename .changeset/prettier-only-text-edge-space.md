@@ -1,0 +1,5 @@
+---
+'@tsrx/prettier-plugin': patch
+---
+
+Keep an element's only text one child when the element breaks. The compiler prints an element's only text with a space or tab at an edge as one literal (`{' a '}`), so a `<textarea>`, a `<title>` or a component that takes `children: string` gets one string. The formatter, as Prettier does, moved such a space into a `{" "}` child once the element didn't fit on a line or had several attributes, which gave the element two or three children again: React's `<textarea>` threw, `<title>` rendered empty, and a `children: string` component got an array. The space now stays beside its tag (`<textarea> Lorem ipsum …` and `… tempor </textarea>`), with the words filling the lines between, and a short text with several attributes stays on one line. A text the compiler would split over lines (one with a non-breaking space, U+200B or a reference to whitespace) stays on one line. A fragment's only text and text beside other children print as before.
