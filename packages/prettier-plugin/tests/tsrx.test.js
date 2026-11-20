@@ -1725,6 +1725,65 @@ const b = (
 		);
 	});
 
+	// The compiler keeps the split for these over lines, so they print as
+	// Prettier prints them: `{" "}` children where the element breaks.
+	test('prints as Prettier does a text the compiler splits', async () => {
+		await expectFormat(
+			`const a = <p> one
+&#32;two </p>;
+const b = <p> one\u00a0two
+three </p>;`,
+			`const a = (
+  <p>
+    {" "}
+    one
+    &#32;two{" "}
+  </p>
+);
+const b = (
+  <p>
+    {" "}
+    one\u00a0two
+    three{" "}
+  </p>
+);
+`,
+			{ printWidth: 20 },
+		);
+	});
+
+	test('keeps the cursor on the word it was before', async () => {
+		const source = 'const a = <p>alpha beta gamma </p>;';
+		for (const word of ['alpha', 'beta']) {
+			const { formatted, cursorOffset } = await prettier.formatWithCursor(source, {
+				parser: 'tsrx',
+				plugins: [plugin],
+				printWidth: 20,
+				cursorOffset: source.indexOf(word),
+			});
+			expect(formatted).toBe(`const a = (
+  <p>
+    alpha beta
+    gamma </p>
+);
+`);
+			expect(cursorOffset, word).toBe(formatted.indexOf(word));
+		}
+	});
+
+	test('takes linear time in a long run of spaces', async () => {
+		const run = ' '.repeat(100_000);
+		for (const [source, expected] of [
+			[`const a = <p>a${run}b</p>;`, 'const a = <p>a b</p>;\n'],
+			[`const a = <p> a${run}b </p>;`, 'const a = <p> a b </p>;\n'],
+			[`const a = <p>${run}a b </p>;`, 'const a = <p> a b </p>;\n'],
+		]) {
+			const start = performance.now();
+			expect(await format(source)).toBe(expected);
+			expect(performance.now() - start).toBeLessThan(2000);
+		}
+	});
+
 	test('compiles to the string the unformatted text compiles to', async () => {
 		const sources = [
 			'<textarea> Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor </textarea>',
