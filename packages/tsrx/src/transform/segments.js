@@ -1824,12 +1824,28 @@ export function convert_source_map_to_mappings(
 					return;
 				}
 				if (has_location(node)) {
-					const mapping = get_mapping_from_node(
+					let mapping = get_mapping_from_node(
 						node,
 						src_to_gen_map,
 						gen_line_offsets,
 						mapping_data_verify_only,
 					);
+					// A container the compiler makes around an expression can have the
+					// expression's location (Solid's `when={…}` from an `@if` test, or
+					// `keyed={(item) => …}` from a `@for` key). Its first generated
+					// position is then the `{`, or the arrow before the expression, so
+					// the mapping starts where the expression is printed instead, and
+					// an error on the expression doesn't shift by that prefix. A
+					// container the author wrote, whose expression starts after its
+					// `{`, keeps its mapping: one printed as a dynamic tag's `is={…}`
+					// maps the `is` that TypeScript reports a wrong tag type on.
+					const expression_start = /** @type {AST.NodeWithLocation} */ (node.expression)?.start;
+					if (
+						source[node.start] !== '{' ||
+						!(typeof expression_start === 'number' && expression_start > node.start)
+					) {
+						mapping = start_at_own_text(mapping, node);
+					}
 					if (errors.length > 0 && holds_recovered_closing(node)) {
 						// A mapping of the whole container would cover the closing tag
 						// that loose recovery adds to a tag left unclosed in it (#978),

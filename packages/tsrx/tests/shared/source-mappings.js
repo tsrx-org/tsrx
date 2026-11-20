@@ -2672,6 +2672,55 @@ ${members.map((member) => `\t${member}`).join('\n')}
 		});
 	});
 
+	describe(`[${name}] an expression in a container the compiler makes around it`, () => {
+		// Solid prints an `@if` test as `when={…}` and a `@for` key as
+		// `keyed={(item) => …}`, in a container with the expression's location.
+		// The container's mapping started at the `{`, so TypeScript's error on
+		// the expression was reported one character, or the arrow's length, later
+		// in the source.
+		const wrap = (/** @type {string} */ directive) =>
+			`export function App(props: { n: number; items: number[] }) @{\n\t<ul>\n\t\t${directive} {\n\t\t\t<li />\n\t\t}\n\t</ul>\n}\n`;
+		it.each([
+			['an `@if` test', '@if (props.n as string)', 'props.n as string'],
+			[
+				'an `@if` test that starts with an object',
+				'@if ({ n: props.n } as string)',
+				'{ n: props.n } as string',
+			],
+			[
+				'a `@for` key',
+				'@for (const item of props.items; key props.n as string)',
+				'props.n as string',
+			],
+			[
+				'a `@for` key in parentheses',
+				'@for (const item of props.items; key (props.n as string))',
+				'props.n as string',
+			],
+		])('reports an error on %s on the expression', (_, directive, text) => {
+			const source = wrap(directive);
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const map = new SourceMap(result.mappings);
+			/** @type {string[]} */
+			const shown = [];
+			for (const diagnostic of type_diagnostics(result.code, '/output.tsx')) {
+				if (diagnostic.code !== 2352) continue;
+				const start = /** @type {number} */ (diagnostic.start);
+				for (const [source_start, source_end] of map.toSourceRange(
+					start,
+					start + /** @type {number} */ (diagnostic.length),
+					true,
+					isDiagnosticsEnabled,
+				)) {
+					shown.push(source.slice(source_start, source_end));
+					break;
+				}
+			}
+			expect(shown).toEqual([text]);
+		});
+	});
+
 	describe(`[${name}] a member expression where other code starts at the same position (#1392)`, () => {
 		// The printer can write other code that starts at the same source position
 		// before a member expression: the `(` of a parenthesized sequence, or a key
@@ -2688,9 +2737,9 @@ ${members.map((member) => `\t${member}`).join('\n')}
 				'a `@for` key',
 				'export function App(props: { items: { id: number }[] }) @{\n\t<ul>\n\t\t@for (const item of props.items; key item.id) {\n\t\t\t<li />\n\t\t}\n\t</ul>\n}\n',
 				'item.id',
-				// Solid also maps the key function it makes from the key, as a whole
-				// arrow function, from the `{` before it.
-				name === 'solid' ? ['{(item) => item.id'] : [],
+				// Solid also maps the `keyed={…}` it makes around the key function,
+				// which has the key's location, from where the key is printed.
+				name === 'solid' ? ['item.id'] : [],
 			],
 		])('maps %s from its own text', (_, source, text, others) => {
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
