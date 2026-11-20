@@ -6931,6 +6931,47 @@ export function App() @{
 		});
 	});
 
+	describe(`[${name}] TypeScript words as names in a template body`, () => {
+		it('reads them as names, as TypeScript does', () => {
+			const source = `declare const type: any, namespace: any, module: any, declare: any, global: any, async: any;
+export function App({ items }: { items: string[] }) @{
+	type; namespace; module; declare; global;
+	declare namespace;
+	declare global;
+	namespace: for (const item of items) {
+		if (item) continue namespace;
+		break namespace;
+	}
+	const read = items.map(async type => type);
+	const value = async as unknown;
+	<b>{read.length}{String(value)}</b>
+}`;
+			for (const options of [{}, { collect: true }, { loose: true }]) {
+				const { code, errors } = compile(source, 'App.tsrx', options);
+				expect(errors ?? []).toEqual([]);
+				expect(code).toMatch(
+					/\btype;\s+namespace;\s+module;\s+declare;\s+global;\s+declare;\s+namespace;\s+declare;\s+global;/,
+				);
+				expect(code).toMatch(/namespace: for \(const item of items\)/);
+				expect(code).toContain('continue namespace;');
+				expect(code).toContain('break namespace;');
+				expect(code).toMatch(/async \(?type\)? => type/);
+				expect(code).toContain('async as unknown');
+			}
+		});
+
+		it('reports a namespace named `as` there (TS1235)', () => {
+			const source = `export function App() @{
+	namespace as {}
+	<b />
+}`;
+			const { errors } = compile(source, 'App.tsrx', { collect: true });
+			expect(errors.map((error) => [error.code, error.pos])).toEqual([
+				['TS1235', source.indexOf('namespace')],
+			]);
+		});
+	});
+
 	describe(`[${name}] getters and setters with an \`@{ … }\` body`, () => {
 		it.each([
 			[

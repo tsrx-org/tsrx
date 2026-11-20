@@ -12144,6 +12144,154 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			valid: 'class A {\n\tconstructor(private readonly x: number) {}\n}',
 			pick: constructor_parameter,
 		},
+		// An `accessor` property's modifiers that acorn-typescript doesn't check,
+		// which the output keeps in the source's order, where esbuild and Babel
+		// reject them (#235).
+		{
+			source: 'class A { accessor static x = 1; }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static x']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:19'],
+			valid: 'class A { static accessor x = 1; }',
+			pick: first_member,
+		},
+		{
+			source: 'class A { accessor static #x = 1; }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static #x']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:19'],
+			valid: 'class A { static accessor #x = 1; }',
+			pick: first_member,
+		},
+		{
+			source: 'class A { accessor readonly x = 1; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'readonly x']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:19'],
+			pick: first_member,
+			match: { accessor: true, readonly: true },
+		},
+		{
+			source: 'class A { declare accessor x: number; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'accessor x']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:18'],
+			pick: first_member,
+			match: { accessor: true, declare: true },
+		},
+		{
+			source: 'abstract class A { private accessor abstract x: number; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'abstract x']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:36'],
+			pick: first_member,
+			match: { accessibility: 'private', accessor: true, abstract: true },
+		},
+		// An `async` constructor, at the `async`, where acorn threw `Constructor
+		// can't be an async method` at the name. It stays async, as TypeScript
+		// reads it.
+		{
+			source: 'class A { async constructor() { await 1; } }',
+			errors: [[TS_ERRORS.MODIFIER_ON_CONSTRUCTOR, 'async']],
+			throws: [TS_ERRORS.MODIFIER_ON_CONSTRUCTOR, '1:10'],
+			pick: first_member,
+			match: {
+				kind: 'constructor',
+				value: { async: true, body: { body: [{ expression: { type: 'AwaitExpression' } }] } },
+			},
+		},
+		// TypeScript reads an `async` before a method's other modifiers as a
+		// modifier too, which acorn read as the name (#235).
+		{
+			source: 'abstract class A { async abstract m(): Promise<void>; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'async abstract']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:19'],
+			pick: first_member,
+			match: { abstract: true, key: { name: 'm' }, value: { async: true } },
+		},
+		{
+			source: 'class A { async static *m() { await 1; } }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static *m']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:16'],
+			valid: 'class A { static async *m() { await 1; } }',
+			pick: first_member,
+		},
+		{
+			source: 'class B { m() {} }\nclass A extends B { async override m() {} }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'override m']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '2:26'],
+			valid: 'class B { m() {} }\nclass A extends B { override async m() {} }',
+			pick: (program) =>
+				as_type(/** @type {AST.Node} */ (last(program)), 'ClassDeclaration').body.body[0],
+		},
+		// TypeScript reports only the first error of the modifiers: not also
+		// `public` after `static`, or `static` with `abstract`.
+		{
+			source: 'class A { async static public m() {} }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static public']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:16'],
+			pick: first_member,
+			match: { static: true, accessibility: 'public', value: { async: true } },
+		},
+		{
+			source: 'abstract class A { abstract async static m(): Promise<void>; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'async static']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:28'],
+			pick: first_member,
+			match: { static: true, abstract: true, value: { async: true } },
+		},
+		// Nor acorn-typescript's errors of the modifiers that it raises at the
+		// member's start, after them: TS1244 for `abstract` in a class that isn't
+		// abstract.
+		{
+			source: 'class A { async static abstract m(): void; }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'static abstract']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:16'],
+			pick: first_member,
+			match: { static: true, abstract: true, value: { async: true } },
+		},
+		{
+			source: 'class A { async public public m() {} }',
+			errors: [[TS_ERRORS.MODIFIER_MUST_PRECEDE, 'public public']],
+			throws: [TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:16'],
+			pick: first_member,
+			match: { accessibility: 'public', value: { async: true } },
+		},
+		// One that acorn-typescript doesn't report.
+		{
+			source: 'abstract class A { private async abstract m(): Promise<void>; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'abstract m']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:33'],
+			pick: first_member,
+			match: { accessibility: 'private', abstract: true, value: { async: true } },
+		},
+		// An error before the `async`, once: acorn-typescript's TS1030, or the
+		// TS1243 it doesn't report.
+		{
+			source: 'abstract class A { abstract abstract async public m(): Promise<void>; }',
+			errors: [[UPSTREAM_ERRORS.DUPLICATE_MODIFIER, 'abstract async']],
+			throws: [UPSTREAM_ERRORS.DUPLICATE_MODIFIER, '1:28'],
+			pick: first_member,
+			match: { abstract: true, value: { async: true } },
+		},
+		{
+			source: 'abstract class A { abstract private async static m(): Promise<void>; }',
+			errors: [[TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, 'private async']],
+			throws: [TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH, '1:28'],
+			pick: first_member,
+			match: { abstract: true, static: true, value: { async: true } },
+		},
+		{
+			source: 'class A { async async m() {} }',
+			errors: [[TS_ERRORS.MODIFIER_ALREADY_SEEN, 'async m']],
+			throws: [TS_ERRORS.MODIFIER_ALREADY_SEEN, '1:16'],
+			valid: 'class A { async m() {} }',
+			pick: first_member,
+		},
+		// acorn-typescript's error for another of its modifiers, which it raises
+		// at the member's start, is at that modifier.
+		{
+			source: 'class A { async abstract m(): Promise<void>; }',
+			errors: [[UPSTREAM_ERRORS.ABSTRACT_METHOD_IN_CLASS, 'abstract m']],
+			throws: [UPSTREAM_ERRORS.ABSTRACT_METHOD_IN_CLASS, '1:16'],
+			pick: first_member,
+			match: { abstract: true, key: { name: 'm' }, value: { async: true } },
+		},
 		{
 			source: 'function f(...a?: number[]) {}',
 			errors: [[TS_ERRORS.OPTIONAL_REST_PARAMETER, '?']],
@@ -12953,11 +13101,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			throws: [TS_ERRORS.REST_PARAMETER_NOT_LAST, '3:13'],
 		},
 		{
-			// One acorn-typescript reads after `declare` on the line before, which
-			// TypeScript reads as a name. TypeScript reports it at `abstract`.
+			// After `declare` on the line before, which TypeScript reads as a name
+			// (the statement `declare;`), at the token after `abstract`, as above.
 			source: 'let declare: any;\nfunction f() {\n\tdeclare\n\tabstract namespace N {}\n}',
-			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'declare']],
-			throws: [TS_ERRORS.NESTED_NAMESPACE, '3:1'],
+			errors: [[TS_ERRORS.NESTED_NAMESPACE, 'namespace']],
+			throws: [TS_ERRORS.NESTED_NAMESPACE, '4:10'],
 		},
 		{
 			// Errors held in a parameter's default are still corrected to TS2300.
@@ -14290,20 +14438,23 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
-	it('reports no place for a namespace that acorn-typescript reads as an expression', () => {
+	it('reports the syntax error in a namespace named `as`, and not its place', () => {
 		// TypeScript reads a namespace named `as` and reports a syntax error in it
-		// instead, which acorn-typescript doesn't see.
-		for (const source of [
-			'{\n\tnamespace as any;\n}',
-			'{\n\tnamespace as { readonly r: number };\n}',
-		]) {
-			/** @type {CompileError[]} */
-			const errors = [];
-			parseModule(source, 'App.tsrx', { collect: true, errors });
-			expect(
-				errors.map((error) => error.code),
-				source,
-			).not.toContain(TS_ERRORS.NESTED_NAMESPACE.code);
+		// instead (TS1005 `'{' expected.` at `any`, where this parser reports
+		// `Unexpected token`, as after any namespace's name).
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
+		const cases = [
+			['{\n\tnamespace as any;\n}', TS_ERRORS.UNEXPECTED_TOKEN, 'any'],
+			[
+				'{\n\tnamespace as { readonly r: number };\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'readonly',
+			],
+		];
+		for (const [source, error, at] of cases) {
+			expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] }), source).toThrow(
+				expect.objectContaining({ code: code_of(error), pos: source.indexOf(at) }),
+			);
 		}
 	});
 
@@ -14487,6 +14638,101 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				outcome.ok ? 'parsed' : [outcome.code, line_column(cases[index].source, outcome.pos)],
 			),
 		).toEqual(cases.map(({ throws: [error, at] }) => [code_of(error), at]));
+	});
+
+	it("leaves the errors of an async method's modifiers that acorn reads to TypeScript (#235)", async () => {
+		const sources = [
+			// TS1243, TS18019
+			'abstract class A { abstract async m(): Promise<void>; }',
+			'abstract class A { abstract async #m(): Promise<void>; }',
+			// TS1040, which Prettier's `typescript` parser accepts.
+			'declare class A { async m(): Promise<void>; }',
+		];
+		const outcomes = await parse_in_worker(
+			sources.flatMap((source) =>
+				[undefined, ...collect_modes].map((options) => ({ source, options })),
+			),
+		);
+		expect(
+			outcomes.map((outcome) => (outcome.ok ? (outcome.errors ?? []) : outcome.message)),
+		).toEqual(outcomes.map(() => []));
+	});
+
+	it("keeps the errors in an accessor property's initializer with its modifiers' error (#235)", async () => {
+		const source = 'class A { accessor static x = class { public #y = 1; }; }';
+		const [outcome] = await parse_in_worker([{ source, options: { collect: true } }]);
+		expect(outcome).toEqual({ ok: true, errors: ['TS1029', 'TS18010'] });
+	});
+
+	it('reports a syntax error in a method with a leading `async` first (#235)', async () => {
+		const source = 'abstract class A { async abstract m(,): void; }';
+		const [outcome] = await parse_in_worker([{ source }]);
+		expect(outcome).toMatchObject({ ok: false, pos: source.indexOf(',') });
+	});
+
+	it('reports a repeated modifier after a leading `async` where acorn did (#235)', async () => {
+		const source = 'class A { async static static m() {} }';
+		const [outcome] = await parse_in_worker([{ source }]);
+		expect(outcome).toMatchObject({ ok: false, code: 'TS1012', pos: source.indexOf('static m') });
+	});
+
+	it("keeps acorn's syntax error for an async after a modifier a method can't take (#235)", async () => {
+		const source = 'class A { accessor async static m() {} }';
+		const outcomes = await parse_in_worker(
+			[undefined, ...collect_modes].map((options) => ({ source, options })),
+		);
+		for (const outcome of outcomes) {
+			expect(outcome).toMatchObject({ ok: false, code: 'TS1012', pos: source.indexOf(' m(') + 1 });
+		}
+	});
+
+	it("keeps acorn's error for a decorated async constructor in an async constructor (#235)", async () => {
+		const source =
+			'declare function dec(...a: unknown[]): any;\nclass A { async constructor() { class B { @dec async constructor() {} } } }';
+		const [outcome] = await parse_in_worker([{ source, options: { collect: true } }]);
+		expect(outcome).toMatchObject({ ok: false, pos: source.lastIndexOf('constructor') });
+	});
+
+	it("reads the words before a member's name in linear time (#235)", async () => {
+		const source = `class A { async${' '.repeat(64)}"constructor"() {} }`;
+		const [outcome] = await parse_in_worker([{ source, options: { collect: true } }]);
+		expect(outcome).toEqual({ ok: true, errors: ['TS1089'] });
+	});
+
+	it('keeps TS1368 for an async generator constructor, which TypeScript reports first (#235)', async () => {
+		const source = 'class A { async *constructor() {} }';
+		const outcomes = await parse_in_worker(
+			[undefined, ...collect_modes].map((options) => ({ source, options })),
+		);
+		for (const outcome of outcomes) {
+			expect(outcome).toMatchObject({
+				ok: false,
+				code: 'TS1368',
+				pos: source.indexOf('constructor'),
+			});
+		}
+	});
+
+	it('reads an `async` that no modifier follows on its line as the name (#235)', () => {
+		/** @param {string} source */
+		const members = (source) =>
+			without_locations(
+				as_type(
+					/** @type {AST.Node} */ (first(parseModule(source, 'App.tsrx'))),
+					'ClassDeclaration',
+				).body.body,
+			);
+		// A method named `static`, and a field named `async` before a static method.
+		expect(members('class A { async static() {} }')).toEqual(
+			members('class A { async ["static"]() {} }').map((/** @type {any} */ member) => ({
+				...member,
+				computed: false,
+				key: { type: 'Identifier', name: 'static' },
+			})),
+		);
+		expect(members('class A { async\n\tstatic m() {} }')).toEqual(
+			members('class A { async;\n\tstatic m() {} }'),
+		);
 	});
 
 	it('throws in a strict parse the first error that a collecting parse records (#1162)', async () => {

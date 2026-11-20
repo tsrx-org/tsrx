@@ -513,6 +513,85 @@ export function tsx_with_ts_locations(
 				context,
 			);
 		},
+		// A class member and a parameter property print their modifiers in the
+		// source's order, which esrap doesn't keep (see `member_modifiers`).
+		MethodDefinition: (node, context) => {
+			const print = /** @type {NonNullable<typeof base.MethodDefinition>} */ (
+				base.MethodDefinition
+			);
+			const modifiers = reordered_modifiers(node, source);
+			if (!modifiers) {
+				print(node, context);
+				return;
+			}
+			print_member_decorators(node, node.decorators, context, true);
+			for (const modifier of modifiers) context.write(modifier.text + ' ');
+			print(
+				{
+					...node,
+					decorators: [],
+					abstract: false,
+					accessibility: undefined,
+					override: false,
+					static: false,
+					value: { ...node.value, async: false },
+				},
+				context,
+			);
+		},
+		PropertyDefinition: (node, context) => {
+			const print = /** @type {NonNullable<typeof base.PropertyDefinition>} */ (
+				base.PropertyDefinition
+			);
+			const modifiers = reordered_modifiers(node, source);
+			if (!modifiers) {
+				print(node, context);
+				return;
+			}
+			print_member_decorators(node, node.decorators, context, true);
+			for (const modifier of modifiers) context.write(modifier.text + ' ');
+			print(
+				{
+					...node,
+					decorators: [],
+					abstract: false,
+					accessibility: undefined,
+					accessor: false,
+					declare: false,
+					override: false,
+					readonly: false,
+					static: false,
+				},
+				context,
+			);
+		},
+		TSParameterProperty: (node, context) => {
+			const modifiers = reordered_modifiers(node, source);
+			if (!modifiers) {
+				/** @type {NonNullable<typeof base.TSParameterProperty>} */ (base.TSParameterProperty)(
+					node,
+					context,
+				);
+				return;
+			}
+			// As esrap prints it: the parser gives the decorators to the parameter.
+			const parameter = node.parameter;
+			const parameter_decorators = parameter.decorators;
+			const decorators = /** @type {AST.Node[] | undefined} */ (
+				/** @type {unknown} */ (
+					parameter_decorators?.length ? parameter_decorators : node.decorators
+				)
+			);
+			print_member_decorators(node, decorators, context, false);
+			for (const modifier of modifiers) context.write(modifier.text + ' ');
+			if (parameter_decorators?.length) {
+				parameter.decorators = [];
+				context.visit(parameter);
+				parameter.decorators = parameter_decorators;
+			} else {
+				context.visit(parameter);
+			}
+		},
 		TSNamedTupleMember: (node, context) => {
 			context.visit(node.label);
 			if (node.optional) {
@@ -954,6 +1033,138 @@ function is_name_chain(node) {
 function write_keyword(keyword, node, context) {
 	context.write(keyword);
 	if (node.loc) context.location(node.loc.start.line, node.loc.start.column + keyword.length);
+}
+
+/**
+ * A class member or a parameter property, whose parameter has the decorators.
+ * @typedef {{ decorators?: AST.Node[], parameter?: { decorators?: AST.Node[] } }} MemberWithDecorators
+ */
+
+/**
+ * The modifiers of each node type, in the order esrap writes them. For a
+ * method, `async` is its value's.
+ * @type {Record<string, string[]>}
+ */
+const PRINTED_MODIFIER_ORDER = {
+	MethodDefinition: ['abstract', 'accessibility', 'override', 'static', 'async'],
+	PropertyDefinition: [
+		'declare',
+		'accessibility',
+		'abstract',
+		'static',
+		'override',
+		'readonly',
+		'accessor',
+	],
+	TSParameterProperty: ['accessibility', 'override', 'readonly'],
+};
+
+/**
+ * A modifier word, after any spaces and comments. Each space, and each comment
+ * to its end, is matched one way only, so a failed match takes linear time.
+ */
+const regex_modifier =
+	/(?:\s|\/\/[^\n\r\u2028\u2029]*(?![^\n\r\u2028\u2029])|\/\*(?:[^*]|\*(?!\/))*\*\/)*([a-z]+)(?![\p{ID_Continue}$\u200c\u200d\\])/uy;
+
+/**
+ * The modifiers of a class member or a parameter property, in the order the
+ * source writes them, each with its source offset. esrap writes them in an
+ * order of its own: `static override m()` as `override static m()` and
+ * `public abstract m()` as `abstract public m()`, which TypeScript reports
+ * (TS1029) and Babel rejects, and `abstract private m()` for `private
+ * abstract m()`, which TypeScript reports at another modifier. The printer
+ * keeps the source's order, so that the editor output has the same modifier
+ * errors as the source, at the same modifiers, which `segments.js` maps
+ * (#235). `null` when the node has no modifiers, or when the source doesn't
+ * have them between its decorators and its name, as for a node the compiler
+ * builds or a modifier written with an escape.
+ * @param {AST.Node} node
+ * @param {string | undefined} source
+ * @returns {Array<{ text: string, start: number }> | null}
+ */
+export function member_modifiers(node, source) {
+	const order = PRINTED_MODIFIER_ORDER[node.type];
+	if (!order || source === undefined || !has_location(node)) return null;
+	const written = new Set(printed_modifiers(node, order));
+	if (written.size === 0) return null;
+	const member = /** @type {MemberWithDecorators} */ (node);
+	const decorators = [...(member.decorators ?? []), ...(member.parameter?.decorators ?? [])];
+	regex_modifier.lastIndex = Math.max(
+		node.start,
+		...decorators.map((decorator) => decorator.end ?? 0),
+	);
+	/** @type {Array<{ text: string, start: number }>} */
+	const modifiers = [];
+	while (written.size > 0) {
+		const match = regex_modifier.exec(source);
+		if (!match || !written.delete(match[1])) return null;
+		modifiers.push({ text: match[1], start: regex_modifier.lastIndex - match[1].length });
+	}
+	return modifiers;
+}
+
+/**
+ * The modifiers of a class member or a parameter property, in the order esrap
+ * writes them.
+ * @param {AST.Node} node
+ * @param {string[]} order
+ * @returns {string[]}
+ */
+function printed_modifiers(node, order) {
+	const flags = /** @type {Record<string, unknown> & { value?: { async?: boolean } }} */ (
+		/** @type {unknown} */ (node)
+	);
+	/** @type {string[]} */
+	const modifiers = [];
+	for (const flag of order) {
+		if (flag === 'accessibility') {
+			if (typeof flags.accessibility === 'string') modifiers.push(flags.accessibility);
+		} else if (flag === 'async' ? flags.value?.async : flags[flag]) {
+			modifiers.push(flag);
+		}
+	}
+	return modifiers;
+}
+
+/**
+ * The source's modifiers of a class member or a parameter property (see
+ * `member_modifiers`), when esrap would write them in another order.
+ * @param {AST.Node} node
+ * @param {string | undefined} source
+ * @returns {Array<{ text: string, start: number }> | null}
+ */
+function reordered_modifiers(node, source) {
+	const modifiers = member_modifiers(node, source);
+	if (!modifiers) return null;
+	const printed = printed_modifiers(node, PRINTED_MODIFIER_ORDER[node.type]);
+	return modifiers.some((modifier, index) => modifier.text !== printed[index]) ? modifiers : null;
+}
+
+/**
+ * Print the decorators of a class member or a parameter property as esrap's
+ * `block_decorators` and `inline_decorators` do: each on a line of its own, or
+ * each followed by a space.
+ * @param {AST.Node} node
+ * @param {ReadonlyArray<AST.Node> | undefined} decorators
+ * @param {ESRap.Context} context
+ * @param {boolean} block
+ */
+function print_member_decorators(node, decorators, context, block) {
+	if (!decorators?.length) return;
+	for (const decorator of decorators) {
+		context.visit(decorator);
+		if (block) context.newline();
+		else context.write(' ');
+	}
+	const first = decorators[0].loc?.start;
+	const start = node.loc?.start;
+	if (
+		first &&
+		start &&
+		(first.line < start.line || (first.line === start.line && first.column < start.column))
+	) {
+		context.location(start.line, start.column);
+	}
 }
 
 const regex_identifier_char = /[\p{ID_Continue}$\u200c\u200d]/u;

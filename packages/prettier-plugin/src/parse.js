@@ -133,6 +133,18 @@ const regex_static_block_modifiers =
 	/^(?:(?:abstract|accessor|declare|override|private|protected|public|readonly)(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)+static(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*\{/u;
 
 /**
+ * Whether `error` is for an `async` constructor (`async constructor() {}`,
+ * TS1089), which Prettier's `typescript` parser rejects, where it formats a
+ * `static` constructor (`static constructor() {}`, TS1089 too).
+ * @param {ParseError} error
+ * @returns {boolean}
+ */
+function isAsyncConstructor(error) {
+	const { code, message } = TS_ERRORS.MODIFIER_ON_CONSTRUCTOR('async');
+	return error.code === code && error.message === message;
+}
+
+/**
  * Whether `error` is for decorators on a class `static` block (`@dec static
  * {}`, TS1206), which Prettier's `typescript` parser leaves out, as the plugin
  * does, instead of rejecting them as it does decorators elsewhere.
@@ -157,7 +169,8 @@ function isRejected(error, text) {
 		(BROKEN_MARKUP_CODES.has(error.code) ||
 			(REJECTED_CODES.has(error.code) && !isStaticBlockDecorator(error)) ||
 			isModifierBeforeExport(error, text) ||
-			isAbstractInBlock(error, text))
+			isAbstractInBlock(error, text) ||
+			isAsyncConstructor(error))
 	);
 }
 

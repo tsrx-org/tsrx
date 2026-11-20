@@ -657,6 +657,46 @@ function decode_identifier_escapes(name) {
 // where an expression starts: not one of the reserved words acorn reads as
 // one (see `semicolon`).
 const regex_plain_name = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*$/u;
+// The words that TypeScript's scanner reads as keywords, not identifiers, and
+// acorn-typescript as names (`tt.name`); see `#declarationAfterDeclare`.
+const TYPESCRIPT_KEYWORD_NAMES = new Set([
+	'accessor',
+	'any',
+	'as',
+	'async',
+	'await',
+	'bigint',
+	'boolean',
+	'constructor',
+	'defer',
+	'from',
+	'get',
+	'implements',
+	'infer',
+	'intrinsic',
+	'is',
+	'let',
+	'never',
+	'number',
+	'object',
+	'of',
+	'out',
+	'override',
+	'package',
+	'private',
+	'protected',
+	'public',
+	'require',
+	'satisfies',
+	'set',
+	'static',
+	'string',
+	'symbol',
+	'undefined',
+	'unknown',
+	'using',
+	'yield',
+]);
 // The names after which TypeScript's parser reports another error than TS1434
 // for a missing `;`, or none (`parseErrorForMissingSemicolonAfter`), which
 // keep TS1005 here.
@@ -1145,6 +1185,69 @@ const block_scoped_redeclarations = new WeakMap();
  * @type {WeakSet<CompileError>}
  */
 const duplicate_export_errors = new WeakSet();
+
+/**
+ * The methods with an `async` before another modifier, which TypeScript reads
+ * as a modifier too: the errors acorn-typescript raised for the modifiers
+ * after it, held, and the first error of the modifiers (see
+ * `tsParseModifiers`).
+ * @type {WeakMap<object, { held: CompileError[], found: { start: number, error: Diagnostic } | 'acorn' | null }>}
+ */
+const leading_async_modifiers = new WeakMap();
+
+/**
+ * The class members whose modifiers acorn-typescript reported an error for,
+ * as it read them (see `parseClassField`).
+ * @type {WeakSet<object>}
+ */
+const members_with_modifier_errors = new WeakSet();
+
+/** The access modifiers. */
+const ACCESSIBILITY_MODIFIERS = new Set(['public', 'protected', 'private']);
+
+/** The modifiers that a method takes. */
+const METHOD_MODIFIERS = new Set([
+	'public',
+	'protected',
+	'private',
+	'static',
+	'override',
+	'abstract',
+]);
+
+/** The codes of the errors of a combination of modifiers. */
+const MODIFIER_ERROR_CODES = new Set(['TS1028', 'TS1029', 'TS1030', 'TS1243']);
+
+/**
+ * The codes of the errors of a method's modifiers that acorn-typescript
+ * raises at the method's start, once it has read them: `abstract` outside an
+ * abstract class (TS1244).
+ */
+const MEMBER_MODIFIER_ERROR_CODES = new Set(['TS1244']);
+
+/** The modifiers of a class member, with `async`. */
+const MEMBER_MODIFIERS_WITH_ASYNC = new Set([
+	'public',
+	'protected',
+	'private',
+	'static',
+	'override',
+	'declare',
+	'abstract',
+	'readonly',
+	'accessor',
+	'async',
+]);
+
+/** acorn's error for an `async` constructor (see `parseClassMethod`). */
+const ASYNC_CONSTRUCTOR = "Constructor can't be an async method";
+
+/**
+ * A word, after any spaces and comments. Each space, and each comment to its
+ * end, is matched one way only, so a failed match takes linear time.
+ */
+const regex_word_after_comments =
+	/(?:\s|\/\/[^\n\r\u2028\u2029]*(?![^\n\r\u2028\u2029])|\/\*(?:[^*]|\*(?!\/))*\*\/)*([\p{ID_Start}$_][\p{ID_Continue}$\u200c\u200d]*)/uy;
 
 /** @type {WeakMap<Parse.Parser, number[]>} */
 const parser_line_starts = new WeakMap();
@@ -2143,6 +2246,15 @@ export function TSRXPlugin(config) {
 			// Whether acorn-typescript raised its error for modifiers before the class
 			// `static` block being read (see `parseClassElement`).
 			#staticBlockModifiers = false;
+			// Whether decorators come before the class member being read.
+			#memberDecorated = false;
+			// Where the methods with an `async` before another modifier start, and
+			// the first error of their modifiers (see `tsParseModifiers`).
+			/** @type {Map<number, { start: number, error: Diagnostic } | 'acorn' | null>} */
+			#leadingAsyncMembers = new Map();
+			// Where the name of the `async` constructor being read starts, where
+			// acorn raises its error for it (see `parseClassMethod`).
+			#asyncConstructorAt = -1;
 			// The private names of a class's methods without a body, by the class's
 			// private-name scope (see `exitClassBody`).
 			/** @type {WeakMap<object, string[]>} */
@@ -2186,6 +2298,9 @@ export function TSRXPlugin(config) {
 			// Where a `declare` after `abstract` is, whose TS1038 TypeScript doesn't
 			// report after `abstract`'s error (see `tsParseDeclaration`), or -1.
 			#declareAfterAbstract = -1;
+			// Where the name `declare` is that a statement ends after without a `;`
+			// before a token on its line (see `tsParseExpressionStatement`), or -1.
+			#nameDeclareStart = -1;
 			// The rest parameters read after parameter property modifiers on a
 			// method's parameter, with where the modifiers start (see `parseMethod`).
 			/** @type {WeakMap<AST.Node, number>} */
@@ -4111,7 +4226,67 @@ export function TSRXPlugin(config) {
 						return this.#parseJSXControlFlowValue();
 					}
 				}
+				if (
+					this.type === tt.name &&
+					this.value === 'async' &&
+					!this.containsEsc &&
+					this.potentialArrowAt === this.start &&
+					!this.#lineBreakAfter(this.end)
+				) {
+					const atom = this.#parseAsyncBeforeWord(refDestructuringErrors, forInit, forNew);
+					if (atom) return atom;
+				}
 				return super.parseExprAtom(refDestructuringErrors, forInit, forNew);
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript#175): remove once a release includes the fix
+			/**
+			 * `async` before a word on its line, where an arrow function can start: a
+			 * TypeScript word and then `=>` on its line are an async arrow function's
+			 * parameter (`async type => type`), and `as` or `satisfies` without a `=>`
+			 * after it is an operator on the name `async` (`async as T`), as in
+			 * TypeScript. acorn-typescript took the parameter only from a name token,
+			 * and any name token for one, so the first failed at the word and the
+			 * second at the token after it. `undefined` for any other word, which
+			 * acorn-typescript reads.
+			 * @param {Parameters<Parse.Parser['parseExprAtom']>[0]} refDestructuringErrors
+			 * @param {Parameters<Parse.Parser['parseExprAtom']>[1]} forInit
+			 * @param {Parameters<Parse.Parser['parseExprAtom']>[2]} forNew
+			 */
+			#parseAsyncBeforeWord(refDestructuringErrors, forInit, forNew) {
+				const word = this.lookahead();
+				// Not past a token that isn't a word, which could start a template.
+				if (!Parser.acornTypeScript.tokenIsIdentifier(word.type)) return undefined;
+				const after = this.lookahead(2);
+				if (
+					word.type !== tt.name &&
+					word.type !== tstt.enum &&
+					Parser.acornTypeScript.tokenIsIdentifier(word.type) &&
+					after.type === tt.arrow &&
+					!this.#lineBreakAfter(word.end)
+				) {
+					const node = this.startNode();
+					this.next(); // `async`
+					const parameter = this.parseIdent(false);
+					this.expect(tt.arrow);
+					return this.parseArrowExpression(node, [parameter], true, forInit);
+				}
+				if (
+					word.type === tt.name &&
+					(word.value === 'as' || word.value === 'satisfies') &&
+					after.type !== tt.arrow
+				) {
+					// acorn-typescript reads an async arrow function only where one can
+					// start (`potentialArrowAt`).
+					const potential_arrow_at = this.potentialArrowAt;
+					this.potentialArrowAt = -1;
+					try {
+						return super.parseExprAtom(refDestructuringErrors, forInit, forNew);
+					} finally {
+						this.potentialArrowAt = potential_arrow_at;
+					}
+				}
+				return undefined;
 			}
 
 			/**
@@ -5688,6 +5863,10 @@ export function TSRXPlugin(config) {
 			 * @returns {never}
 			 */
 			raise(position, message) {
+				// See `parseClassMethod`.
+				if (position === this.#asyncConstructorAt && message === ASYNC_CONSTRUCTOR) {
+					return /** @type {never} */ (undefined);
+				}
 				let kind = typeof message === 'function' ? undefined : error_kind(message);
 				if (typeof message === 'function') {
 					// UPSTREAM(sveltejs/acorn-typescript#123): remove once a release includes
@@ -5763,6 +5942,18 @@ export function TSRXPlugin(config) {
 					return /** @type {never} */ (undefined);
 				}
 				let error = to_diagnostic(message, kind);
+				const leading_async = this.#leadingAsyncMembers.get(position);
+				if (leading_async !== undefined) {
+					// See `tsParseModifiers`.
+					if (
+						leading_async &&
+						leading_async !== 'acorn' &&
+						MEMBER_MODIFIER_ERROR_CODES.has(error.code ?? '')
+					) {
+						return /** @type {never} */ (undefined);
+					}
+					position = this.#leadingAsyncModifierPosition(position, message);
+				}
 				if (kind === TS_ERRORS.REST_ELEMENT_TRAILING_COMMA) {
 					({ position, error } = this.#restElementCommaError(position));
 				}
@@ -5793,6 +5984,29 @@ export function TSRXPlugin(config) {
 					/** @type {{ code?: string }} */ (thrown).code = error.code;
 					if (checker) checker_errors_thrown.add(/** @type {object} */ (thrown));
 					throw thrown;
+				}
+			}
+
+			/**
+			 * Where acorn-typescript's error for one of a class member's modifiers
+			 * is, which it raises at the member's start: at the modifier, as in
+			 * TypeScript, where the member starts with an `async` before its other
+			 * modifiers (see `tsParseModifiers`). `Abstract methods can only appear
+			 * within an abstract class.` is at `abstract`, `Class methods cannot
+			 * have the 'readonly' modifier.` at `readonly`.
+			 * @param {number} position The member's start
+			 * @param {string | { message?: string }} message
+			 * @returns {number}
+			 */
+			#leadingAsyncModifierPosition(position, message) {
+				const text = get_error_message(message);
+				const modifier = /^Abstract /.test(text) ? 'abstract' : /'(\w+)' modifier/.exec(text)?.[1];
+				if (modifier === undefined) return position;
+				regex_word_after_comments.lastIndex = position;
+				for (;;) {
+					const match = regex_word_after_comments.exec(this.input);
+					if (!match || !MEMBER_MODIFIERS_WITH_ASYNC.has(match[1])) return position;
+					if (match[1] === modifier) return regex_word_after_comments.lastIndex - modifier.length;
 				}
 			}
 
@@ -7781,15 +7995,412 @@ export function TSRXPlugin(config) {
 			/**
 			 * Records the node whose modifiers are being read, so that
 			 * `tsParseModifier` can tell whether it has already read `static`.
+			 *
+			 * TypeScript reads a class member's `async` as a modifier wherever it
+			 * is, and reports one in the wrong place as an error of the modifiers:
+			 * `async static m()` is TS1029 at `static`, `async abstract m()` TS1243
+			 * at `async`. acorn reads `async` only right before the name, so an
+			 * `async` before another modifier was the method's name, and the
+			 * modifier after it a syntax error. A method's is read as a modifier
+			 * here, and the method is async (see `parseClassMethod`).
+			 *
+			 * TypeScript reports only the first error of a member's modifiers, which
+			 * the parser reports for such a method (see `#leadingAsyncError`) in
+			 * place of acorn-typescript's: those for the modifiers after the `async`,
+			 * which are held, and those it raises later, at the member's start (see
+			 * `raise`).
 			 * @type {Parse.Parser['tsParseModifiers']}
 			 */
 			tsParseModifiers(options) {
 				const outer = this.#modifiersNode;
 				this.#modifiersNode = options.modified;
 				try {
-					return super.tsParseModifiers(options);
+					const recorded = this.#hold.held ?? this.#errors;
+					const count = recorded?.length ?? 0;
+					let modifiers = super.tsParseModifiers(options);
+					if (!options.stopOnStartOfClassStaticBlock) return modifiers;
+					// See `parseClassField`.
+					if ((recorded?.length ?? 0) > count) members_with_modifier_errors.add(options.modified);
+					/** @type {CompileError[]} */
+					const held = [];
+					let leading = false;
+					while (this.#atAsyncBeforeModifier(options.allowedModifiers)) {
+						leading = true;
+						this.next();
+						modifiers = {
+							...modifiers,
+							...this.#holdingErrors(held, () => super.tsParseModifiers(options)),
+						};
+					}
+					if (leading) {
+						const member = /** @type {AST.Node} */ (/** @type {unknown} */ (options.modified));
+						// The modifiers end after an `async` that acorn reads, unless that
+						// is the name.
+						const end = this.tsLookAhead(() => {
+							if (!this.isContextual('async')) return this.start;
+							const async_end = this.end;
+							this.next();
+							return this.type === tt.parenL || this.tsMatchLeftRelational()
+								? this.lastTokStart
+								: async_end;
+						});
+						const found = this.#leadingAsyncError(member, end);
+						leading_async_modifiers.set(member, { held, found });
+						this.#leadingAsyncMembers.set(/** @type {number} */ (member.start), found);
+					}
+					return modifiers;
 				} finally {
 					this.#modifiersNode = outer;
+				}
+			}
+
+			/**
+			 * Whether the token is an `async` that TypeScript reads as a modifier
+			 * before another modifier of a method: one on its line that is a
+			 * modifier there, or another `async`, with the method's name and
+			 * parameters after the modifiers. Only for the modifiers a method takes
+			 * (an access modifier, `static`, `override`, `abstract`), outside an
+			 * ambient context, and for a method without decorators whose name is a
+			 * plain one, where TypeScript's first error of the modifiers is known
+			 * from them (see `#leadingAsyncError`). A property, an accessor, an
+			 * index signature, a constructor and any other method keep acorn's
+			 * syntax error.
+			 * @param {readonly string[]} allowed The modifiers of a class member.
+			 * @returns {boolean}
+			 */
+			#atAsyncBeforeModifier(allowed) {
+				const member = /** @type {Record<string, unknown> | null} */ (this.#modifiersNode);
+				if (
+					!this.isContextual('async') ||
+					this.#memberDecorated ||
+					this.isAmbientContext ||
+					member?.accessor ||
+					member?.readonly ||
+					member?.declare
+				) {
+					return false;
+				}
+				return this.tsLookAhead(() => {
+					this.next();
+					if (this.hasPrecedingLineBreak()) return false;
+					let modifiers = 0;
+					let static_seen = false;
+					while (
+						Parser.acornTypeScript.tokenIsIdentifier(this.type) &&
+						!this.containsEsc &&
+						allowed.includes(/** @type {string} */ (this.value)) &&
+						// As in TypeScript, `static` after `static` is the name.
+						!(static_seen && this.value === 'static')
+					) {
+						const modifier = this.tsParseModifier(allowed, true);
+						if (modifier === undefined) break;
+						if (!METHOD_MODIFIERS.has(modifier)) return false;
+						static_seen ||= modifier === 'static';
+						modifiers++;
+					}
+					// An `async` that acorn reads, before the name, or the name.
+					if (this.isContextual('async')) {
+						this.next();
+						if (this.type === tt.parenL || this.tsMatchLeftRelational()) return modifiers > 0;
+						if (this.hasPrecedingLineBreak()) return false;
+					} else if (modifiers === 0) {
+						return false;
+					}
+					if (this.type === tt.star) this.next();
+					if (!this.isLiteralPropertyName() || this.value === 'constructor') return false;
+					this.next();
+					if (this.type === tt.question) this.next();
+					return this.type === tt.parenL || this.tsMatchLeftRelational();
+				});
+			}
+
+			/**
+			 * The first error TypeScript's checker reports for the modifiers of a
+			 * method with an `async` before another modifier
+			 * (`checkGrammarModifiers`), the modifiers written before `end`: access
+			 * modifiers, `static`, `override`, `abstract` and `async` (see
+			 * `#atAsyncBeforeModifier`). `'acorn'` for `abstract` outside an abstract
+			 * class (TS1244), which acorn-typescript reports, and `null` when there
+			 * is none.
+			 * @param {AST.Node} member
+			 * @param {number} end
+			 * @returns {{ start: number, error: Diagnostic } | 'acorn' | null}
+			 */
+			#leadingAsyncError(member, end) {
+				/** @type {Set<string>} */
+				const flags = new Set();
+				let async_start = -1;
+				regex_word_after_comments.lastIndex = /** @type {number} */ (member.start);
+				for (;;) {
+					const match = regex_word_after_comments.exec(this.input);
+					if (!match || regex_word_after_comments.lastIndex > end) return null;
+					const value = match[1];
+					const start = regex_word_after_comments.lastIndex - value.length;
+					/** @param {Diagnostic} error */
+					const at = (error, position = start) => ({ start: position, error });
+					switch (value) {
+						case 'public':
+						case 'protected':
+						case 'private':
+							if (flags.has('accessibility'))
+								return at(TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN);
+							for (const other of ['override', 'static', 'async']) {
+								if (flags.has(other)) return at(TS_ERRORS.MODIFIER_MUST_PRECEDE(value, other));
+							}
+							if (flags.has('abstract')) {
+								return at(
+									(value === 'private'
+										? TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH
+										: TS_ERRORS.MODIFIER_MUST_PRECEDE)(value, 'abstract'),
+								);
+							}
+							flags.add('accessibility');
+							break;
+						case 'static':
+							if (flags.has(value)) return at(TS_ERRORS.MODIFIER_ALREADY_SEEN(value));
+							if (flags.has('async')) return at(TS_ERRORS.MODIFIER_MUST_PRECEDE(value, 'async'));
+							if (flags.has('abstract')) {
+								return at(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH(value, 'abstract'));
+							}
+							if (flags.has('override')) {
+								return at(TS_ERRORS.MODIFIER_MUST_PRECEDE(value, 'override'));
+							}
+							break;
+						case 'override':
+							if (flags.has(value)) return at(TS_ERRORS.MODIFIER_ALREADY_SEEN(value));
+							if (flags.has('async')) return at(TS_ERRORS.MODIFIER_MUST_PRECEDE(value, 'async'));
+							break;
+						case 'abstract':
+							if (flags.has(value)) return at(TS_ERRORS.MODIFIER_ALREADY_SEEN(value));
+							if (!this.inAbstractClass) return 'acorn';
+							for (const other of ['static', 'private']) {
+								if (flags.has(other)) {
+									return at(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH(other, value));
+								}
+							}
+							if (flags.has('async')) {
+								return at(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH('async', value), async_start);
+							}
+							if (flags.has('override')) {
+								return at(TS_ERRORS.MODIFIER_MUST_PRECEDE(value, 'override'));
+							}
+							break;
+						case 'async':
+							if (flags.has(value)) return at(TS_ERRORS.MODIFIER_ALREADY_SEEN(value));
+							if (flags.has('abstract')) {
+								return at(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH(value, 'abstract'));
+							}
+							async_start = start;
+							break;
+					}
+					if (value === 'private') flags.add(value);
+					flags.add(value);
+				}
+			}
+
+			/**
+			 * TypeScript's error for an `async` constructor (TS1089), at the `async`,
+			 * when it's the first error of the modifiers: with no modifier but an
+			 * access modifier before the `async`, outside an ambient context and
+			 * without decorators, where TypeScript reports another first.
+			 * @param {AST.MethodDefinition} constructor
+			 * @returns {{ start: number, error: Diagnostic } | null}
+			 */
+			#asyncConstructorError(constructor) {
+				if (this.#memberDecorated || this.isAmbientContext) return null;
+				let accessibility = false;
+				regex_word_after_comments.lastIndex = /** @type {number} */ (constructor.start);
+				for (;;) {
+					const match = regex_word_after_comments.exec(this.input);
+					if (
+						!match ||
+						regex_word_after_comments.lastIndex > /** @type {number} */ (constructor.key.start)
+					) {
+						return null;
+					}
+					const start = regex_word_after_comments.lastIndex - match[1].length;
+					if (match[1] === 'async') {
+						return { start, error: TS_ERRORS.MODIFIER_ON_CONSTRUCTOR('async') };
+					}
+					if (accessibility || !['public', 'protected', 'private'].includes(match[1])) return null;
+					accessibility = true;
+				}
+			}
+
+			/**
+			 * TypeScript's error for the modifiers of an `accessor` property that
+			 * acorn-typescript reports nothing for: `accessor` before `static`,
+			 * `override`, `abstract` or `readonly` (TS1029), or with `readonly` or
+			 * `declare` (TS1243). The output keeps the source's order (see
+			 * `member_modifiers` in `transform/jsx/helpers.js`), which esbuild and
+			 * Babel reject there, where esrap's order compiled: a strict parse throws
+			 * it at the source instead.
+			 *
+			 * It's reported before the field is read, as acorn-typescript reports the
+			 * modifiers' errors it checks. So a syntax error in the initializer comes
+			 * after it, where TypeScript reports only that one, and acorn-typescript's
+			 * error for a private name (TS18010, TS18019) or an ambient initializer
+			 * (TS1039) is also recorded, where TypeScript reports only the first.
+			 * Holding those until the field is read reorders the errors of the code
+			 * in the initializer instead, and some of those can't be held.
+			 *
+			 * On a decorated `declare` or `abstract` property, TypeScript reports the
+			 * decorators first (TS1206) unless `experimentalDecorators` is on, which
+			 * the parser can't tell: it reports the modifiers' error, TypeScript's
+			 * first with `experimentalDecorators`.
+			 * @type {Parse.Parser['parseClassField']}
+			 */
+			parseClassField(field) {
+				const member = /** @type {AST.PropertyDefinition} */ (field);
+				if (member.accessor && !members_with_modifier_errors.has(field)) {
+					const found = this.#accessorModifierError(member);
+					if (found) this.#raiseCheckerError(found.start, found.error);
+				}
+				return super.parseClassField(field);
+			}
+
+			/**
+			 * The first error TypeScript's checker reports for the modifiers of an
+			 * `accessor` property (`checkGrammarModifiers`), the words before its
+			 * name, or `null` when it reports none, or one of a kind this leaves to
+			 * acorn-typescript (TS1253 for `abstract` outside an abstract class,
+			 * TS18010 and TS18019 for a private name).
+			 * @param {AST.PropertyDefinition} property
+			 * @returns {{ start: number, error: Diagnostic } | null}
+			 */
+			#accessorModifierError(property) {
+				if (!this.inAbstractClass && property.abstract) return null;
+				// TS18010 and TS18019 for an access modifier, `declare` or `abstract`
+				const private_name = property.key.type === 'PrivateIdentifier';
+				/** @type {Set<string>} */
+				const flags = new Set();
+				const end = /** @type {number} */ (property.key.start);
+				regex_word_after_comments.lastIndex = /** @type {number} */ (property.start);
+				for (;;) {
+					const match = regex_word_after_comments.exec(this.input);
+					if (!match || regex_word_after_comments.lastIndex > end) return null;
+					const value = match[1];
+					const start = regex_word_after_comments.lastIndex - value.length;
+					/** @param {Diagnostic} error */
+					const at = (error) => ({ start, error });
+					/** @param {string} other */
+					const precede = (other) => at(TS_ERRORS.MODIFIER_MUST_PRECEDE(value, other));
+					/** @param {string} first @param {string} second */
+					const together = (first, second) =>
+						at(TS_ERRORS.MODIFIER_CANNOT_BE_USED_WITH(first, second));
+					if (flags.has(value) && !ACCESSIBILITY_MODIFIERS.has(value)) {
+						return at(TS_ERRORS.MODIFIER_ALREADY_SEEN(value));
+					}
+					switch (value) {
+						case 'public':
+						case 'protected':
+						case 'private':
+							if (flags.has('accessibility')) {
+								return at(TS_ERRORS.ACCESSIBILITY_MODIFIER_ALREADY_SEEN);
+							}
+							for (const other of ['override', 'static', 'accessor', 'readonly']) {
+								if (flags.has(other)) return precede(other);
+							}
+							if (flags.has('abstract')) {
+								return value === 'private' ? together(value, 'abstract') : precede('abstract');
+							}
+							if (private_name) return null;
+							flags.add('accessibility');
+							break;
+						case 'static':
+							for (const other of ['readonly', 'accessor']) {
+								if (flags.has(other)) return precede(other);
+							}
+							if (flags.has('abstract')) return together(value, 'abstract');
+							if (flags.has('override')) return precede('override');
+							break;
+						case 'accessor':
+							for (const other of ['readonly', 'declare']) {
+								if (flags.has(other)) return together(value, other);
+							}
+							break;
+						case 'readonly':
+							if (flags.has('accessor')) return together(value, 'accessor');
+							break;
+						case 'override':
+							if (flags.has('declare')) return together(value, 'declare');
+							for (const other of ['readonly', 'accessor']) {
+								if (flags.has(other)) return precede(other);
+							}
+							break;
+						case 'declare':
+							if (flags.has('override')) {
+								return at(TS_ERRORS.MODIFIER_IN_AMBIENT_CONTEXT('override'));
+							}
+							if (private_name) return null;
+							if (flags.has('accessor')) return together(value, 'accessor');
+							break;
+						case 'abstract':
+							if (flags.has('static')) return together('static', value);
+							if (flags.has('private')) return together('private', value);
+							if (flags.has('override')) return precede('override');
+							if (flags.has('accessor')) return precede('accessor');
+							if (private_name) return null;
+							break;
+						default:
+							return null;
+					}
+					flags.add(value);
+				}
+			}
+
+			/**
+			 * A method with an `async` before another modifier is async (see
+			 * `tsParseModifiers`). Once it's read, so that a syntax error in it
+			 * comes first, as in TypeScript, the first error of its modifiers, or
+			 * else acorn-typescript's, which were held.
+			 *
+			 * An `async` constructor is TypeScript's TS1089 at the `async`, a
+			 * checker error, where acorn threw `Constructor can't be an async method`
+			 * at the name, and stays async, as TypeScript reads it. acorn's error
+			 * stays where TypeScript reports another first: in an ambient class, or
+			 * after decorators.
+			 * @type {Parse.Parser['parseClassMethod']}
+			 */
+			parseClassMethod(method, isGenerator, isAsync, allowsDirectSuper) {
+				const leading = leading_async_modifiers.get(method);
+				if (leading) {
+					const result = super.parseClassMethod(method, isGenerator, true, allowsDirectSuper);
+					const { held, found } = leading;
+					// acorn-typescript reported most errors of the modifiers before the
+					// `async` as it read them.
+					const recorded = this.#hold.held ?? this.#errors;
+					if (
+						found &&
+						found !== 'acorn' &&
+						!recorded?.some((error) => error.pos === found.start && error.code === found.error.code)
+					) {
+						this.#raiseCheckerError(found.start, found.error);
+					}
+					this.#releaseErrors(
+						found ? held.filter((error) => !MODIFIER_ERROR_CODES.has(error.code ?? '')) : held,
+					);
+					this.#leadingAsyncMembers.delete(
+						/** @type {number} */ (/** @type {AST.Node} */ (method).start),
+					);
+					return result;
+				}
+				const member = /** @type {AST.MethodDefinition} */ (method);
+				// TS1368 for a generator constructor comes first.
+				const found =
+					isAsync && !isGenerator && member.kind === 'constructor'
+						? this.#asyncConstructorError(member)
+						: null;
+				if (!found) {
+					return super.parseClassMethod(method, isGenerator, isAsync, allowsDirectSuper);
+				}
+				this.#raiseCheckerError(found.start, found.error);
+				const outer = this.#asyncConstructorAt;
+				this.#asyncConstructorAt = /** @type {number} */ (member.key.start);
+				try {
+					return super.parseClassMethod(method, isGenerator, isAsync, allowsDirectSuper);
+				} finally {
+					this.#asyncConstructorAt = outer;
 				}
 			}
 
@@ -8085,6 +8696,22 @@ export function TSRXPlugin(config) {
 				);
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript, not reported yet): remove once a release
+			// includes the fix
+			/**
+			 * Whether a declaration can follow the TypeScript word that a statement
+			 * starts with, read as its expression (`next` false), without reading the
+			 * `;` after it. acorn-typescript's `isLineTerminator` read that `;`, and
+			 * the statement, which then isn't a declaration, needed another `;` or a
+			 * line break: `type; foo;`, `namespace; foo;` or `abstract;foo;` failed
+			 * with `';' expected.` at `foo`, where TypeScript reads two statements.
+			 * @type {Parse.Parser['tsCheckLineTerminator']}
+			 */
+			tsCheckLineTerminator(next) {
+				if (next) return super.tsCheckLineTerminator(next);
+				return this.type !== tt.semi && !this.canInsertSemicolon();
+			}
+
 			// UPSTREAM(sveltejs/acorn-typescript#143): remove once a release includes the fix
 			// UPSTREAM(sveltejs/acorn-typescript#147): remove once a release includes the fix
 			/**
@@ -8278,7 +8905,7 @@ export function TSRXPlugin(config) {
 				if (
 					this.#lastWordEscaped() &&
 					!this.hasPrecedingLineBreak() &&
-					this.#declarationAfterModifier(0) !== null
+					(this.type === tstt.type || this.#declarationAfterModifier(0) !== null)
 				) {
 					this.raise(this.lastTokStart, TS_ERRORS.KEYWORD_ESCAPE);
 				}
@@ -8307,11 +8934,41 @@ export function TSRXPlugin(config) {
 						return declared;
 					}
 				}
-				const declared = super.tsTryParseDeclare(node);
+				const declared =
+					this.type === tstt.type
+						? this.#parseDeclaredTypeAlias(node)
+						: super.tsTryParseDeclare(node);
 				if (declared && ambient_declare !== -1) {
 					this.#raiseCheckerError(ambient_declare, TS_ERRORS.DECLARE_MODIFIER_IN_AMBIENT_CONTEXT);
 				}
 				return declared;
+			}
+
+			// UPSTREAM(sveltejs/acorn-typescript, not reported yet): remove once a release
+			// includes the fix
+			/**
+			 * The type alias after `declare type`, which TypeScript's parser reads
+			 * whatever follows `type` (`isDeclaration`), and reports TS1142
+			 * `Line break not permitted here.` at a name on the next line, or TS1003
+			 * `Identifier expected.` at the token in its place, as after
+			 * `export declare type` (see `#checkExportDeclarationStart`).
+			 * acorn-typescript read `type` and then took nothing without a name on
+			 * its line: `declare type;` compiled to `declare;`, and
+			 * `declare type\nT = 1;` failed with `';' expected.`.
+			 * @param {AST.Node} node
+			 */
+			#parseDeclaredTypeAlias(node) {
+				return this.tsInAmbientContext(() => {
+					this.next(); // `type`
+					this.#checkKeywordJustRead();
+					if (this.hasPrecedingLineBreak()) {
+						this.raise(this.start, TS_ERRORS.LINE_BREAK_NOT_PERMITTED);
+					}
+					if (!Parser.acornTypeScript.tokenIsIdentifier(this.type)) {
+						this.#raiseIdentifierExpected(this.getCurLookaheadState());
+					}
+					return this.tsParseTypeAliasDeclaration(node);
+				});
 			}
 
 			/**
@@ -9074,10 +9731,24 @@ export function TSRXPlugin(config) {
 			 * `(type) T = 1;` as a type alias, where a collecting parse (which
 			 * keeps the parentheses) failed. A parenthesized name starts after the
 			 * statement does.
+			 *
+			 * UPSTREAM(sveltejs/acorn-typescript, not reported yet): `declare` before
+			 * a token that starts no declaration is the name `declare`, as in
+			 * TypeScript (see `#declarationAfterDeclare`). acorn-typescript read the
+			 * `;` after it (`declare; foo;` then failed at `foo`), and a word that
+			 * starts a declaration only before a name, which it then dropped:
+			 * `declare namespace;` compiled to `declare;`, and `declare global;` to
+			 * a global augmentation without a body, which esbuild rejects.
 			 * @type {Parse.Parser['tsParseExpressionStatement']}
 			 */
 			tsParseExpressionStatement(node, expr) {
 				if (expr.start !== node.start) return undefined;
+				if (expr.name === 'declare' && !this.#declarationAfterDeclare()) {
+					// TypeScript ends the statement after the name, without an error
+					// before a token on its line (see `semicolon`).
+					this.#nameDeclareStart = /** @type {number} */ (expr.start);
+					return undefined;
+				}
 				if (
 					expr.name === 'declare' &&
 					expr.start !== this.#declareAfterAbstract &&
@@ -9087,6 +9758,95 @@ export function TSRXPlugin(config) {
 					this.#ambientDeclareStart = /** @type {number} */ (expr.start);
 				}
 				return super.tsParseExpressionStatement(node, expr);
+			}
+
+			/**
+			 * Whether TypeScript's parser reads a declaration after the `declare` just
+			 * read, from the current token (`isDeclaration`): on its line, `type`,
+			 * any other word or keyword that starts one there (see
+			 * `#declarationAfterModifier`), or a modifier on its line (`static` on
+			 * any line) and then one of these. Where it reads none, `declare` is a
+			 * name, and TypeScript reports no missing `;` after it
+			 * (`parseErrorForMissingSemicolonAfter`). Before `export` it says yes
+			 * without looking further, and acorn-typescript reads on.
+			 */
+			#declarationAfterDeclare() {
+				if (this.type === tt.semi || this.canInsertSemicolon()) return false;
+				if (this.type === tstt.type) return true;
+				const is_identifier = Parser.acornTypeScript.tokenIsIdentifier;
+				for (let ahead = 0; ; ahead++) {
+					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
+					if (!is_identifier(token.type)) {
+						if (token.type === tt._import) {
+							// An import declaration, not `import(…)` or `import.meta`.
+							const after = this.lookahead(ahead + 1).type;
+							return (
+								after === tt.string ||
+								after === tt.star ||
+								after === tt.braceL ||
+								after.keyword !== undefined ||
+								is_identifier(after)
+							);
+						}
+						return (
+							token.type === tt._var ||
+							token.type === tt._const ||
+							token.type === tt._function ||
+							token.type === tt._class ||
+							token.type === tt._export
+						);
+					}
+					const word = /** @type {string} */ (token.value);
+					const next = this.lookahead(ahead + 1);
+					const same_line = !regex_line_break.test(this.input.slice(token.end, next.start));
+					switch (word) {
+						case 'let':
+						case 'enum':
+							return true;
+						case 'using':
+							return same_line && (is_identifier(next.type) || next.type === tt.braceL);
+						case 'await': {
+							// `await using x = y;`, with `using` on the line or the next.
+							if (next.type !== tt.name || next.value !== 'using') return false;
+							const after = this.lookahead(ahead + 2);
+							return (
+								!regex_line_break.test(this.input.slice(next.end, after.start)) &&
+								(is_identifier(after.type) || after.type === tt.braceL)
+							);
+						}
+						case 'interface':
+						case 'type':
+						case 'defer':
+							return same_line && is_identifier(next.type);
+						case 'namespace':
+						case 'module':
+							return same_line && (is_identifier(next.type) || next.type === tt.string);
+						case 'global':
+							// Before an identifier, on any line, which no keyword is: after
+							// `declare global` and a line break, `async as T;` is a statement.
+							return (
+								next.type === tt.braceL ||
+								next.type === tt._export ||
+								(next.type === tt.name &&
+									!TYPESCRIPT_KEYWORD_NAMES.has(/** @type {string} */ (next.value)))
+							);
+						case 'static':
+							continue;
+						case 'abstract':
+						case 'accessor':
+						case 'async':
+						case 'declare':
+						case 'private':
+						case 'protected':
+						case 'public':
+						case 'readonly':
+							if (!same_line) return false;
+							// `declare type` starts a type alias.
+							if (word === 'declare' && next.type === tstt.type) return true;
+							continue;
+					}
+					return false;
+				}
 			}
 
 			/**
@@ -15436,6 +16196,41 @@ export function TSRXPlugin(config) {
 				return this.#labelFloor?.labels === this.labels ? this.#labelFloor.length : 0;
 			}
 
+			// UPSTREAM(sveltejs/acorn-typescript#175): remove once a release includes the fix
+			/**
+			 * A TypeScript word after `break` or `continue` on its line is a label, as
+			 * any other name (see `#parseStatement`): acorn takes one only from a name
+			 * token, so `break namespace;` failed with `Unexpected token`. This is
+			 * acorn's method for these words.
+			 * @type {Parse.Parser['parseBreakContinueStatement']}
+			 */
+			parseBreakContinueStatement(node, keyword) {
+				const label = this.lookahead();
+				if (
+					label.type === tt.name ||
+					label.type === tstt.enum ||
+					!Parser.acornTypeScript.tokenIsIdentifier(label.type) ||
+					this.#lineBreakAfter(this.end)
+				) {
+					return super.parseBreakContinueStatement(node, keyword);
+				}
+				const is_break = keyword === 'break';
+				const statement = /** @type {AST.BreakStatement | AST.ContinueStatement} */ (node);
+				this.next();
+				this.type = tt.name;
+				const name = this.parseIdent();
+				statement.label = name;
+				this.semicolon();
+				if (
+					!this.labels.some(
+						(label) => label.name === name.name && (is_break || label.kind === 'loop'),
+					)
+				) {
+					this.raise(/** @type {number} */ (statement.start), `Unsyntactic ${keyword}`);
+				}
+				return this.finishNode(statement, is_break ? 'BreakStatement' : 'ContinueStatement');
+			}
+
 			/**
 			 * Records where the label starts, for the statement it labels (see
 			 * `#parseStatement`).
@@ -15590,12 +16385,34 @@ export function TSRXPlugin(config) {
 
 				this.#checkEscapedDeclarationKeyword();
 
-				if (this.type === tstt.type && this.#isTypeAliasNamedOperator()) {
+				if (
+					(this.type === tstt.type || this.type === tstt.namespace || this.type === tstt.module) &&
+					this.#isDeclarationNamedOperator()
+				) {
 					const node = this.startNode();
-					this.next(); // `type`
+					const alias = this.type === tstt.type;
+					this.next(); // `type`, `namespace` or `module`
 					return /** @type {AST.Statement} */ (
-						/** @type {unknown} */ (this.tsParseTypeAliasDeclaration(node))
+						/** @type {unknown} */ (
+							alias
+								? this.tsParseTypeAliasDeclaration(node)
+								: this.tsParseModuleOrNamespaceDeclaration(node)
+						)
 					);
+				}
+
+				// UPSTREAM(sveltejs/acorn-typescript#175): remove once a release includes the fix
+				// A TypeScript word before `:` is a label, as any other name: acorn
+				// takes a label only from a name token, and acorn-typescript gives
+				// these words their own, so `namespace: for (;;) {}` failed with
+				// `';' expected.` at the `:`. `enum` is a reserved word.
+				if (
+					this.type !== tt.name &&
+					this.type !== tstt.enum &&
+					Parser.acornTypeScript.tokenIsIdentifier(this.type) &&
+					this.lookahead().type === tt.colon
+				) {
+					this.type = tt.name;
 				}
 
 				const start = this.start;
@@ -15626,17 +16443,23 @@ export function TSRXPlugin(config) {
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#145): remove once a release includes the fix
+			// UPSTREAM(sveltejs/acorn-typescript, not reported yet): remove once a release
+			// includes the fix
 			/**
-			 * Whether the current token, `type`, starts a type alias named `as` or
-			 * `satisfies`. TypeScript reads `type` before a name on the same line as a
-			 * type alias (`isDeclaration`), and these are names. acorn-typescript
-			 * reads the start of a statement as an expression first and makes a type
-			 * alias of `type` and the name after it, but it read `as` or `satisfies`
-			 * after the expression `type` as an operator, so `type as = 1;` failed at
-			 * `=`, and `type as number;` parsed as an expression, where TypeScript
-			 * expects the alias's `=` (TS1005).
+			 * Whether the current token, `type`, `namespace` or `module`, starts a
+			 * type alias or a namespace named `as` or `satisfies`. TypeScript reads
+			 * these words before a name on the same line as a declaration
+			 * (`isDeclaration`), and these are names. acorn-typescript reads the
+			 * start of a statement as an expression first and makes a declaration of
+			 * the word and the name after it, but it read `as` or `satisfies` after
+			 * the expression `type` as an operator, so `type as = 1;` failed at `=`,
+			 * and `type as number;` parsed as an expression, where TypeScript expects
+			 * the alias's `=` (TS1005) (sveltejs/acorn-typescript#145). So did
+			 * `namespace as {}`, which compiled to the expression `namespace as {};`,
+			 * and inside a function had no error where TypeScript reports the
+			 * namespace there (TS1235).
 			 */
-			#isTypeAliasNamedOperator() {
+			#isDeclarationNamedOperator() {
 				const next = this.lookahead();
 				return (
 					next.type === tt.name &&
@@ -15794,11 +16617,14 @@ export function TSRXPlugin(config) {
 			 * expression statement's or a `throw`'s lone name it reports TS1434
 			 * `Unexpected keyword or identifier.` at the name, TS1435 with the keyword
 			 * it takes the name for (`cosnt x = 1;`), or TS1440 after `let`
-			 * (`parseErrorForMissingSemicolonAfter`).
+			 * (`parseErrorForMissingSemicolonAfter`). After the name `declare` it
+			 * reports nothing, and the next statement starts at the token (see
+			 * `tsParseExpressionStatement`).
 			 * @type {Parse.Parser['semicolon']}
 			 */
 			semicolon() {
 				if (this.eat(tt.semi) || this.insertSemicolon()) return;
+				if (this.lastTokStart === this.#nameDeclareStart) return;
 				// `=>`, `in` and `of` end a declaration list too (`isListTerminator`).
 				if (
 					this.lastTokEnd === this.#declaratorEnd &&
@@ -15838,11 +16664,14 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * See `semicolon`.
+			 * See `semicolon`. TypeScript reports no missing `;` after the name
+			 * `declare` there either (`throw declare foo;`).
 			 * @type {Parse.Parser['parseThrowStatement']}
 			 */
 			parseThrowStatement(node) {
-				this.#statementExpressionStart = this.lookahead().start;
+				const argument = this.lookahead();
+				this.#statementExpressionStart = argument.start;
+				if (argument.type === tstt.declare) this.#nameDeclareStart = argument.start;
 				return super.parseThrowStatement(node);
 			}
 
@@ -16125,6 +16954,8 @@ export function TSRXPlugin(config) {
 					this.lastTokEnd === this.#decoratorEnd ? this.#decoratorsStart : -1;
 				const outer_static_block_modifiers = this.#staticBlockModifiers;
 				this.#staticBlockModifiers = false;
+				const outer_member_decorated = this.#memberDecorated;
+				this.#memberDecorated = decorators_start !== -1;
 				/** @type {CompileError[] | null} */
 				const held = this.#startsStaticBlockWithModifiers(decorators_start !== -1) ? [] : null;
 				/** @type {ReturnType<Parse.Parser['parseClassElement']>} */
@@ -16137,6 +16968,7 @@ export function TSRXPlugin(config) {
 					modifiers = this.#staticBlockModifiers;
 				} finally {
 					this.#staticBlockModifiers = outer_static_block_modifiers;
+					this.#memberDecorated = outer_member_decorated;
 				}
 				if (element?.type === 'StaticBlock') {
 					if (decorators_start !== -1) {

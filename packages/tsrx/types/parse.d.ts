@@ -589,6 +589,8 @@ export namespace Parse {
 		inType: boolean;
 		/** Whether @sveltejs/acorn-typescript is parsing an ambient (`declare`) context */
 		isAmbientContext: boolean;
+		/** Whether @sveltejs/acorn-typescript is parsing the body of an abstract class */
+		inAbstractClass: boolean;
 		/**
 		 * Whether @sveltejs/acorn-typescript is reading a list that can be an arrow
 		 * function's parameters: a parenthesized expression or a call's arguments
@@ -1489,6 +1491,8 @@ export namespace Parse {
 
 		/** Whether the current token is `static` followed by `{` (@sveltejs/acorn-typescript). */
 		tsIsStartOfStaticBlocks(): boolean;
+		/** Whether the tokens from a `[` are an index signature's, not a computed name */
+		tsIsUnambiguouslyIndexSignature(): boolean;
 
 		/** Whether the current token can be a literal property name (@sveltejs/acorn-typescript). */
 		isLiteralPropertyName(): boolean;
@@ -1539,8 +1543,8 @@ export namespace Parse {
 		/**
 		 * Whether a declaration can follow the TypeScript word just checked: with
 		 * `next`, read the current token and require the next one on the same line;
-		 * without it, require no line terminator here, eating a `;`
-		 * (@sveltejs/acorn-typescript).
+		 * without it, require no line terminator here, without reading a `;`
+		 * (@sveltejs/acorn-typescript, which reads one; see the override).
 		 */
 		tsCheckLineTerminator(next: boolean): boolean;
 

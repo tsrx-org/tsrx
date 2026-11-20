@@ -1079,3 +1079,15 @@ describe('TSRX2021 matches what babel-preset-solid compiles for an await in a te
 		},
 	);
 });
+
+// #235: the output wrote `static override m()` as `override static m()`, which
+// babel rejects ('static' modifier must precede 'override' modifier).
+describe("a class member's modifiers in the order the source has them (#235)", () => {
+	it('builds a static override method', async () => {
+		const { code } = compile(
+			'class A {\n\tstatic m() {}\n\tstatic async n() {}\n}\nexport class B extends A {\n\tstatic override m() {}\n\tpublic static override async n() {}\n}',
+			'Probe.tsrx',
+		);
+		expect(await builds(code)).toBe(true);
+	});
+});
