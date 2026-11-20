@@ -5702,6 +5702,7 @@ runJsxTextWhitespaceRuntimeTests({
 	anchors: 'empty comments',
 	children: 'slots',
 	references: 'html',
+	lines: 'kept',
 });
 runScriptBodyRuntimeTests();
 runNullishSpreadRefRuntimeTests();

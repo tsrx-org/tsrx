@@ -137,6 +137,8 @@ const vue_platform = {
 		// `innerHTML` there as an attribute. `v-html` sets the body as written
 		// when the element is created, and the server renders it as written.
 		scriptBody: 'v-html',
+		// vue-jsx-vapor decodes JSX text as HTML and keeps its lines.
+		textReading: { lines: 'keep', html: true },
 	},
 	validation: {
 		requireUseServerForAwait: true,

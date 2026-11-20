@@ -4146,6 +4146,37 @@ export function A() {
 			expect(output_type_errors(code + jsx_types)).toEqual([]);
 		});
 
+		it('gives a component whose `children` is a string one string, for text over lines', () => {
+			const source = `function Upper(props: { children: string }) {
+	return null;
+}
+export function A() {
+	return <div><Upper> a
+		b </Upper></div>;
+}`;
+			const { code } = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(output_type_errors(code + jsx_types)).toEqual([]);
+		});
+
+		// Solid's and Vue's compilers read JSX text as HTML, where an `&` before a
+		// name can start a reference, so that text keeps the split there
+		it('gives a component whose `children` is a string one string, for an `&` before a name', () => {
+			const source = `function Upper(props: { children: string }) {
+	return null;
+}
+export function A() {
+	return <div><Upper> R&D </Upper></div>;
+}`;
+			const { code } = compile_to_volar_mappings(source, 'App.tsrx');
+			const errors = output_type_errors(code + jsx_types);
+			if (name === 'solid' || name === 'vue') {
+				expect(errors).toHaveLength(1);
+				expect(errors[0]).toContain("TS2322 Type '{ children: string[]; }'");
+			} else {
+				expect(errors).toEqual([]);
+			}
+		});
+
 		// A template body's output starts where its `return` does, so the text's
 		// start maps there too
 		it.each([
@@ -4177,6 +4208,82 @@ export function A() {
 				).toEqual(["{' a '}"]);
 			},
 		);
+
+		it('maps text over lines to its literal, where TypeScript reports an error on it', () => {
+			const source = `function Num(props: { children: number }) {
+	return null;
+}
+export function A() {
+	return <div><Num> a
+		b </Num></div>;
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(output_type_errors(result.code + jsx_types)).toEqual([
+				"TS2322 Type 'string' is not assignable to type 'number'.",
+			]);
+			const text = ' a\n\t\tb ';
+			expect(
+				result.mappings
+					.filter(
+						(mapping) =>
+							mapping.sourceOffsets[0] === source.indexOf(text) &&
+							mapping.lengths[0] === text.length &&
+							mapping.data.verification,
+					)
+					.map((mapping) =>
+						result.code.slice(
+							mapping.generatedOffsets[0],
+							mapping.generatedOffsets[0] + (mapping.generatedLengths?.[0] ?? mapping.lengths[0]),
+						),
+					),
+			).toEqual([name === 'vue' ? "{' a\\n\t\tb '}" : "{' a b '}"]);
+		});
+
+		it('shows the error on the literal at the text, for references, astral characters and a CRLF', () => {
+			const text = ' &#x1F600;&amp;\u00e9\r\n b&#x1F601; ';
+			const source = `function Num(props: { children: number }) {\n\treturn null;\n}\nexport function A() {\n\treturn <div><Num>${text}</Num></div>;\n}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(result.code).toContain(
+				name === 'vue'
+					? "<Num>{' \u{1F600}&\u00e9\\r\\n b\u{1F601} '}</Num>"
+					: "<Num>{' \u{1F600}&\u00e9 b\u{1F601} '}</Num>",
+			);
+			const map = new SourceMap(result.mappings);
+			/** @type {string[]} */
+			const shown = [];
+			for (const diagnostic of type_diagnostics(result.code + jsx_types, '/output.tsx')) {
+				const start = /** @type {number} */ (diagnostic.start);
+				for (const [source_start, source_end] of map.toSourceRange(
+					start,
+					start + /** @type {number} */ (diagnostic.length),
+					true,
+					isDiagnosticsEnabled,
+				)) {
+					shown.push(`TS${diagnostic.code} ${source.slice(source_start, source_end)}`);
+					break;
+				}
+			}
+			expect(shown).toEqual([`TS2322 ${text}`]);
+		});
+
+		// The `@` completion mapping reads the spaces after the `@` from their
+		// end: a regular expression ending in `$` took about 5 seconds here
+		it('maps a long run of spaces after an `@` that starts a text over lines in linear time', () => {
+			const text = ' @a' + ' '.repeat(100_000) + 'b\nc ';
+			const source = `export function A() {\n\treturn <div><b>${text}</b></div>;\n}`;
+			const start = performance.now();
+			const result = compile_to_volar_mappings(source, 'App.tsrx');
+			expect(performance.now() - start).toBeLessThan(2000);
+			const cursor = source.indexOf('@') + 1;
+			expect(
+				result.mappings.some(
+					(mapping) =>
+						mapping.data.completion &&
+						cursor >= mapping.sourceOffsets[0] &&
+						cursor <= mapping.sourceOffsets[0] + mapping.lengths[0],
+				),
+			).toBe(true);
+		});
 	});
 
 	describe(`[${name}] input AST immutability`, () => {

@@ -587,15 +587,24 @@ function Shout(props: { children: string }) @{
  * An element whose only child is text with whitespace at an edge gets the text
  * as one string (#1368): a `<textarea>` takes at most one child, and a
  * component can read `children` as a string. Its character references read as
- * TypeScript reads them on every target, except a name the parser doesn't
- * decode (`&check;`), which keeps the split text.
+ * TypeScript reads them on every target, and its lines as the target's
+ * compiled JSX reads them. On Solid and Vue, whose compilers read JSX text as
+ * HTML, a name the parser doesn't decode (`&check;`) and an `&` before a name
+ * keep the split text.
  */
 export function JsxTextOnlyApp() @{
 	// prettier-ignore
 	<div>
 		<textarea class="only-text-textarea"> a </textarea>
+		<textarea class="only-text-textarea-lines"> a
+			b </textarea>
+		<textarea class="only-text-textarea-ampersand"> R&D </textarea>
 		<span class="only-text-references"> &lang;&#10; </span>
 		<span class="only-text-html-name"> &check; </span>
 		<Shout> a </Shout>
+		<span class="only-text-component-lines">
+			<Shout> a
+				b </Shout>
+		</span>
 	</div>
 }

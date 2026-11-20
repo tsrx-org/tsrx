@@ -395,6 +395,15 @@ export interface JsxPlatformHooks {
 }
 
 /**
+ * How a target's compiled JSX reads JSX text (see `JsxPlatform['jsx']['textReading']`).
+ */
+export interface JsxTextReading {
+	/** Default: `'join'`. */
+	lines?: 'join' | 'keep';
+	html?: boolean;
+}
+
+/**
  * A JSX platform descriptor is the parameter to `createJsxTransform`. It
  * declares how to render a TSRX AST as valid TSX for the target platform
  * (React, Preact, Solid). The shared transformer in `@tsrx/core` reads this
@@ -718,6 +727,26 @@ export interface JsxPlatform {
 		 *   writes a string `innerHTML` into its HTML template as an attribute.
 		 */
 		scriptBody?: 'children' | 'dangerouslySetInnerHTML' | 'innerHTML' | 'v-html';
+		/**
+		 * How the compiled JSX reads JSX text, which an element's only text
+		 * with edge whitespace matches when it prints as one literal
+		 * (`<textarea>{' a '}</textarea>`). By default, as TypeScript, esbuild
+		 * and oxc read it: a text's lines are trimmed and joined with a space,
+		 * and its character references read as the TSRX parser decodes them.
+		 *
+		 * - `lines: 'join'` (default): a text's lines are trimmed and joined
+		 *   with a space, as TypeScript, esbuild and oxc join them.
+		 * - `lines: 'keep'`: a text keeps its lines as written, and loses only
+		 *   whitespace with a line break at its start or end, as
+		 *   vue-jsx-vapor reads it.
+		 * - `html: true`: the compiler reads JSX text as HTML (Solid's and
+		 *   Vue's write it into an HTML template or decode it as HTML), where a
+		 *   name the parser leaves as written (`&check;`) or an `&` before a
+		 *   name without a `;` can read differently, and Solid's turns
+		 *   whitespace other than spaces, tabs and line breaks into a space.
+		 *   Such a text keeps its edges split instead.
+		 */
+		textReading?: JsxTextReading;
 	};
 
 	validation: {

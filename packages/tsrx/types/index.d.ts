@@ -12,6 +12,7 @@ import type {
 	JsxPlatformHooks,
 	JsxTransformContext,
 	JsxTransformOptions,
+	JsxTextReading,
 	JsxTransformResult,
 	createJsxTransform,
 } from './jsx-platform';
@@ -22,6 +23,7 @@ export type {
 	JsxPlatformHooks,
 	JsxTransformContext,
 	JsxTransformOptions,
+	JsxTextReading,
 	JsxTransformResult,
 };
 export { createJsxTransform };
