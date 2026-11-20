@@ -585,6 +585,12 @@ export function convert_source_map_to_mappings(
 	 * _$_server_$_.foo`), esrap records multiple generated positions for the
 	 * same source location. Keep token mappings in generated-order by consuming
 	 * the next matching generated token instead of always using the first one.
+	 *
+	 * A call printed around a node with the node's location, as a platform's
+	 * AST pass can make (#1392), starts at the same source position, and its
+	 * callee can start with the token's text: `read(re)`, `count(count)`,
+	 * `a.read(a.re)` for `a`. The node itself also maps its end there, so the
+	 * positions whose text ends where the token's source ends are taken first.
 	 * @param {MappingToken} token
 	 * @returns {{ line: number; column: number }}
 	 */
@@ -600,7 +606,29 @@ export function convert_source_map_to_mappings(
 			const offset = loc_to_offset(position.line, position.column, gen_line_offsets);
 			return generated_code.startsWith(token.generated, offset);
 		});
-		const candidates = matching_positions.length > 0 ? matching_positions : positions;
+		const end = generated_loc.end;
+		const end_offsets =
+			matching_positions.length > 1 && end
+				? new Set(
+						(src_to_gen_map.get(`${end.line}:${end.column}`) ?? []).map((position) =>
+							loc_to_offset(position.line, position.column, gen_line_offsets),
+						),
+					)
+				: null;
+		const own_positions = end_offsets
+			? matching_positions.filter((position) =>
+					end_offsets.has(
+						loc_to_offset(position.line, position.column, gen_line_offsets) +
+							token.generated.length,
+					),
+				)
+			: [];
+		const candidates =
+			own_positions.length > 0
+				? own_positions
+				: matching_positions.length > 0
+					? matching_positions
+					: positions;
 		const index_key = `${key}:${token.generated}`;
 		const index = generated_position_indexes.get(index_key) ?? 0;
 		generated_position_indexes.set(index_key, index + 1);

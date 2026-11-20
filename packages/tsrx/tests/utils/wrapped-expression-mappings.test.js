@@ -50,8 +50,9 @@ const WRAPPED_TYPES = new Set([
  * @param {string} [wrapper] the wrapping call's callee, a name or a dotted path
  * @param {boolean} [nested] also wrap each member expression's object that is
  * a member expression, from the innermost out
+ * @param {Set<string>} [wrapped_types] the expression types to wrap
  */
-function compile_wrapped(source, wrapper = 'read', nested = false) {
+function compile_wrapped(source, wrapper = 'read', nested = false, wrapped_types = WRAPPED_TYPES) {
 	/** @type {CompileError[]} */
 	const errors = [];
 	/** @type {AST.CommentWithLocation[]} */
@@ -103,7 +104,7 @@ function compile_wrapped(source, wrapper = 'read', nested = false) {
 			node.forEach(wrap);
 			return;
 		}
-		if (node.type === 'JSXExpressionContainer' && WRAPPED_TYPES.has(node.expression?.type)) {
+		if (node.type === 'JSXExpressionContainer' && wrapped_types.has(node.expression?.type)) {
 			node.expression = wrap_call(nested ? wrap_objects(node.expression) : node.expression);
 		}
 		for (const key of Object.keys(node)) {
@@ -226,6 +227,39 @@ export class C extends Base {
 		(expression, printed, wrapper) => {
 			const source = `${DECLARATIONS}export function App() @{ <p>{${expression}}</p> }\n`;
 			expect(mapped_texts(source, expression, wrapper)).toEqual([printed]);
+		},
+	);
+
+	it.each([
+		// The wrapper's callee starts with the name.
+		['re', 'read'],
+		// The wrapper's callee is the name.
+		['count', 'count'],
+		// The wrapper's callee starts with the member expression's object.
+		['a.re', 'a.read'],
+	])(
+		'maps the name in `{%s}` in a `%s(…)` call from the argument, not the callee',
+		(expression, wrapper) => {
+			const source = `${DECLARATIONS}declare const count: number;\nexport function App() @{ <p>{${expression}}</p> }\n`;
+			const { code, mappings } = compile_wrapped(
+				source,
+				wrapper,
+				false,
+				new Set(['Identifier', ...WRAPPED_TYPES]),
+			);
+			const name = expression.split('.')[0];
+			const start = source.lastIndexOf(`{${expression}}`) + 1;
+			const argument = code.indexOf(`${wrapper}(${expression})`) + wrapper.length + 1;
+			// The name's own mapping, with completion, hover and navigation
+			const offsets = mappings
+				.filter(
+					(mapping) =>
+						mapping.sourceOffsets[0] === start &&
+						mapping.lengths[0] === name.length &&
+						mapping.data.completion,
+				)
+				.map((mapping) => mapping.generatedOffsets[0]);
+			expect(offsets).toEqual([argument]);
 		},
 	);
 
