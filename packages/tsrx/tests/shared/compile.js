@@ -471,6 +471,14 @@ function virtual_semantic_diagnostics(code, extra_options = {}) {
  * @param {CompileDiagnosticsHarness} harness
  */
 export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, name }) {
+	describe(`[${name}] class index signatures in virtual code`, () => {
+		it('keeps static on a class index signature', () => {
+			expect_static_index_signatures(
+				compile_to_volar_mappings(STATIC_INDEX_SIGNATURES, 'App.tsrx', { loose: true }).code,
+			);
+		});
+	});
+
 	describe(`[${name}] a style block's editor anchor`, () => {
 		it('is named apart from a name the source uses', () => {
 			const source =
@@ -478,14 +486,6 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			const { code } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			expect(code.match(/\bconst _tsrx_style_anchor_1\b/g)).toEqual(['const _tsrx_style_anchor_1']);
 			expect(code).toMatch(/\bconst _tsrx_style_anchor_2 = <style>/);
-		});
-	});
-
-	describe(`[${name}] class index signatures in virtual code`, () => {
-		it('keeps static on a class index signature', () => {
-			expect_static_index_signatures(
-				compile_to_volar_mappings(STATIC_INDEX_SIGNATURES, 'App.tsrx', { loose: true }).code,
-			);
 		});
 	});
 
