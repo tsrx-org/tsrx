@@ -2085,14 +2085,22 @@ export function runSharedScopedStyleTests({
 			const animated = compile(
 				`export function App() @{
 					<>
-						<style>:root.dark:has(.missing) { animation: none; }</style>
+						<style>
+							:root.dark:has(.missing) { animation: none; }
+							:root.dark:has(.missing) .icon { animation: none; }
+						</style>
 						<div ${attr}="wrap"><i ${attr}="icon" /></div>
 					</>
 				}`,
 				'App.tsrx',
 			);
+			const animated_hash = hashes_of(animated.cssHash)[0];
 			expect(animated.css).toContain(
-				`:root.dark:has(.missing.${hashes_of(animated.cssHash)[0]}) { animation: none; }`,
+				`:root.dark:has(.missing.${animated_hash}) { animation: none; }`,
+			);
+			// And so it is when the rest of the selector matched.
+			expect(animated.css).toContain(
+				`:root.dark:has(.missing:where(.${animated_hash})) .icon.${animated_hash} { animation: none; }`,
 			);
 			// Nothing of a pruned selector is hashed, in its comment or after it.
 			expect(css).toContain(

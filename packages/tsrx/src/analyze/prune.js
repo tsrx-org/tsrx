@@ -1393,9 +1393,20 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 				// A selector of global-like compounds only (`:root.dark:has(.x)`) is
 				// used from the start, yet the arguments of its `:has()` still need
 				// the scoping a match would give them.
+				// So does an argument of the `:has()` of a global-like compound in a
+				// selector that matched (`:root.dark:has(.x) .icon`): matching the
+				// selector never matches the compound, nor its `:has()`.
+				const compound = context.path.at(-3);
+				const global_like_has =
+					context.path.at(-2)?.type === 'PseudoClassSelector' &&
+					/** @type {AST.CSS.PseudoClassSelector} */ (context.path.at(-2)).name === 'has' &&
+					compound?.type === 'RelativeSelector' &&
+					compound.metadata.is_global_like &&
+					!compound.metadata.is_global;
 				if (
-					(!node.metadata.used || node.metadata.is_global) &&
-					rule.prelude.children.includes(node)
+					((!node.metadata.used || node.metadata.is_global) &&
+						rule.prelude.children.includes(node)) ||
+					global_like_has
 				) {
 					let pending = unmatched_animation_selectors.get(css);
 					if (!pending) unmatched_animation_selectors.set(css, (pending = new Set()));
