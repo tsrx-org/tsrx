@@ -613,6 +613,22 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			expect(result.code).not.toMatch(/\bbreak\b/);
 		});
 
+		it('leaves TypeScript nothing to report on it in the virtual code', () => {
+			for (const statement of ['break;', 'break foo;']) {
+				const source = `export function App({ s }: { s: number }) @{\n\t<div>@switch (s) { @case 1: { ${statement}\n\t\tconst bad: number = 'x';\n\t\t<b>{bad}</b> } @default: { <i /> } }</div>\n}\n`;
+				const { code } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				expect(
+					virtual_semantic_diagnostics(code)
+						.filter((diagnostic) => [1105, 1107, 1116, 2322].includes(diagnostic.code))
+						.map((diagnostic) => [
+							diagnostic.code,
+							code.slice(diagnostic.start, (diagnostic.start ?? 0) + (diagnostic.length ?? 0)),
+						]),
+					statement,
+				).toEqual([[2322, 'bad']]);
+			}
+		});
+
 		it('is reported once beside a nested one in the same case', () => {
 			const source = `export function App({ s, x }: { s: number; x: boolean }) @{\n\t<div>@switch (s) { @case 1: { if (x) break; <b /> break; } @default: { <i /> } }</div>\n}\n`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
