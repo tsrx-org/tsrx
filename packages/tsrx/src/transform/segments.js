@@ -21,6 +21,7 @@
 @import { Parse } from '../../types/parse';
  */
 
+import * as acorn from 'acorn';
 import { walk } from 'zimmerframe';
 import {
 	build_src_to_gen_map,
@@ -51,10 +52,17 @@ import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 const RETURN_KEYWORD = 'return';
 /** The longest node whose whole text `start_at_own_text` compares. */
 const OWN_TEXT_MAX_LENGTH = 1000;
-// A name as written: identifier characters and `\uXXXX` / `\u{X}` escapes,
-// after an optional `#` for a private name.
-const regex_written_name =
-	/#?(?:[\p{ID_Continue}$\u200c\u200d]|\\u[\da-fA-F]{4}|\\u\{[\da-fA-F]+\})+/uy;
+// A Unicode escape in a name as written, `\uXXXX` or `\u{X}`.
+const regex_escape_at = /\\u(?:[\da-fA-F]{4}|\{[\da-fA-F]+\})/y;
+/**
+ * acorn's own identifier test, which the parser reads names with, so a name
+ * is measured with the characters the parser took for it. acorn's types
+ * don't declare it.
+ */
+const { isIdentifierChar: is_identifier_char } =
+	/** @type {{ isIdentifierChar(code: number, astral?: boolean): boolean }} */ (
+		/** @type {unknown} */ (acorn)
+	);
 const regex_name_escape = /\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g;
 /** A fragment's `<>`, with any whitespace or comments between its `<` and `>`. */
 const regex_opening_fragment = /^<(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*>$/;
@@ -1626,19 +1634,42 @@ export function convert_source_map_to_mappings(
 	 * @param {AST.SourceLocation} loc
 	 * @param {string} name The authored name, decoded: `#a` for a private name,
 	 *   `className` for an attribute a target prints as `class`.
+	 * @param {boolean} [jsx] A JSX name, which can have `-` in it.
 	 * @returns {number | undefined} `undefined` for a name written without escapes.
 	 */
-	function escaped_name_length(loc, name) {
+	function escaped_name_length(loc, name, jsx = false) {
 		const start = loc_to_offset(loc.start.line, loc.start.column, src_line_offsets);
 		if (source.startsWith(name, start)) return;
-		regex_written_name.lastIndex = start;
-		const written = regex_written_name.exec(source)?.[0];
-		if (!written?.includes('\\')) return;
+		const written = written_name_at(start, jsx);
+		if (!written.includes('\\')) return;
 		const decoded = written.replace(regex_name_escape, (escape, braced, short) => {
 			const code = Number.parseInt(braced ?? short, 16);
 			return code <= 0x10ffff ? String.fromCodePoint(code) : escape;
 		});
 		return decoded === name ? written.length : undefined;
+	}
+
+	/**
+	 * A name as written at `start`: identifier characters and escapes, after a
+	 * `#` for a private name, and also `-` for a JSX name (`data-\u0061`).
+	 * @param {number} start
+	 * @param {boolean} jsx
+	 * @returns {string}
+	 */
+	function written_name_at(start, jsx) {
+		let end = !jsx && source[start] === '#' ? start + 1 : start;
+		while (end < source.length) {
+			const code = /** @type {number} */ (source.codePointAt(end));
+			if (is_identifier_char(code, true) || (jsx && code === 45)) {
+				end += code > 0xffff ? 2 : 1;
+				continue;
+			}
+			regex_escape_at.lastIndex = end;
+			const escape = regex_escape_at.exec(source);
+			if (!escape) break;
+			end += escape[0].length;
+		}
+		return source.slice(start, end);
 	}
 
 	/**
@@ -1770,7 +1801,7 @@ export function convert_source_map_to_mappings(
 						loc: node.loc,
 						metadata: {},
 						sourceLength:
-							escaped_name_length(node.loc, node.metadata?.source_name ?? node.name) ??
+							escaped_name_length(node.loc, node.metadata?.source_name ?? node.name, true) ??
 							node.metadata?.source_length,
 					};
 					if (node.metadata?.disable_verification) {

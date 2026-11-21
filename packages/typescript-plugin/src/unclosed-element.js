@@ -16,6 +16,35 @@ const RAW_TEXT_OPENING_TAGS = new Map([
 	['script', /<script[\s/>]/],
 ]);
 
+const regex_name_escape = /\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g;
+
+/**
+ * The name the Unicode escapes in `name` spell: `Inn\u0065r` is `Inner`. The
+ * parser reads a JSX name so, and matches opening and closing tags by it.
+ * @param {string} name
+ * @returns {string}
+ */
+export function decodeNameEscapes(name) {
+	return name.replace(regex_name_escape, (escape, braced, short) => {
+		const code = Number.parseInt(braced ?? short, 16);
+		return code <= 0x10ffff ? String.fromCodePoint(code) : escape;
+	});
+}
+
+/**
+ * A tag's name as the parser matches tags by it: a static name (`div`,
+ * `ui.Item`, `svg:rect`) as its escapes spell it, a dynamic one (`{Tag}`) as
+ * its expression is written.
+ * @param {AST.Node} name The opening or closing element's `name`.
+ * @param {string} sourceCode
+ * @returns {string}
+ */
+export function tagNameText(name, sourceCode) {
+	const { start, end } = /** @type {AST.NodeWithLocation} */ (name);
+	const text = sourceCode.slice(start, end);
+	return name.type === 'JSXExpressionContainer' ? text : decodeNameEscapes(text);
+}
+
 /**
  * An element of the parsed source and, when the element is one of its children,
  * the element that holds it.
@@ -73,10 +102,8 @@ export function findElement(node, end, parent = null) {
  */
 export function isUnclosed(path, sourceCode) {
 	/** @param {AST.TSRXJSXElement} element */
-	const name = (element) => {
-		const { start, end } = /** @type {AST.NodeWithLocation} */ (element.openingElement.name);
-		return sourceCode.slice(start, end);
-	};
+	const name = (element) =>
+		tagNameText(/** @type {AST.Node} */ (element.openingElement.name), sourceCode);
 
 	const { element } = path;
 	const rawTextOpeningTag = RAW_TEXT_OPENING_TAGS.get(name(element));

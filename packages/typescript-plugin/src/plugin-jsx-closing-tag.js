@@ -1,7 +1,7 @@
 import { isCompletionEnabled } from '@volar/language-core';
 import { toGeneratedOffset } from '@volar/typescript/lib/node/transform.js';
 import { getServiceScript } from '@volar/typescript/lib/node/utils.js';
-import { findElement, isUnclosed } from './unclosed-element.js';
+import { findElement, isUnclosed, tagNameText } from './unclosed-element.js';
 
 /**
  * VS Code's TypeScript closes a JSX tag by asking tsserver for
@@ -76,8 +76,11 @@ function closing_tag_from_source(source_script, position) {
 	if (!path) return undefined;
 	const source = source_script.snapshot.getText(0, source_script.snapshot.getLength());
 	if (!isUnclosed(path, source)) return undefined;
-	const name = /** @type {{ start: number, end: number }} */ (
+	// With the name the parser matches tags by: a static one as its escapes spell
+	// it, since a raw-text element (`<st\u0079le>`) ends only at a closing tag
+	// written out, and a dynamic one (`{Tag}`) as written.
+	const name = /** @type {import('estree').Node} */ (
 		/** @type {unknown} */ (path.element.openingElement.name)
 	);
-	return { newText: `</${source.slice(name.start, name.end)}>` };
+	return { newText: `</${tagNameText(name, source)}>` };
 }

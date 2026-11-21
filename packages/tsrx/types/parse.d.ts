@@ -700,6 +700,15 @@ export namespace Parse {
 		 */
 		readWord1(): string;
 
+		/** The code point at the current position, a surrogate pair read as one */
+		fullCharCodeAtPos(): number;
+
+		/** Read the code point of a `\uXXXX` or `\u{X}` escape, after its `\u` */
+		readCodePoint(): number;
+
+		/** Raise an error for a malformed token at `pos` */
+		invalidStringToken(pos: number, message: string): void;
+
 		/** Read a number literal */
 		readNumber(startsWithDot: boolean): void;
 

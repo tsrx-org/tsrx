@@ -1,7 +1,11 @@
 /** @import * as AST from 'estree' */
 /** @import { LanguageServicePlugin } from '@volar/language-server' */
 
-import { findElement, isUnclosed } from '@tsrx/typescript-plugin/src/unclosed-element.js';
+import {
+	decodeNameEscapes,
+	findElement,
+	isUnclosed,
+} from '@tsrx/typescript-plugin/src/unclosed-element.js';
 import { getVirtualCode, createLogging, is_tsrx_document } from './utils.js';
 
 const { log } = createLogging('[TSRX Auto-Insert Plugin]');
@@ -159,6 +163,10 @@ export function createAutoInsertPlugin() {
 					}
 
 					log('Tag matched:', tagName);
+					// The closing tag uses the name the escapes in it spell: the parser
+					// matches tags by that name, and a raw-text element (`<st\u0079le>`)
+					// ends only at a closing tag written out.
+					tagName = decodeNameEscapes(tagName);
 
 					// Don't auto-close void elements (self-closing HTML tags)
 					if (VOID_ELEMENTS.has(tagName.toLowerCase())) {
@@ -216,6 +224,12 @@ export function unescapeSnippetText(snippet) {
 	return snippet.replace(/\\([\\$}])/g, '$1');
 }
 
+// A `\uXXXX` or `\u{X}` escape, as a JSX name can have one.
+const name_escape = String.raw`\\u(?:[\da-fA-F]{4}|\{[\da-fA-F]+\})`;
+const regex_opening_tag_name = new RegExp(
+	String.raw`^<((?:[@$_\p{ID_Start}]|${name_escape})(?:[$\p{ID_Continue}\u200C\u200D.-]|${name_escape})*)`,
+	'u',
+);
 /**
  * Match an opening tag `<name …>` that ends exactly at the end of `text` and return its name.
  *
@@ -227,13 +241,14 @@ export function unescapeSnippetText(snippet) {
  * self-closing (`<style apply={theme} />`).
  *
  * A name is made of JavaScript identifier characters, `.` and `-`, so `$` and non-ASCII
- * letters can appear anywhere in it (`<ui.$Item>`, `<Café>`).
+ * letters can appear anywhere in it (`<ui.$Item>`, `<Café>`), and Unicode escapes
+ * (`<Inn\u0065r>`), which the name is returned with, as written.
  *
  * @param {string} text - Source text from the tag's `<` up to and including the typed `>`
  * @returns {string | null}
  */
 export function matchOpeningTag(text) {
-	const nameMatch = text.match(/^<([@$_\p{ID_Start}][$\p{ID_Continue}\u200C\u200D.-]*)/u);
+	const nameMatch = text.match(regex_opening_tag_name);
 	if (!nameMatch) {
 		return null;
 	}

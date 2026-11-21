@@ -160,6 +160,7 @@ const CharCode = Object.freeze({
 	openParen: 40,
 	closeParen: 41,
 	comma: 44,
+	hyphen: 45,
 	asterisk: 42,
 	dot: 46,
 	slash: 47,
@@ -173,6 +174,7 @@ const CharCode = Object.freeze({
 	uppercaseA: 65,
 	uppercaseZ: 90,
 	openBracket: 91,
+	backslash: 92,
 	closeBracket: 93,
 	underscore: 95,
 	lowercaseA: 97,
@@ -197,6 +199,16 @@ const DECORATABLE_NODE_TYPES = new Set([
 	'PropertyDefinition',
 ]);
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
+/**
+ * acorn's own identifier tests, which acorn-typescript uses to decide that a
+ * JSX name starts: the JSX name reader must take every character they take,
+ * or a name could stop before its first character. acorn's types don't
+ * declare them.
+ */
+const { isIdentifierChar: is_identifier_char, isIdentifierStart: is_identifier_start } =
+	/** @type {{ isIdentifierChar(code: number, astral?: boolean): boolean, isIdentifierStart(code: number, astral?: boolean): boolean }} */ (
+		/** @type {unknown} */ (acorn)
+	);
 // The files TypeScript reads without JSX, and the ones where it reserves the
 // syntax a JSX file would read as a tag (TS7059, TS7060).
 const regex_file_without_jsx = /\.[cm]?ts$/;
@@ -2901,6 +2913,20 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether the `}` at `index` ends the name token just read, a name that
+			 * ends with a braced escape (`<Bo\u{78}<T> />`), rather than a block,
+			 * which a tag can follow.
+			 * @param {number} index
+			 */
+			#endsEscapedName(index) {
+				return (
+					(this.type === tt.name || this.type === tstt.jsxName) &&
+					index === this.lastTokEnd - 1 &&
+					this.input.charCodeAt(index) === CharCode.closeBrace
+				);
+			}
+
+			/**
 			 * Returns true when a `<` at `index` can start TypeScript type
 			 * parameters/arguments in expression-like code rather than a JSX tag.
 			 * Most type argument lists are adjacent to the previous token (`foo<T>`,
@@ -2918,6 +2944,7 @@ export function TSRXPlugin(config) {
 			#canStartTypeParameterOrArgumentList(index) {
 				const next = this.input.charCodeAt(index + 1);
 				if (next === CharCode.equals || next === CharCode.lessThan) return false;
+				if (this.#endsEscapedName(this.#previousNonSpaceTabCommentIndex(index))) return true;
 				const previous = this.#previousNonSpaceTabIndex(index);
 				if (previous < 0) return false;
 				if (previous === index - 1) {
@@ -11929,6 +11956,15 @@ export function TSRXPlugin(config) {
 						).getTokenFromCode.call(this, code);
 					}
 				}
+				// A name in a tag can start with an escape (`<\u0061ria-label>`), which
+				// acorn-typescript reads as a JavaScript name, without the `-` part.
+				if (
+					code === CharCode.backslash &&
+					(context === tstc.tc_oTag || context === tstc.tc_cTag) &&
+					!this.inType
+				) {
+					return this.jsx_readWord();
+				}
 				if (context === tstc.tc_expr || context === tstc.tc_oTag || context === tstc.tc_cTag) {
 					return super.readToken(code);
 				}
@@ -12033,6 +12069,8 @@ export function TSRXPlugin(config) {
 						this.#functionBodyDepth === 0 && this.#isNativeTemplateNode(parent);
 					/** @type {number | null} */
 					let prevNonWhitespaceChar = null;
+					// Whether that is the `}` of a name's braced escape, not a block's.
+					let after_escaped_name = false;
 					const nextChar =
 						this.pos + 1 < this.input.length ? this.input.charCodeAt(this.pos + 1) : -1;
 
@@ -12062,6 +12100,7 @@ export function TSRXPlugin(config) {
 						// starts a tag after a statement without a semicolon.
 						const previous = this.#previousNonSpaceTabCommentIndex(this.pos);
 						prevNonWhitespaceChar = previous >= 0 ? this.input.charCodeAt(previous) : null;
+						after_escaped_name = this.#endsEscapedName(previous);
 
 						if (
 							nextChar !== CharCode.slash &&
@@ -12082,7 +12121,7 @@ export function TSRXPlugin(config) {
 						prevNonWhitespaceChar === null ||
 						acorn.isNewLine(prevNonWhitespaceChar) ||
 						prevNonWhitespaceChar === CharCode.openBrace ||
-						prevNonWhitespaceChar === CharCode.closeBrace ||
+						(prevNonWhitespaceChar === CharCode.closeBrace && !after_escaped_name) ||
 						prevNonWhitespaceChar === CharCode.greaterThan;
 
 					if (!inNativeTemplate && this.exprAllowed && isTagLikeAfterLt) {
@@ -14405,6 +14444,50 @@ export function TSRXPlugin(config) {
 				node.namespace = base;
 				node.name = this.jsx_parseIdentifier();
 				return this.finishNode(node, 'JSXNamespacedName');
+			}
+
+			/**
+			 * A JSX name: a tag's, an attribute's, or a part of a member or namespaced
+			 * one. acorn-typescript reads identifier characters and `-` and stops at
+			 * an escape, so `<Inn\u0065r />` read as the tag `Inn` with an attribute
+			 * `\u0065r`, and `<Inn\u0065r></Inn\u0065r>` didn't parse. TypeScript
+			 * reads the escape as part of the name, as in an identifier, and reports
+			 * it (TS17021); so does this, without the error. The name is the one the
+			 * escapes spell.
+			 * @type {Parse.Parser['jsx_readWord']}
+			 */
+			jsx_readWord() {
+				const start = this.pos;
+				let word = '';
+				let chunk_start = this.pos;
+				let first = true;
+				while (this.pos < this.input.length) {
+					const ch = this.fullCharCodeAtPos();
+					if (is_identifier_char(ch, true) || ch === CharCode.hyphen) {
+						this.pos += ch <= 0xffff ? 1 : 2;
+					} else if (ch === CharCode.backslash) {
+						word += this.input.slice(chunk_start, this.pos);
+						const escape_start = this.pos;
+						if (this.input.charCodeAt(++this.pos) !== 117) {
+							this.invalidStringToken(this.pos, 'Expecting Unicode escape sequence \\uXXXX');
+						}
+						++this.pos;
+						const escaped = this.readCodePoint();
+						if (!(first ? is_identifier_start : is_identifier_char)(escaped, true)) {
+							this.invalidStringToken(escape_start, 'Invalid Unicode escape');
+						}
+						word += String.fromCodePoint(escaped);
+						chunk_start = this.pos;
+					} else {
+						break;
+					}
+					first = false;
+				}
+				// acorn-typescript reads a name here only where acorn's tables say one
+				// starts, so this has read at least one character; if not, its reader
+				// does, rather than this one returning an empty name forever.
+				if (this.pos === start) return super.jsx_readWord();
+				return this.finishToken(tstt.jsxName, word + this.input.slice(chunk_start, this.pos));
 			}
 
 			/**

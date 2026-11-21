@@ -1084,6 +1084,91 @@ const target_dependencies = {
 };
 
 /**
+ * JSX names with an escape after their start, which the JSX tokenizer used to
+ * end at the escape (`<Inn\u0065r />` was `<Inn er />`).
+ */
+describe.each(Object.keys(target_dependencies))(
+	'native language server on %s: a JSX name with an escape',
+	(target) => {
+		const backslash = String.fromCharCode(92);
+		const tag = `Inn${backslash}u0065r`;
+		const missing = `Missin${backslash}u0067`;
+		const source = `function Inner(props: { n: number }) { return null; }
+export function Escaped() @{
+	<div>
+		<${tag} n={1} />
+		<${missing} />
+	</div>
+}
+`;
+		/** @type {Record<string, string>} */
+		const files = {
+			'main.ts': "import { Escaped } from './Escaped.tsrx';\n\nexport const list = [Escaped];\n",
+			'Escaped.tsrx': source,
+		};
+		/** @type {ReturnType<typeof create_native_workspace>} */
+		let workspace;
+		/** @type {NativeLspClient} */
+		let client;
+
+		beforeAll(async () => {
+			const tsconfig = /** @type {Record<string, unknown>} */ (
+				parse_jsonc(
+					fs.readFileSync(
+						new URL(`./fixtures/targets/${target}/tsconfig.json`, import.meta.url),
+						'utf8',
+					),
+				).value
+			);
+			tsconfig.contentMappers = [{ package: '@tsrx/content-mapper', extensions: ['.tsrx'] }];
+			tsconfig.include = ['*.ts', '*.tsrx'];
+			files['tsconfig.json'] = JSON.stringify(tsconfig, null, '\t');
+			workspace = create_native_workspace(files, { dependencies: target_dependencies[target] });
+			client = new NativeLspClient(workspace.dir);
+			await client.initialize({ runExternalCode: true });
+			client.open('main.ts', files['main.ts']);
+			await client.wait_for_registration('content-mapper-did-open');
+			client.open('Escaped.tsrx', source);
+		});
+
+		afterAll(async () => {
+			await client?.shutdown();
+			workspace?.cleanup();
+		});
+
+		/** @param {{ start: { line: number, character: number }, end: object }} range */
+		const where = (range) =>
+			`${source
+				.split('\n')
+				.slice(0, range.start.line)
+				.reduce((sum, line) => sum + line.length + 1, range.start.character)}:${range_text(
+				source,
+				/** @type {any} */ (range),
+			)}`;
+
+		it('reads it as one name, mapped from all of its text', async () => {
+			expect(
+				(await client.diagnostics('Escaped.tsrx'))
+					.filter((d) => d.severity === 1)
+					.map((d) => [d.code, where(d.range)]),
+			).toEqual([[2304, `${source.indexOf(missing)}:${missing}`]]);
+			const params = at(client, files, 'Escaped.tsrx', tag, 2);
+			const hover = await client.request('textDocument/hover', params);
+			expect(`${where(hover.range)} ${hover.contents.value.split('\n')[1]}`).toBe(
+				`${source.indexOf(tag)}:${tag} function Inner(props: {`,
+			);
+			const definition = await client.request('textDocument/definition', params);
+			expect(
+				definition.map(
+					(/** @type {{ uri: string, range: any }} */ location) =>
+						`${path.basename(location.uri)} ${where(location.range)}`,
+				),
+			).toEqual([`Escaped.tsrx ${source.indexOf('Inner')}:Inner`]);
+		});
+	},
+);
+
+/**
  * A `@for` item and index used in the body and the key, where the transform
  * maps the name twice over the same text, once for diagnostics only. Solid
  * passes the item as an accessor.
