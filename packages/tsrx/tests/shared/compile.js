@@ -581,14 +581,25 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 				'a case in an `@else if` body',
 				'<div>@if (s) { <b /> } @else if (s > 1) { <p>@switch (s) { @case 1: { <b /> break; } @default: { <i /> } }</p> }</div>',
 			],
+			[
+				'a case, with a label no statement has',
+				'<div>@switch (s) { @case 1: { <b /> break foo; } @default: { <i /> } }</div>',
+			],
+			[
+				'a case, with a TypeScript word as its label',
+				'<div>@switch (s) { @case 1: { <b /> break namespace; } @default: { <i /> } }</div>',
+			],
 		])('is reported once in %s, and the rest of the file maps', (_, template) => {
 			const source = `export function App({ s, items }: { s: number; items: number[] }) @{\n\t${template}\n}\nexport const after = 1;\n`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-			const start = source.indexOf('break;');
+			const start = source.indexOf('break');
 			expect(result.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
 				[TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code, start, start + 'break'.length],
 			]);
 			expect(result.code).toContain('export const after = 1;');
+			// Left out of the output: in a function, such as Solid's case function,
+			// TypeScript would report it again.
+			expect(result.code).not.toMatch(/\bbreak\b/);
 		});
 
 		it('keeps the code after it in the output', () => {
@@ -599,6 +610,7 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			]);
 			expect(result.code).toContain('const bad: number = 1;');
 			expect(result.code).toContain('<b>{bad}</b>');
+			expect(result.code).not.toMatch(/\bbreak\b/);
 		});
 
 		it('is reported once beside a nested one in the same case', () => {

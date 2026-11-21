@@ -2399,6 +2399,9 @@ export function TSRXPlugin(config) {
 			// The `break` or `continue` statement being read (see `raise`).
 			/** @type {AST.BreakStatement | AST.ContinueStatement | null} */
 			#jumpStatement = null;
+			// Where the `break` right in an `@switch` case that a collecting parse
+			// last recorded (TSRX2008) starts (see `#reportSwitchCaseJump`).
+			#reportedSwitchCaseBreak = -1;
 
 			/**
 			 * @type {Parse.Parser['finishNode']}
@@ -5685,6 +5688,7 @@ export function TSRXPlugin(config) {
 						? TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT
 						: TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
 				);
+				if (keyword === 'break') this.#reportedSwitchCaseBreak = start;
 			}
 
 			/**
@@ -6085,6 +6089,13 @@ export function TSRXPlugin(config) {
 					// it at the function's start; acorn-typescript goes on to read the
 					// body (#784).
 					this.#raiseCheckerError(this.start, TS_ERRORS.AMBIENT_IMPLEMENTATION);
+					return /** @type {never} */ (undefined);
+				} else if (
+					message === 'Unsyntactic break' &&
+					this.#jumpStatement?.start === this.#reportedSwitchCaseBreak
+				) {
+					// A labeled `break` right in an `@switch` case, already recorded as
+					// TSRX2008, where acorn finds no target.
 					return /** @type {never} */ (undefined);
 				} else if (
 					(message === 'Unsyntactic break' || message === 'Unsyntactic continue') &&

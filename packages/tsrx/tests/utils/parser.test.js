@@ -3635,6 +3635,9 @@ foo();`;
 			['const d = 1; break;', ''],
 			['break', " @case 'g': { return; }"],
 			['break;', " @case 'g': { <g /> break; }"],
+			// acorn finds no target for these labels.
+			['break foo;', ''],
+			['<path /> break namespace;', ''],
 		]) {
 			/** @type {any[]} */
 			const errors = [];
