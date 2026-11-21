@@ -348,8 +348,51 @@ export function tsx_with_ts_locations(
 		write_source_text(source.slice(offset, node.end), context);
 	};
 
+	/**
+	 * Whether the source writes the same name twice, as two names: `a: a` or
+	 * `a as a`, not the shorthand `a`.
+	 * @param {AST.Node} first
+	 * @param {AST.Node} second
+	 * @returns {boolean}
+	 */
+	const written_twice = (first, second) =>
+		first.type === 'Identifier' &&
+		second.type === 'Identifier' &&
+		first.name === second.name &&
+		has_location(first) &&
+		has_location(second) &&
+		first.start !== second.start;
+
 	/** @type {ESRap.Visitors<AST.Node>} */
 	const wrappers = {
+		// esrap prints `import { a as a }` and `export { a as a }` as `{ a }`,
+		// which the editor's output keeps as written, as it keeps `a: a`.
+		ImportSpecifier: (node, context) => {
+			if (!type_only || !written_twice(node.imported, node.local)) {
+				/** @type {NonNullable<typeof base.ImportSpecifier>} */ (base.ImportSpecifier)(
+					node,
+					context,
+				);
+				return;
+			}
+			if (node.importKind === 'type') context.write('type ');
+			context.visit(node.imported);
+			context.write(' as ');
+			context.visit(node.local);
+		},
+		ExportSpecifier: (node, context) => {
+			if (!type_only || !written_twice(node.local, node.exported)) {
+				/** @type {NonNullable<typeof base.ExportSpecifier>} */ (base.ExportSpecifier)(
+					node,
+					context,
+				);
+				return;
+			}
+			if (node.exportKind === 'type') context.write('type ');
+			context.visit(node.local);
+			context.write(' as ');
+			context.visit(node.exported);
+		},
 		TemplateLiteral: (node, context) => {
 			if (!type_only) {
 				/** @type {NonNullable<typeof base.TemplateLiteral>} */ (base.TemplateLiteral)(
@@ -629,6 +672,25 @@ export function tsx_with_ts_locations(
 		// `{ foo: function() {} }` (`node.method === false`) and getters/setters
 		// must fall through to base.Property to preserve their printed form.
 		Property: (node, context) => {
+			// esrap prints `a: a` as the shorthand `a`. In the editor's output that
+			// leaves one of the two names without text of its own: TypeScript 7
+			// drops the second's mapping, and TypeScript renames the shorthand by
+			// adding the property, so renaming `a` turned `{ a: a }` into
+			// `{ a: a: renamed }`.
+			const name = node.value.type === 'AssignmentPattern' ? node.value.left : node.value;
+			if (
+				type_only &&
+				!node.shorthand &&
+				!node.computed &&
+				!node.method &&
+				node.kind === 'init' &&
+				written_twice(node.key, name)
+			) {
+				context.visit(node.key);
+				context.write(': ');
+				context.visit(node.value);
+				return;
+			}
 			if (!node.method || node.value.type !== 'FunctionExpression') {
 				/** @type {NonNullable<typeof base.Property>} */ (base.Property)(node, context);
 				return;

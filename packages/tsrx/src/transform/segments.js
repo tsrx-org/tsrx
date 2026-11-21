@@ -1736,13 +1736,9 @@ export function convert_source_map_to_mappings(
 				visit(node.source);
 				return;
 			} else if (node.type === 'ImportSpecifier') {
-				// If local and imported are the same, only visit local to avoid duplicates
-				// Otherwise visit both in order
-				if (
-					node.imported &&
-					node.local &&
-					/** @type {AST.Identifier} */ (node.imported).name !== node.local.name
-				) {
+				// A name written once (`{ a }`, `{ type a }`) is both the imported and
+				// the local name: visit it once. `{ a as a }` writes two.
+				if (node.imported && node.local && node.imported.start !== node.local.start) {
 					visit(node.imported);
 					visit(node.local);
 				} else if (node.local) {
@@ -1759,14 +1755,9 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'ExportSpecifier') {
-				// If local and exported are the same, only visit local to avoid duplicates
-				// Otherwise visit both in order
-				if (
-					node.local &&
-					node.exported &&
-					/** @type {AST.Identifier} */ (node.local).name !==
-						/** @type {AST.Identifier} */ (node.exported).name
-				) {
+				// A name written once (`{ a }`) is both the local and the exported
+				// name: visit it once. `{ a as a }` writes two.
+				if (node.local && node.exported && node.local.start !== node.exported.start) {
 					visit(node.local);
 					visit(node.exported);
 				} else if (node.local) {
