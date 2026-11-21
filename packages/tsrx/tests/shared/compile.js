@@ -558,6 +558,93 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 		});
 	});
 
+	describe(`[${name}] a break right in an @switch case, in the editor`, () => {
+		it.each([
+			['a case', '<div>@switch (s) { @case 1: { <b /> break; } @default: { <i /> } }</div>'],
+			[
+				'a case in an `@catch`',
+				'@try { <p /> } @catch (e) { <div>@switch (s) { @case 1: { <b /> break; } @default: { <i /> } }</div> }',
+			],
+			[
+				'a case in an `@try` body',
+				'@try { <div>@switch (s) { @case 1: { <b /> break; } @default: { <i /> } }</div> } @catch (e) { <i /> }',
+			],
+			[
+				'a case in an `@if` body',
+				'<div>@if (s) { <p>@switch (s) { @case 1: { <b /> break; } @default: { <i /> } }</p> }</div>',
+			],
+			[
+				'a case in an `@for` body',
+				'<ul>@for (const y of items) { <li>@switch (s) { @case 1: { <b /> break; } @default: { <i /> } }</li> }</ul>',
+			],
+			[
+				'a case in an `@else if` body',
+				'<div>@if (s) { <b /> } @else if (s > 1) { <p>@switch (s) { @case 1: { <b /> break; } @default: { <i /> } }</p> }</div>',
+			],
+			[
+				'a case, with a label no statement has',
+				'<div>@switch (s) { @case 1: { <b /> break foo; } @default: { <i /> } }</div>',
+			],
+			[
+				'a case, with a TypeScript word as its label',
+				'<div>@switch (s) { @case 1: { <b /> break namespace; } @default: { <i /> } }</div>',
+			],
+		])('is reported once in %s, and the rest of the file maps', (_, template) => {
+			const source = `export function App({ s, items }: { s: number; items: number[] }) @{\n\t${template}\n}\nexport const after = 1;\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const start = source.indexOf('break');
+			expect(result.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				[TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code, start, start + 'break'.length],
+			]);
+			expect(result.code).toContain('export const after = 1;');
+			// Left out of the output: in a function, such as Solid's case function,
+			// TypeScript would report it again.
+			expect(result.code).not.toMatch(/\bbreak\b/);
+		});
+
+		it('keeps the code after it in the output', () => {
+			const source = `export function App({ s }: { s: number }) @{\n\t<div>@switch (s) { @case 1: { break;\n\t\tconst bad: number = 1;\n\t\t<b>{bad}</b> } @default: { <i /> } }</div>\n}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => error.code)).toEqual([
+				TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code,
+			]);
+			expect(result.code).toContain('const bad: number = 1;');
+			expect(result.code).toContain('<b>{bad}</b>');
+			expect(result.code).not.toMatch(/\bbreak\b/);
+		});
+
+		it('leaves TypeScript nothing to report on it in the virtual code', () => {
+			for (const statement of ['break;', 'break foo;']) {
+				const source = `export function App({ s }: { s: number }) @{\n\t<div>@switch (s) { @case 1: { ${statement}\n\t\tconst bad: number = 'x';\n\t\t<b>{bad}</b> } @default: { <i /> } }</div>\n}\n`;
+				const { code } = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				expect(
+					virtual_semantic_diagnostics(code)
+						.filter((diagnostic) => [1105, 1107, 1116, 2322].includes(diagnostic.code))
+						.map((diagnostic) => [
+							diagnostic.code,
+							code.slice(diagnostic.start, (diagnostic.start ?? 0) + (diagnostic.length ?? 0)),
+						]),
+					statement,
+				).toEqual([[2322, 'bad']]);
+			}
+		});
+
+		it('is reported once beside a nested one in the same case', () => {
+			const source = `export function App({ s, x }: { s: number; x: boolean }) @{\n\t<div>@switch (s) { @case 1: { if (x) break; <b /> break; } @default: { <i /> } }</div>\n}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const nested = source.indexOf('break;');
+			const direct = source.lastIndexOf('break;');
+			expect(
+				result.errors
+					.map((error) => [error.code, error.pos, error.end])
+					.sort((a, b) => Number(a[1]) - Number(b[1])),
+			).toEqual([
+				[TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code, nested, nested + 'break;'.length],
+				[TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code, direct, direct + 'break'.length],
+			]);
+		});
+	});
+
 	describe(`[${name}] a directive used as a value, with a return in a body, in the editor`, () => {
 		it.each([
 			[

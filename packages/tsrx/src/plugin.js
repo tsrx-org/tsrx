@@ -2399,6 +2399,9 @@ export function TSRXPlugin(config) {
 			// The `break` or `continue` statement being read (see `raise`).
 			/** @type {AST.BreakStatement | AST.ContinueStatement | null} */
 			#jumpStatement = null;
+			// Where the `break` right in an `@switch` case that a collecting parse
+			// last recorded (TSRX2008) starts (see `#reportSwitchCaseJump`).
+			#reportedSwitchCaseBreak = -1;
 
 			/**
 			 * @type {Parse.Parser['finishNode']}
@@ -4941,12 +4944,16 @@ export function TSRXPlugin(config) {
 					this.#switchCaseLabelStart(this.start) === -1
 				) {
 					const raw = String(this.value ?? '').trimStart();
-					if (/^break\b/.test(raw)) {
-						this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT);
-					}
-					const direct_return = /^return\b/.test(raw);
-					if (direct_return) {
-						this.#reportSwitchCaseReturn(this.start + String(this.value ?? '').length - raw.length);
+					const direct_jump = /^break\b/.test(raw)
+						? 'break'
+						: /^return\b/.test(raw)
+							? 'return'
+							: null;
+					if (direct_jump) {
+						this.#reportSwitchCaseJump(
+							this.start + String(this.value ?? '').length - raw.length,
+							direct_jump,
+						);
 					}
 					this.#filterTemplateScriptContexts();
 					this.pos = this.start;
@@ -4959,7 +4966,7 @@ export function TSRXPlugin(config) {
 					try {
 						this.#suppressTemplateRawTextToken = true;
 						this.next();
-						consequent.push(this.#markSwitchCaseReturn(this.parseStatement(null), direct_return));
+						consequent.push(this.#markSwitchCaseJump(this.parseStatement(null), direct_jump));
 					} finally {
 						this.#parsingJSXSwitchCaseScriptStatementDepth--;
 					}
@@ -5020,12 +5027,9 @@ export function TSRXPlugin(config) {
 				}
 
 				const label = this.type.keyword || this.type.label;
-				if (label === 'break') {
-					this.raise(this.start, TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT);
-				}
-				const direct_return = label === 'return';
-				if (direct_return) {
-					this.#reportSwitchCaseReturn(this.start);
+				const direct_jump = label === 'break' || label === 'return' ? label : null;
+				if (direct_jump) {
+					this.#reportSwitchCaseJump(this.start, direct_jump);
 				}
 				if (label === 'continue' || label === 'throw') {
 					consequent.push(this.parseStatement(null));
@@ -5054,7 +5058,7 @@ export function TSRXPlugin(config) {
 				}
 				this.#parsingJSXSwitchCaseScriptStatementDepth++;
 				try {
-					consequent.push(this.#markSwitchCaseReturn(this.parseStatement(null), direct_return));
+					consequent.push(this.#markSwitchCaseJump(this.parseStatement(null), direct_jump));
 				} finally {
 					this.#parsingJSXSwitchCaseScriptStatementDepth--;
 				}
@@ -5669,30 +5673,37 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * A `return` right in an `@switch` case body (TSRX2009). A collecting or
-			 * loose parse records it and reads the statement on, as it does a
-			 * `return` in an `@try` body, so the editor keeps the rest of the file.
-			 * @param {number} start the `return` keyword's offset
+			 * A `break` or `return` right in an `@switch` case body (TSRX2008,
+			 * TSRX2009). A collecting or loose parse records it over the keyword and
+			 * reads the statement on, as it does a `return` in an `@try` body, so the
+			 * editor keeps the rest of the file.
+			 * @param {number} start the keyword's offset
+			 * @param {'break' | 'return'} keyword
 			 */
-			#reportSwitchCaseReturn(start) {
+			#reportSwitchCaseJump(start, keyword) {
 				this.#report_recoverable_error_range(
 					start,
-					start + 'return'.length,
-					TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+					start + keyword.length,
+					keyword === 'break'
+						? TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT
+						: TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
 				);
+				if (keyword === 'break') this.#reportedSwitchCaseBreak = start;
 			}
 
 			/**
-			 * Marks a `return` `#reportSwitchCaseReturn` reported, so the template
-			 * return checks (here and in the transform) don't report it again.
+			 * Marks a jump `#reportSwitchCaseJump` reported, so the template checks
+			 * (here and in the transform) don't report it again.
 			 * @template {AST.Node} T
 			 * @param {T} statement
-			 * @param {boolean} reported
+			 * @param {'break' | 'return' | null} reported the jump's keyword, if reported
 			 * @returns {T}
 			 */
-			#markSwitchCaseReturn(statement, reported) {
-				if (reported && statement.type === 'ReturnStatement') {
+			#markSwitchCaseJump(statement, reported) {
+				if (reported === 'return' && statement.type === 'ReturnStatement') {
 					statement.metadata = { ...statement.metadata, invalid_tsrx_template_return: true };
+				} else if (reported === 'break' && statement.type === 'BreakStatement') {
+					statement.metadata = { ...statement.metadata, invalid_tsrx_switch_case_break: true };
 				}
 				return statement;
 			}
@@ -6078,6 +6089,13 @@ export function TSRXPlugin(config) {
 					// it at the function's start; acorn-typescript goes on to read the
 					// body (#784).
 					this.#raiseCheckerError(this.start, TS_ERRORS.AMBIENT_IMPLEMENTATION);
+					return /** @type {never} */ (undefined);
+				} else if (
+					message === 'Unsyntactic break' &&
+					this.#jumpStatement?.start === this.#reportedSwitchCaseBreak
+				) {
+					// A labeled `break` right in an `@switch` case, already recorded as
+					// TSRX2008, where acorn finds no target.
 					return /** @type {never} */ (undefined);
 				} else if (
 					(message === 'Unsyntactic break' || message === 'Unsyntactic continue') &&
