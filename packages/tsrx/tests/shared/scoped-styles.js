@@ -2088,6 +2088,7 @@ export function runSharedScopedStyleTests({
 						<style>
 							:root.dark:has(.missing) { animation: none; }
 							:root.dark:has(.missing) .icon { animation: none; }
+							.icon:not(:root.dark:has(.missing) .icon) { animation: none; }
 						</style>
 						<div ${attr}="wrap"><i ${attr}="icon" /></div>
 					</>
@@ -2101,6 +2102,10 @@ export function runSharedScopedStyleTests({
 			// And so it is when the rest of the selector matched.
 			expect(animated.css).toContain(
 				`:root.dark:has(.missing:where(.${animated_hash})) .icon.${animated_hash} { animation: none; }`,
+			);
+			// Not in a :not(), whose arguments stay as they were.
+			expect(animated.css).toContain(
+				`.icon.${animated_hash}:not(:root.dark:has(.missing) .icon:where(.${animated_hash})) { animation: none; }`,
 			);
 			// Nothing of a pruned selector is hashed, in its comment or after it.
 			expect(css).toContain(

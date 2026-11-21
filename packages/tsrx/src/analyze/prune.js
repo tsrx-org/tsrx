@@ -1396,13 +1396,17 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 				// So does an argument of the `:has()` of a global-like compound in a
 				// selector that matched (`:root.dark:has(.x) .icon`): matching the
 				// selector never matches the compound, nor its `:has()`.
+				// Not in a `:not()`, whose arguments stay as the pruner left them.
 				const compound = context.path.at(-3);
 				const global_like_has =
 					context.path.at(-2)?.type === 'PseudoClassSelector' &&
 					/** @type {AST.CSS.PseudoClassSelector} */ (context.path.at(-2)).name === 'has' &&
 					compound?.type === 'RelativeSelector' &&
 					compound.metadata.is_global_like &&
-					!compound.metadata.is_global;
+					!compound.metadata.is_global &&
+					!context.path.some(
+						(ancestor) => ancestor.type === 'PseudoClassSelector' && ancestor.name === 'not',
+					);
 				if (
 					((!node.metadata.used || node.metadata.is_global) &&
 						rule.prelude.children.includes(node)) ||
