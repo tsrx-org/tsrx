@@ -18420,6 +18420,67 @@ ${lines.join('\n')}
 		}
 	});
 
+	it('reads a tag in children that starts with an escape or a letter outside ASCII, as TypeScript does', () => {
+		// A `<` in children opens a tag before an escape for a character a name
+		// starts with, and before a letter outside ASCII. Not before an escape for
+		// another character, which stays text, as before (TypeScript reports
+		// TS1127 there).
+		/** @type {Array<[string, string[]]>} */
+		const snippets = [
+			[`const x = <div><${escape('0049')}nner n={5} /></div>;`, ['Inner']],
+			[`const x = <div>a <${escape('0061')}bbr>x</${escape('0061')}bbr></div>;`, ['abbr', 'abbr']],
+			[`const x = <div><${escape('{49}')}nner /></div>;`, ['Inner']],
+			[`const x = <div><é /><日本 /><Ω>x</Ω></div>;`, ['é', '日本', 'Ω', 'Ω']],
+		];
+		for (const [snippet, expected] of snippets) {
+			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
+			const diagnostics = /** @type {ts.DiagnosticWithLocation[]} */ (
+				/** @type {any} */ (file).parseDiagnostics
+			);
+			/** @type {any[]} */
+			const errors = [];
+			const ast = parseModule(snippet, 'App.tsrx', { collect: true, errors });
+			expect(
+				errors.map((error) => [error.code, error.pos, error.end]),
+				snippet,
+			).toEqual(
+				diagnostics.map((diagnostic) => [
+					`TS${diagnostic.code}`,
+					diagnostic.start,
+					diagnostic.start + diagnostic.length,
+				]),
+			);
+			/** @type {string[]} */
+			const names = [];
+			walk_names(ast, names);
+			expect(
+				names.filter((name) => name !== 'div' && name !== 'n'),
+				snippet,
+			).toEqual(expected);
+			if (diagnostics.length > 0) {
+				expect(() => parseModule(snippet, 'App.tsrx'), snippet).toThrow(
+					error_with(TS_ERRORS.JSX_NAME_UNICODE_ESCAPE, line_column(snippet, diagnostics[0].start)),
+				);
+			}
+		}
+		// In a template's children, too.
+		const template = `export function App() @{\n\t<div><${escape('0049')}nner n={5} /></div>\n}\n`;
+		/** @type {any[]} */
+		const errors = [];
+		parseModule(template, 'App.tsrx', { collect: true, errors });
+		const at = template.indexOf(backslash);
+		expect(errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+			['TS17021', at, at + 10],
+		]);
+		/** @type {any[]} */
+		const text_errors = [];
+		parseModule(`const x = <div>1 <${escape('0031')} 2</div>;`, 'App.tsrx', {
+			collect: true,
+			errors: text_errors,
+		});
+		expect(text_errors).toEqual([]);
+	});
+
 	/**
 	 * The names of the JSX identifiers in `node`.
 	 * @param {unknown} node

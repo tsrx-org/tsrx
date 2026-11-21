@@ -1521,6 +1521,31 @@ export function App() @{
               (identifier))))))))
 
 =====================================
+JSX Text With A Less-Than Before An Escape
+=====================================
+
+export function App() @{
+  <span>1 <\u0031 2 <\u002d 3 <\x</span>
+}
+
+---
+
+(program
+  (export_statement
+    (function_declaration
+      (identifier)
+      (formal_parameters)
+      (jsx_statement_container
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_text)
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))))))
+
+=====================================
 JSX Text With At Signs
 =====================================
 

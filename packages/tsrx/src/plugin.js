@@ -1808,8 +1808,10 @@ function get_argument_clash_reported_names(check_clashes) {
 /**
  * A `<` opens a tag only when the character after it can begin one: `/` for a
  * closing tag, `>` for a fragment, `{` for a dynamic tag, or an element or
- * component name start. Any other character, or end of input, leaves the `<`
- * as literal text.
+ * component name start, as TypeScript reads one: also a letter outside ASCII
+ * (`<é />`), or a Unicode escape for one (`<\u0049nner />`), whose name
+ * then gets TS17021 (see `#reportJSXNameEscape`). Any other character, or end
+ * of input, leaves the `<` as literal text.
  * @param {string} input
  * @param {number} index Index of the `<`.
  */
@@ -1823,8 +1825,26 @@ function can_start_tag_after_lt(input, index) {
 		next === CharCode.dollar ||
 		next === CharCode.underscore ||
 		(next >= CharCode.uppercaseA && next <= CharCode.uppercaseZ) ||
-		(next >= CharCode.lowercaseA && next <= CharCode.lowercaseZ)
+		(next >= CharCode.lowercaseA && next <= CharCode.lowercaseZ) ||
+		(next > 0x7f &&
+			is_identifier_start(/** @type {number} */ (input.codePointAt(index + 1)), true)) ||
+		(next === CharCode.backslash &&
+			is_identifier_start(escaped_code_point_at(input, index + 1), true))
 	);
+}
+
+/**
+ * The code point that the well-formed Unicode escape at `index` spells
+ * (`\uXXXX` or `\u{X}`), or -1.
+ * @param {string} input
+ * @param {number} index
+ */
+function escaped_code_point_at(input, index) {
+	regex_name_escape_at.lastIndex = index;
+	const match = regex_name_escape_at.exec(input);
+	if (!match) return -1;
+	const code = Number.parseInt(match[1] ?? match[2], 16);
+	return code <= 0x10ffff ? code : -1;
 }
 
 /** The start of an end tag for a script, in any letter case. */
@@ -14571,11 +14591,8 @@ export function TSRXPlugin(config) {
 			 * @param {number} index
 			 */
 			#escapeContinuesName(index) {
-				regex_name_escape_at.lastIndex = index;
-				const match = regex_name_escape_at.exec(this.input);
-				if (!match) return false;
-				const code = Number.parseInt(match[1] ?? match[2], 16);
-				return code <= 0x10ffff && is_identifier_char(code, true);
+				const code = escaped_code_point_at(this.input, index);
+				return code !== -1 && is_identifier_char(code, true);
 			}
 
 			/**
