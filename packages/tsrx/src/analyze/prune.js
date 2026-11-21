@@ -1457,13 +1457,20 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
  * written: they are global too, so none is pruned or scoped, whatever matching
  * the compound against the component's elements found (#1314).
  *
+ * So are the arguments of the `:not()`, `:is()` and `:where()` of a compound
+ * with `:root` or `:host` (`:root:not(.dark)`): they are about the page's root
+ * element or the shadow host, never one of the component's elements. Pruning
+ * them left an empty `:not()`, which is invalid. Those of its `:has()` are the
+ * element's descendants, scoped as before.
+ *
  * @param {AST.CSS.Node} css
  * @returns {void}
  */
 export function keep_global_compound_arguments(css) {
 	walk(css, null, {
 		RelativeSelector(node, { next }) {
-			if (!is_outer_global(node)) return next();
+			const global = is_outer_global(node);
+			if (!global && !node.selectors.some(is_root_or_host)) return next();
 
 			for (const selector of node.selectors) {
 				if (
@@ -1472,10 +1479,14 @@ export function keep_global_compound_arguments(css) {
 					(selector.name === 'not' ||
 						selector.name === 'is' ||
 						selector.name === 'where' ||
-						selector.name === 'has')
+						(global && selector.name === 'has'))
 				) {
 					walk(/** @type {AST.CSS.Node} */ (selector.args), null, {
 						ComplexSelector(complex_selector, context) {
+							// In a :root or :host compound's argument, a selector with an `&`
+							// is about the rule around it, or a `@scope`'s root, and is left
+							// as the pruner matched it.
+							if (!global && has_nesting_selector(complex_selector)) return;
 							complex_selector.metadata.used = true;
 							context.next();
 						},
@@ -1483,9 +1494,41 @@ export function keep_global_compound_arguments(css) {
 							relative_selector.metadata.scoped = false;
 							context.next();
 						},
+						// There, a :has() still looks at descendants
+						// (`:root:not(:root:has(.icon))`), scoped as before.
+						PseudoClassSelector(pseudo_class, context) {
+							if (global || pseudo_class.name !== 'has') context.next();
+						},
 					});
 				}
 			}
+			// The arguments of a :root or :host compound's :has() may hold more.
+			if (!global) next();
 		},
 	});
+}
+
+/**
+ * Whether one of `selector`'s compounds has an `&`.
+ *
+ * @param {AST.CSS.ComplexSelector} selector
+ * @returns {boolean}
+ */
+function has_nesting_selector(selector) {
+	return selector.children.some(({ selectors }) =>
+		selectors.some((simple) => simple.type === 'NestingSelector'),
+	);
+}
+
+/**
+ * Whether `simple` is `:root` or `:host` (`:host(...)` too), which match the
+ * page's root element or the shadow host.
+ *
+ * @param {AST.CSS.SimpleSelector} simple
+ * @returns {boolean}
+ */
+function is_root_or_host(simple) {
+	return (
+		simple.type === 'PseudoClassSelector' && (simple.name === 'root' || simple.name === 'host')
+	);
 }

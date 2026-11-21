@@ -2491,6 +2491,58 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('keeps the :not(), :is() and :where() arguments of a :root or :host compound as written', () => {
+			// They are about <html> or the shadow host, never one of the component's
+			// elements: pruned, they left an empty :not(), and the browser dropped the
+			// rule.
+			for (const [selector, kept] of [
+				[':root:not(.dark)', ':root:not(.dark) {'],
+				[':root:not(.dark):not(.light) .icon', ':root:not(.dark):not(.light) .icon'],
+				[':root:not(.missing, .icon)', ':root:not(.missing, .icon) {'],
+				[':root:not(.wrap .missing)', ':root:not(.wrap .missing) {'],
+				[':root:is(.dark, .light) .icon', ':root:is(.dark, .light) .icon'],
+				[':root:where(.missing) .icon', ':root:where(.missing) .icon'],
+				[':host:not(.open) .icon', ':host:not(.open) .icon'],
+			]) {
+				const rule = `${selector} { color: red; }`;
+				const theme = compile(`export const theme = <style>${rule}</style>;`, 'App.tsrx');
+				const component = compile(
+					`export function App() @{
+						<>
+							<style>${rule}</style>
+							<div ${attr}="wrap"><i ${attr}="icon" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+				expect(theme.css, selector).toContain(kept);
+				expect(component.css, selector).toContain(kept);
+				expect(component.css, selector).not.toContain('(unused)');
+			}
+			// Those of its :has() are its descendants, scoped, in such an argument too.
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							:root:has(.icon):not(.dark) { color: red; }
+							:root:not(:root:has(.icon)) .wrap { color: blue; }
+							@scope (.wrap) { :root:is(&) { color: green; } }
+							@scope (.wrap) { :root:is(&.missing) { color: gray; } }
+						</style>
+						<div ${attr}="wrap"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`:root:has(.icon.${hash}):not(.dark) {`);
+			expect(css).toContain(`:root:not(:root:has(.icon:where(.${hash}))) .wrap.${hash} {`);
+			// So does an & for a @scope's root, as :scope does.
+			expect(css).toContain(`:root:is(&.${hash}) { color: green; }`);
+			// An argument with an & is matched as before: no .missing, so pruned.
+			expect(css).toContain(':root:is(/* (unused) &.missing*/) { color: gray; }');
+		});
+
 		it('keeps the arguments of a :global() compound in a scope without elements', () => {
 			for (const pseudo of ['not', 'is', 'where', 'has']) {
 				const { css } = compile(
