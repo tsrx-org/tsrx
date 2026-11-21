@@ -1,5 +1,31 @@
 # @tsrx/language-server
 
+## 0.7.14
+
+### Patch Changes
+
+- [#1492](https://github.com/tsrx-org/tsrx/pull/1492)
+  [`835320d`](https://github.com/tsrx-org/tsrx/commit/835320d4a7660a7e382a166cb2a8c1188e064c98)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The closing tag the
+  editor inserts after a JSX tag whose name has a Unicode escape now has the name
+  the escape spells: typing `>` after `<Inn\u0065r` inserts `</Inner>`, and after
+  `<st\u0079le` `</style>`, in the TSRX language server and through the TypeScript
+  plugin. The language server inserted `</Inn>` and `</st>`, the TypeScript plugin
+  `</st\u0079le>`, which doesn't end a `<style>` body. Tags whose names are
+  spelled differently but read the same (`<Inner><Inn\u0065r>`) now count as the
+  same tag when deciding whether one still needs its closing tag.
+- Updated dependencies
+  [[`835320d`](https://github.com/tsrx-org/tsrx/commit/835320d4a7660a7e382a166cb2a8c1188e064c98),
+  [`835320d`](https://github.com/tsrx-org/tsrx/commit/835320d4a7660a7e382a166cb2a8c1188e064c98),
+  [`e75d581`](https://github.com/tsrx-org/tsrx/commit/e75d581a055287586532f674edc110d7041f3d6c),
+  [`b718942`](https://github.com/tsrx-org/tsrx/commit/b718942eb90fae98dcfcf6348dca5145bd354582),
+  [`e65e512`](https://github.com/tsrx-org/tsrx/commit/e65e5125ae4c3fc46efd787ad6521a90283a484a),
+  [`822c103`](https://github.com/tsrx-org/tsrx/commit/822c103329a33d8c5d6631baabe809a662725919),
+  [`d4d97a3`](https://github.com/tsrx-org/tsrx/commit/d4d97a3caf776d9139b9da90c6c10f78db12c848),
+  [`7c86de0`](https://github.com/tsrx-org/tsrx/commit/7c86de009883d959b0a006e6faf45d8ba15d93df)]:
+  - @tsrx/typescript-plugin@0.7.14
+  - @tsrx/core@0.9.0
+
 ## 0.7.13
 
 ### Patch Changes

@@ -1,5 +1,29 @@
 # @tsrx/solid
 
+## 0.4.14
+
+### Patch Changes
+
+- [#1488](https://github.com/tsrx-org/tsrx/pull/1488)
+  [`e65e512`](https://github.com/tsrx-org/tsrx/commit/e65e5125ae4c3fc46efd787ad6521a90283a484a)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, an `@case`
+  test that the `@switch` value can never equal is now reported on the test in the
+  editor, as on the other targets. Solid compares a copy of the value with each
+  test (`<Match when={value === test}>`), and TypeScript reports TS2367 on the
+  whole comparison, which had no mapping of its own: the error covered everything
+  from the `@switch` value to the test, often several lines. The editor output now
+  writes each copy in parentheses and maps the comparison to its test, under the
+  classic language server and under TypeScript 7. The build output doesn't change.
+- Updated dependencies
+  [[`835320d`](https://github.com/tsrx-org/tsrx/commit/835320d4a7660a7e382a166cb2a8c1188e064c98),
+  [`e75d581`](https://github.com/tsrx-org/tsrx/commit/e75d581a055287586532f674edc110d7041f3d6c),
+  [`b718942`](https://github.com/tsrx-org/tsrx/commit/b718942eb90fae98dcfcf6348dca5145bd354582),
+  [`e65e512`](https://github.com/tsrx-org/tsrx/commit/e65e5125ae4c3fc46efd787ad6521a90283a484a),
+  [`822c103`](https://github.com/tsrx-org/tsrx/commit/822c103329a33d8c5d6631baabe809a662725919),
+  [`d4d97a3`](https://github.com/tsrx-org/tsrx/commit/d4d97a3caf776d9139b9da90c6c10f78db12c848),
+  [`7c86de0`](https://github.com/tsrx-org/tsrx/commit/7c86de009883d959b0a006e6faf45d8ba15d93df)]:
+  - @tsrx/core@0.9.0
+
 ## 0.4.13
 
 ### Patch Changes
