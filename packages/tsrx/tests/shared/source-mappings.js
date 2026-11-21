@@ -1510,23 +1510,34 @@ export function App() @{
 			expect(result.errors).toEqual([]);
 			expect(result.code).toContain('useState as useState');
 			expect(result.code).toMatch(/(["'])a\1 as (["'])a\2/);
-			for (const [needle, skip] of /** @type {const} */ ([
-				['useState as', 0],
-				['as useState', 3],
-				['"a" as', 0],
-				['as "a"', 3],
-				['sentinel', 0],
+			const map = new SourceMap(result.mappings);
+			/** @type {number[]} */
+			const generated = [];
+			for (const [needle, skip, text] of /** @type {const} */ ([
+				['useState as', 0, 'useState'],
+				['as useState', 3, 'useState'],
+				['"a" as', 0, '"a"'],
+				['as "a"', 3, '"a"'],
+				['sentinel', 0, 'sentinel'],
 			])) {
 				const offset = printed_source.indexOf(needle) + skip;
-				expect(
-					result.mappings.some(
-						(mapping) =>
-							mapping.sourceOffsets[0] === offset &&
-							(isRenameEnabled(mapping.data) || isDiagnosticsEnabled(mapping.data)),
-					),
-					needle,
-				).toBe(true);
+				const mapping = result.mappings.find(
+					(candidate) =>
+						candidate.sourceOffsets[0] === offset &&
+						candidate.lengths[0] === text.length &&
+						isDiagnosticsEnabled(candidate.data),
+				);
+				assert(mapping, needle);
+				const start = mapping.generatedOffsets[0];
+				expect(result.code.slice(start, start + text.length).replace(/'/g, '"'), needle).toBe(text);
+				// Each name maps back to itself from its own printed text.
+				const [back] = [
+					...map.toSourceRange(start, start + text.length, true, isDiagnosticsEnabled),
+				];
+				expect(back?.[0], needle).toBe(offset);
+				generated.push(start);
 			}
+			expect(new Set(generated).size).toBe(generated.length);
 		});
 	});
 
