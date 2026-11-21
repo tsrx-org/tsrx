@@ -2910,6 +2910,20 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether the `}` at `index` ends the name token just read, a name that
+			 * ends with a braced escape (`<Bo\u{78}<T> />`), rather than a block,
+			 * which a tag can follow.
+			 * @param {number} index
+			 */
+			#endsEscapedName(index) {
+				return (
+					(this.type === tt.name || this.type === tstt.jsxName) &&
+					index === this.lastTokEnd - 1 &&
+					this.input.charCodeAt(index) === CharCode.closeBrace
+				);
+			}
+
+			/**
 			 * Returns true when a `<` at `index` can start TypeScript type
 			 * parameters/arguments in expression-like code rather than a JSX tag.
 			 * Most type argument lists are adjacent to the previous token (`foo<T>`,
@@ -2927,15 +2941,7 @@ export function TSRXPlugin(config) {
 			#canStartTypeParameterOrArgumentList(index) {
 				const next = this.input.charCodeAt(index + 1);
 				if (next === CharCode.equals || next === CharCode.lessThan) return false;
-				// A name that ends with a braced escape (`<Bo\u{78}<T> />`) ends with
-				// `}`, which elsewhere ends a block that a tag can follow.
-				if (
-					(this.type === tt.name || this.type === tstt.jsxName) &&
-					this.input.charCodeAt(this.lastTokEnd - 1) === CharCode.closeBrace &&
-					this.#previousNonSpaceTabCommentIndex(index) === this.lastTokEnd - 1
-				) {
-					return true;
-				}
+				if (this.#endsEscapedName(this.#previousNonSpaceTabCommentIndex(index))) return true;
 				const previous = this.#previousNonSpaceTabIndex(index);
 				if (previous < 0) return false;
 				if (previous === index - 1) {
@@ -12045,6 +12051,8 @@ export function TSRXPlugin(config) {
 						this.#functionBodyDepth === 0 && this.#isNativeTemplateNode(parent);
 					/** @type {number | null} */
 					let prevNonWhitespaceChar = null;
+					// Whether that is the `}` of a name's braced escape, not a block's.
+					let after_escaped_name = false;
 					const nextChar =
 						this.pos + 1 < this.input.length ? this.input.charCodeAt(this.pos + 1) : -1;
 
@@ -12074,6 +12082,7 @@ export function TSRXPlugin(config) {
 						// starts a tag after a statement without a semicolon.
 						const previous = this.#previousNonSpaceTabCommentIndex(this.pos);
 						prevNonWhitespaceChar = previous >= 0 ? this.input.charCodeAt(previous) : null;
+						after_escaped_name = this.#endsEscapedName(previous);
 
 						if (
 							nextChar !== CharCode.slash &&
@@ -12094,7 +12103,7 @@ export function TSRXPlugin(config) {
 						prevNonWhitespaceChar === null ||
 						acorn.isNewLine(prevNonWhitespaceChar) ||
 						prevNonWhitespaceChar === CharCode.openBrace ||
-						prevNonWhitespaceChar === CharCode.closeBrace ||
+						(prevNonWhitespaceChar === CharCode.closeBrace && !after_escaped_name) ||
 						prevNonWhitespaceChar === CharCode.greaterThan;
 
 					if (!inNativeTemplate && this.exprAllowed && isTagLikeAfterLt) {
