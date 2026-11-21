@@ -1,5 +1,31 @@
 # @tsrx/core
 
+## 0.10.0
+
+### Minor Changes
+
+- [#1496](https://github.com/tsrx-org/tsrx/pull/1496)
+  [`e679ea7`](https://github.com/tsrx-org/tsrx/commit/e679ea723e75673a6b4c8224687ea3524344d31b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `<` in children, a
+  template's or a JSX element's, now opens a tag before a Unicode escape for a
+  character a name can start with (`<\u0049nner n={5} />`), and before a letter
+  outside ASCII (`<é />`, `<Ω>…</Ω>`), as TypeScript reads them. The escaped name
+  then gets TS17021, as it does everywhere else, instead of compiling to text with
+  the attribute's `{5}` as an expression in it, which showed `<\u0049nner n=5 />`
+  on the page. Before, `<é />` was text too, and `<Ω>x</Ω>` failed with a closing
+  tag that doesn't match. A `<` before an escape for another character (`<\u0031`)
+  is still text.
+
+  A generic arrow function whose type parameter is written with an escape
+  (`<\u0054,>(x: T) => x`, `<T\u0061,>(…) => …`) now parses, as TypeScript reads
+  it, in an expression and as an `@for` key. Before, it failed with TS17021 or
+  TS1012.
+
+  Migration: to write a `<` as text before a letter outside ASCII, write `&lt;` or
+  `{'<'}`, as before an ASCII letter. A comparison whose `<` starts a line, right
+  before such a letter, after a left operand on the line before, now reads as a
+  tag too, as before an ASCII letter: put a space after the `<`.
+
 ## 0.9.0
 
 ### Minor Changes

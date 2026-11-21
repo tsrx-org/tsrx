@@ -3,7 +3,7 @@
   "description": "Vite plugin for @tsrx/react (.tsrx modules)",
   "license": "MIT",
   "author": "Dominic Gannaway",
-  "version": "0.0.135",
+  "version": "0.0.136",
   "type": "module",
   "publishConfig": {
     "access": "public"

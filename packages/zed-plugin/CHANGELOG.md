@@ -1,5 +1,20 @@
 # @tsrx/zed-plugin
 
+## 0.1.20
+
+### Patch Changes
+
+- [#1496](https://github.com/tsrx-org/tsrx/pull/1496)
+  [`e679ea7`](https://github.com/tsrx-org/tsrx/commit/e679ea723e75673a6b4c8224687ea3524344d31b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The tree-sitter grammar
+  now ends text at a `<` before a Unicode escape for a character a name can start
+  with (`<\u0049nner />`), as the compiler does, and before a letter outside
+  ASCII, as its other name checks read one (`iswalpha`). Before, the `<` and what
+  follows it were text. A braced escape (`<\u{49}`) is still text, so that its `{`
+  still starts an expression when the escape doesn't spell a name's start.
+- Updated dependencies []:
+  - @tsrx/language-server@0.7.15
+
 ## 0.1.19
 
 ### Patch Changes
