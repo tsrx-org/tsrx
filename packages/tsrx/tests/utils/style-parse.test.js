@@ -109,8 +109,21 @@ describe('parseStyle declaration values', function () {
 		// A comment in a string or an unquoted url() is text.
 		[".a { content: '/* } */'; }", [[['content', "'/* } */'"]]]],
 		['.a { background: url(/* x */a.png); }', [[['background', 'url(/* x */a.png)']]]],
+		// url is a name, so URL( is one too.
+		[
+			'.a{background:URL(/*x)}.b{color:red/* } */}',
+			[[['background', 'URL(/*x)']], [['color', 'red/* } */']]],
+		],
 	])('reads past a comment in %j', function (css, expected) {
 		expect(blocks(css)).toEqual(expected);
+	});
+
+	it('reads an escaped url( as url(', function () {
+		const rules = blocks(String.raw`.a{background:u\72l(/*x)}.b{color:red}`);
+
+		expect(
+			rules.map((declarations) => declarations.map((/** @type {any} */ item) => item[0])),
+		).toEqual([['background'], ['color']]);
 	});
 
 	it('reports a comment a value leaves open, unless loose', function () {

@@ -443,10 +443,24 @@ function read_declaration(parser) {
 }
 
 /**
+ * Whether the source text `value` ends with the name `url`, which CSS reads
+ * case-insensitively and with escapes (`URL`, `u\72l`): a comment can't start
+ * in its argument.
+ *
+ * @param {string} value
+ * @returns {boolean}
+ */
+function ends_with_url(value) {
+	const name = /(?:\\[0-9a-f]{1,6}\s?|\\[^0-9a-f\n]|[a-z0-9_-])+$/i.exec(value);
+	return name !== null && unescape_css(name[0]).toLowerCase() === 'url';
+}
+
+/**
  * @param {Parser} parser
  * @returns {string}
  */
 function read_value(parser) {
+	const start = parser.index;
 	let value = '';
 	let escaped = false;
 	let in_url = false;
@@ -480,7 +494,7 @@ function read_value(parser) {
 			in_url = false;
 		} else if (quote_mark === null && (char === '"' || char === "'")) {
 			quote_mark = char;
-		} else if (char === '(' && value.slice(-3) === 'url') {
+		} else if (char === '(' && ends_with_url(parser.template.slice(start, parser.index))) {
 			in_url = true;
 		} else if ((char === ';' || char === '{' || char === '}') && !in_url && !quote_mark) {
 			return value.trim();
