@@ -1879,8 +1879,8 @@ export function App() @{
 
 		it('reads a tag in template children that starts with an escape or a letter outside ASCII', () => {
 			// A `<` there opens a tag where TypeScript reads one, so the escaped name
-			// gets TS17021 as everywhere else, rather than the text
-			// `&lt;Inner n={5} /&gt;`, and `<Ω />` is an element. An escape for a
+			// gets TS17021 as everywhere else, rather than being text around the
+			// expression `{5}`, and `<Ω />` is an element. An escape for a
 			// character that can't start a name leaves the `<` as text, as before.
 			const lead = `${backslash}u0049nner`;
 			const children_source = [
@@ -1901,7 +1901,8 @@ export function App() @{
 			]);
 			expect(collected.code).toContain('<Inner n={5} />');
 			expect(collected.code).toContain('<Ω />');
-			expect(collected.code).not.toContain('Inner n={5} /&gt;');
+			// No text keeps the escape's spelling.
+			expect(collected.code).not.toContain(lead.slice(1));
 			const result = compile_to_volar_mappings(children_source, 'App.tsrx', { loose: true });
 			expect(
 				result.mappings.some(

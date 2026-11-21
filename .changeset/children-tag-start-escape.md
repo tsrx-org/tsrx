@@ -2,7 +2,7 @@
 '@tsrx/core': minor
 ---
 
-A `<` in children, a template's or a JSX element's, now opens a tag before a Unicode escape for a character a name can start with (`<\u0049nner n={5} />`), and before a letter outside ASCII (`<é />`, `<Ω>…</Ω>`), as TypeScript reads them. The escaped name then gets TS17021, as it does everywhere else, instead of compiling to the text `&lt;Inner n={5} /&gt;`. Before, `<é />` was text too, and `<Ω>x</Ω>` failed with a closing tag that doesn't match. A `<` before an escape for another character (`<\u0031`) is still text.
+A `<` in children, a template's or a JSX element's, now opens a tag before a Unicode escape for a character a name can start with (`<\u0049nner n={5} />`), and before a letter outside ASCII (`<é />`, `<Ω>…</Ω>`), as TypeScript reads them. The escaped name then gets TS17021, as it does everywhere else, instead of compiling to text with the attribute's `{5}` as an expression in it, which showed `<\u0049nner n=5 />` on the page. Before, `<é />` was text too, and `<Ω>x</Ω>` failed with a closing tag that doesn't match. A `<` before an escape for another character (`<\u0031`) is still text.
 
 A generic arrow function whose type parameter is written with an escape (`<\u0054,>(x: T) => x`, `<T\u0061,>(…) => …`) now parses, as TypeScript reads it, in an expression and as an `@for` key. Before, it failed with TS17021 or TS1012.
 
