@@ -5885,9 +5885,9 @@ export function TSRXPlugin(config) {
 				}
 				if (code_start === -1) return;
 				// What the dropped children recorded is reported again as the code is
-				// read again.
-				const errors = this.#errors;
-				if (errors) {
+				// read again, held (in a parameter's default) or not.
+				for (const errors of new Set([this.#errors, this.#hold.held])) {
+					if (!errors) continue;
 					const kept = errors.filter(
 						(error) =>
 							!(
@@ -14451,9 +14451,9 @@ export function TSRXPlugin(config) {
 			 * one. acorn-typescript reads identifier characters and `-` and stops at
 			 * an escape, so `<Inn\u0065r />` read as the tag `Inn` with an attribute
 			 * `\u0065r`, and `<Inn\u0065r></Inn\u0065r>` didn't parse. TypeScript
-			 * reads the escape as part of the name, as in an identifier, and reports
-			 * TS17021 on the name; so does this (see `#reportJSXNameEscape`). The
-			 * name is the one the escapes spell.
+			 * reads the escape as part of the name, as in an identifier; so does
+			 * this, and `jsx_parseIdentifier` reports it as TypeScript does. The name
+			 * is the one the escapes spell.
 			 * @type {Parse.Parser['jsx_readWord']}
 			 */
 			jsx_readWord() {
@@ -14461,7 +14461,6 @@ export function TSRXPlugin(config) {
 				let word = '';
 				let chunk_start = this.pos;
 				let first = true;
-				let escaped_name = false;
 				while (this.pos < this.input.length) {
 					const ch = this.fullCharCodeAtPos();
 					if (is_identifier_char(ch, true) || ch === CharCode.hyphen) {
@@ -14479,7 +14478,6 @@ export function TSRXPlugin(config) {
 						}
 						word += String.fromCodePoint(escaped);
 						chunk_start = this.pos;
-						escaped_name = true;
 					} else {
 						break;
 					}
@@ -14489,25 +14487,39 @@ export function TSRXPlugin(config) {
 				// starts, so this has read at least one character; if not, its reader
 				// does, rather than this one returning an empty name forever.
 				if (this.pos === start) return super.jsx_readWord();
-				if (escaped_name) this.#reportJSXNameEscape(start, this.pos);
 				return this.finishToken(tstt.jsxName, word + this.input.slice(chunk_start, this.pos));
 			}
 
 			/**
 			 * A JSX name written with a Unicode escape (`<Inn\u0065r />`), which
-			 * TypeScript's scanner reports as TS17021 on the name, or on the part of a
-			 * member or namespaced name that has it: a strict parse throws it, and a
-			 * collecting or loose one records it, once (the tokenizer can read a name
-			 * again), and reads the name on as the one the escapes spell.
+			 * TypeScript reports as TS17021 on the name as it reads it
+			 * (`parseIdentifierNameErrorOnUnicodeEscapeSequence`): a tag's or an
+			 * attribute's name, or a part of a member or namespaced one. Not an
+			 * attribute's unquoted value, nor a name a lookahead only tokenizes.
+			 *
+			 * A strict parse throws it, unless it holds errors, or the parse is a
+			 * speculative one, which reports it once kept (see `tryParse`), so that
+			 * an abandoned attempt doesn't fail on it. A collecting or loose parse
+			 * records it, once, and reads on with the name the escapes spell.
 			 * @param {number} start
 			 * @param {number} end
 			 */
 			#reportJSXNameEscape(start, end) {
-				if (!this.#collect) this.#throwError(start, TS_ERRORS.JSX_NAME_UNICODE_ESCAPE);
-				const errors = this.#hold.held ?? this.#errors;
-				if (errors?.some((other) => other.pos === start && other.code === 'TS17021')) return;
-				if (errors) this.parseEffects?.willAppend(errors);
-				this.#report_recoverable_error_range(start, end, TS_ERRORS.JSX_NAME_UNICODE_ESCAPE, errors);
+				const error = TS_ERRORS.JSX_NAME_UNICODE_ESCAPE;
+				if (this.#collect || this.#hold.held) {
+					this.#recordCheckerLevelError(start, end, error, true);
+					return;
+				}
+				if (this.parseEffects?.active) {
+					/** @type {CompileError[]} */
+					const recorded = [];
+					this.#report_recoverable_error_range(start, end, error, recorded);
+					raised_errors.add(recorded[0]);
+					this.parseEffects.willAppend(this.#speculativeErrors);
+					this.#speculativeErrors.push(recorded[0]);
+					return;
+				}
+				this.#throwError(start, error);
 			}
 
 			/**
@@ -14518,6 +14530,18 @@ export function TSRXPlugin(config) {
 
 				if (this.type === tt.name || this.type.keyword || this.type === tstt.jsxName) {
 					node.name = /** @type {string} */ (this.value);
+					if (this.input.slice(this.start, this.end).includes('\\')) {
+						// A member's property is an identifier, which ends at a `-`, which
+						// only a tag's or an attribute's name has.
+						const after_dot =
+							this.lastTokEnd - this.lastTokStart === 1 &&
+							this.input.charCodeAt(this.lastTokStart) === CharCode.dot;
+						const hyphen = after_dot ? this.input.indexOf('-', this.start) : -1;
+						const end = hyphen !== -1 && hyphen < this.end ? hyphen : this.end;
+						if (this.input.slice(this.start, end).includes('\\')) {
+							this.#reportJSXNameEscape(this.start, end);
+						}
+					}
 					this.next();
 				} else {
 					return super.jsx_parseIdentifier();

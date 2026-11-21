@@ -18342,6 +18342,54 @@ ${lines.join('\n')}
 		);
 	});
 
+	it('reports it only where TypeScript reads a JSX name, also in speculative parses', () => {
+		// After type arguments and in a generic call or arrow function, which the
+		// parser reads speculatively first, on a member's part up to a `-`, and
+		// not on an attribute's unquoted value, which isn't a name.
+		const snippets = [
+			`const x = <A<T> a${escape('0062')} />;`,
+			`const x = f<T,>(x = <A${escape('0062')} />, 1);`,
+			`const f = async <T,>(x = <A${escape('0062')} />) => { const y = 1; };`,
+			`const x = <X.A${escape('0062')}-c />;`,
+			`const x = <X.A-${escape('0062')} />;`,
+			`const x = <X a=A${escape('0062')} />;`,
+		];
+		for (const snippet of snippets) {
+			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
+			const diagnostics = /** @type {ts.DiagnosticWithLocation[]} */ (
+				/** @type {any} */ (file).parseDiagnostics
+			);
+			const expected = diagnostics
+				.filter((diagnostic) => diagnostic.code === 17021)
+				.map((diagnostic) => [diagnostic.start, diagnostic.start + diagnostic.length]);
+			/** @type {any[]} */
+			const errors = [];
+			try {
+				parseModule(snippet, 'App.tsrx', { collect: true, errors });
+			} catch {
+				// Another error stops the parse; the ones before it are recorded.
+			}
+			expect(
+				errors.filter((error) => error.code === 'TS17021').map((error) => [error.pos, error.end]),
+				snippet,
+			).toEqual(expected);
+			// A strict parse throws TypeScript's first error when it's this one.
+			const strict = (() => {
+				try {
+					parseModule(snippet, 'App.tsrx');
+					return null;
+				} catch (error) {
+					return /** @type {any} */ (error);
+				}
+			})();
+			if (diagnostics[0]?.code === 17021) {
+				expect([strict?.code, strict?.pos], snippet).toEqual(['TS17021', diagnostics[0].start]);
+			} else {
+				expect(strict?.code, snippet).not.toBe('TS17021');
+			}
+		}
+	});
+
 	/**
 	 * The names of the JSX identifiers in `node`.
 	 * @param {unknown} node
