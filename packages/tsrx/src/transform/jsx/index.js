@@ -6613,7 +6613,10 @@ function collect_directive_jumps(node, parent, scope, found) {
 			// The `@if` and `@for` checks, which see a jump in an `@try` right in
 			// their bodies, leave it to this one.
 			node.metadata = { ...node.metadata, invalid_directive_jump: true };
-			found.push({ node, kind: scope.kind });
+			// The parser reports a `break` right in an `@switch` case.
+			if (!(node.type === 'BreakStatement' && node.metadata.invalid_tsrx_switch_case_break)) {
+				found.push({ node, kind: scope.kind });
+			}
 		}
 		return;
 	}

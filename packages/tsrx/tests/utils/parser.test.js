@@ -3627,6 +3627,41 @@ foo();`;
 		}
 	});
 
+	it('records a break right in a JSX switch case when collecting, and reads on', () => {
+		for (const [statement, also] of [
+			['break;', ''],
+			['<path />\n\t\t\t\t\t\tbreak;', ''],
+			['<path /> break;', ''],
+			['const d = 1; break;', ''],
+			['break', " @case 'g': { return; }"],
+			['break;', " @case 'g': { <g /> break; }"],
+		]) {
+			/** @type {any[]} */
+			const errors = [];
+			const source = `function App() { return @switch (tag) {
+					@case 'path': {
+						${statement}
+					}${also}
+				}; }
+				export const after = 1;`;
+			const program = parseModule(source, 'App.tsrx', { collect: true, loose: true, errors });
+			const jumps = [...source.matchAll(/\b(break|return)\b/g)].slice(1);
+			expect(
+				errors.map((error) => [error.code, error.pos, error.end]),
+				statement,
+			).toEqual(
+				jumps.map(({ 1: keyword, index }) => [
+					keyword === 'break'
+						? TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code
+						: TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code,
+					index,
+					index + keyword.length,
+				]),
+			);
+			expect(program.body.at(-1)?.type, statement).toBe('ExportNamedDeclaration');
+		}
+	});
+
 	it('scopes switch case setup locals to their own case block', () => {
 		expect(() =>
 			parseModule(
