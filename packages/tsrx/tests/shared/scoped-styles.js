@@ -1876,8 +1876,10 @@ export function runSharedScopedStyleTests({
 				['.wrap:global(> i)', (hash) => `.wrap.${hash}> i {`],
 				['.wrap:global(+n)', (hash) => `.wrap.${hash}+n {`],
 				['.wrap:global(n-1)', (hash) => `.wrap.${hash}:is(n-1) {`],
-				// A global block prunes nothing, so its selectors get the :is() too.
+				// A global block prunes nothing, so its selectors get the :is() too, as
+				// do the arguments of a compound with a bare :global.
 				[':global { .x:global(div)', () => '.x:is(div) {'],
+				['.wrap:global:is(.missing:global(div))', (hash) => `.wrap.${hash}:is(.missing:is(div)) {`],
 			];
 			for (const [selector, expected] of cases) {
 				const rule = `${selector} { color: red; }${selector.includes(' {') ? ' }' : ''}`;

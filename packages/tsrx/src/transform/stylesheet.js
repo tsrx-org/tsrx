@@ -851,9 +851,11 @@ const visitors = {
 		}
 
 		// Text written into a pruned selector would outlast it when minifying,
-		// which removes it before this runs. A global block prunes nothing.
+		// which removes it before this runs. A global block prunes nothing, nor
+		// do the arguments of a global compound.
 		const kept =
 			is_in_global_block(context.path) ||
+			is_in_global_pseudo(context.path) ||
 			(node.metadata.used &&
 				!context.path.some(
 					(ancestor) => ancestor.type === 'ComplexSelector' && !ancestor.metadata.used,
