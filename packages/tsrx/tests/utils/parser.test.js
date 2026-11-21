@@ -18481,6 +18481,35 @@ ${lines.join('\n')}
 		expect(text_errors).toEqual([]);
 	});
 
+	it('reads a generic arrow function whose type parameter is written with an escape, as TypeScript does', () => {
+		// The lookahead that tells a generic arrow function from a tag reads the
+		// name with its escapes, as TypeScript's scanner does, so these aren't
+		// tags, which a `<` before an escape for a name's start now opens.
+		const snippets = [
+			`const g = <${escape('0054')},>(x: T) => x;`,
+			`const g = <${escape('{54}')},>(x: T) => x;`,
+			`const g = <${escape('0054')} extends unknown>(x: T) => x;`,
+			`const g = <T${escape('0061')},>(x: Ta) => x;`,
+		];
+		for (const snippet of snippets) {
+			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
+			expect(/** @type {any} */ (file).parseDiagnostics, snippet).toEqual([]);
+			/** @type {any[]} */
+			const errors = [];
+			const ast = parseModule(snippet, 'App.tsrx', { collect: true, errors });
+			expect(errors, snippet).toEqual([]);
+			expect(JSON.stringify(ast.body), snippet).toContain('"ArrowFunctionExpression"');
+			expect(() => parseModule(snippet, 'App.tsrx'), snippet).not.toThrow();
+		}
+		// And as an `@for` key, which reads a `<` after `key` again as a tag start.
+		const keyed = `export function App() @{\n\t@for (const n of [1]; key <${escape('0054')},>(x: T) => x) {\n\t\t<div />\n\t}\n}\n`;
+		/** @type {any[]} */
+		const errors = [];
+		parseModule(keyed, 'App.tsrx', { collect: true, errors });
+		expect(errors).toEqual([]);
+		expect(() => parseModule(keyed, 'App.tsrx')).not.toThrow();
+	});
+
 	/**
 	 * The names of the JSX identifiers in `node`.
 	 * @param {unknown} node

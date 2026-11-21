@@ -199,6 +199,9 @@ const DECORATABLE_NODE_TYPES = new Set([
 	'PropertyDefinition',
 ]);
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
+/** An identifier that may be written with Unicode escapes, as TypeScript's scanner reads one. */
+const regex_escaped_identifier =
+	/(?:[$_\p{ID_Start}]|\\u(?:[\da-fA-F]{4}|\{[\da-fA-F]+\}))(?:[$_\u200c\u200d\p{ID_Continue}]|\\u(?:[\da-fA-F]{4}|\{[\da-fA-F]+\}))*/uy;
 /** A Unicode escape at a position, `\uXXXX` or `\u{X}`, with its hex digits. */
 const regex_name_escape_at = /\\u(?:([\da-fA-F]{4})|\{([\da-fA-F]+)\})/y;
 /**
@@ -1999,23 +2002,36 @@ function scan_identifier_from(input, i) {
 }
 
 /**
+ * `scan_identifier_from`, for an identifier that may be written with Unicode
+ * escapes (`\u0054`), as TypeScript's scanner reads one.
+ * @param {string} input
+ * @param {number} i
+ */
+function scan_escaped_identifier_from(input, i) {
+	regex_escaped_identifier.lastIndex = i;
+	const match = regex_escaped_identifier.exec(input);
+	return match === null ? -1 : i + match[0].length;
+}
+
+/**
  * Whether the `<` at `pos` starts a generic arrow function rather than a JSX
  * tag, by TypeScript's rule for `.tsx` files (`isParenthesizedArrowFunctionExpression`).
  * It reads four tokens and never the parameters: `<[const] T` followed by `,`
  * or `=`, or by `extends` and anything but `=`, `>`, or `/`. Everything else,
- * `<T>(x) => x` included, is a tag.
+ * `<T>(x) => x` included, is a tag. A name may be written with escapes
+ * (`<\u0054,>`), as TypeScript's scanner reads it.
  * @param {string} input
  * @param {number} pos
  */
 function looks_like_generic_arrow(input, pos) {
 	let i = skip_space_and_comments_from(input, pos + 1);
-	let name_end = i === -1 ? -1 : scan_identifier_from(input, i);
+	let name_end = i === -1 ? -1 : scan_escaped_identifier_from(input, i);
 	if (name_end === -1) return false;
 	const name = input.slice(i, name_end);
 	if (TYPE_PARAMETER_MODIFIERS.has(name)) {
 		// A `const` modifier precedes the parameter name.
 		i = skip_space_and_comments_from(input, name_end);
-		name_end = i === -1 ? -1 : scan_identifier_from(input, i);
+		name_end = i === -1 ? -1 : scan_escaped_identifier_from(input, i);
 		if (name_end === -1) return false;
 	} else if (RESERVED_WORDS.has(name)) {
 		return false;
