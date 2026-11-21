@@ -199,6 +199,8 @@ const DECORATABLE_NODE_TYPES = new Set([
 	'PropertyDefinition',
 ]);
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
+/** A Unicode escape at a position, `\uXXXX` or `\u{X}`, with its hex digits. */
+const regex_name_escape_at = /\\u(?:([\da-fA-F]{4})|\{([\da-fA-F]+)\})/y;
 /**
  * acorn's own identifier tests, which acorn-typescript uses to decide that a
  * JSX name starts: the JSX name reader must take every character they take,
@@ -1067,6 +1069,14 @@ const catch_parameter_names = new WeakMap();
  * @type {WeakSet<CompileError>}
  */
 const raised_errors = new WeakSet();
+
+/**
+ * The held errors that are syntax errors, held for their position as the
+ * checker errors are, which a strict parse throws as syntax errors still (see
+ * `#isSyntaxError`): a JSX name written with an escape (TS17021).
+ * @type {WeakSet<CompileError>}
+ */
+const held_syntax_errors = new WeakSet();
 
 /**
  * The held errors that a strict parse raises later than where they're held,
@@ -5885,9 +5895,9 @@ export function TSRXPlugin(config) {
 				}
 				if (code_start === -1) return;
 				// What the dropped children recorded is reported again as the code is
-				// read again.
-				const errors = this.#errors;
-				if (errors) {
+				// read again, held (in a parameter's default) or not.
+				for (const errors of new Set([this.#errors, this.#hold.held])) {
+					if (!errors) continue;
 					const kept = errors.filter(
 						(error) =>
 							!(
@@ -8159,13 +8169,63 @@ export function TSRXPlugin(config) {
 			/**
 			 * Report the signatures' errors held in a speculative parse once the
 			 * outermost one is kept (see `tsFillSignature`). acorn-typescript's undo
-			 * log drops them with an abandoned one.
+			 * log drops them with an abandoned one. When the parse throws, it throws
+			 * the first syntax error held in it instead, as a parse that doesn't
+			 * hold it throws that first (see `#speculativeSyntaxError`).
 			 * @type {Parse.Parser['tryParse']}
 			 */
 			tryParse(fn) {
-				const result = super.tryParse(fn);
+				// acorn-typescript passes `fn` the function that aborts the parse.
+				/** @typedef {(abort: () => never) => ReturnType<typeof fn>} Attempt */
+				/** @type {Attempt} */
+				const attempt = (abort) => {
+					const start = this.start;
+					try {
+						return /** @type {Attempt} */ (fn)(abort);
+					} catch (thrown) {
+						throw this.#speculativeSyntaxError(start, thrown) ?? thrown;
+					}
+				};
+				const result = super.tryParse(/** @type {typeof fn} */ (attempt));
 				this.#reportSpeculativeErrors();
 				return result;
+			}
+
+			/**
+			 * The error that a strict speculative parse of the code from `start`
+			 * that throws `thrown`, an error the parser reports, throws instead, or
+			 * `null`: the first syntax error held in it (`held_syntax_errors`), which
+			 * a parse that doesn't hold it throws as it reads it, so before anything
+			 * the parse throws once it's read it, wherever that is: a closing tag
+			 * that doesn't match, found after its name, is at its `</`. It's thrown
+			 * as `thrown` is: with acorn's `raise`, as a sign that the code isn't
+			 * what the parse tried, which an abandoned parse that the parser goes on
+			 * past drops with the rest of its effects, or as it is, which
+			 * acorn-typescript doesn't catch, as a checker error is thrown.
+			 * @param {number} start
+			 * @param {unknown} thrown
+			 * @returns {unknown}
+			 */
+			#speculativeSyntaxError(start, thrown) {
+				if (this.#collect || !(thrown instanceof Error)) return null;
+				if (typeof (/** @type {{ code?: unknown }} */ (thrown).code) !== 'string') return null;
+				const first = this.#speculativeErrors
+					.filter((error) => held_syntax_errors.has(error) && (error.pos ?? 0) >= start)
+					.sort(compare_errors)[0];
+				if (!first) return null;
+				// Of two, the first is thrown, such as one an async generic arrow
+				// function's parameters held before one in its body.
+				const { code, pos } = /** @type {{ code?: string, pos?: number }} */ (thrown);
+				if (code === first.code && (pos ?? 0) <= (first.pos ?? 0)) return null;
+				if (thrown instanceof SyntaxError) {
+					try {
+						this.#throwHeldError(first);
+					} catch (raised) {
+						return raised;
+					}
+				}
+				first.type = 'fatal';
+				return first;
 			}
 
 			/**
@@ -12781,7 +12841,10 @@ export function TSRXPlugin(config) {
 				}
 				try {
 					return super.parseArrowExpression(node, params, isAsync, forInit);
-				} catch (error) {
+				} catch (thrown) {
+					// A syntax error held before it in the arrow function, which comes
+					// first (see `tryParse`).
+					const error = this.#speculativeSyntaxError(arrow.typeParametersStart, thrown) ?? thrown;
 					if (error instanceof SyntaxError) {
 						arrow.error = error;
 						// Once its `=>` is read, TypeScript reads an arrow function whatever
@@ -13316,6 +13379,13 @@ export function TSRXPlugin(config) {
 			 */
 			#releaseErrors(held) {
 				const sorted = held.slice().sort(compare_errors);
+				// A syntax error held for its position (`held_syntax_errors`), which
+				// TypeScript reports before the checker errors: a strict parse throws
+				// it first, rather than hold it among them.
+				const syntax_error = this.#collect
+					? undefined
+					: sorted.find((error) => held_syntax_errors.has(error));
+				if (syntax_error) this.#throwHeldError(syntax_error);
 				for (const error of sorted) {
 					const outer = this.#hold.held;
 					const errors = outer ?? (this.#collect ? this.#errors : undefined);
@@ -13337,16 +13407,17 @@ export function TSRXPlugin(config) {
 			 * @returns {never}
 			 */
 			#throwHeldError(error) {
+				const checker = !held_syntax_errors.has(error);
 				if (raised_errors.has(error)) {
 					try {
 						this.#throwError(error.pos ?? 0, { code: error.code, message: error.message });
 					} catch (thrown) {
-						checker_errors_thrown.add(/** @type {object} */ (thrown));
+						if (checker) checker_errors_thrown.add(/** @type {object} */ (thrown));
 						throw thrown;
 					}
 				}
 				error.type = 'fatal';
-				checker_errors_thrown.add(error);
+				if (checker) checker_errors_thrown.add(error);
 				throw error;
 			}
 
@@ -14451,9 +14522,9 @@ export function TSRXPlugin(config) {
 			 * one. acorn-typescript reads identifier characters and `-` and stops at
 			 * an escape, so `<Inn\u0065r />` read as the tag `Inn` with an attribute
 			 * `\u0065r`, and `<Inn\u0065r></Inn\u0065r>` didn't parse. TypeScript
-			 * reads the escape as part of the name, as in an identifier, and reports
-			 * it (TS17021); so does this, without the error. The name is the one the
-			 * escapes spell.
+			 * reads the escape as part of the name, as in an identifier; so does
+			 * this, and `jsx_parseIdentifier` reports it as TypeScript does. The name
+			 * is the one the escapes spell.
 			 * @type {Parse.Parser['jsx_readWord']}
 			 */
 			jsx_readWord() {
@@ -14466,6 +14537,10 @@ export function TSRXPlugin(config) {
 					if (is_identifier_char(ch, true) || ch === CharCode.hyphen) {
 						this.pos += ch <= 0xffff ? 1 : 2;
 					} else if (ch === CharCode.backslash) {
+						// A name read so far ends before an escape that can't go on with
+						// it, as TypeScript's does: its error (TS17021) is reported on the
+						// name, and the escape's own error then on the next token.
+						if (this.pos > start && !this.#escapeContinuesName(this.pos)) break;
 						word += this.input.slice(chunk_start, this.pos);
 						const escape_start = this.pos;
 						if (this.input.charCodeAt(++this.pos) !== 117) {
@@ -14491,6 +14566,62 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether the escape at `index` is a well-formed one for a character an
+			 * identifier can go on with.
+			 * @param {number} index
+			 */
+			#escapeContinuesName(index) {
+				regex_name_escape_at.lastIndex = index;
+				const match = regex_name_escape_at.exec(this.input);
+				if (!match) return false;
+				const code = Number.parseInt(match[1] ?? match[2], 16);
+				return code <= 0x10ffff && is_identifier_char(code, true);
+			}
+
+			/**
+			 * A JSX name written with a Unicode escape (`<Inn\u0065r />`), which
+			 * TypeScript reports as TS17021 on the name as it reads it
+			 * (`parseIdentifierNameErrorOnUnicodeEscapeSequence`): a tag's or an
+			 * attribute's name, or a part of a member or namespaced one. Not an
+			 * attribute's unquoted value, nor a name a lookahead only tokenizes.
+			 *
+			 * A strict parse throws it as it reads it, as a syntax error, which
+			 * TypeScript reports before the checker errors held around it (see
+			 * `#holdingErrors`), unless the parse is a speculative one, which
+			 * reports it once kept, or instead of what it throws (see `tryParse`),
+			 * so that an abandoned attempt doesn't fail on it. A collecting or loose
+			 * parse records it, once, and reads on with the name the escapes spell.
+			 * @param {number} start
+			 * @param {number} end
+			 */
+			#reportJSXNameEscape(start, end) {
+				const error = TS_ERRORS.JSX_NAME_UNICODE_ESCAPE;
+				if (this.#collect) {
+					// Where it's recorded, which a strict parse that reads ahead as a
+					// collecting one (see `#asCollecting`) reports later.
+					const errors = this.#hold.held ?? this.#errors;
+					const count = errors?.length ?? 0;
+					// Not raised: a strict parse that reads ahead throws it as it is once
+					// read, which an attempt it's read in doesn't take for a sign that
+					// the code isn't what it tried.
+					this.#recordCheckerLevelError(start, end, error);
+					if (errors && errors.length > count) held_syntax_errors.add(errors[errors.length - 1]);
+					return;
+				}
+				if (this.parseEffects?.active) {
+					/** @type {CompileError[]} */
+					const recorded = [];
+					this.#report_recoverable_error_range(start, end, error, recorded);
+					raised_errors.add(recorded[0]);
+					held_syntax_errors.add(recorded[0]);
+					this.parseEffects.willAppend(this.#speculativeErrors);
+					this.#speculativeErrors.push(recorded[0]);
+					return;
+				}
+				this.#throwError(start, error);
+			}
+
+			/**
 			 * @type {Parse.Parser['jsx_parseIdentifier']}
 			 */
 			jsx_parseIdentifier() {
@@ -14498,6 +14629,18 @@ export function TSRXPlugin(config) {
 
 				if (this.type === tt.name || this.type.keyword || this.type === tstt.jsxName) {
 					node.name = /** @type {string} */ (this.value);
+					if (this.input.slice(this.start, this.end).includes('\\')) {
+						// A member's property is an identifier, which ends at a `-`, which
+						// only a tag's or an attribute's name has.
+						const after_dot =
+							this.lastTokEnd - this.lastTokStart === 1 &&
+							this.input.charCodeAt(this.lastTokStart) === CharCode.dot;
+						const hyphen = after_dot ? this.input.indexOf('-', this.start) : -1;
+						const end = hyphen !== -1 && hyphen < this.end ? hyphen : this.end;
+						if (this.input.slice(this.start, end).includes('\\')) {
+							this.#reportJSXNameEscape(this.start, end);
+						}
+					}
 					this.next();
 				} else {
 					return super.jsx_parseIdentifier();

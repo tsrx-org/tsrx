@@ -18274,3 +18274,167 @@ describe('TypeScript-coded errors that had no source (#964)', () => {
 		}
 	});
 });
+
+// TypeScript's scanner reports a Unicode escape in a JSX name as TS17021, on
+// the name, or on the part of a member or namespaced name that has the escape,
+// and reads the name as the one the escapes spell.
+describe('a JSX name written with a Unicode escape', () => {
+	const backslash = String.fromCharCode(92);
+	/** @param {string} hex */
+	const escape = (hex) => `${backslash}u${hex}`;
+	const lines = [
+		`export const a = <Inn${escape('0065')}r n={1} />;`,
+		`export const b = <Inn${escape('0065')}r n={2}></Inn${escape('0065')}r>;`,
+		`export const c = <Inn${escape('0065')}r n={3}></Inner>;`,
+		`export const d = <${escape('0049')}nner n={4} />;`,
+		`export const e = <div data-${escape('0061')}="1" ${escape('0061')}ria-label="x" ${escape('0074')}itle="t" />;`,
+		`export const f = <ns.Inn${escape('0065')}r n={5} />;`,
+		`export const g = <n${escape('0073')}.Inner n={6} />;`,
+		`export const h = <div x:t${escape('0069')}tle="1" />;`,
+		`export const i = <Inn${escape('{65}')}r n={7} />;`,
+		`export const j = <In${escape('006e')}${escape('0065')}r n={8} />;`,
+		`export const k = <div title="t">{'text'}</div>;`,
+	];
+	const source = `function Inner(props: { n: number; children?: unknown }) { return null; }
+const ns = { Inner };
+${lines.join('\n')}
+`;
+
+	/** TypeScript's TS17021 errors on `source` as a `.tsx` file, as `[start, end]`. */
+	function typescript_errors() {
+		const file = ts.createSourceFile('/App.tsx', source, ts.ScriptTarget.Latest, true);
+		const diagnostics = /** @type {ts.DiagnosticWithLocation[]} */ (
+			/** @type {any} */ (file).parseDiagnostics
+		);
+		return diagnostics
+			.filter((diagnostic) => diagnostic.code === 17021)
+			.map((diagnostic) => [diagnostic.start, diagnostic.start + diagnostic.length]);
+	}
+
+	it('records TS17021 where TypeScript reports it, and reads the names', () => {
+		/** @type {any[]} */
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', { collect: true, errors });
+		expect(errors.map((error) => [error.code, error.message, error.pos, error.end])).toEqual(
+			typescript_errors().map(([start, end]) => [
+				'TS17021',
+				'Unicode escape sequence cannot appear here.',
+				start,
+				end,
+			]),
+		);
+		expect(errors.length).toBe(13);
+		/** @type {string[]} */
+		const names = [];
+		walk_names(ast, names);
+		expect(names).toEqual(expect.arrayContaining(['Inner', 'data-a', 'aria-label', 'title', 'ns']));
+		expect(names).not.toContain('Inn');
+	});
+
+	it('records it in a loose parse too, and a strict parse throws the first', () => {
+		/** @type {any[]} */
+		const errors = [];
+		parseModule(source, 'App.tsrx', { collect: true, loose: true, errors });
+		expect(errors.map((error) => error.pos)).toEqual(typescript_errors().map(([start]) => start));
+		const [first] = typescript_errors();
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			error_with(TS_ERRORS.JSX_NAME_UNICODE_ESCAPE, line_column(source, first[0])),
+		);
+	});
+
+	it('reports it only where TypeScript reads a JSX name, also in speculative parses', () => {
+		// After type arguments and in a generic call or arrow function, which the
+		// parser reads speculatively first, on a member's part up to a `-`, on a
+		// name before a malformed escape, and not on an attribute's unquoted
+		// value, which isn't a name.
+		const snippets = [
+			`const x = <A<T> a${escape('0062')} />;`,
+			`const x = f<T,>(x = <A${escape('0062')} />, 1);`,
+			`const f = async <T,>(x = <A${escape('0062')} />) => { const y = 1; };`,
+			`const x = <X.A${escape('0062')}-c />;`,
+			`const x = <X.A-${escape('0062')} />;`,
+			`const x = <X a=A${escape('0062')} />;`,
+			// A name ends before an escape that can't go on with it.
+			`const x = <A${escape('0062')}${escape('002d')} />;`,
+			// Thrown as a syntax error, before an export declared twice before it,
+			// which TypeScript reports only after its syntax errors, and before a
+			// checker error later in the speculative parse it's held in.
+			`const a = 1, b = 2;\nexport { a as x };\nexport { b as x };\nfunction f(y = <A${escape('0062')} />) {}`,
+			`const f = <T,>() => {\n\tconst x = <A${escape('0062')} />;\n\tconst y;\n};`,
+			`const g = f<T,>(() => { <A${escape('0062')} />; const y; }, 1);`,
+			`const a = 1, b = 2;\nexport { a as x };\nexport { b as x };\nconst f = async <T,>(x = <A${escape('0062')} />) => x;`,
+			// And before a syntax error later in the arrow function's body, or one
+			// found after the name, at its closing tag's `</`.
+			`const f = <T,>() => { <A${escape('0062')} />; const y = ; };`,
+			`const f = <T,>() => <A></B${escape('0063')}>;`,
+			// In an async generic arrow function's default, read ahead in another's,
+			// also in a function's default there.
+			`const f = <T,>(x = async <U,>(y = <A${escape('0062')} />) => y) => x;`,
+			`const f = <T,>(x = async <U,>(y = function (z = <A${escape('0062')} />) {}) => 0) => 0;`,
+			// In a parameter's default, where checker errors are held: before them,
+			// and in a function's or a method's in a speculative parse.
+			`function h(x = <A${escape('0062')} />, x) {}`,
+			`const r = (a ? function (x = <A${escape('0062')} />) {} : 0);`,
+			`const r = (a ? { m(x = <A${escape('0062')} />) {} } : 0);`,
+			// And from a speculative parse kept in a default, before them.
+			`function h(x = f<T>(<A${escape('0062')} />), x) {}`,
+			`declare function h(x = f<T>(<A${escape('0062')} />));`,
+			// The first of two, held in parameters and queued in the body.
+			`const f = async <T,>(x = <A${escape('0062')} />) => <C${escape('0064')} />;`,
+		];
+		for (const snippet of snippets) {
+			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
+			const diagnostics = /** @type {ts.DiagnosticWithLocation[]} */ (
+				/** @type {any} */ (file).parseDiagnostics
+			);
+			const expected = diagnostics
+				.filter((diagnostic) => diagnostic.code === 17021)
+				.map((diagnostic) => [diagnostic.start, diagnostic.start + diagnostic.length]);
+			/** @type {any[]} */
+			const errors = [];
+			let stopped = Infinity;
+			try {
+				parseModule(snippet, 'App.tsrx', { collect: true, errors });
+			} catch (error) {
+				// Another error stops the parse; the ones before it are recorded.
+				stopped = /** @type {any} */ (error).pos;
+			}
+			expect(
+				errors.filter((error) => error.code === 'TS17021').map((error) => [error.pos, error.end]),
+				snippet,
+			).toEqual(expected.filter(([start]) => start < stopped));
+			// A strict parse throws TypeScript's first error when it's this one.
+			const strict = (() => {
+				try {
+					parseModule(snippet, 'App.tsrx');
+					return null;
+				} catch (error) {
+					return /** @type {any} */ (error);
+				}
+			})();
+			if (diagnostics[0]?.code === 17021) {
+				expect([strict?.code, strict?.pos], snippet).toEqual(['TS17021', diagnostics[0].start]);
+			} else {
+				expect(strict?.code, snippet).not.toBe('TS17021');
+			}
+		}
+	});
+
+	/**
+	 * The names of the JSX identifiers in `node`.
+	 * @param {unknown} node
+	 * @param {string[]} names
+	 */
+	function walk_names(node, names) {
+		if (!node || typeof node !== 'object') return;
+		if (Array.isArray(node)) {
+			for (const child of node) walk_names(child, names);
+			return;
+		}
+		const record = /** @type {Record<string, unknown>} */ (node);
+		if (record.type === 'JSXIdentifier') names.push(/** @type {string} */ (record.name));
+		for (const [key, value] of Object.entries(record)) {
+			if (key !== 'loc' && key !== 'metadata') walk_names(value, names);
+		}
+	}
+});

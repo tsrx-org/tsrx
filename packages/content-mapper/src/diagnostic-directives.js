@@ -2,7 +2,7 @@
 /** @import {CodeMapping, CompileError} from '@tsrx/core/types' */
 /** @import {DiagnosticDirectives} from './protocol.js' */
 
-import { DIAGNOSTIC_CODES } from '@tsrx/core/diagnostics';
+import { DIAGNOSTIC_CODES, TS_ERRORS } from '@tsrx/core/diagnostics';
 import { DiagnosticDirectivePolicy } from './protocol.js';
 
 /**
@@ -12,6 +12,8 @@ import { DiagnosticDirectivePolicy } from './protocol.js';
  */
 const HOLDER_TYPE =
 	/(?:Statement|Declaration|Definition|Signature)$|^(?:StaticBlock|AccessorProperty|JSXElement|JSXFragment|JSXStyleElement)$/;
+
+const JSX_NAME_ESCAPE_CODE = TS_ERRORS.JSX_NAME_UNICODE_ESCAPE.code;
 
 /** Keys of a tree node that hold no child nodes, or nodes that aren't its children. */
 const NOT_CHILDREN = new Set([
@@ -77,7 +79,13 @@ export function ignore_directives(errors, source_ast, mappings, original_length,
 		}
 		const on_tag = reported_on_tag(error);
 		const position = on_tag ? /** @type {number} */ (error.raisedAt) - 1 : error.pos;
-		const holder = source_ast ? holder_at(source_ast, position) : null;
+		// An escape in a JSX name (TS17021) only misspells the name, which the
+		// output has the right way: TypeScript's errors elsewhere in the element,
+		// such as a wrong attribute value, stay. Only the name's own code is
+		// covered, so TypeScript's error on the name itself (TS2304 on
+		// `<Missin\u0067 />`) shows once.
+		const holder =
+			source_ast && error.code !== JSX_NAME_ESCAPE_CODE ? holder_at(source_ast, position) : null;
 		const start = holder ? /** @type {number} */ (holder.start) : error.pos;
 		const end = holder
 			? /** @type {number} */ (holder.end)

@@ -2886,6 +2886,11 @@ describe('parse errors', () => {
 			['const a = (x: number);', TS_ERRORS.UNEXPECTED_TYPE_ANNOTATION, { line: 1, column: 13 }],
 			// Prettier's typescript parser: `Expression expected. (1:15)`.
 			['const c = f(x?);', TS_ERRORS.UNEXPECTED_TOKEN, { line: 1, column: 14 }],
+			[
+				`const a = <b ${String.fromCharCode(92)}u0074itle="t" />;`,
+				TS_ERRORS.JSX_NAME_UNICODE_ESCAPE,
+				{ line: 1, column: 14 },
+			],
 		]) {
 			const { line, column } = /** @type {{ line: number, column: number }} */ (start);
 			await expect_reported(

@@ -872,6 +872,7 @@ const TYPESCRIPT_ERROR_CODES = [
 	"TS17002  Expected corresponding JSX closing tag for '{0}'.",
 	"TS17012  '{0}' is not a valid meta-property for keyword '{1}'. Did you mean '{2}'?",
 	"TS17013  Meta-property '{0}' is only allowed in the body of a function declaration, function expression, or constructor.",
+	'TS17021  Unicode escape sequence cannot appear here.',
 	"TS18006  Classes may not have a field named 'constructor'.",
 	'TS18010  An accessibility modifier cannot be used with a private identifier.',
 	"TS18011  The operand of a 'delete' operator cannot be a private identifier.",

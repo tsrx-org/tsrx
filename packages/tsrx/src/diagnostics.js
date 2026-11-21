@@ -214,6 +214,7 @@ export const TS_SYNTAX_ERROR_CODES = [
 	'TS1487',
 	'TS1488',
 	'TS17002',
+	'TS17021',
 	'TS2657',
 	'TS6188',
 	'TS6189',
@@ -837,6 +838,11 @@ export const TS_ERRORS = {
 	},
 	LINE_BREAK_NOT_PERMITTED: { code: 'TS1142', message: 'Line break not permitted here.' },
 	KEYWORD_ESCAPE: { code: 'TS1260', message: 'Keywords cannot contain escape characters.' },
+	// A JSX name written with a Unicode escape (`<Inn\u0065r />`)
+	JSX_NAME_UNICODE_ESCAPE: {
+		code: 'TS17021',
+		message: 'Unicode escape sequence cannot appear here.',
+	},
 	// A private name outside any class (see `parsePrivateIdent` in `plugin.js`)
 	PRIVATE_IDENTIFIER_OUTSIDE_CLASS: {
 		code: 'TS18016',

@@ -4,6 +4,7 @@ import {
 	analyzeTsrx as analyze_tsrx,
 	DIAGNOSTIC_CODES,
 	parseModule as parse_module,
+	TS_ERRORS,
 } from '@tsrx/core';
 import { visitorKeys as typescript_visitor_keys } from '@typescript-eslint/visitor-keys';
 import { Definition, Referencer, ScopeManager } from 'eslint-scope';
@@ -680,11 +681,14 @@ function token_type(
  * The collected errors ESLint reports as a parse error: broken markup, a
  * directive's clause that no directive takes (TSRX1012), which the parser
  * reads as text and an expression container, as it throws a clause written
- * without its `@` (TSRX1009), and a `break` or `return` right in an
- * `@switch` case (TSRX2008, TSRX2009), which the parser used to throw.
+ * without its `@` (TSRX1009), a `break` or `return` right in an `@switch`
+ * case (TSRX2008, TSRX2009), which the parser used to throw, and a JSX name
+ * written with a Unicode escape (TS17021), which a build throws and Prettier
+ * rejects, and which TypeScript reports as a syntax error.
  */
 function is_fatal_parser_diagnostic(error: any): boolean {
 	return (
+		error?.code === TS_ERRORS.JSX_NAME_UNICODE_ESCAPE.code ||
 		error?.code === DIAGNOSTIC_CODES.UNCLOSED_TAG ||
 		error?.code === DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG ||
 		error?.code === DIAGNOSTIC_CODES.DETACHED_DIRECTIVE_CLAUSE ||

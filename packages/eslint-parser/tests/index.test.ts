@@ -428,6 +428,24 @@ export function A({ items }) @{
 		]);
 	});
 
+	it('reports a JSX name written with a Unicode escape as a parse error at the escape', () => {
+		const code = `export const x = <b ${String.fromCharCode(92)}u0074itle="t" />;\n`;
+		const messages = new Linter().verify(
+			code,
+			{ files: ['**/*.tsrx'], languageOptions: { parser } },
+			'App.tsrx',
+		);
+
+		expect(messages).toEqual([
+			expect.objectContaining({
+				fatal: true,
+				line: 1,
+				column: code.indexOf(String.fromCharCode(92)) + 1,
+				message: 'Parsing error: Unicode escape sequence cannot appear here.',
+			}),
+		]);
+	});
+
 	it('reports a return right in an @switch case as a parse error', () => {
 		expect(
 			lint(
