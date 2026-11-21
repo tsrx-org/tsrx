@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
 	createAutoInsertPlugin,
-	decodeNameEscapes,
 	escapeSnippetText,
 	matchOpeningTag,
 	unescapeSnippetText,
 } from '../src/autoInsertPlugin.js';
+import { decodeNameEscapes } from '@tsrx/typescript-plugin/src/unclosed-element.js';
 import { create_service_harness } from './setup.js';
 
 /**
@@ -123,6 +123,13 @@ describe('auto-insert plugin — element tags', () => {
 			'\n\t\t<div />\n\t</>\n}',
 		);
 		expect(style).toBe('$0</style>');
+		// A child that takes its parent's closing tag, matched by the name the
+		// escape spells, leaves the parent unclosed.
+		const child = await auto_insert_after_gt(
+			`function Inner() @{ <div /> }\nexport function App() @{\n\t<Inner><Inn${backslash}u0065r`,
+			'</Inner>\n}',
+		);
+		expect(child).toBe('$0</Inner>');
 	});
 
 	it('closes a tag inside a control-flow body', async () => {

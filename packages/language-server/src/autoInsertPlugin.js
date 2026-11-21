@@ -1,7 +1,11 @@
 /** @import * as AST from 'estree' */
 /** @import { LanguageServicePlugin } from '@volar/language-server' */
 
-import { findElement, isUnclosed } from '@tsrx/typescript-plugin/src/unclosed-element.js';
+import {
+	decodeNameEscapes,
+	findElement,
+	isUnclosed,
+} from '@tsrx/typescript-plugin/src/unclosed-element.js';
 import { getVirtualCode, createLogging, is_tsrx_document } from './utils.js';
 
 const { log } = createLogging('[TSRX Auto-Insert Plugin]');
@@ -226,20 +230,6 @@ const regex_opening_tag_name = new RegExp(
 	String.raw`^<((?:[@$_\p{ID_Start}]|${name_escape})(?:[$\p{ID_Continue}\u200C\u200D.-]|${name_escape})*)`,
 	'u',
 );
-const regex_name_escape = /\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g;
-
-/**
- * The name the Unicode escapes in `name` spell: `Inn\u0065r` is `Inner`.
- * @param {string} name
- * @returns {string}
- */
-export function decodeNameEscapes(name) {
-	return name.replace(regex_name_escape, (escape, braced, short) => {
-		const code = Number.parseInt(braced ?? short, 16);
-		return code <= 0x10ffff ? String.fromCodePoint(code) : escape;
-	});
-}
-
 /**
  * Match an opening tag `<name …>` that ends exactly at the end of `text` and return its name.
  *

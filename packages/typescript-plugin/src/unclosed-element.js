@@ -16,6 +16,21 @@ const RAW_TEXT_OPENING_TAGS = new Map([
 	['script', /<script[\s/>]/],
 ]);
 
+const regex_name_escape = /\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g;
+
+/**
+ * The name the Unicode escapes in `name` spell: `Inn\u0065r` is `Inner`. The
+ * parser reads a JSX name so, and matches opening and closing tags by it.
+ * @param {string} name
+ * @returns {string}
+ */
+export function decodeNameEscapes(name) {
+	return name.replace(regex_name_escape, (escape, braced, short) => {
+		const code = Number.parseInt(braced ?? short, 16);
+		return code <= 0x10ffff ? String.fromCodePoint(code) : escape;
+	});
+}
+
 /**
  * An element of the parsed source and, when the element is one of its children,
  * the element that holds it.
@@ -72,10 +87,13 @@ export function findElement(node, end, parent = null) {
  * @returns {boolean}
  */
 export function isUnclosed(path, sourceCode) {
-	/** @param {AST.TSRXJSXElement} element */
+	/**
+	 * The tag's name, as the escapes in it spell it (`<Inn\u0065r>` is `Inner`).
+	 * @param {AST.TSRXJSXElement} element
+	 */
 	const name = (element) => {
 		const { start, end } = /** @type {AST.NodeWithLocation} */ (element.openingElement.name);
-		return sourceCode.slice(start, end);
+		return decodeNameEscapes(sourceCode.slice(start, end));
 	};
 
 	const { element } = path;

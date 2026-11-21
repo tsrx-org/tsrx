@@ -1,7 +1,7 @@
 import { isCompletionEnabled } from '@volar/language-core';
 import { toGeneratedOffset } from '@volar/typescript/lib/node/transform.js';
 import { getServiceScript } from '@volar/typescript/lib/node/utils.js';
-import { findElement, isUnclosed } from './unclosed-element.js';
+import { decodeNameEscapes, findElement, isUnclosed } from './unclosed-element.js';
 
 /**
  * VS Code's TypeScript closes a JSX tag by asking tsserver for
@@ -79,5 +79,7 @@ function closing_tag_from_source(source_script, position) {
 	const name = /** @type {{ start: number, end: number }} */ (
 		/** @type {unknown} */ (path.element.openingElement.name)
 	);
-	return { newText: `</${source.slice(name.start, name.end)}>` };
+	// With the name the escapes in it spell: the parser matches tags by that name,
+	// and a raw-text element (`<st\u0079le>`) ends only at a closing tag written out.
+	return { newText: `</${decodeNameEscapes(source.slice(name.start, name.end))}>` };
 }
