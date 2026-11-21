@@ -13,7 +13,8 @@ const REGEX_COMBINATOR = /^(\+|~|>|\|\|)/;
 const REGEX_VALID_IDENTIFIER_CHAR = /[a-zA-Z0-9_-]/;
 const REGEX_LEADING_HYPHEN_OR_DIGIT = /-?\d/;
 const REGEX_WHITESPACE_OR_COLON = /[\s:]/;
-const REGEX_CUSTOM_PROPERTY_START = /^--[^\s:;{}]*\s*:/;
+// `--` and a name (letters, digits, `-`, `_`, non-ASCII, escapes), then `:`.
+const REGEX_CUSTOM_PROPERTY_START = /^--(?:[\w-]|[^\x00-\x7f]|\\[^\n])*\s*:/;
 const REGEX_NTH_OF =
 	/^(even|odd|\+?(\d+|\d*n(\s*[+-]\s*\d+)?)|-\d*n(\s*\+\s*\d+))((?=\s*[,)])|\s+of\s+)/;
 // Up to six hex digits, then one optional whitespace that ends the escape
@@ -469,7 +470,7 @@ function read_custom_property_value(parser) {
 		const char = parser.template[parser.index];
 
 		if (char === '\\') {
-			parser.index += 2;
+			parser.index = Math.min(parser.index + 2, parser.template.length);
 			continue;
 		}
 		if (quote_mark !== null) {
@@ -481,6 +482,21 @@ function read_custom_property_value(parser) {
 			if (close === -1) break;
 			parser.index = close + 2;
 			continue;
+		} else if (
+			char === '(' &&
+			/(?:^|[^\w-])url$/i.test(parser.template.slice(start, parser.index)) &&
+			!/^\(\s*["']/.test(parser.template.slice(parser.index))
+		) {
+			// An unquoted url(), where `{`, `[` and `/*` are part of the URL: it
+			// ends at the first `)` that isn't escaped.
+			parser.index++;
+			while (parser.index < parser.template.length && parser.template[parser.index] !== ')') {
+				parser.index += parser.template[parser.index] === '\\' ? 2 : 1;
+			}
+			if (parser.index >= parser.template.length) {
+				parser.index = parser.template.length;
+				break;
+			}
 		} else if (char === '{' || char === '(' || char === '[') {
 			closers.push(char === '{' ? '}' : char === '(' ? ')' : ']');
 		} else if (closers.length > 0 && char === closers.at(-1)) {

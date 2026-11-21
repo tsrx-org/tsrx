@@ -213,6 +213,20 @@ describe('parseStyle custom properties', function () {
 				],
 			],
 		],
+		// In an unquoted url(), a `{`, `[` or `/*` is part of the URL.
+		[
+			'.a { --x: url(/a{.svg); --y: url(/*b[.svg); color: red }',
+			[
+				[
+					['--x', 'url(/a{.svg)'],
+					['--y', 'url(/*b[.svg)'],
+					['color', 'red'],
+				],
+			],
+		],
+		// A selector that starts with a custom property name, but isn't one before
+		// its `:`, is still a rule's.
+		['.a { --w,i:hover { color: red } --w[x]:hover { color: red } }', [['Rule', 'Rule']]],
 	])('reads %j', function (css, expected) {
 		expect(blocks(css)).toEqual(expected);
 	});
