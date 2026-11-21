@@ -6567,7 +6567,13 @@ function validate_directive_jumps(program, transform_context) {
 	for (const { node, kind } of found) {
 		if (node.type === 'ReturnStatement') {
 			error(
-				kind === 'if' ? TSRX_ERRORS.IF_RETURN_STATEMENT : TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				kind === 'if'
+					? TSRX_ERRORS.IF_RETURN_STATEMENT
+					: kind === 'case'
+						? TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT
+						: kind === 'for'
+							? TSRX_ERRORS.FOR_RETURN_STATEMENT
+							: TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
 				transform_context.filename,
 				node,
 				transform_context.errors,
@@ -6629,10 +6635,16 @@ function validate_directive_jumps(program, transform_context) {
  */
 function collect_directive_jumps(node, parent, scope, found) {
 	// The parser reports a `return` in an `@try`, `@pending` or `@catch` body or
-	// a nested `@{ … }` block, also one in an `@switch` there.
+	// a nested `@{ … }` block, also one in an `@switch` there, but not one in a
+	// loop there, and the `@for` check doesn't see one in a loop in its body:
+	// this reports those, and a `return` in an `@empty` body, which neither
+	// checks.
 	if (
 		node.type === 'ReturnStatement' &&
-		(scope.kind === 'case' || scope.kind === 'if') &&
+		(scope.kind === 'case' ||
+			scope.kind === 'if' ||
+			scope.kind === 'body' ||
+			(scope.kind === 'for' && scope.nested)) &&
 		!node.metadata?.invalid_tsrx_template_return
 	) {
 		// The `@if` and `@for` checks, which see a `return` in an `@switch` in

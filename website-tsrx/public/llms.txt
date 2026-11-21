@@ -924,9 +924,9 @@ const TodoList = ({ items }: { items: Todo[] }) =>
 Regular `for`, `for...in`, `while`, and `do...while` are not template
 rendering constructs. Use `for...of` for rendered lists, filter the iterable
 before rendering when some items should be skipped, and use `@empty { ... }` for
-the no-items fallback. Direct `continue`, `break`, and `return` statements are
-not allowed in `@for` template loop bodies. Move imperative loops into a nested
-function. The head declares its loop variable with `const` or `let`, as in
+the no-items fallback. Direct `continue` and `break` statements are not allowed
+in `@for` template loop bodies, and neither is a `return`, also inside a loop
+there. Move imperative loops into a nested function. The head declares its loop variable with `const` or `let`, as in
 `@for (const item of items)`: assigning to an existing variable or property
 (`@for (state.item of items)`), `var` loop variables, which can't be read after
 the loop, and `using` loop variables are errors.
@@ -990,9 +990,9 @@ export const RetryBoundary = () => @try {
 
 Every target runs the body, `@pending` and `@catch` inside functions, so a
 `break` or `continue` in one of them can only reach a loop, a `switch` (`break`
-only) or a label inside that block, and a `return` there is the template
-`return` error. The same holds for a `break` or `continue` in `@empty` or in a
-nested `@{ ... }` block. A code-only block that is a child of a returned
+only) or a label inside that block, and a `return` there, also inside a loop
+there, is the template `return` error. The same holds for a `break`,
+`continue` or `return` in `@empty` or in a nested `@{ ... }` block. A code-only block that is a child of a returned
 fragment is inlined before the `return`, but it keeps the same rule, as it keeps
 the `var` rule. A label in any of these bodies, or in an `@if`, `@for` or
 `@switch` body, may reuse the name of a label outside it, as in a nested
