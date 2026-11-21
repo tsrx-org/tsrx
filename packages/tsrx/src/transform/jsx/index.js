@@ -1653,7 +1653,7 @@ function transform_return_statement(node, { next, visit, state, path }) {
 	if (
 		active_native_tsrx_function &&
 		is_native_tsrx_node(node.argument) &&
-		!node.metadata?.invalid_tsrx_template_return &&
+		!is_reported_template_return(node) &&
 		!is_in_directive_body(path)
 	) {
 		if (!active_native_tsrx_function.metadata?.native_tsrx_body) {
@@ -1736,6 +1736,18 @@ function get_active_native_tsrx_function(path) {
 		}
 	}
 	return null;
+}
+
+/**
+ * Whether a `return` is already reported as a template return: by the parser
+ * (`invalid_tsrx_template_return`, TSRX2001 in an `@try` body or a nested
+ * block) or by the directive jump check (`invalid_directive_jump`, such as one
+ * in a loop there or in an `@empty` body).
+ * @param {AST.ReturnStatement} node
+ * @returns {boolean}
+ */
+function is_reported_template_return(node) {
+	return !!(node.metadata?.invalid_tsrx_template_return || node.metadata?.invalid_directive_jump);
 }
 
 /**
@@ -2641,12 +2653,12 @@ function expand_native_tsrx_return_statement_list(statements, transform_context)
  * @returns {AST.Statement[]}
  */
 function expand_native_tsrx_return_statement(statement, transform_context) {
-	// A `return` the parser reported (TSRX2001) is left as written, with the
-	// mark that keeps it from being reported or read as a value again.
+	// A `return` already reported is left as written, with the mark that keeps
+	// it from being reported or read as a value again.
 	if (
 		statement.type === 'ReturnStatement' &&
 		is_native_tsrx_node(statement.argument) &&
-		!statement.metadata?.invalid_tsrx_template_return
+		!is_reported_template_return(statement)
 	) {
 		return create_native_tsrx_return_statements(statement, transform_context);
 	}
@@ -6069,10 +6081,10 @@ function body_contains_top_level_return_value(node) {
 		return node.some(body_contains_top_level_return_value);
 	}
 
-	// A `return` the parser reported (TSRX2001), as in a code block beside
-	// the directive, isn't a value either.
+	// A `return` already reported, as in a code block beside the directive,
+	// isn't a value either.
 	if (node.type === 'ReturnStatement') {
-		return node.argument != null && !node.metadata?.invalid_tsrx_template_return;
+		return node.argument != null && !is_reported_template_return(node);
 	}
 
 	if (

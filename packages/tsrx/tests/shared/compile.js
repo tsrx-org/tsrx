@@ -3292,6 +3292,13 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 						return <div>{view}</div>;
 					}`,
 				],
+				[
+					'a code-only block beside an `@try` in an assigned fragment',
+					`export function App() {
+						const view = <>@{ for (;;) { return <b />; } } @try { <b /> } @catch (e) { <i /> }</>;
+						return <div>{view}</div>;
+					}`,
+				],
 			]) {
 				const start = source.indexOf('return <b />;');
 				const expected = [TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code, start];
