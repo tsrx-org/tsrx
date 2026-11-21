@@ -1653,6 +1653,7 @@ function transform_return_statement(node, { next, visit, state, path }) {
 	if (
 		active_native_tsrx_function &&
 		is_native_tsrx_node(node.argument) &&
+		!node.metadata?.invalid_tsrx_template_return &&
 		!is_in_directive_body(path)
 	) {
 		if (!active_native_tsrx_function.metadata?.native_tsrx_body) {
@@ -2640,7 +2641,13 @@ function expand_native_tsrx_return_statement_list(statements, transform_context)
  * @returns {AST.Statement[]}
  */
 function expand_native_tsrx_return_statement(statement, transform_context) {
-	if (statement.type === 'ReturnStatement' && is_native_tsrx_node(statement.argument)) {
+	// A `return` the parser reported (TSRX2001) is left as written, with the
+	// mark that keeps it from being reported or read as a value again.
+	if (
+		statement.type === 'ReturnStatement' &&
+		is_native_tsrx_node(statement.argument) &&
+		!statement.metadata?.invalid_tsrx_template_return
+	) {
 		return create_native_tsrx_return_statements(statement, transform_context);
 	}
 

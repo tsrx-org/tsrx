@@ -3173,22 +3173,29 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 		});
 
 		it('reports a `return` in a code block beside a directive in an assigned fragment when collecting', () => {
-			const source = `export function App({ s }: { s: number }) {
-				const view = <>
-					@{ if (s) return null; }
-					@switch (s) { @case 1: { if (s) return <b />; <i /> } @default: { <u /> } }
-				</>;
-				return <div>{view}</div>;
-			}`;
-			expect(
-				compile(source, 'App.tsrx', { collect: true }).errors.map((error) => [
-					error.code,
-					error.pos,
-				]),
-			).toEqual([
-				[TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code, source.indexOf('return null;')],
-				[TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code, source.indexOf('return <b />;')],
-			]);
+			for (const statement of [
+				'return null;',
+				'return <b />;',
+				'return <>@{ console.log(s); }<b /></>;',
+			]) {
+				const source = `export function App({ s }: { s: number }) {
+					const view = <>
+						@{ if (s) ${statement} }
+						@switch (s) { @case 1: { if (s) return <b />; <i /> } @default: { <u /> } }
+					</>;
+					return <div>{view}</div>;
+				}`;
+				expect(
+					compile(source, 'App.tsrx', { collect: true }).errors.map((error) => [
+						error.code,
+						error.pos,
+					]),
+					statement,
+				).toEqual([
+					[TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code, source.indexOf(statement)],
+					[TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code, source.lastIndexOf('return <b />;')],
+				]);
+			}
 		});
 
 		it('rejects an `@if` used as a value whose branches each return a value', () => {
