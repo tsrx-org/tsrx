@@ -124,4 +124,24 @@ describe('tsserver plugin: closing JSX tags in .tsrx files', () => {
 			newText: '</style>',
 		});
 	});
+
+	it('answers a dynamic tag as written, and tells dynamic tags apart by it', () => {
+		// The parser matches dynamic tags by their expression as written.
+		const backslash = String.fromCharCode(92);
+		const tag = `{${backslash}u0054ag}`;
+		const dynamic = `export function App() @{
+	<div>{'x'}<${tag}></div>
+}
+export function Nested() @{
+	<{Tag}><${tag}></${tag}></{Tag}>
+}
+`;
+		const { service, file_name } = create_service(dynamic);
+		const after_tag = dynamic.indexOf(`<${tag}>`) + `<${tag}>`.length;
+		expect(service.getJsxClosingTagAtPosition(file_name, after_tag)).toEqual({
+			newText: `</${tag}>`,
+		});
+		const after_nested = dynamic.lastIndexOf(`<${tag}>`) + `<${tag}>`.length;
+		expect(service.getJsxClosingTagAtPosition(file_name, after_nested)).toBeUndefined();
+	});
 });

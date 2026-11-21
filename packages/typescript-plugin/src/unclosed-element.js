@@ -32,6 +32,20 @@ export function decodeNameEscapes(name) {
 }
 
 /**
+ * A tag's name as the parser matches tags by it: a static name (`div`,
+ * `ui.Item`, `svg:rect`) as its escapes spell it, a dynamic one (`{Tag}`) as
+ * its expression is written.
+ * @param {AST.Node} name The opening or closing element's `name`.
+ * @param {string} sourceCode
+ * @returns {string}
+ */
+export function tagNameText(name, sourceCode) {
+	const { start, end } = /** @type {AST.NodeWithLocation} */ (name);
+	const text = sourceCode.slice(start, end);
+	return name.type === 'JSXExpressionContainer' ? text : decodeNameEscapes(text);
+}
+
+/**
  * An element of the parsed source and, when the element is one of its children,
  * the element that holds it.
  * @typedef {{ element: AST.TSRXJSXElement; parent: ElementPath | null }} ElementPath
@@ -87,14 +101,9 @@ export function findElement(node, end, parent = null) {
  * @returns {boolean}
  */
 export function isUnclosed(path, sourceCode) {
-	/**
-	 * The tag's name, as the escapes in it spell it (`<Inn\u0065r>` is `Inner`).
-	 * @param {AST.TSRXJSXElement} element
-	 */
-	const name = (element) => {
-		const { start, end } = /** @type {AST.NodeWithLocation} */ (element.openingElement.name);
-		return decodeNameEscapes(sourceCode.slice(start, end));
-	};
+	/** @param {AST.TSRXJSXElement} element */
+	const name = (element) =>
+		tagNameText(/** @type {AST.Node} */ (element.openingElement.name), sourceCode);
 
 	const { element } = path;
 	const rawTextOpeningTag = RAW_TEXT_OPENING_TAGS.get(name(element));
