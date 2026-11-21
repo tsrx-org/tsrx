@@ -1459,10 +1459,19 @@ export function App() @{
 				`\t\t<Missin${backslash}u0067 />`,
 				'\t</section>',
 				'}',
+				'function Box<T>(props: { v?: T }) { return null; }',
+				// A braced escape at the end of a name, before type arguments.
+				`export const generic = <Bo${backslash}u{78}<string> v="x" />;`,
 				'',
 			].join('\n');
 			const built = compile(jsx_source, 'App.tsrx').code;
-			for (const text of ['<Inner n={1} />', '<ns.Inner n={4} />', 'data-a="1"', 'aria-label=']) {
+			for (const text of [
+				'<Inner n={1} />',
+				'<ns.Inner n={4} />',
+				'data-a="1"',
+				'aria-label=',
+				'<Box<string> v="x" />',
+			]) {
 				expect(built).toContain(text);
 			}
 			const result = compile_to_volar_mappings(jsx_source, 'App.tsrx', { loose: true });
@@ -1495,6 +1504,7 @@ export function App() @{
 				'data-a',
 				'aria-label',
 				'Missing',
+				'Box',
 			]);
 			// TS2304 on the unknown tag covers all of its name.
 			const map = new SourceMap(result.mappings);
@@ -1526,13 +1536,32 @@ export function App() @{
 				`const ${start} = () => null;`,
 				`const A${start} = () => null;`,
 				`const B${astral} = () => null;`,
-				`export const tags = [<${start} />, <A${start} />, <B${astral}></B${astral}>];`,
+				`const C${start}d = () => null;`,
+				`export const tags = [<${start} />, <A${start} />, <B${astral}></B${astral}>, <C${start}${backslash}u0064 />];`,
 				'',
 			].join('\n');
 			const built = compile(unicode_source, 'App.tsrx').code;
-			for (const tag of [`<${start} />`, `<A${start} />`, `<B${astral}></B${astral}>`]) {
+			for (const tag of [
+				`<${start} />`,
+				`<A${start} />`,
+				`<B${astral}></B${astral}>`,
+				`<C${start}d />`,
+			]) {
 				expect(built).toContain(tag);
 			}
+			// The escaped name maps from all of its text, measured with the same
+			// identifier characters the parser read it with.
+			const result = compile_to_volar_mappings(unicode_source, 'App.tsrx', { loose: true });
+			const written = `C${start}${backslash}u0064`;
+			const offset = unicode_source.lastIndexOf(written);
+			expect(
+				result.mappings.some(
+					(mapping) =>
+						mapping.sourceOffsets[0] === offset &&
+						mapping.lengths[0] === written.length &&
+						isRenameEnabled(mapping.data),
+				),
+			).toBe(true);
 		});
 	});
 
