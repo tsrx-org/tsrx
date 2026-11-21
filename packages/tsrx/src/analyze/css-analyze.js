@@ -237,10 +237,14 @@ function negation_unscoped(selector) {
  */
 function kept_arguments_unscoped(list, negated) {
 	return list.children.every((argument) =>
-		argument.children.every(({ selectors }) =>
-			selectors.every((simple) => {
+		argument.children.every(({ selectors, metadata }) => {
+			// A `:global(...)` compound keeps its arguments as written too.
+			if (metadata.is_global) return true;
+			// No `&` gets the hash in a :root or :host compound (`:root&`).
+			const root_or_host = has_root_or_host(selectors);
+			return selectors.every((simple) => {
 				if (simple.type === 'NestingSelector') {
-					return negated || !is_scope_root_ampersand(argument.metadata.rule);
+					return negated || root_or_host || !is_scope_root_ampersand(argument.metadata.rule);
 				}
 				if (
 					simple.type !== 'PseudoClassSelector' ||
@@ -255,8 +259,8 @@ function kept_arguments_unscoped(list, negated) {
 					);
 				}
 				return kept_arguments_unscoped(simple.args, simple.name === 'not' ? !negated : negated);
-			}),
-		),
+			});
+		}),
 	);
 }
 

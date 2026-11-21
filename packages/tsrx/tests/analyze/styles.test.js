@@ -1097,6 +1097,10 @@ describe('scoped style analysis', () => {
 				'.p { :global.w, &:where(:root:is(.a)) { color: red; } }',
 				':global.w, :root :global :root:is(.a) { color: red; }',
 				':global.w, :root:not(:root:has(.x)) { color: red; }',
+				// A :global(...) compound there keeps its arguments, and an & in a :root
+				// compound gets no hash.
+				':global.w, :root:is(:global(.x):has(.a)) { color: red; }',
+				'@scope (.q) { :global.w, :root:is(:root&) { color: red; } }',
 				// The & already has the hash, and :where() adds no specificity.
 				'.p { :global.w, &:where(.p) { color: red; } }',
 				'@scope (.q) { .p { :global.w, &:where(.p) { color: red; } } }',
