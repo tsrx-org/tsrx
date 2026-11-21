@@ -1630,7 +1630,10 @@ function transform_block_statement(node, { next, visit, state, path }) {
 		return next() ?? node;
 	}
 
-	if (get_active_native_tsrx_function(path)?.metadata?.native_tsrx_body) {
+	if (
+		get_active_native_tsrx_function(path)?.metadata?.native_tsrx_body &&
+		!is_in_directive_body(path)
+	) {
 		const block = create_native_tsrx_statement_list_block(node, state);
 		if (block) {
 			return visit(block, state);
@@ -1647,7 +1650,11 @@ function transform_block_statement(node, { next, visit, state, path }) {
  */
 function transform_return_statement(node, { next, visit, state, path }) {
 	const active_native_tsrx_function = get_active_native_tsrx_function(path);
-	if (active_native_tsrx_function && is_native_tsrx_node(node.argument)) {
+	if (
+		active_native_tsrx_function &&
+		is_native_tsrx_node(node.argument) &&
+		!is_in_directive_body(path)
+	) {
 		if (!active_native_tsrx_function.metadata?.native_tsrx_body) {
 			const statements = mark_native_pretransformed_jsx(
 				create_native_tsrx_return_statements(node, state),
@@ -1728,6 +1735,24 @@ function get_active_native_tsrx_function(path) {
 		}
 	}
 	return null;
+}
+
+/**
+ * Whether a node with these ancestors is in an `@if`, `@for`, `@switch` or
+ * `@try` body, outside a function there, where a `return` is the template
+ * return error that body's check reports. A directive used as a value is
+ * lowered after its children are visited, so a `return` there is left as
+ * written for that check, with its location and the marks the checks leave
+ * on it, not rebuilt as a component's native return.
+ * @param {AST.Node[]} path
+ * @returns {boolean}
+ */
+function is_in_directive_body(path) {
+	for (let i = path.length - 1; i >= 0; i -= 1) {
+		if (is_function_or_class_boundary(path[i])) return false;
+		if (is_jsx_control_flow_expression(path[i])) return true;
+	}
+	return false;
 }
 
 /**
@@ -2572,20 +2597,6 @@ function create_native_tsrx_return_statements(statement, transform_context) {
 	const [only] = statements;
 	if (statements.length === 1 && only.type === 'ReturnStatement' && !has_location(only)) {
 		set_loc(only, statement);
-	}
-	// A directive used as a value is lowered after its children, so a `return`
-	// in its body is rebuilt here first. It keeps the mark of the check that
-	// reported it, so the `@if` and `@for` checks (Solid's too) don't report it
-	// again.
-	const last = statements.at(-1);
-	if (last?.type === 'ReturnStatement' && last !== statement) {
-		const { invalid_directive_jump, invalid_tsrx_template_return } = statement.metadata ?? {};
-		if (invalid_directive_jump) {
-			last.metadata = { ...last.metadata, invalid_directive_jump };
-		}
-		if (invalid_tsrx_template_return) {
-			last.metadata = { ...last.metadata, invalid_tsrx_template_return };
-		}
 	}
 	return statements;
 }
@@ -6051,8 +6062,10 @@ function body_contains_top_level_return_value(node) {
 		return node.some(body_contains_top_level_return_value);
 	}
 
+	// A `return` the parser reported (TSRX2001), as in a code block beside
+	// the directive, isn't a value either.
 	if (node.type === 'ReturnStatement') {
-		return node.argument != null;
+		return node.argument != null && !node.metadata?.invalid_tsrx_template_return;
 	}
 
 	if (

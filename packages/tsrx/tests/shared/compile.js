@@ -3148,6 +3148,49 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			]);
 		});
 
+		it('reports a `return` of a fragment with setup in a directive used as a value at the `return`', () => {
+			// The fragment's setup would turn the `return` into several statements,
+			// and the error had no position.
+			for (const [directive, error] of /** @type {Array<[string, { code: string }]>} */ ([
+				['@if (s) { BODY }', TSRX_ERRORS.IF_RETURN_STATEMENT],
+				['@for (const z of [s]) { BODY }', TSRX_ERRORS.FOR_RETURN_STATEMENT],
+			])) {
+				const statement = 'return <>@{ console.log(s); }<b /></>;';
+				const source = `export function App({ s }: { s: number }) {
+					const view = ${directive.replace('BODY', statement)};
+					return <div>{view}</div>;
+				}`;
+				const expected = expect.objectContaining({
+					code: error.code,
+					pos: source.indexOf(statement),
+					end: source.indexOf(statement) + statement.length,
+				});
+				expect(() => compile(source, 'App.tsrx'), directive).toThrow(expected);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, directive).toEqual([
+					expected,
+				]);
+			}
+		});
+
+		it('reports a `return` in a code block beside a directive in an assigned fragment when collecting', () => {
+			const source = `export function App({ s }: { s: number }) {
+				const view = <>
+					@{ if (s) return null; }
+					@switch (s) { @case 1: { if (s) return <b />; <i /> } @default: { <u /> } }
+				</>;
+				return <div>{view}</div>;
+			}`;
+			expect(
+				compile(source, 'App.tsrx', { collect: true }).errors.map((error) => [
+					error.code,
+					error.pos,
+				]),
+			).toEqual([
+				[TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code, source.indexOf('return null;')],
+				[TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code, source.indexOf('return <b />;')],
+			]);
+		});
+
 		it('rejects an `@if` used as a value whose branches each return a value', () => {
 			// This used to compile to `ready ? <b /> : <i />`; a `return` in an `@if`
 			// body is an error in a child position.
