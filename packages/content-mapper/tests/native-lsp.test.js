@@ -1157,6 +1157,9 @@ const SWITCH_TSRX = `export function Cases(props: { n: number; s: 'a' | 'b'; t: 
 			@case props.t as string: {
 				<u />
 			}
+			@case function () { return 'f'; }: {
+				<s />
+			}
 		}
 		@switch (/x/.test(props.t)) {
 			@case 'c': {
@@ -1378,12 +1381,27 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 
 	it('reports an @case test the discriminant can never equal on the test', async () => {
 		const diagnostics = await client.diagnostics('Switch.tsrx');
-		const code = target === 'solid' ? 2367 : 2678;
-		expect(diagnostics.map((d) => [d.code, where('Switch.tsrx', d.range)])).toEqual([
-			[code, `${SWITCH_TSRX.indexOf("'x'")}:'x'`],
-			[code, `${SWITCH_TSRX.indexOf('props.t as')}:props.t as string`],
-			[code, `${SWITCH_TSRX.indexOf("'c'")}:'c'`],
-		]);
+		const fn = SWITCH_TSRX.indexOf('function ()');
+		const shown = diagnostics.map((d) => [d.code, where('Switch.tsrx', d.range)]);
+		if (target === 'solid') {
+			// The printer writes the function over several lines, so its `}` has no
+			// mapping of its own.
+			expect(shown).toEqual([
+				[2367, `${SWITCH_TSRX.indexOf("'x'")}:'x'`],
+				[2367, `${SWITCH_TSRX.indexOf('props.t as')}:props.t as string`],
+				[2367, `${fn}:function () { return 'f'; }`],
+				[2839, `${fn}:function () { return 'f'; }`],
+				[2367, `${SWITCH_TSRX.indexOf("'c'")}:'c'`],
+			]);
+		} else {
+			// Vue's `case` with the function shows on `function` alone, which is
+			// another mapping's.
+			expect(shown.filter(([, at]) => !String(at).startsWith(`${fn}:`))).toEqual([
+				[2678, `${SWITCH_TSRX.indexOf("'x'")}:'x'`],
+				[2678, `${SWITCH_TSRX.indexOf('props.t as')}:props.t as string`],
+				[2678, `${SWITCH_TSRX.indexOf("'c'")}:'c'`],
+			]);
+		}
 	});
 });
 

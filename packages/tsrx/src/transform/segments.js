@@ -1181,10 +1181,12 @@ export function convert_source_map_to_mappings(
 			generatedLengths: [1],
 			data: { customData: {} },
 		});
-		// A later copy of a switch inside a discriminant has no mapping of its own
-		// for a literal test, so its last character maps to the test's as well. A
-		// span this short would take the place of the test's own in the first.
-		if (index > 0) {
+		// Its last character maps to the test's as well where nothing else may: in
+		// a later copy of a switch inside a discriminant, whose literal tests have
+		// no mapping of their own, and at a bracket the printer writes (a `)` it
+		// adds, the `}` of a function it reformats). A span this short would take
+		// the place of the test's own last token.
+		if (index > 0 || /[)\]}]/.test(generated_code[end - 1])) {
 			mappings.push({
 				sourceOffsets: [test.end - 1],
 				lengths: [1],
