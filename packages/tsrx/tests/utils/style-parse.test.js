@@ -398,3 +398,81 @@ describe('parseStyle custom properties', function () {
 		}).toThrow(/Unexpected end of input/);
 	});
 });
+
+describe('parseStyle url( and unclosed preludes', function () {
+	it.each([
+		// After # or @ the name is a hash or an at-keyword, so the ( opens a
+		// block, and a comment in it is one: a browser reads .b into it.
+		['.a { color: #url(/*x); } .b { color: red /*c*/ }', 1],
+		['.a { color: @url(/*x); } .b { color: red /*c*/ }', 1],
+		['.a { color: #\\75rl(/*x); } .b { color: red /*c*/ }', 1],
+		['.a { color: url(/*x); } .b { color: red /*c*/ }', 2],
+		['.a { color: \\000075\r\n\\000072\r\n\\00006c\r\n(/*x); } .b { color: red /*c*/ }', 2],
+		['.a { color: <!--url(/*x); } .b { color: red /*c*/ }', 2],
+		// A quote after url( makes it a function, and one in an unquoted url()
+		// doesn't open a string.
+		['.a { background: url("a)b"); } .b { color: red }', 2],
+		['.a { background: url(a"b); } .b { color: red }', 2],
+	])('reads %j as %i rule(s)', function (css, rules) {
+		expect(parseStyle(css, LOCATION, {}).children).toHaveLength(rules);
+	});
+
+	it.each([
+		// <!-- is a token of its own, and url( after it a url(); an escaped < is
+		// no <!--, so the name is --url, and /* opens a comment.
+		['.a { --x: <!--url(/*); color: blue */); }', 2],
+		['.a { --x: \\<!--url(/*); color: blue */); }', 1],
+		['.a { --x: \\\\<!--url(/*); color: blue */); }', 2],
+		['.a { color: \\<!--url(/*); color: blue */); }', 1],
+	])('reads %j as %i declaration(s)', function (css, declarations) {
+		const [rule] = parseStyle(css, LOCATION, {}).children;
+
+		expect(/** @type {any} */ (rule).block.children).toHaveLength(declarations);
+	});
+
+	it.each([
+		'@supports (--x: {a}) { .a { color: red } } .b { color: blue }',
+		'@supports (--x: {a)}) { .a { color: red } } .b { color: blue }',
+		'@supports (--x: #url({a})) { .a { color: red } } .b { color: blue }',
+		'@supports (--x: f(<!--url(/*) } */)) { .a { color: red } } .b { color: blue }',
+	])('reads the {} and } in the brackets of the prelude of %j', function (css) {
+		const sheet = parseStyle(css, LOCATION, {});
+
+		expect(sheet.children.map((node) => node.type)).toEqual(['Atrule', 'Rule']);
+	});
+
+	it.each([
+		['@media (min-width: 600px { .a { color: red } } .b { color: blue }', '('],
+		['.x { @media (min-width: 600px { color: red } } .b { color: blue }', '('],
+		['@supports (background: url("a)b") { .a { color: red } }', '('],
+		['@media [x { .a { color: red } }', '['],
+	])('reports the bracket %j leaves open in a prelude, at the bracket', function (css, bracket) {
+		let thrown;
+		try {
+			parseStyle(css, LOCATION, {});
+		} catch (error) {
+			thrown = /** @type {Error & { pos?: number }} */ (error);
+		}
+		const closer = bracket === '(' ? ')' : ']';
+		expect(thrown?.message).toBe(
+			`Expected ${closer} to close this ${bracket} in the at-rule's prelude`,
+		);
+		expect(thrown?.pos).toBe(css.indexOf(bracket));
+	});
+
+	it.each([
+		[
+			'.a { color: red }\n@media (width: 600px { .b { color: blue } }\n.c { color: green }',
+			['Rule', 'Atrule', 'Rule'],
+		],
+		['@media (width: 600px; .b { color: blue }', ['Atrule', 'Rule']],
+		[
+			'@media (a { .b { color: red } } @media (c { .d { color: red } } .e { color: blue }',
+			['Atrule', 'Atrule', 'Rule'],
+		],
+	])('ends such a prelude where it did before in loose mode: %j', function (css, types) {
+		const sheet = parseStyle(css, LOCATION, { loose: true });
+
+		expect(sheet.children.map((node) => node.type)).toEqual(types);
+	});
+});

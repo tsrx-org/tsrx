@@ -27,6 +27,9 @@ const regex_whitespace = /\s/;
 
 class Parser {
 	index = 0;
+	// Whether, in loose mode, an at-rule's prelude has left a `(` or `[` open,
+	// so its read ran to the end of the sheet.
+	unclosed_prelude = false;
 
 	/**
 	 * @param {string} template
@@ -313,7 +316,7 @@ function read_at_rule(parser) {
 
 	const name = read_identifier(parser);
 
-	const prelude = read_value(parser);
+	const prelude = read_value(parser, true);
 
 	/** @type {AST.CSS.Block | null} */
 	let block = null;
@@ -468,31 +471,28 @@ function read_custom_property_value(parser) {
 	const closers = [];
 	/** @type {null | '"' | "'"} */
 	let quote_mark = null;
-	// The name right before the current character, as written, for telling an
-	// unquoted `url(`, which CSS reads case-insensitively and with escapes.
-	let name = '';
+	const name = create_name_tracker();
 
 	while (parser.index < parser.template.length) {
 		const char = parser.template[parser.index];
 
 		if (char === '\\') {
-			// An escape, and the one space that ends a hex escape (`\r\n` too); a
-			// `\` and a newline isn't one, and ends the name.
+			// An escape, read whole, and the one space that ends a hex escape
+			// (`\r\n` too); a `\` and a newline isn't one.
 			const escape = /^\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^\n\r\f]?)/.exec(
 				parser.template.slice(parser.index, parser.index + 9),
 			);
 			const text = escape?.[0] ?? char;
-			if (quote_mark === null) name = text.length > 1 ? name + text : '';
+			if (quote_mark === null) {
+				if (text.length > 1) track_escape(name, parser.template, parser.index, text);
+				else track_name(name, parser.template, parser.index);
+			}
 			parser.index += text.length;
 			continue;
 		}
-		const before = name;
-		// A NUL reads as U+FFFD, a name character.
-		name = quote_mark === null && /[\w\u0000\u0080-\uffff-]/.test(char) ? name + char : '';
-		// `<!--` is a token of its own, not the start of a name.
-		if (name === '--' && parser.template.slice(parser.index - 3, parser.index - 1) === '<!') {
-			name = '';
-		}
+		const url =
+			quote_mark === null && char === '(' && is_unquoted_url(name, parser.template, parser.index);
+		if (quote_mark === null) track_name(name, parser.template, parser.index);
 		if (quote_mark !== null) {
 			if (char === quote_mark) quote_mark = null;
 		} else if (char === '"' || char === "'") {
@@ -501,14 +501,9 @@ function read_custom_property_value(parser) {
 			const close = parser.template.indexOf('*/', parser.index + 2);
 			if (close === -1) break;
 			parser.index = close + 2;
+			reset_name(name);
 			continue;
-		} else if (
-			char === '(' &&
-			unescape_css(before).toLowerCase() === 'url' &&
-			// Not a hash or an at-keyword (`#url(`, `@url(`).
-			!/[#@]/.test(parser.template[parser.index - before.length - 1] ?? '') &&
-			!/^\(\s*["']/.test(parser.template.slice(parser.index))
-		) {
+		} else if (url) {
 			// An unquoted url(), where `{`, `[` and `/*` are part of the URL: it
 			// ends at the first `)` that isn't escaped.
 			parser.index++;
@@ -534,97 +529,257 @@ function read_custom_property_value(parser) {
 }
 
 /**
+ * The name a value has read up to the current character, as CSS's tokenizer
+ * reads it, for telling an unquoted `url(`: `URL(`, `u\72l(` and `ur\6c (` are
+ * one, `#url(`, `@url(`, `-url(`, `myurl(` and `<!--url(` aren't.
+ *
+ * @typedef {{ name: string, hex: number, escaped: boolean, after_cr: boolean, prefixed: boolean }} NameTracker
+ */
+
+/** @returns {NameTracker} */
+function create_name_tracker() {
+	return { name: '', hex: 0, escaped: false, after_cr: false, prefixed: false };
+}
+
+/**
+ * Read `source[index]`, which is outside a string, a comment and a url(), into
+ * the tracker.
+ *
+ * @param {NameTracker} tracker
+ * @param {string} source
+ * @param {number} index
+ */
+function track_name(tracker, source, index) {
+	const code = source.charCodeAt(index);
+	const after_cr = tracker.after_cr;
+	tracker.after_cr = false;
+	if (after_cr && code === 10) {
+		// `\r\n` is the one space that ends a hex escape.
+		tracker.name += '\n';
+	} else if (tracker.escaped) {
+		tracker.escaped = false;
+		if (code === 10 || code === 12 || code === 13) {
+			// A `\` and a newline isn't an escape: it ends the name.
+			reset_name(tracker);
+		} else {
+			if (tracker.name === '') tracker.prefixed = is_hash_or_at(source, index - 2);
+			tracker.name += '\\' + source[index];
+			tracker.hex = is_hex_digit(code) ? 1 : 0;
+		}
+	} else if (code === 92) {
+		// A `\`: the next character goes with it.
+		tracker.escaped = true;
+	} else if (tracker.hex > 0 && tracker.hex < 6 && is_hex_digit(code)) {
+		tracker.name += source[index];
+		tracker.hex++;
+	} else if (
+		tracker.hex > 0 &&
+		(code === 32 || code === 9 || code === 10 || code === 12 || code === 13)
+	) {
+		tracker.name += source[index];
+		tracker.hex = 0;
+		tracker.after_cr = code === 13;
+	} else if (is_name_code(code)) {
+		if (tracker.name === '') tracker.prefixed = is_hash_or_at(source, index - 1);
+		tracker.name += source[index];
+		tracker.hex = 0;
+		// `<!--` is a token of its own, not the start of a name; `\<!--` isn't one.
+		if (tracker.name === '--' && source.slice(index - 3, index - 1) === '<!') {
+			let backslashes = 0;
+			while (source[index - 4 - backslashes] === '\\') backslashes++;
+			if (backslashes % 2 === 0) reset_name(tracker);
+		}
+	} else if (tracker.name !== '' || tracker.hex !== 0) {
+		reset_name(tracker);
+	}
+}
+
+/**
+ * Read a whole escape, `\` and at least one more character, into the tracker.
+ *
+ * @param {NameTracker} tracker
+ * @param {string} source
+ * @param {number} index where the `\` is
+ * @param {string} text
+ */
+function track_escape(tracker, source, index, text) {
+	if (tracker.name === '') tracker.prefixed = is_hash_or_at(source, index - 1);
+	tracker.name += text;
+	tracker.hex = 0;
+	tracker.escaped = false;
+	tracker.after_cr = false;
+}
+
+/**
+ * A name character: a letter, a digit, `_`, `-`, a non-ASCII character, or a
+ * NUL, which reads as U+FFFD.
+ *
+ * @param {number} code
+ */
+function is_name_code(code) {
+	return (
+		(code >= 97 && code <= 122) ||
+		(code >= 65 && code <= 90) ||
+		(code >= 48 && code <= 57) ||
+		code === 95 ||
+		code === 45 ||
+		code === 0 ||
+		code >= 0x80
+	);
+}
+
+/** @param {number} code */
+function is_hex_digit(code) {
+	return (code >= 48 && code <= 57) || (code >= 97 && code <= 102) || (code >= 65 && code <= 70);
+}
+
+/**
+ * @param {string} source
+ * @param {number} index
+ */
+function is_hash_or_at(source, index) {
+	return source[index] === '#' || source[index] === '@';
+}
+
+/** @param {NameTracker} tracker */
+function reset_name(tracker) {
+	tracker.name = '';
+	tracker.hex = 0;
+	tracker.prefixed = false;
+}
+
+/**
+ * Whether the `(` at `index` starts an unquoted url(), which runs to the first
+ * `)` that isn't escaped: the tracker has read `url`, not after a `#` or `@`,
+ * where it is a hash or an at-keyword, and no quote follows, which makes it
+ * an ordinary function (`url("a)b")`).
+ *
+ * @param {NameTracker} tracker
+ * @param {string} source
+ * @param {number} index
+ */
+function is_unquoted_url(tracker, source, index) {
+	if (!is_url_name(tracker)) return false;
+	let i = index + 1;
+	while (' \t\n\r\f'.includes(source[i] || '-')) i++;
+	return source[i] !== '"' && source[i] !== "'";
+}
+
+/** @param {NameTracker} tracker */
+function is_url_name(tracker) {
+	// `url` with each letter escaped as `\00006c` and a `\r\n` is 27 characters
+	// long.
+	return (
+		!tracker.prefixed &&
+		tracker.name.length >= 3 &&
+		tracker.name.length <= 27 &&
+		unescape_css(tracker.name).toLowerCase() === 'url'
+	);
+}
+
+/**
  * @param {Parser} parser
+ * @param {boolean} [prelude] whether this is an at-rule's prelude: a `{` in
+ *   its brackets is a block, a `}` in them part of them, and a `(` or `[` it
+ *   leaves open is reported
  * @returns {string}
  */
-function read_value(parser) {
+function read_value(parser, prelude = false) {
 	let value = '';
 	let escaped = false;
 	let in_url = false;
-	// The name the value ends with, as written, for telling a `url(` in any
-	// case and with escapes (`URL(`, `u\72l(`).
-	let name = '';
-	// The digits of a hex escape the name ends with, 0 if it doesn't.
-	let hex_digits = 0;
-	// How many `(` and `[` are open: a `;` or `{` in them, as in `f(a;b)`,
-	// doesn't end the value.
-	let depth = 0;
-	// Whether a `\r` just ended a hex escape, so a `\n` goes with it.
-	let after_cr = false;
+	const name = create_name_tracker();
+	// The closers of the `(` and `[` still open, and in a prelude of the `{}`
+	// blocks in them: a `;` or `{` in them, as in `f(a;b)`, doesn't end the
+	// value.
+	/** @type {string[]} */
+	const closers = [];
+	// Where the outermost of them opens.
+	let open = -1;
+	// In a prelude, the first `;`, `{` or `}` inside the outermost one still
+	// open, where the prelude ended before they were tracked, and the value
+	// before it.
+	let stop = -1;
+	let before_stop = '';
 
 	/** @type {null | '"' | "'"} */
 	let quote_mark = null;
 
+	/**
+	 * A prelude's `(` or `[` is left open: report it at the bracket, or in loose
+	 * mode, while the `)` is still to be typed, end the prelude at the first
+	 * `;`, `{` or `}` inside it, as before.
+	 */
+	const unclosed = () => {
+		if (parser.loose) {
+			parser.unclosed_prelude = true;
+			if (stop === -1) return value.trim();
+			parser.index = stop;
+			return before_stop.trim();
+		}
+		const bracket = parser.template[open];
+		parser.index = open;
+		throw new Error(
+			`Expected ${bracket === '(' ? ')' : ']'} to close this ${bracket} in the at-rule's prelude`,
+		);
+	};
+
 	while (parser.index < parser.template.length) {
 		const char = parser.template[parser.index];
-		const before = name;
-		if (quote_mark === null && !in_url) {
-			const cr = after_cr;
-			after_cr = false;
-			if (cr && char === '\n') {
-				name += char;
-			} else if (escaped && /[\n\r\f]/.test(char)) {
-				// Not an escape: a `\` and a newline end the name.
-				name = '';
-				hex_digits = 0;
-			} else if (escaped) {
-				name += '\\' + char;
-				hex_digits = /[0-9a-f]/i.test(char) ? 1 : 0;
-			} else if (char === '\\') {
-				// The next character goes with it.
-			} else if (hex_digits > 0 && hex_digits < 6 && /[0-9a-f]/i.test(char)) {
-				name += char;
-				hex_digits++;
-			} else if (hex_digits > 0 && /[ \t\n\r\f]/.test(char)) {
-				// The one space that ends a hex escape (`\r\n` counts as one).
-				name += char;
-				hex_digits = 0;
-				after_cr = char === '\r';
-			} else if (/[\w\u0080-\uffff-]/.test(char)) {
-				name += char;
-				hex_digits = 0;
-			} else {
-				name = '';
-				hex_digits = 0;
-			}
-		}
+		const outside = quote_mark === null && !in_url;
+		const url = outside && char === '(' && is_unquoted_url(name, parser.template, parser.index);
+		if (outside) track_name(name, parser.template, parser.index);
 
 		if (escaped) {
 			value += '\\' + char;
 			escaped = false;
 		} else if (char === '\\') {
 			escaped = true;
-		} else if (
-			char === '/' &&
-			parser.template[parser.index + 1] === '*' &&
-			quote_mark === null &&
-			!in_url
-		) {
+		} else if (outside && char === '/' && parser.template[parser.index + 1] === '*') {
 			// A comment, which can hold a `;`, `{` or `}` (`color: red /* } */`).
 			const close = parser.template.indexOf('*/', parser.index + 2);
-			if (close === -1) break;
+			if (close === -1) throw new Error('Unexpected end of input');
 			value += parser.template.slice(parser.index, close + 2);
 			parser.index = close + 2;
-			name = '';
-			hex_digits = 0;
+			reset_name(name);
 			continue;
 		} else if (char === quote_mark) {
 			quote_mark = null;
 		} else if (char === ')' && in_url) {
 			in_url = false;
-		} else if (quote_mark === null && !in_url && (char === '(' || char === '[')) {
-			if (char === '(' && unescape_css(before).toLowerCase() === 'url') in_url = true;
-			else depth++;
-		} else if (quote_mark === null && !in_url && depth > 0 && (char === ')' || char === ']')) {
-			depth--;
-		} else if (quote_mark === null && (char === '"' || char === "'")) {
-			quote_mark = char;
-		} else if (
-			(char === '}' || (depth === 0 && (char === ';' || char === '{'))) &&
-			!in_url &&
-			!quote_mark
-		) {
-			return value.trim();
+		} else if (outside) {
+			if (prelude && stop === -1 && closers.length > 0 && /[;{}]/.test(char)) {
+				// Once one read has run to the end of the sheet, end the later ones
+				// here, as before, rather than read it again for each.
+				if (parser.unclosed_prelude) return value.trim();
+				stop = parser.index;
+				before_stop = value;
+			}
+			if (char === '"' || char === "'") {
+				quote_mark = char;
+			} else if (char === '(' || char === '[' || (prelude && closers.length > 0 && char === '{')) {
+				if (url) {
+					in_url = true;
+				} else {
+					if (closers.length === 0) open = parser.index;
+					closers.push(char === '(' ? ')' : char === '[' ? ']' : '}');
+				}
+			} else if (
+				closers.length > 0 &&
+				// A `)` or `]` closes either, as before; a `}` only its `{`.
+				(char === '}'
+					? closers.at(-1) === '}'
+					: (char === ')' || char === ']') && closers.at(-1) !== '}')
+			) {
+				closers.pop();
+				if (closers.length === 0) stop = -1;
+			} else if (char === '}') {
+				// In a prelude's brackets a `}` is part of them, as in CSS; in a
+				// declaration's it ends the value, before the next rule is read in.
+				if (!prelude || closers.length === 0) return value.trim();
+			} else if (closers.length === 0 && (char === ';' || char === '{')) {
+				return value.trim();
+			}
 		}
 
 		value += char;
@@ -632,6 +787,7 @@ function read_value(parser) {
 		parser.index++;
 	}
 
+	if (prelude && closers.length > 0) return unclosed();
 	throw new Error('Unexpected end of input');
 }
 
