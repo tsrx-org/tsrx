@@ -1874,6 +1874,9 @@ export function runSharedScopedStyleTests({
 				// combinator first, which no :is() can hold, it is dropped.
 				['.icon:global(.x)', (hash) => `.icon.${hash}.x {`],
 				['.wrap:global(> i)', (hash) => `.wrap.${hash}> i {`],
+				['.wrap:global(+n)', (hash) => `.wrap.${hash}+n {`],
+				// A global block prunes nothing, so its selectors get the :is() too.
+				[':global { .x:global(div)', () => '.x:is(div) {'],
 			];
 			for (const [selector, expected] of cases) {
 				const rule = `${selector} { color: red; }${selector.includes(' {') ? ' }' : ''}`;

@@ -467,7 +467,9 @@ function remove_global_pseudo_class(selector, combinator, state, after_start = f
 function leading_type_selector(list) {
 	const relative = list.children[0]?.children[0];
 	const first = relative?.combinator === null ? relative.selectors[0] : null;
-	return first?.type === 'TypeSelector' || first?.type === 'Nth' ? first : null;
+	if (first?.type === 'TypeSelector') return first;
+	// Not `+n`, which is a combinator and a type selector.
+	return first?.type === 'Nth' && /^(n|odd|even)$/i.test(first.value) ? first : null;
 }
 
 /**
@@ -849,12 +851,13 @@ const visitors = {
 		}
 
 		// Text written into a pruned selector would outlast it when minifying,
-		// which removes it before this runs.
+		// which removes it before this runs. A global block prunes nothing.
 		const kept =
-			node.metadata.used &&
-			!context.path.some(
-				(ancestor) => ancestor.type === 'ComplexSelector' && !ancestor.metadata.used,
-			);
+			is_in_global_block(context.path) ||
+			(node.metadata.used &&
+				!context.path.some(
+					(ancestor) => ancestor.type === 'ComplexSelector' && !ancestor.metadata.used,
+				));
 
 		for (const relative_selector of node.children) {
 			if (relative_selector.metadata.is_global && !insideScopingPseudo) {
