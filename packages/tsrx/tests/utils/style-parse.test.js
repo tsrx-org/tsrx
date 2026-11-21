@@ -224,6 +224,18 @@ describe('parseStyle custom properties', function () {
 				],
 			],
 		],
+		// url is a name, read case-insensitively, with escapes; éurl isn't url.
+		[
+			String.raw`.a { --x: URL(/a{.svg); --y: ur\6c (/b[.svg); color: red }`,
+			[
+				[
+					['--x', 'URL(/a{.svg)'],
+					['--y', String.raw`ur\6c (/b[.svg)`],
+					['color', 'red'],
+				],
+			],
+		],
+		['.a { --x: éurl((a); b) }', [[['--x', 'éurl((a); b)']]]],
 		// A selector that starts with a custom property name, but isn't one before
 		// its `:`, is still a rule's.
 		['.a { --w,i:hover { color: red } --w[x]:hover { color: red } }', [['Rule', 'Rule']]],

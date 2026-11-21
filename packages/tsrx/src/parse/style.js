@@ -465,14 +465,25 @@ function read_custom_property_value(parser) {
 	const closers = [];
 	/** @type {null | '"' | "'"} */
 	let quote_mark = null;
+	// The name right before the current character, as written, for telling an
+	// unquoted `url(`, which CSS reads case-insensitively and with escapes.
+	let name = '';
 
 	while (parser.index < parser.template.length) {
 		const char = parser.template[parser.index];
 
 		if (char === '\\') {
-			parser.index = Math.min(parser.index + 2, parser.template.length);
+			// An escape, and the one space that ends a hex escape (`\r\n` too).
+			const escape = /^\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^]?)/.exec(
+				parser.template.slice(parser.index, parser.index + 9),
+			);
+			const text = escape?.[0] ?? char;
+			if (quote_mark === null) name += text;
+			parser.index += text.length;
 			continue;
 		}
+		const before = name;
+		name = quote_mark === null && /[\w\u0080-\uffff-]/.test(char) ? name + char : '';
 		if (quote_mark !== null) {
 			if (char === quote_mark) quote_mark = null;
 		} else if (char === '"' || char === "'") {
@@ -484,7 +495,7 @@ function read_custom_property_value(parser) {
 			continue;
 		} else if (
 			char === '(' &&
-			/(?:^|[^\w-])url$/i.test(parser.template.slice(start, parser.index)) &&
+			unescape_css(before).toLowerCase() === 'url' &&
 			!/^\(\s*["']/.test(parser.template.slice(parser.index))
 		) {
 			// An unquoted url(), where `{`, `[` and `/*` are part of the URL: it
