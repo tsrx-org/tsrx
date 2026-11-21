@@ -1525,7 +1525,7 @@ JSX Text With A Less-Than Before An Escape
 =====================================
 
 export function App() @{
-  <span>1 <\u0031 2 <\u002d 3 <\x</span>
+  <span>1 <\u0031 2 <\u002d 3 <\x 4 <\u{31}</span>
 }
 
 ---
@@ -1541,6 +1541,10 @@ export function App() @{
             (jsx_element_name
               (identifier)))
           (jsx_text)
+          (jsx_expression
+            (component_statement
+              (expression_statement
+                (number))))
           (jsx_closing_element
             (jsx_element_name
               (identifier))))))))

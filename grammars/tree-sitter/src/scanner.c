@@ -201,25 +201,17 @@ static int hex_value(int32_t c) {
   return -1;
 }
 
-// The code point that the Unicode escape at the lexer's `\` spells, `\uXXXX`
-// or `\u{X}`, or -1 when it isn't a well-formed one. Reads past it.
+// The code point that the Unicode escape at the lexer's `\` spells, `\uXXXX`,
+// or -1 when it isn't a well-formed one. Reads past what it reads, which the
+// text then takes when it's -1, so it doesn't read a braced one (`\u{X}`): its
+// `{` starts an expression unless the escape spells a name's start
+// (`<\u{31}`), and the text stops before it either way. The compiler reports a
+// braced one that does (TS17021).
 static int32_t scan_unicode_escape(TSLexer *lexer) {
   advance(lexer);
   if (lexer->lookahead != 'u') return -1;
   advance(lexer);
   int32_t code = 0;
-  if (lexer->lookahead == '{') {
-    advance(lexer);
-    unsigned digits = 0;
-    while (hex_value(lexer->lookahead) != -1) {
-      code = code * 16 + hex_value(lexer->lookahead);
-      if (code > 0x10FFFF) return -1;
-      digits++;
-      advance(lexer);
-    }
-    if (digits == 0 || lexer->lookahead != '}') return -1;
-    return code;
-  }
   for (unsigned i = 0; i < 4; i++) {
     int value = hex_value(lexer->lookahead);
     if (value == -1) return -1;
@@ -230,11 +222,13 @@ static int32_t scan_unicode_escape(TSLexer *lexer) {
 }
 
 // Whether a `<` in text starts a tag, as the compiler's `can_start_tag_after_lt`
-// decides: the character after it is `/`, `>`, `{`, `@`, `$`, `_`, a letter
-// (outside ASCII, as `iswalpha` reads one), or a Unicode escape for one of those
-// (`<\u0049nner />`), whose name the compiler reports. Otherwise the `<` is
-// text (`1 < 2`, `<\u0031`). Reads past the `<`; the caller has marked the
-// end of the text before it.
+// decides: the character after it is `/`, `>`, `{`, `@`, `$`, `_`, a letter, or
+// a Unicode escape for one of those (`<\u0049nner />`), whose name the
+// compiler reports. Otherwise the `<` is text (`1 < 2`, `<\u0031`). A letter
+// outside ASCII is one as its other name checks read one, with `iswalpha`, which
+// in the C locale takes ASCII letters only, and a braced escape is text (see
+// `scan_unicode_escape`). Reads past the `<`; the caller has marked the end of
+// the text before it.
 static bool lt_starts_tag(TSLexer *lexer) {
   advance(lexer);
   int32_t c = lexer->lookahead;
