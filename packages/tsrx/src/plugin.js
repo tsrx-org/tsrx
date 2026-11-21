@@ -14601,7 +14601,10 @@ export function TSRXPlugin(config) {
 					// collecting one (see `#asCollecting`) reports later.
 					const errors = this.#hold.held ?? this.#errors;
 					const count = errors?.length ?? 0;
-					this.#recordCheckerLevelError(start, end, error, true);
+					// Not raised: a strict parse that reads ahead throws it as it is once
+					// read, which an attempt it's read in doesn't take for a sign that
+					// the code isn't what it tried.
+					this.#recordCheckerLevelError(start, end, error);
 					if (errors && errors.length > count) held_syntax_errors.add(errors[errors.length - 1]);
 					return;
 				}

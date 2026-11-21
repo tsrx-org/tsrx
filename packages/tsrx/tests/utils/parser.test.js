@@ -18367,8 +18367,10 @@ ${lines.join('\n')}
 			// found after the name, at its closing tag's `</`.
 			`const f = <T,>() => { <A${escape('0062')} />; const y = ; };`,
 			`const f = <T,>() => <A></B${escape('0063')}>;`,
-			// In an async generic arrow function's default, read ahead in another's.
+			// In an async generic arrow function's default, read ahead in another's,
+			// also in a function's default there.
 			`const f = <T,>(x = async <U,>(y = <A${escape('0062')} />) => y) => x;`,
+			`const f = <T,>(x = async <U,>(y = function (z = <A${escape('0062')} />) {}) => 0) => 0;`,
 			// In a parameter's default, where checker errors are held: before them,
 			// and in a function's or a method's in a speculative parse.
 			`function h(x = <A${escape('0062')} />, x) {}`,
