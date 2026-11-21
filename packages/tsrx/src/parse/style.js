@@ -455,6 +455,9 @@ function read_value(parser) {
 	let name = '';
 	// The digits of a hex escape the name ends with, 0 if it doesn't.
 	let hex_digits = 0;
+	// How many `(` and `[` are open: a `;` or `{` in them, as in `f(a;b)`,
+	// doesn't end the value.
+	let depth = 0;
 	// Whether a `\r` just ended a hex escape, so a `\n` goes with it.
 	let after_cr = false;
 
@@ -516,18 +519,20 @@ function read_value(parser) {
 			continue;
 		} else if (char === quote_mark) {
 			quote_mark = null;
-		} else if (char === ')') {
+		} else if (char === ')' && in_url) {
 			in_url = false;
+		} else if (quote_mark === null && !in_url && (char === '(' || char === '[')) {
+			if (char === '(' && unescape_css(before).toLowerCase() === 'url') in_url = true;
+			else depth++;
+		} else if (quote_mark === null && !in_url && depth > 0 && (char === ')' || char === ']')) {
+			depth--;
 		} else if (quote_mark === null && (char === '"' || char === "'")) {
 			quote_mark = char;
 		} else if (
-			char === '(' &&
-			quote_mark === null &&
-			// As main read it, any name that ends in `url` (`myurl(` too).
-			unescape_css(before).toLowerCase().endsWith('url')
+			(char === '}' || (depth === 0 && (char === ';' || char === '{'))) &&
+			!in_url &&
+			!quote_mark
 		) {
-			in_url = true;
-		} else if ((char === ';' || char === '{' || char === '}') && !in_url && !quote_mark) {
 			return value.trim();
 		}
 
