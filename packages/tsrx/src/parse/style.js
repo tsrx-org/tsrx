@@ -450,8 +450,8 @@ function read_value(parser) {
 	let value = '';
 	let escaped = false;
 	let in_url = false;
-	// The name the value ends with, as written, for telling a `url(`, which CSS
-	// reads case-insensitively and with escapes (`URL(`, `u\72l(`).
+	// The name the value ends with, as written, for telling a `url(` in any
+	// case and with escapes (`URL(`, `u\72l(`).
 	let name = '';
 	// The digits of a hex escape the name ends with, 0 if it doesn't.
 	let hex_digits = 0;
@@ -469,6 +469,10 @@ function read_value(parser) {
 			after_cr = false;
 			if (cr && char === '\n') {
 				name += char;
+			} else if (escaped && /[\n\r\f]/.test(char)) {
+				// Not an escape: a `\` and a newline end the name.
+				name = '';
+				hex_digits = 0;
 			} else if (escaped) {
 				name += '\\' + char;
 				hex_digits = /[0-9a-f]/i.test(char) ? 1 : 0;
@@ -519,7 +523,8 @@ function read_value(parser) {
 		} else if (
 			char === '(' &&
 			quote_mark === null &&
-			unescape_css(before).toLowerCase() === 'url'
+			// As main read it, any name that ends in `url` (`myurl(` too).
+			unescape_css(before).toLowerCase().endsWith('url')
 		) {
 			in_url = true;
 		} else if ((char === ';' || char === '{' || char === '}') && !in_url && !quote_mark) {

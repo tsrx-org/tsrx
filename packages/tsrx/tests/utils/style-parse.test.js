@@ -124,6 +124,10 @@ describe('parseStyle declaration values', function () {
 		['.a{background:ur\\6c\r\n(/*x)}.b{color:red/* } */}', 2],
 		// In a string, URL( is text.
 		['.a{content:"URL("}.b{color:red}', 2],
+		// A name that ends in url is read as url(, as main read it.
+		['.a{--x:myurl(a;b)}.b{color:blue}', 2],
+		// A \ and a newline isn't an escape, so it ends the name.
+		['.a{--x:ur\\\nl(/*"*/x)}.b{color:red}', 2],
 	])('reads the url( name of %j as CSS does', function (css, rules) {
 		expect(blocks(css)).toHaveLength(rules);
 	});
