@@ -372,6 +372,9 @@ function read_block(parser) {
 
 		if (parser.match('}')) {
 			break;
+		} else if (parser.eat(';')) {
+			// An empty declaration, as in `color: red;;`, which CSS allows.
+			continue;
 		} else {
 			children.push(read_block_item(parser));
 		}
