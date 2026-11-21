@@ -3216,6 +3216,130 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual(errors);
 		});
 
+		it('rejects a `return` in a loop in a template body, or in an `@empty` body, strictly and when collecting', () => {
+			// The `@for` check and the parser's check of the other bodies stopped at
+			// a loop, and nothing checked an `@empty` body.
+			const loop = 'for (const z of items) { if (z) RETURN; }';
+			for (const [template, error] of /** @type {Array<[string, { code: string }]>} */ ([
+				[`@for (const item of items) { ${loop} <i /> }`, TSRX_ERRORS.FOR_RETURN_STATEMENT],
+				[
+					'@for (const item of items) { while (log) { RETURN; } <i /> }',
+					TSRX_ERRORS.FOR_RETURN_STATEMENT,
+				],
+				[`@try { ${loop} <b /> } @catch (e) { <i /> }`, TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT],
+				[
+					`@try { <b /> } @pending { ${loop} <i /> } @catch (e) { <i /> }`,
+					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+				],
+				[`@try { <b /> } @catch (e) { ${loop} <i /> }`, TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT],
+				[`<p>{@{ ${loop} <b /> }}</p>`, TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT],
+				[
+					'@for (const item of items) { <b /> } @empty { if (log) RETURN; <i /> }',
+					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+				],
+				[
+					`@for (const item of items) { <b /> } @empty { ${loop} <i /> }`,
+					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+				],
+				[
+					`@if (log) { <s /> } @else if (items.length) { @try { ${loop} <b /> } @catch (e) { <i /> } }`,
+					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+				],
+				[
+					`@if (log) { @try { ${loop} <b /> } @catch (e) { <i /> } }`,
+					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+				],
+				[
+					`@for (const item of items) { @try { ${loop} <b /> } @catch (e) { <i /> } }`,
+					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+				],
+				[
+					`@try { <ul>@for (const item of items) { ${loop} <li /> }</ul> } @catch (e) { <i /> }`,
+					TSRX_ERRORS.FOR_RETURN_STATEMENT,
+				],
+			])) {
+				for (const statement of ['return <s />', 'return']) {
+					const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
+						<div>${template.replace('RETURN', statement)}</div>
+					}`;
+					const start = source.indexOf(`${statement};`);
+					const expected = expect.objectContaining({
+						code: error.code,
+						pos: start,
+						end: start + `${statement};`.length,
+					});
+					expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
+					expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([
+						expected,
+					]);
+				}
+			}
+		});
+
+		it('reports a `return` in a loop in a directive body once in a value position', () => {
+			for (const [label, source] of [
+				[
+					'an `@try` in an `@if` in an attribute value',
+					`declare function Comp(props: { value: unknown }): any;
+					export function App({ log }: { log: unknown }) @{
+						<Comp value={@if (log) { @try { for (;;) { return <b />; } <i /> } @catch (e) { <i /> } }} />
+					}`,
+				],
+				[
+					'an `@try` assigned to a const',
+					`export function App() {
+						const view = @try { for (;;) { return <b />; } <i /> } @catch (e) { <i /> };
+						return <div>{view}</div>;
+					}`,
+				],
+				[
+					'a code-only block beside an `@try` in an assigned fragment',
+					`export function App() {
+						const view = <>@{ for (;;) { return <b />; } } @try { <b /> } @catch (e) { <i /> }</>;
+						return <div>{view}</div>;
+					}`,
+				],
+			]) {
+				const start = source.indexOf('return <b />;');
+				const expected = [TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code, start];
+				expect(
+					compile(source, 'App.tsrx', { collect: true }).errors.map((error) => [
+						error.code,
+						error.pos,
+					]),
+					label,
+				).toEqual([expected]);
+			}
+		});
+
+		it('rejects a `return` in a loop in a code-only block inlined before a `return`', () => {
+			const source = `export function App({ items }: { items: string[] }) {
+				return <>@{ for (const z of items) { if (z) return <b />; } }<i /></>;
+			}`;
+			const start = source.indexOf('return <b />;');
+			const expected = expect.objectContaining({
+				code: TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code,
+				pos: start,
+				end: start + 'return <b />;'.length,
+			});
+			expect(() => compile(source, 'App.tsrx')).toThrow(expected);
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([expected]);
+		});
+
+		it('allows a `return` in a function in a loop in a template body', () => {
+			for (const template of [
+				'@for (const item of items) { for (const z of items) { const f = () => { return z; }; console.log(f()); } <i /> }',
+				'@for (const item of items) { <b /> } @empty { const o = { m() { for (const z of items) { return z; } } }; <i>{o.m()}</i> }',
+				'@try { function Inner() @{ for (const z of items) { if (z) return null; } <b /> } <Inner /> } @catch (e) { <i /> }',
+				'<p>{@{ const f = () => { do { return 1; } while (log); }; <i>{f()}</i> }}</p>',
+			]) {
+				const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
+					<div>${template}</div>
+				}`;
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([]);
+			}
+		});
+
 		it('rejects direct returns inside @if template blocks', () => {
 			expect(() =>
 				compile(
@@ -3767,7 +3891,8 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			}
 
 			// A returned code-only block in a template body is inlined into that
-			// body's function, apart from the label outside the template.
+			// body's function, apart from the label outside the template. (The
+			// `return` itself is the template return error, TSRX2001.)
 			for (const block of [
 				'@{ for (const y of items) { return @{ outer: for (const z of items) { console.log(z); } }; } <b /> }',
 				'@{ for (const y of items) { return <>@{ outer: for (const z of items) { console.log(z); } }<i /></>; } <b /> }',
@@ -3779,7 +3904,10 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 					}
 					return null;
 				}`;
-				expect(compile(allowed, 'App.tsrx', { collect: true }).errors, block).toEqual([]);
+				expect(
+					compile(allowed, 'App.tsrx', { collect: true }).errors.map((error) => error.code),
+					block,
+				).toEqual([TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT.code]);
 			}
 		});
 
