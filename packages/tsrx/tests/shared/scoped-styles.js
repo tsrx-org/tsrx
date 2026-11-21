@@ -1854,6 +1854,25 @@ export function runSharedScopedStyleTests({
 	});
 
 	describe(`[${name}] :global selectors`, () => {
+		it('reads a custom property whose value holds {} blocks', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							.a { --x: { a: b; c }; color: red; .b { color: blue } }
+						</style>
+						<div ${attr}="a"><i ${attr}="b" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(
+				`.a.${hash} { --x: { a: b; c }; color: red; .b.${hash} { color: blue } }`,
+			);
+		});
+
 		it('global-forms: :global leaves the wrapped part unscoped and scopes the rest of the selector', () => {
 			const { code, css, cssHash } = compile(
 				`export function App() @{

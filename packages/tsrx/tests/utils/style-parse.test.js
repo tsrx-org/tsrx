@@ -157,3 +157,69 @@ describe('parseStyle escapes', function () {
 		expect(unescape_css(value)).toBe(expected);
 	});
 });
+
+describe('parseStyle custom properties', function () {
+	/** @param {string} css */
+	function blocks(css) {
+		return parseStyle(css, LOCATION, {}).children.map((rule) =>
+			/** @type {any} */ (rule).block.children.map((/** @type {any} */ child) =>
+				child.type === 'Declaration' ? [child.property, child.value] : child.type,
+			),
+		);
+	}
+
+	it.each([
+		// The read-ahead took the `{` for a nested rule's.
+		['.a { --x: {a} }', [[['--x', '{a}']]]],
+		[
+			'.a { --x: { a: b; c }; color: red }',
+			[
+				[
+					['--x', '{ a: b; c }'],
+					['color', 'red'],
+				],
+			],
+		],
+		['.a { --x: a {b} c; .b { color: blue } }', [[['--x', 'a {b} c'], 'Rule']]],
+		['.a { --x : {a} {b} }', [[['--x', '{a} {b}']]]],
+		// A ; or } in a block, a string or a comment doesn't end the value.
+		[
+			'.a { --x: [a; b]; --y: (c; d) }',
+			[
+				[
+					['--x', '[a; b]'],
+					['--y', '(c; d)'],
+				],
+			],
+		],
+		[
+			'.a { --x: "}" /* } */; color: red }',
+			[
+				[
+					['--x', '"}" /* } */'],
+					['color', 'red'],
+				],
+			],
+		],
+		// CSS reads an item that starts with a custom property name and a `:` as
+		// a declaration, so this is one, not a rule.
+		['.a { --x:hover { color: red } }', [[['--x', 'hover { color: red }']]]],
+		[
+			'.a { --empty:; color: red }',
+			[
+				[
+					['--empty', ''],
+					['color', 'red'],
+				],
+			],
+		],
+	])('reads %j', function (css, expected) {
+		expect(blocks(css)).toEqual(expected);
+	});
+
+	it('reports a block the value leaves open', function () {
+		expect(function () {
+			parseStyle('.a { --x: {a; }', LOCATION, {});
+		}).toThrow(/Unexpected end of input/);
+	});
+});
