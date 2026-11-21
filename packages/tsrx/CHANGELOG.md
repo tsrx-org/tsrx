@@ -1,5 +1,133 @@
 # @tsrx/core
 
+## 0.9.0
+
+### Minor Changes
+
+- [#1493](https://github.com/tsrx-org/tsrx/pull/1493)
+  [`e75d581`](https://github.com/tsrx-org/tsrx/commit/e75d581a055287586532f674edc110d7041f3d6c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A JSX name written with
+  a Unicode escape is now reported as TS17021, "Unicode escape sequence cannot
+  appear here.", as TypeScript reports it in a `.tsx` file: on the tag name
+  (`<Inn\u0065r />`, `</Inn\u0065r>`), on the part of a member or namespaced name
+  that has the escape (`<ns.Inn\u0065r />`, `x:t\u0069tle`), and on an attribute
+  name (`data-\u0061`, `\u0074itle`). A build throws it. The editor and other
+  collecting compiles report it, once per name, and still read the name as the one
+  the escapes spell, so its hover, definition, rename, diagnostics and closing tag
+  keep working. Under TypeScript 7 the error hides TypeScript's own errors on the
+  name only, not in the rest of the element. Prettier's `typescript` parser
+  rejects such a name too, and so does the formatter now, rather than rewriting
+  it, and ESLint reports it as a parse error at the escape.
+
+  In 0.8.1 a name with an escape after its first character compiled to broken
+  output (`<Inn\u0065r n={3} />` to `<Inn er n={3} />`, `data-\u0061="1"` to two
+  attributes) or didn't parse, but a name that starts with one compiled and worked
+  (`<b \u0074itle="t" />` gave `title="t"`), and now fails to compile.
+
+  Migration: write the name without the escape: `\u0074itle` becomes `title`, and
+  `Inn\u0065r` becomes `Inner`.
+
+- [#1490](https://github.com/tsrx-org/tsrx/pull/1490)
+  [`d4d97a3`](https://github.com/tsrx-org/tsrx/commit/d4d97a3caf776d9139b9da90c6c10f78db12c848)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `return` in a native
+  loop in a template body is now reported, as a `return` right in that body
+  already was: `TSRX2005` in an `@for` body, and `TSRX2001` in an `@try`,
+  `@pending` or `@catch` body or a nested `@{ … }` block, also when that `@try` is
+  in an `@else if` body or an `@for` body. A `return` in an `@empty` body, right
+  in it or in a loop, is now `TSRX2001` too. Before, these compiled on every
+  target, except a loop in an `@try` in an `@else if` body, which Solid rejected
+  with `TSRX2002`. The `return` ended the function the body runs in, so its value
+  rendered in place of that body (the `@for` row, the `@try` body, the `@pending`
+  or `@catch` block, the `@empty` block or the nested block), or in place of the
+  component's output for a code-only block inlined before a `return`, and a bare
+  `return;` rendered nothing there. A `return` in a loop in an `@try` in an `@if`
+  or `@else` body, and on Solid in an `@else if` body, is now `TSRX2001` rather
+  than `TSRX2002`, as a `return` right in that `@try` already was.
+
+  Migration: work out the value before the template output and render it
+  conditionally, as in `const hit = list.find(test);` followed by
+  `@if (hit) { <b>{hit}</b> } @else { <i /> }`, or move the loop into a function
+  declared in the body.
+
+- [#1487](https://github.com/tsrx-org/tsrx/pull/1487)
+  [`7c86de0`](https://github.com/tsrx-org/tsrx/commit/7c86de009883d959b0a006e6faf45d8ba15d93df)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `return` in the body
+  of an `@if`, `@for`, `@switch` or `@try` used as a value (assigned, as in
+  `const view = @switch (x) { … }`, passed to a function, in an expression
+  container, or in an assigned fragment) now gets the error it gets in a child
+  position: `TSRX2002`, `TSRX2005`, `TSRX2009` or `TSRX2001`, once, at the
+  `return`. Before, a `return` there took the directive off the template lowering:
+  one with a value in any of these positions, any `return` in an expression
+  container, and a `return` in a `@{ … }` block beside the directive in a
+  fragment. An `@if` whose branches were each one `return` compiled to a
+  conditional (`const view = @if (x) { return <b />; } @else { return <i />; }`
+  became `x ? <b /> : <i />`) and rendered on every target. Every other shape
+  printed the directive unlowered and threw `Not implemented: JSXSwitchExpression`
+  (or `JSXIfExpression`, `JSXForExpression`, `JSXTryExpression`), also in the
+  editor, which then lost the whole file. For an `@if` or `@for` the strict
+  compile threw that error too, in place of the diagnostic. A directive used as a
+  value with no `return` in it compiles as before.
+
+  Migration: write each branch's value as its output, as in
+  `const view = @if (x) { <b /> } @else { <i /> };`.
+
+### Patch Changes
+
+- [#1492](https://github.com/tsrx-org/tsrx/pull/1492)
+  [`835320d`](https://github.com/tsrx-org/tsrx/commit/835320d4a7660a7e382a166cb2a8c1188e064c98)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A JSX tag or attribute
+  name with a Unicode escape after its first character (`<Inn\u0065r />`,
+  `data-\u0061`) is now read as one name, the one the escape spells, as TypeScript
+  reads it. The JSX tokenizer stopped at the escape, so `<Inn\u0065r n={3} />`
+  compiled to `<Inn er n={3} />` (the tag `Inn` with an attribute `er`), the
+  editor reported TS2304 on `Inn`, `data-\u0061="1"` became two attributes, and a
+  closing tag spelled with an escape (`</Inn\u0065r>`) or an attribute name that
+  starts with one and has a `-` (`\u0061ria-label`) didn't parse, so the editor
+  lost the whole file. The build output now has `<Inner n={3} />`, and in the
+  editor the name's hover, definition, references, rename and diagnostics cover
+  all of its written text. TypeScript itself also reports such an escape
+  (TS17021); the compiler doesn't. A JSX name with a character outside the BMP,
+  which threw "Unexpected character", and a tag name that ends with a braced
+  escape before type arguments (`<Bo\u{78}<string> />`), which threw "Unexpected
+  token", parse too.
+
+- [#1489](https://github.com/tsrx-org/tsrx/pull/1489)
+  [`b718942`](https://github.com/tsrx-org/tsrx/commit/b718942eb90fae98dcfcf6348dca5145bd354582)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - In the editor, a name
+  written twice, `{ a: a }`, `import { a as a }` or `export { a as a }`, now keeps
+  both names. The editor output printed these as the shorthand `{ a }`, so one of
+  the names had no text of its own: under TypeScript 7 the value of `a: a` had no
+  hover, definition or rename, the imported name of `import { a as a }` had no
+  hover or definition in the classic server, and renaming `a` turned `{ a: a }`
+  into `{ a: a: renamed }` and `export { a as a }` into
+  `export { renamed as a as a }` on both. The build output doesn't change.
+
+- [#1488](https://github.com/tsrx-org/tsrx/pull/1488)
+  [`e65e512`](https://github.com/tsrx-org/tsrx/commit/e65e5125ae4c3fc46efd787ad6521a90283a484a)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On Solid, an `@case`
+  test that the `@switch` value can never equal is now reported on the test in the
+  editor, as on the other targets. Solid compares a copy of the value with each
+  test (`<Match when={value === test}>`), and TypeScript reports TS2367 on the
+  whole comparison, which had no mapping of its own: the error covered everything
+  from the `@switch` value to the test, often several lines. The editor output now
+  writes each copy in parentheses and maps the comparison to its test, under the
+  classic language server and under TypeScript 7. The build output doesn't change.
+
+- [#1486](https://github.com/tsrx-org/tsrx/pull/1486)
+  [`822c103`](https://github.com/tsrx-org/tsrx/commit/822c103329a33d8c5d6631baabe809a662725919)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `break` right in an
+  `@switch` case body is still `TSRX2008`, but a collecting compile and the editor
+  now record it and read on instead of stopping, as they already do for a `return`
+  there. Before, `compile_to_volar_mappings` threw on it, also when the `@switch`
+  was in an `@try`, `@catch`, `@if` or `@for` body, so the editor lost the whole
+  file's virtual code and every other diagnostic in it, and Prettier could not
+  format the file. The error now covers the `break` keyword and is reported once,
+  also for a `break` with a label (`break done;`). The `break` is left out of the
+  output and the code after it is kept, so that code's errors still show and
+  TypeScript doesn't report the `break` again in Solid's case function. The strict
+  compile still throws, now with the keyword's range, and ESLint still reports it
+  as a parsing error.
+
 ## 0.8.1
 
 ### Patch Changes
