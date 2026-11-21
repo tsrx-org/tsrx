@@ -946,6 +946,7 @@ describe('scoped style analysis', () => {
 					0,
 				],
 				[':global.w, :root .x { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
+				[':global.w, :root.dark .x { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
 				[':global.w, :root:has(.x) { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
 				[':global.w, :is(.a) { color: red; }', TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR, 0],
 				// Without its hashes, a :not() in a :not() matches more.
@@ -969,11 +970,6 @@ describe('scoped style analysis', () => {
 				// @scope's root, unless its compound is global-like.
 				[
 					'@scope (:root) { :global.w, :root:is(&.missing) { color: red; } }',
-					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
-					0,
-				],
-				[
-					'@scope (:root) { :global.w, :root:is(&:root) { color: red; } }',
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 					0,
 				],
@@ -1076,6 +1072,10 @@ describe('scoped style analysis', () => {
 				':global.w, :global(.a) { color: red; }',
 				':global(.a), :global.w { color: red; }',
 				':global.w, :root { color: red; }',
+				// Nor does a compound with :root or :host, whatever else it has.
+				':global.w, :root.dark { color: red; }',
+				':global.w, .dark:root[lang] { color: red; }',
+				':global.w, :host.open { color: red; }',
 				':global.w, :root:has(:global(.x)) { color: red; }',
 				':global.w, :is(:global(.a)) { color: red; }',
 				'.p { :global .a, &.b { color: red; } }',
@@ -1112,6 +1112,8 @@ describe('scoped style analysis', () => {
 				// compound gets no hash.
 				':global.w, :root:is(:global(.x):has(.a)) { color: red; }',
 				'@scope (.q) { :global.w, :root:is(:root&) { color: red; } }',
+				// An & for a @scope's root in a compound with :root gets no hash either.
+				'@scope (:root) { :global.w, :root:is(&:root) { color: red; } }',
 				// The & already has the hash, and :where() adds no specificity.
 				'.p { :global.w, &:where(.p) { color: red; } }',
 				'@scope (.q) { .p { :global.w, &:where(.p) { color: red; } } }',

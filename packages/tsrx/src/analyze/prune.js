@@ -312,19 +312,9 @@ function truncate(node) {
 		);
 	});
 
-	return node.children.slice(0, i + 1).map((child) => {
-		// In case of `:root.y:has(...)`, `y` is unscoped, but everything in `:has(...)` should be scoped (if not global).
-		// To properly accomplish that, we gotta filter out all selector types except `:has`.
-		const root = child.selectors.find((s) => s.type === 'PseudoClassSelector' && s.name === 'root');
-		if (!root || child.metadata.is_global_like) return child;
-
-		return {
-			...child,
-			selectors: child.selectors.filter(
-				(s) => s.type === 'PseudoClassSelector' && s.name === 'has',
-			),
-		};
-	});
+	// A compound with :root (`:root.y:has(...)`) is global-like, so it stays
+	// unscoped and only the arguments of its `:has()` are scoped.
+	return node.children.slice(0, i + 1);
 }
 
 /**
@@ -1352,7 +1342,10 @@ const unmatched_animation_selectors = new WeakMap();
 export function scope_unmatched_animation_rules(css) {
 	const pending = unmatched_animation_selectors.get(css);
 	if (!pending) return;
-	for (const node of pending) assume_match(get_relative_selectors(node));
+	for (const node of pending) {
+		const selectors = get_relative_selectors(node);
+		assume_match(selectors.length > 0 ? selectors : node.children);
+	}
 	unmatched_animation_selectors.delete(css);
 	// `assume_match` scopes the `:is()`, `:where()` and `:has()` arguments of a
 	// global compound too, which stay as written.
@@ -1397,7 +1390,28 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 				// the rule's own selectors: `assume_match` scopes their arguments as
 				// a match would, and an argument of a selector that matched stays
 				// as `prune_css` left it.
-				if (!node.metadata.used && rule.prelude.children.includes(node)) {
+				// A selector of global-like compounds only (`:root.dark:has(.x)`) is
+				// used from the start, yet the arguments of its `:has()` still need
+				// the scoping a match would give them.
+				// So does an argument of the `:has()` of a global-like compound in a
+				// selector that matched (`:root.dark:has(.x) .icon`): matching the
+				// selector never matches the compound, nor its `:has()`.
+				// Not in a `:not()`, whose arguments stay as the pruner left them.
+				const compound = context.path.at(-3);
+				const global_like_has =
+					context.path.at(-2)?.type === 'PseudoClassSelector' &&
+					/** @type {AST.CSS.PseudoClassSelector} */ (context.path.at(-2)).name === 'has' &&
+					compound?.type === 'RelativeSelector' &&
+					compound.metadata.is_global_like &&
+					!compound.metadata.is_global &&
+					!context.path.some(
+						(ancestor) => ancestor.type === 'PseudoClassSelector' && ancestor.name === 'not',
+					);
+				if (
+					((!node.metadata.used || node.metadata.is_global) &&
+						rule.prelude.children.includes(node)) ||
+					global_like_has
+				) {
 					let pending = unmatched_animation_selectors.get(css);
 					if (!pending) unmatched_animation_selectors.set(css, (pending = new Set()));
 					pending.add(node);

@@ -1387,7 +1387,12 @@ export function SpecificationPage() @{
 								of a selector as unscoped and may appear only at the start or end of a selector
 								sequence (<code class="inline-code">TSRX3011</code>); the block form{' '}
 								<code class="inline-code">{':global { ... }'}</code> marks every rule inside it as
-								unscoped.
+								unscoped. A compound with <code class="inline-code">:root</code> or{' '}
+								<code class="inline-code">:host</code> matches only the page's root element or the
+								shadow host, so it takes no hash class, and neither do the arguments of its{' '}
+								<code class="inline-code">:not()</code>, <code class="inline-code">:is()</code> and{' '}
+								<code class="inline-code">:where()</code>; a type selector such as{' '}
+								<code class="inline-code">html</code> is scoped like any other.
 							</p>
 							<pre class="code-block plain">
 								<code>{STYLE_GRAMMAR}</code>

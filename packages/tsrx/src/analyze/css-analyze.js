@@ -102,6 +102,20 @@ function check_global_block_list(rule, report) {
 	}
 }
 
+/**
+ * Whether `simple` is `:root` or `:host` (`:host(...)` too): a compound with
+ * one matches the page's root element or the shadow host, never one of the
+ * component's elements.
+ *
+ * @param {AST.CSS.SimpleSelector} simple
+ * @returns {boolean}
+ */
+export function is_root_or_host(simple) {
+	return (
+		simple.type === 'PseudoClassSelector' && (simple.name === 'root' || simple.name === 'host')
+	);
+}
+
 /** Pseudo-classes whose selector arguments the output scopes. */
 const SELECTOR_ARGUMENTS = ['is', 'where', 'not', 'has'];
 
@@ -109,10 +123,10 @@ const SELECTOR_ARGUMENTS = ['is', 'where', 'not', 'has'];
  * Whether leaving the scope hashes out of `selector`, as a global block does,
  * can't make it match more than the output gives it on its own. Outside a
  * global block a compound gets no hash when it is `:global(...)` (with its
- * arguments kept as written), `:root` or `:host` with only pseudo-classes, has
- * an `&`, is a lone `:is()` or `:where()`, or follows a bare `:global`; the
- * arguments of its `:is()`, `:where()`, `:not()` and `:has()` are scoped as
- * selectors of their own, except that:
+ * arguments kept as written), has `:root` or `:host`, has an `&` (other than
+ * one for a `@scope`'s root), is a lone `:is()` or `:where()`, or follows a
+ * bare `:global`; the arguments of its `:is()`, `:where()`, `:not()` and
+ * `:has()` are scoped as selectors of their own, except that:
  *
  * - those of the `:is()`, `:where()` and `:not()` of a compound with `:root`
  *   or `:host` are kept as written, and
@@ -144,15 +158,9 @@ function is_unscoped(selector, subject_hashed = false) {
 		// An `&` for a `@scope`'s root is the `:scope` it stands for: it gets the
 		// hash as `:scope` does.
 		const scope_root = is_scope_root_ampersand(selector.metadata.rule);
-		const pseudo = (/** @type {AST.CSS.SimpleSelector} */ simple) =>
-			simple.type === 'PseudoClassSelector' ||
-			simple.type === 'PseudoElementSelector' ||
-			(scope_root && simple.type === 'NestingSelector');
 		const nesting = !scope_root && selectors.some((simple) => simple.type === 'NestingSelector');
 		return (
-			((first.type === 'PseudoClassSelector' &&
-				(first.name === 'root' || first.name === 'host') &&
-				selectors.every(pseudo)) ||
+			(selectors.some(is_root_or_host) ||
 				nesting ||
 				(selectors.length === 1 &&
 					first.type === 'PseudoClassSelector' &&
@@ -852,21 +860,11 @@ export function analyze_css(css, options = {}) {
 			const scope_root = is_scope_root_ampersand(context.state.rule);
 			node.metadata.is_global = node.selectors.length >= 1 && is_global(node, scope_root);
 
-			// Check for :root and other global-like selectors.
-			if (
-				node.selectors.length >= 1 &&
-				node.selectors.every(
-					(selector) =>
-						selector.type === 'PseudoClassSelector' ||
-						selector.type === 'PseudoElementSelector' ||
-						(scope_root && selector.type === 'NestingSelector'),
-				)
-			) {
-				const first = node.selectors[0];
-				node.metadata.is_global_like ||=
-					(first.type === 'PseudoClassSelector' && first.name === 'host') ||
-					(first.type === 'PseudoClassSelector' && first.name === 'root');
-			}
+			// A compound with :root or :host matches the page's root element or the
+			// shadow host, never one of the component's elements, whatever else it
+			// has (`:root.dark`, `:host[open]`, `:root&` in a `@scope`): it stays as
+			// written.
+			node.metadata.is_global_like ||= node.selectors.some(is_root_or_host);
 
 			context.next();
 		},

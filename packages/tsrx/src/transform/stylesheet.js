@@ -327,6 +327,51 @@ function separator_comma(source, start, end) {
 	return i;
 }
 
+/**
+ * Mark a rule's selector unused when a compound of it with `:root` or `:host`
+ * has a `:has()` whose arguments all match nothing: the output would write
+ * an empty `:has()`, which is invalid and makes the browser drop the whole
+ * selector list, as `:root:has(.missing), .icon` would lose `.icon`. Such a
+ * selector can't match, as one whose other compounds' `:has()` matches
+ * nothing, which the pruner leaves unused. Global blocks aren't pruned.
+ *
+ * @param {AST.CSS.StyleSheet} stylesheet
+ */
+function unuse_selectors_with_emptied_has(stylesheet) {
+	walk(/** @type {AST.CSS.Node} */ (stylesheet), null, {
+		Rule(node, { next }) {
+			if (node.metadata.is_global_block) return;
+			for (const selector of node.prelude.children) {
+				if (
+					selector.metadata.used &&
+					selector.children.some(
+						({ metadata, selectors }) =>
+							metadata.is_global_like &&
+							selectors.some(
+								(simple) =>
+									simple.type === 'PseudoClassSelector' &&
+									simple.name === 'has' &&
+									simple.args !== null &&
+									simple.args.children.every((argument) => !argument.metadata.used),
+							),
+					)
+				) {
+					selector.metadata.used = false;
+					// As for a selector no element matched, nothing in it is scoped, so
+					// no hash is written into the comment, or after it.
+					walk(/** @type {AST.CSS.Node} */ (selector), null, {
+						RelativeSelector(relative_selector, context) {
+							relative_selector.metadata.scoped = false;
+							context.next();
+						},
+					});
+				}
+			}
+			next();
+		},
+	});
+}
+
 /** @param {AST.CSS.Rule} rule */
 function is_used(rule) {
 	return rule.prelude.children.some((selector) => selector.metadata.used);
@@ -887,8 +932,14 @@ const visitors = {
 				}
 			}
 
-			// Skip scoping if we're inside a global block
-			if (relative_selector.metadata.scoped && !is_in_global_block(context.path)) {
+			// Skip scoping if we're inside a global block. A compound with :root or
+			// :host never takes the hash, nor the specificity bump, which goes to
+			// the next compound as it does after :root alone.
+			if (
+				relative_selector.metadata.scoped &&
+				!relative_selector.metadata.is_global_like &&
+				!is_in_global_block(context.path)
+			) {
 				if (relative_selector.selectors.length === 1) {
 					// skip standalone :is/:where/& selectors
 					const selector = relative_selector.selectors[0];
@@ -982,6 +1033,7 @@ export function render_stylesheets(stylesheets, minify = false) {
 			},
 		};
 
+		unuse_selectors_with_emptied_has(stylesheet);
 		walk(stylesheet, state, visitors);
 		css += code.toString();
 	}
