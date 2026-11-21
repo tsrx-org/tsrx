@@ -1875,6 +1875,7 @@ export function runSharedScopedStyleTests({
 				['.icon:global(.x)', (hash) => `.icon.${hash}.x {`],
 				['.wrap:global(> i)', (hash) => `.wrap.${hash}> i {`],
 				['.wrap:global(+n)', (hash) => `.wrap.${hash}+n {`],
+				['.wrap:global(n-1)', (hash) => `.wrap.${hash}:is(n-1) {`],
 				// A global block prunes nothing, so its selectors get the :is() too.
 				[':global { .x:global(div)', () => '.x:is(div) {'],
 			];

@@ -458,8 +458,8 @@ function remove_global_pseudo_class(selector, combinator, state, after_start = f
 /**
  * The type selector (`div`, `*`, `svg|a`) `list` starts with, if any, and no
  * combinator before it (`:global(> i)` keeps its `>`, which no `:is()` can
- * hold). In a pseudo-class's argument the parser reads `n`, `odd` and `even`
- * as an `Nth`, which here is a type selector too.
+ * hold). In a pseudo-class's argument the parser reads a name like `n`,
+ * `odd` or `n-1` as an `Nth`, which here is a type selector too.
  *
  * @param {AST.CSS.SelectorList} list
  * @returns {AST.CSS.TypeSelector | AST.CSS.Nth | null}
@@ -468,8 +468,8 @@ function leading_type_selector(list) {
 	const relative = list.children[0]?.children[0];
 	const first = relative?.combinator === null ? relative.selectors[0] : null;
 	if (first?.type === 'TypeSelector') return first;
-	// Not `+n`, which is a combinator and a type selector.
-	return first?.type === 'Nth' && /^(n|odd|even)$/i.test(first.value) ? first : null;
+	// One that is a name (`odd`, `n-1`), not `+n` or `2n+1`.
+	return first?.type === 'Nth' && /^-?[a-z_][\w-]*$/i.test(first.value) ? first : null;
 }
 
 /**
