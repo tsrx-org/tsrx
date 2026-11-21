@@ -1847,17 +1847,22 @@ function switch_statement_to_jsx_child(node, transform_context) {
 		const discriminant = switch_value
 			? b.member(b.call(clone_identifier(switch_value)), b.literal(0), true)
 			: clone_ast_node(node.discriminant);
-		// TypeScript reports a test the discriminant can never equal (TS2367) on
-		// the whole comparison, which starts at the copy of the discriminant. The
-		// editor output puts the copy in parentheses, so the comparison starts on
-		// a token of its own, and maps the comparison to the case's test, where
-		// the other targets report TS2678 (`case_comparison` in segments.js).
-		const test = b.binary(
-			'===',
-			transform_context.typeOnly ? b.parenthesized(discriminant) : discriminant,
-			/** @type {AST.Expression} */ (original_case.test),
-		);
-		if (transform_context.typeOnly) test.metadata.case_comparison = true;
+		/** @type {AST.Expression} */
+		let left = discriminant;
+		if (transform_context.typeOnly && has_location(original_case)) {
+			// TypeScript reports a test the discriminant can never equal (TS2367) on
+			// the whole comparison, which starts at the copy of the discriminant. The
+			// editor output puts the copy in parentheses, so the comparison starts on
+			// a token of its own, and segments.js maps the comparison to the case's
+			// test, where the other targets report TS2678. The `(` takes the
+			// `@case`'s start as an empty location, which nothing else in the
+			// output has, so segments.js finds where each copy's comparison starts.
+			left = b.parenthesized(discriminant);
+			left.start = left.end = original_case.start;
+			left.loc = { start: original_case.loc.start, end: original_case.loc.start };
+		}
+		const test = b.binary('===', left, /** @type {AST.Expression} */ (original_case.test));
+		if (left !== discriminant) test.metadata.case_comparison = true;
 
 		match_entries.push({ test, body_jsx });
 	}

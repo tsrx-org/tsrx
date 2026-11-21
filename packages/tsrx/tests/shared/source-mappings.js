@@ -1256,9 +1256,13 @@ export async function App() @{
 			// the discriminant with each test (`<Match when={(d) === test}>`), and
 			// TypeScript reports TS2367 on the whole comparison, which started at
 			// the copy: the error covered the source from the `@switch` to the test.
+			// The printer writes parentheses around `/x/` and around a test that
+			// binds less tightly than `===`, and a switch inside a discriminant has a
+			// copy of its comparisons in each copy of that discriminant.
 			const source = `enum Kind { A }
 declare const kind: () => Kind;
-export function App(props: { n: number; s: 'a' | 'b' }) @{
+declare function pick(node: unknown): number;
+export function App(props: { n: number; s: 'a' | 'b'; t: string; on: boolean }) @{
 	<div>
 		@switch ((props.n)) {
 			@case ('x'): {
@@ -1266,6 +1270,12 @@ export function App(props: { n: number; s: 'a' | 'b' }) @{
 			}
 			@case 1: {
 				<i />
+			}
+			@case props.t as string: {
+				<u />
+			}
+			@case props.on ? 'y' : 'z': {
+				<s />
 			}
 		}
 		@switch (kind()) {
@@ -1278,6 +1288,19 @@ export function App(props: { n: number; s: 'a' | 'b' }) @{
 			}
 			@case 'B': {
 				<p />
+			}
+		}
+		@switch (/x/.test(props.t)) {
+			@case 'r': {
+				<b />
+			}
+		}
+		@switch (pick(@switch (props.n) { @case 'nested': { <i /> } })) {
+			@case 0: {
+				<b />
+			}
+			@case 'w': {
+				<i />
 			}
 		}
 	</div>
@@ -1301,7 +1324,24 @@ export function App(props: { n: number; s: 'a' | 'b' }) @{
 					return `TS${diagnostic.code} unmapped`;
 				});
 			const code = name === 'solid' ? 'TS2367' : 'TS2678';
-			expect(shown.sort()).toEqual(["('x')", "'B'", "'c'"].map((test) => `${code} ${test}`).sort());
+			// Solid reports the nested switch's error once in each copy.
+			expect(shown.filter((text) => text.endsWith("'nested'"))).toHaveLength(
+				name === 'solid' ? 2 : 1,
+			);
+			expect([...new Set(shown)].sort()).toEqual(
+				[
+					"('x')",
+					'props.t as string',
+					"props.on ? 'y' : 'z'",
+					"'B'",
+					"'c'",
+					"'r'",
+					"'nested'",
+					"'w'",
+				]
+					.map((test) => `${code} ${test}`)
+					.sort(),
+			);
 		});
 
 		it('reports a fallthrough, unreachable code and an unreachable switch where they are', () => {

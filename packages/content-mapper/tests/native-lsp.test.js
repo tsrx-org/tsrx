@@ -1145,7 +1145,7 @@ export function Shown(props: { items: { id: number }[]; on: boolean }) @{
  * reports TS2367 on the whole comparison; Vue prints a `switch`, where it
  * reports TS2678 on the test.
  */
-const SWITCH_TSRX = `export function Cases(props: { n: number; s: 'a' | 'b' }) @{
+const SWITCH_TSRX = `export function Cases(props: { n: number; s: 'a' | 'b'; t: string }) @{
 	<div>
 		@switch (props.n) {
 			@case 'x': {
@@ -1154,8 +1154,11 @@ const SWITCH_TSRX = `export function Cases(props: { n: number; s: 'a' | 'b' }) @
 			@case 1: {
 				<i />
 			}
+			@case props.t as string: {
+				<u />
+			}
 		}
-		@switch (props.s) {
+		@switch (/x/.test(props.t)) {
 			@case 'c': {
 				<s />
 			}
@@ -1378,6 +1381,7 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 		const code = target === 'solid' ? 2367 : 2678;
 		expect(diagnostics.map((d) => [d.code, where('Switch.tsrx', d.range)])).toEqual([
 			[code, `${SWITCH_TSRX.indexOf("'x'")}:'x'`],
+			[code, `${SWITCH_TSRX.indexOf('props.t as')}:props.t as string`],
 			[code, `${SWITCH_TSRX.indexOf("'c'")}:'c'`],
 		]);
 	});
