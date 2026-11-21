@@ -1876,6 +1876,43 @@ export function App() @{
 				),
 			).toBe(true);
 		});
+
+		it('reads a tag in template children that starts with an escape or a letter outside ASCII', () => {
+			// A `<` there opens a tag where TypeScript reads one, so the escaped name
+			// gets TS17021 as everywhere else, rather than being text around the
+			// expression `{5}`, and `<Ω />` is an element. An escape for a
+			// character that can't start a name leaves the `<` as text, as before.
+			const lead = `${backslash}u0049nner`;
+			const children_source = [
+				'function Inner(props: { n: number }) { return null; }',
+				'function Ω() { return null; }',
+				'export function App() @{',
+				`\t<div><${lead} n={5} /><Ω /> 1 <${backslash}u0031 2</div>`,
+				'}',
+				'',
+			].join('\n');
+			expect(() => compile(children_source, 'App.tsrx')).toThrow(
+				'Unicode escape sequence cannot appear here.',
+			);
+			const collected = compile(children_source, 'App.tsrx', { collect: true });
+			const offset = children_source.indexOf(lead);
+			expect(collected.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				['TS17021', offset, offset + lead.length],
+			]);
+			expect(collected.code).toContain('<Inner n={5} />');
+			expect(collected.code).toContain('<Ω />');
+			// No text keeps the escape's spelling.
+			expect(collected.code).not.toContain(lead.slice(1));
+			const result = compile_to_volar_mappings(children_source, 'App.tsrx', { loose: true });
+			expect(
+				result.mappings.some(
+					(mapping) =>
+						mapping.sourceOffsets[0] === offset &&
+						mapping.lengths[0] === lead.length &&
+						isRenameEnabled(mapping.data),
+				),
+			).toBe(true);
+		});
 	});
 
 	describe(`[${name}] computed key brackets`, () => {

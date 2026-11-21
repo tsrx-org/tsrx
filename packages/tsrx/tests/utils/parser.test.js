@@ -18420,6 +18420,96 @@ ${lines.join('\n')}
 		}
 	});
 
+	it('reads a tag in children that starts with an escape or a letter outside ASCII, as TypeScript does', () => {
+		// A `<` in children opens a tag before an escape for a character a name
+		// starts with, and before a letter outside ASCII. Not before an escape for
+		// another character, which stays text, as before (TypeScript reports
+		// TS1127 there).
+		/** @type {Array<[string, string[]]>} */
+		const snippets = [
+			[`const x = <div><${escape('0049')}nner n={5} /></div>;`, ['Inner']],
+			[`const x = <div>a <${escape('0061')}bbr>x</${escape('0061')}bbr></div>;`, ['abbr', 'abbr']],
+			[`const x = <div><${escape('{49}')}nner /></div>;`, ['Inner']],
+			[`const x = <div><é /><日本 /><Ω>x</Ω></div>;`, ['é', '日本', 'Ω', 'Ω']],
+		];
+		for (const [snippet, expected] of snippets) {
+			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
+			const diagnostics = /** @type {ts.DiagnosticWithLocation[]} */ (
+				/** @type {any} */ (file).parseDiagnostics
+			);
+			/** @type {any[]} */
+			const errors = [];
+			const ast = parseModule(snippet, 'App.tsrx', { collect: true, errors });
+			expect(
+				errors.map((error) => [error.code, error.pos, error.end]),
+				snippet,
+			).toEqual(
+				diagnostics.map((diagnostic) => [
+					`TS${diagnostic.code}`,
+					diagnostic.start,
+					diagnostic.start + diagnostic.length,
+				]),
+			);
+			/** @type {string[]} */
+			const names = [];
+			walk_names(ast, names);
+			expect(
+				names.filter((name) => name !== 'div' && name !== 'n'),
+				snippet,
+			).toEqual(expected);
+			if (diagnostics.length > 0) {
+				expect(() => parseModule(snippet, 'App.tsrx'), snippet).toThrow(
+					error_with(TS_ERRORS.JSX_NAME_UNICODE_ESCAPE, line_column(snippet, diagnostics[0].start)),
+				);
+			}
+		}
+		// In a template's children, too.
+		const template = `export function App() @{\n\t<div><${escape('0049')}nner n={5} /></div>\n}\n`;
+		/** @type {any[]} */
+		const errors = [];
+		parseModule(template, 'App.tsrx', { collect: true, errors });
+		const at = template.indexOf(backslash);
+		expect(errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+			['TS17021', at, at + 10],
+		]);
+		/** @type {any[]} */
+		const text_errors = [];
+		parseModule(`const x = <div>1 <${escape('0031')} 2</div>;`, 'App.tsrx', {
+			collect: true,
+			errors: text_errors,
+		});
+		expect(text_errors).toEqual([]);
+	});
+
+	it('reads a generic arrow function whose type parameter is written with an escape, as TypeScript does', () => {
+		// The lookahead that tells a generic arrow function from a tag reads the
+		// name with its escapes, as TypeScript's scanner does, so these aren't
+		// tags, which a `<` before an escape for a name's start now opens.
+		const snippets = [
+			`const g = <${escape('0054')},>(x: T) => x;`,
+			`const g = <${escape('{54}')},>(x: T) => x;`,
+			`const g = <${escape('0054')} extends unknown>(x: T) => x;`,
+			`const g = <T${escape('0061')},>(x: Ta) => x;`,
+		];
+		for (const snippet of snippets) {
+			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
+			expect(/** @type {any} */ (file).parseDiagnostics, snippet).toEqual([]);
+			/** @type {any[]} */
+			const errors = [];
+			const ast = parseModule(snippet, 'App.tsrx', { collect: true, errors });
+			expect(errors, snippet).toEqual([]);
+			expect(JSON.stringify(ast.body), snippet).toContain('"ArrowFunctionExpression"');
+			expect(() => parseModule(snippet, 'App.tsrx'), snippet).not.toThrow();
+		}
+		// And as an `@for` key, which reads a `<` after `key` again as a tag start.
+		const keyed = `export function App() @{\n\t@for (const n of [1]; key <${escape('0054')},>(x: T) => x) {\n\t\t<div />\n\t}\n}\n`;
+		/** @type {any[]} */
+		const errors = [];
+		parseModule(keyed, 'App.tsrx', { collect: true, errors });
+		expect(errors).toEqual([]);
+		expect(() => parseModule(keyed, 'App.tsrx')).not.toThrow();
+	});
+
 	/**
 	 * The names of the JSX identifiers in `node`.
 	 * @param {unknown} node

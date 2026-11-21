@@ -193,15 +193,50 @@ static bool check_boundary_lookahead(TSLexer *lexer, const char *word) {
   return lexer->lookahead == '{';
 }
 
+// The value of a hex digit, or -1.
+static int hex_value(int32_t c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+// The code point that the Unicode escape at the lexer's `\` spells, `\uXXXX`,
+// or -1 when it isn't a well-formed one. Reads past what it reads, which the
+// text then takes when it's -1, so it doesn't read a braced one (`\u{X}`): its
+// `{` starts an expression unless the escape spells a name's start
+// (`<\u{31}`), and the text stops before it either way. The compiler reports a
+// braced one that does (TS17021).
+static int32_t scan_unicode_escape(TSLexer *lexer) {
+  advance(lexer);
+  if (lexer->lookahead != 'u') return -1;
+  advance(lexer);
+  int32_t code = 0;
+  for (unsigned i = 0; i < 4; i++) {
+    int value = hex_value(lexer->lookahead);
+    if (value == -1) return -1;
+    code = code * 16 + value;
+    advance(lexer);
+  }
+  return code;
+}
+
 // Whether a `<` in text starts a tag, as the compiler's `can_start_tag_after_lt`
-// decides: the character after it is `/`, `>`, `{`, `@`, `$`, `_` or an ASCII
-// letter. Otherwise the `<` is text (`1 < 2`). Reads past the `<`; the caller
-// has marked the end of the text before it.
+// decides: the character after it is `/`, `>`, `{`, `@`, `$`, `_`, a letter, or
+// a Unicode escape for one of those (`<\u0049nner />`), whose name the
+// compiler reports. Otherwise the `<` is text (`1 < 2`, `<\u0031`). A letter
+// outside ASCII is one as its other name checks read one, with `iswalpha`, which
+// in the C locale takes ASCII letters only, and a braced escape is text (see
+// `scan_unicode_escape`). Reads past the `<`; the caller has marked the end of
+// the text before it.
 static bool lt_starts_tag(TSLexer *lexer) {
   advance(lexer);
   int32_t c = lexer->lookahead;
-  return c == '/' || c == '>' || c == '{' || c == '@' || c == '$' || c == '_' ||
-         (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+  if (c == '\\') {
+    int32_t code = scan_unicode_escape(lexer);
+    return code != -1 && is_identifier_start(code);
+  }
+  return c == '/' || c == '>' || c == '{' || c == '@' || is_identifier_start(c);
 }
 
 // Whether an `@` in text starts a code block or directive, which ends the text,

@@ -199,6 +199,9 @@ const DECORATABLE_NODE_TYPES = new Set([
 	'PropertyDefinition',
 ]);
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
+/** An identifier that may be written with Unicode escapes, as TypeScript's scanner reads one. */
+const regex_escaped_identifier =
+	/(?:[$_\p{ID_Start}]|\\u(?:[\da-fA-F]{4}|\{[\da-fA-F]+\}))(?:[$_\u200c\u200d\p{ID_Continue}]|\\u(?:[\da-fA-F]{4}|\{[\da-fA-F]+\}))*/uy;
 /** A Unicode escape at a position, `\uXXXX` or `\u{X}`, with its hex digits. */
 const regex_name_escape_at = /\\u(?:([\da-fA-F]{4})|\{([\da-fA-F]+)\})/y;
 /**
@@ -1808,8 +1811,10 @@ function get_argument_clash_reported_names(check_clashes) {
 /**
  * A `<` opens a tag only when the character after it can begin one: `/` for a
  * closing tag, `>` for a fragment, `{` for a dynamic tag, or an element or
- * component name start. Any other character, or end of input, leaves the `<`
- * as literal text.
+ * component name start, as TypeScript reads one: also a letter outside ASCII
+ * (`<é />`), or a Unicode escape for one (`<\u0049nner />`), whose name
+ * then gets TS17021 (see `#reportJSXNameEscape`). Any other character, or end
+ * of input, leaves the `<` as literal text.
  * @param {string} input
  * @param {number} index Index of the `<`.
  */
@@ -1823,8 +1828,26 @@ function can_start_tag_after_lt(input, index) {
 		next === CharCode.dollar ||
 		next === CharCode.underscore ||
 		(next >= CharCode.uppercaseA && next <= CharCode.uppercaseZ) ||
-		(next >= CharCode.lowercaseA && next <= CharCode.lowercaseZ)
+		(next >= CharCode.lowercaseA && next <= CharCode.lowercaseZ) ||
+		(next > 0x7f &&
+			is_identifier_start(/** @type {number} */ (input.codePointAt(index + 1)), true)) ||
+		(next === CharCode.backslash &&
+			is_identifier_start(escaped_code_point_at(input, index + 1), true))
 	);
+}
+
+/**
+ * The code point that the well-formed Unicode escape at `index` spells
+ * (`\uXXXX` or `\u{X}`), or -1.
+ * @param {string} input
+ * @param {number} index
+ */
+function escaped_code_point_at(input, index) {
+	regex_name_escape_at.lastIndex = index;
+	const match = regex_name_escape_at.exec(input);
+	if (!match) return -1;
+	const code = Number.parseInt(match[1] ?? match[2], 16);
+	return code <= 0x10ffff ? code : -1;
 }
 
 /** The start of an end tag for a script, in any letter case. */
@@ -1979,23 +2002,36 @@ function scan_identifier_from(input, i) {
 }
 
 /**
+ * `scan_identifier_from`, for an identifier that may be written with Unicode
+ * escapes (`\u0054`), as TypeScript's scanner reads one.
+ * @param {string} input
+ * @param {number} i
+ */
+function scan_escaped_identifier_from(input, i) {
+	regex_escaped_identifier.lastIndex = i;
+	const match = regex_escaped_identifier.exec(input);
+	return match === null ? -1 : i + match[0].length;
+}
+
+/**
  * Whether the `<` at `pos` starts a generic arrow function rather than a JSX
  * tag, by TypeScript's rule for `.tsx` files (`isParenthesizedArrowFunctionExpression`).
  * It reads four tokens and never the parameters: `<[const] T` followed by `,`
  * or `=`, or by `extends` and anything but `=`, `>`, or `/`. Everything else,
- * `<T>(x) => x` included, is a tag.
+ * `<T>(x) => x` included, is a tag. A name may be written with escapes
+ * (`<\u0054,>`), as TypeScript's scanner reads it.
  * @param {string} input
  * @param {number} pos
  */
 function looks_like_generic_arrow(input, pos) {
 	let i = skip_space_and_comments_from(input, pos + 1);
-	let name_end = i === -1 ? -1 : scan_identifier_from(input, i);
+	let name_end = i === -1 ? -1 : scan_escaped_identifier_from(input, i);
 	if (name_end === -1) return false;
 	const name = input.slice(i, name_end);
 	if (TYPE_PARAMETER_MODIFIERS.has(name)) {
 		// A `const` modifier precedes the parameter name.
 		i = skip_space_and_comments_from(input, name_end);
-		name_end = i === -1 ? -1 : scan_identifier_from(input, i);
+		name_end = i === -1 ? -1 : scan_escaped_identifier_from(input, i);
 		if (name_end === -1) return false;
 	} else if (RESERVED_WORDS.has(name)) {
 		return false;
@@ -14571,11 +14607,8 @@ export function TSRXPlugin(config) {
 			 * @param {number} index
 			 */
 			#escapeContinuesName(index) {
-				regex_name_escape_at.lastIndex = index;
-				const match = regex_name_escape_at.exec(this.input);
-				if (!match) return false;
-				const code = Number.parseInt(match[1] ?? match[2], 16);
-				return code <= 0x10ffff && is_identifier_char(code, true);
+				const code = escaped_code_point_at(this.input, index);
+				return code !== -1 && is_identifier_char(code, true);
 			}
 
 			/**
