@@ -160,6 +160,7 @@ const CharCode = Object.freeze({
 	openParen: 40,
 	closeParen: 41,
 	comma: 44,
+	hyphen: 45,
 	asterisk: 42,
 	dot: 46,
 	slash: 47,
@@ -173,6 +174,7 @@ const CharCode = Object.freeze({
 	uppercaseA: 65,
 	uppercaseZ: 90,
 	openBracket: 91,
+	backslash: 92,
 	closeBracket: 93,
 	underscore: 95,
 	lowercaseA: 97,
@@ -197,6 +199,7 @@ const DECORATABLE_NODE_TYPES = new Set([
 	'PropertyDefinition',
 ]);
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
+const regex_identifier_start = /^[$_\p{ID_Start}]/u;
 // The files TypeScript reads without JSX, and the ones where it reserves the
 // syntax a JSX file would read as a tag (TS7059, TS7060).
 const regex_file_without_jsx = /\.[cm]?ts$/;
@@ -11911,6 +11914,15 @@ export function TSRXPlugin(config) {
 						).getTokenFromCode.call(this, code);
 					}
 				}
+				// A name in a tag can start with an escape (`<\u0061ria-label>`), which
+				// acorn-typescript reads as a JavaScript name, without the `-` part.
+				if (
+					code === CharCode.backslash &&
+					(context === tstc.tc_oTag || context === tstc.tc_cTag) &&
+					!this.inType
+				) {
+					return this.jsx_readWord();
+				}
 				if (context === tstc.tc_expr || context === tstc.tc_oTag || context === tstc.tc_cTag) {
 					return super.readToken(code);
 				}
@@ -14387,6 +14399,46 @@ export function TSRXPlugin(config) {
 				node.namespace = base;
 				node.name = this.jsx_parseIdentifier();
 				return this.finishNode(node, 'JSXNamespacedName');
+			}
+
+			/**
+			 * A JSX name: a tag's, an attribute's, or a part of a member or namespaced
+			 * one. acorn-typescript reads identifier characters and `-` and stops at
+			 * an escape, so `<Inn\u0065r />` read as the tag `Inn` with an attribute
+			 * `\u0065r`, and `<Inn\u0065r></Inn\u0065r>` didn't parse. TypeScript
+			 * reads the escape as part of the name, as in an identifier, and reports
+			 * it (TS17021); so does this, without the error. The name is the one the
+			 * escapes spell.
+			 * @type {Parse.Parser['jsx_readWord']}
+			 */
+			jsx_readWord() {
+				let word = '';
+				let chunk_start = this.pos;
+				let first = true;
+				while (this.pos < this.input.length) {
+					const ch = this.fullCharCodeAtPos();
+					if (regex_identifier_part.test(String.fromCodePoint(ch)) || ch === CharCode.hyphen) {
+						this.pos += ch <= 0xffff ? 1 : 2;
+					} else if (ch === CharCode.backslash) {
+						word += this.input.slice(chunk_start, this.pos);
+						const escape_start = this.pos;
+						if (this.input.charCodeAt(++this.pos) !== 117) {
+							this.invalidStringToken(this.pos, 'Expecting Unicode escape sequence \\uXXXX');
+						}
+						++this.pos;
+						const escaped = this.readCodePoint();
+						const pattern = first ? regex_identifier_start : regex_identifier_part;
+						if (!pattern.test(String.fromCodePoint(escaped))) {
+							this.invalidStringToken(escape_start, 'Invalid Unicode escape');
+						}
+						word += String.fromCodePoint(escaped);
+						chunk_start = this.pos;
+					} else {
+						break;
+					}
+					first = false;
+				}
+				return this.finishToken(tstt.jsxName, word + this.input.slice(chunk_start, this.pos));
 			}
 
 			/**

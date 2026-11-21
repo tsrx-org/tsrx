@@ -1139,14 +1139,28 @@ export function Shown(props: { items: { id: number }[]; on: boolean }) @{
 }
 `;
 
+/**
+ * JSX names with an escape after their start, which the JSX tokenizer used to
+ * end at the escape (`<Inn\u0065r />` was `<Inn er />`).
+ */
+const ESCAPED_TSRX = `function Inner(props: { n: number }) { return null; }
+export function Escaped() @{
+	<div>
+		<Inn${'\\'}u0065r n={1} />
+		<Missin${'\\'}u0067 />
+	</div>
+}
+`;
+
 describe.each(Object.keys(target_dependencies))('native language server on %s', (target) => {
 	/** @type {Record<string, string>} */
 	const files = {
 		'main.ts':
-			"import { List } from './List.tsrx';\nimport { Tag } from './Names.tsrx';\nimport { Shown } from './Shown.tsrx';\n\nexport const list = [List, Tag, Shown];\n",
+			"import { List } from './List.tsrx';\nimport { Tag } from './Names.tsrx';\nimport { Shown } from './Shown.tsrx';\nimport { Escaped } from './Escaped.tsrx';\n\nexport const list = [List, Tag, Shown, Escaped];\n",
 		'List.tsrx': for_source(target),
 		'Names.tsrx': NAMES_TSRX,
 		'Shown.tsrx': SHOWN_TSRX,
+		'Escaped.tsrx': ESCAPED_TSRX,
 	};
 	/** @type {ReturnType<typeof create_native_workspace>} */
 	let workspace;
@@ -1173,6 +1187,7 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 		client.open('List.tsrx', files['List.tsrx']);
 		client.open('Names.tsrx', files['Names.tsrx']);
 		client.open('Shown.tsrx', files['Shown.tsrx']);
+		client.open('Escaped.tsrx', files['Escaped.tsrx']);
 	});
 
 	afterAll(async () => {
@@ -1344,6 +1359,29 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 			rename: [`Shown.tsrx ${declared_id}:id -> id: renamed`, `Shown.tsrx ${key_id}:id -> renamed`],
 			completes: true,
 		});
+	});
+
+	it('reads a JSX name with an escape after its start as one name', async () => {
+		const backslash = String.fromCharCode(92);
+		const tag = `Inn${backslash}u0065r`;
+		const missing = `Missin${backslash}u0067`;
+		expect(
+			(await client.diagnostics('Escaped.tsrx'))
+				.filter((d) => d.severity === 1)
+				.map((d) => [d.code, where('Escaped.tsrx', d.range)]),
+		).toEqual([[2304, `${ESCAPED_TSRX.indexOf(missing)}:${missing}`]]);
+		const params = at(client, files, 'Escaped.tsrx', tag, 2);
+		const hover = await client.request('textDocument/hover', params);
+		expect(`${where('Escaped.tsrx', hover.range)} ${hover.contents.value.split('\n')[1]}`).toBe(
+			`${ESCAPED_TSRX.indexOf(tag)}:${tag} function Inner(props: {`,
+		);
+		const definition = await client.request('textDocument/definition', params);
+		expect(
+			definition.map(
+				(/** @type {{ uri: string, range: any }} */ location) =>
+					`${path.basename(location.uri)} ${where(path.basename(location.uri), location.range)}`,
+			),
+		).toEqual([`Escaped.tsrx ${ESCAPED_TSRX.indexOf('Inner')}:Inner`]);
 	});
 });
 

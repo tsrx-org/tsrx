@@ -55,6 +55,9 @@ const OWN_TEXT_MAX_LENGTH = 1000;
 // after an optional `#` for a private name.
 const regex_written_name =
 	/#?(?:[\p{ID_Continue}$\u200c\u200d]|\\u[\da-fA-F]{4}|\\u\{[\da-fA-F]+\})+/uy;
+// A JSX name as written, which can also have `-` in it (`data-\u0061`).
+const regex_written_jsx_name =
+	/(?:[\p{ID_Continue}$\u200c\u200d-]|\\u[\da-fA-F]{4}|\\u\{[\da-fA-F]+\})+/uy;
 const regex_name_escape = /\\u(?:\{([\da-fA-F]+)\}|([\da-fA-F]{4}))/g;
 /** A fragment's `<>`, with any whitespace or comments between its `<` and `>`. */
 const regex_opening_fragment = /^<(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*>$/;
@@ -1528,13 +1531,15 @@ export function convert_source_map_to_mappings(
 	 * @param {AST.SourceLocation} loc
 	 * @param {string} name The authored name, decoded: `#a` for a private name,
 	 *   `className` for an attribute a target prints as `class`.
+	 * @param {boolean} [jsx] A JSX name, which can have `-` in it.
 	 * @returns {number | undefined} `undefined` for a name written without escapes.
 	 */
-	function escaped_name_length(loc, name) {
+	function escaped_name_length(loc, name, jsx = false) {
 		const start = loc_to_offset(loc.start.line, loc.start.column, src_line_offsets);
 		if (source.startsWith(name, start)) return;
-		regex_written_name.lastIndex = start;
-		const written = regex_written_name.exec(source)?.[0];
+		const pattern = jsx ? regex_written_jsx_name : regex_written_name;
+		pattern.lastIndex = start;
+		const written = pattern.exec(source)?.[0];
 		if (!written?.includes('\\')) return;
 		const decoded = written.replace(regex_name_escape, (escape, braced, short) => {
 			const code = Number.parseInt(braced ?? short, 16);
@@ -1672,7 +1677,7 @@ export function convert_source_map_to_mappings(
 						loc: node.loc,
 						metadata: {},
 						sourceLength:
-							escaped_name_length(node.loc, node.metadata?.source_name ?? node.name) ??
+							escaped_name_length(node.loc, node.metadata?.source_name ?? node.name, true) ??
 							node.metadata?.source_length,
 					};
 					if (node.metadata?.disable_verification) {

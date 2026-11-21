@@ -1439,6 +1439,81 @@ export function App() @{
 				{ written: b, printed: 'b', edit: b, covers: true },
 			]);
 		});
+
+		it('reads a JSX name with an escape after its start as one name', () => {
+			// The JSX tokenizer stopped at the escape: `<Inn\u0065r n={1} />` was the
+			// tag `Inn` with an attribute `\u0065r`, and a closing tag spelled with an
+			// escape didn't parse. TypeScript reads the whole name (and reports
+			// TS17021), and so does the compiler now, with the names the escapes spell.
+			const e = `${backslash}u0065`;
+			const jsx_source = [
+				'function Inner(props: { n: number; children?: unknown }) { return null; }',
+				'const ns = { Inner };',
+				'export function App(props: { label: string }) @{',
+				'\t<section>',
+				`\t\t<Inn${e}r n={1} />`,
+				`\t\t<Inn${e}r n={2}></Inn${backslash}u{65}r>`,
+				`\t\t<Inner n={3}></Inn${e}r>`,
+				`\t\t<ns.Inn${e}r n={4} />`,
+				`\t\t<div data-${backslash}u0061="1" ${backslash}u0061ria-label={props.label} />`,
+				`\t\t<Missin${backslash}u0067 />`,
+				'\t</section>',
+				'}',
+				'',
+			].join('\n');
+			const built = compile(jsx_source, 'App.tsrx').code;
+			for (const text of ['<Inner n={1} />', '<ns.Inner n={4} />', 'data-a="1"', 'aria-label=']) {
+				expect(built).toContain(text);
+			}
+			const result = compile_to_volar_mappings(jsx_source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const jsx_name = new RegExp(`[${backslash}w$-]*(?:${escape}[${backslash}w$-]*)+`, 'g');
+			const names = [...jsx_source.matchAll(jsx_name)].map((match) => {
+				const start = /** @type {number} */ (match.index);
+				const token = result.mappings.find(
+					(mapping) =>
+						mapping.sourceOffsets[0] === start &&
+						mapping.lengths[0] === match[0].length &&
+						isRenameEnabled(mapping.data),
+				);
+				if (!token) return { written: match[0], printed: null };
+				const generated_start = token.generatedOffsets[0];
+				return {
+					written: match[0],
+					printed: result.code.slice(
+						generated_start,
+						generated_start + (token.generatedLengths ?? token.lengths)[0],
+					),
+				};
+			});
+			expect(names.map(({ printed }) => printed)).toEqual([
+				'Inner',
+				'Inner',
+				'Inner',
+				'Inner',
+				'Inner',
+				'data-a',
+				'aria-label',
+				'Missing',
+			]);
+			// TS2304 on the unknown tag covers all of its name.
+			const map = new SourceMap(result.mappings);
+			const shown = type_diagnostics(result.code, '/output.tsx')
+				.filter((diagnostic) => diagnostic.code === 2304)
+				.map((diagnostic) => {
+					const start = /** @type {number} */ (diagnostic.start);
+					const [range] = [
+						...map.toSourceRange(
+							start,
+							start + /** @type {number} */ (diagnostic.length),
+							true,
+							isDiagnosticsEnabled,
+						),
+					];
+					return range && jsx_source.slice(range[0], range[1]);
+				});
+			expect(shown).toEqual([`Missin${backslash}u0067`]);
+		});
 	});
 
 	describe(`[${name}] computed key brackets`, () => {
