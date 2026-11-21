@@ -1241,6 +1241,12 @@ with CSS nesting:
   climb up.
 - Leading `:global(.theme-dark) .card` -> `.theme-dark .card.<hash>`: your own
   element, only when an ancestor carries the class.
+- `:root` and `:host` never take the hash, nor does a compound with either, so
+  a class or attribute on `<html>` needs no `:global`:
+  `:root.dark .card` -> `:root.dark .card.<hash>`, and
+  `:root:not(.dark) .card` -> `:root:not(.dark) .card.<hash>`. A type selector is
+  scoped like any other, so `html.dark .card` and `body .card` never match:
+  write `:root.dark .card`, `:global(html.dark) .card` or `:global(body) .card`.
 - Compound `.card:global(.is-open)` -> `.card.<hash>.is-open`: your own
   element, with a class another library toggles on it.
 - Pseudo-classes right after `:global(...)` stay in its compound, which stays
