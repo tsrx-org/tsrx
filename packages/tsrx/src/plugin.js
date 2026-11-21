@@ -199,7 +199,16 @@ const DECORATABLE_NODE_TYPES = new Set([
 	'PropertyDefinition',
 ]);
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
-const regex_identifier_start = /^[$_\p{ID_Start}]/u;
+/**
+ * acorn's own identifier tests, which acorn-typescript uses to decide that a
+ * JSX name starts: the JSX name reader must take every character they take,
+ * or a name could stop before its first character. acorn's types don't
+ * declare them.
+ */
+const { isIdentifierChar: is_identifier_char, isIdentifierStart: is_identifier_start } =
+	/** @type {{ isIdentifierChar(code: number, astral?: boolean): boolean, isIdentifierStart(code: number, astral?: boolean): boolean }} */ (
+		/** @type {unknown} */ (acorn)
+	);
 // The files TypeScript reads without JSX, and the ones where it reserves the
 // syntax a JSX file would read as a tag (TS7059, TS7060).
 const regex_file_without_jsx = /\.[cm]?ts$/;
@@ -14412,12 +14421,13 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['jsx_readWord']}
 			 */
 			jsx_readWord() {
+				const start = this.pos;
 				let word = '';
 				let chunk_start = this.pos;
 				let first = true;
 				while (this.pos < this.input.length) {
 					const ch = this.fullCharCodeAtPos();
-					if (regex_identifier_part.test(String.fromCodePoint(ch)) || ch === CharCode.hyphen) {
+					if (is_identifier_char(ch, true) || ch === CharCode.hyphen) {
 						this.pos += ch <= 0xffff ? 1 : 2;
 					} else if (ch === CharCode.backslash) {
 						word += this.input.slice(chunk_start, this.pos);
@@ -14427,8 +14437,7 @@ export function TSRXPlugin(config) {
 						}
 						++this.pos;
 						const escaped = this.readCodePoint();
-						const pattern = first ? regex_identifier_start : regex_identifier_part;
-						if (!pattern.test(String.fromCodePoint(escaped))) {
+						if (!(first ? is_identifier_start : is_identifier_char)(escaped, true)) {
 							this.invalidStringToken(escape_start, 'Invalid Unicode escape');
 						}
 						word += String.fromCodePoint(escaped);
@@ -14438,6 +14447,10 @@ export function TSRXPlugin(config) {
 					}
 					first = false;
 				}
+				// acorn-typescript reads a name here only where acorn's tables say one
+				// starts, so this has read at least one character; if not, its reader
+				// does, rather than this one returning an empty name forever.
+				if (this.pos === start) return super.jsx_readWord();
 				return this.finishToken(tstt.jsxName, word + this.input.slice(chunk_start, this.pos));
 			}
 

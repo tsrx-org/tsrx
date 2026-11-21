@@ -1514,6 +1514,26 @@ export function App() @{
 				});
 			expect(shown).toEqual([`Missin${backslash}u0067`]);
 		});
+
+		it('reads a JSX name of characters outside ASCII and the BMP', () => {
+			// The JSX name reader takes the characters acorn's tables take, so a
+			// name acorn-typescript starts reading is read whole: U+1C89 starts an
+			// identifier in acorn's tables but not in every Node version's regular
+			// expressions.
+			const start = String.fromCodePoint(0x1c89);
+			const astral = String.fromCodePoint(0x10400);
+			const unicode_source = [
+				`const ${start} = () => null;`,
+				`const A${start} = () => null;`,
+				`const B${astral} = () => null;`,
+				`export const tags = [<${start} />, <A${start} />, <B${astral}></B${astral}>];`,
+				'',
+			].join('\n');
+			const built = compile(unicode_source, 'App.tsrx').code;
+			for (const tag of [`<${start} />`, `<A${start} />`, `<B${astral}></B${astral}>`]) {
+				expect(built).toContain(tag);
+			}
+		});
 	});
 
 	describe(`[${name}] computed key brackets`, () => {
