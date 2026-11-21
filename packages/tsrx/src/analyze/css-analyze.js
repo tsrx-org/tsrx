@@ -228,25 +228,27 @@ function negation_unscoped(selector) {
 /**
  * Whether the arguments a `:root` or `:host` compound keeps as written (those
  * of its `:is()`, `:where()` and `:not()`) can't match more without hashes:
- * only a `:has()` in them still looks at the component's elements, and an `&`
- * for a `@scope`'s root keeps the hash `:scope` gets.
+ * only a `:has()` in them still looks at the component's elements, and an
+ * argument with an `&`, about the rule around it, is kept as on its own.
  *
  * @param {AST.CSS.SelectorList} list
  * @param {boolean} negated whether a match there makes the selector match less
  * @returns {boolean}
  */
 function kept_arguments_unscoped(list, negated) {
-	return list.children.every((argument) =>
-		argument.children.every(({ selectors, metadata }) => {
+	return list.children.every((argument) => {
+		// One with an `&` is left as the pruner matched it, as on its own.
+		if (
+			argument.children.some(({ selectors }) =>
+				selectors.some((simple) => simple.type === 'NestingSelector'),
+			)
+		) {
+			return negated ? negation_unscoped(argument) : is_unscoped(argument);
+		}
+		return argument.children.every(({ selectors, metadata }) => {
 			// A `:global(...)` compound keeps its arguments as written too.
 			if (metadata.is_global) return true;
 			return selectors.every((simple) => {
-				// An `&` in a global-like compound (`:root&`) gets no hash.
-				if (simple.type === 'NestingSelector') {
-					return (
-						negated || metadata.is_global_like || !is_scope_root_ampersand(argument.metadata.rule)
-					);
-				}
 				if (
 					simple.type !== 'PseudoClassSelector' ||
 					!simple.args ||
@@ -261,8 +263,8 @@ function kept_arguments_unscoped(list, negated) {
 				}
 				return kept_arguments_unscoped(simple.args, simple.name === 'not' ? !negated : negated);
 			});
-		}),
-	);
+		});
+	});
 }
 
 /**

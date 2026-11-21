@@ -2454,6 +2454,7 @@ export function runSharedScopedStyleTests({
 							:root:has(.icon):not(.dark) { color: red; }
 							:root:not(:root:has(.icon)) .wrap { color: blue; }
 							@scope (.wrap) { :root:is(&) { color: green; } }
+							@scope (.wrap) { :root:is(&.missing) { color: gray; } }
 						</style>
 						<div ${attr}="wrap"><i ${attr}="icon" /></div>
 					</>
@@ -2465,6 +2466,8 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`:root:not(:root:has(.icon:where(.${hash}))) .wrap.${hash} {`);
 			// So does an & for a @scope's root, as :scope does.
 			expect(css).toContain(`:root:is(&.${hash}) { color: green; }`);
+			// An argument with an & is matched as before: no .missing, so pruned.
+			expect(css).toContain(':root:is(/* (unused) &.missing*/) { color: gray; }');
 		});
 
 		it('keeps the arguments of a :global() compound in a scope without elements', () => {

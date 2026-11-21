@@ -1483,18 +1483,15 @@ export function keep_global_compound_arguments(css) {
 				) {
 					walk(/** @type {AST.CSS.Node} */ (selector.args), null, {
 						ComplexSelector(complex_selector, context) {
+							// In a :root or :host compound's argument, a selector with an `&`
+							// is about the rule around it, or a `@scope`'s root, and is left
+							// as the pruner matched it.
+							if (!global && has_nesting_selector(complex_selector)) return;
 							complex_selector.metadata.used = true;
 							context.next();
 						},
 						RelativeSelector(relative_selector, context) {
-							// In a :root or :host compound's argument, an `&` still stands for
-							// the rule around it, or a `@scope`'s root, scoped as before.
-							if (
-								global ||
-								!relative_selector.selectors.some((simple) => simple.type === 'NestingSelector')
-							) {
-								relative_selector.metadata.scoped = false;
-							}
+							relative_selector.metadata.scoped = false;
 							context.next();
 						},
 						// There, a :has() still looks at descendants
@@ -1509,6 +1506,18 @@ export function keep_global_compound_arguments(css) {
 			if (!global) next();
 		},
 	});
+}
+
+/**
+ * Whether one of `selector`'s compounds has an `&`.
+ *
+ * @param {AST.CSS.ComplexSelector} selector
+ * @returns {boolean}
+ */
+function has_nesting_selector(selector) {
+	return selector.children.some(({ selectors }) =>
+		selectors.some((simple) => simple.type === 'NestingSelector'),
+	);
 }
 
 /**
