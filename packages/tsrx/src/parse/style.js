@@ -484,7 +484,12 @@ function read_custom_property_value(parser) {
 			continue;
 		}
 		const before = name;
-		name = quote_mark === null && /[\w\u0080-\uffff-]/.test(char) ? name + char : '';
+		// A NUL reads as U+FFFD, a name character.
+		name = quote_mark === null && /[\w\u0000\u0080-\uffff-]/.test(char) ? name + char : '';
+		// `<!--` is a token of its own, not the start of a name.
+		if (name === '--' && parser.template.slice(parser.index - 3, parser.index - 1) === '<!') {
+			name = '';
+		}
 		if (quote_mark !== null) {
 			if (char === quote_mark) quote_mark = null;
 		} else if (char === '"' || char === "'") {

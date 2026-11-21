@@ -259,6 +259,25 @@ describe('parseStyle custom properties', function () {
 		// A selector that starts with a custom property name, but isn't one before
 		// its `:`, is still a rule's.
 		['.a { --w,i:hover { color: red } --w[x]:hover { color: red } }', [['Rule', 'Rule']]],
+		// <!-- is a token of its own, and a NUL a name character.
+		[
+			'.a { --x: <!--url(a[.svg); color: red }',
+			[
+				[
+					['--x', '<!--url(a[.svg)'],
+					['color', 'red'],
+				],
+			],
+		],
+		[
+			'.a { --x: \0url(a")"b); color: red }',
+			[
+				[
+					['--x', '\0url(a")"b)'],
+					['color', 'red'],
+				],
+			],
+		],
 	])('reads %j', function (css, expected) {
 		expect(blocks(css)).toEqual(expected);
 	});
