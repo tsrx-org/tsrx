@@ -1108,6 +1108,54 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map a comparison the compiler writes for a case of a template switch,
+	 * `(d) === test` with a copy of the discriminant `d` (Solid's
+	 * `<Match when>`), to the case's test. TypeScript reports a test that the
+	 * discriminant can never equal (TS2367) on the whole comparison, and
+	 * without this its start mapped to the discriminant, so the error covered
+	 * everything from the `@switch` to the test.
+	 *
+	 * - Its start, the `(`, and its end are the two points of one
+	 *   diagnostics-only mapping to the test's ends (see
+	 *   {@link push_points_mapping}).
+	 * - The `(` maps to the test with no Volar feature, for TypeScript 7 (see
+	 *   {@link push_literal_mappings}).
+	 * @param {AST.BinaryExpression} node
+	 * @returns {void}
+	 */
+	function push_case_comparison_mappings(node) {
+		const { left, right: test } = node;
+		if (left.type !== 'ParenthesizedExpression') return;
+		const copy = left.expression;
+		if (!has_location(copy) || !has_location(test)) return;
+		const offsets = (/** @type {AST.Position} */ position) =>
+			(src_to_gen_map.get(`${position.line}:${position.column}`) ?? []).map((generated) =>
+				loc_to_offset(generated.line, generated.column, gen_line_offsets),
+			);
+		const test_start = Math.min(...offsets(test.loc.start));
+		const test_end = offsets(test.loc.end).find((offset) => offset >= test_start);
+		// Every case has a copy of the discriminant, and each copy is printed
+		// right before its own test.
+		const copy_start = Math.max(...offsets(copy.loc.start).filter((offset) => offset < test_start));
+		const open = copy_start - 1;
+		if (test_end === undefined || generated_code[open] !== '(') return;
+		mappings.push({
+			sourceOffsets: [test.start, test.end],
+			generatedOffsets: [open, test_end],
+			lengths: [0, 0],
+			generatedLengths: [0, 0],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
+		mappings.push({
+			sourceOffsets: [test.start],
+			lengths: [test.end - test.start],
+			generatedOffsets: [open],
+			generatedLengths: [1],
+			data: { customData: {} },
+		});
+	}
+
+	/**
 	 * Map the `}` that ends a block, for diagnostics only, so that unreachable
 	 * code (TS7027) that ends with the block keeps its end.
 	 * @param {AST.Node | null | undefined} node
@@ -2530,6 +2578,9 @@ export function convert_source_map_to_mappings(
 				}
 				if (node.right) {
 					visit(node.right);
+				}
+				if (node.type === 'BinaryExpression' && node.metadata?.case_comparison) {
+					push_case_comparison_mappings(node);
 				}
 				return;
 			} else if (node.type === 'MemberExpression') {

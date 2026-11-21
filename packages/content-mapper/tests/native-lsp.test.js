@@ -1139,14 +1139,40 @@ export function Shown(props: { items: { id: number }[]; on: boolean }) @{
 }
 `;
 
+/**
+ * `@case` tests the discriminant can never equal. Solid compares a copy of the
+ * discriminant with each test (`<Match when={(d) === test}>`), where TypeScript
+ * reports TS2367 on the whole comparison; Vue prints a `switch`, where it
+ * reports TS2678 on the test.
+ */
+const SWITCH_TSRX = `export function Cases(props: { n: number; s: 'a' | 'b' }) @{
+	<div>
+		@switch (props.n) {
+			@case 'x': {
+				<b />
+			}
+			@case 1: {
+				<i />
+			}
+		}
+		@switch (props.s) {
+			@case 'c': {
+				<s />
+			}
+		}
+	</div>
+}
+`;
+
 describe.each(Object.keys(target_dependencies))('native language server on %s', (target) => {
 	/** @type {Record<string, string>} */
 	const files = {
 		'main.ts':
-			"import { List } from './List.tsrx';\nimport { Tag } from './Names.tsrx';\nimport { Shown } from './Shown.tsrx';\n\nexport const list = [List, Tag, Shown];\n",
+			"import { List } from './List.tsrx';\nimport { Tag } from './Names.tsrx';\nimport { Shown } from './Shown.tsrx';\nimport { Cases } from './Switch.tsrx';\n\nexport const list = [List, Tag, Shown, Cases];\n",
 		'List.tsrx': for_source(target),
 		'Names.tsrx': NAMES_TSRX,
 		'Shown.tsrx': SHOWN_TSRX,
+		'Switch.tsrx': SWITCH_TSRX,
 	};
 	/** @type {ReturnType<typeof create_native_workspace>} */
 	let workspace;
@@ -1173,6 +1199,7 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 		client.open('List.tsrx', files['List.tsrx']);
 		client.open('Names.tsrx', files['Names.tsrx']);
 		client.open('Shown.tsrx', files['Shown.tsrx']);
+		client.open('Switch.tsrx', files['Switch.tsrx']);
 	});
 
 	afterAll(async () => {
@@ -1344,6 +1371,15 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 			rename: [`Shown.tsrx ${declared_id}:id -> id: renamed`, `Shown.tsrx ${key_id}:id -> renamed`],
 			completes: true,
 		});
+	});
+
+	it('reports an @case test the discriminant can never equal on the test', async () => {
+		const diagnostics = await client.diagnostics('Switch.tsrx');
+		const code = target === 'solid' ? 2367 : 2678;
+		expect(diagnostics.map((d) => [d.code, where('Switch.tsrx', d.range)])).toEqual([
+			[code, `${SWITCH_TSRX.indexOf("'x'")}:'x'`],
+			[code, `${SWITCH_TSRX.indexOf("'c'")}:'c'`],
+		]);
 	});
 });
 

@@ -613,7 +613,9 @@ describe('@tsrx/solid basic', () => {
 			expect(code.match(/queue\.shift\(\)/g)).toHaveLength(1);
 
 			const type_only = compile_to_volar_mappings(source, 'App.tsrx').code;
-			expect(type_only).toContain("<__Match when={queue.shift() === 'loading'}>");
+			// The editor output puts each copy in parentheses, so each comparison
+			// starts on a token that maps to its case's test.
+			expect(type_only).toContain("<__Match when={(queue.shift()) === 'loading'}>");
 			expect(type_only).not.toContain('createMemo');
 		});
 
