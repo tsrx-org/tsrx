@@ -199,6 +199,8 @@ const DECORATABLE_NODE_TYPES = new Set([
 	'PropertyDefinition',
 ]);
 const regex_identifier = /[$_\p{ID_Start}][$_\u200c\u200d\p{ID_Continue}]*/uy;
+/** A Unicode escape at a position, `\uXXXX` or `\u{X}`, with its hex digits. */
+const regex_name_escape_at = /\\u(?:([\da-fA-F]{4})|\{([\da-fA-F]+)\})/y;
 /**
  * acorn's own identifier tests, which acorn-typescript uses to decide that a
  * JSX name starts: the JSX name reader must take every character they take,
@@ -14466,6 +14468,10 @@ export function TSRXPlugin(config) {
 					if (is_identifier_char(ch, true) || ch === CharCode.hyphen) {
 						this.pos += ch <= 0xffff ? 1 : 2;
 					} else if (ch === CharCode.backslash) {
+						// A name read so far ends before an escape that can't go on with
+						// it, as TypeScript's does: its error (TS17021) is reported on the
+						// name, and the escape's own error then on the next token.
+						if (this.pos > start && !this.#escapeContinuesName(this.pos)) break;
 						word += this.input.slice(chunk_start, this.pos);
 						const escape_start = this.pos;
 						if (this.input.charCodeAt(++this.pos) !== 117) {
@@ -14488,6 +14494,19 @@ export function TSRXPlugin(config) {
 				// does, rather than this one returning an empty name forever.
 				if (this.pos === start) return super.jsx_readWord();
 				return this.finishToken(tstt.jsxName, word + this.input.slice(chunk_start, this.pos));
+			}
+
+			/**
+			 * Whether the escape at `index` is a well-formed one for a character an
+			 * identifier can go on with.
+			 * @param {number} index
+			 */
+			#escapeContinuesName(index) {
+				regex_name_escape_at.lastIndex = index;
+				const match = regex_name_escape_at.exec(this.input);
+				if (!match) return false;
+				const code = Number.parseInt(match[1] ?? match[2], 16);
+				return code <= 0x10ffff && is_identifier_char(code, true);
 			}
 
 			/**

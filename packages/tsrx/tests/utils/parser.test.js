@@ -18344,8 +18344,9 @@ ${lines.join('\n')}
 
 	it('reports it only where TypeScript reads a JSX name, also in speculative parses', () => {
 		// After type arguments and in a generic call or arrow function, which the
-		// parser reads speculatively first, on a member's part up to a `-`, and
-		// not on an attribute's unquoted value, which isn't a name.
+		// parser reads speculatively first, on a member's part up to a `-`, on a
+		// name before a malformed escape, and not on an attribute's unquoted
+		// value, which isn't a name.
 		const snippets = [
 			`const x = <A<T> a${escape('0062')} />;`,
 			`const x = f<T,>(x = <A${escape('0062')} />, 1);`,
@@ -18353,6 +18354,8 @@ ${lines.join('\n')}
 			`const x = <X.A${escape('0062')}-c />;`,
 			`const x = <X.A-${escape('0062')} />;`,
 			`const x = <X a=A${escape('0062')} />;`,
+			// A name ends before an escape that can't go on with it.
+			`const x = <A${escape('0062')}${escape('002d')} />;`,
 		];
 		for (const snippet of snippets) {
 			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
