@@ -974,11 +974,6 @@ describe('scoped style analysis', () => {
 					0,
 				],
 				[
-					'@scope (:root) { :global.w, :root:is(&:root) { color: red; } }',
-					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
-					0,
-				],
-				[
 					'@scope (.q) { :global.w, :root:is(&) { color: red; } }',
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 					0,
@@ -1117,6 +1112,8 @@ describe('scoped style analysis', () => {
 				// compound gets no hash.
 				':global.w, :root:is(:global(.x):has(.a)) { color: red; }',
 				'@scope (.q) { :global.w, :root:is(:root&) { color: red; } }',
+				// An & for a @scope's root in a compound with :root gets no hash either.
+				'@scope (:root) { :global.w, :root:is(&:root) { color: red; } }',
 				// The & already has the hash, and :where() adds no specificity.
 				'.p { :global.w, &:where(.p) { color: red; } }',
 				'@scope (.q) { .p { :global.w, &:where(.p) { color: red; } } }',
