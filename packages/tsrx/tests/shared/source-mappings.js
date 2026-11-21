@@ -1531,6 +1531,24 @@ export function App() @{
 			expect(shown).toEqual([`Missin${backslash}u0067`]);
 		});
 
+		it('reads a comparison after a name that ends with a braced escape', () => {
+			// The `}` of the escape doesn't end a block, after which a `<` would
+			// start a tag (`a\u{62} <c` threw "',' expected").
+			const ab = `a${backslash}u{62}`;
+			const comparison_source = [
+				'declare const ab: number;',
+				'declare const c: number;',
+				`export const r = ${ab} <c;`,
+				`export const s = ${ab} /* x */ < c ? 1 : 2;`,
+				`export const t = ${ab} << 2;`,
+				'',
+			].join('\n');
+			const built = compile(comparison_source, 'App.tsrx').code;
+			expect(built).toContain('export const r = ab < c;');
+			expect(built).toContain('export const s = ab < c ? 1 : 2;');
+			expect(built).toContain('export const t = ab << 2;');
+		});
+
 		it('reads a JSX name of characters outside ASCII and the BMP', () => {
 			// The JSX name reader takes the characters acorn's tables take, so a
 			// name acorn-typescript starts reading is read whole: U+1C89 starts an
