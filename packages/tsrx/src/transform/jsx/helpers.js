@@ -348,21 +348,6 @@ export function tsx_with_ts_locations(
 		write_source_text(source.slice(offset, node.end), context);
 	};
 
-	/**
-	 * Whether the source writes the same name twice, as two names: `a: a` or
-	 * `a as a`, not the shorthand `a`.
-	 * @param {AST.Node} first
-	 * @param {AST.Node} second
-	 * @returns {boolean}
-	 */
-	const written_twice = (first, second) =>
-		first.type === 'Identifier' &&
-		second.type === 'Identifier' &&
-		first.name === second.name &&
-		has_location(first) &&
-		has_location(second) &&
-		first.start !== second.start;
-
 	/** @type {ESRap.Visitors<AST.Node>} */
 	const wrappers = {
 		// esrap prints `import { a as a }` and `export { a as a }` as `{ a }`,
@@ -684,6 +669,7 @@ export function tsx_with_ts_locations(
 				!node.computed &&
 				!node.method &&
 				node.kind === 'init' &&
+				node.key.type === 'Identifier' &&
 				written_twice(node.key, name)
 			) {
 				context.visit(node.key);
@@ -1370,6 +1356,48 @@ const IMPORT_SYNTAX = new Set([
 	'with',
 	'assert',
 ]);
+
+/**
+ * Whether two names are the same, as esrap compares the names of a
+ * specifier: the same identifier or the same string.
+ * @param {AST.Node} first
+ * @param {AST.Node} second
+ * @returns {boolean}
+ */
+function same_name(first, second) {
+	if (first.type !== second.type) return false;
+	if (first.type === 'Identifier')
+		return first.name === /** @type {AST.Identifier} */ (second).name;
+	return first.type === 'Literal' && first.value === /** @type {AST.Literal} */ (second).value;
+}
+
+/**
+ * Whether the source writes the same name twice, as two names: `a: a`,
+ * `a as a` or `"a" as "a"`, not the shorthand `a`. esrap prints such a pair
+ * as the shorthand, and the editor's output as written.
+ * @param {AST.Node} first
+ * @param {AST.Node} second
+ * @returns {boolean}
+ */
+export function written_twice(first, second) {
+	return (
+		has_location(first) &&
+		has_location(second) &&
+		first.start !== second.start &&
+		same_name(first, second)
+	);
+}
+
+/**
+ * Whether the editor's output prints both names of an import or export
+ * specifier: names that differ, or the same name written twice.
+ * @param {AST.Node} first The imported or the local name.
+ * @param {AST.Node} second The local or the exported name.
+ * @returns {boolean}
+ */
+export function prints_both_names(first, second) {
+	return !same_name(first, second) || written_twice(first, second);
+}
 
 /**
  * The names, module string and attribute keys and values of an import or a
