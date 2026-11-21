@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
 	createAutoInsertPlugin,
+	decodeNameEscapes,
 	escapeSnippetText,
 	matchOpeningTag,
 	unescapeSnippetText,
@@ -106,6 +107,22 @@ describe('auto-insert plugin — element tags', () => {
 			'\n\t</>\n}',
 		);
 		expect(snippet).toBe('$0</Café>');
+	});
+
+	it('closes a tag with an escape in its name with the name it spells', async () => {
+		// The parser matches tags by the name the escapes spell, and a raw-text
+		// element ends only at a closing tag written out.
+		const backslash = String.fromCharCode(92);
+		const tag = await auto_insert_after_gt(
+			`function Inner() @{ <div /> }\nexport function App() @{\n\t<>\n\t\t<Inn${backslash}u0065r`,
+			'\n\t</>\n}',
+		);
+		expect(tag).toBe('$0</Inner>');
+		const style = await auto_insert_after_gt(
+			`export function App() @{\n\t<>\n\t\t<st${backslash}u0079le`,
+			'\n\t\t<div />\n\t</>\n}',
+		);
+		expect(style).toBe('$0</style>');
 	});
 
 	it('closes a tag inside a control-flow body', async () => {
@@ -329,6 +346,13 @@ describe('matchOpeningTag', () => {
 		expect(matchOpeningTag('<Component.Item>')).toBe('Component.Item');
 		expect(matchOpeningTag('<div class="a > b" title=\'x>\'>')).toBe('div');
 		expect(matchOpeningTag('<style apply={theme}>')).toBe('style');
+	});
+
+	it('matches a name with Unicode escapes as written, and decodes it', () => {
+		const backslash = String.fromCharCode(92);
+		expect(matchOpeningTag(`<Inn${backslash}u0065r n={1}>`)).toBe(`Inn${backslash}u0065r`);
+		expect(matchOpeningTag(`<${backslash}u0049nner>`)).toBe(`${backslash}u0049nner`);
+		expect(decodeNameEscapes(`a-${backslash}u{62}.Inn${backslash}u0065r`)).toBe('a-b.Inner');
 	});
 
 	it('matches `$` and non-ASCII letters anywhere in the name', () => {
