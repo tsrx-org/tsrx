@@ -70,6 +70,44 @@ describe('parseStyle loose recovery', function () {
 });
 
 // A syntax error gets where the parser stopped (#1306).
+describe('parseStyle empty declarations', function () {
+	/** @param {string} css */
+	function blocks(css) {
+		return parseStyle(css, LOCATION, {}).children.map((rule) =>
+			/** @type {any} */ (rule).block.children.map((/** @type {any} */ child) =>
+				child.type === 'Declaration' ? [child.property, child.value] : child.type,
+			),
+		);
+	}
+
+	it.each([
+		['.a { color: red;; }', [[['color', 'red']]]],
+		[
+			'.a { color: red;/* c */; padding: 0 }',
+			[
+				[
+					['color', 'red'],
+					['padding', '0'],
+				],
+			],
+		],
+		// An empty one before another was read as a declaration of `;`.
+		['.a { ; animation: spin 1s }', [[['animation', 'spin 1s']]]],
+		['.a { color: red; ; .b { color: blue } }', [[['color', 'red'], 'Rule']]],
+		[
+			'@font-face { font-family: x;; src: url(a.woff) }',
+			[
+				[
+					['font-family', 'x'],
+					['src', 'url(a.woff)'],
+				],
+			],
+		],
+	])('skips the empty declarations in %j', function (css, expected) {
+		expect(blocks(css)).toEqual(expected);
+	});
+});
+
 describe('parseStyle syntax errors', function () {
 	it('gives the offset in the body', function () {
 		expect(function () {
@@ -84,6 +122,78 @@ describe('parseStyle syntax errors', function () {
 		}).toThrow(
 			expect.objectContaining({ code: 'TSRX3013', pos: 122, loc: { line: 5, column: 1 } }),
 		);
+	});
+});
+
+describe('parseStyle declaration values', function () {
+	/** @param {string} css */
+	function blocks(css) {
+		return parseStyle(css, LOCATION, {}).children.map((rule) =>
+			/** @type {any} */ (rule).block.children.map((/** @type {any} */ child) =>
+				child.type === 'Declaration' ? [child.property, child.value] : child.type,
+			),
+		);
+	}
+
+	it.each([
+		// A `}` or `;` in a comment ended the value, and the rule with it.
+		['.a { color: red /* } */ }', [[['color', 'red /* } */']]]],
+		[
+			'.a { color: red /* ; */ } .b { color: blue }',
+			[[['color', 'red /* ; */']], [['color', 'blue']]],
+		],
+		['.a { color: /* { */ red; .b /* } */ { color: blue } }', [[['color', '/* { */ red'], 'Rule']]],
+		['.a { animation: spin /* } */ 1s; }', [[['animation', 'spin /* } */ 1s']]]],
+		// A comment in a string or an unquoted url() is text.
+		[".a { content: '/* } */'; }", [[['content', "'/* } */'"]]]],
+		['.a { background: url(/* x */a.png); }', [[['background', 'url(/* x */a.png)']]]],
+		// url is a name, so URL( is one too.
+		[
+			'.a{background:URL(/*x)}.b{color:red/* } */}',
+			[[['background', 'URL(/*x)']], [['color', 'red/* } */']]],
+		],
+	])('reads past a comment in %j', function (css, expected) {
+		expect(blocks(css)).toEqual(expected);
+	});
+
+	it.each([
+		// A hex escape ends at a space, or a \r\n, which is part of it.
+		['.a{background:ur\\6c (/*x)}.b{color:red/* } */}', 2],
+		['.a{background:ur\\6c\r\n(/*x)}.b{color:red/* } */}', 2],
+		// In a string, URL( is text.
+		['.a{content:"URL("}.b{color:red}', 2],
+		// A ; in a function's parentheses doesn't end the value; myurl( isn't url(.
+		['.a{--x:myurl(a;b)}.b{color:blue}', 2],
+		['.a{color:f(a;b)}.b{color:blue}', 2],
+		['.a{--x:/*"*/myurl(/*"*/)}.b{color:blue}', 2],
+		// A \ and a newline isn't an escape, so it ends the name.
+		['.a{--x:ur\\\nl(/*"*/x)}.b{color:red}', 2],
+	])('reads the url( name of %j as CSS does', function (css, rules) {
+		expect(blocks(css)).toHaveLength(rules);
+	});
+
+	it('reads a long run of escapes before a ( in linear time', function () {
+		const css = '.a{--x:' + String.raw`\000061`.repeat(14) + '  (x)}';
+		const start = performance.now();
+		parseStyle(css, LOCATION, {});
+		expect(performance.now() - start).toBeLessThan(1000);
+	});
+
+	it('reads an escaped url( as url(', function () {
+		const rules = blocks(String.raw`.a{background:u\72l(/*x)}.b{color:red}`);
+
+		expect(
+			rules.map((declarations) => declarations.map((/** @type {any} */ item) => item[0])),
+		).toEqual([['background'], ['color']]);
+	});
+
+	it('reports a comment a value leaves open, unless loose', function () {
+		expect(function () {
+			parseStyle('.a { color: red /* open }', LOCATION, {});
+		}).toThrow(/Unexpected end of input/);
+		expect(function () {
+			parseStyle('.a { color: red /* open }', LOCATION, { loose: true });
+		}).not.toThrow();
 	});
 });
 
@@ -155,5 +265,136 @@ describe('parseStyle escapes', function () {
 		['a\\\r\nb', 'ab'],
 	])('unescapes %j to %j', function (value, expected) {
 		expect(unescape_css(value)).toBe(expected);
+	});
+});
+
+describe('parseStyle custom properties', function () {
+	/** @param {string} css */
+	function blocks(css) {
+		return parseStyle(css, LOCATION, {}).children.map((rule) =>
+			/** @type {any} */ (rule).block.children.map((/** @type {any} */ child) =>
+				child.type === 'Declaration' ? [child.property, child.value] : child.type,
+			),
+		);
+	}
+
+	it.each([
+		// The read-ahead took the `{` for a nested rule's.
+		['.a { --x: {a} }', [[['--x', '{a}']]]],
+		[
+			'.a { --x: { a: b; c }; color: red }',
+			[
+				[
+					['--x', '{ a: b; c }'],
+					['color', 'red'],
+				],
+			],
+		],
+		['.a { --x: a {b} c; .b { color: blue } }', [[['--x', 'a {b} c'], 'Rule']]],
+		['.a { --x : {a} {b} }', [[['--x', '{a} {b}']]]],
+		// A ; or } in a block, a string or a comment doesn't end the value.
+		[
+			'.a { --x: [a; b]; --y: (c; d) }',
+			[
+				[
+					['--x', '[a; b]'],
+					['--y', '(c; d)'],
+				],
+			],
+		],
+		[
+			'.a { --x: "}" /* } */; color: red }',
+			[
+				[
+					['--x', '"}" /* } */'],
+					['color', 'red'],
+				],
+			],
+		],
+		// CSS reads an item that starts with a custom property name and a `:` as
+		// a declaration, so this is one, not a rule.
+		['.a { --x:hover { color: red } }', [[['--x', 'hover { color: red }']]]],
+		[
+			'.a { --empty:; color: red }',
+			[
+				[
+					['--empty', ''],
+					['color', 'red'],
+				],
+			],
+		],
+		// In an unquoted url(), a `{`, `[` or `/*` is part of the URL.
+		[
+			'.a { --x: url(/a{.svg); --y: url(/*b[.svg); color: red }',
+			[
+				[
+					['--x', 'url(/a{.svg)'],
+					['--y', 'url(/*b[.svg)'],
+					['color', 'red'],
+				],
+			],
+		],
+		// url is a name, read case-insensitively, with escapes; éurl isn't url.
+		[
+			String.raw`.a { --x: URL(/a{.svg); --y: ur\6c (/b[.svg); color: red }`,
+			[
+				[
+					['--x', 'URL(/a{.svg)'],
+					['--y', String.raw`ur\6c (/b[.svg)`],
+					['color', 'red'],
+				],
+			],
+		],
+		['.a { --x: éurl((a); b) }', [[['--x', 'éurl((a); b)']]]],
+		// #url( and @url( aren't url(, nor is u, a \ and a newline, then rl(.
+		[
+			'.a { --x: #url(a")"b); --y: @url(c")"d); color: red }',
+			[
+				[
+					['--x', '#url(a")"b)'],
+					['--y', '@url(c")"d)'],
+					['color', 'red'],
+				],
+			],
+		],
+		[
+			'.a { --x: u\\\nrl(a")"b); color: red }',
+			[
+				[
+					['--x', 'u\\\nrl(a")"b)'],
+					['color', 'red'],
+				],
+			],
+		],
+		// A selector that starts with a custom property name, but isn't one before
+		// its `:`, is still a rule's.
+		['.a { --w,i:hover { color: red } --w[x]:hover { color: red } }', [['Rule', 'Rule']]],
+		// <!-- is a token of its own, and a NUL a name character.
+		[
+			'.a { --x: <!--url(a[.svg); color: red }',
+			[
+				[
+					['--x', '<!--url(a[.svg)'],
+					['color', 'red'],
+				],
+			],
+		],
+		[
+			'.a { --x: \0url(a")"b); color: red }',
+			[
+				[
+					['--x', '\0url(a")"b)'],
+					['color', 'red'],
+				],
+			],
+		],
+	])('reads %j', function (css, expected) {
+		expect(blocks(css)).toEqual(expected);
+	});
+
+	it('reports a block the value leaves open', function () {
+		expect(function () {
+			parseStyle('.a { --x: {a; }', LOCATION, {});
+		}).toThrow(/Unexpected end of input/);
 	});
 });

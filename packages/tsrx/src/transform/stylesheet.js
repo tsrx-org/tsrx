@@ -492,6 +492,38 @@ function remove_global_pseudo_class(selector, combinator, state) {
 }
 
 /**
+ * Drop the `;` of each empty declaration in `block` (`;;`, or a `;` after a
+ * rule), which the parser skips: every `;` outside its children and comments
+ * but the one that ends a declaration.
+ *
+ * @param {AST.CSS.Block} block
+ * @param {StylesheetRenderState} state
+ */
+function remove_empty_declarations(block, state) {
+	const source = state.code.original;
+	let child = 0;
+	let ends_declaration = false;
+	let i = block.start + 1;
+	while (i < block.end - 1) {
+		const next = block.children[child];
+		if (next && i >= next.start) {
+			ends_declaration = next.type === 'Declaration';
+			i = next.end;
+			child++;
+		} else if (source.startsWith('/*', i)) {
+			const close = source.indexOf('*/', i + 2);
+			i = close === -1 ? block.end - 1 : close + 2;
+		} else {
+			if (source[i] === ';') {
+				if (ends_declaration) ends_declaration = false;
+				else state.code.update(i, i + 1, '');
+			}
+			i++;
+		}
+	}
+}
+
+/**
  * Escape each `*` and `/` pair in `node`'s text, which goes inside a comment
  * the output adds around it: the end of a comment in it, or of a string.
  *
@@ -724,6 +756,9 @@ const visitors = {
 			) {
 				state.code.appendLeft(last.end, ';');
 			}
+			// Out of a style rule, the block's empty declarations (`;;`) would be
+			// left where no declaration can be.
+			if (!has_parent_rule_in_output(node)) remove_empty_declarations(node.block, state);
 			if (state.minify) {
 				state.code.remove(node.start, node.block.start + 1);
 				state.code.remove(node.block.end - 1, node.end);

@@ -1187,6 +1187,26 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`animation: ${hash}-fade 3s;`);
 		});
 
+		it('reads a declaration value past a comment that holds a } or ;', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							@keyframes spin { to { opacity: 0; } }
+							.a { color: red /* } */ }
+							.b { animation: spin /* ; */ 1s }
+						</style>
+						<div ${attr}="a"><i ${attr}="b" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`.a.${hash} { color: red /* } */ }`);
+			expect(css).toContain(`.b.${hash} { animation: ${hash}-spin /* ; */ 1s }`);
+		});
+
 		it('keeps -global- names, :global blocks, and other keyframes unscoped', () => {
 			const { css } = compile_keyframes(
 				`@keyframes -global-spin ${frames}
@@ -1854,6 +1874,25 @@ export function runSharedScopedStyleTests({
 	});
 
 	describe(`[${name}] :global selectors`, () => {
+		it('reads a custom property whose value holds {} blocks', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							.a { --x: { a: b; c }; color: red; .b { color: blue } }
+						</style>
+						<div ${attr}="a"><i ${attr}="b" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(
+				`.a.${hash} { --x: { a: b; c }; color: red; .b.${hash} { color: blue } }`,
+			);
+		});
+
 		it('global-forms: :global leaves the wrapped part unscoped and scopes the rest of the selector', () => {
 			const { code, css, cssHash } = compile(
 				`export function App() @{
@@ -2111,6 +2150,40 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(
 				`.wrap.${hash} /* (unused) :root.dark:has(.missing) .icon*/ { color: gray; }`,
 			);
+		});
+
+		it('skips an empty declaration', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							@keyframes spin { to { opacity: 0; } }
+							.a { color: red;; }
+							.b { ; animation: spin 1s }
+						</style>
+						<div ${attr}="a"><i ${attr}="b" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`.a.${hash} { color: red;; }`);
+			// Read as a declaration of `;`, its animation name kept no hash.
+			expect(css).toContain(`.b.${hash} { ; animation: ${hash}-spin 1s }`);
+
+			// Out of a style rule, where a dropped :global { ... } block puts it, an
+			// empty declaration is dropped too: no `;` is left at the top level.
+			const dropped = compile(
+				`export function App() @{
+					<>
+						<style>:global { ; .x { color: red; }; /* ; */ }</style>
+						<div ${attr}="a" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+			expect(dropped.css).toContain('/* :global {*/  .x { color: red; } /* ; */ /*}*/');
 		});
 
 		it('closes the comment over a pruned selector that touches a :global() selector', () => {
@@ -2511,6 +2584,58 @@ export function runSharedScopedStyleTests({
 				expect(css, `${rule} ${body}`).not.toContain('(unused)');
 				expect(css, `${rule} ${body}`).toContain(expected(hashes_of(cssHash)[0]));
 			}
+		});
+
+		it('keeps the :not(), :is() and :where() arguments of a :root or :host compound as written', () => {
+			// They are about <html> or the shadow host, never one of the component's
+			// elements: pruned, they left an empty :not(), and the browser dropped the
+			// rule.
+			for (const [selector, kept] of [
+				[':root:not(.dark)', ':root:not(.dark) {'],
+				[':root:not(.dark):not(.light) .icon', ':root:not(.dark):not(.light) .icon'],
+				[':root:not(.missing, .icon)', ':root:not(.missing, .icon) {'],
+				[':root:not(.wrap .missing)', ':root:not(.wrap .missing) {'],
+				[':root:is(.dark, .light) .icon', ':root:is(.dark, .light) .icon'],
+				[':root:where(.missing) .icon', ':root:where(.missing) .icon'],
+				[':host:not(.open) .icon', ':host:not(.open) .icon'],
+			]) {
+				const rule = `${selector} { color: red; }`;
+				const theme = compile(`export const theme = <style>${rule}</style>;`, 'App.tsrx');
+				const component = compile(
+					`export function App() @{
+						<>
+							<style>${rule}</style>
+							<div ${attr}="wrap"><i ${attr}="icon" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+				expect(theme.css, selector).toContain(kept);
+				expect(component.css, selector).toContain(kept);
+				expect(component.css, selector).not.toContain('(unused)');
+			}
+			// Those of its :has() are its descendants, scoped, in such an argument too.
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							:root:has(.icon):not(.dark) { color: red; }
+							:root:not(:root:has(.icon)) .wrap { color: blue; }
+							@scope (.wrap) { :root:is(&) { color: green; } }
+							@scope (.wrap) { :root:is(&.missing) { color: gray; } }
+						</style>
+						<div ${attr}="wrap"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`:root:has(.icon.${hash}):not(.dark) {`);
+			expect(css).toContain(`:root:not(:root:has(.icon:where(.${hash}))) .wrap.${hash} {`);
+			// So does an & for a @scope's root, as :scope does.
+			expect(css).toContain(`:root:is(&.${hash}) { color: green; }`);
+			// An argument with an & is matched as before: no .missing, so pruned.
+			expect(css).toContain(':root:is(/* (unused) &.missing*/) { color: gray; }');
 		});
 
 		it('keeps the arguments of a :global() compound in a scope without elements', () => {

@@ -1,5 +1,90 @@
 # @tsrx/vue-runtime
 
+## 0.2.6
+
+### Patch Changes
+
+- [#1442](https://github.com/tsrx-org/tsrx/pull/1442)
+  [`fea1e90`](https://github.com/tsrx-org/tsrx/commit/fea1e90e93f95cfedf31f0755864cf09b9c3bc4a)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `TsrxErrorBoundary` and
+  `TsrxPendingBody` are marked as Vapor components (`__vapor`) on the client.
+  After a page hydrated a `@try` with `createVaporSSRApp`, an app it mounted later
+  with `createVaporApp` printed `@try` bodies as text, such as
+  `[object HTMLButtonElement]`. vue-jsx-vapor renders a function component through
+  one proxy per function, shared by every app, and the app that first makes the
+  proxy decides whether it says the component is a Vapor one: a hydrating app,
+  which has no `vaporInteropPlugin`, made one that didn't, so the later app, which
+  the bundler plugins give that interop, mounted the boundary as a VDOM component.
+  Any app without the interop that rendered a boundary first did the same. The
+  boundaries' own flag now gives every app the same answer. The flag is set only
+  where Vue's Vapor renderer is present, as the boundary already decides between
+  its client and server paths: with Vue's Node build, the server renders them as
+  functional VDOM components, unflagged, and its markup is unchanged.
+
+- [#1446](https://github.com/tsrx-org/tsrx/pull/1446)
+  [`2bf746a`](https://github.com/tsrx-org/tsrx/commit/2bf746a04c40d2a5793036f2079f423e2a4b2a62)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, a
+  `@try` with `@pending` whose `@catch` parameter pattern throws, such as
+  `@catch ({ response: { status } })` for an error without a `response`, runs that
+  pattern once and passes its error to the next `@catch` out, or to
+  `app.config.errorHandler`, as a `@try` without `@pending` does. When the body
+  threw as it rendered, or an async component rejected after the `Suspense` had
+  resolved, the boundary inside the `Suspense` ran the pattern, and the boundary
+  around the `Suspense`, which renders the same `@catch`, took its error as the
+  body's and ran the pattern again before passing it on. A rejection while the
+  `Suspense` is pending already ran it once. What the body's own code throws as
+  the `@try` goes away, such as a throwing `onBeforeUnmount` the body registered,
+  also goes on now, as it does without `@pending`: when the app unmounts, or when
+  a `@try` around it shows its `@catch`, before, the boundary around the
+  `Suspense` took it and it was lost. After the `@catch` calls `reset`, what the
+  replaced body still throws stays in that `@catch`, as before, while the `@try`
+  is mounted.
+
+- [#1463](https://github.com/tsrx-org/tsrx/pull/1463)
+  [`aa926f2`](https://github.com/tsrx-org/tsrx/commit/aa926f238565970d89b99bf10de717729571941c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `@try` now
+  server-renders on Vue's bundler build, which a server resolves without the
+  `node` condition (an edge or worker runtime, or an SSR bundle). That build has
+  the Vapor renderer, so the boundary took its client path on the server: every
+  `@try` rendered `<!---->`, and `app.config.errorHandler` got
+  `ReferenceError: Node is not defined`. The boundary now detects a server render
+  by the SSR context Vue's server renderer provides, as `useSSRContext` does, and
+  renders as it does with Vue's Node build. `TsrxErrorBoundary` and
+  `TsrxPendingBody` report themselves as Vapor components (`__vapor`) only where
+  both Vue's Vapor renderer and a DOM are present when Vue asks, so a server on
+  the bundler build doesn't see the flag either; it would make the server renderer
+  drop what a component adds to a cloned slot child. A realm that has a DOM and
+  also server-renders, such as a jsdom test, still sees the flag.
+
+- [#1465](https://github.com/tsrx-org/tsrx/pull/1465)
+  [`34366c2`](https://github.com/tsrx-org/tsrx/commit/34366c2d909c12241eb08459231b8f2b6d356b67)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, an
+  error a component throws as it is torn down, such as from `onBeforeUnmount`, now
+  goes on from a `@try` that is going away, to the next `@catch` out or to
+  `app.config.errorHandler`, as it does without the `@try`. When the app
+  unmounted, or a `@try` around showed its `@catch` and removed it, the boundary
+  took the error and it was lost, also for a `@try` with `@pending`. An `@if` that
+  removes a `@try` hands the error to the `@catch` around it, as it does for a
+  component without the `@try`. And a `@try` whose `@catch` just replaced its
+  content, with or without `@pending`, no longer shows what that content throws as
+  it is torn down in place of the error it was swapped in for: that error goes on
+  to the next `@catch` out or to `app.config.errorHandler`. A teardown error that
+  comes later, from `onUnmounted` or an async `onBeforeUnmount`, still replaces
+  it. A loader that a `@try` with `@pending` reset away still doesn't reach the
+  new body.
+
+  An `onScopeDispose` that throws in content a `@try` removes no longer stops the
+  `@try` from rendering: before, the old content stayed on screen and the `@try`
+  stopped updating, and when it was swapping in its `@catch`, both errors were
+  lost. Now the `@try` shows its `@catch`, or its content again after a reset, and
+  the error goes on as above; when the content's own update removed the component,
+  the `@catch` shows it, as for a component inside an `@if`. In development with
+  nothing to take the error, it is logged rather than thrown, so the `@try` still
+  renders. Vue's teardown of that component still stops partway, as it does
+  without a `@try`: its `onBeforeUnmount` can run again as the `@try` removes it,
+  and other parts of the removed content can stay mounted, or on screen, such as
+  what a `Suspense` in it held.
+
 ## 0.2.5
 
 ### Patch Changes
