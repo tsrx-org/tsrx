@@ -443,33 +443,53 @@ function read_declaration(parser) {
 }
 
 /**
- * Whether the source text `value` ends with the name `url`, which CSS reads
- * case-insensitively and with escapes (`URL`, `u\72l`): a comment can't start
- * in its argument.
- *
- * @param {string} value
- * @returns {boolean}
- */
-function ends_with_url(value) {
-	const name = /(?:\\[0-9a-f]{1,6}\s?|\\[^0-9a-f\n]|[a-z0-9_-])+$/i.exec(value);
-	return name !== null && unescape_css(name[0]).toLowerCase() === 'url';
-}
-
-/**
  * @param {Parser} parser
  * @returns {string}
  */
 function read_value(parser) {
-	const start = parser.index;
 	let value = '';
 	let escaped = false;
 	let in_url = false;
+	// The name the value ends with, as written, for telling a `url(`, which CSS
+	// reads case-insensitively and with escapes (`URL(`, `u\72l(`).
+	let name = '';
+	// The digits of a hex escape the name ends with, 0 if it doesn't.
+	let hex_digits = 0;
+	// Whether a `\r` just ended a hex escape, so a `\n` goes with it.
+	let after_cr = false;
 
 	/** @type {null | '"' | "'"} */
 	let quote_mark = null;
 
 	while (parser.index < parser.template.length) {
 		const char = parser.template[parser.index];
+		const before = name;
+		if (quote_mark === null && !in_url) {
+			const cr = after_cr;
+			after_cr = false;
+			if (cr && char === '\n') {
+				name += char;
+			} else if (escaped) {
+				name += '\\' + char;
+				hex_digits = /[0-9a-f]/i.test(char) ? 1 : 0;
+			} else if (char === '\\') {
+				// The next character goes with it.
+			} else if (hex_digits > 0 && hex_digits < 6 && /[0-9a-f]/i.test(char)) {
+				name += char;
+				hex_digits++;
+			} else if (hex_digits > 0 && /[ \t\n\r\f]/.test(char)) {
+				// The one space that ends a hex escape (`\r\n` counts as one).
+				name += char;
+				hex_digits = 0;
+				after_cr = char === '\r';
+			} else if (/[\w\u0080-\uffff-]/.test(char)) {
+				name += char;
+				hex_digits = 0;
+			} else {
+				name = '';
+				hex_digits = 0;
+			}
+		}
 
 		if (escaped) {
 			value += '\\' + char;
@@ -487,6 +507,8 @@ function read_value(parser) {
 			if (close === -1) break;
 			value += parser.template.slice(parser.index, close + 2);
 			parser.index = close + 2;
+			name = '';
+			hex_digits = 0;
 			continue;
 		} else if (char === quote_mark) {
 			quote_mark = null;
@@ -494,7 +516,11 @@ function read_value(parser) {
 			in_url = false;
 		} else if (quote_mark === null && (char === '"' || char === "'")) {
 			quote_mark = char;
-		} else if (char === '(' && ends_with_url(parser.template.slice(start, parser.index))) {
+		} else if (
+			char === '(' &&
+			quote_mark === null &&
+			unescape_css(before).toLowerCase() === 'url'
+		) {
 			in_url = true;
 		} else if ((char === ';' || char === '{' || char === '}') && !in_url && !quote_mark) {
 			return value.trim();

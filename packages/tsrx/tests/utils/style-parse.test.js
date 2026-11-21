@@ -118,6 +118,23 @@ describe('parseStyle declaration values', function () {
 		expect(blocks(css)).toEqual(expected);
 	});
 
+	it.each([
+		// A hex escape ends at a space, or a \r\n, which is part of it.
+		['.a{background:ur\\6c (/*x)}.b{color:red/* } */}', 2],
+		['.a{background:ur\\6c\r\n(/*x)}.b{color:red/* } */}', 2],
+		// In a string, URL( is text.
+		['.a{content:"URL("}.b{color:red}', 2],
+	])('reads the url( name of %j as CSS does', function (css, rules) {
+		expect(blocks(css)).toHaveLength(rules);
+	});
+
+	it('reads a long run of escapes before a ( in linear time', function () {
+		const css = '.a{--x:' + String.raw`\000061`.repeat(14) + '  (x)}';
+		const start = performance.now();
+		parseStyle(css, LOCATION, {});
+		expect(performance.now() - start).toBeLessThan(1000);
+	});
+
 	it('reads an escaped url( as url(', function () {
 		const rules = blocks(String.raw`.a{background:u\72l(/*x)}.b{color:red}`);
 
