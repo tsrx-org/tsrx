@@ -18362,6 +18362,9 @@ ${lines.join('\n')}
 			`const a = 1, b = 2;\nexport { a as x };\nexport { b as x };\nfunction f(y = <A${escape('0062')} />) {}`,
 			`const f = <T,>() => {\n\tconst x = <A${escape('0062')} />;\n\tconst y;\n};`,
 			`const g = f<T,>(() => { <A${escape('0062')} />; const y; }, 1);`,
+			`const a = 1, b = 2;\nexport { a as x };\nexport { b as x };\nconst f = async <T,>(x = <A${escape('0062')} />) => x;`,
+			// And before a syntax error later in the arrow function's body.
+			`const f = <T,>() => { <A${escape('0062')} />; const y = ; };`,
 		];
 		for (const snippet of snippets) {
 			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);

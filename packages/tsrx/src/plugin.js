@@ -8171,7 +8171,7 @@ export function TSRXPlugin(config) {
 			 * outermost one is kept (see `tsFillSignature`). acorn-typescript's undo
 			 * log drops them with an abandoned one. When the parse throws, it throws
 			 * the first syntax error held in it instead, as a parse that doesn't
-			 * hold it throws that first (see `#throwSpeculativeSyntaxError`).
+			 * hold it throws that first (see `#speculativeSyntaxError`).
 			 * @type {Parse.Parser['tryParse']}
 			 */
 			tryParse(fn) {
@@ -8179,12 +8179,11 @@ export function TSRXPlugin(config) {
 				/** @typedef {(abort: () => never) => ReturnType<typeof fn>} Attempt */
 				/** @type {Attempt} */
 				const attempt = (abort) => {
-					const queued = this.#speculativeErrors.length;
+					const start = this.start;
 					try {
 						return /** @type {Attempt} */ (fn)(abort);
 					} catch (thrown) {
-						this.#throwSpeculativeSyntaxError(queued, thrown);
-						throw thrown;
+						throw this.#speculativeSyntaxError(start, thrown) ?? thrown;
 					}
 				};
 				const result = super.tryParse(/** @type {typeof fn} */ (attempt));
@@ -8193,31 +8192,38 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * When a speculative parse throws `thrown`, an error the parser reports,
-			 * throw the first syntax error it held (`held_syntax_errors`, from index
-			 * `queued` on) instead, which a strict parse that doesn't hold it throws
-			 * as it reads it: before a checker error, which TypeScript reports only
-			 * after its syntax errors, and before a syntax error after it. It's
-			 * thrown as `thrown` is: with acorn's `raise`, as a sign that the code
-			 * isn't what the parse tried, which an abandoned parse that the parser
-			 * goes on past drops with the rest of its effects, or as it is, which
-			 * acorn-typescript doesn't catch, as a checker error is thrown.
-			 * @param {number} queued
+			 * The error that a strict speculative parse of the code from `start`
+			 * that throws `thrown`, an error the parser reports, throws instead, or
+			 * `null`: the first syntax error held in it (`held_syntax_errors`), which
+			 * a parse that doesn't hold it throws as it reads it, so before a checker
+			 * error, which TypeScript reports only after its syntax errors, and
+			 * before a syntax error after it. It's thrown as `thrown` is: with
+			 * acorn's `raise`, as a sign that the code isn't what the parse tried,
+			 * which an abandoned parse that the parser goes on past drops with the
+			 * rest of its effects, or as it is, which acorn-typescript doesn't catch,
+			 * as a checker error is thrown.
+			 * @param {number} start
 			 * @param {unknown} thrown
+			 * @returns {unknown}
 			 */
-			#throwSpeculativeSyntaxError(queued, thrown) {
-				if (this.#collect || !(thrown instanceof Error)) return;
-				if (typeof (/** @type {{ code?: unknown }} */ (thrown).code) !== 'string') return;
+			#speculativeSyntaxError(start, thrown) {
+				if (this.#collect || !(thrown instanceof Error)) return null;
+				if (typeof (/** @type {{ code?: unknown }} */ (thrown).code) !== 'string') return null;
 				const first = this.#speculativeErrors
-					.slice(queued)
-					.filter((error) => held_syntax_errors.has(error))
+					.filter((error) => held_syntax_errors.has(error) && (error.pos ?? 0) >= start)
 					.sort(compare_errors)[0];
-				if (!first) return;
-				const at = /** @type {{ pos?: number }} */ (thrown)?.pos;
-				if (this.#isSyntaxError(thrown) && at !== undefined && (first.pos ?? 0) >= at) return;
-				if (thrown instanceof SyntaxError) this.#throwHeldError(first);
+				if (!first) return null;
+				const at = /** @type {{ pos?: number }} */ (thrown).pos;
+				if (this.#isSyntaxError(thrown) && at !== undefined && (first.pos ?? 0) >= at) return null;
+				if (thrown instanceof SyntaxError) {
+					try {
+						this.#throwHeldError(first);
+					} catch (raised) {
+						return raised;
+					}
+				}
 				first.type = 'fatal';
-				throw first;
+				return first;
 			}
 
 			/**
@@ -12833,7 +12839,10 @@ export function TSRXPlugin(config) {
 				}
 				try {
 					return super.parseArrowExpression(node, params, isAsync, forInit);
-				} catch (error) {
+				} catch (thrown) {
+					// A syntax error held before it in the arrow function, which comes
+					// first (see `tryParse`).
+					const error = this.#speculativeSyntaxError(arrow.typeParametersStart, thrown) ?? thrown;
 					if (error instanceof SyntaxError) {
 						arrow.error = error;
 						// Once its `=>` is read, TypeScript reads an arrow function whatever
@@ -14578,9 +14587,16 @@ export function TSRXPlugin(config) {
 				const error = TS_ERRORS.JSX_NAME_UNICODE_ESCAPE;
 				const held = this.#hold.held;
 				if (this.#collect || held) {
-					const count = held?.length ?? 0;
+					// Where it's recorded, which a strict parse that holds it, or reads
+					// ahead as a collecting one (see `#asCollecting`), reports later.
+					const errors = held ?? this.#errors;
+					const count = errors?.length ?? 0;
 					this.#recordCheckerLevelError(start, end, error, true);
-					if (held && held.length > count) held_syntax_errors.add(held[held.length - 1]);
+					const recorded = errors && errors.length > count ? errors[errors.length - 1] : null;
+					if (recorded) {
+						raised_errors.add(recorded);
+						held_syntax_errors.add(recorded);
+					}
 					return;
 				}
 				if (this.parseEffects?.active) {
