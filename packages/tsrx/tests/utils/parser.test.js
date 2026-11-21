@@ -18369,6 +18369,11 @@ ${lines.join('\n')}
 			`const f = <T,>() => <A></B${escape('0063')}>;`,
 			// In an async generic arrow function's default, read ahead in another's.
 			`const f = <T,>(x = async <U,>(y = <A${escape('0062')} />) => y) => x;`,
+			// In a parameter's default, where checker errors are held: before them,
+			// and in a function's or a method's in a speculative parse.
+			`function h(x = <A${escape('0062')} />, x) {}`,
+			`const r = (a ? function (x = <A${escape('0062')} />) {} : 0);`,
+			`const r = (a ? { m(x = <A${escape('0062')} />) {} } : 0);`,
 		];
 		for (const snippet of snippets) {
 			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);

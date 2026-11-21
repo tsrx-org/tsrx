@@ -14576,20 +14576,21 @@ export function TSRXPlugin(config) {
 			 * attribute's name, or a part of a member or namespaced one. Not an
 			 * attribute's unquoted value, nor a name a lookahead only tokenizes.
 			 *
-			 * A strict parse throws it, unless it holds errors, or the parse is a
-			 * speculative one, which reports it once kept (see `tryParse`), so that
-			 * an abandoned attempt doesn't fail on it. A collecting or loose parse
-			 * records it, once, and reads on with the name the escapes spell.
+			 * A strict parse throws it as it reads it, as a syntax error, which
+			 * TypeScript reports before the checker errors held around it (see
+			 * `#holdingErrors`), unless the parse is a speculative one, which
+			 * reports it once kept, or instead of what it throws (see `tryParse`),
+			 * so that an abandoned attempt doesn't fail on it. A collecting or loose
+			 * parse records it, once, and reads on with the name the escapes spell.
 			 * @param {number} start
 			 * @param {number} end
 			 */
 			#reportJSXNameEscape(start, end) {
 				const error = TS_ERRORS.JSX_NAME_UNICODE_ESCAPE;
-				const held = this.#hold.held;
-				if (this.#collect || held) {
-					// Where it's recorded, which a strict parse that holds it, or reads
-					// ahead as a collecting one (see `#asCollecting`), reports later.
-					const errors = held ?? this.#errors;
+				if (this.#collect) {
+					// Where it's recorded, which a strict parse that reads ahead as a
+					// collecting one (see `#asCollecting`) reports later.
+					const errors = this.#hold.held ?? this.#errors;
 					const count = errors?.length ?? 0;
 					this.#recordCheckerLevelError(start, end, error, true);
 					if (errors && errors.length > count) held_syntax_errors.add(errors[errors.length - 1]);
