@@ -2018,6 +2018,27 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('skips an empty declaration', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							@keyframes spin { to { opacity: 0; } }
+							.a { color: red;; }
+							.b { ; animation: spin 1s }
+						</style>
+						<div ${attr}="a"><i ${attr}="b" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`.a.${hash} { color: red;; }`);
+			// Read as a declaration of `;`, its animation name kept no hash.
+			expect(css).toContain(`.b.${hash} { ; animation: ${hash}-spin 1s }`);
+		});
+
 		it('closes the comment over a pruned selector that touches a :global() selector', () => {
 			/** @type {Array<[string, (hash: string) => string]>} */
 			const cases = [

@@ -70,6 +70,44 @@ describe('parseStyle loose recovery', function () {
 });
 
 // A syntax error gets where the parser stopped (#1306).
+describe('parseStyle empty declarations', function () {
+	/** @param {string} css */
+	function blocks(css) {
+		return parseStyle(css, LOCATION, {}).children.map((rule) =>
+			/** @type {any} */ (rule).block.children.map((/** @type {any} */ child) =>
+				child.type === 'Declaration' ? [child.property, child.value] : child.type,
+			),
+		);
+	}
+
+	it.each([
+		['.a { color: red;; }', [[['color', 'red']]]],
+		[
+			'.a { color: red;/* c */; padding: 0 }',
+			[
+				[
+					['color', 'red'],
+					['padding', '0'],
+				],
+			],
+		],
+		// An empty one before another was read as a declaration of `;`.
+		['.a { ; animation: spin 1s }', [[['animation', 'spin 1s']]]],
+		['.a { color: red; ; .b { color: blue } }', [[['color', 'red'], 'Rule']]],
+		[
+			'@font-face { font-family: x;; src: url(a.woff) }',
+			[
+				[
+					['font-family', 'x'],
+					['src', 'url(a.woff)'],
+				],
+			],
+		],
+	])('skips the empty declarations in %j', function (css, expected) {
+		expect(blocks(css)).toEqual(expected);
+	});
+});
+
 describe('parseStyle syntax errors', function () {
 	it('gives the offset in the body', function () {
 		expect(function () {
