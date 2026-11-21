@@ -1071,6 +1071,14 @@ const catch_parameter_names = new WeakMap();
 const raised_errors = new WeakSet();
 
 /**
+ * The held errors that are syntax errors, held for their position as the
+ * checker errors are, which a strict parse throws as syntax errors still (see
+ * `#isSyntaxError`): a JSX name written with an escape (TS17021).
+ * @type {WeakSet<CompileError>}
+ */
+const held_syntax_errors = new WeakSet();
+
+/**
  * The held errors that a strict parse raises later than where they're held,
  * when it doesn't hold them (see `#holdingErrors`).
  * @type {WeakSet<CompileError>}
@@ -8161,13 +8169,55 @@ export function TSRXPlugin(config) {
 			/**
 			 * Report the signatures' errors held in a speculative parse once the
 			 * outermost one is kept (see `tsFillSignature`). acorn-typescript's undo
-			 * log drops them with an abandoned one.
+			 * log drops them with an abandoned one. When the parse throws, it throws
+			 * the first syntax error held in it instead, as a parse that doesn't
+			 * hold it throws that first (see `#throwSpeculativeSyntaxError`).
 			 * @type {Parse.Parser['tryParse']}
 			 */
 			tryParse(fn) {
-				const result = super.tryParse(fn);
+				// acorn-typescript passes `fn` the function that aborts the parse.
+				/** @typedef {(abort: () => never) => ReturnType<typeof fn>} Attempt */
+				/** @type {Attempt} */
+				const attempt = (abort) => {
+					const queued = this.#speculativeErrors.length;
+					try {
+						return /** @type {Attempt} */ (fn)(abort);
+					} catch (thrown) {
+						this.#throwSpeculativeSyntaxError(queued, thrown);
+						throw thrown;
+					}
+				};
+				const result = super.tryParse(/** @type {typeof fn} */ (attempt));
 				this.#reportSpeculativeErrors();
 				return result;
+			}
+
+			/**
+			 * When a speculative parse throws `thrown`, an error the parser reports,
+			 * throw the first syntax error it held (`held_syntax_errors`, from index
+			 * `queued` on) instead, which a strict parse that doesn't hold it throws
+			 * as it reads it: before a checker error, which TypeScript reports only
+			 * after its syntax errors, and before a syntax error after it. It's
+			 * thrown as `thrown` is: with acorn's `raise`, as a sign that the code
+			 * isn't what the parse tried, which an abandoned parse that the parser
+			 * goes on past drops with the rest of its effects, or as it is, which
+			 * acorn-typescript doesn't catch, as a checker error is thrown.
+			 * @param {number} queued
+			 * @param {unknown} thrown
+			 */
+			#throwSpeculativeSyntaxError(queued, thrown) {
+				if (this.#collect || !(thrown instanceof Error)) return;
+				if (typeof (/** @type {{ code?: unknown }} */ (thrown).code) !== 'string') return;
+				const first = this.#speculativeErrors
+					.slice(queued)
+					.filter((error) => held_syntax_errors.has(error))
+					.sort(compare_errors)[0];
+				if (!first) return;
+				const at = /** @type {{ pos?: number }} */ (thrown)?.pos;
+				if (this.#isSyntaxError(thrown) && at !== undefined && (first.pos ?? 0) >= at) return;
+				if (thrown instanceof SyntaxError) this.#throwHeldError(first);
+				first.type = 'fatal';
+				throw first;
 			}
 
 			/**
@@ -13339,16 +13389,17 @@ export function TSRXPlugin(config) {
 			 * @returns {never}
 			 */
 			#throwHeldError(error) {
+				const checker = !held_syntax_errors.has(error);
 				if (raised_errors.has(error)) {
 					try {
 						this.#throwError(error.pos ?? 0, { code: error.code, message: error.message });
 					} catch (thrown) {
-						checker_errors_thrown.add(/** @type {object} */ (thrown));
+						if (checker) checker_errors_thrown.add(/** @type {object} */ (thrown));
 						throw thrown;
 					}
 				}
 				error.type = 'fatal';
-				checker_errors_thrown.add(error);
+				if (checker) checker_errors_thrown.add(error);
 				throw error;
 			}
 
@@ -14525,8 +14576,11 @@ export function TSRXPlugin(config) {
 			 */
 			#reportJSXNameEscape(start, end) {
 				const error = TS_ERRORS.JSX_NAME_UNICODE_ESCAPE;
-				if (this.#collect || this.#hold.held) {
+				const held = this.#hold.held;
+				if (this.#collect || held) {
+					const count = held?.length ?? 0;
 					this.#recordCheckerLevelError(start, end, error, true);
+					if (held && held.length > count) held_syntax_errors.add(held[held.length - 1]);
 					return;
 				}
 				if (this.parseEffects?.active) {
@@ -14534,6 +14588,7 @@ export function TSRXPlugin(config) {
 					const recorded = [];
 					this.#report_recoverable_error_range(start, end, error, recorded);
 					raised_errors.add(recorded[0]);
+					held_syntax_errors.add(recorded[0]);
 					this.parseEffects.willAppend(this.#speculativeErrors);
 					this.#speculativeErrors.push(recorded[0]);
 					return;

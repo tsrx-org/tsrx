@@ -18356,6 +18356,12 @@ ${lines.join('\n')}
 			`const x = <X a=A${escape('0062')} />;`,
 			// A name ends before an escape that can't go on with it.
 			`const x = <A${escape('0062')}${escape('002d')} />;`,
+			// Thrown as a syntax error, before an export declared twice before it,
+			// which TypeScript reports only after its syntax errors, and before a
+			// checker error later in the speculative parse it's held in.
+			`const a = 1, b = 2;\nexport { a as x };\nexport { b as x };\nfunction f(y = <A${escape('0062')} />) {}`,
+			`const f = <T,>() => {\n\tconst x = <A${escape('0062')} />;\n\tconst y;\n};`,
+			`const g = f<T,>(() => { <A${escape('0062')} />; const y; }, 1);`,
 		];
 		for (const snippet of snippets) {
 			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
