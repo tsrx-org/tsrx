@@ -2927,17 +2927,18 @@ export function TSRXPlugin(config) {
 			#canStartTypeParameterOrArgumentList(index) {
 				const next = this.input.charCodeAt(index + 1);
 				if (next === CharCode.equals || next === CharCode.lessThan) return false;
+				// A name that ends with a braced escape (`<Bo\u{78}<T> />`) ends with
+				// `}`, which elsewhere ends a block that a tag can follow.
+				if (
+					(this.type === tt.name || this.type === tstt.jsxName) &&
+					this.input.charCodeAt(this.lastTokEnd - 1) === CharCode.closeBrace &&
+					this.#previousNonSpaceTabCommentIndex(index) === this.lastTokEnd - 1
+				) {
+					return true;
+				}
 				const previous = this.#previousNonSpaceTabIndex(index);
 				if (previous < 0) return false;
 				if (previous === index - 1) {
-					// A name that ends with a braced escape (`<Bo\u{78}<T> />`) ends with `}`.
-					if (
-						this.input.charCodeAt(previous) === CharCode.closeBrace &&
-						this.lastTokEnd === index &&
-						(this.type === tt.name || this.type === tstt.jsxName)
-					) {
-						return true;
-					}
 					return this.#canPrecedeTypeArgumentList(this.input.charCodeAt(previous));
 				}
 				return this.#keywordEndsAt(previous, 'function');

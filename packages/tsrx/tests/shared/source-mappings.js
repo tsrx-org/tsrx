@@ -1462,6 +1462,7 @@ export function App() @{
 				'function Box<T>(props: { v?: T }) { return null; }',
 				// A braced escape at the end of a name, before type arguments.
 				`export const generic = <Bo${backslash}u{78}<string> v="x" />;`,
+				`export const spaced = <Bo${backslash}u{78} /* c */ <string> v="y" />;`,
 				'',
 			].join('\n');
 			const built = compile(jsx_source, 'App.tsrx').code;
@@ -1471,6 +1472,7 @@ export function App() @{
 				'data-a="1"',
 				'aria-label=',
 				'<Box<string> v="x" />',
+				'<Box<string> v="y" />',
 			]) {
 				expect(built).toContain(text);
 			}
@@ -1504,6 +1506,7 @@ export function App() @{
 				'data-a',
 				'aria-label',
 				'Missing',
+				'Box',
 				'Box',
 			]);
 			// TS2304 on the unknown tag covers all of its name.
