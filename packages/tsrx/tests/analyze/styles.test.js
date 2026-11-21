@@ -1556,6 +1556,23 @@ describe('scoped style analysis', () => {
 				.trim();
 		}
 
+		it('writes nothing into a pruned selector with a :global(...) that holds a type selector', () => {
+			for (const minify of [false, true]) {
+				for (const [css, pruned] of [
+					['.p, .q:global(div) { color: red; }', '.q:global(div)'],
+					['.q:global(div), .p { color: red; }', '.q:global(div)'],
+					// Nor into the argument of a global compound in one.
+					['.p, .q:global:is(.r:global(div)) { color: red; }', '.q:global:is(.r:global(div))'],
+				]) {
+					const rendered = render(css, [pruned], minify);
+					// Minified, the pruned selector is removed before the :global is
+					// rewritten, and an `:is(` written then would outlast it.
+					if (minify) expect(strip_hash(rendered), css).toBe('.p { color: red; }');
+					else expect(rendered, css).toContain('/* (unused) ');
+				}
+			}
+		});
+
 		it('renders a bare :global list whose other selectors need no scoping', () => {
 			/** @type {Array<[string, string]>} */
 			const cases = [

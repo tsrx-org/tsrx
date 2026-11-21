@@ -1874,6 +1874,48 @@ export function runSharedScopedStyleTests({
 	});
 
 	describe(`[${name}] :global selectors`, () => {
+		it('puts a type selector that a :global(...) after the start of a compound holds in an :is()', () => {
+			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
+			const cases = [
+				// Dropping the wrapper ran the type selector into what came before it.
+				['.icon:global(i)', (hash) => `.icon.${hash}:is(i) {`],
+				[':root:global(html)', () => ':root:is(html) {'],
+				['.wrap:global(div.x) .icon', (hash) => `.wrap.${hash}:is(div).x .icon:where(.${hash}) {`],
+				['.wrap:global(*)', (hash) => `.wrap.${hash}:is(*) {`],
+				['.wrap:global(div::before)', (hash) => `.wrap.${hash}:is(div)::before {`],
+				['.wrap:not(.x:global(div))', (hash) => `.wrap.${hash}:not(.x:where(.${hash}):is(div)) {`],
+				['.wrap { &:global(div)', (hash) => `.wrap.${hash} { &:is(div) {`],
+				// A :global(...) after the first one of a global compound is dropped too.
+				[':global(div):global(.x)', () => 'div.x {'],
+				[':global(.x):global(div)', () => '.x:is(div) {'],
+				// The parser reads n, odd and even there as an Nth, a type selector too.
+				[':global(.x):global(odd)', () => '.x:is(odd) {'],
+				// At the start of its compound, holding no type selector, or with a
+				// combinator first, which no :is() can hold, it is dropped.
+				['.icon:global(.x)', (hash) => `.icon.${hash}.x {`],
+				['.wrap:global(> i)', (hash) => `.wrap.${hash}> i {`],
+				['.wrap:global(+n)', (hash) => `.wrap.${hash}+n {`],
+				['.wrap:global(n-1)', (hash) => `.wrap.${hash}:is(n-1) {`],
+				// A global block prunes nothing, so its selectors get the :is() too, as
+				// do the arguments of a compound with a bare :global.
+				[':global { .x:global(div)', () => '.x:is(div) {'],
+				['.wrap:global:is(.missing:global(div))', (hash) => `.wrap.${hash}:is(.missing:is(div)) {`],
+			];
+			for (const [selector, expected] of cases) {
+				const rule = `${selector} { color: red; }${selector.includes(' {') ? ' }' : ''}`;
+				const component = compile(
+					`export function App() @{
+						<>
+							<style>${rule}</style>
+							<div ${attr}="wrap x"><i ${attr}="icon x" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+				expect(component.css, selector).toContain(expected(hashes_of(component.cssHash)[0]));
+			}
+		});
+
 		it('reads a custom property whose value holds {} blocks', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{
