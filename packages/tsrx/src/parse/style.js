@@ -13,6 +13,8 @@ const REGEX_COMBINATOR = /^(\+|~|>|\|\|)/;
 const REGEX_VALID_IDENTIFIER_CHAR = /[a-zA-Z0-9_-]/;
 const REGEX_LEADING_HYPHEN_OR_DIGIT = /-?\d/;
 const REGEX_WHITESPACE_OR_COLON = /[\s:]/;
+// `--` and a name (letters, digits, `-`, `_`, non-ASCII, escapes), then `:`.
+const REGEX_CUSTOM_PROPERTY_START = /^--(?:[\w-]|[^\x00-\x7f]|\\[^\n])*\s*:/;
 const REGEX_NTH_OF =
 	/^(even|odd|\+?(\d+|\d*n(\s*[+-]\s*\d+)?)|-\d*n(\s*\+\s*\d+))((?=\s*[,)])|\s+of\s+)/;
 // Up to six hex digits, then one optional whitespace that ends the escape
@@ -401,6 +403,13 @@ function read_block_item(parser) {
 		return read_at_rule(parser);
 	}
 
+	// A custom property's value may hold `{}` blocks (`--x: {a}`), which the
+	// read-ahead below would take for a nested rule's. CSS reads an item that
+	// starts with a custom property name and a `:` as a declaration.
+	if (parser.match_regex(REGEX_CUSTOM_PROPERTY_START)) {
+		return read_declaration(parser);
+	}
+
 	// read ahead to understand whether we're dealing with a declaration or a nested rule.
 	// this involves some duplicated work, but avoids a try-catch that would disguise errors
 	const start = parser.index;
@@ -424,7 +433,7 @@ function read_declaration(parser) {
 	let index = parser.index;
 	parser.allow_whitespace();
 
-	const value = read_value(parser);
+	const value = property.startsWith('--') ? read_custom_property_value(parser) : read_value(parser);
 
 	if (!value && !property.startsWith('--') && !parser.loose) {
 		throw new Error('CSS Declaration cannot be empty');
@@ -443,6 +452,85 @@ function read_declaration(parser) {
 		property,
 		value,
 	};
+}
+
+/**
+ * Read a custom property's value, which may hold `{}`, `()` and `[]` blocks
+ * (`--x: {a}`): it ends at a `;` or a `}` outside every block, string and
+ * comment.
+ *
+ * @param {Parser} parser
+ * @returns {string}
+ */
+function read_custom_property_value(parser) {
+	const start = parser.index;
+	/** @type {string[]} */
+	const closers = [];
+	/** @type {null | '"' | "'"} */
+	let quote_mark = null;
+	// The name right before the current character, as written, for telling an
+	// unquoted `url(`, which CSS reads case-insensitively and with escapes.
+	let name = '';
+
+	while (parser.index < parser.template.length) {
+		const char = parser.template[parser.index];
+
+		if (char === '\\') {
+			// An escape, and the one space that ends a hex escape (`\r\n` too); a
+			// `\` and a newline isn't one, and ends the name.
+			const escape = /^\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^\n\r\f]?)/.exec(
+				parser.template.slice(parser.index, parser.index + 9),
+			);
+			const text = escape?.[0] ?? char;
+			if (quote_mark === null) name = text.length > 1 ? name + text : '';
+			parser.index += text.length;
+			continue;
+		}
+		const before = name;
+		// A NUL reads as U+FFFD, a name character.
+		name = quote_mark === null && /[\w\u0000\u0080-\uffff-]/.test(char) ? name + char : '';
+		// `<!--` is a token of its own, not the start of a name.
+		if (name === '--' && parser.template.slice(parser.index - 3, parser.index - 1) === '<!') {
+			name = '';
+		}
+		if (quote_mark !== null) {
+			if (char === quote_mark) quote_mark = null;
+		} else if (char === '"' || char === "'") {
+			quote_mark = char;
+		} else if (char === '/' && parser.template[parser.index + 1] === '*') {
+			const close = parser.template.indexOf('*/', parser.index + 2);
+			if (close === -1) break;
+			parser.index = close + 2;
+			continue;
+		} else if (
+			char === '(' &&
+			unescape_css(before).toLowerCase() === 'url' &&
+			// Not a hash or an at-keyword (`#url(`, `@url(`).
+			!/[#@]/.test(parser.template[parser.index - before.length - 1] ?? '') &&
+			!/^\(\s*["']/.test(parser.template.slice(parser.index))
+		) {
+			// An unquoted url(), where `{`, `[` and `/*` are part of the URL: it
+			// ends at the first `)` that isn't escaped.
+			parser.index++;
+			while (parser.index < parser.template.length && parser.template[parser.index] !== ')') {
+				parser.index += parser.template[parser.index] === '\\' ? 2 : 1;
+			}
+			if (parser.index >= parser.template.length) {
+				parser.index = parser.template.length;
+				break;
+			}
+		} else if (char === '{' || char === '(' || char === '[') {
+			closers.push(char === '{' ? '}' : char === '(' ? ')' : ']');
+		} else if (closers.length > 0 && char === closers.at(-1)) {
+			closers.pop();
+		} else if (closers.length === 0 && (char === ';' || char === '}')) {
+			return parser.template.slice(start, parser.index).trim();
+		}
+
+		parser.index++;
+	}
+
+	throw new Error('Unexpected end of input');
 }
 
 /**
