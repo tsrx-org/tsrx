@@ -1,5 +1,116 @@
 # @tsrx/core
 
+## 0.8.1
+
+### Patch Changes
+
+- [#1479](https://github.com/tsrx-org/tsrx/pull/1479)
+  [`11b76f8`](https://github.com/tsrx-org/tsrx/commit/11b76f8c7ce70c34b4ddebdb292a06e5131285c1)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A comment in a
+  declaration value no longer ends the value. The CSS parser read a `;`, `{` or
+  `}` in it as the value's end: `.a { color: red /* } */ }` was `TSRX3013`
+  (`Expected identifier`), `.a { color: red /* ; */ } .b {}` was `TSRX3013`
+  (`CSS Declaration cannot be empty`), and a compact
+  `.p { :global{color: red /* } */} }` read the comment's `}` as the block's end.
+  These now parse, and the output keeps the comment. A comment a value leaves open
+  is `TSRX3013` (`Unexpected end of input`), as one between declarations already
+  is. A `;` in the parentheses of a function, as in `color: f(a; b)`, no longer
+  ends the value either, which read the next rule into it and left it unscoped.
+
+- [#1483](https://github.com/tsrx-org/tsrx/pull/1483)
+  [`395d412`](https://github.com/tsrx-org/tsrx/commit/395d4126ac165cc76d2b3ce5ae41fa999529771d)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The CSS parser tells a
+  `url(` in a declaration value or an at-rule's prelude the way it already did in
+  a custom property's: `#url(` and `@url(` are a hash and an at-keyword before a
+  block, and `\<!--url(` a function named `--url`, so a `/*` in them opens a
+  comment, as in a browser; `url("a)b")` is a function holding a string, and a
+  quote in an unquoted `url(a"b)` doesn't open one. An at-rule's prelude reads a
+  `{}` block or a `}` in its brackets, and a closer that doesn't match its
+  bracket, as CSS does (`@supports (--x: {a}) { … }` compiles), and one that
+  leaves a `(` or `[` open, as in `@media (min-width: 600px { … }`, is now
+  `TSRX3013` with the message
+  `Expected ) to close this ( in the at-rule's prelude` at the `(`, where it was
+  `Expected ;` at the next `}`. In the editor, while the `)` is still to be typed,
+  the prelude ends at its first `{`, `;` or `}`, as it did before, so the rules
+  after it keep their class maps and hovers. Reading many at-rules no longer takes
+  time quadratic in the length of the sheet.
+
+- [#1480](https://github.com/tsrx-org/tsrx/pull/1480)
+  [`053a31d`](https://github.com/tsrx-org/tsrx/commit/053a31d15640e1f416602a5391a39d64a826c523)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A custom property's
+  value may hold `{}` blocks, as CSS allows: `.a { --x: {a} }` was `TSRX3013`
+  (`Expected identifier`), since the CSS parser took the `{` for the start of a
+  nested rule's block. An item that starts with a custom property name and a `:`
+  is now read as a declaration, as CSS reads it, and its value runs to a `;` or
+  `}` outside every `{}`, `()` and `[]` block, string and comment, so
+  `--x: { a: b; c }`, `--x: [a; b]` and `--x: "}" /* } */` keep their whole value.
+  `--x:hover { … }` is read as the declaration CSS reads it as, not a rule.
+
+- [#1481](https://github.com/tsrx-org/tsrx/pull/1481)
+  [`1962357`](https://github.com/tsrx-org/tsrx/commit/196235773fa62b13fa77464a0aecbd80653e219f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An empty declaration in
+  a style block, as in `.a { color: red;; }`, is skipped, as CSS skips it. The CSS
+  parser reported `.a { color: red;; }` and `.a { color: red;/* c */; }` as
+  `TSRX3013` (`CSS Declaration cannot be empty`), and a `;` that starts a block or
+  follows another with only whitespace between was read as the name of a
+  declaration: in `.a { ; animation: spin 1s }` the animation's keyframes name got
+  no scope hash. Where the output drops a `:global { ... }` block's braces outside
+  a style rule, which can't hold an empty declaration, its `;` is dropped as well.
+
+- [#1478](https://github.com/tsrx-org/tsrx/pull/1478)
+  [`af26c98`](https://github.com/tsrx-org/tsrx/commit/af26c98f3e564769383b6f7a96a60b95df0a7b53)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A type selector at the
+  start of a `:global(...)` that doesn't start its compound now goes in an
+  `:is()`, since a type selector can only start a compound. The output drops the
+  `:global(` and `)`, so the type selector ran into what came before it:
+  `.icon:global(i)` compiled to `.icon.<hash>i`, a class named `<hash>i`;
+  `:root:global(div)` to `:rootdiv`, `.wrap:global(*)` to `.wrap.<hash>*`
+  (invalid) and `.p { &:global(div) {} }` to `&div` (invalid). These now compile
+  to `.icon.<hash>:is(i)`, `:root:is(div)`, `.wrap.<hash>:is(*)` and `&:is(div)`,
+  which match the same elements with the same specificity. A second `:global(...)`
+  in a compound that starts with one is dropped too: `:global(div):global(.x)`
+  compiled to `div:global(.x)` and now compiles to `div.x`.
+
+- [#1476](https://github.com/tsrx-org/tsrx/pull/1476)
+  [`ccdd08b`](https://github.com/tsrx-org/tsrx/commit/ccdd08bc4dd31e0e18f8d6a1c58c53cbe84bacf9)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A compound selector
+  with `:root` or `:host` no longer gets the scope hash, whatever else it has.
+  `:root.dark .icon` in a component compiled to
+  `:root.dark.<hash> .icon:where(.<hash>)` whenever `.icon` had an ancestor
+  element in the component, and always in an assigned block, so the rule needed
+  `<html>` to carry the hash and never applied; `:root.dark { --c: … }` compiled
+  to `:root.dark.<hash>` everywhere. These now compile as `:root` alone does:
+  `:root.dark .icon.<hash>`, `:root.dark { --c: … }`, `:host.open .icon.<hash>`.
+  In an assigned block, `:root` and `:host` alone no longer take the class bump
+  either, so `:root .icon` gives `:root .icon.<hash>`, as in a component. That
+  raises the specificity of such a rule from (0,2,0) to (0,3,0), as in a
+  component, so a rule that tied with it by source order now loses to it. A bare
+  `:global` list beside such a compound (`:global.w, :root.dark`) is no longer
+  `TSRX3011`, since neither is scoped. A selector whose `:root` or `:host`
+  compound has a `:has()` none of whose arguments matches an element of the
+  component is now pruned, as other selectors with such a `:has()` are:
+  `:root:has(.missing)` compiled to `:root:has(/* (unused) .missing*/)`, an empty
+  `:has()`, which is invalid and made the browser drop the whole selector list
+  (`:root:has(.missing), .icon` lost `.icon`). A rule with an animation whose
+  selector has only such compounds (`:root.dark:has(.icon)`) now gets the hash on
+  its `:has()` arguments when no element matches it, as any other animation rule
+  no element matches does; `:root:has(.missing) { animation: … }` was kept
+  unscoped.
+
+- [#1477](https://github.com/tsrx-org/tsrx/pull/1477)
+  [`f843a73`](https://github.com/tsrx-org/tsrx/commit/f843a735410df0fcb99bcae39d92afb33a0b596c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The arguments of the
+  `:not()`, `:is()` and `:where()` of a compound with `:root` or `:host` are kept
+  as written: they are about the page's root element or the shadow host, never one
+  of the component's elements. In a component, `:root:not(.dark) { … }` compiled
+  to `:root:not(/* (unused) .dark*/)`, an empty `:not()`, which is invalid, so the
+  browser dropped the rule (the usual light-mode rule);
+  `:root:is(.dark, .light) .icon` lost both arguments the same way, and an
+  argument that matched an element got the hash, as in `:root:not(.icon.<hash>)`,
+  which an assigned block gave every argument. The arguments of the compound's
+  `:has()` are its descendants and stay scoped. A bare `:global` list beside such
+  a compound (`:global.w, :host:is(.a)`) is no longer `TSRX3011`.
+
 ## 0.8.0
 
 ### Minor Changes

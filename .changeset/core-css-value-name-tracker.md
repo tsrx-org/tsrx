@@ -1,5 +1,0 @@
----
-'@tsrx/core': patch
----
-
-The CSS parser tells a `url(` in a declaration value or an at-rule's prelude the way it already did in a custom property's: `#url(` and `@url(` are a hash and an at-keyword before a block, and `\<!--url(` a function named `--url`, so a `/*` in them opens a comment, as in a browser; `url("a)b")` is a function holding a string, and a quote in an unquoted `url(a"b)` doesn't open one. An at-rule's prelude reads a `{}` block or a `}` in its brackets, and a closer that doesn't match its bracket, as CSS does (`@supports (--x: {a}) { … }` compiles), and one that leaves a `(` or `[` open, as in `@media (min-width: 600px { … }`, is now `TSRX3013` with the message `Expected ) to close this ( in the at-rule's prelude` at the `(`, where it was `Expected ;` at the next `}`. In the editor, while the `)` is still to be typed, the prelude ends at its first `{`, `;` or `}`, as it did before, so the rules after it keep their class maps and hovers. Reading many at-rules no longer takes time quadratic in the length of the sheet.
