@@ -236,6 +236,26 @@ describe('parseStyle custom properties', function () {
 			],
 		],
 		['.a { --x: éurl((a); b) }', [[['--x', 'éurl((a); b)']]]],
+		// #url( and @url( aren't url(, nor is u, a \ and a newline, then rl(.
+		[
+			'.a { --x: #url(a")"b); --y: @url(c")"d); color: red }',
+			[
+				[
+					['--x', '#url(a")"b)'],
+					['--y', '@url(c")"d)'],
+					['color', 'red'],
+				],
+			],
+		],
+		[
+			'.a { --x: u\\\nrl(a")"b); color: red }',
+			[
+				[
+					['--x', 'u\\\nrl(a")"b)'],
+					['color', 'red'],
+				],
+			],
+		],
 		// A selector that starts with a custom property name, but isn't one before
 		// its `:`, is still a rule's.
 		['.a { --w,i:hover { color: red } --w[x]:hover { color: red } }', [['Rule', 'Rule']]],

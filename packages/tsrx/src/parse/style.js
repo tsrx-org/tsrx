@@ -473,12 +473,13 @@ function read_custom_property_value(parser) {
 		const char = parser.template[parser.index];
 
 		if (char === '\\') {
-			// An escape, and the one space that ends a hex escape (`\r\n` too).
-			const escape = /^\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^]?)/.exec(
+			// An escape, and the one space that ends a hex escape (`\r\n` too); a
+			// `\` and a newline isn't one, and ends the name.
+			const escape = /^\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^\n\r\f]?)/.exec(
 				parser.template.slice(parser.index, parser.index + 9),
 			);
 			const text = escape?.[0] ?? char;
-			if (quote_mark === null) name += text;
+			if (quote_mark === null) name = text.length > 1 ? name + text : '';
 			parser.index += text.length;
 			continue;
 		}
@@ -496,6 +497,8 @@ function read_custom_property_value(parser) {
 		} else if (
 			char === '(' &&
 			unescape_css(before).toLowerCase() === 'url' &&
+			// Not a hash or an at-keyword (`#url(`, `@url(`).
+			!/[#@]/.test(parser.template[parser.index - before.length - 1] ?? '') &&
 			!/^\(\s*["']/.test(parser.template.slice(parser.index))
 		) {
 			// An unquoted url(), where `{`, `[` and `/*` are part of the URL: it
