@@ -1513,6 +1513,21 @@ describe('scoped style analysis', () => {
 				.trim();
 		}
 
+		it('writes nothing into a pruned selector with a :global(...) that holds a type selector', () => {
+			for (const minify of [false, true]) {
+				for (const css of [
+					'.p, .q:global(div) { color: red; }',
+					'.q:global(div), .p { color: red; }',
+				]) {
+					const rendered = render(css, ['.q:global(div)'], minify);
+					// Minified, the pruned selector is removed before the :global is
+					// rewritten, and an `:is(` written then would outlast it.
+					expect(rendered, css).not.toContain(':is(');
+					expect(strip_hash(rendered), css).toContain('.p');
+				}
+			}
+		});
+
 		it('renders a bare :global list whose other selectors need no scoping', () => {
 			/** @type {Array<[string, string]>} */
 			const cases = [

@@ -1868,8 +1868,12 @@ export function runSharedScopedStyleTests({
 				// A :global(...) after the first one of a global compound is dropped too.
 				[':global(div):global(.x)', () => 'div.x {'],
 				[':global(.x):global(div)', () => '.x:is(div) {'],
-				// At the start of its compound, or holding no type selector, it is dropped.
+				// The parser reads n, odd and even there as an Nth, a type selector too.
+				[':global(.x):global(odd)', () => '.x:is(odd) {'],
+				// At the start of its compound, holding no type selector, or with a
+				// combinator first, which no :is() can hold, it is dropped.
 				['.icon:global(.x)', (hash) => `.icon.${hash}.x {`],
+				['.wrap:global(> i)', (hash) => `.wrap.${hash}> i {`],
 			];
 			for (const [selector, expected] of cases) {
 				const rule = `${selector} { color: red; }${selector.includes(' {') ? ' }' : ''}`;

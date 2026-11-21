@@ -436,7 +436,8 @@ function has_global_in_middle(rule) {
  * @param {AST.CSS.PseudoClassSelector} selector
  * @param {AST.CSS.Combinator | null} combinator
  * @param {StylesheetRenderState} state
- * @param {boolean} [after_start] whether `selector` isn't the first of its compound
+ * @param {boolean} [after_start] whether `selector` isn't the first of its
+ *   compound, in a selector the output keeps
  */
 function remove_global_pseudo_class(selector, combinator, state, after_start = false) {
 	if (selector.args === null) {
@@ -455,14 +456,18 @@ function remove_global_pseudo_class(selector, combinator, state, after_start = f
 }
 
 /**
- * The type selector (`div`, `*`, `svg|a`) `list` starts with, if any.
+ * The type selector (`div`, `*`, `svg|a`) `list` starts with, if any, and no
+ * combinator before it (`:global(> i)` keeps its `>`, which no `:is()` can
+ * hold). In a pseudo-class's argument the parser reads `n`, `odd` and `even`
+ * as an `Nth`, which here is a type selector too.
  *
  * @param {AST.CSS.SelectorList} list
- * @returns {AST.CSS.TypeSelector | null}
+ * @returns {AST.CSS.TypeSelector | AST.CSS.Nth | null}
  */
 function leading_type_selector(list) {
-	const first = list.children[0]?.children[0]?.selectors[0];
-	return first?.type === 'TypeSelector' ? first : null;
+	const relative = list.children[0]?.children[0];
+	const first = relative?.combinator === null ? relative.selectors[0] : null;
+	return first?.type === 'TypeSelector' || first?.type === 'Nth' ? first : null;
 }
 
 /**
@@ -843,6 +848,14 @@ const visitors = {
 			}
 		}
 
+		// Text written into a pruned selector would outlast it when minifying,
+		// which removes it before this runs.
+		const kept =
+			node.metadata.used &&
+			!context.path.some(
+				(ancestor) => ancestor.type === 'ComplexSelector' && !ancestor.metadata.used,
+			);
+
 		for (const relative_selector of node.children) {
 			if (relative_selector.metadata.is_global && !insideScopingPseudo) {
 				const global = /** @type {AST.CSS.PseudoClassSelector} */ (relative_selector.selectors[0]);
@@ -850,7 +863,7 @@ const visitors = {
 				// So is any other :global(...) of the compound (`:global(div):global(.x)`).
 				for (const selector of relative_selector.selectors.slice(1)) {
 					if (selector.type === 'PseudoClassSelector' && selector.name === 'global') {
-						remove_global_pseudo_class(selector, null, context.state, true);
+						remove_global_pseudo_class(selector, null, context.state, kept);
 					}
 				}
 
@@ -872,7 +885,7 @@ const visitors = {
 				// for any :global() or :global at the middle of compound selector
 				for (const [i, selector] of relative_selector.selectors.entries()) {
 					if (selector.type === 'PseudoClassSelector' && selector.name === 'global') {
-						remove_global_pseudo_class(selector, null, context.state, i > 0);
+						remove_global_pseudo_class(selector, null, context.state, kept && i > 0);
 					}
 				}
 			}
