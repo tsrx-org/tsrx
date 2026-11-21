@@ -558,6 +558,39 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 		});
 	});
 
+	describe(`[${name}] a directive used as a value, with a return in a body, in the editor`, () => {
+		it.each([
+			[
+				'an `@switch` assigned to a const',
+				'const view = @switch (s) { @case 1: { if (s) return null; <b /> } @default: { <i /> } };\n\t<div>{view}</div>',
+				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+			],
+			[
+				'an `@switch` in an assigned fragment',
+				'const view = <>@switch (s) { @case 1: { if (s) return null; <b /> } @default: { <i /> } }</>;\n\t<div>{view}</div>',
+				TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+			],
+			[
+				'an `@for` assigned to a const',
+				'const view = @for (const z of [s]) { if (z) return null; <b /> };\n\t<div>{view}</div>',
+				TSRX_ERRORS.FOR_RETURN_STATEMENT,
+			],
+			[
+				'an `@try` assigned to a const',
+				'const view = @try { if (s) return null; <b /> } @catch (e) { <i /> };\n\t<div>{view}</div>',
+				TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+			],
+		])('is reported once in %s, and the rest of the file maps', (_, body, error) => {
+			const source = `export function App({ s }: { s: number }) @{\n\t${body}\n}\nexport const after = 1;\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const start = source.indexOf('return null;');
+			expect(result.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				[error.code, start, start + 'return null;'.length],
+			]);
+			expect(result.code).toContain('export const after = 1;');
+		});
+	});
+
 	describe(`[${name}] class index signatures in virtual code`, () => {
 		it('keeps static on a class index signature', () => {
 			expect_static_index_signatures(
@@ -3021,6 +3054,116 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 					),
 				).toThrow(error_with(error));
 			}
+		});
+
+		it('reports a `return` in a directive used as a value as it does one in a child, strictly and when collecting', () => {
+			// The `return` belongs to the directive's body, as in a child position;
+			// it used to take the directive off the template lowering, which then
+			// printed it unlowered (`Not implemented: JSXSwitchExpression`).
+			const sw = '@switch (s) { @case 1: { if (s) RETURN; <b /> } @default: { <i /> } }';
+			for (const [
+				label,
+				source,
+				error,
+			] of /** @type {Array<[string, string, { code: string }]>} */ ([
+				[
+					'an `@switch` assigned to a const',
+					`export function App({ s }: { s: number }) @{\n\tconst view = ${sw};\n\t<div>{view}</div>\n}`,
+					TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				],
+				[
+					'an exported `@switch` at module level',
+					`declare const s: number;\nexport const view = ${sw};`,
+					TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				],
+				[
+					'an `@switch` passed to a function',
+					`declare function wrap(value: unknown): any;\nexport function App({ s }: { s: number }) {\n\treturn <div>{wrap(${sw})}</div>;\n}`,
+					TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				],
+				[
+					'an `@switch` in an expression container',
+					`export function App({ s }: { s: number }) {\n\treturn <div>{${sw}}</div>;\n}`,
+					TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				],
+				[
+					'an `@switch` in an assigned fragment',
+					`export function App({ s }: { s: number }) @{\n\tconst view = <>${sw}</>;\n\t<div>{view}</div>\n}`,
+					TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				],
+				[
+					'an `@if` assigned to a const',
+					`export function App({ s }: { s: number }) @{\n\tconst view = @if (s) { if (s) RETURN; <b /> };\n\t<div>{view}</div>\n}`,
+					TSRX_ERRORS.IF_RETURN_STATEMENT,
+				],
+				[
+					'an `@if` in an expression container',
+					`export function App({ s }: { s: number }) {\n\treturn <div>{@if (s) { if (s) RETURN; <b /> }}</div>;\n}`,
+					TSRX_ERRORS.IF_RETURN_STATEMENT,
+				],
+				[
+					'an `@else if` body of an `@if` assigned to a const',
+					`export function App({ s }: { s: number }) @{\n\tconst view = @if (s) { <b /> } @else if (s > 1) { if (s) RETURN; <i /> };\n\t<div>{view}</div>\n}`,
+					TSRX_ERRORS.IF_RETURN_STATEMENT,
+				],
+				[
+					'an `@try` in an `@else if` body of an `@if` assigned to a const',
+					`export function App({ s }: { s: number }) @{\n\tconst view = @if (s) { <b /> } @else if (s > 1) { @try { if (s) RETURN; <i /> } @catch (e) { <u /> } };\n\t<div>{view}</div>\n}`,
+					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+				],
+				[
+					'an `@for` assigned to a const',
+					`export function App({ items }: { items: number[] }) @{\n\tconst view = @for (const s of items) { if (s) RETURN; <b /> };\n\t<ul>{view}</ul>\n}`,
+					TSRX_ERRORS.FOR_RETURN_STATEMENT,
+				],
+				[
+					'an `@try` assigned to a const',
+					`export function App({ s }: { s: number }) @{\n\tconst view = @try { if (s) RETURN; <b /> } @catch (e) { <i /> };\n\t<div>{view}</div>\n}`,
+					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+				],
+			])) {
+				const code = source.replace('RETURN', 'return <s />');
+				const start = code.indexOf('return <s />;');
+				const expected = expect.objectContaining({
+					code: error.code,
+					pos: start,
+					end: start + 'return <s />;'.length,
+				});
+				expect(() => compile(code, 'App.tsrx'), label).toThrow(expected);
+				expect(compile(code, 'App.tsrx', { collect: true }).errors, label).toEqual([expected]);
+			}
+		});
+
+		it('reports a bare `return` in a directive in an expression container when collecting', () => {
+			const source = `export function App({ s }: { s: number }) {
+				return <div>{@switch (s) { @case 1: { if (s) return; <b /> } @default: { <i /> } }}</div>;
+			}`;
+			const start = source.indexOf('return;');
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual([
+				expect.objectContaining({
+					code: TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code,
+					pos: start,
+					end: start + 'return;'.length,
+				}),
+			]);
+		});
+
+		it('rejects an `@if` used as a value whose branches each return a value', () => {
+			// This used to compile to `ready ? <b /> : <i />`; a `return` in an `@if`
+			// body is an error in a child position.
+			const source = `export function App({ ready }: { ready: boolean }) @{
+				const view = @if (ready) { return <b />; } @else { return <i />; };
+				<div>{view}</div>
+			}`;
+			const errors = ['return <b />;', 'return <i />;'].map((statement) =>
+				expect.objectContaining({
+					code: TSRX_ERRORS.IF_RETURN_STATEMENT.code,
+					pos: source.indexOf(statement),
+					end: source.indexOf(statement) + statement.length,
+				}),
+			);
+			expect(() => compile(source, 'App.tsrx')).toThrow(errors[0]);
+			expect(compile(source, 'App.tsrx', { collect: true }).errors).toEqual(errors);
 		});
 
 		it('rejects direct returns inside @if template blocks', () => {

@@ -2573,6 +2573,20 @@ function create_native_tsrx_return_statements(statement, transform_context) {
 	if (statements.length === 1 && only.type === 'ReturnStatement' && !has_location(only)) {
 		set_loc(only, statement);
 	}
+	// A directive used as a value is lowered after its children, so a `return`
+	// in its body is rebuilt here first. It keeps the mark of the check that
+	// reported it, so the `@if` and `@for` checks (Solid's too) don't report it
+	// again.
+	const last = statements.at(-1);
+	if (last?.type === 'ReturnStatement' && last !== statement) {
+		const { invalid_directive_jump, invalid_tsrx_template_return } = statement.metadata ?? {};
+		if (invalid_directive_jump) {
+			last.metadata = { ...last.metadata, invalid_directive_jump };
+		}
+		if (invalid_tsrx_template_return) {
+			last.metadata = { ...last.metadata, invalid_tsrx_template_return };
+		}
+	}
 	return statements;
 }
 
@@ -5043,6 +5057,9 @@ function children_contain_return_semantics(children) {
 }
 
 /**
+ * A `return` in an `@if`, `@for`, `@switch` or `@try` body belongs to that
+ * body (see `body_contains_top_level_return_value`).
+ *
  * @param {unknown} node
  * @returns {boolean}
  */
@@ -5062,7 +5079,8 @@ function child_contains_return_semantics(node) {
 	if (
 		ast_node.type === 'FunctionDeclaration' ||
 		ast_node.type === 'FunctionExpression' ||
-		ast_node.type === 'ArrowFunctionExpression'
+		ast_node.type === 'ArrowFunctionExpression' ||
+		is_jsx_control_flow_expression(/** @type {AST.Node} */ (node))
 	) {
 		return false;
 	}
@@ -6019,6 +6037,10 @@ function return_value_statement_to_expression(node, transform_context) {
 }
 
 /**
+ * A `return` in an `@if`, `@for`, `@switch` or `@try` body belongs to that
+ * body, whose check reports it (TSRX2002, TSRX2005, TSRX2009, TSRX2001), so
+ * the directive is lowered like any other.
+ *
  * @param {AST.Node | AST.Node[] | null | undefined} node
  * @returns {boolean}
  */
@@ -6038,7 +6060,8 @@ function body_contains_top_level_return_value(node) {
 		node.type === 'FunctionExpression' ||
 		node.type === 'ArrowFunctionExpression' ||
 		node.type === 'ClassDeclaration' ||
-		node.type === 'ClassExpression'
+		node.type === 'ClassExpression' ||
+		is_jsx_control_flow_expression(node)
 	) {
 		return false;
 	}
