@@ -11,7 +11,7 @@ const REGEX_HTML_COMMENT_CLOSE = /-->/;
 const REGEX_PERCENTAGE = /^\d+(\.\d+)?%/;
 const REGEX_COMBINATOR = /^(\+|~|>|\|\|)/;
 const REGEX_VALID_IDENTIFIER_CHAR = /[a-zA-Z0-9_-]/;
-const REGEX_LEADING_HYPHEN_OR_DIGIT = /-?\d/;
+const REGEX_LEADING_HYPHEN_OR_DIGIT = /^-?\d/;
 const REGEX_WHITESPACE_OR_COLON = /[\s:]/;
 // `--` and a name (letters, digits, `-`, `_`, non-ASCII, escapes), then `:`.
 const REGEX_CUSTOM_PROPERTY_START = /^--(?:[\w-]|[^\x00-\x7f]|\\[^\n])*\s*:/;
@@ -738,7 +738,10 @@ function read_value(parser, prelude = false) {
 		} else if (outside && char === '/' && parser.template[parser.index + 1] === '*') {
 			// A comment, which can hold a `;`, `{` or `}` (`color: red /* } */`).
 			const close = parser.template.indexOf('*/', parser.index + 2);
-			if (close === -1) throw new Error('Unexpected end of input');
+			if (close === -1) {
+				if (prelude && closers.length > 0) return unclosed();
+				throw new Error('Unexpected end of input');
+			}
 			value += parser.template.slice(parser.index, close + 2);
 			parser.index = close + 2;
 			reset_name(name);
@@ -766,10 +769,9 @@ function read_value(parser, prelude = false) {
 				}
 			} else if (
 				closers.length > 0 &&
-				// A `)` or `]` closes either, as before; a `}` only its `{`.
-				(char === '}'
-					? closers.at(-1) === '}'
-					: (char === ')' || char === ']') && closers.at(-1) !== '}')
+				// In a prelude a closer closes only its own bracket, as in CSS; in a
+				// declaration a `)` or `]` closes either, as before.
+				(prelude ? char === closers.at(-1) : char === ')' || char === ']')
 			) {
 				closers.pop();
 				if (closers.length === 0) stop = -1;

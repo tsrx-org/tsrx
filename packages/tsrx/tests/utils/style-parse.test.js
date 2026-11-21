@@ -446,6 +446,7 @@ describe('parseStyle url( and unclosed preludes', function () {
 		['.x { @media (min-width: 600px { color: red } } .b { color: blue }', '('],
 		['@supports (background: url("a)b") { .a { color: red } }', '('],
 		['@media [x { .a { color: red } }', '['],
+		['@supports (display: grid] { .a { color: red } }', '('],
 	])('reports the bracket %j leaves open in a prelude, at the bracket', function (css, bracket) {
 		let thrown;
 		try {
@@ -470,9 +471,20 @@ describe('parseStyle url( and unclosed preludes', function () {
 			'@media (a { .b { color: red } } @media (c { .d { color: red } } .e { color: blue }',
 			['Atrule', 'Atrule', 'Rule'],
 		],
+		// A comment still open at the end doesn't take the rules before it.
+		['@media (width: 600px { .a { color: red } }\n.b { color: blue } /*', ['Atrule', 'Rule']],
 	])('ends such a prelude where it did before in loose mode: %j', function (css, types) {
 		const sheet = parseStyle(css, LOCATION, { loose: true });
 
 		expect(sheet.children.map((node) => node.type)).toEqual(types);
+	});
+
+	it.each([
+		['nested', '@media (a { '.repeat(20000) + '.b { color: red }'],
+		['in a row', '@media (x;'.repeat(20000) + '.a { color: red }'],
+	])('reads 20,000 unclosed preludes %s in loose mode in linear time', function (_, css) {
+		const start = performance.now();
+		parseStyle(css, LOCATION, { loose: true });
+		expect(performance.now() - start).toBeLessThan(1000);
 	});
 });
