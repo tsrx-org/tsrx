@@ -2081,6 +2081,19 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(
 				`:host.open:has(/* (unused) .missing,*/ .icon:where(.${hash})) .wrap.${hash} { color: green; }`,
 			);
+			// A rule with an animation is kept, its :has() scoped as a match would.
+			const animated = compile(
+				`export function App() @{
+					<>
+						<style>:root.dark:has(.missing) { animation: none; }</style>
+						<div ${attr}="wrap"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+			expect(animated.css).toContain(
+				`:root.dark:has(.missing.${hashes_of(animated.cssHash)[0]}) { animation: none; }`,
+			);
 			// Nothing of a pruned selector is hashed, in its comment or after it.
 			expect(css).toContain(
 				`.wrap.${hash} /* (unused) :root.dark:has(.missing) .icon*/ { color: gray; }`,

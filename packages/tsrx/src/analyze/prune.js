@@ -1342,7 +1342,10 @@ const unmatched_animation_selectors = new WeakMap();
 export function scope_unmatched_animation_rules(css) {
 	const pending = unmatched_animation_selectors.get(css);
 	if (!pending) return;
-	for (const node of pending) assume_match(get_relative_selectors(node));
+	for (const node of pending) {
+		const selectors = get_relative_selectors(node);
+		assume_match(selectors.length > 0 ? selectors : node.children);
+	}
 	unmatched_animation_selectors.delete(css);
 	// `assume_match` scopes the `:is()`, `:where()` and `:has()` arguments of a
 	// global compound too, which stay as written.
@@ -1387,7 +1390,13 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 				// the rule's own selectors: `assume_match` scopes their arguments as
 				// a match would, and an argument of a selector that matched stays
 				// as `prune_css` left it.
-				if (!node.metadata.used && rule.prelude.children.includes(node)) {
+				// A selector of global-like compounds only (`:root.dark:has(.x)`) is
+				// used from the start, yet the arguments of its `:has()` still need
+				// the scoping a match would give them.
+				if (
+					(!node.metadata.used || node.metadata.is_global) &&
+					rule.prelude.children.includes(node)
+				) {
 					let pending = unmatched_animation_selectors.get(css);
 					if (!pending) unmatched_animation_selectors.set(css, (pending = new Set()));
 					pending.add(node);
