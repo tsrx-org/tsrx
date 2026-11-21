@@ -1108,6 +1108,104 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * How many comparisons of each case `push_case_comparison_mappings` has
+	 * mapped, by the case's start: a switch inside a discriminant has a copy
+	 * of each of its comparisons in every copy of that discriminant.
+	 * @type {Map<number, number>}
+	 */
+	const case_comparison_counts = new Map();
+
+	/**
+	 * Map a comparison the compiler writes for a case of a template switch,
+	 * `(d) === test` with a copy of the discriminant `d` (Solid's
+	 * `<Match when>`), to the case's test. TypeScript reports a test that the
+	 * discriminant can never equal (TS2367) on the whole comparison, and
+	 * without this its start mapped to the discriminant, so the error covered
+	 * everything from the `@switch` to the test.
+	 *
+	 * The `(` has the case's start as an empty location, so it is where the
+	 * source map puts that position: the n-th time this case's comparison is
+	 * visited, at the n-th such `(`. The comparison ends after the test and any
+	 * parentheses the printer writes around it (`(d) === (t as T)`).
+	 *
+	 * - Its start and its end are the two points of one diagnostics-only
+	 *   mapping to the test's ends (see {@link push_points_mapping}).
+	 * - Its `(` maps to the test with no Volar feature, for TypeScript 7 (see
+	 *   {@link push_literal_mappings}).
+	 * @param {AST.BinaryExpression} node
+	 * @returns {void}
+	 */
+	function push_case_comparison_mappings(node) {
+		const { left, right: test } = node;
+		if (left.type !== 'ParenthesizedExpression' || !has_location(left) || !has_location(test)) {
+			return;
+		}
+		/** @param {AST.Position} position */
+		const offsets = (position) =>
+			[
+				...new Set(
+					(src_to_gen_map.get(`${position.line}:${position.column}`) ?? []).map((generated) =>
+						loc_to_offset(generated.line, generated.column, gen_line_offsets),
+					),
+				),
+			].sort((a, b) => a - b);
+		const index = case_comparison_counts.get(left.start) ?? 0;
+		case_comparison_counts.set(left.start, index + 1);
+		const open = offsets(left.loc.start).filter((offset) => generated_code[offset] === '(')[index];
+		if (open === undefined) return;
+		const test_start = offsets(test.loc.start).find((offset) => offset > open);
+		if (test_start === undefined || generated_code.lastIndexOf('===', test_start) <= open) return;
+		const ends = offsets(test.loc.end);
+		let index_of_end = ends.findIndex((offset) => offset > test_start);
+		if (index_of_end < 0) return;
+		// The source map puts the test's end both before and after each `)` the
+		// printer adds around it.
+		while (
+			ends[index_of_end + 1] === ends[index_of_end] + 1 &&
+			generated_code[ends[index_of_end]] === ')'
+		) {
+			index_of_end++;
+		}
+		const end = ends[index_of_end];
+		mappings.push({
+			sourceOffsets: [test.start, test.end],
+			generatedOffsets: [open, end],
+			lengths: [0, 0],
+			generatedLengths: [0, 0],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
+		mappings.push({
+			sourceOffsets: [test.start],
+			lengths: [test.end - test.start],
+			generatedOffsets: [open],
+			generatedLengths: [1],
+			data: { customData: {} },
+		});
+		// Its last character maps to the test's as well where nothing else may: in
+		// a later copy of a switch inside a discriminant, whose literal tests have
+		// no mapping of their own, and at a bracket the printer writes (a `)` it
+		// adds, the `}` of a function it reformats). A span this short would take
+		// the place of the test's own last token. A character outside the BMP
+		// takes both of its UTF-16 units.
+		if (index > 0 || /[)\]}]/.test(generated_code[end - 1])) {
+			const generated_length = is_low_surrogate(generated_code.charCodeAt(end - 1)) ? 2 : 1;
+			const source_length = is_low_surrogate(source.charCodeAt(test.end - 1)) ? 2 : 1;
+			mappings.push({
+				sourceOffsets: [test.end - source_length],
+				lengths: [source_length],
+				generatedOffsets: [end - generated_length],
+				generatedLengths: [generated_length],
+				data: { customData: {} },
+			});
+		}
+	}
+
+	/** @param {number} code */
+	function is_low_surrogate(code) {
+		return code >= 0xdc00 && code <= 0xdfff;
+	}
+
+	/**
 	 * Map the `}` that ends a block, for diagnostics only, so that unreachable
 	 * code (TS7027) that ends with the block keeps its end.
 	 * @param {AST.Node | null | undefined} node
@@ -2530,6 +2628,9 @@ export function convert_source_map_to_mappings(
 				}
 				if (node.right) {
 					visit(node.right);
+				}
+				if (node.type === 'BinaryExpression' && node.metadata?.case_comparison) {
+					push_case_comparison_mappings(node);
 				}
 				return;
 			} else if (node.type === 'MemberExpression') {

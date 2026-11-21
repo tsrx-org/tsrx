@@ -1139,14 +1139,57 @@ export function Shown(props: { items: { id: number }[]; on: boolean }) @{
 }
 `;
 
+/**
+ * `@case` tests the discriminant can never equal. Solid compares a copy of the
+ * discriminant with each test (`<Match when={(d) === test}>`), where TypeScript
+ * reports TS2367 on the whole comparison; Vue prints a `switch`, where it
+ * reports TS2678 on the test.
+ */
+const ASTRAL = String.fromCodePoint(0x10400);
+const SWITCH_TSRX = `declare const long${ASTRAL}: string;
+declare function pick(node: unknown): number;
+export function Cases(props: { n: number; s: 'a' | 'b'; t: string }) @{
+	<div>
+		@switch (props.n) {
+			@case 'x': {
+				<b />
+			}
+			@case 1: {
+				<i />
+			}
+			@case props.t as string: {
+				<u />
+			}
+			@case function () { return 'f'; }: {
+				<s />
+			}
+		}
+		@switch (/x/.test(props.t)) {
+			@case 'c': {
+				<s />
+			}
+		}
+		@switch (pick(@switch (props.n) { @case long${ASTRAL}: { <i /> } })) {
+			@case 0: {
+				<b />
+			}
+			@case 1: {
+				<b />
+			}
+		}
+	</div>
+}
+`;
+
 describe.each(Object.keys(target_dependencies))('native language server on %s', (target) => {
 	/** @type {Record<string, string>} */
 	const files = {
 		'main.ts':
-			"import { List } from './List.tsrx';\nimport { Tag } from './Names.tsrx';\nimport { Shown } from './Shown.tsrx';\n\nexport const list = [List, Tag, Shown];\n",
+			"import { List } from './List.tsrx';\nimport { Tag } from './Names.tsrx';\nimport { Shown } from './Shown.tsrx';\nimport { Cases } from './Switch.tsrx';\n\nexport const list = [List, Tag, Shown, Cases];\n",
 		'List.tsrx': for_source(target),
 		'Names.tsrx': NAMES_TSRX,
 		'Shown.tsrx': SHOWN_TSRX,
+		'Switch.tsrx': SWITCH_TSRX,
 	};
 	/** @type {ReturnType<typeof create_native_workspace>} */
 	let workspace;
@@ -1173,6 +1216,7 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 		client.open('List.tsrx', files['List.tsrx']);
 		client.open('Names.tsrx', files['Names.tsrx']);
 		client.open('Shown.tsrx', files['Shown.tsrx']);
+		client.open('Switch.tsrx', files['Switch.tsrx']);
 	});
 
 	afterAll(async () => {
@@ -1344,6 +1388,43 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 			rename: [`Shown.tsrx ${declared_id}:id -> id: renamed`, `Shown.tsrx ${key_id}:id -> renamed`],
 			completes: true,
 		});
+	});
+
+	it('reports an @case test the discriminant can never equal on the test', async () => {
+		const diagnostics = await client.diagnostics('Switch.tsrx');
+		const fn = SWITCH_TSRX.indexOf('function ()');
+		const shown = diagnostics.map((d) => [d.code, where('Switch.tsrx', d.range)]);
+		if (target === 'solid') {
+			// The printer writes the function over several lines, so its `}` has no
+			// mapping of its own.
+			expect(shown).toEqual([
+				[2367, `${SWITCH_TSRX.indexOf("'x'")}:'x'`],
+				[2367, `${SWITCH_TSRX.indexOf('props.t as')}:props.t as string`],
+				[2367, `${fn}:function () { return 'f'; }`],
+				[2839, `${fn}:function () { return 'f'; }`],
+				[2367, `${SWITCH_TSRX.indexOf("'c'")}:'c'`],
+				// A switch inside a discriminant has a copy of its comparison in each
+				// copy of the discriminant.
+				[2367, `${SWITCH_TSRX.indexOf(`@case long${ASTRAL}`) + 6}:long${ASTRAL}`],
+				[2367, `${SWITCH_TSRX.indexOf(`@case long${ASTRAL}`) + 6}:long${ASTRAL}`],
+			]);
+		} else {
+			// Vue's `case` with the function shows on `function` alone, which is
+			// another mapping's.
+			expect(shown.filter(([, at]) => !String(at).startsWith(`${fn}:`))).toEqual([
+				[2678, `${SWITCH_TSRX.indexOf("'x'")}:'x'`],
+				[2678, `${SWITCH_TSRX.indexOf('props.t as')}:props.t as string`],
+				[2678, `${SWITCH_TSRX.indexOf("'c'")}:'c'`],
+				[2678, `${SWITCH_TSRX.indexOf(`@case long${ASTRAL}`) + 6}:long${ASTRAL}`],
+			]);
+		}
+		// The inner switch's discriminant keeps its hover (TypeScript 7 rejects a
+		// span map that splits a character outside the BMP).
+		const hover = await client.request(
+			'textDocument/hover',
+			at(client, files, 'Switch.tsrx', `pick(@switch (props.n)`, 20),
+		);
+		expect(hover?.contents.value.split('\n')[1]).toBe('(property) n: number');
 	});
 });
 

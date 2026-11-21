@@ -1251,6 +1251,99 @@ export async function App() @{
 			).toEqual(name === 'solid' ? [] : [['switch', '}', '}']]);
 		});
 
+		it('reports a case test the discriminant can never equal on the test', () => {
+			// A `switch` reports it as TS2678 on the test. Solid compares a copy of
+			// the discriminant with each test (`<Match when={(d) === test}>`), and
+			// TypeScript reports TS2367 on the whole comparison, which started at
+			// the copy: the error covered the source from the `@switch` to the test.
+			// The printer writes parentheses around `/x/` and around a test that
+			// binds less tightly than `===`, and a switch inside a discriminant has a
+			// copy of its comparisons in each copy of that discriminant.
+			const source = `enum Kind { A }
+declare const kind: () => Kind;
+declare function pick(node: unknown): number;
+export function App(props: { n: number; s: 'a' | 'b'; t: string; on: boolean }) @{
+	<div>
+		@switch ((props.n)) {
+			@case ('x'): {
+				<b />
+			}
+			@case 1: {
+				<i />
+			}
+			@case props.t as string: {
+				<u />
+			}
+			@case props.on ? 'y' : 'z': {
+				<s />
+			}
+		}
+		@switch (kind()) {
+			@case Kind.A: {
+				@switch (/* c */ props.s) {
+					@case 'c': {
+						<s />
+					}
+				}
+			}
+			@case 'B': {
+				<p />
+			}
+		}
+		@switch (/x/.test(props.t)) {
+			@case 'r': {
+				<b />
+			}
+		}
+		@switch (pick(@switch (props.n) { @case 'nested': { <i /> } })) {
+			@case 0: {
+				<b />
+			}
+			@case 'w': {
+				<i />
+			}
+		}
+	</div>
+}
+`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			const map = new SourceMap(result.mappings);
+			const shown = type_diagnostics(result.code, '/output.tsx')
+				.filter((diagnostic) => diagnostic.code === 2367 || diagnostic.code === 2678)
+				.map((diagnostic) => {
+					const start = /** @type {number} */ (diagnostic.start);
+					for (const [source_start, source_end] of map.toSourceRange(
+						start,
+						start + /** @type {number} */ (diagnostic.length),
+						true,
+						isDiagnosticsEnabled,
+					)) {
+						return `TS${diagnostic.code} ${source.slice(source_start, source_end)}`;
+					}
+					return `TS${diagnostic.code} unmapped`;
+				});
+			const code = name === 'solid' ? 'TS2367' : 'TS2678';
+			// Solid reports the nested switch's error once in each copy.
+			expect(shown.filter((text) => text.endsWith("'nested'"))).toHaveLength(
+				name === 'solid' ? 2 : 1,
+			);
+			expect([...new Set(shown)].sort()).toEqual(
+				[
+					"('x')",
+					'props.t as string',
+					"props.on ? 'y' : 'z'",
+					"'B'",
+					"'c'",
+					"'r'",
+					"'nested'",
+					"'w'",
+				]
+					.map((test) => `${code} ${test}`)
+					.sort(),
+			);
+		});
+
 		it('reports a fallthrough, unreachable code and an unreachable switch where they are', () => {
 			// The printer respaces `switch  (x)` and `case  0 :`, so mapping by offset
 			// from the statement's start would move each of these.

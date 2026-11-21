@@ -269,6 +269,8 @@ export interface BaseNodeMetaData {
 	regular_js?: boolean;
 	returned_tsrx_child?: boolean;
 	forceMapping?: boolean;
+	/** A comparison of a copy of a template switch's discriminant with a case's test (Solid's `<Match when>`). */
+	case_comparison?: boolean;
 	generated_loop_skip_if?: boolean;
 	disable_verification?: boolean;
 	/** Map this synthesized identifier's borrowed source span for diagnostics only (no hover/navigation). */
