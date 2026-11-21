@@ -453,27 +453,89 @@ function read_value(parser) {
 	let value = '';
 	let escaped = false;
 	let in_url = false;
+	// The name the value ends with, as written, for telling a `url(` in any
+	// case and with escapes (`URL(`, `u\72l(`).
+	let name = '';
+	// The digits of a hex escape the name ends with, 0 if it doesn't.
+	let hex_digits = 0;
+	// How many `(` and `[` are open: a `;` or `{` in them, as in `f(a;b)`,
+	// doesn't end the value.
+	let depth = 0;
+	// Whether a `\r` just ended a hex escape, so a `\n` goes with it.
+	let after_cr = false;
 
 	/** @type {null | '"' | "'"} */
 	let quote_mark = null;
 
 	while (parser.index < parser.template.length) {
 		const char = parser.template[parser.index];
+		const before = name;
+		if (quote_mark === null && !in_url) {
+			const cr = after_cr;
+			after_cr = false;
+			if (cr && char === '\n') {
+				name += char;
+			} else if (escaped && /[\n\r\f]/.test(char)) {
+				// Not an escape: a `\` and a newline end the name.
+				name = '';
+				hex_digits = 0;
+			} else if (escaped) {
+				name += '\\' + char;
+				hex_digits = /[0-9a-f]/i.test(char) ? 1 : 0;
+			} else if (char === '\\') {
+				// The next character goes with it.
+			} else if (hex_digits > 0 && hex_digits < 6 && /[0-9a-f]/i.test(char)) {
+				name += char;
+				hex_digits++;
+			} else if (hex_digits > 0 && /[ \t\n\r\f]/.test(char)) {
+				// The one space that ends a hex escape (`\r\n` counts as one).
+				name += char;
+				hex_digits = 0;
+				after_cr = char === '\r';
+			} else if (/[\w\u0080-\uffff-]/.test(char)) {
+				name += char;
+				hex_digits = 0;
+			} else {
+				name = '';
+				hex_digits = 0;
+			}
+		}
 
 		if (escaped) {
 			value += '\\' + char;
 			escaped = false;
 		} else if (char === '\\') {
 			escaped = true;
+		} else if (
+			char === '/' &&
+			parser.template[parser.index + 1] === '*' &&
+			quote_mark === null &&
+			!in_url
+		) {
+			// A comment, which can hold a `;`, `{` or `}` (`color: red /* } */`).
+			const close = parser.template.indexOf('*/', parser.index + 2);
+			if (close === -1) break;
+			value += parser.template.slice(parser.index, close + 2);
+			parser.index = close + 2;
+			name = '';
+			hex_digits = 0;
+			continue;
 		} else if (char === quote_mark) {
 			quote_mark = null;
-		} else if (char === ')') {
+		} else if (char === ')' && in_url) {
 			in_url = false;
+		} else if (quote_mark === null && !in_url && (char === '(' || char === '[')) {
+			if (char === '(' && unescape_css(before).toLowerCase() === 'url') in_url = true;
+			else depth++;
+		} else if (quote_mark === null && !in_url && depth > 0 && (char === ')' || char === ']')) {
+			depth--;
 		} else if (quote_mark === null && (char === '"' || char === "'")) {
 			quote_mark = char;
-		} else if (char === '(' && value.slice(-3) === 'url') {
-			in_url = true;
-		} else if ((char === ';' || char === '{' || char === '}') && !in_url && !quote_mark) {
+		} else if (
+			(char === '}' || (depth === 0 && (char === ';' || char === '{'))) &&
+			!in_url &&
+			!quote_mark
+		) {
 			return value.trim();
 		}
 

@@ -1187,6 +1187,26 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`animation: ${hash}-fade 3s;`);
 		});
 
+		it('reads a declaration value past a comment that holds a } or ;', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							@keyframes spin { to { opacity: 0; } }
+							.a { color: red /* } */ }
+							.b { animation: spin /* ; */ 1s }
+						</style>
+						<div ${attr}="a"><i ${attr}="b" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`.a.${hash} { color: red /* } */ }`);
+			expect(css).toContain(`.b.${hash} { animation: ${hash}-spin /* ; */ 1s }`);
+		});
+
 		it('keeps -global- names, :global blocks, and other keyframes unscoped', () => {
 			const { css } = compile_keyframes(
 				`@keyframes -global-spin ${frames}

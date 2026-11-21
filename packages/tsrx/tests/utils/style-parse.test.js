@@ -125,6 +125,78 @@ describe('parseStyle syntax errors', function () {
 	});
 });
 
+describe('parseStyle declaration values', function () {
+	/** @param {string} css */
+	function blocks(css) {
+		return parseStyle(css, LOCATION, {}).children.map((rule) =>
+			/** @type {any} */ (rule).block.children.map((/** @type {any} */ child) =>
+				child.type === 'Declaration' ? [child.property, child.value] : child.type,
+			),
+		);
+	}
+
+	it.each([
+		// A `}` or `;` in a comment ended the value, and the rule with it.
+		['.a { color: red /* } */ }', [[['color', 'red /* } */']]]],
+		[
+			'.a { color: red /* ; */ } .b { color: blue }',
+			[[['color', 'red /* ; */']], [['color', 'blue']]],
+		],
+		['.a { color: /* { */ red; .b /* } */ { color: blue } }', [[['color', '/* { */ red'], 'Rule']]],
+		['.a { animation: spin /* } */ 1s; }', [[['animation', 'spin /* } */ 1s']]]],
+		// A comment in a string or an unquoted url() is text.
+		[".a { content: '/* } */'; }", [[['content', "'/* } */'"]]]],
+		['.a { background: url(/* x */a.png); }', [[['background', 'url(/* x */a.png)']]]],
+		// url is a name, so URL( is one too.
+		[
+			'.a{background:URL(/*x)}.b{color:red/* } */}',
+			[[['background', 'URL(/*x)']], [['color', 'red/* } */']]],
+		],
+	])('reads past a comment in %j', function (css, expected) {
+		expect(blocks(css)).toEqual(expected);
+	});
+
+	it.each([
+		// A hex escape ends at a space, or a \r\n, which is part of it.
+		['.a{background:ur\\6c (/*x)}.b{color:red/* } */}', 2],
+		['.a{background:ur\\6c\r\n(/*x)}.b{color:red/* } */}', 2],
+		// In a string, URL( is text.
+		['.a{content:"URL("}.b{color:red}', 2],
+		// A ; in a function's parentheses doesn't end the value; myurl( isn't url(.
+		['.a{--x:myurl(a;b)}.b{color:blue}', 2],
+		['.a{color:f(a;b)}.b{color:blue}', 2],
+		['.a{--x:/*"*/myurl(/*"*/)}.b{color:blue}', 2],
+		// A \ and a newline isn't an escape, so it ends the name.
+		['.a{--x:ur\\\nl(/*"*/x)}.b{color:red}', 2],
+	])('reads the url( name of %j as CSS does', function (css, rules) {
+		expect(blocks(css)).toHaveLength(rules);
+	});
+
+	it('reads a long run of escapes before a ( in linear time', function () {
+		const css = '.a{--x:' + String.raw`\000061`.repeat(14) + '  (x)}';
+		const start = performance.now();
+		parseStyle(css, LOCATION, {});
+		expect(performance.now() - start).toBeLessThan(1000);
+	});
+
+	it('reads an escaped url( as url(', function () {
+		const rules = blocks(String.raw`.a{background:u\72l(/*x)}.b{color:red}`);
+
+		expect(
+			rules.map((declarations) => declarations.map((/** @type {any} */ item) => item[0])),
+		).toEqual([['background'], ['color']]);
+	});
+
+	it('reports a comment a value leaves open, unless loose', function () {
+		expect(function () {
+			parseStyle('.a { color: red /* open }', LOCATION, {});
+		}).toThrow(/Unexpected end of input/);
+		expect(function () {
+			parseStyle('.a { color: red /* open }', LOCATION, { loose: true });
+		}).not.toThrow();
+	});
+});
+
 describe('parseStyle escapes', function () {
 	/**
 	 * @param {string} css
