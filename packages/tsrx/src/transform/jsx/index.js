@@ -1630,7 +1630,10 @@ function transform_block_statement(node, { next, visit, state, path }) {
 		return next() ?? node;
 	}
 
-	if (get_active_native_tsrx_function(path)?.metadata?.native_tsrx_body) {
+	if (
+		get_active_native_tsrx_function(path)?.metadata?.native_tsrx_body &&
+		!is_in_directive_body(path)
+	) {
 		const block = create_native_tsrx_statement_list_block(node, state);
 		if (block) {
 			return visit(block, state);
@@ -1647,7 +1650,12 @@ function transform_block_statement(node, { next, visit, state, path }) {
  */
 function transform_return_statement(node, { next, visit, state, path }) {
 	const active_native_tsrx_function = get_active_native_tsrx_function(path);
-	if (active_native_tsrx_function && is_native_tsrx_node(node.argument)) {
+	if (
+		active_native_tsrx_function &&
+		is_native_tsrx_node(node.argument) &&
+		!is_reported_template_return(node) &&
+		!is_in_directive_body(path)
+	) {
 		if (!active_native_tsrx_function.metadata?.native_tsrx_body) {
 			const statements = mark_native_pretransformed_jsx(
 				create_native_tsrx_return_statements(node, state),
@@ -1728,6 +1736,36 @@ function get_active_native_tsrx_function(path) {
 		}
 	}
 	return null;
+}
+
+/**
+ * Whether a `return` is already reported as a template return: by the parser
+ * (`invalid_tsrx_template_return`, TSRX2001 in an `@try` body or a nested
+ * block) or by the directive jump check (`invalid_directive_jump`, such as one
+ * in a loop there or in an `@empty` body).
+ * @param {AST.ReturnStatement} node
+ * @returns {boolean}
+ */
+function is_reported_template_return(node) {
+	return !!(node.metadata?.invalid_tsrx_template_return || node.metadata?.invalid_directive_jump);
+}
+
+/**
+ * Whether a node with these ancestors is in an `@if`, `@for`, `@switch` or
+ * `@try` body, outside a function there, where a `return` is the template
+ * return error that body's check reports. A directive used as a value is
+ * lowered after its children are visited, so a `return` there is left as
+ * written for that check, with its location and the marks the checks leave
+ * on it, not rebuilt as a component's native return.
+ * @param {AST.Node[]} path
+ * @returns {boolean}
+ */
+function is_in_directive_body(path) {
+	for (let i = path.length - 1; i >= 0; i -= 1) {
+		if (is_function_or_class_boundary(path[i])) return false;
+		if (is_jsx_control_flow_expression(path[i])) return true;
+	}
+	return false;
 }
 
 /**
@@ -2615,7 +2653,13 @@ function expand_native_tsrx_return_statement_list(statements, transform_context)
  * @returns {AST.Statement[]}
  */
 function expand_native_tsrx_return_statement(statement, transform_context) {
-	if (statement.type === 'ReturnStatement' && is_native_tsrx_node(statement.argument)) {
+	// A `return` already reported is left as written, with the mark that keeps
+	// it from being reported or read as a value again.
+	if (
+		statement.type === 'ReturnStatement' &&
+		is_native_tsrx_node(statement.argument) &&
+		!is_reported_template_return(statement)
+	) {
 		return create_native_tsrx_return_statements(statement, transform_context);
 	}
 
@@ -5043,6 +5087,9 @@ function children_contain_return_semantics(children) {
 }
 
 /**
+ * A `return` in an `@if`, `@for`, `@switch` or `@try` body belongs to that
+ * body (see `body_contains_top_level_return_value`).
+ *
  * @param {unknown} node
  * @returns {boolean}
  */
@@ -5062,7 +5109,8 @@ function child_contains_return_semantics(node) {
 	if (
 		ast_node.type === 'FunctionDeclaration' ||
 		ast_node.type === 'FunctionExpression' ||
-		ast_node.type === 'ArrowFunctionExpression'
+		ast_node.type === 'ArrowFunctionExpression' ||
+		is_jsx_control_flow_expression(/** @type {AST.Node} */ (node))
 	) {
 		return false;
 	}
@@ -6019,6 +6067,10 @@ function return_value_statement_to_expression(node, transform_context) {
 }
 
 /**
+ * A `return` in an `@if`, `@for`, `@switch` or `@try` body belongs to that
+ * body, whose check reports it (TSRX2002, TSRX2005, TSRX2009, TSRX2001), so
+ * the directive is lowered like any other.
+ *
  * @param {AST.Node | AST.Node[] | null | undefined} node
  * @returns {boolean}
  */
@@ -6029,8 +6081,10 @@ function body_contains_top_level_return_value(node) {
 		return node.some(body_contains_top_level_return_value);
 	}
 
+	// A `return` already reported, as in a code block beside the directive,
+	// isn't a value either.
 	if (node.type === 'ReturnStatement') {
-		return node.argument != null;
+		return node.argument != null && !is_reported_template_return(node);
 	}
 
 	if (
@@ -6038,7 +6092,8 @@ function body_contains_top_level_return_value(node) {
 		node.type === 'FunctionExpression' ||
 		node.type === 'ArrowFunctionExpression' ||
 		node.type === 'ClassDeclaration' ||
-		node.type === 'ClassExpression'
+		node.type === 'ClassExpression' ||
+		is_jsx_control_flow_expression(node)
 	) {
 		return false;
 	}
@@ -6524,7 +6579,13 @@ function validate_directive_jumps(program, transform_context) {
 	for (const { node, kind } of found) {
 		if (node.type === 'ReturnStatement') {
 			error(
-				kind === 'if' ? TSRX_ERRORS.IF_RETURN_STATEMENT : TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				kind === 'if'
+					? TSRX_ERRORS.IF_RETURN_STATEMENT
+					: kind === 'case'
+						? TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT
+						: kind === 'for'
+							? TSRX_ERRORS.FOR_RETURN_STATEMENT
+							: TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
 				transform_context.filename,
 				node,
 				transform_context.errors,
@@ -6586,10 +6647,16 @@ function validate_directive_jumps(program, transform_context) {
  */
 function collect_directive_jumps(node, parent, scope, found) {
 	// The parser reports a `return` in an `@try`, `@pending` or `@catch` body or
-	// a nested `@{ … }` block, also one in an `@switch` there.
+	// a nested `@{ … }` block, also one in an `@switch` there, but not one in a
+	// loop there, and the `@for` check doesn't see one in a loop in its body:
+	// this reports those, and a `return` in an `@empty` body, which neither
+	// checks.
 	if (
 		node.type === 'ReturnStatement' &&
-		(scope.kind === 'case' || scope.kind === 'if') &&
+		(scope.kind === 'case' ||
+			scope.kind === 'if' ||
+			scope.kind === 'body' ||
+			(scope.kind === 'for' && scope.nested)) &&
 		!node.metadata?.invalid_tsrx_template_return
 	) {
 		// The `@if` and `@for` checks, which see a `return` in an `@switch` in
