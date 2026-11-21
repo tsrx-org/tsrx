@@ -462,6 +462,18 @@ function read_value(parser) {
 			escaped = false;
 		} else if (char === '\\') {
 			escaped = true;
+		} else if (
+			char === '/' &&
+			parser.template[parser.index + 1] === '*' &&
+			quote_mark === null &&
+			!in_url
+		) {
+			// A comment, which can hold a `;`, `{` or `}` (`color: red /* } */`).
+			const close = parser.template.indexOf('*/', parser.index + 2);
+			if (close === -1) break;
+			value += parser.template.slice(parser.index, close + 2);
+			parser.index = close + 2;
+			continue;
 		} else if (char === quote_mark) {
 			quote_mark = null;
 		} else if (char === ')') {

@@ -87,6 +87,42 @@ describe('parseStyle syntax errors', function () {
 	});
 });
 
+describe('parseStyle declaration values', function () {
+	/** @param {string} css */
+	function blocks(css) {
+		return parseStyle(css, LOCATION, {}).children.map((rule) =>
+			/** @type {any} */ (rule).block.children.map((/** @type {any} */ child) =>
+				child.type === 'Declaration' ? [child.property, child.value] : child.type,
+			),
+		);
+	}
+
+	it.each([
+		// A `}` or `;` in a comment ended the value, and the rule with it.
+		['.a { color: red /* } */ }', [[['color', 'red /* } */']]]],
+		[
+			'.a { color: red /* ; */ } .b { color: blue }',
+			[[['color', 'red /* ; */']], [['color', 'blue']]],
+		],
+		['.a { color: /* { */ red; .b /* } */ { color: blue } }', [[['color', '/* { */ red'], 'Rule']]],
+		['.a { animation: spin /* } */ 1s; }', [[['animation', 'spin /* } */ 1s']]]],
+		// A comment in a string or an unquoted url() is text.
+		[".a { content: '/* } */'; }", [[['content', "'/* } */'"]]]],
+		['.a { background: url(/* x */a.png); }', [[['background', 'url(/* x */a.png)']]]],
+	])('reads past a comment in %j', function (css, expected) {
+		expect(blocks(css)).toEqual(expected);
+	});
+
+	it('reports a comment a value leaves open, unless loose', function () {
+		expect(function () {
+			parseStyle('.a { color: red /* open }', LOCATION, {});
+		}).toThrow(/Unexpected end of input/);
+		expect(function () {
+			parseStyle('.a { color: red /* open }', LOCATION, { loose: true });
+		}).not.toThrow();
+	});
+});
+
 describe('parseStyle escapes', function () {
 	/**
 	 * @param {string} css
