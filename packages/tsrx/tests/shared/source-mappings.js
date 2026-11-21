@@ -76,6 +76,65 @@ function type_diagnostics(code, file_name, extra_options = {}) {
 }
 
 /**
+ * The source after a TypeScript rename at `generated_offset` in a compiled
+ * module, with each edit mapped back as Volar maps it.
+ *
+ * @param {string} code
+ * @param {CodeMapping[]} mappings
+ * @param {string} source
+ * @param {number} generated_offset
+ * @returns {string}
+ */
+function rename_in_source(code, mappings, source, generated_offset) {
+	const file_name = '/output.tsx';
+	/** @type {ts.CompilerOptions} */
+	const options = {
+		target: ts.ScriptTarget.ESNext,
+		module: ts.ModuleKind.ESNext,
+		moduleResolution: ts.ModuleResolutionKind.Bundler,
+		lib: ['lib.esnext.d.ts'],
+		jsx: ts.JsxEmit.Preserve,
+		types: [],
+		noEmit: true,
+	};
+	const service = ts.createLanguageService({
+		getScriptFileNames: () => [file_name],
+		getScriptVersion: () => '1',
+		getScriptSnapshot: (name) => {
+			const text = name === file_name ? code : ts.sys.readFile(name);
+			return text === undefined ? undefined : ts.ScriptSnapshot.fromString(text);
+		},
+		getCurrentDirectory: () => '/',
+		getCompilationSettings: () => options,
+		getDefaultLibFileName: (settings) => ts.getDefaultLibFilePath(settings),
+		fileExists: (name) => name === file_name || ts.sys.fileExists(name),
+		readFile: (name) => (name === file_name ? code : ts.sys.readFile(name)),
+	});
+	const map = new SourceMap(mappings);
+	const locations =
+		service.findRenameLocations(file_name, generated_offset, false, false, {
+			providePrefixAndSuffixTextForRename: true,
+		}) ?? [];
+	const edits = locations.map((location) => {
+		const start = location.textSpan.start;
+		const [edit] = [
+			...map.toSourceRange(start, start + location.textSpan.length, true, isRenameEnabled),
+		];
+		assert(edit, `edit at ${start} maps to the source`);
+		return {
+			start: edit[0],
+			end: edit[1],
+			text: `${location.prefixText ?? ''}renamed${location.suffixText ?? ''}`,
+		};
+	});
+	let result = source;
+	for (const edit of edits.sort((a, b) => b.start - a.start)) {
+		result = result.slice(0, edit.start) + edit.text + result.slice(edit.end);
+	}
+	return result;
+}
+
+/**
  * Tests for `compile_to_volar_mappings`
  * @param {SourceMappingHarness} harness
  */
@@ -1454,6 +1513,124 @@ export function App() @{
 					expect(result.code[generated], open).toMatch(/[<{(]/);
 				}
 			}
+		});
+	});
+
+	describe(`[${name}] the same name written twice`, () => {
+		// esrap prints `a: a` and `a as a` as the shorthand `a`, which left one of
+		// the names with no text of its own in the editor's output, and TypeScript
+		// renames a shorthand by adding the property: renaming `x` turned
+		// `{ x: x }` into `{ x: x: renamed }`.
+		const source = `import { useState as useState } from 'react';
+const { x: x } = { x: 1 };
+export { x as x };
+export function App() @{
+	const [n] = useState(0);
+	const point = { x: x, n: n };
+	<p>{point.x}{JSON.stringify({ n: n })}</p>
+}
+export function area({ y: y = 1 }: { y?: number }) {
+	return y;
+}
+`;
+
+		it('prints both names and maps each to its own text', () => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			for (const written of ['useState as useState', 'x: x', 'x as x', 'x: x, n: n', 'n: n']) {
+				expect(result.code).toContain(written);
+			}
+			// The imported name, the first of the two.
+			const imported = source.indexOf('useState');
+			const mapping = result.mappings.find(
+				(candidate) =>
+					candidate.sourceOffsets[0] === imported &&
+					candidate.lengths[0] === 'useState'.length &&
+					isRenameEnabled(candidate.data),
+			);
+			assert(mapping, 'the imported name has a token mapping');
+			expect(result.code.slice(mapping.generatedOffsets[0], mapping.generatedOffsets[0] + 8)).toBe(
+				'useState',
+			);
+		});
+
+		it('renames the binding, not the property or the exported name', () => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			/** @param {string} needle @param {number} skip */
+			const rename_at = (needle, skip) => {
+				const offset = source.indexOf(needle) + skip;
+				const mapping = result.mappings.find(
+					(candidate) =>
+						candidate.sourceOffsets[0] === offset &&
+						candidate.lengths[0] === 1 &&
+						isRenameEnabled(candidate.data),
+				);
+				assert(mapping, `a token mapping at ${needle}`);
+				return rename_in_source(result.code, result.mappings, source, mapping.generatedOffsets[0]);
+			};
+			const renamed_x = rename_at('{ x: x }', 5);
+			expect(renamed_x.slice(0, renamed_x.indexOf('export function area')))
+				.toBe(`import { useState as useState } from 'react';
+const { x: renamed } = { x: 1 };
+export { renamed as x };
+export function App() @{
+	const [n] = useState(0);
+	const point = { x: renamed, n: n };
+	<p>{point.x}{JSON.stringify({ n: n })}</p>
+}
+`);
+			expect(rename_at('[n]', 1)).toContain(`	const [renamed] = useState(0);
+	const point = { x: x, n: renamed };
+	<p>{point.x}{JSON.stringify({ n: renamed })}</p>`);
+			expect(rename_at('{ y: y', 5))
+				.toContain(`export function area({ y: renamed = 1 }: { y?: number }) {
+	return renamed;
+}`);
+		});
+
+		it('prints and maps both names of a specifier the printer writes', () => {
+			// A name spelled with an escape keeps an import or a re-export from
+			// being printed as written, so esrap prints its specifiers, and a
+			// string name written twice has to be printed twice for its mapping.
+			const backslash = String.fromCharCode(92);
+			const printed_source = [
+				`import { useState as useState, ${backslash}u0075seMemo } from 'react';`,
+				`export { "a" as "a", ${backslash}u0062 as b } from './lib';`,
+				'export const sentinel = useState ?? useMemo;',
+				'',
+			].join('\n');
+			const result = compile_to_volar_mappings(printed_source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).toContain('useState as useState');
+			expect(result.code).toMatch(/(["'])a\1 as (["'])a\2/);
+			const map = new SourceMap(result.mappings);
+			/** @type {number[]} */
+			const generated = [];
+			for (const [needle, skip, text] of /** @type {const} */ ([
+				['useState as', 0, 'useState'],
+				['as useState', 3, 'useState'],
+				['"a" as', 0, '"a"'],
+				['as "a"', 3, '"a"'],
+				['sentinel', 0, 'sentinel'],
+			])) {
+				const offset = printed_source.indexOf(needle) + skip;
+				const mapping = result.mappings.find(
+					(candidate) =>
+						candidate.sourceOffsets[0] === offset &&
+						candidate.lengths[0] === text.length &&
+						isDiagnosticsEnabled(candidate.data),
+				);
+				assert(mapping, needle);
+				const start = mapping.generatedOffsets[0];
+				expect(result.code.slice(start, start + text.length).replace(/'/g, '"'), needle).toBe(text);
+				// Each name maps back to itself from its own printed text.
+				const [back] = [
+					...map.toSourceRange(start, start + text.length, true, isDiagnosticsEnabled),
+				];
+				expect(back?.[0], needle).toBe(offset);
+				generated.push(start);
+			}
+			expect(new Set(generated).size).toBe(generated.length);
 		});
 	});
 

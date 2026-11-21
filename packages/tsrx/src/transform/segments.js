@@ -45,7 +45,7 @@ import {
 import { child_nodes, has_location, is_organized_import } from '../utils/ast.js';
 import { regex_whitespace, regex_whitespaces_strict } from '../utils/patterns.js';
 import { get_source_tokens } from '../parse/source-tokens.js';
-import { member_modifiers, regex_jsx_text_escaped } from './jsx/helpers.js';
+import { member_modifiers, prints_both_names, regex_jsx_text_escaped } from './jsx/helpers.js';
 import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 
 const RETURN_KEYWORD = 'return';
@@ -1834,13 +1834,9 @@ export function convert_source_map_to_mappings(
 				visit(node.source);
 				return;
 			} else if (node.type === 'ImportSpecifier') {
-				// If local and imported are the same, only visit local to avoid duplicates
-				// Otherwise visit both in order
-				if (
-					node.imported &&
-					node.local &&
-					/** @type {AST.Identifier} */ (node.imported).name !== node.local.name
-				) {
+				// A name written once (`{ a }`, `{ type a }`) is both the imported and
+				// the local name, printed once: visit it once. `{ a as a }` writes two.
+				if (node.imported && node.local && prints_both_names(node.imported, node.local)) {
 					visit(node.imported);
 					visit(node.local);
 				} else if (node.local) {
@@ -1857,14 +1853,9 @@ export function convert_source_map_to_mappings(
 				}
 				return;
 			} else if (node.type === 'ExportSpecifier') {
-				// If local and exported are the same, only visit local to avoid duplicates
-				// Otherwise visit both in order
-				if (
-					node.local &&
-					node.exported &&
-					/** @type {AST.Identifier} */ (node.local).name !==
-						/** @type {AST.Identifier} */ (node.exported).name
-				) {
+				// A name written once (`{ a }`) is both the local and the exported
+				// name, printed once: visit it once. `{ a as a }` writes two.
+				if (node.local && node.exported && prints_both_names(node.local, node.exported)) {
 					visit(node.local);
 					visit(node.exported);
 				} else if (node.local) {

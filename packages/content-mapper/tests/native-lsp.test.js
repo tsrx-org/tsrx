@@ -1850,3 +1850,100 @@ describe('editor preferences and file lifecycle on the native server', () => {
 		]);
 	});
 });
+
+/**
+ * A name written twice, `a: a`, which the editor's output used to print as
+ * the shorthand `a`: the value then had no span of its own.
+ */
+describe.each(Object.keys(target_dependencies))(
+	'native language server on %s: a name written twice',
+	(target) => {
+		const source = `export function Pairs(props: { a: number }) @{
+	const a = props.a;
+	<p>
+		@if ({a:a}) {
+			<b />
+		}
+	</p>
+}
+`;
+		/** @type {Record<string, string>} */
+		const files = {
+			'main.ts': "import { Pairs } from './Pairs.tsrx';\n\nexport const list = [Pairs];\n",
+			'Pairs.tsrx': source,
+		};
+		/** @type {ReturnType<typeof create_native_workspace>} */
+		let workspace;
+		/** @type {NativeLspClient} */
+		let client;
+
+		beforeAll(async () => {
+			const tsconfig = /** @type {Record<string, unknown>} */ (
+				parse_jsonc(
+					fs.readFileSync(
+						new URL(`./fixtures/targets/${target}/tsconfig.json`, import.meta.url),
+						'utf8',
+					),
+				).value
+			);
+			tsconfig.contentMappers = [{ package: '@tsrx/content-mapper', extensions: ['.tsrx'] }];
+			tsconfig.include = ['*.ts', '*.tsrx'];
+			files['tsconfig.json'] = JSON.stringify(tsconfig, null, '\t');
+			workspace = create_native_workspace(files, { dependencies: target_dependencies[target] });
+			client = new NativeLspClient(workspace.dir);
+			await client.initialize({ runExternalCode: true });
+			client.open('main.ts', files['main.ts']);
+			await client.wait_for_registration('content-mapper-did-open');
+			client.open('Pairs.tsrx', source);
+		});
+
+		afterAll(async () => {
+			await client?.shutdown();
+			workspace?.cleanup();
+		});
+
+		/** @param {{ start: { line: number, character: number }, end: object }} range */
+		const where = (range) =>
+			`${source
+				.split('\n')
+				.slice(0, range.start.line)
+				.reduce((sum, line) => sum + line.length + 1, range.start.character)}:${range_text(
+				source,
+				/** @type {any} */ (range),
+			)}`;
+
+		it('keeps the features of the value in a: a and renames only it', async () => {
+			await client.diagnostics('Pairs.tsrx');
+			const declared = source.indexOf('a =');
+			const value = source.indexOf('a})');
+			const params = at(client, files, 'Pairs.tsrx', '{a:a}', 3);
+			const hover = await client.request('textDocument/hover', params);
+			expect(`${where(hover.range)} ${hover.contents.value.split('\n')[1]}`).toBe(
+				`${value}:a const a: number`,
+			);
+			/** @param {Array<{ range: any }> | null} locations */
+			const ranges = (locations) => (locations ?? []).map((l) => where(l.range)).sort();
+			expect(ranges(await client.request('textDocument/definition', params))).toEqual([
+				`${declared}:a`,
+			]);
+			expect(
+				ranges(
+					await client.request('textDocument/references', {
+						...params,
+						context: { includeDeclaration: true },
+					}),
+				),
+			).toEqual([`${declared}:a`, `${value}:a`]);
+			const rename = await client.request('textDocument/rename', { ...params, newName: 'renamed' });
+			expect(
+				Object.values(rename?.changes ?? {})
+					.flat()
+					.map(
+						(/** @type {{ range: any, newText: string }} */ e) =>
+							`${where(e.range)} -> ${e.newText}`,
+					)
+					.sort(),
+			).toEqual([`${declared}:a -> renamed`, `${value}:a -> renamed`]);
+		});
+	},
+);

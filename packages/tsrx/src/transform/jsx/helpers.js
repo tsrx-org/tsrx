@@ -350,6 +350,34 @@ export function tsx_with_ts_locations(
 
 	/** @type {ESRap.Visitors<AST.Node>} */
 	const wrappers = {
+		// esrap prints `import { a as a }` and `export { a as a }` as `{ a }`,
+		// which the editor's output keeps as written, as it keeps `a: a`.
+		ImportSpecifier: (node, context) => {
+			if (!type_only || !written_twice(node.imported, node.local)) {
+				/** @type {NonNullable<typeof base.ImportSpecifier>} */ (base.ImportSpecifier)(
+					node,
+					context,
+				);
+				return;
+			}
+			if (node.importKind === 'type') context.write('type ');
+			context.visit(node.imported);
+			context.write(' as ');
+			context.visit(node.local);
+		},
+		ExportSpecifier: (node, context) => {
+			if (!type_only || !written_twice(node.local, node.exported)) {
+				/** @type {NonNullable<typeof base.ExportSpecifier>} */ (base.ExportSpecifier)(
+					node,
+					context,
+				);
+				return;
+			}
+			if (node.exportKind === 'type') context.write('type ');
+			context.visit(node.local);
+			context.write(' as ');
+			context.visit(node.exported);
+		},
 		TemplateLiteral: (node, context) => {
 			if (!type_only) {
 				/** @type {NonNullable<typeof base.TemplateLiteral>} */ (base.TemplateLiteral)(
@@ -629,6 +657,26 @@ export function tsx_with_ts_locations(
 		// `{ foo: function() {} }` (`node.method === false`) and getters/setters
 		// must fall through to base.Property to preserve their printed form.
 		Property: (node, context) => {
+			// esrap prints `a: a` as the shorthand `a`. In the editor's output that
+			// leaves one of the two names without text of its own: TypeScript 7
+			// drops the second's mapping, and TypeScript renames the shorthand by
+			// adding the property, so renaming `a` turned `{ a: a }` into
+			// `{ a: a: renamed }`.
+			const name = node.value.type === 'AssignmentPattern' ? node.value.left : node.value;
+			if (
+				type_only &&
+				!node.shorthand &&
+				!node.computed &&
+				!node.method &&
+				node.kind === 'init' &&
+				node.key.type === 'Identifier' &&
+				written_twice(node.key, name)
+			) {
+				context.visit(node.key);
+				context.write(': ');
+				context.visit(node.value);
+				return;
+			}
 			if (!node.method || node.value.type !== 'FunctionExpression') {
 				/** @type {NonNullable<typeof base.Property>} */ (base.Property)(node, context);
 				return;
@@ -1308,6 +1356,48 @@ const IMPORT_SYNTAX = new Set([
 	'with',
 	'assert',
 ]);
+
+/**
+ * Whether two names are the same, as esrap compares the names of a
+ * specifier: the same identifier or the same string.
+ * @param {AST.Node} first
+ * @param {AST.Node} second
+ * @returns {boolean}
+ */
+function same_name(first, second) {
+	if (first.type !== second.type) return false;
+	if (first.type === 'Identifier')
+		return first.name === /** @type {AST.Identifier} */ (second).name;
+	return first.type === 'Literal' && first.value === /** @type {AST.Literal} */ (second).value;
+}
+
+/**
+ * Whether the source writes the same name twice, as two names: `a: a`,
+ * `a as a` or `"a" as "a"`, not the shorthand `a`. esrap prints such a pair
+ * as the shorthand, and the editor's output as written.
+ * @param {AST.Node} first
+ * @param {AST.Node} second
+ * @returns {boolean}
+ */
+export function written_twice(first, second) {
+	return (
+		has_location(first) &&
+		has_location(second) &&
+		first.start !== second.start &&
+		same_name(first, second)
+	);
+}
+
+/**
+ * Whether the editor's output prints both names of an import or export
+ * specifier: names that differ, or the same name written twice.
+ * @param {AST.Node} first The imported or the local name.
+ * @param {AST.Node} second The local or the exported name.
+ * @returns {boolean}
+ */
+export function prints_both_names(first, second) {
+	return !same_name(first, second) || written_twice(first, second);
+}
 
 /**
  * The names, module string and attribute keys and values of an import or a
