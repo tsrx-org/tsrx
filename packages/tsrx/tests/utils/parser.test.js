@@ -18363,8 +18363,12 @@ ${lines.join('\n')}
 			`const f = <T,>() => {\n\tconst x = <A${escape('0062')} />;\n\tconst y;\n};`,
 			`const g = f<T,>(() => { <A${escape('0062')} />; const y; }, 1);`,
 			`const a = 1, b = 2;\nexport { a as x };\nexport { b as x };\nconst f = async <T,>(x = <A${escape('0062')} />) => x;`,
-			// And before a syntax error later in the arrow function's body.
+			// And before a syntax error later in the arrow function's body, or one
+			// found after the name, at its closing tag's `</`.
 			`const f = <T,>() => { <A${escape('0062')} />; const y = ; };`,
+			`const f = <T,>() => <A></B${escape('0063')}>;`,
+			// In an async generic arrow function's default, read ahead in another's.
+			`const f = <T,>(x = async <U,>(y = <A${escape('0062')} />) => y) => x;`,
 		];
 		for (const snippet of snippets) {
 			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
@@ -18376,15 +18380,17 @@ ${lines.join('\n')}
 				.map((diagnostic) => [diagnostic.start, diagnostic.start + diagnostic.length]);
 			/** @type {any[]} */
 			const errors = [];
+			let stopped = Infinity;
 			try {
 				parseModule(snippet, 'App.tsrx', { collect: true, errors });
-			} catch {
+			} catch (error) {
 				// Another error stops the parse; the ones before it are recorded.
+				stopped = /** @type {any} */ (error).pos;
 			}
 			expect(
 				errors.filter((error) => error.code === 'TS17021').map((error) => [error.pos, error.end]),
 				snippet,
-			).toEqual(expected);
+			).toEqual(expected.filter(([start]) => start < stopped));
 			// A strict parse throws TypeScript's first error when it's this one.
 			const strict = (() => {
 				try {

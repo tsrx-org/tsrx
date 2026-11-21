@@ -8195,13 +8195,13 @@ export function TSRXPlugin(config) {
 			 * The error that a strict speculative parse of the code from `start`
 			 * that throws `thrown`, an error the parser reports, throws instead, or
 			 * `null`: the first syntax error held in it (`held_syntax_errors`), which
-			 * a parse that doesn't hold it throws as it reads it, so before a checker
-			 * error, which TypeScript reports only after its syntax errors, and
-			 * before a syntax error after it. It's thrown as `thrown` is: with
-			 * acorn's `raise`, as a sign that the code isn't what the parse tried,
-			 * which an abandoned parse that the parser goes on past drops with the
-			 * rest of its effects, or as it is, which acorn-typescript doesn't catch,
-			 * as a checker error is thrown.
+			 * a parse that doesn't hold it throws as it reads it, so before anything
+			 * the parse throws once it's read it, wherever that is: a closing tag
+			 * that doesn't match, found after its name, is at its `</`. It's thrown
+			 * as `thrown` is: with acorn's `raise`, as a sign that the code isn't
+			 * what the parse tried, which an abandoned parse that the parser goes on
+			 * past drops with the rest of its effects, or as it is, which
+			 * acorn-typescript doesn't catch, as a checker error is thrown.
 			 * @param {number} start
 			 * @param {unknown} thrown
 			 * @returns {unknown}
@@ -8213,8 +8213,8 @@ export function TSRXPlugin(config) {
 					.filter((error) => held_syntax_errors.has(error) && (error.pos ?? 0) >= start)
 					.sort(compare_errors)[0];
 				if (!first) return null;
-				const at = /** @type {{ pos?: number }} */ (thrown).pos;
-				if (this.#isSyntaxError(thrown) && at !== undefined && (first.pos ?? 0) >= at) return null;
+				const { code, pos } = /** @type {{ code?: string, pos?: number }} */ (thrown);
+				if (code === first.code && pos === first.pos) return null;
 				if (thrown instanceof SyntaxError) {
 					try {
 						this.#throwHeldError(first);
@@ -14592,11 +14592,7 @@ export function TSRXPlugin(config) {
 					const errors = held ?? this.#errors;
 					const count = errors?.length ?? 0;
 					this.#recordCheckerLevelError(start, end, error, true);
-					const recorded = errors && errors.length > count ? errors[errors.length - 1] : null;
-					if (recorded) {
-						raised_errors.add(recorded);
-						held_syntax_errors.add(recorded);
-					}
+					if (errors && errors.length > count) held_syntax_errors.add(errors[errors.length - 1]);
 					return;
 				}
 				if (this.parseEffects?.active) {
