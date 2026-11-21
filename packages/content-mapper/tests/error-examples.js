@@ -869,6 +869,13 @@ export { data };
 Foo = 1;`,
 	},
 	{ error: TS_ERRORS.KEYWORD_ESCAPE, source: `export \\u0061bstract function f() {}` },
+	{
+		error: TS_ERRORS.JSX_NAME_UNICODE_ESCAPE,
+		source: `export function C() @{
+	<d\\u0069v />
+}
+`,
+	},
 	{ error: TS_ERRORS.PRIVATE_IDENTIFIER_OUTSIDE_CLASS, source: `const x = this.#y;` },
 	{ error: TS_ERRORS.MODIFIER_ALREADY_SEEN, source: `declare declare class A {}` },
 	{

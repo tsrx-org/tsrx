@@ -1147,11 +1147,17 @@ export function Escaped() @{
 			)}`;
 
 		it('reads it as one name, mapped from all of its text', async () => {
+			// TS17021 on each escaped name, as TypeScript reports it in a .tsx file;
+			// the mapper's directive over it hides TypeScript's own TS2304 there.
+			const code = typescript_mapper_code(TS_ERRORS.JSX_NAME_UNICODE_ESCAPE.code);
 			expect(
 				(await client.diagnostics('Escaped.tsrx'))
 					.filter((d) => d.severity === 1)
 					.map((d) => [d.code, where(d.range)]),
-			).toEqual([[2304, `${source.indexOf(missing)}:${missing}`]]);
+			).toEqual([
+				[code, `${source.indexOf(tag)}:${tag}`],
+				[code, `${source.indexOf(missing)}:${missing}`],
+			]);
 			const params = at(client, files, 'Escaped.tsrx', tag, 2);
 			const hover = await client.request('textDocument/hover', params);
 			expect(`${where(hover.range)} ${hover.contents.value.split('\n')[1]}`).toBe(

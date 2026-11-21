@@ -18274,3 +18274,89 @@ describe('TypeScript-coded errors that had no source (#964)', () => {
 		}
 	});
 });
+
+// TypeScript's scanner reports a Unicode escape in a JSX name as TS17021, on
+// the name, or on the part of a member or namespaced name that has the escape,
+// and reads the name as the one the escapes spell.
+describe('a JSX name written with a Unicode escape', () => {
+	const backslash = String.fromCharCode(92);
+	/** @param {string} hex */
+	const escape = (hex) => `${backslash}u${hex}`;
+	const lines = [
+		`export const a = <Inn${escape('0065')}r n={1} />;`,
+		`export const b = <Inn${escape('0065')}r n={2}></Inn${escape('0065')}r>;`,
+		`export const c = <Inn${escape('0065')}r n={3}></Inner>;`,
+		`export const d = <${escape('0049')}nner n={4} />;`,
+		`export const e = <div data-${escape('0061')}="1" ${escape('0061')}ria-label="x" ${escape('0074')}itle="t" />;`,
+		`export const f = <ns.Inn${escape('0065')}r n={5} />;`,
+		`export const g = <n${escape('0073')}.Inner n={6} />;`,
+		`export const h = <div x:t${escape('0069')}tle="1" />;`,
+		`export const i = <Inn${escape('{65}')}r n={7} />;`,
+		`export const j = <In${escape('006e')}${escape('0065')}r n={8} />;`,
+		`export const k = <div title="t">{'text'}</div>;`,
+	];
+	const source = `function Inner(props: { n: number; children?: unknown }) { return null; }
+const ns = { Inner };
+${lines.join('\n')}
+`;
+
+	/** TypeScript's TS17021 errors on `source` as a `.tsx` file, as `[start, end]`. */
+	function typescript_errors() {
+		const file = ts.createSourceFile('/App.tsx', source, ts.ScriptTarget.Latest, true);
+		const diagnostics = /** @type {ts.DiagnosticWithLocation[]} */ (
+			/** @type {any} */ (file).parseDiagnostics
+		);
+		return diagnostics
+			.filter((diagnostic) => diagnostic.code === 17021)
+			.map((diagnostic) => [diagnostic.start, diagnostic.start + diagnostic.length]);
+	}
+
+	it('records TS17021 where TypeScript reports it, and reads the names', () => {
+		/** @type {any[]} */
+		const errors = [];
+		const ast = parseModule(source, 'App.tsrx', { collect: true, errors });
+		expect(errors.map((error) => [error.code, error.message, error.pos, error.end])).toEqual(
+			typescript_errors().map(([start, end]) => [
+				'TS17021',
+				'Unicode escape sequence cannot appear here.',
+				start,
+				end,
+			]),
+		);
+		expect(errors.length).toBe(13);
+		/** @type {string[]} */
+		const names = [];
+		walk_names(ast, names);
+		expect(names).toEqual(expect.arrayContaining(['Inner', 'data-a', 'aria-label', 'title', 'ns']));
+		expect(names).not.toContain('Inn');
+	});
+
+	it('records it in a loose parse too, and a strict parse throws the first', () => {
+		/** @type {any[]} */
+		const errors = [];
+		parseModule(source, 'App.tsrx', { collect: true, loose: true, errors });
+		expect(errors.map((error) => error.pos)).toEqual(typescript_errors().map(([start]) => start));
+		const [first] = typescript_errors();
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			error_with(TS_ERRORS.JSX_NAME_UNICODE_ESCAPE, line_column(source, first[0])),
+		);
+	});
+
+	/**
+	 * The names of the JSX identifiers in `node`.
+	 * @param {unknown} node
+	 * @param {string[]} names
+	 */
+	function walk_names(node, names) {
+		if (!node || typeof node !== 'object') return;
+		if (Array.isArray(node)) {
+			for (const child of node) walk_names(child, names);
+			return;
+		}
+		const record = /** @type {Record<string, unknown>} */ (node);
+		if (record.type === 'JSXIdentifier') names.push(/** @type {string} */ (record.name));
+		for (const [key, value] of Object.entries(record)) {
+			if (key !== 'loc' && key !== 'metadata') walk_names(value, names);
+		}
+	}
+});

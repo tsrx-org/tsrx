@@ -54,7 +54,8 @@ const BROKEN_MARKUP_CODES = new Set([
  * `import.source()` (TS17012, TS18061), a default or named binding in
  * a deferred import (`import defer a from "m"`, TS18058 and TS18059), a
  * type-only import with both (`import type a, { b } from "m"`, TS1363),
- * `import type` on an import alias (TS1392), and a function body in an
+ * `import type` on an import alias (TS1392), a JSX name written with a
+ * Unicode escape (`<Inn\u0065r />`, TS17021), and a function body in an
  * ambient context (TS1183). Prettier rejects that one after `declare`
  * (`declare function f() {}`, which its tree prints wrong), and the plugin in
  * a `declare namespace` too.
@@ -89,6 +90,7 @@ const REJECTED_CODES = new Set([
 	'TS18059',
 	'TS1363',
 	'TS1392',
+	'TS17021',
 	'TS1183',
 ]);
 

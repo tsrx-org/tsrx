@@ -1660,7 +1660,10 @@ export function App() @{
 
 		it('maps each escaped name whole to the printed name', () => {
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-			expect(result.errors).toEqual([]);
+			// The escapes in the two attribute names, which TypeScript also reports.
+			expect(
+				result.errors.map((error) => `${error.code} ${source.slice(error.pos, error.end)}`),
+			).toEqual([`TS17021 ${backslash}u0074itle`, `TS17021 ${backslash}u0063lassName`]);
 			const map = new SourceMap(result.mappings);
 			const names = [...source.matchAll(escaped_name)].map((match) => {
 				const start = /** @type {number} */ (match.index);
@@ -1713,8 +1716,8 @@ export function App() @{
 		it('reads a JSX name with an escape after its start as one name', () => {
 			// The JSX tokenizer stopped at the escape: `<Inn\u0065r n={1} />` was the
 			// tag `Inn` with an attribute `\u0065r`, and a closing tag spelled with an
-			// escape didn't parse. TypeScript reads the whole name (and reports
-			// TS17021), and so does the compiler now, with the names the escapes spell.
+			// escape didn't parse. TypeScript reads the whole name, with the name the
+			// escapes spell, and reports TS17021 on it, and so does the compiler.
 			const e = `${backslash}u0065`;
 			const jsx_source = [
 				'function Inner(props: { n: number; children?: unknown }) { return null; }',
@@ -1736,7 +1739,19 @@ export function App() @{
 				`export const commented = <Bo${backslash}u{78}</* c */ string> v="z" />;`,
 				'',
 			].join('\n');
-			const built = compile(jsx_source, 'App.tsrx').code;
+			const jsx_name = new RegExp(`[${backslash}w$-]*(?:${escape}[${backslash}w$-]*)+`, 'g');
+			const escaped_names = [...jsx_source.matchAll(jsx_name)].map((match) => match[0]);
+			/** @param {Array<{ code?: string, pos?: number, end?: number }>} errors */
+			const reported = (errors) =>
+				errors.map((error) => `${error.code} ${jsx_source.slice(error.pos, error.end)}`);
+			// A strict compile throws the first; a collecting one records each and
+			// compiles the names the escapes spell.
+			expect(() => compile(jsx_source, 'App.tsrx')).toThrow(
+				'Unicode escape sequence cannot appear here.',
+			);
+			const collected = compile(jsx_source, 'App.tsrx', { collect: true });
+			expect(reported(collected.errors)).toEqual(escaped_names.map((text) => `TS17021 ${text}`));
+			const built = collected.code;
 			for (const text of [
 				'<Inner n={1} />',
 				'<ns.Inner n={4} />',
@@ -1749,8 +1764,7 @@ export function App() @{
 				expect(built).toContain(text);
 			}
 			const result = compile_to_volar_mappings(jsx_source, 'App.tsrx', { loose: true });
-			expect(result.errors).toEqual([]);
-			const jsx_name = new RegExp(`[${backslash}w$-]*(?:${escape}[${backslash}w$-]*)+`, 'g');
+			expect(reported(result.errors)).toEqual(escaped_names.map((text) => `TS17021 ${text}`));
 			const names = [...jsx_source.matchAll(jsx_name)].map((match) => {
 				const start = /** @type {number} */ (match.index);
 				const token = result.mappings.find(
@@ -1834,7 +1848,14 @@ export function App() @{
 				`export const tags = [<${start} />, <A${start} />, <B${astral}></B${astral}>, <C${start}${backslash}u0064 />];`,
 				'',
 			].join('\n');
-			const built = compile(unicode_source, 'App.tsrx').code;
+			const collected = compile(unicode_source, 'App.tsrx', { collect: true });
+			const written = `C${start}${backslash}u0064`;
+			const offset = unicode_source.lastIndexOf(written);
+			// TS17021 on the escaped one only.
+			expect(collected.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				['TS17021', offset, offset + written.length],
+			]);
+			const built = collected.code;
 			for (const tag of [
 				`<${start} />`,
 				`<A${start} />`,
@@ -1846,8 +1867,6 @@ export function App() @{
 			// The escaped name maps from all of its text, measured with the same
 			// identifier characters the parser read it with.
 			const result = compile_to_volar_mappings(unicode_source, 'App.tsrx', { loose: true });
-			const written = `C${start}${backslash}u0064`;
-			const offset = unicode_source.lastIndexOf(written);
 			expect(
 				result.mappings.some(
 					(mapping) =>

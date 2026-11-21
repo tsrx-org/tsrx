@@ -14452,8 +14452,8 @@ export function TSRXPlugin(config) {
 			 * an escape, so `<Inn\u0065r />` read as the tag `Inn` with an attribute
 			 * `\u0065r`, and `<Inn\u0065r></Inn\u0065r>` didn't parse. TypeScript
 			 * reads the escape as part of the name, as in an identifier, and reports
-			 * it (TS17021); so does this, without the error. The name is the one the
-			 * escapes spell.
+			 * TS17021 on the name; so does this (see `#reportJSXNameEscape`). The
+			 * name is the one the escapes spell.
 			 * @type {Parse.Parser['jsx_readWord']}
 			 */
 			jsx_readWord() {
@@ -14461,6 +14461,7 @@ export function TSRXPlugin(config) {
 				let word = '';
 				let chunk_start = this.pos;
 				let first = true;
+				let escaped_name = false;
 				while (this.pos < this.input.length) {
 					const ch = this.fullCharCodeAtPos();
 					if (is_identifier_char(ch, true) || ch === CharCode.hyphen) {
@@ -14478,6 +14479,7 @@ export function TSRXPlugin(config) {
 						}
 						word += String.fromCodePoint(escaped);
 						chunk_start = this.pos;
+						escaped_name = true;
 					} else {
 						break;
 					}
@@ -14487,7 +14489,25 @@ export function TSRXPlugin(config) {
 				// starts, so this has read at least one character; if not, its reader
 				// does, rather than this one returning an empty name forever.
 				if (this.pos === start) return super.jsx_readWord();
+				if (escaped_name) this.#reportJSXNameEscape(start, this.pos);
 				return this.finishToken(tstt.jsxName, word + this.input.slice(chunk_start, this.pos));
+			}
+
+			/**
+			 * A JSX name written with a Unicode escape (`<Inn\u0065r />`), which
+			 * TypeScript's scanner reports as TS17021 on the name, or on the part of a
+			 * member or namespaced name that has it: a strict parse throws it, and a
+			 * collecting or loose one records it, once (the tokenizer can read a name
+			 * again), and reads the name on as the one the escapes spell.
+			 * @param {number} start
+			 * @param {number} end
+			 */
+			#reportJSXNameEscape(start, end) {
+				if (!this.#collect) this.#throwError(start, TS_ERRORS.JSX_NAME_UNICODE_ESCAPE);
+				const errors = this.#hold.held ?? this.#errors;
+				if (errors?.some((other) => other.pos === start && other.code === 'TS17021')) return;
+				if (errors) this.parseEffects?.willAppend(errors);
+				this.#report_recoverable_error_range(start, end, TS_ERRORS.JSX_NAME_UNICODE_ESCAPE, errors);
 			}
 
 			/**
