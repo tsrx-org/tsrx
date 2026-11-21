@@ -240,11 +240,12 @@ function kept_arguments_unscoped(list, negated) {
 		argument.children.every(({ selectors, metadata }) => {
 			// A `:global(...)` compound keeps its arguments as written too.
 			if (metadata.is_global) return true;
-			// No `&` gets the hash in a :root or :host compound (`:root&`).
-			const root_or_host = has_root_or_host(selectors);
 			return selectors.every((simple) => {
+				// An `&` in a global-like compound (`:root&`) gets no hash.
 				if (simple.type === 'NestingSelector') {
-					return negated || root_or_host || !is_scope_root_ampersand(argument.metadata.rule);
+					return (
+						negated || metadata.is_global_like || !is_scope_root_ampersand(argument.metadata.rule)
+					);
 				}
 				if (
 					simple.type !== 'PseudoClassSelector' ||

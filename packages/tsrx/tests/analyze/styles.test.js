@@ -965,7 +965,12 @@ describe('scoped style analysis', () => {
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 					0,
 				],
-				// So is an & for a @scope's root.
+				// So is an & for a @scope's root, unless its compound is global-like.
+				[
+					'@scope (:root) { :global.w, :root:is(&:root) { color: red; } }',
+					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
+					0,
+				],
 				[
 					'@scope (.q) { :global.w, :root:is(&) { color: red; } }',
 					TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
