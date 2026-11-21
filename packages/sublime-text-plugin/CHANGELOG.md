@@ -1,5 +1,14 @@
 # @tsrx/sublime-text-plugin
 
+## 0.0.100
+
+### Patch Changes
+
+- [#1498](https://github.com/tsrx-org/tsrx/pull/1498)
+  [`afd2ea3`](https://github.com/tsrx-org/tsrx/commit/afd2ea3ccd44cd55129208f99e483de9dfdc2dd5)
+  Thanks [@github-actions](https://github.com/apps/github-actions)! - Install
+  `@tsrx/language-server` 0.7.15 when a project has no server of its own.
+
 ## 0.0.99
 
 ### Patch Changes
