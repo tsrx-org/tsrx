@@ -1515,15 +1515,17 @@ describe('scoped style analysis', () => {
 
 		it('writes nothing into a pruned selector with a :global(...) that holds a type selector', () => {
 			for (const minify of [false, true]) {
-				for (const css of [
-					'.p, .q:global(div) { color: red; }',
-					'.q:global(div), .p { color: red; }',
+				for (const [css, pruned] of [
+					['.p, .q:global(div) { color: red; }', '.q:global(div)'],
+					['.q:global(div), .p { color: red; }', '.q:global(div)'],
+					// Nor into the argument of a global compound in one.
+					['.p, .q:global:is(.r:global(div)) { color: red; }', '.q:global:is(.r:global(div))'],
 				]) {
-					const rendered = render(css, ['.q:global(div)'], minify);
+					const rendered = render(css, [pruned], minify);
 					// Minified, the pruned selector is removed before the :global is
 					// rewritten, and an `:is(` written then would outlast it.
-					expect(rendered, css).not.toContain(':is(');
-					expect(strip_hash(rendered), css).toContain('.p');
+					if (minify) expect(strip_hash(rendered), css).toBe('.p { color: red; }');
+					else expect(rendered, css).toContain('/* (unused) ');
 				}
 			}
 		});

@@ -456,6 +456,27 @@ function remove_global_pseudo_class(selector, combinator, state, after_start = f
 }
 
 /**
+ * Whether the output prunes `selector`, or a selector around it: the
+ * `SelectorList` visitor comments out (or, minified, removes) an unused one,
+ * except in a global block or the arguments of a global compound.
+ *
+ * @param {AST.CSS.ComplexSelector} selector
+ * @param {AST.CSS.Node[]} path
+ * @returns {boolean}
+ */
+function is_pruned(selector, path) {
+	if (is_in_global_block(path)) return false;
+	for (let i = 0; i <= path.length; i++) {
+		const node = i === path.length ? selector : path[i];
+		const ancestors = path.slice(0, i);
+		if (node.type === 'ComplexSelector' && !node.metadata.used && !is_in_global_pseudo(ancestors)) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/**
  * The type selector (`div`, `*`, `svg|a`) `list` starts with, if any, and no
  * combinator before it (`:global(> i)` keeps its `>`, which no `:is()` can
  * hold). In a pseudo-class's argument the parser reads a name like `n`,
@@ -851,15 +872,8 @@ const visitors = {
 		}
 
 		// Text written into a pruned selector would outlast it when minifying,
-		// which removes it before this runs. A global block prunes nothing, nor
-		// do the arguments of a global compound.
-		const kept =
-			is_in_global_block(context.path) ||
-			is_in_global_pseudo(context.path) ||
-			(node.metadata.used &&
-				!context.path.some(
-					(ancestor) => ancestor.type === 'ComplexSelector' && !ancestor.metadata.used,
-				));
+		// which removes it before this runs.
+		const kept = !is_pruned(node, context.path);
 
 		for (const relative_selector of node.children) {
 			if (relative_selector.metadata.is_global && !insideScopingPseudo) {
