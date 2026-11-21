@@ -1145,7 +1145,10 @@ export function Shown(props: { items: { id: number }[]; on: boolean }) @{
  * reports TS2367 on the whole comparison; Vue prints a `switch`, where it
  * reports TS2678 on the test.
  */
-const SWITCH_TSRX = `export function Cases(props: { n: number; s: 'a' | 'b'; t: string }) @{
+const ASTRAL = String.fromCodePoint(0x10400);
+const SWITCH_TSRX = `declare const long${ASTRAL}: string;
+declare function pick(node: unknown): number;
+export function Cases(props: { n: number; s: 'a' | 'b'; t: string }) @{
 	<div>
 		@switch (props.n) {
 			@case 'x': {
@@ -1164,6 +1167,14 @@ const SWITCH_TSRX = `export function Cases(props: { n: number; s: 'a' | 'b'; t: 
 		@switch (/x/.test(props.t)) {
 			@case 'c': {
 				<s />
+			}
+		}
+		@switch (pick(@switch (props.n) { @case long${ASTRAL}: { <i /> } })) {
+			@case 0: {
+				<b />
+			}
+			@case 1: {
+				<b />
 			}
 		}
 	</div>
@@ -1392,6 +1403,10 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 				[2367, `${fn}:function () { return 'f'; }`],
 				[2839, `${fn}:function () { return 'f'; }`],
 				[2367, `${SWITCH_TSRX.indexOf("'c'")}:'c'`],
+				// A switch inside a discriminant has a copy of its comparison in each
+				// copy of the discriminant.
+				[2367, `${SWITCH_TSRX.indexOf(`@case long${ASTRAL}`) + 6}:long${ASTRAL}`],
+				[2367, `${SWITCH_TSRX.indexOf(`@case long${ASTRAL}`) + 6}:long${ASTRAL}`],
 			]);
 		} else {
 			// Vue's `case` with the function shows on `function` alone, which is
@@ -1400,8 +1415,16 @@ describe.each(Object.keys(target_dependencies))('native language server on %s', 
 				[2678, `${SWITCH_TSRX.indexOf("'x'")}:'x'`],
 				[2678, `${SWITCH_TSRX.indexOf('props.t as')}:props.t as string`],
 				[2678, `${SWITCH_TSRX.indexOf("'c'")}:'c'`],
+				[2678, `${SWITCH_TSRX.indexOf(`@case long${ASTRAL}`) + 6}:long${ASTRAL}`],
 			]);
 		}
+		// The inner switch's discriminant keeps its hover (TypeScript 7 rejects a
+		// span map that splits a character outside the BMP).
+		const hover = await client.request(
+			'textDocument/hover',
+			at(client, files, 'Switch.tsrx', `pick(@switch (props.n)`, 20),
+		);
+		expect(hover?.contents.value.split('\n')[1]).toBe('(property) n: number');
 	});
 });
 

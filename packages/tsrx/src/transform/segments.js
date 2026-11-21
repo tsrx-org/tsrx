@@ -1185,16 +1185,24 @@ export function convert_source_map_to_mappings(
 		// a later copy of a switch inside a discriminant, whose literal tests have
 		// no mapping of their own, and at a bracket the printer writes (a `)` it
 		// adds, the `}` of a function it reformats). A span this short would take
-		// the place of the test's own last token.
+		// the place of the test's own last token. A character outside the BMP
+		// takes both of its UTF-16 units.
 		if (index > 0 || /[)\]}]/.test(generated_code[end - 1])) {
+			const generated_length = is_low_surrogate(generated_code.charCodeAt(end - 1)) ? 2 : 1;
+			const source_length = is_low_surrogate(source.charCodeAt(test.end - 1)) ? 2 : 1;
 			mappings.push({
-				sourceOffsets: [test.end - 1],
-				lengths: [1],
-				generatedOffsets: [end - 1],
-				generatedLengths: [1],
+				sourceOffsets: [test.end - source_length],
+				lengths: [source_length],
+				generatedOffsets: [end - generated_length],
+				generatedLengths: [generated_length],
 				data: { customData: {} },
 			});
 		}
+	}
+
+	/** @param {number} code */
+	function is_low_surrogate(code) {
+		return code >= 0xdc00 && code <= 0xdfff;
 	}
 
 	/**
