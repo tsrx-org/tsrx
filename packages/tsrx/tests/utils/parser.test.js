@@ -18374,6 +18374,11 @@ ${lines.join('\n')}
 			`function h(x = <A${escape('0062')} />, x) {}`,
 			`const r = (a ? function (x = <A${escape('0062')} />) {} : 0);`,
 			`const r = (a ? { m(x = <A${escape('0062')} />) {} } : 0);`,
+			// And from a speculative parse kept in a default, before them.
+			`function h(x = f<T>(<A${escape('0062')} />), x) {}`,
+			`declare function h(x = f<T>(<A${escape('0062')} />));`,
+			// The first of two, held in parameters and queued in the body.
+			`const f = async <T,>(x = <A${escape('0062')} />) => <C${escape('0064')} />;`,
 		];
 		for (const snippet of snippets) {
 			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);

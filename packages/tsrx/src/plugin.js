@@ -8213,8 +8213,10 @@ export function TSRXPlugin(config) {
 					.filter((error) => held_syntax_errors.has(error) && (error.pos ?? 0) >= start)
 					.sort(compare_errors)[0];
 				if (!first) return null;
+				// Of two, the first is thrown, such as one an async generic arrow
+				// function's parameters held before one in its body.
 				const { code, pos } = /** @type {{ code?: string, pos?: number }} */ (thrown);
-				if (code === first.code && pos === first.pos) return null;
+				if (code === first.code && (pos ?? 0) <= (first.pos ?? 0)) return null;
 				if (thrown instanceof SyntaxError) {
 					try {
 						this.#throwHeldError(first);
@@ -13377,6 +13379,13 @@ export function TSRXPlugin(config) {
 			 */
 			#releaseErrors(held) {
 				const sorted = held.slice().sort(compare_errors);
+				// A syntax error held for its position (`held_syntax_errors`), which
+				// TypeScript reports before the checker errors: a strict parse throws
+				// it first, rather than hold it among them.
+				const syntax_error = this.#collect
+					? undefined
+					: sorted.find((error) => held_syntax_errors.has(error));
+				if (syntax_error) this.#throwHeldError(syntax_error);
 				for (const error of sorted) {
 					const outer = this.#hold.held;
 					const errors = outer ?? (this.#collect ? this.#errors : undefined);
