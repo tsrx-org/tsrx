@@ -14798,8 +14798,7 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				{ source, options: { loose: true } },
 			]),
 		);
-		// A collecting parse records it over the statement, as TypeScript's
-		// checker reports it, and reads on.
+		// A collecting parse records it over the keyword, and reads on.
 		expect(
 			outcomes.map((outcome) =>
 				outcome.ok ? { errors: outcome.errors, last: outcome.ast.body.at(-1)?.type } : outcome,
@@ -14807,10 +14806,8 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		).toEqual(
 			cases.flatMap(([source, error, at]) => {
 				const pos = source.indexOf(at);
-				const semicolon = source.indexOf(';', pos);
-				const end = semicolon === -1 ? pos + at.length : semicolon + 1;
 				const collected = {
-					errors: [{ code: code_of(error), pos, end }],
+					errors: [{ code: code_of(error), pos, end: pos + at.length }],
 					last: 'ExportNamedDeclaration',
 				};
 				return [thrown(error, pos), collected, collected];

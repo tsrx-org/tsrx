@@ -716,7 +716,8 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			const start = source.indexOf(statement);
 			expect(result.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
-				[error.code, start, start + statement.length],
+				// Over the keyword, which the editor's code maps.
+				[error.code, start, start + (statement.startsWith('break') ? 'break' : 'continue').length],
 			]);
 			expect(result.code).toContain('export const after = 1;');
 			// TypeScript reports the same code on the jump, at the same place, where
