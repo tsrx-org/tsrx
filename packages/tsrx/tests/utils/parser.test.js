@@ -3665,6 +3665,52 @@ foo();`;
 		}
 	});
 
+	it('reads the body of a loop or a label in an @switch case used as a value as a block', () => {
+		// A `{` there was read as an expression container when the `@switch` was
+		// in one (`{@switch …}`), as it isn't when the `@switch` is a child.
+		/** @type {Array<[statement: string, type: string, body: string[]]>} */
+		const cases = [
+			['while (ready) { return <b />; }', 'WhileStatement', ['ReturnStatement']],
+			['while (ready) { break; }', 'WhileStatement', ['BreakStatement']],
+			[
+				'while (ready) { const z = 1; f(z); }',
+				'WhileStatement',
+				['VariableDeclaration', 'ExpressionStatement'],
+			],
+			[
+				'while (ready) { f(); f(); }',
+				'WhileStatement',
+				['ExpressionStatement', 'ExpressionStatement'],
+			],
+			['while (ready) { f(); }', 'WhileStatement', ['ExpressionStatement']],
+			[
+				'l: { const z = 1; f(z); }',
+				'LabeledStatement',
+				['VariableDeclaration', 'ExpressionStatement'],
+			],
+			['l: { break l; }', 'LabeledStatement', ['BreakStatement']],
+			['l: while (ready) { break l; }', 'LabeledStatement', ['BreakStatement']],
+			['m: l: { f(); }', 'LabeledStatement', ['ExpressionStatement']],
+		];
+		for (const [statement, type, body] of cases) {
+			const arm = `@switch (n) { @case 1: { ${statement} <i /> } @default: { <u /> } }`;
+			for (const template of [`{${arm}}`, `{<>${arm}</>}`, arm]) {
+				const source = `export function App({ n, ready, f }) {\n\treturn <p>${template}</p>;\n}\n`;
+				const label = `${template}`;
+				const program = parseModule(source, 'App.tsrx');
+				const found = /** @type {any} */ (find_first(program, (node) => node.type === type));
+				expect(found?.start, label).toBe(source.indexOf(statement));
+				// The innermost labeled or loop body.
+				let block = found;
+				while (block.type !== 'BlockStatement') block = block.body;
+				expect(
+					block.body.map((/** @type {AST.Node} */ node) => node.type),
+					label,
+				).toEqual(body);
+			}
+		}
+	});
+
 	it('scopes switch case setup locals to their own case block', () => {
 		expect(() =>
 			parseModule(

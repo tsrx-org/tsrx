@@ -16871,9 +16871,10 @@ export function TSRXPlugin(config) {
 						context = undefined;
 					}
 				}
+				// The body of an `if`, a loop or a label (`context`) is a block, not
+				// an expression container.
 				if (
-					context !== 'for' &&
-					context !== 'if' &&
+					context == null &&
 					this.#functionBodyDepth === 0 &&
 					this.context.at(-1) === b_stat &&
 					this.type === tt.braceL &&

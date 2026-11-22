@@ -3005,6 +3005,39 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 			expect(count_substring(code, "'D'")).toBe(1);
 		});
 	});
+
+	describe(`[${name}] a loop or a label in an @switch case used as a value`, () => {
+		it.each([
+			['while (ready) { return <b />; }', [TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT.code]],
+			['while (ready) { break; }', []],
+			['while (ready) { const z = 1; log(z); }', []],
+			['while (ready) { log(1); log(2); }', []],
+			['l: { const z = 1; log(z); }', []],
+			['l: while (ready) { break l; }', []],
+		])('compiles `%s` as when the @switch is a child', (statement, codes) => {
+			const arm = `@switch (n) { @case 1: { ${statement} <i /> } @default: { <u /> } }`;
+			/** @param {string} template */
+			const source = (template) =>
+				`export function App({ n, ready, log }: { n: number; ready: boolean; log: (x: number) => void }) {\n\treturn <p>${template}</p>;\n}\n`;
+			for (const template of [`{${arm}}`, `{<>${arm}</>}`, arm]) {
+				const src = source(template);
+				const shift = src.indexOf(statement);
+				const errors = compile(src, 'App.tsrx', { collect: true }).errors.map((error) => [
+					error.code,
+					/** @type {number} */ (error.pos) - shift,
+				]);
+				const return_at = statement.indexOf('return');
+				expect(errors, template).toEqual(codes.map((code) => [code, return_at]));
+				if (codes.length === 0) {
+					expect(compile(src, 'App.tsrx').code, template).toContain('<i />');
+				} else {
+					expect(() => compile(src, 'App.tsrx'), template).toThrow(
+						expect.objectContaining({ code: codes[0], pos: shift + return_at }),
+					);
+				}
+			}
+		});
+	});
 }
 
 /**
