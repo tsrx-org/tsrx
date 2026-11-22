@@ -9129,13 +9129,14 @@ export function TSRXPlugin(config) {
 			 *   every mode. acorn-typescript read `\u0061bstract class A {}` as an
 			 *   abstract class (sveltejs/acorn-typescript#147).
 			 *
-			 * At the start of a statement, before anything else, `abstract` is a
-			 * name, as in TypeScript: before a token on its line, TS1434
-			 * `Unexpected keyword or identifier.` (see `semicolon`), where
-			 * acorn-typescript raised `Unexpected token` (`abstract foo;`).
-			 * Elsewhere, before a repeated modifier (`abstract abstract class A
-			 * {}`), or a modifier this parser doesn't keep on a declaration
-			 * (`abstract public class A {}`), acorn-typescript's reading stays.
+			 * At the start of a statement, before what TypeScript reads no
+			 * declaration from (see `#startsDeclaration`), `abstract` is a name, as
+			 * in TypeScript: before a token on its line, TS1434 `Unexpected keyword
+			 * or identifier.` (see `semicolon`), where acorn-typescript raised
+			 * `Unexpected token` (`abstract foo;`). Before anything else, a repeated
+			 * modifier (`abstract abstract class A {}`), or a modifier this parser
+			 * doesn't keep on a declaration (`abstract public class A {}`),
+			 * acorn-typescript's reading stays.
 			 * @type {Parse.Parser['tsParseDeclaration']}
 			 */
 			tsParseDeclaration(node, value, next) {
@@ -9158,7 +9159,9 @@ export function TSRXPlugin(config) {
 					declaration = null;
 				}
 				if (declaration === null) {
-					return next && Parser.acornTypeScript.tokenIsIdentifier(this.type)
+					// A name where TypeScript reads no declaration after it.
+					if (!next && !this.#startsDeclaration()) return undefined;
+					return Parser.acornTypeScript.tokenIsIdentifier(this.type)
 						? this.tsParseAbstractDeclaration(node)
 						: undefined;
 				}
@@ -17243,7 +17246,9 @@ export function TSRXPlugin(config) {
 				) {
 					this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED(','));
 				}
-				const name = this.input.slice(this.lastTokStart, this.lastTokEnd);
+				// TypeScript reads a name with the escapes in it decoded (`idText`).
+				const raw = this.input.slice(this.lastTokStart, this.lastTokEnd);
+				const name = (raw.includes('\\') && decode_identifier_name(raw)) || raw;
 				if (
 					this.lastTokStart === this.#statementExpressionStart &&
 					regex_plain_name.test(name) &&

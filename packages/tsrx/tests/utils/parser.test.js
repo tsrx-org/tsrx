@@ -17550,11 +17550,20 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			['declare export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
 			['declare async foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'async'],
 			['declare abstract foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'abstract'],
+			// A name written with an escape is the name it spells (`idText`).
+			['\\u0061bstract foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
+			['\\u0061sync foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
+			['a\\u0062 c;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'a'],
 		]);
 		expect(() => parseModule('declare export foo;', 'App.tsrx')).toThrow(
 			'Declaration or statement expected.',
 		);
 		expect(() => parseModule('async foo;', 'App.tsrx')).toThrow(
+			'Unexpected keyword or identifier.',
+		);
+		// Before a declaration TypeScript reads (a global augmentation named
+		// `foo`, TS1005 at `foo`), `abstract` isn't a name.
+		expect(() => parseModule('abstract global foo;', 'App.tsrx')).not.toThrow(
 			'Unexpected keyword or identifier.',
 		);
 		// Before a declaration they stay modifiers, and `async` before a name and
