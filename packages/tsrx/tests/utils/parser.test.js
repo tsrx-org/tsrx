@@ -14788,15 +14788,33 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				'continue',
 			],
 			['function f() { L: { continue L; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['function f() { continue\n}', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'continue'],
 		];
-		const outcomes = await parse_in_worker(
-			cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
-		);
-		expect(outcomes).toEqual(
-			cases.flatMap(([source, error, at]) => [
-				thrown(error, source.indexOf(at)),
-				thrown(error, source.indexOf(at)),
+		const sources = cases.map(([source]) => `${source}\nexport const after = 1;`);
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) => [
+				{ source },
+				{ source, options: { collect: true } },
+				{ source, options: { loose: true } },
 			]),
+		);
+		// A collecting parse records it over the statement, as TypeScript's
+		// checker reports it, and reads on.
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok ? { errors: outcome.errors, last: outcome.ast.body.at(-1)?.type } : outcome,
+			),
+		).toEqual(
+			cases.flatMap(([source, error, at]) => {
+				const pos = source.indexOf(at);
+				const semicolon = source.indexOf(';', pos);
+				const end = semicolon === -1 ? pos + at.length : semicolon + 1;
+				const collected = {
+					errors: [{ code: code_of(error), pos, end }],
+					last: 'ExportNamedDeclaration',
+				};
+				return [thrown(error, pos), collected, collected];
+			}),
 		);
 	});
 
@@ -15561,8 +15579,6 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// `TS_SYNTAX_ERROR_CODES`).
 			...[
 				['class A { m(public x) { label: label: ; } }', 'TS1114', 'label: ;'],
-				['class A { m(public x) { break; } }', 'TS1107', 'break'],
-				['class A { m(public x) { continue; } }', 'TS1107', 'continue'],
 				['class A { m(public x) { delete y; } }', 'TS1102', 'delete'],
 				['class A { m(public x) { arguments = 1; } }', 'TS1100', 'arguments'],
 				["class A { m(public x) { 'use strict'; } }", 'TS1347', '(public'],
@@ -15594,6 +15610,18 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 						source,
 						[[parameter_property, 'public x']],
 						[code, at],
+					]),
+			),
+			// A jump with no target, which a collecting parse records (TS1107).
+			...['break', 'continue'].map(
+				(keyword) =>
+					/** @type {[string, string, Array<[string | undefined, string]>]} */ ([
+						'a.ts',
+						`class A { m(public x) { ${keyword}; } }`,
+						[
+							[parameter_property, 'public x'],
+							['TS1107', keyword],
+						],
 					]),
 			),
 			[

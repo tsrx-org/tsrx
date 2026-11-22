@@ -405,6 +405,8 @@ declare module 'estree' {
 			invalid_directive_jump?: boolean;
 			/** A `break` right in an `@switch` case, which the parser reported (TSRX2008), so the directive jump check doesn't report it again. */
 			invalid_tsrx_switch_case_break?: boolean;
+			/** A `break` with no target, which the parser reported (TS1105, TS1107, TS1116), so the template checks don't report it again. */
+			invalid_jump_target?: boolean;
 		};
 	}
 
@@ -412,6 +414,8 @@ declare module 'estree' {
 		metadata: BaseNodeMetaData & {
 			/** A `continue` the directive jump check reported, which the `@if` and `@for` checks then leave alone. */
 			invalid_directive_jump?: boolean;
+			/** A `continue` with no target, which the parser reported (TS1104, TS1107, TS1115), so the template checks don't report it again. */
+			invalid_jump_target?: boolean;
 		};
 	}
 

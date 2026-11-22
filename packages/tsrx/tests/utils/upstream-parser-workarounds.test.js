@@ -4361,7 +4361,13 @@ describe('a TypeScript word as a label or an async arrow function parameter (sve
 			parse_in_worker(in_every_mode(named)),
 		]);
 		expect(outcomes).toEqual(expected);
-		expect(outcomes.every((outcome) => !outcome.ok)).toBe(true);
+		// A strict parse throws it, and a collecting one records it and reads on.
+		expect(outcomes.map((outcome) => (outcome.ok ? outcome.errors : outcome.code))).toEqual(
+			sources.flatMap((source) => {
+				const code = source.startsWith('for') ? 'TS1116' : 'TS1115';
+				return [code, [code], [code]];
+			}),
+		);
 	});
 
 	it('reads the word as an async arrow function parameter', async () => {
