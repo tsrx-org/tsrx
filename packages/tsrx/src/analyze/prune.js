@@ -318,6 +318,30 @@ function truncate(node) {
 }
 
 /**
+ * @param {AST.CSS.SimpleSelector} selector
+ * @returns {boolean}
+ */
+function is_root(selector) {
+	return selector.type === 'PseudoClassSelector' && selector.name === 'root';
+}
+
+/**
+ * Whether `element` may be the page's root element: an `<html>`, or a dynamic
+ * element, whose tag is only known at runtime.
+ *
+ * @param {AST.TSRXElementNode} element
+ * @returns {boolean}
+ */
+function may_be_root_element(element) {
+	if (is_dynamic_element(element)) return true;
+	const name = get_element_name(element);
+	return (
+		(name?.type === 'Identifier' || name?.type === 'JSXIdentifier') &&
+		name.name.toLowerCase() === 'html'
+	);
+}
+
+/**
  * @param {AST.CSS.RelativeSelector[]} relative_selectors
  * @param {AST.CSS.Rule} rule
  * @param {AST.TSRXElementNode} element
@@ -1121,6 +1145,10 @@ function relative_selector_might_apply_to_node(relative_selector, rule, element,
 		}
 	}
 
+	// `:root` is the page's root element, so one of the component's only when it
+	// renders the `<html>`, whose state (`:root.dark`) the page may set later.
+	if (other_selectors.some((selector) => is_root(selector))) return may_be_root_element(element);
+
 	for (const selector of other_selectors) {
 		if (selector.type === 'Percentage' || selector.type === 'Nth') continue;
 
@@ -1128,7 +1156,7 @@ function relative_selector_might_apply_to_node(relative_selector, rule, element,
 
 		switch (selector.type) {
 			case 'PseudoClassSelector': {
-				if (name === 'host' || name === 'root') return false;
+				if (name === 'host') return false;
 
 				if (
 					name === 'global' &&
@@ -1499,8 +1527,16 @@ export function keep_global_compound_arguments(css) {
 						ComplexSelector(complex_selector, context) {
 							// In a :root or :host compound's argument, a selector with an `&`
 							// is about the rule around it, or a `@scope`'s root, and is left
-							// as the pruner matched it.
-							if (!global && has_nesting_selector(complex_selector)) return;
+							// as the pruner matched it, but kept in a :not(), with its own
+							// arguments, as if it matched: pruned, it would leave the :not()
+							// empty, which is invalid.
+							if (!global && has_nesting_selector(complex_selector)) {
+								if (selector.name === 'not') {
+									complex_selector.metadata.used = true;
+									assume_match(complex_selector.children);
+								}
+								return;
+							}
 							complex_selector.metadata.used = true;
 							context.next();
 						},
@@ -1509,9 +1545,18 @@ export function keep_global_compound_arguments(css) {
 							context.next();
 						},
 						// There, a :has() still looks at descendants
-						// (`:root:not(:root:has(.icon))`), scoped as before.
+						// (`:root:not(:root:has(.icon))`), scoped as before. An argument
+						// of it that matches nothing is kept, scoped, as if it matched:
+						// pruned, it would leave the :has() empty, which is invalid and
+						// takes the rule's whole selector list with it. Scoped, it
+						// matches nothing, as pruned it would.
 						PseudoClassSelector(pseudo_class, context) {
-							if (global || pseudo_class.name !== 'has') context.next();
+							if (global || pseudo_class.name !== 'has') return context.next();
+							for (const argument of pseudo_class.args?.children ?? []) {
+								if (argument.metadata.used) continue;
+								argument.metadata.used = true;
+								assume_match(truncate(argument));
+							}
 						},
 					});
 				}
