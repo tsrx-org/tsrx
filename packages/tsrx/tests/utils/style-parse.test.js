@@ -201,10 +201,17 @@ describe('parseStyle declaration values', function () {
 		[String.raw`.a { content: "\2713"; }`, String.raw`"\2713"`],
 		[String.raw`.a { content: "a\"b"; }`, String.raw`"a\"b"`],
 		[String.raw`.a { font-family: \31 x, \\; }`, String.raw`\31 x, \\`],
-		// The space a `\` escapes is part of the value.
+		// The space a `\` escapes is part of the value, as is the one that ends
+		// a hex escape; a `\` before a newline escapes nothing.
 		[String.raw`.a { font-family: a\ ; }`, String.raw`a\ `],
+		['.a { font-family: a\\\t; }', 'a\\\t'],
 		[String.raw`.a { font-family: a\\ ; }`, String.raw`a\\`],
 		[String.raw`.a { --x: a\ ; }`, String.raw`a\ `],
+		[String.raw`.a { font-family: a\31  ; }`, String.raw`a\31 `],
+		[String.raw`.a { --x: a\31 ; }`, String.raw`a\31 `],
+		['.a { --x: a\\31\r\n; }', 'a\\31\r\n'],
+		['.a { --x: a\\\n; }', 'a\\'],
+		['.a { font-family: a\\\r\n; }', 'a\\'],
 	])('keeps the escapes in %j as written', function (css, value) {
 		expect(blocks(css)).toEqual([[[css.slice(5, css.indexOf(':')), value]]]);
 	});
@@ -219,6 +226,10 @@ describe('parseStyle declaration values', function () {
 		expect(/** @type {any} */ (sheet.children[0]).prelude).toBe(
 			String.raw`(content: "\2713") and (--x: \31 )`,
 		);
+		expect(
+			/** @type {any} */ (parseStyle(String.raw`@keyframes a\31 { }`, LOCATION, {}).children[0])
+				.prelude,
+		).toBe(String.raw`a\31 `);
 	});
 });
 

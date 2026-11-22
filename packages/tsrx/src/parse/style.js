@@ -13,6 +13,8 @@ const REGEX_COMBINATOR = /^(\+|~|>|\|\|)/;
 const REGEX_VALID_IDENTIFIER_CHAR = /[a-zA-Z0-9_-]/;
 const REGEX_LEADING_HYPHEN_OR_DIGIT = /^-?\d/;
 const REGEX_WHITESPACE_OR_COLON = /[\s:]/;
+// An escape, and the one space that ends a hex escape (`\r\n` too).
+const REGEX_VALUE_ESCAPE = /^\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^\n\r\f])/;
 // `--` and a name (letters, digits, `-`, `_`, non-ASCII, escapes), then `:`.
 const REGEX_CUSTOM_PROPERTY_START = /^--(?:[\w-]|[^\x00-\x7f]|\\[^\n])*\s*:/;
 const REGEX_NTH_OF =
@@ -678,8 +680,9 @@ function is_url_name(tracker) {
 }
 
 /**
- * `value` without the whitespace around it, but with a whitespace character an
- * escape holds: `a\ ` is the identifier `a `.
+ * `value` without the whitespace around it, but with the whitespace an escape
+ * at its end holds: `a\ ` is the identifier `a `, and the space that ends the
+ * hex escape `\31 ` is part of it. A `\` before a newline is no escape.
  *
  * @param {string} value
  * @returns {string}
@@ -687,9 +690,12 @@ function is_url_name(tracker) {
 function trim_value(value) {
 	const start = value.length - value.trimStart().length;
 	let end = value.trimEnd().length;
-	let backslashes = 0;
-	while (end - backslashes > start && value[end - 1 - backslashes] === '\\') backslashes += 1;
-	if (backslashes % 2 === 1 && end < value.length) end += 1;
+	for (let index = value.indexOf('\\', start); index !== -1 && index < end;) {
+		const escape = REGEX_VALUE_ESCAPE.exec(value.slice(index, index + 9));
+		const length = escape ? escape[0].length : 1;
+		end = Math.max(end, index + length);
+		index = value.indexOf('\\', index + length);
+	}
 	return value.slice(start, end);
 }
 
