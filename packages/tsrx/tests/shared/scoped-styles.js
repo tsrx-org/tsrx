@@ -2262,6 +2262,77 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`:ROOT:WHERE(&.dark, .light) > body.${hash} {`);
 		});
 
+		it('reads a compound with an & for :root or :host as one with :root or :host', () => {
+			/** @type {Array<[rule: string, expected: (hash: string) => string]>} */
+			const cases = [
+				// A state of the root reached through `&` matched no element and was pruned.
+				[':root { --c: black; &.dark { --c: white } }', () => '&.dark { --c: white }'],
+				[':root.dark { &.dark .icon { color: red } }', (hash) => `&.dark .icon.${hash} {`],
+				[
+					':root { &[data-theme="dark"] .icon { color: red } }',
+					(hash) => `&[data-theme="dark"] .icon.${hash} {`,
+				],
+				[':host { &.open .icon { color: red } }', (hash) => `&.open .icon.${hash} {`],
+				[':root, :host { &.dark .icon { color: red } }', (hash) => `&.dark .icon.${hash} {`],
+				[':root { &.dark { &.x .icon { color: red } } }', (hash) => `&.x .icon.${hash} {`],
+				// Its :not(), :is() and :where() arguments are kept as written.
+				[':root { &:not(.dark) .icon { color: red } }', (hash) => `&:not(.dark) .icon.${hash} {`],
+				[
+					':root:not(.dark) { &:is(.light) .icon { color: red } }',
+					(hash) => `&:is(.light) .icon.${hash} {`,
+				],
+			];
+			for (const [rule, expected] of cases) {
+				const theme = compile(`export const theme = <style>${rule}</style>;`, 'App.tsrx');
+				const component = compile(
+					`export function App() @{
+						<>
+							<style>${rule}</style>
+							<div ${attr}="wrap"><i ${attr}="icon" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(theme.css, rule).toContain(expected(hashes_of(theme.cssHash)[0]));
+				expect(component.css, rule).toContain(expected(hashes_of(component.cssHash)[0]));
+				expect(component.css, rule).not.toContain('(unused)');
+			}
+
+			// Nor does it leave one of those arguments empty, which would lose .icon.
+			const kept = compile(
+				`export function App() @{
+					<>
+						<style>
+							:root { &:not(.missing &), &:not(:has(.missing)), .icon { color: red; } }
+							:root { &:not(&:has(.missing)), &:not(.missing:not(.absent) &), .icon { color: blue; } }
+						</style>
+						<i ${attr}="icon" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+			const kept_hash = hashes_of(kept.cssHash)[0];
+			expect(kept.css).toContain(
+				`&:not(.missing.${kept_hash} &), &:not(:has(.missing.${kept_hash})), .icon.${kept_hash} {`,
+			);
+			expect(kept.css).toContain(
+				`&:not(&:has(.missing.${kept_hash})), &:not(.missing.${kept_hash}:not(.absent) &), .icon.${kept_hash} {`,
+			);
+
+			// An `&` for a compound that matches an element is matched against it.
+			const { css } = compile(
+				`export function App() @{
+					<>
+						<style>:root .wrap { &.dark .icon { color: red; } }</style>
+						<div ${attr}="wrap"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+			expect(css).toContain('/* (empty) :root .wrap');
+		});
+
 		it('prunes a selector whose :root or :host compound has a :has() that matches nothing', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{

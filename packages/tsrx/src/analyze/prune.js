@@ -10,6 +10,7 @@ import {
 	node_children,
 } from '../utils/ast.js';
 import { unescape_css } from '../parse/style.js';
+import { is_root_compound } from './css-analyze.js';
 import { regex_whitespaces_strict } from '../utils/patterns.js';
 
 /** @type {CssPruneDirection} */
@@ -1571,19 +1572,23 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
  * the compound against the component's elements found (#1314).
  *
  * So are the arguments of the `:not()`, `:is()` and `:where()` of a compound
- * with `:root` or `:host` (`:root:not(.dark)`): they are about the page's root
- * element or the shadow host, never one of the component's elements. Pruning
- * them left an empty `:not()`, which is invalid. Those of its `:has()` are the
- * element's descendants, scoped as before.
+ * with `:root` or `:host` (`:root:not(.dark)`), or with an `&` that stands for
+ * one (`:root { &:not(.dark) {} }`): they are about the page's root element or
+ * the shadow host, never one of the component's elements. Pruning them left an
+ * empty `:not()`, which is invalid. Those of its `:has()` are the element's
+ * descendants, scoped as before.
  *
  * @param {AST.CSS.Node} css
  * @returns {void}
  */
 export function keep_global_compound_arguments(css) {
-	walk(css, null, {
-		RelativeSelector(node, { next }) {
+	walk(css, /** @type {AST.CSS.Rule | null} */ (null), {
+		ComplexSelector(node, { next }) {
+			next(node.metadata.rule);
+		},
+		RelativeSelector(node, { state, next }) {
 			const global = is_outer_global(node);
-			if (!global && !node.selectors.some(is_root_or_host)) return next();
+			if (!global && !is_root_compound(node, state)) return next();
 
 			for (const selector of node.selectors) {
 				if (
@@ -1652,18 +1657,5 @@ export function keep_global_compound_arguments(css) {
 function has_nesting_selector(selector) {
 	return selector.children.some(({ selectors }) =>
 		selectors.some((simple) => simple.type === 'NestingSelector'),
-	);
-}
-
-/**
- * Whether `simple` is `:root` or `:host` (`:host(...)` too), which match the
- * page's root element or the shadow host.
- *
- * @param {AST.CSS.SimpleSelector} simple
- * @returns {boolean}
- */
-function is_root_or_host(simple) {
-	return (
-		simple.type === 'PseudoClassSelector' && (simple.name === 'root' || simple.name === 'host')
 	);
 }
