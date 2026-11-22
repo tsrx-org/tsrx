@@ -17562,10 +17562,13 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			'Unexpected keyword or identifier.',
 		);
 		// Before a declaration TypeScript reads (a global augmentation named
-		// `foo`, TS1005 at `foo`), `abstract` isn't a name.
-		expect(() => parseModule('abstract global foo;', 'App.tsrx')).not.toThrow(
-			'Unexpected keyword or identifier.',
-		);
+		// `foo`, TS1005 at `foo`; a repeated modifier, TS1030), `abstract` isn't a
+		// name.
+		for (const source of ['abstract global foo;', 'if (x) abstract abstract class C {}']) {
+			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow(
+				'Unexpected keyword or identifier.',
+			);
+		}
 		// Before a declaration they stay modifiers, and `async` before a name and
 		// `=>` on its line starts an arrow function.
 		for (const source of [
@@ -17578,6 +17581,8 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			'async foo => foo;',
 			'const g = async\nfoo => foo;',
 			'async function* g() {}',
+			// acorn's reading of `async of` in a `for` head stays.
+			'async function f(xs) {\n\tfor await (async of xs) {}\n}',
 		]) {
 			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
 		}
