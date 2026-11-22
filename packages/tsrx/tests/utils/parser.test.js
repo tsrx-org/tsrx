@@ -14801,14 +14801,16 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	});
 
 	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {
-		// `global` is a global augmentation only before `{`, so TS1184, as on main.
+		// `global` is a global augmentation only before `{` (or a name or
+		// `export`), so `export` starts no declaration there: TS1128, as in
+		// TypeScript.
 		for (const source of [
 			'let global: any;\n{\n\texport global;\n}',
 			'let global: any;\n{\n\texport global.x;\n}',
 		]) {
 			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
 				expect.objectContaining({
-					code: TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE.code,
+					code: TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED.code,
 					pos: source.indexOf('export'),
 				}),
 			);
@@ -17386,10 +17388,9 @@ describe('an at-sign construct after `export` (#607)', () => {
 			['export @for (const a of b) { <div /> }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
 			['export @switch (a) { @case 1: { <div /> } }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
 			['export @try { <div /> } @catch (e) { <b /> }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
-			['export foo;', TS_ERRORS.UNEXPECTED_TOKEN, 'foo'],
-			// acorn-typescript's `'export declare' must be followed by an ambient
-			// declaration.`
-			['export declare @if (a) { <div /> }', 'TS1128', '@'],
+			['export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			// `export declare` before no declaration, as TypeScript reports it.
+			['export declare @if (a) { <div /> }', 'TS1128', 'export'],
 		];
 		const outcomes = await parse_in_worker(
 			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
@@ -17512,6 +17513,63 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		]);
 		// Before a line break or another token, it's a name.
 		for (const source of ['accessor\nx;', 'accessor = 1;', 'readonly;']) {
+			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
+		}
+	});
+
+	it('reports `export`, `async` and `abstract` before no declaration as TypeScript does', async () => {
+		await expect_thrown([
+			// `export` starts no statement before what TypeScript reads no
+			// declaration from: TS1128 at `export`, where acorn failed after it.
+			['export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			['export 1;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			['export\nfoo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			['export async foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			['export abstract foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			['export declare foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			['export declare abstract foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			['{\n\texport foo;\n}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			['namespace N {\n\texport foo;\n}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			// `async` and `abstract` are names before anything else: TS1434 at the
+			// name, where acorn failed at the token after it (`async`) or reported
+			// `Unexpected token` (`abstract`).
+			['async foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'async'],
+			['async foo();', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'async'],
+			['async foo\n=> 1;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'async'],
+			['async await;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'async'],
+			['abstract foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'abstract'],
+			['abstract foo = 1;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'abstract'],
+			['abstract interface;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'abstract'],
+			[
+				'function f() {\n\tabstract foo;\n}',
+				TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER,
+				'abstract',
+			],
+			// After `declare`, which is a name there with no error after it, the
+			// next statement starts at the word.
+			['declare export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			['declare async foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'async'],
+			['declare abstract foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'abstract'],
+		]);
+		expect(() => parseModule('declare export foo;', 'App.tsrx')).toThrow(
+			'Declaration or statement expected.',
+		);
+		expect(() => parseModule('async foo;', 'App.tsrx')).toThrow(
+			'Unexpected keyword or identifier.',
+		);
+		// Before a declaration they stay modifiers, and `async` before a name and
+		// `=>` on its line starts an arrow function.
+		for (const source of [
+			'export async function f() {}',
+			'export abstract class A {}',
+			'export declare const x: number;',
+			'export\nconst x = 1;',
+			'declare abstract class A {}',
+			'const f = async foo => foo;',
+			'async foo => foo;',
+			'const g = async\nfoo => foo;',
+			'async function* g() {}',
+		]) {
 			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
 		}
 	});

@@ -4393,12 +4393,15 @@ export function TSRXPlugin(config) {
 			/**
 			 * `async` before a word on its line, where an arrow function can start: a
 			 * TypeScript word and then `=>` on its line are an async arrow function's
-			 * parameter (`async type => type`), and `as` or `satisfies` without a `=>`
-			 * after it is an operator on the name `async` (`async as T`), as in
-			 * TypeScript. acorn-typescript took the parameter only from a name token,
-			 * and any name token for one, so the first failed at the word and the
-			 * second at the token after it. `undefined` for any other word, which
-			 * acorn-typescript reads.
+			 * parameter (`async type => type`), and before any other word without a
+			 * `=>` after it on its line `async` is a name, as in TypeScript
+			 * (`isUnParenthesizedAsyncArrowFunctionWorker`): `as` or `satisfies` is
+			 * an operator on it (`async as T`), and another word is a missing `;`
+			 * after it (`async foo;`, TS1434 `Unexpected keyword or identifier.`, see
+			 * `semicolon`). acorn-typescript took the parameter only from a name
+			 * token, and any name token for one, so the first failed at the word and
+			 * the others at the token after it (`Unexpected token`). `undefined` for
+			 * any other word, which acorn-typescript reads.
 			 * @param {Parameters<Parse.Parser['parseExprAtom']>[0]} refDestructuringErrors
 			 * @param {Parameters<Parse.Parser['parseExprAtom']>[1]} forInit
 			 * @param {Parameters<Parse.Parser['parseExprAtom']>[2]} forNew
@@ -4423,8 +4426,9 @@ export function TSRXPlugin(config) {
 				}
 				if (
 					word.type === tt.name &&
-					(word.value === 'as' || word.value === 'satisfies') &&
-					after.type !== tt.arrow
+					(after.type !== tt.arrow || this.#lineBreakAfter(word.end)) &&
+					// acorn's own reading of `for (async of …)`.
+					!(forInit && word.value === 'of')
 				) {
 					// acorn-typescript reads an async arrow function only where one can
 					// start (`potentialArrowAt`).
@@ -9125,7 +9129,11 @@ export function TSRXPlugin(config) {
 			 *   every mode. acorn-typescript read `\u0061bstract class A {}` as an
 			 *   abstract class (sveltejs/acorn-typescript#147).
 			 *
-			 * Before anything else, a repeated modifier (`abstract abstract class A
+			 * At the start of a statement, before anything else, `abstract` is a
+			 * name, as in TypeScript: before a token on its line, TS1434
+			 * `Unexpected keyword or identifier.` (see `semicolon`), where
+			 * acorn-typescript raised `Unexpected token` (`abstract foo;`).
+			 * Elsewhere, before a repeated modifier (`abstract abstract class A
 			 * {}`), or a modifier this parser doesn't keep on a declaration
 			 * (`abstract public class A {}`), acorn-typescript's reading stays.
 			 * @type {Parse.Parser['tsParseDeclaration']}
@@ -9150,7 +9158,7 @@ export function TSRXPlugin(config) {
 					declaration = null;
 				}
 				if (declaration === null) {
-					return Parser.acornTypeScript.tokenIsIdentifier(this.type)
+					return next && Parser.acornTypeScript.tokenIsIdentifier(this.type)
 						? this.tsParseAbstractDeclaration(node)
 						: undefined;
 				}
@@ -10146,17 +10154,25 @@ export function TSRXPlugin(config) {
 
 			/**
 			 * Whether TypeScript's parser reads a declaration after the `declare` just
-			 * read, from the current token (`isDeclaration`): on its line, `type`,
-			 * any other word or keyword that starts one there (see
-			 * `#declarationAfterModifier`), or a modifier on its line (`static` on
-			 * any line) and then one of these. Where it reads none, `declare` is a
+			 * read, from the current token (`isDeclaration`): on its line, `type`, or
+			 * what `#startsDeclaration` takes. Where it reads none, `declare` is a
 			 * name, and TypeScript reports no missing `;` after it
-			 * (`parseErrorForMissingSemicolonAfter`). Before `export` it says yes
-			 * without looking further, and acorn-typescript reads on.
+			 * (`parseErrorForMissingSemicolonAfter`).
 			 */
 			#declarationAfterDeclare() {
 				if (this.type === tt.semi || this.canInsertSemicolon()) return false;
 				if (this.type === tstt.type) return true;
+				return this.#startsDeclaration();
+			}
+
+			/**
+			 * Whether TypeScript's parser reads a declaration from the current token
+			 * (`isDeclaration`): a word or keyword that starts one there (see
+			 * `#declarationAfterModifier`), `export` before `=`, `*`, `{`, `default`,
+			 * `as` or `@` (after `type`, too), or a modifier, `export`, or one on its
+			 * line (`static` on any line), and then one of these.
+			 */
+			#startsDeclaration() {
 				const is_identifier = Parser.acornTypeScript.tokenIsIdentifier;
 				for (let ahead = 0; ; ahead++) {
 					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
@@ -10172,12 +10188,26 @@ export function TSRXPlugin(config) {
 								is_identifier(after)
 							);
 						}
+						if (token.type === tt._export) {
+							let after = this.lookahead(ahead + 1);
+							if (after.type === tstt.type) after = this.lookahead(ahead + 2);
+							if (
+								after.type === tt.eq ||
+								after.type === tt.star ||
+								after.type === tt.braceL ||
+								after.type === tt._default ||
+								after.type === tstt.at ||
+								(after.type === tt.name && after.value === 'as')
+							) {
+								return true;
+							}
+							continue;
+						}
 						return (
 							token.type === tt._var ||
 							token.type === tt._const ||
 							token.type === tt._function ||
-							token.type === tt._class ||
-							token.type === tt._export
+							token.type === tt._class
 						);
 					}
 					const word = /** @type {string} */ (token.value);
@@ -16580,9 +16610,14 @@ export function TSRXPlugin(config) {
 			 * on its line, where TypeScript's parser reads no declaration
 			 * (`accessor x;`): it doesn't start a statement there (`isStartOfStatement`),
 			 * and TypeScript reports TS1128 `Declaration or statement expected.` at
-			 * it, where acorn read a name and failed after it.
+			 * it, where acorn read a name and failed after it. So does `export`
+			 * before anything TypeScript's parser reads no declaration from
+			 * (`export foo;`, `export async foo;`), where acorn failed after it.
 			 */
 			#checkStatementStart() {
+				if (this.type === tt._export && !this.#startsDeclaration()) {
+					this.raise(this.start, TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED);
+				}
 				if (
 					!Parser.acornTypeScript.tokenIsIdentifier(this.type) ||
 					this.containsEsc ||
