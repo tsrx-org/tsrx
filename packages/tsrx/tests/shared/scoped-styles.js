@@ -1092,6 +1092,18 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`animation: ${hash}-fade/*comment*/ 1s infinite;`);
 		});
 
+		it('reads the value after a space before the colon', () => {
+			const { css, hash } = compile_keyframes(
+				`@keyframes fade ${frames} @keyframes slide ${frames}
+				.a { animation :fade 1s; }
+				.b { animation-name :slide; }
+				.c { animation\n:fade 1s, 2s "slide"; }`,
+			);
+			expect(css).toContain(`animation :${hash}-fade 1s;`);
+			expect(css).toContain(`animation-name :${hash}-slide;`);
+			expect(css).toContain(`animation\n:${hash}-fade 1s, 2s "${hash}-slide";`);
+		});
+
 		it('leaves animation shorthand keywords alone even when local keyframes share their name', () => {
 			const { css, hash } = compile_keyframes(
 				`@keyframes linear ${frames} @keyframes fade ${frames}
