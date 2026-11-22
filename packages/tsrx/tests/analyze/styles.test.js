@@ -1294,6 +1294,25 @@ describe('scoped style analysis', () => {
 			expect_anchored_on(errors[1], source, ':global(.e)');
 		});
 
+		it('reports a lone :global in a list outside a rule once, not its declarations too', () => {
+			for (const css of [
+				':global, .z { color: red; }',
+				'.z, :global { color: red; }',
+				':global, :global .w { color: red; }',
+				'@media print { :global.w, :global { color: red; } }',
+			]) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				const source = `const t = <style>${css}</style>;`;
+				analyzeCss(first_stylesheet(source), { errors });
+
+				expect(
+					errors.map((error) => error.message),
+					css,
+				).toEqual([TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR]);
+			}
+		});
+
 		it('reports a :global(...) selector list in a longer selector', () => {
 			/** @type {Array<[css: string, anchor: string | null]>} */
 			const cases = [

@@ -82,6 +82,7 @@ function check_global_block_list(rule, report) {
 	);
 	if (lone !== -1 && styles && !has_parent_rule_in_output(rule)) {
 		report(TSRX_ERRORS.CSS_GLOBAL_BLOCK_NOT_ALONE, /** @type {AST.CSS.Node} */ (leading[lone]));
+		not_alone_rules.add(rule);
 		return;
 	}
 	if (!leading.includes(null)) return;
@@ -650,6 +651,16 @@ function first_bare_declaration(block) {
 }
 
 /**
+ * Rules whose lone `:global` shares their selector list, reported as
+ * `CSS_GLOBAL_BLOCK_NOT_ALONE`: the output drops their selectors for it, and
+ * that error already says why their declarations would be left outside every
+ * rule (`:global, .z { color: red }`).
+ *
+ * @type {WeakSet<AST.CSS.Rule>}
+ */
+const not_alone_rules = new WeakSet();
+
+/**
  * Report what would be left outside every rule in the output: an `&` with
  * no rule or `@scope` around it, which would match the page's root element,
  * and the declarations of a `:global { ... }` block the output drops with no
@@ -670,7 +681,8 @@ function check_rules_without_parent(rules, report) {
 		if (
 			drops_selector(rule) &&
 			!has_parent_rule_in_output(rule) &&
-			!declaration_at_rule_rules.has(rule)
+			!declaration_at_rule_rules.has(rule) &&
+			!not_alone_rules.has(rule)
 		) {
 			const declaration = first_bare_declaration(rule.block);
 			if (declaration) report(TSRX_ERRORS.CSS_GLOBAL_BLOCK_DECLARATION, declaration);
