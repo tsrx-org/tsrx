@@ -808,6 +808,79 @@ describe('TSRX parser', () => {
 				expect(() => parseModule(source, 'App.tsrx')).toThrow(error_with(error));
 			}
 		});
+
+		it('reads a using declaration where TypeScript does', () => {
+			// `using x = y;` on the line after `await` is an `await using`
+			// declaration, as TypeScript reads it, which compiles to `await using`.
+			for (const source of [
+				'async function f(y) {\n\tawait\n\tusing x = y;\n}',
+				'async function f(y) {\n\tfor (await\n\tusing x of y) {}\n}',
+				'await\nusing x = y;',
+			]) {
+				const [declaration] = find_all(source, 'VariableDeclaration');
+				expect(declaration?.kind, source).toBe('await using');
+			}
+			// Without a name or `{` on the line of `using`, it's an expression.
+			for (const source of ['await\nusing;', 'await\nusing.x;', 'await\nusing\nx = y;']) {
+				expect(find_all(source, 'VariableDeclaration'), source).toEqual([]);
+			}
+
+			// A binding pattern, which TypeScript's checker reports at the pattern
+			// (TS1492), and nothing else about the declarator: a strict parse throws
+			// it, and a collecting one records it and keeps the pattern.
+			/** @type {Array<[source: string, kind: string, at: string]>} */
+			const patterns = [
+				['using {x} = y;', 'using', '{x}'],
+				['using {x}: T = y;', 'using', '{x}'],
+				['using {x};', 'using', '{x}'],
+				['using z = w, [x] = y;', 'using', '[x]'],
+				['async function f() {\n\tawait using {x} = y;\n}', 'await using', '{x}'],
+				['async function f() {\n\tawait\n\tusing {x} = y;\n}', 'await using', '{x}'],
+				['for (using {x} of y) {}', 'using', '{x}'],
+			];
+			for (const [source, kind, at] of patterns) {
+				const error = TS_ERRORS.USING_BINDING_PATTERN(kind);
+				const pos = source.indexOf(at);
+				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+					expect.objectContaining({
+						code: 'TS1492',
+						message: expect.stringContaining(error.message),
+						pos,
+					}),
+				);
+				/** @type {CompileError[]} */
+				const errors = [];
+				const ast = parseModule(source, 'App.tsrx', { collect: true, errors });
+				expect(
+					errors.map((found) => [found.code, found.message, found.pos, found.end]),
+					source,
+				).toEqual([['TS1492', error.message, pos, pos + at.length]]);
+				const ids = find_all(source, 'VariableDeclarator', { collect: true, errors: [] }).map(
+					(declarator) => declarator.id.type,
+				);
+				expect(ids, source).toContain(at.startsWith('{') ? 'ObjectPattern' : 'ArrayPattern');
+				expect(ast.body.length, source).toBeGreaterThan(0);
+			}
+
+			// After `declare`, TypeScript reports the modifier first.
+			for (const [source, codes] of /** @type {Array<[string, string[]]>} */ ([
+				['declare using {x} = y;', ['TS1491', 'TS1492']],
+				['declare await using {x} = y;', ['TS1495', 'TS1492']],
+				['declare await\nusing x = y;', ['TS1495']],
+				['abstract using {x} = y;', ['TS1242', 'TS1492']],
+			])) {
+				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+					expect.objectContaining({ code: codes[0], pos: 0 }),
+				);
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, 'App.tsrx', { collect: true, errors });
+				expect(
+					errors.map((found) => found.code),
+					source,
+				).toEqual(codes);
+			}
+		});
 	});
 
 	it('parses returned tags as JSXElement nodes', () => {

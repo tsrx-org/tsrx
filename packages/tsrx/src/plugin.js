@@ -2430,6 +2430,10 @@ export function TSRXPlugin(config) {
 			// Where the name `declare` is that a statement ends after without a `;`
 			// before a token on its line (see `tsParseExpressionStatement`), or -1.
 			#nameDeclareStart = -1;
+			// Where the binding pattern of a `using` or `await using` declarator ends,
+			// after which TypeScript reports no missing initializer (see
+			// `parseVarId`), or -1.
+			#usingPatternEnd = -1;
 			// The rest parameters read after parameter property modifiers on a
 			// method's parameter, with where the modifiers start (see `parseMethod`).
 			/** @type {WeakMap<AST.Node, number>} */
@@ -6149,6 +6153,12 @@ export function TSRXPlugin(config) {
 				) {
 					// See `parseDecorators`.
 					return /** @type {never} */ (undefined);
+				} else if (
+					position === this.#usingPatternEnd &&
+					/^Missing initializer in (?:await )?using declaration$/.test(get_error_message(message))
+				) {
+					// See `parseVarId`.
+					return /** @type {never} */ (undefined);
 				} else if (message === STATIC_BLOCK_MODIFIERS) {
 					// See `parseClassElement`.
 					this.#staticBlockModifiers = true;
@@ -7397,14 +7407,77 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether a `using` or `await using` declaration starts at the current
+			 * token, as TypeScript's parser reads one (`isUsingDeclaration`,
+			 * `isAwaitUsingDeclaration`): `using` before a name or `{` on its line,
+			 * after `await` on any line. acorn reads one only before a name, with
+			 * `using` on the line of `await`, so `using {x} = y;` was the name
+			 * `using` (TS1434), and `await` with `using x = y;` on the next line,
+			 * which TypeScript compiles to `await using x = y;`, an `await`
+			 * expression (`';' expected.`). A binding pattern is TypeScript's checker
+			 * error (see `parseVarId`).
+			 * @param {boolean} isAwaitUsing
+			 * @param {boolean} isFor
+			 */
+			isUsingKeyword(isAwaitUsing, isFor) {
+				if (super.isUsingKeyword(isAwaitUsing, isFor)) return true;
+				if (!this.isContextual(isAwaitUsing ? 'await' : 'using')) return false;
+				const using = isAwaitUsing ? this.lookahead() : this.getCurLookaheadState();
+				if (using.type !== tt.name || this.input.slice(using.start, using.end) !== 'using') {
+					return false;
+				}
+				const next = this.lookahead(isAwaitUsing ? 2 : 1);
+				if (regex_line_break.test(this.input.slice(using.end, next.start))) return false;
+				return (
+					next.type === tt.braceL ||
+					(isAwaitUsing &&
+						Parser.acornTypeScript.tokenIsIdentifier(next.type) &&
+						// TypeScript's `for` head reads `await using of` as an expression.
+						!(isFor && next.type === tt.name && next.value === 'of'))
+				);
+			}
+
+			/**
+			 * A `using` or `await using` declarator's name can be a binding pattern
+			 * where TypeScript's parser reads one (see `isUsingKeyword`, and any
+			 * declarator after the first), which its checker reports, TS1492
+			 * `'using' declarations may not have binding patterns.`, at the pattern,
+			 * and nothing else about the declarator: a strict parse throws it, and a
+			 * collecting one records it and keeps the pattern. acorn read only a name
+			 * there.
 			 * @param {AST.VariableDeclarator} decl
 			 * @param {AST.VariableDeclaration['kind']} kind
 			 */
 			parseVarId(decl, kind) {
 				const outer = this.#declaration;
 				this.#declaration = { kind, scope: this.currentScope() };
+				const pattern =
+					(kind === 'using' || kind === 'await using') &&
+					(this.type === tt.braceL || this.type === tt.bracketL);
 				try {
-					super.parseVarId(decl, kind);
+					if (!pattern) {
+						super.parseVarId(decl, kind);
+					} else {
+						// acorn's and acorn-typescript's reading of a `let` declarator's
+						// name, whose binding is lexical too.
+						const start = this.start;
+						decl.id = this.parseBindingAtom();
+						this.checkLValPattern(decl.id, BINDING_TYPES.BIND_LEXICAL);
+						this.#recordCheckerLevelError(
+							start,
+							this.lastTokEnd,
+							TS_ERRORS.USING_BINDING_PATTERN(kind),
+						);
+						const type = this.tsTryParseTypeAnnotation();
+						if (type) {
+							/** @type {AST.Pattern} */ (decl.id).typeAnnotation = type;
+							this.resetEndLocation(decl.id);
+						}
+						// TypeScript reports nothing else about the declarator, so not a
+						// missing initializer, which acorn's `parseVar` checks next.
+						this.#usingPatternEnd = this.lastTokEnd;
+						return;
+					}
 				} finally {
 					this.#declaration = outer;
 				}
@@ -9175,8 +9248,18 @@ export function TSRXPlugin(config) {
 				const ambient = this.#inAmbientModuleBlock();
 				// TypeScript reports `abstract` there, not a `declare` after it (TS1038).
 				if (declaration[0] === 'declare') this.#declareAfterAbstract = this.start;
-				const statement = this.parseStatement(null, this.#atTopLevel());
-				this.#raiseAbstractModifierError(start, statement, block, declare_start, ambient);
+				const read = () => {
+					const statement = this.parseStatement(null, this.#atTopLevel());
+					this.#raiseAbstractModifierError(start, statement, block, declare_start, ambient);
+					return statement;
+				};
+				if (declaration[0] !== 'using' && declaration[0] !== 'await') return read();
+				// A `using` declaration's errors come after its modifier's (see
+				// `#parseModifiedStatement`).
+				/** @type {CompileError[]} */
+				const held = [];
+				const statement = this.#holdingErrors(held, read);
+				this.#releaseErrors(held);
 				return statement;
 			}
 
@@ -9408,8 +9491,12 @@ export function TSRXPlugin(config) {
 					case 'interface':
 					case 'type':
 					case 'namespace':
-					case 'using':
 						return same_line && is_identifier(next.type) ? [word] : null;
+					case 'using':
+						// Before an object pattern too (see `isUsingKeyword`).
+						return same_line && (is_identifier(next.type) || next.type === tt.braceL)
+							? [word]
+							: null;
 					case 'module':
 						return same_line && (is_identifier(next.type) || next.type === tt.string)
 							? [word]
@@ -9417,11 +9504,12 @@ export function TSRXPlugin(config) {
 					case 'global':
 						return next.type === tt.braceL ? [word] : null;
 					case 'await': {
-						// `await using x = y;`
-						if (!same_line || next.type !== tt.name || next.value !== 'using') return null;
+						// `await using x = y;`, with `using` on the line or a later one (see
+						// `isUsingKeyword`).
+						if (next.type !== tt.name || next.value !== 'using') return null;
 						const after = this.lookahead(ahead + 2);
 						return !regex_line_break.test(this.input.slice(next.end, after.start)) &&
-							is_identifier(after.type)
+							(is_identifier(after.type) || after.type === tt.braceL)
 							? ['await']
 							: null;
 					}
@@ -9688,9 +9776,13 @@ export function TSRXPlugin(config) {
 						this.#raiseModifierErrors(read.modifiers, declaration, context, null);
 						return declaration;
 					};
-					if (!context.block) return /** @type {AST.Statement} */ (parse());
+					const using = read.declaration === 'using' || read.declaration === 'await';
+					if (!context.block && !using) return /** @type {AST.Statement} */ (parse());
 					// In a block, the errors in the declaration come after TS1184 at its
-					// first modifier (#1264).
+					// first modifier (#1264), and anywhere a `using` declaration's come
+					// after its modifier's (TS1492 at a binding pattern after TS1491 at
+					// `declare`), as TypeScript's checker reports a variable statement's
+					// modifiers before its declarations (`checkVariableStatement`).
 					/** @type {CompileError[]} */
 					const held = [];
 					const declaration = this.#holdingErrors(held, parse);
