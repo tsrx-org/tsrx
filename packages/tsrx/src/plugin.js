@@ -2451,8 +2451,9 @@ export function TSRXPlugin(config) {
 			#labelStarts = [];
 			// The labels outside the template body being read: `this.labels` then,
 			// and how many it held (see `#parseCodeBlockBody`). A function body
-			// starts a new `this.labels`, where none are outside.
-			/** @type {{ labels: Parse.Parser['labels'], length: number } | null} */
+			// starts a new `this.labels`, where none are outside. `varScope` is
+			// acorn's `currentVarScope()` then (see `raise`).
+			/** @type {{ labels: Parse.Parser['labels'], length: number, varScope: Parse.Scope } | null} */
 			#labelFloor = null;
 			// The `break` or `continue` statement being read (see `raise`).
 			/** @type {AST.BreakStatement | AST.ContinueStatement | null} */
@@ -4224,7 +4225,11 @@ export function TSRXPlugin(config) {
 				// or `continue` can still name a label outside, for the transform to
 				// report.
 				const outer_label_floor = this.#labelFloor;
-				this.#labelFloor = { labels: this.labels, length: this.labels.length };
+				this.#labelFloor = {
+					labels: this.labels,
+					length: this.labels.length,
+					varScope: this.currentVarScope(),
+				};
 				try {
 					this.#parseCodeBlockBodyStatements(flat);
 				} finally {
@@ -4951,7 +4956,11 @@ export function TSRXPlugin(config) {
 							// A label in the arm may reuse an outer one's name, as in a
 							// template body (see `#parseCodeBlockBody`).
 							const outer_label_floor = this.#labelFloor;
-							this.#labelFloor = { labels: this.labels, length: this.labels.length };
+							this.#labelFloor = {
+								labels: this.labels,
+								length: this.labels.length,
+								varScope: this.currentVarScope(),
+							};
 							try {
 								while (this.type !== tt.braceR && this.type !== tt.eof) {
 									this.#parseJSXSwitchCaseConsequent(body.body);
@@ -6162,6 +6171,15 @@ export function TSRXPlugin(config) {
 					// it at the function's start; acorn-typescript goes on to read the
 					// body (#784).
 					this.#raiseCheckerError(this.start, TS_ERRORS.AMBIENT_IMPLEMENTATION);
+					return /** @type {never} */ (undefined);
+				} else if (
+					message === "'return' outside of function" &&
+					this.#labelFloor?.varScope === this.currentVarScope()
+				) {
+					// A `return` in a template body in a class field's initializer or a
+					// class `static` block, outside any function there: acorn allows one
+					// only in a function or at the top level. The template checks report
+					// it, as they do at the top level.
 					return /** @type {never} */ (undefined);
 				} else if (
 					message === 'Unsyntactic break' &&
