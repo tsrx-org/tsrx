@@ -519,7 +519,7 @@ function read_custom_property_value(parser) {
 		} else if (closers.length > 0 && char === closers.at(-1)) {
 			closers.pop();
 		} else if (closers.length === 0 && (char === ';' || char === '}')) {
-			return parser.template.slice(start, parser.index).trim();
+			return trim_value(parser.template.slice(start, parser.index));
 		}
 
 		parser.index++;
@@ -678,6 +678,22 @@ function is_url_name(tracker) {
 }
 
 /**
+ * `value` without the whitespace around it, but with a whitespace character an
+ * escape holds: `a\ ` is the identifier `a `.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function trim_value(value) {
+	const start = value.length - value.trimStart().length;
+	let end = value.trimEnd().length;
+	let backslashes = 0;
+	while (end - backslashes > start && value[end - 1 - backslashes] === '\\') backslashes += 1;
+	if (backslashes % 2 === 1 && end < value.length) end += 1;
+	return value.slice(start, end);
+}
+
+/**
  * @param {Parser} parser
  * @param {boolean} [prelude] whether this is an at-rule's prelude: a `{` in
  *   its brackets is a block, a `}` in them part of them, and a `(` or `[` it
@@ -713,9 +729,9 @@ function read_value(parser, prelude = false) {
 	const unclosed = () => {
 		if (parser.loose) {
 			parser.unclosed_prelude = true;
-			if (stop === -1) return value.trim();
+			if (stop === -1) return trim_value(value);
 			parser.index = stop;
-			return before_stop.trim();
+			return trim_value(before_stop);
 		}
 		const bracket = parser.template[open];
 		parser.index = open;
@@ -731,7 +747,7 @@ function read_value(parser, prelude = false) {
 		if (outside) track_name(name, parser.template, parser.index);
 
 		if (escaped) {
-			value += '\\' + char;
+			// The `\` is already in the value.
 			escaped = false;
 		} else if (char === '\\') {
 			escaped = true;
@@ -754,7 +770,7 @@ function read_value(parser, prelude = false) {
 			if (prelude && stop === -1 && closers.length > 0 && /[;{}]/.test(char)) {
 				// Once one read has run to the end of the sheet, end the later ones
 				// here, as before, rather than read it again for each.
-				if (parser.unclosed_prelude) return value.trim();
+				if (parser.unclosed_prelude) return trim_value(value);
 				stop = parser.index;
 				before_stop = value;
 			}
@@ -778,9 +794,9 @@ function read_value(parser, prelude = false) {
 			} else if (char === '}') {
 				// In a prelude's brackets a `}` is part of them, as in CSS; in a
 				// declaration's it ends the value, before the next rule is read in.
-				if (!prelude || closers.length === 0) return value.trim();
+				if (!prelude || closers.length === 0) return trim_value(value);
 			} else if (closers.length === 0 && (char === ';' || char === '{')) {
-				return value.trim();
+				return trim_value(value);
 			}
 		}
 

@@ -195,6 +195,31 @@ describe('parseStyle declaration values', function () {
 			parseStyle('.a { color: red /* open }', LOCATION, { loose: true });
 		}).not.toThrow();
 	});
+
+	it.each([
+		// Each escaped character was doubled, with its `\`.
+		[String.raw`.a { content: "\2713"; }`, String.raw`"\2713"`],
+		[String.raw`.a { content: "a\"b"; }`, String.raw`"a\"b"`],
+		[String.raw`.a { font-family: \31 x, \\; }`, String.raw`\31 x, \\`],
+		// The space a `\` escapes is part of the value.
+		[String.raw`.a { font-family: a\ ; }`, String.raw`a\ `],
+		[String.raw`.a { font-family: a\\ ; }`, String.raw`a\\`],
+		[String.raw`.a { --x: a\ ; }`, String.raw`a\ `],
+	])('keeps the escapes in %j as written', function (css, value) {
+		expect(blocks(css)).toEqual([[[css.slice(5, css.indexOf(':')), value]]]);
+	});
+
+	it('keeps the escapes in an at-rule prelude as written', function () {
+		const sheet = parseStyle(
+			String.raw`@supports (content: "\2713") and (--x: \31 ) { .a { color: red } }`,
+			LOCATION,
+			{},
+		);
+
+		expect(/** @type {any} */ (sheet.children[0]).prelude).toBe(
+			String.raw`(content: "\2713") and (--x: \31 )`,
+		);
+	});
 });
 
 describe('parseStyle escapes', function () {
