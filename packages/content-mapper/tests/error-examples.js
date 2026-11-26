@@ -754,6 +754,20 @@ export {};
 `,
 	},
 	{
+		error: TSRX_ERRORS.CSS_GLOBAL_COMBINATOR_IN_COMPOUND,
+		source: `export function C() @{
+	<>
+		<style>
+			.wrap:global(.x i).icon {
+				color: red;
+			}
+		</style>
+		<div class="wrap x" />
+	</>
+}
+`,
+	},
+	{
 		error: TSRX_ERRORS.CSS_GLOBAL_BLOCK_IN_MIXED_LIST,
 		source: `export function C() @{
 	<>

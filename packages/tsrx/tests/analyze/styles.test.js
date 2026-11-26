@@ -16,6 +16,7 @@ import {
 	TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
 	TSRX_CSS_GLOBAL_BLOCK_IN_MIXED_LIST_ERROR,
 	TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR,
+	TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
 	TSRX_CSS_GLOBAL_MIDDLE_PLACEMENT_ERROR,
 	TSRX_CSS_GLOBAL_NESTED_IN_PSEUDOCLASS_ERROR,
 	TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
@@ -1391,6 +1392,68 @@ describe('scoped style analysis', () => {
 				':is(:global(.a, .b)) .c { color: red; }',
 				'.p:has(:global(> .a, > .b)) { color: red; }',
 				':global(.a) .c, :global(.b) .c { color: red; }',
+			]) {
+				expect(analyze_thrown(parse_stylesheet(css)), css).toBeNull();
+			}
+		});
+
+		it('reports a :global(...) with a combinator in the middle of a compound', () => {
+			/** @type {Array<[css: string, anchor: string]>} */
+			const cases = [
+				['.wrap:global(.x i).icon { color: red; }', ':global(.x i)'],
+				['.wrap:global(.x > i):hover { color: red; }', ':global(.x > i)'],
+				['div:global(> i)[title] { color: red; }', ':global(> i)'],
+				['.p { &:global(.x i).icon { color: red; } }', ':global(.x i)'],
+				['.wrap:global(.x i):not(.y)::before { content: "x"; }', ':global(.x i)'],
+				['.wrap:global(.y):global(.x i):global(.z).icon { color: red; }', ':global(.x i)'],
+				['.k .wrap:global(.x ~ i).icon .m { color: red; }', ':global(.x ~ i)'],
+				['.p:has(> .wrap:global(.x i).icon) { color: red; }', ':global(.x i)'],
+			];
+			for (const [css, anchor] of cases) {
+				const source = `const t = <style>${css}</style>;`;
+				const thrown = analyze_thrown(first_stylesheet(source));
+				const pos = source.indexOf(anchor);
+
+				expect(thrown?.code, css).toBe(DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT);
+				expect(thrown?.message, css).toBe(TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR);
+				expect([thrown?.pos, thrown?.end], css).toEqual([pos, pos + anchor.length]);
+			}
+		});
+
+		it('collects one error for each :global(...) with a combinator in the middle of a compound', () => {
+			/** @type {CompileError[]} */
+			const errors = [];
+			const source = `const t = <style>
+	.a:global(.b c).d, .e:global(.f > g).h { color: red; }
+	.k:global(.x, .y z).m { color: red; }
+</style>;`;
+
+			expect(() => analyzeCss(first_stylesheet(source), { errors })).not.toThrow();
+			expect(errors.map((error) => error.message)).toEqual([
+				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
+				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
+				TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
+			]);
+			expect_anchored_on(errors[0], source, ':global(.b c)');
+			expect_anchored_on(errors[1], source, ':global(.f > g)');
+			expect_anchored_on(errors[2], source, ':global(.x, .y z)');
+		});
+
+		it('allows a :global(...) with a combinator at the start or end of a compound', () => {
+			for (const css of [
+				'.wrap:global(.x i) { color: red; }',
+				':global(.x i).icon { color: red; }',
+				'.p { &:global(.x i) { color: red; } }',
+				'.p { :global(> i).icon { color: red; } }',
+				'.wrap:global(.x i)::before { content: "x"; }',
+				'.wrap:global(.x i)::before:hover { content: "x"; }',
+				':global(.y):global(.x i).icon { color: red; }',
+				'.wrap:global(.x i):global(.y) { color: red; }',
+				'.wrap:global(.x).icon { color: red; }',
+				'.wrap:is(.x i).icon { color: red; }',
+				'.wrap:has(> i).icon { color: red; }',
+				':global(.wrap.x) :global(i).icon { color: red; }',
+				'.wrap:global(.x) :global(i).icon { color: red; }',
 			]) {
 				expect(analyze_thrown(parse_stylesheet(css)), css).toBeNull();
 			}

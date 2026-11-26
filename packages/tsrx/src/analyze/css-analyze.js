@@ -20,6 +20,14 @@ function is_global_block_selector(simple_selector) {
 }
 
 /**
+ * True if is `:global(...)` or `:global`
+ * @param {AST.CSS.SimpleSelector} simple_selector
+ */
+function is_global_pseudo_class(simple_selector) {
+	return simple_selector.type === 'PseudoClassSelector' && simple_selector.name === 'global';
+}
+
+/**
  * True if is `:global(...)` or `:global` and no pseudo class that is scoped.
  * @param {AST.CSS.RelativeSelector} relative_selector
  * @param {boolean} [scope_root] whether an `&` in it stands for a `@scope`'s
@@ -881,6 +889,31 @@ export function analyze_css(css, options = {}) {
 							relative_selector.combinator)
 					) {
 						report(TSRX_ERRORS.CSS_GLOBAL_SELECTOR_LIST, selector);
+					}
+				}
+			}
+
+			// So a `:global(...)` with a combinator between other selectors of a
+			// compound (`.a:global(.b c).d`) gives `.a.b c.d`, `.a` and `.d` on two
+			// elements, where the check for unused CSS matches both on one. Other
+			// `:global(...)` join the global part, and a pseudo-element belongs to
+			// the last element either way.
+			for (const { selectors } of node.children) {
+				const pseudo_element = selectors.findIndex(
+					(selector) => selector.type === 'PseudoElementSelector',
+				);
+				const compound = pseudo_element === -1 ? selectors : selectors.slice(0, pseudo_element);
+				for (let i = 0; i < compound.length; i++) {
+					const selector = compound[i];
+					if (
+						is_global_pseudo_class(selector) &&
+						selector.args?.children.length === 1 &&
+						(selector.args.children[0].children.length > 1 ||
+							selector.args.children[0].children[0].combinator) &&
+						compound.slice(0, i).some((other) => !is_global_pseudo_class(other)) &&
+						compound.slice(i + 1).some((other) => !is_global_pseudo_class(other))
+					) {
+						report(TSRX_ERRORS.CSS_GLOBAL_COMBINATOR_IN_COMPOUND, selector);
 					}
 				}
 			}
