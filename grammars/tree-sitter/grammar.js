@@ -1484,10 +1484,14 @@ module.exports = grammar({
 		undefined: ($) => 'undefined',
 		import: ($) => 'import',
 
+		// A Unicode escape is part of a name, as in TypeScript and
+		// tree-sitter-javascript: `const \u0061 = 1;`, and a tag in text that the
+		// scanner opens before one (`<\u0049nner />`, see `lt_starts_tag`).
 		identifier: ($) => {
-			const alpha = /[^\x00-\x1F\s\p{Zs}0-9:;`"'@#.,|^&<=>+\-*/\\%?!~()\[\]{}\uFEFF\u2060\u200B]/;
+			const alpha =
+				/[^\x00-\x1F\s\p{Zs}0-9:;`"'@#.,|^&<=>+\-*/\\%?!~()\[\]{}\uFEFF\u2060\u200B]|\\u[0-9a-fA-F]{4}|\\u\{[0-9a-fA-F]+\}/;
 			const alphanumeric =
-				/[^\x00-\x1F\s\p{Zs}:;`"'@#.,|^&<=>+\-*/\\%?!~()\[\]{}\uFEFF\u2060\u200B]/;
+				/[^\x00-\x1F\s\p{Zs}:;`"'@#.,|^&<=>+\-*/\\%?!~()\[\]{}\uFEFF\u2060\u200B]|\\u[0-9a-fA-F]{4}|\\u\{[0-9a-fA-F]+\}/;
 			return token(seq(alpha, repeat(alphanumeric)));
 		},
 
