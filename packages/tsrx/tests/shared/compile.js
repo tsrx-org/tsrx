@@ -803,8 +803,8 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			expect(result.errors.map((error) => error.code)).toEqual([error.code]);
 			expect(result.code).toContain('export const after = 1;');
-			// Where the editor's code runs the body in a function, the jump is left
-			// out, so TypeScript reports no TS1107 beside the error.
+			// Where the editor's code runs the body in a function, the jump gets a
+			// loop of its own, so TypeScript reports no TS1107 beside the error.
 			expect(jump_diagnostics(result.code)).toEqual([]);
 		});
 	});

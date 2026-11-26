@@ -2286,4 +2286,25 @@ describe('@tsrx/react a reported jump in the output', () => {
 		// The code after it narrows `v` as it did.
 		expect(code).toContain('if (!v) break;');
 	});
+
+	it('leaves a jump whose error a comment suppresses as it is, also beside another error', () => {
+		const source = `export function App({ x }: { x: boolean }) {
+	for (;;) {
+		return <div>@if (x) {
+			// @tsrx-ignore
+			break;
+			<b />
+		}</div>;
+	}
+}
+`;
+		for (const [file, codes] of /** @type {Array<[string, string[]]>} */ ([
+			[source, []],
+			[`${source}export function g() {\n\tcontinue;\n}\n`, [TS_ERRORS.JUMP_ACROSS_FUNCTION.code]],
+		])) {
+			const { code, errors } = compile(file, 'App.tsrx', { collect: true });
+			expect(errors.map((error) => error.code)).toEqual(codes);
+			expect(code).toMatch(/^\s*break;$/m);
+		}
+	});
 });

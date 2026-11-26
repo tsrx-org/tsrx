@@ -6812,6 +6812,11 @@ function is_reported_jump(node) {
 }
 
 /**
+ * A loop, `switch` statement or label around a statement in the output.
+ * @typedef {{ label: string | null, loop: boolean }} OutputJumpTarget
+ */
+
+/**
  * Gives each reported `break` or `continue` that nothing in the output can
  * take a loop of its own: `do break; while (false);`. Every target runs a
  * template body in a function, so TypeScript would report such a jump again
@@ -6822,15 +6827,18 @@ function is_reported_jump(node) {
  * jump. Its label, which nothing around it has, goes. A reported jump with
  * a target in the output, such as a nested `break` in an `@switch` case that
  * a target lowers to a `switch` statement, stays as it is, so the code after
- * it narrows as it did. Only a compile that collects its errors has output
- * with a reported jump.
+ * it narrows as it did, and so does one whose error a comment suppressed
+ * (`// @tsrx-ignore`), as in a file with no other error. Only a compile that
+ * collects its errors has output with a reported jump.
  * @param {AST.Program} program
  * @param {TransformContext} transform_context
  * @returns {AST.Program}
  */
 function contain_reported_jumps_without_target(program, transform_context) {
-	if (!transform_context.errors?.length) return program;
-	/** @typedef {{ label: string | null, loop: boolean }} OutputJumpTarget */
+	const errors = transform_context.errors;
+	if (!errors?.length) return program;
+	// Where the recorded errors start: a jump's starts at its keyword.
+	const reported_at = new Set(errors.map((error) => error.pos));
 	return /** @type {AST.Program} */ (
 		walk(/** @type {AST.Node} */ (program), /** @type {OutputJumpTarget[]} */ ([]), {
 			_(node, { next, state }) {
@@ -6841,11 +6849,13 @@ function contain_reported_jumps_without_target(program, transform_context) {
 					// for a `continue` to a label that isn't a loop's, which TypeScript
 					// reports as the parser does (TS1115).
 					const has_target = state.some(
-						(target) => target.label === label && (label !== null || !loop || target.loop),
+						(/** @type {OutputJumpTarget} */ target) =>
+							target.label === label && (label !== null || !loop || target.loop),
 					);
-					return is_reported_jump(node) && !has_target
-						? b.do_while(b.literal(false), { ...node, label: null })
-						: node;
+					if (has_target || !is_reported_jump(node) || !reported_at.has(node.start)) {
+						return node;
+					}
+					return b.do_while(b.literal(false), { ...node, label: null });
 				}
 				if (is_function_or_class_boundary(node)) return next([]);
 				if (node.type === 'LabeledStatement') {

@@ -570,9 +570,9 @@ export {};`,
 	});
 
 	// The parser records a `break` or `continue` with no target over its keyword,
-	// and the editor's code leaves it out, so TypeScript doesn't report it again
-	// beside it, with the same code or, where the template runs in a function,
-	// as TS1107.
+	// and the editor's code gives it a loop of its own, so TypeScript doesn't
+	// report it again beside it, with the same code or, where the template runs
+	// in a function, as TS1107.
 	it.each([
 		[
 			'CaseContinue',
