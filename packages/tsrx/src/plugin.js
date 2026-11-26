@@ -741,6 +741,8 @@ const NAMES_WITH_OWN_MISSING_SEMICOLON_ERROR = new Set([
 	'namespace',
 	'type',
 ]);
+// The start of a word that `regex_next_token` reads.
+const regex_word_start = /^(?:[\p{ID_Start}$_]|\\u)/u;
 // A word, or any other character, after whitespace and comments. A word may
 // have identifier escapes in it, and is read up to 64 characters at a time.
 const regex_next_token =
@@ -7432,19 +7434,52 @@ export function TSRXPlugin(config) {
 				if (using.type !== tt.name || this.input.slice(using.start, using.end) !== 'using') {
 					return false;
 				}
-				const next = this.lookahead(isAwaitUsing ? 2 : 1);
-				if (isFor && !isAwaitUsing && next.type === tt.name && next.value === 'of') {
+				// What follows `using` is read from the text, as acorn reads it: a
+				// token read ahead there would take a `/` for a regular expression's
+				// (`await using / x`).
+				const next = this.#wordAt(using.end);
+				if (!next) return false;
+				if (isFor && !isAwaitUsing && next.word === 'of') {
 					// acorn reads `using of` as a declaration in a `for` head only before
 					// `=` on its line, and TypeScript before `=`, `:` or `;` on any line
 					// (`nextTokenIsBindingIdentifierOrStartOfDestructuringOnSameLine`).
-					const after = this.lookahead(2).type;
-					return after === tt.eq || after === tt.colon || after === tt.semi;
+					const after = this.#wordAt(next.end);
+					return (
+						after !== null &&
+						(after.word === ':' ||
+							after.word === ';' ||
+							(after.word === '=' && !/[=>]/.test(this.input[after.end] ?? '')))
+					);
 				}
 				if (regex_line_break.test(this.input.slice(using.end, next.start))) return false;
+				if (next.word === '{') return true;
+				// A name, not a reserved word (TypeScript's `isBindingIdentifier`).
 				return (
-					next.type === tt.braceL ||
-					(isAwaitUsing && Parser.acornTypeScript.tokenIsIdentifier(next.type))
+					isAwaitUsing &&
+					next.name !== null &&
+					!this.keywords.test(next.name) &&
+					next.name !== 'enum'
 				);
+			}
+
+			/**
+			 * The word, or other character, after whitespace and comments from
+			 * `position`, where it starts and ends, and the name it spells, if any.
+			 * @param {number} position
+			 * @returns {{ word: string, name: string | null, start: number, end: number } | null}
+			 */
+			#wordAt(position) {
+				regex_next_token.lastIndex = position;
+				const match = regex_next_token.exec(this.input);
+				if (!match) return null;
+				const word = match[1];
+				const end = match.index + match[0].length;
+				const name = !regex_word_start.test(word)
+					? null
+					: word.includes('\\')
+						? decode_identifier_name(word)
+						: word;
+				return { word, name, start: end - word.length, end };
 			}
 
 			/**

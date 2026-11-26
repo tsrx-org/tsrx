@@ -820,10 +820,21 @@ describe('TSRX parser', () => {
 				const [declaration] = find_all(source, 'VariableDeclaration');
 				expect(declaration?.kind, source).toBe('await using');
 			}
-			// Without a name or `{` on the line of `using`, it's an expression.
-			for (const source of ['await\nusing;', 'await\nusing.x;', 'await\nusing\nx = y;']) {
+			// Without a name or `{` on the line of `using`, it's an expression: also
+			// before `/`, a division, and before a reserved word.
+			for (const source of [
+				'await\nusing;',
+				'await\nusing.x;',
+				'await\nusing\nx = y;',
+				'async function f(using, x) {\n\tawait using / x;\n}',
+				'async function f(using, x) {\n\tawait\n\tusing / x;\n}',
+			]) {
 				expect(find_all(source, 'VariableDeclaration'), source).toEqual([]);
 			}
+			const reserved = 'async function f() {\n\tawait\n\tusing enum = null;\n}';
+			expect(() => parseModule(reserved, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS1005', pos: reserved.indexOf('enum') }),
+			);
 
 			// A binding pattern, which TypeScript's checker reports at the pattern
 			// (TS1492), and nothing else about the declarator: a strict parse throws
