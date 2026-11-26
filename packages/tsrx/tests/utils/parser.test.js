@@ -3711,6 +3711,40 @@ foo();`;
 		}
 	});
 
+	it('reads code in an @switch case used as a value as it does when the @switch is a child', () => {
+		// A `{` that starts a statement in other code in the case, such as a
+		// block in a loop's body, was read as an expression container when the
+		// `@switch` was in one.
+		for (const statement of [
+			'if (x) { { f(); g(); } }',
+			'if (x) { {y} }',
+			'while (ready) { { break; } }',
+			'while (ready) { { f(); g(); } }',
+			'l: { { f(); } }',
+			'switch (x) { case 1: { f(); g(); } }',
+			'for (;;) { { f(); } break; }',
+			'do { { f(); g(); } } while (ready);',
+		]) {
+			const arm = `@switch (n) { @case 1: { ${statement} <i /> } @default: { <u /> } }`;
+			const [value, fragment, child] = [`{${arm}}`, `{<>${arm}</>}`, arm].map((template) => {
+				const source = `export function App({ n, x, y, ready, f, g }) {\n\treturn <p>${template}</p>;\n}\n`;
+				const shift = source.indexOf(statement);
+				const node = /** @type {any} */ (
+					find_first(parseModule(source, 'App.tsrx'), (node) => node.type === 'JSXSwitchExpression')
+				);
+				return JSON.stringify(node.cases[0].consequent, (key, value) =>
+					key === 'loc' || key === 'metadata' || key === 'range'
+						? undefined
+						: key === 'start' || key === 'end'
+							? value - shift
+							: value,
+				);
+			});
+			expect(value, statement).toBe(child);
+			expect(fragment, statement).toBe(child);
+		}
+	});
+
 	it('scopes switch case setup locals to their own case block', () => {
 		expect(() =>
 			parseModule(
