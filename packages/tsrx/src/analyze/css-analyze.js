@@ -121,6 +121,54 @@ export function is_root_or_host(simple) {
 	);
 }
 
+/**
+ * Whether `relative_selector`, a compound of a selector of `rule`, matches the
+ * page's root element or the shadow host, never one of the component's
+ * elements: it has `:root` or `:host`, or an `&` for a rule each of whose
+ * selectors ends in such a compound (`:root { &.dark {} }`).
+ *
+ * @param {AST.CSS.RelativeSelector} relative_selector
+ * @param {AST.CSS.Rule | null} rule
+ * @returns {boolean}
+ */
+export function is_root_compound(relative_selector, rule) {
+	return (
+		relative_selector.selectors.some(is_root_or_host) ||
+		(!!rule &&
+			relative_selector.selectors.some((simple) => simple.type === 'NestingSelector') &&
+			ampersand_is_root(rule))
+	);
+}
+
+/**
+ * Whether an `&` in `rule` stands for the root element or the shadow host:
+ * every selector of the rule around it ends in a compound that matches it.
+ * In a `@scope` (with no rule between) it stands for the scope's root.
+ *
+ * @param {AST.CSS.Rule} rule
+ * @returns {boolean}
+ */
+function ampersand_is_root(rule) {
+	const parent = rule.metadata.parent_rule;
+	if (!parent || scope_root_rules.has(rule)) return false;
+	let root = ampersand_root_cache.get(parent);
+	if (root === undefined) {
+		root = parent.prelude.children.every((selector) =>
+			is_root_compound(/** @type {AST.CSS.RelativeSelector} */ (selector.children.at(-1)), parent),
+		);
+		ampersand_root_cache.set(parent, root);
+	}
+	return root;
+}
+
+/**
+ * Whether the selectors of a rule all end in a compound that matches the root
+ * element or the shadow host.
+ *
+ * @type {WeakMap<AST.CSS.Rule, boolean>}
+ */
+const ampersand_root_cache = new WeakMap();
+
 /** Pseudo-classes whose selector arguments the output scopes. */
 const SELECTOR_ARGUMENTS = ['is', 'where', 'not', 'has'];
 
@@ -133,8 +181,8 @@ const SELECTOR_ARGUMENTS = ['is', 'where', 'not', 'has'];
  * bare `:global`; the arguments of its `:is()`, `:where()`, `:not()` and
  * `:has()` are scoped as selectors of their own, except that:
  *
- * - those of the `:is()`, `:where()` and `:not()` of a compound with `:root`
- *   or `:host` are kept as written, and
+ * - those of the `:is()`, `:where()` and `:not()` of a compound that matches
+ *   the root or the host (`is_root_compound`) are kept as written, and
  *
  * - a `:not()` argument without its hashes only makes the `:not()` match
  *   fewer elements (a `:not()` within it is checked again), and
@@ -149,15 +197,15 @@ const SELECTOR_ARGUMENTS = ['is', 'where', 'not', 'has'];
  */
 function is_unscoped(selector, subject_hashed = false) {
 	let after_bare_global = false;
-	return selector.children.every(({ selectors, metadata }) => {
+	return selector.children.every((relative_selector) => {
+		const { selectors, metadata } = relative_selector;
+		const root = is_root_compound(relative_selector, selector.metadata.rule);
 		if (metadata.is_global) {
 			if (is_global_block_selector(selectors[0])) after_bare_global = true;
 			return true;
 		}
 		if (after_bare_global) {
-			return selectors.every((simple) =>
-				arguments_unscoped(simple, false, has_root_or_host(selectors)),
-			);
+			return selectors.every((simple) => arguments_unscoped(simple, false, root));
 		}
 		const [first] = selectors;
 		// An `&` for a `@scope`'s root is the `:scope` it stands for: it gets the
@@ -170,9 +218,7 @@ function is_unscoped(selector, subject_hashed = false) {
 				(selectors.length === 1 &&
 					first.type === 'PseudoClassSelector' &&
 					(first.name === 'is' || first.name === 'where'))) &&
-			selectors.every((simple) =>
-				arguments_unscoped(simple, nesting && subject_hashed, has_root_or_host(selectors)),
-			)
+			selectors.every((simple) => arguments_unscoped(simple, nesting && subject_hashed, root))
 		);
 	});
 }
@@ -180,8 +226,9 @@ function is_unscoped(selector, subject_hashed = false) {
 /**
  * @param {AST.CSS.SimpleSelector} simple
  * @param {boolean} [subject_hashed] whether the compound's element has the hash
- * @param {boolean} [root_or_host] whether the compound has `:root` or `:host`,
- *   whose `:not()`, `:is()` and `:where()` arguments are kept as written
+ * @param {boolean} [root_or_host] whether the compound matches the root or
+ *   the host (`is_root_compound`), so that its `:not()`, `:is()` and
+ *   `:where()` arguments are kept as written
  * @returns {boolean}
  */
 function arguments_unscoped(simple, subject_hashed = false, root_or_host = false) {
@@ -203,9 +250,9 @@ function arguments_unscoped(simple, subject_hashed = false, root_or_host = false
 			argument.children.length === 1 &&
 			argument.children[0].combinator === null
 		) {
-			const { selectors } = argument.children[0];
-			return selectors.every((inner) =>
-				arguments_unscoped(inner, false, has_root_or_host(selectors)),
+			const root = is_root_compound(argument.children[0], argument.metadata.rule);
+			return argument.children[0].selectors.every((inner) =>
+				arguments_unscoped(inner, false, root),
 			);
 		}
 		return is_unscoped(argument);
@@ -222,14 +269,14 @@ function arguments_unscoped(simple, subject_hashed = false, root_or_host = false
  */
 function negation_unscoped(selector) {
 	return selector.children.every(
-		({ selectors, metadata }) =>
-			metadata.is_global ||
-			selectors.every(
+		(relative_selector) =>
+			relative_selector.metadata.is_global ||
+			relative_selector.selectors.every(
 				(simple) =>
 					simple.type !== 'PseudoClassSelector' ||
 					!simple.args ||
 					!SELECTOR_ARGUMENTS.includes(simple.name) ||
-					(simple.name !== 'has' && has_root_or_host(selectors)
+					(simple.name !== 'has' && is_root_compound(relative_selector, selector.metadata.rule)
 						? kept_arguments_unscoped(simple.args, simple.name !== 'not')
 						: simple.args.children.every((argument) =>
 								simple.name === 'not' ? is_unscoped(argument) : negation_unscoped(argument),
@@ -278,20 +325,6 @@ function kept_arguments_unscoped(list, negated) {
 			});
 		});
 	});
-}
-
-/**
- * Whether a compound has `:root` or `:host`, whose `:not()`, `:is()` and
- * `:where()` arguments the output keeps as written.
- *
- * @param {AST.CSS.SimpleSelector[]} selectors
- * @returns {boolean}
- */
-function has_root_or_host(selectors) {
-	return selectors.some(
-		(simple) =>
-			simple.type === 'PseudoClassSelector' && (simple.name === 'root' || simple.name === 'host'),
-	);
 }
 
 /**
@@ -881,8 +914,9 @@ export function analyze_css(css, options = {}) {
 			// A compound with :root or :host matches the page's root element or the
 			// shadow host, never one of the component's elements, whatever else it
 			// has (`:root.dark`, `:host[open]`, `:root&` in a `@scope`): it stays as
-			// written.
-			node.metadata.is_global_like ||= node.selectors.some(is_root_or_host);
+			// written. So does one with an `&` for such a compound
+			// (`:root { &.dark {} }`).
+			node.metadata.is_global_like ||= is_root_compound(node, context.state.rule);
 
 			context.next();
 		},
