@@ -1413,6 +1413,7 @@ describe('scoped style analysis', () => {
 				[':global { .wrap:global(.x i).icon { color: red; } }', ':global(.x i)'],
 				[':root:global(.x i).icon { color: red; }', ':global(.x i)'],
 				[':global(.outer):has(.wrap:global(.x i).icon) { color: red; }', ':global(.x i)'],
+				['.a:global(.x/**/ .y).b { color: red; }', ':global(.x/**/ .y)'],
 			];
 			for (const [css, anchor] of cases) {
 				const source = `const t = <style>${css}</style>;`;
@@ -1432,6 +1433,7 @@ describe('scoped style analysis', () => {
 	.a:global(.b c).d, .e:global(.f > g).h { color: red; }
 	.k:global(.x, .y z).m { color: red; }
 	.n:global(.x i, .y).o { color: red; }
+	.p:global(.q r):global(.s > t).u { color: red; }
 </style>;`;
 
 			expect(() => analyzeCss(first_stylesheet(source), { errors })).not.toThrow();
@@ -1440,12 +1442,16 @@ describe('scoped style analysis', () => {
 				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
 				TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
 				TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
+				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
+				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
 			]);
 			expect_anchored_on(errors[0], source, ':global(.b c)');
 			expect_anchored_on(errors[1], source, ':global(.f > g)');
 			expect_anchored_on(errors[2], source, ':global(.x, .y z)');
 			// A list gets only the list error, whichever of its items holds a combinator.
 			expect_anchored_on(errors[3], source, ':global(.x i, .y)');
+			expect_anchored_on(errors[4], source, ':global(.q r)');
+			expect_anchored_on(errors[5], source, ':global(.s > t)');
 		});
 
 		it('allows a :global(...) with a combinator at the start or end of a compound', () => {
@@ -1467,9 +1473,20 @@ describe('scoped style analysis', () => {
 				'.wrap:has(> i).icon { color: red; }',
 				':global(.wrap.x) :global(i).icon { color: red; }',
 				'.wrap:global(.x) :global(i).icon { color: red; }',
+				':global(.x i):global(.y b) { color: red; }',
+				'.a:global(.x/**/.y).b { color: red; }',
 			]) {
 				expect(analyze_thrown(parse_stylesheet(css)), css).toBeNull();
 			}
+		});
+
+		it('checks a long chain of :global(...) in time linear in its length', () => {
+			const sheet = parse_stylesheet(`.a${':global(.b c)'.repeat(40_000)} { color: red; }`);
+			const start = performance.now();
+			const thrown = analyze_thrown(sheet);
+
+			expect(performance.now() - start).toBeLessThan(2000);
+			expect(thrown).toBeNull();
 		});
 
 		it('takes the filename from options over the sheet', () => {
