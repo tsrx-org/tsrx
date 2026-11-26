@@ -1594,6 +1594,20 @@ describe('scoped style analysis', () => {
 					'.wrap.H { /* (unused) .missing:is(*),*/ & .icon.H { color: red; } }',
 					'.wrap.H {  & .icon.H { color: red; } }',
 				],
+				// Nor the :where() bump of a second compound.
+				[
+					'.missing:is(.icon .leaf), .wrap { color: red; }',
+					'.missing:is(.icon .leaf)',
+					'/* (unused) .missing:is(.icon .leaf),*/ .wrap.H { color: red; }',
+					' .wrap.H { color: red; }',
+				],
+				// An argument beside a pruned one keeps its hash.
+				[
+					':is(.missing:is(.icon), .wrap) { color: red; }',
+					'.missing:is(.icon)',
+					':is(/* (unused) .missing:is(.icon),*/ .wrap.H) { color: red; }',
+					':is( .wrap.H) { color: red; }',
+				],
 			];
 			for (const [css, pruned, expected, minified] of cases) {
 				for (const minify of [false, true]) {
