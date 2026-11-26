@@ -17554,6 +17554,9 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			['\\u0061bstract foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
 			['\\u0061sync foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
 			['a\\u0062 c;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'a'],
+			// Except a keyword that TypeScript reads as the keyword there: `global`
+			// starts a global augmentation.
+			['\\u0067lobal foo;', TS_ERRORS.TOKEN_EXPECTED, 'foo'],
 		]);
 		expect(() => parseModule('declare export foo;', 'App.tsrx')).toThrow(
 			'Declaration or statement expected.',
@@ -17561,6 +17564,17 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		expect(() => parseModule('async foo;', 'App.tsrx')).toThrow(
 			'Unexpected keyword or identifier.',
 		);
+		// TS1434 covers the name, as in TypeScript.
+		for (const [source, name] of [
+			['async foo;', 'async'],
+			['abstract foo;', 'abstract'],
+			['\\u0061sync foo;', '\\u0061sync'],
+			['a b;', 'a'],
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code: 'TS1434', pos: 0, end: name.length }),
+			);
+		}
 		// Before a declaration TypeScript reads (a global augmentation named
 		// `foo`, TS1005 at `foo`; a repeated modifier, TS1030), `abstract` isn't a
 		// name.
@@ -17586,6 +17600,10 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		]) {
 			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
 		}
+		// And so does its error without `await`, after the arrow function it reads.
+		expect(() => parseModule('for (async of xs) {}', 'App.tsrx')).toThrow(
+			expect.objectContaining({ code: 'TS1012', pos: 'for (async of '.length }),
+		);
 	});
 
 	it('reports `import` after `new` as a missing expression', async () => {

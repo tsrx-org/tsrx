@@ -741,6 +741,22 @@ const NAMES_WITH_OWN_MISSING_SEMICOLON_ERROR = new Set([
 	'namespace',
 	'type',
 ]);
+// The words that TypeScript reads as keywords also when written with an
+// escape, and that before a name on their line start a declaration
+// (`global foo;`, `let x;`, `using x = y;`) or no statement (`public foo;`,
+// TS1128) where acorn reads an escaped one as a name. That name keeps TS1005
+// at the next token (see `semicolon`).
+const ESCAPED_NAMES_READ_AS_KEYWORDS = new Set([
+	'accessor',
+	'global',
+	'let',
+	'private',
+	'protected',
+	'public',
+	'readonly',
+	'static',
+	'using',
+]);
 // A word, or any other character, after whitespace and comments. A word may
 // have identifier escapes in it, and is read up to 64 characters at a time.
 const regex_next_token =
@@ -17246,20 +17262,29 @@ export function TSRXPlugin(config) {
 				) {
 					this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED(','));
 				}
-				// TypeScript reads a name with the escapes in it decoded (`idText`).
+				// TypeScript reads a name with the escapes in it decoded (`idText`),
+				// except a keyword that it reads as the keyword there.
 				const raw = this.input.slice(this.lastTokStart, this.lastTokEnd);
-				const name = (raw.includes('\\') && decode_identifier_name(raw)) || raw;
+				const decoded = raw.includes('\\') ? decode_identifier_name(raw) : null;
+				const name = decoded && !ESCAPED_NAMES_READ_AS_KEYWORDS.has(decoded) ? decoded : raw;
 				if (
 					this.lastTokStart === this.#statementExpressionStart &&
 					regex_plain_name.test(name) &&
 					!this.keywords.test(name) &&
 					!NAMES_WITH_OWN_MISSING_SEMICOLON_ERROR.has(name)
 				) {
-					if (name === 'let')
-						this.raise(this.lastTokStart, TS_ERRORS.VARIABLE_DECLARATION_NOT_ALLOWED);
+					// On the name, as TypeScript reports them.
+					const raise_at_name = (/** @type {Diagnostic} */ error) => {
+						try {
+							this.raise(this.lastTokStart, error);
+						} catch (thrown) {
+							/** @type {{ end?: number }} */ (thrown).end = this.lastTokEnd;
+							throw thrown;
+						}
+					};
+					if (name === 'let') raise_at_name(TS_ERRORS.VARIABLE_DECLARATION_NOT_ALLOWED);
 					const suggestion = keyword_suggestion(name);
-					this.raise(
-						this.lastTokStart,
+					raise_at_name(
 						suggestion
 							? TS_ERRORS.UNKNOWN_KEYWORD_OR_IDENTIFIER(suggestion)
 							: TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER,
