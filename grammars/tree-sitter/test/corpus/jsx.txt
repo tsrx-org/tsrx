@@ -1521,6 +1521,48 @@ export function App() @{
               (identifier))))))))
 
 =====================================
+JSX Tag With An Escaped Name In Children
+=====================================
+
+export function App() @{
+  <div>a <\u0049nner n={5} /> b <In\u{6e}er></In\u{6e}er></div>
+}
+
+---
+
+(program
+  (export_statement
+    (function_declaration
+      (identifier)
+      (formal_parameters)
+      (jsx_statement_container
+        (jsx_element
+          (jsx_opening_element
+            (jsx_element_name
+              (identifier)))
+          (jsx_text)
+          (jsx_self_closing_element
+            (jsx_non_namespaced_element_name
+              (identifier))
+            (jsx_attribute
+              (identifier)
+              (jsx_expression
+                (component_statement
+                  (expression_statement
+                    (number))))))
+          (jsx_text)
+          (jsx_element
+            (jsx_opening_element
+              (jsx_element_name
+                (identifier)))
+            (jsx_closing_element
+              (jsx_element_name
+                (identifier))))
+          (jsx_closing_element
+            (jsx_element_name
+              (identifier))))))))
+
+=====================================
 JSX Text With A Less-Than Before An Escape
 =====================================
 

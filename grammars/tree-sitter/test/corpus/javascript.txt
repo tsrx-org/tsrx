@@ -531,3 +531,24 @@ const c = `${code}\n\n/* CSS */\n${css}`;
           (escape_sequence)
           (template_substitution
             (identifier)))))))
+
+==================
+Names Written With A Unicode Escape
+==================
+
+const \u0061 = 1;
+let b\u{63} = \u0061;
+
+---
+
+(program
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (number))))
+  (variable_declaration
+    (variable_declarator
+      name: (identifier)
+      (initializer
+        (identifier)))))
