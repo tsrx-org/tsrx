@@ -1420,8 +1420,13 @@ describe('scoped style analysis', () => {
 				// A pseudo-class at the end of the argument doesn't end the compound.
 				['.wrap:global(.x i:hover):focus { color: red; }', ':global(.x i:hover)'],
 				['.wrap:global(.x i).b:global(.y::before) { color: red; }', ':global(.x i)'],
-				// Only the argument's last compound counts.
+				// Only the argument's last compound counts, and not a pseudo-element in an
+				// :is() there, which the browser drops from the list.
 				['.wrap:global(.x::before i):hover { color: red; }', ':global(.x::before i)'],
+				[
+					'.wrap:global(.x i:is(::before, .y)):hover { color: red; }',
+					':global(.x i:is(::before, .y))',
+				],
 			];
 			for (const [css, anchor] of cases) {
 				const source = `const t = <style>${css}</style>;`;
@@ -1442,6 +1447,7 @@ describe('scoped style analysis', () => {
 	.k:global(.x, .y z).m { color: red; }
 	.n:global(.x i, .y).o { color: red; }
 	.p:global(.q r):global(.s > t).u { color: red; }
+	.v:global(.w x):global(::before, .y).z { color: red; }
 </style>;`;
 
 			expect(() => analyzeCss(first_stylesheet(source), { errors })).not.toThrow();
@@ -1452,6 +1458,8 @@ describe('scoped style analysis', () => {
 				TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
 				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
 				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
+				TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
+				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
 			]);
 			expect_anchored_on(errors[0], source, ':global(.b c)');
 			expect_anchored_on(errors[1], source, ':global(.f > g)');
@@ -1460,6 +1468,9 @@ describe('scoped style analysis', () => {
 			expect_anchored_on(errors[3], source, ':global(.x i, .y)');
 			expect_anchored_on(errors[4], source, ':global(.q r)');
 			expect_anchored_on(errors[5], source, ':global(.s > t)');
+			// A list with a pseudo-element in one item doesn't end the compound.
+			expect_anchored_on(errors[6], source, ':global(::before, .y)');
+			expect_anchored_on(errors[7], source, ':global(.w x)');
 		});
 
 		it('allows a :global(...) with a combinator at the start or end of a compound', () => {
@@ -1489,6 +1500,8 @@ describe('scoped style analysis', () => {
 				'.wrap:global(.x i:before):hover { content: "x"; }',
 				'.wrap:global(.x i:AF\\54 ER):hover { content: "x"; }',
 				'.wrap:global(.x i):global(.y::before):hover { content: "x"; }',
+				// A bare :global joins the global part too.
+				'.wrap:global(.x i):global { color: red; }',
 			]) {
 				expect(analyze_thrown(parse_stylesheet(css)), css).toBeNull();
 			}

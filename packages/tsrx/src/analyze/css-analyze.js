@@ -50,18 +50,17 @@ function is_pseudo_element(simple_selector) {
 /**
  * True if is a pseudo-element, or a `:global(...)` whose argument ends in one
  * (`:global(.x i::before)`): after either, the rest of the compound applies to
- * the pseudo-element
+ * the pseudo-element. A selector list in a `:global(...)` here is an error of
+ * its own, and ends nothing.
  * @param {AST.CSS.SimpleSelector} simple_selector
  */
 function ends_compound(simple_selector) {
-	return (
-		is_pseudo_element(simple_selector) ||
-		(is_global_pseudo_class(simple_selector) &&
-			simple_selector.args !== null &&
-			simple_selector.args.children.some(({ children }) =>
-				children[children.length - 1].selectors.some(is_pseudo_element),
-			))
-	);
+	if (is_pseudo_element(simple_selector)) return true;
+	if (!is_global_pseudo_class(simple_selector) || simple_selector.args?.children.length !== 1) {
+		return false;
+	}
+	const { children } = simple_selector.args.children[0];
+	return children[children.length - 1].selectors.some(is_pseudo_element);
 }
 
 /**
