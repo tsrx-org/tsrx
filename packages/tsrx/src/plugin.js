@@ -743,6 +743,10 @@ const NAMES_WITH_OWN_MISSING_SEMICOLON_ERROR = new Set([
 ]);
 // The start of a word that `regex_next_token` reads.
 const regex_word_start = /^(?:[\p{ID_Start}$_]|\\u)/u;
+// The syntax errors in a JSX name that a parse reads on after (see
+// `#reportJSXNameError`): an escape (TS17021), and a `-` in a member name's
+// part after a `.` (TS1003, or TS1005 in a closing tag).
+const JSX_NAME_SYNTAX_ERROR_CODES = new Set(['TS17021', 'TS1003', 'TS1005']);
 // A word, or any other character, after whitespace and comments. A word may
 // have identifier escapes in it, and is read up to 64 characters at a time.
 const regex_next_token =
@@ -8413,9 +8417,15 @@ export function TSRXPlugin(config) {
 					.sort(compare_errors)[0];
 				if (!first) return null;
 				// Of two, the first is thrown, such as one an async generic arrow
-				// function's parameters held before one in its body.
+				// function's parameters held before one in its body, whichever of a
+				// JSX name's errors they are (see `#reportJSXNameError`).
 				const { code, pos } = /** @type {{ code?: string, pos?: number }} */ (thrown);
-				if (code === first.code && (pos ?? 0) <= (first.pos ?? 0)) return null;
+				if (
+					(code === first.code || JSX_NAME_SYNTAX_ERROR_CODES.has(code ?? '')) &&
+					(pos ?? 0) <= (first.pos ?? 0)
+				) {
+					return null;
+				}
 				if (thrown instanceof SyntaxError) {
 					try {
 						this.#throwHeldError(first);
@@ -14900,7 +14910,18 @@ export function TSRXPlugin(config) {
 			 * @param {number} end
 			 */
 			#reportJSXNameEscape(start, end) {
-				const error = TS_ERRORS.JSX_NAME_UNICODE_ESCAPE;
+				this.#reportJSXNameError(start, end, TS_ERRORS.JSX_NAME_UNICODE_ESCAPE);
+			}
+
+			/**
+			 * A syntax error in a JSX name that TypeScript reads on after, reported
+			 * as `#reportJSXNameEscape` describes: thrown by a strict parse, held by
+			 * a speculative one, and recorded by a collecting one, which reads on.
+			 * @param {number} start
+			 * @param {number} end
+			 * @param {Diagnostic} error
+			 */
+			#reportJSXNameError(start, end, error) {
 				if (this.#collect) {
 					// Where it's recorded, which a strict parse that reads ahead as a
 					// collecting one (see `#asCollecting`) reports later.
@@ -14999,12 +15020,50 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * A part of a JSX member name after a `.`, which TypeScript reads as an
+			 * identifier (`parseRightSideOfDot`), and which a `-` ends, where a tag's
+			 * or an attribute's own name goes on. TypeScript then expects an
+			 * attribute or the tag's end there: it reports TS1003 `Identifier
+			 * expected.` at the `-` in an opening tag, and TS1005 `'>' expected.` in
+			 * a closing one. acorn-typescript read `<X.A-b />` with the part `A-b`,
+			 * which compiled to a tag that esbuild, oxc, Bun and vue-jsx-vapor
+			 * reject, and SWC reads as `X.A - b`. It's reported as an escape in a
+			 * name is (see `#reportJSXNameError`): a collecting parse records it and
+			 * reads on with the part as written, which TypeScript then reports on the
+			 * editor's code too. An escape before the `-` is TypeScript's TS17021
+			 * first (see `jsx_parseIdentifier`).
+			 * @param {boolean} closing Whether the name is a closing tag's
+			 * @returns {ESTreeJSX.JSXIdentifier}
+			 */
+			#parseJSXMemberProperty(closing) {
+				const start = this.start;
+				const hyphen =
+					this.type === tstt.jsxName ? this.input.slice(start, this.end).indexOf('-') : -1;
+				const property = this.jsx_parseIdentifier();
+				if (hyphen !== -1) {
+					// On the token TypeScript reads there: `-`, or `--` or `-=`.
+					const at = start + hyphen;
+					const after = this.input[at + 1];
+					this.#reportJSXNameError(
+						at,
+						at + (after === '-' || after === '=' ? 2 : 1),
+						closing ? TS_ERRORS.TOKEN_EXPECTED('>') : TS_ERRORS.IDENTIFIER_EXPECTED,
+					);
+				}
+				return property;
+			}
+
+			/**
 			 * @type {Parse.Parser['jsx_parseElementName']}
 			 */
 			jsx_parseElementName() {
 				if (this.type === tstt.jsxTagEnd) {
 					return '';
 				}
+				// After `</`, not `<`.
+				const closing =
+					this.lastTokEnd - this.lastTokStart === 1 &&
+					this.input.charCodeAt(this.lastTokStart) === CharCode.slash;
 
 				if (this.type === tt.braceL) {
 					return this.#parseJSXDynamicElementName();
@@ -15024,7 +15083,7 @@ export function TSRXPlugin(config) {
 						)
 					);
 					memberExpr.object = node;
-					memberExpr.property = this.jsx_parseIdentifier();
+					memberExpr.property = this.#parseJSXMemberProperty(closing);
 					memberExpr.computed = false;
 					memberExpr = this.finishNode(memberExpr, 'JSXMemberExpression');
 					while (this.eat(tt.dot)) {
@@ -15035,7 +15094,7 @@ export function TSRXPlugin(config) {
 							)
 						);
 						newMemberExpr.object = memberExpr;
-						newMemberExpr.property = this.jsx_parseIdentifier();
+						newMemberExpr.property = this.#parseJSXMemberProperty(closing);
 						newMemberExpr.computed = false;
 						memberExpr = this.finishNode(newMemberExpr, 'JSXMemberExpression');
 					}

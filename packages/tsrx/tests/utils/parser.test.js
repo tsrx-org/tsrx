@@ -18972,6 +18972,99 @@ ${lines.join('\n')}
 		}
 	});
 
+	it('ends the part of a member name after a `.` at a `-`, as TypeScript does', () => {
+		// TypeScript reads a member name's part after a `.` as an identifier,
+		// which a `-` ends, where a tag's or an attribute's own name goes on: TS1003
+		// at the `-` in an opening tag, TS1005 `'>' expected.` in a closing one.
+		/** @type {Array<[string, string]>} */
+		const scripts = [
+			[`const x = <X.A-b />;`, 'TS1003'],
+			[`const x = <X.A-b c="1" />;`, 'TS1003'],
+			[`const x = <X.A-b></X.A-b>;`, 'TS1003'],
+			[`const x = <X.A.B-c />;`, 'TS1003'],
+			[`const x = <X.A-b.C />;`, 'TS1003'],
+			[`const x = <X.A- />;`, 'TS1003'],
+			[`const x = <X.A-${escape('0062')} />;`, 'TS1003'],
+			[`const x = <X.A>x</X.A-b>;`, 'TS1005'],
+			// In a speculative parse, which goes on.
+			[`const x = f<T,>(<X.A-b />);`, 'TS1003'],
+		];
+		// After an escape in a name in a speculative parse's parameters, which
+		// comes first.
+		const after_escape = `const f = async <T,>(x = <A${escape('0062')} />) => <X.A-b />;`;
+		expect(() => parseModule(after_escape, 'App.tsrx')).toThrow(
+			expect.objectContaining({ code: 'TS17021', pos: after_escape.indexOf('A') }),
+		);
+		for (const [snippet, code] of scripts) {
+			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
+			const [first] = /** @type {ts.DiagnosticWithLocation[]} */ (
+				/** @type {any} */ (file).parseDiagnostics
+			);
+			expect(['TS' + first.code, first.start], snippet).toEqual([code, snippet.indexOf('-')]);
+		}
+		/** @type {Array<[string, string]>} */
+		const templates = [
+			[`export function App() @{\n\t<X.A-b />\n}`, 'TS1003'],
+			[`export function App() @{\n\t<div><X.A-b /></div>\n}`, 'TS1003'],
+			[`export function App() @{\n\t<X.A>x</X.A-b>\n}`, 'TS1005'],
+		];
+		// A strict parse throws it; a collecting one records it and reads on, as
+		// for an escape in a name, so the editor keeps the file.
+		for (const [source, code] of [...scripts, ...templates]) {
+			const at = source.indexOf('-');
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code, pos: at }),
+			);
+			for (const options of [{ collect: true }, { loose: true }]) {
+				/** @type {any[]} */
+				const errors = [];
+				try {
+					parseModule(source, 'App.tsrx', { ...options, errors });
+				} catch {
+					// A closing tag's name that differs from the opening tag's.
+				}
+				expect(errors[0] && [errors[0].code, errors[0].pos, errors[0].end], source).toEqual([
+					code,
+					at,
+					at + 1,
+				]);
+			}
+		}
+		// On the whole token TypeScript reads at the `-`.
+		for (const source of [
+			`const x = <X.A--b />;`,
+			`const x = <X.A-=b />;`,
+			`const x = <X.A></X.A--b>;`,
+		]) {
+			/** @type {any[]} */
+			const errors = [];
+			try {
+				parseModule(source, 'App.tsrx', { collect: true, errors });
+			} catch {
+				// A closing tag's name that differs from the opening tag's.
+			}
+			const file = ts.createSourceFile('/App.tsx', source, ts.ScriptTarget.Latest, true);
+			const [first] = /** @type {ts.DiagnosticWithLocation[]} */ (
+				/** @type {any} */ (file).parseDiagnostics
+			);
+			expect([errors[0]?.code, errors[0]?.pos, errors[0]?.end], source).toEqual([
+				'TS' + first.code,
+				first.start,
+				first.start + first.length,
+			]);
+		}
+		// A `-` in the first part, or in a tag's or attribute's own name, is part
+		// of it; a dynamic tag can take any name.
+		for (const source of [
+			`const x = <a-b.c />;`,
+			`const x = <X.A b-c="1" />;`,
+			`const x = <my-element data-x="1" />;`,
+			`const x = <{X['A-b']} />;`,
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
+		}
+	});
+
 	it('reads a tag in children that starts with an escape or a letter outside ASCII, as TypeScript does', () => {
 		// A `<` in children opens a tag before an escape for a character a name
 		// starts with, and before a letter outside ASCII. Not before an escape for
