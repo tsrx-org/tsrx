@@ -1,5 +1,14 @@
 # @tsrx/nvim-plugin
 
+## 0.0.103
+
+### Patch Changes
+
+- [#1519](https://github.com/tsrx-org/tsrx/pull/1519)
+  [`bec8867`](https://github.com/tsrx-org/tsrx/commit/bec886734b1a15a7658ef8960551c10e4b549cad)
+  Thanks [@github-actions](https://github.com/apps/github-actions)! - Install
+  `@tsrx/language-server` 0.7.16 when a project has no server of its own.
+
 ## 0.0.102
 
 ### Patch Changes
