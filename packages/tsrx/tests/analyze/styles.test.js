@@ -1427,6 +1427,10 @@ describe('scoped style analysis', () => {
 					'.wrap:global(.x i:is(::before, .y)):hover { color: red; }',
 					':global(.x i:is(::before, .y))',
 				],
+				[
+					'.wrap:global(.x i:where(::before, .y)):hover { color: red; }',
+					':global(.x i:where(::before, .y))',
+				],
 				// Nor does another pseudo-class whose argument ends in one.
 				['.wrap:global(.x i):is(.k::before).icon { color: red; }', ':global(.x i)'],
 			];
@@ -1450,6 +1454,7 @@ describe('scoped style analysis', () => {
 	.n:global(.x i, .y).o { color: red; }
 	.p:global(.q r):global(.s > t).u { color: red; }
 	.v:global(.w x):global(::before, .y).z { color: red; }
+	.aa:global(.bb cc):global(.dd, ::after).ee { color: red; }
 </style>;`;
 
 			expect(() => analyzeCss(first_stylesheet(source), { errors })).not.toThrow();
@@ -1459,6 +1464,8 @@ describe('scoped style analysis', () => {
 				TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
 				TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
 				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
+				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
+				TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
 				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
 				TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
 				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
@@ -1473,6 +1480,8 @@ describe('scoped style analysis', () => {
 			// A list with a pseudo-element in one item doesn't end the compound.
 			expect_anchored_on(errors[6], source, ':global(::before, .y)');
 			expect_anchored_on(errors[7], source, ':global(.w x)');
+			expect_anchored_on(errors[8], source, ':global(.dd, ::after)');
+			expect_anchored_on(errors[9], source, ':global(.bb cc)');
 		});
 
 		it('allows a :global(...) with a combinator at the start or end of a compound', () => {

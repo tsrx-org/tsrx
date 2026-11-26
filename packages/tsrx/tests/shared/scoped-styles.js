@@ -2916,6 +2916,8 @@ export function runSharedScopedStyleTests({
 							:root { &:global(.x i):before { content: "d"; } }
 							.wrap:global(.x i::before):hover { content: "e"; }
 							.wrap:global(.x button::part(control)):hover { color: purple; }
+							.wrap:global(.x > i:hover) { color: olive; }
+							:root:global(.x) :global(i).icon { color: teal; }
 							:global(.wrap.x) :global(i).icon { color: blue; }
 							.wrap:global(.x) :global(i).icon { color: gray; }
 						</style>
@@ -2934,6 +2936,10 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(':root { &.x i:before { content: "d"; } }');
 			expect(css).toContain(`.wrap.${hash}.x i::before:hover { content: "e"; }`);
 			expect(css).toContain(`.wrap.${hash}.x button::part(control):hover { color: purple; }`);
+			// The Migration's other spellings: a :hover moved inside keeps the output of
+			// .wrap:global(.x > i):hover, and in a :root compound the hash is added.
+			expect(css).toContain(`.wrap.${hash}.x > i:hover { color: olive; }`);
+			expect(css).toContain(`:root.x i.icon.${hash} { color: teal; }`);
 			// The spellings for a :global(...) between two selectors: the first
 			// keeps its output, the second also scopes .wrap.
 			expect(css).toContain(`.wrap.x i.icon.${hash} { color: blue; }`);
