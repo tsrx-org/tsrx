@@ -18472,6 +18472,29 @@ ${lines.join('\n')}
 				]);
 			}
 		}
+		// On the whole token TypeScript reads at the `-`.
+		for (const source of [
+			`const x = <X.A--b />;`,
+			`const x = <X.A-=b />;`,
+			`const x = <X.A></X.A--b>;`,
+		]) {
+			/** @type {any[]} */
+			const errors = [];
+			try {
+				parseModule(source, 'App.tsrx', { collect: true, errors });
+			} catch {
+				// A closing tag's name that differs from the opening tag's.
+			}
+			const file = ts.createSourceFile('/App.tsx', source, ts.ScriptTarget.Latest, true);
+			const [first] = /** @type {ts.DiagnosticWithLocation[]} */ (
+				/** @type {any} */ (file).parseDiagnostics
+			);
+			expect([errors[0]?.code, errors[0]?.pos, errors[0]?.end], source).toEqual([
+				'TS' + first.code,
+				first.start,
+				first.start + first.length,
+			]);
+		}
 		// A `-` in the first part, or in a tag's or attribute's own name, is part
 		// of it; a dynamic tag can take any name.
 		for (const source of [

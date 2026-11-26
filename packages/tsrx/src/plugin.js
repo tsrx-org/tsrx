@@ -14759,9 +14759,12 @@ export function TSRXPlugin(config) {
 					this.type === tstt.jsxName ? this.input.slice(start, this.end).indexOf('-') : -1;
 				const property = this.jsx_parseIdentifier();
 				if (hyphen !== -1) {
+					// On the token TypeScript reads there: `-`, or `--` or `-=`.
+					const at = start + hyphen;
+					const after = this.input[at + 1];
 					this.#reportJSXNameError(
-						start + hyphen,
-						start + hyphen + 1,
+						at,
+						at + (after === '-' || after === '=' ? 2 : 1),
 						closing ? TS_ERRORS.TOKEN_EXPECTED('>') : TS_ERRORS.IDENTIFIER_EXPECTED,
 					);
 				}
