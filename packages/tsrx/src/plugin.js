@@ -976,6 +976,8 @@ const SCOPE_ASYNC = 4;
 const SCOPE_SIMPLE_CATCH = 32;
 const SCOPE_CLASS_STATIC_BLOCK = 256;
 const SCOPE_CLASS_FIELD_INIT = 512;
+// A `switch` statement's body, where its `case` clauses' statements are read.
+const SCOPE_SWITCH = 1024;
 const TS_SCOPE_OTHER = 1 << 20;
 const TS_SCOPE_TS_MODULE = 1 << 21;
 // The scopes whose names are one symbol table in TypeScript's binder, where a
@@ -1086,6 +1088,21 @@ const raised_errors = new WeakSet();
  * @type {WeakSet<CompileError>}
  */
 const held_syntax_errors = new WeakSet();
+
+/**
+ * The errors a collecting parse records for a token that starts no statement
+ * in a list, and reads on after (see `#checkStatementStart`).
+ * @type {WeakSet<CompileError>}
+ */
+const statement_start_errors = new WeakSet();
+
+/**
+ * The empty statements a collecting parse reads a token that starts no
+ * statement as (see `#checkStatementStart`), which a template's body leaves out
+ * as it does a `;`.
+ * @type {WeakSet<AST.Node>}
+ */
+const skipped_statement_starts = new WeakSet();
 
 /**
  * The held errors that a strict parse raises later than where they're held,
@@ -2144,6 +2161,10 @@ export function TSRXPlugin(config) {
 			#path = [];
 			#collect = false;
 			#loose = false;
+			// Whether a collecting parse records a token that starts no statement
+			// and reads on (see `#checkStatementStart`), which neither a strict one
+			// nor its lookaheads (see `#asCollecting`) do.
+			#recoversStatementStart = false;
 			// Where the caller collects the line comments the tokenizer recorded that
 			// template text reads as text, to drop them after the parse (see
 			// `#readSkippedTemplateText`).
@@ -2531,6 +2552,7 @@ export function TSRXPlugin(config) {
 				const tsrx_options = options?.tsrxOptions;
 				this.#collect = tsrx_options?.collect === true || tsrx_options?.loose === true;
 				this.#loose = tsrx_options?.loose === true;
+				this.#recoversStatementStart = this.#collect && tsrx_options?.stopAtStatementStart !== true;
 				this.#errors = tsrx_options?.errors;
 				this.#filename = tsrx_options?.filename || null;
 				this.#jsxFile = !regex_file_without_jsx.test(this.#filename ?? '');
@@ -4281,6 +4303,8 @@ export function TSRXPlugin(config) {
 						continue;
 					}
 					const statement = this.#parseCodeBlockSetupStatement();
+					// A token that starts no statement, as a `;` (see `#checkStatementStart`).
+					if (statement && skipped_statement_starts.has(statement)) continue;
 					if (statement) {
 						if (last_render) {
 							// A statement after the rendered output: code must come first.
@@ -6841,12 +6865,29 @@ export function TSRXPlugin(config) {
 			 * or module body has been read, which the first of two declarations of an
 			 * export is in, and when the error isn't a syntax error, which TypeScript
 			 * reports alone.
+			 *
+			 * A collecting parse that throws after it recorded a token that starts
+			 * no statement (see `#checkStatementStart`) throws the first such error
+			 * instead, as it did before it read on after them: a syntax error, which
+			 * TypeScript reports before a checker error, and before the syntax
+			 * errors after it. Only a parse that reads to the end keeps the file.
 			 * @type {Parse.Parser['parseTopLevel']}
 			 */
 			parseTopLevel(node) {
+				// The errors this parse records, after any the caller's list holds.
+				const recorded_before = this.#errors?.length ?? 0;
 				try {
 					return super.parseTopLevel(node);
 				} catch (error) {
+					const skipped = this.#collect
+						? this.#errors
+								?.slice(recorded_before)
+								.find((recorded) => statement_start_errors.has(recorded))
+						: undefined;
+					if (skipped) {
+						skipped.type = 'fatal';
+						throw skipped;
+					}
 					if (
 						!this.#collect &&
 						!this.#moduleRead &&
@@ -7286,7 +7327,12 @@ export function TSRXPlugin(config) {
 							allowReturnOutsideFunction: this.options.allowReturnOutsideFunction,
 							locations: true,
 							preserveParens: this.options.preserveParens,
-							tsrxOptions: { filename: this.#filename, collect: true, errors },
+							tsrxOptions: {
+								filename: this.#filename,
+								collect: true,
+								errors,
+								stopAtStatementStart: true,
+							},
 						}),
 					);
 				} catch {
@@ -13136,12 +13182,16 @@ export function TSRXPlugin(config) {
 						// abandoned (see `#parseGenericArrowFunction`). Those an arrow
 						// function holds are kept with them (see `#abandonReservedArrow`)
 						// (#1327).
+						// A syntax error in its parameters stays too (`held_syntax_errors`),
+						// which TypeScript reports whatever follows.
 						const recorded = arrow.recorded;
 						if (recorded && !arrow.reserved) {
 							const at = /** @type {{ pos?: number }} */ (error).pos ?? Infinity;
-							arrow.kept = recorded.errors
-								.slice(recorded.length)
-								.filter((kept) => (kept.pos ?? 0) < at);
+							arrow.kept = recorded.errors.filter(
+								(kept, index) =>
+									(index >= recorded.length || held_syntax_errors.has(kept)) &&
+									(kept.pos ?? 0) < at,
+							);
 						}
 					}
 					throw error;
@@ -13573,7 +13623,8 @@ export function TSRXPlugin(config) {
 			 * error, see `#isSyntaxError`), which TypeScript reports alone, those it
 			 * reports only later go (`deferred_errors`, such as a method's TS2369,
 			 * after its body, or all of them, `deferred`, such as a signature's, once
-			 * it's read). In a generic arrow function that acorn-typescript abandons
+			 * it's read), but not a held syntax error (`held_syntax_errors`), which
+			 * came first. In a generic arrow function that acorn-typescript abandons
 			 * (`abandoned`), a collecting parse records them where the abandoned parse
 			 * doesn't drop them, and a strict parse throws one as it is, which
 			 * acorn-typescript doesn't take for a sign that the code isn't an arrow
@@ -13586,7 +13637,11 @@ export function TSRXPlugin(config) {
 			#abandonHeldErrors(held, thrown, abandoned = false, deferred = false) {
 				const syntax_error = this.#isSyntaxError(thrown);
 				const kept = held
-					.filter((error) => !(syntax_error && (deferred || deferred_errors.has(error))))
+					.filter(
+						(error) =>
+							held_syntax_errors.has(error) ||
+							!(syntax_error && (deferred || deferred_errors.has(error))),
+					)
 					.sort(compare_errors);
 				if (this.#collect) {
 					if (abandoned) {
@@ -13662,12 +13717,19 @@ export function TSRXPlugin(config) {
 				const sorted = held.slice().sort(compare_errors);
 				// A syntax error held for its position (`held_syntax_errors`), which
 				// TypeScript reports before the checker errors: a strict parse throws
-				// it first, rather than hold it among them.
+				// it first, rather than hold it among them, and a collecting one
+				// records the syntax errors first.
 				const syntax_error = this.#collect
 					? undefined
 					: sorted.find((error) => held_syntax_errors.has(error));
 				if (syntax_error) this.#throwHeldError(syntax_error);
-				for (const error of sorted) {
+				const ordered = this.#collect
+					? [
+							...sorted.filter((error) => held_syntax_errors.has(error)),
+							...sorted.filter((error) => !held_syntax_errors.has(error)),
+						]
+					: sorted;
+				for (const error of ordered) {
 					const outer = this.#hold.held;
 					const errors = outer ?? (this.#collect ? this.#errors : undefined);
 					if (!errors) this.#throwHeldError(error);
@@ -16907,34 +16969,85 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * A modifier where a statement in a list starts, before a name or keyword
-			 * on its line, where TypeScript's parser reads no declaration
-			 * (`accessor x;`): it doesn't start a statement there (`isStartOfStatement`),
-			 * and TypeScript reports TS1128 `Declaration or statement expected.` at
-			 * it, where acorn read a name and failed after it. So does `export`
-			 * before anything TypeScript's parser reads no declaration from
-			 * (`export foo;`, `export async foo;`), where acorn failed after it.
+			 * A token that starts no statement where a statement in a list starts
+			 * (`isStartOfStatement`), and an empty statement for it when collecting,
+			 * or `null`:
+			 *
+			 * - a modifier before a name or keyword on its line, where TypeScript's
+			 *   parser reads no declaration (`accessor x;`), where acorn read a name
+			 *   and failed after it;
+			 * - `export` before anything TypeScript's parser reads no declaration
+			 *   from (`export foo;`, `export declare @dec class A {}`), where acorn
+			 *   failed after it.
+			 *
+			 * TypeScript reports the list's error at the token
+			 * (`parsingContextErrors`), TS1129 `Statement expected.` in a `case`
+			 * clause and TS1128 `Declaration or statement expected.` elsewhere, skips
+			 * it, and reads on from the next token
+			 * (`abortParsingListOrMoveToNextToken`). A strict parse throws the
+			 * error. A collecting one records it over the token, as a syntax error,
+			 * and reads the token as an empty statement, so the list reads on from
+			 * the next token as TypeScript's does, and the editor keeps the file.
+			 * The declaration after `export` that `parseExportDeclaration` reads is
+			 * no item of a list, so a mistake there still throws.
+			 * @returns {AST.EmptyStatement | null}
 			 */
 			#checkStatementStart() {
-				if (this.type === tt._export && !this.#startsDeclaration()) {
-					this.raise(this.start, TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED);
+				if (!this.#startsNoStatement()) return null;
+				const error =
+					(this.currentScope().flags & SCOPE_SWITCH) !== 0
+						? TS_ERRORS.STATEMENT_EXPECTED
+						: TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED;
+				const errors = this.#errors;
+				if (
+					!errors ||
+					!this.#recoversStatementStart ||
+					this.start === this.#exportedDeclarationStart
+				) {
+					this.raise(this.start, error);
 				}
+				// Held with the checker errors around it, as a syntax error, which
+				// comes before them (see `#releaseErrors`), and stays when they go (see
+				// `#abandonHeldErrors`).
+				const record = this.#hold.held ?? errors;
+				const count = record.length;
+				this.#recordCheckerLevelError(this.start, this.end, error);
+				if (record.length > count) {
+					held_syntax_errors.add(record[record.length - 1]);
+					statement_start_errors.add(record[record.length - 1]);
+				}
+				const node = /** @type {AST.EmptyStatement} */ (this.startNode());
+				// The next token starts a statement, where an expression can start (a
+				// regular expression, an element), as after a `;`. An escaped `export`
+				// gets this error alone: TypeScript reports its escape at the same
+				// place, and so not at all.
+				this.exprAllowed = true;
+				this.next(true);
+				const statement = this.finishNode(node, 'EmptyStatement');
+				skipped_statement_starts.add(statement);
+				return statement;
+			}
+
+			/**
+			 * Whether the current token starts no statement in a list (see
+			 * `#checkStatementStart`).
+			 */
+			#startsNoStatement() {
+				if (this.type === tt._export) return !this.#startsDeclaration();
 				if (
 					!Parser.acornTypeScript.tokenIsIdentifier(this.type) ||
 					this.containsEsc ||
 					!STATEMENT_START_MODIFIERS.has(/** @type {string} */ (this.value))
 				) {
-					return;
+					return false;
 				}
 				const next = this.lookahead();
-				if (
+				return (
 					(Parser.acornTypeScript.tokenIsIdentifier(next.type) ||
 						next.type.keyword !== undefined) &&
 					!this.#lineBreakAfter(this.end) &&
 					this.#readDeclarationModifiers(0) === null
-				) {
-					this.raise(this.start, TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED);
-				}
+				);
 			}
 
 			/**
@@ -17244,7 +17357,8 @@ export function TSRXPlugin(config) {
 					this.#raiseClosingBraceExpected();
 				}
 				if (context == null) {
-					this.#checkStatementStart();
+					const skipped = this.#checkStatementStart();
+					if (skipped) return /** @type {AST.Statement} */ (/** @type {unknown} */ (skipped));
 				} else {
 					const kind = this.#blockScopedDeclarationKind();
 					if (kind !== null) {

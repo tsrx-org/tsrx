@@ -2521,29 +2521,46 @@ function thrown_in_every_mode(error, pos) {
 	return PARSE_MODES.map(() => thrown(error, pos));
 }
 
+/**
+ * The outcome in each of `PARSE_MODES` of a source whose `export` starts no
+ * statement: a strict parse throws TS1128 at it, and a collecting one records
+ * it, then the codes in `after`, and reads on, as TypeScript's parser does, or,
+ * with `after` `null`, throws it, as it fails later.
+ * @param {string} source
+ * @param {string[] | null} [after]
+ */
+function export_starts_no_statement(source, after = []) {
+	const error = TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED;
+	const pos = source.indexOf('export');
+	return PARSE_MODES.map((options) =>
+		options && after ? { ok: true, errors: [error.code, ...after] } : thrown(error, pos),
+	);
+}
+
 describe('`abstract`, `module`, `namespace` or `type` after `export` that starts no declaration (sveltejs/acorn-typescript#132)', () => {
 	it('reports TS1128 at `export` instead of crashing', async () => {
 		// TypeScript's parser reports TS1128 `Declaration or statement expected.`
-		// at `export` for each.
-		const sources = [
-			'export abstract\nclass A {}',
-			'export abstract\ninterface I {}',
-			'export abstract;',
-			'export abstract 1',
-			'export abstract',
-			'export abstract /* c\n */ class A {}',
-			'export type\nFoo = 1;',
-			'export namespace\nN {}',
-			'export module\nM {}',
-			'export declare abstract\nclass A {}',
-			'export declare namespace\nN {}',
-			'declare module "m" {\n\texport abstract\n\tclass A {}\n}',
+		// at `export` for each. After the word and a line break, a name is TS1434
+		// `Unexpected keyword or identifier.` at the name, which a collecting parse
+		// throws.
+		/** @type {Array<[source: string, after?: string[] | null]>} */
+		const cases = [
+			['export abstract\nclass A {}'],
+			['export abstract\ninterface I {}'],
+			['export abstract;'],
+			['export abstract 1', null],
+			['export abstract'],
+			['export abstract /* c\n */ class A {}'],
+			['export type\nFoo = 1;'],
+			['export namespace\nN {}', null],
+			['export module\nM {}', null],
+			['export declare abstract\nclass A {}'],
+			['export declare namespace\nN {}', null],
+			['declare module "m" {\n\texport abstract\n\tclass A {}\n}'],
 		];
-		const outcomes = await parse_in_worker(in_every_mode(sources));
+		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
 		expect(outcomes).toEqual(
-			sources.flatMap((source) =>
-				thrown_in_every_mode(TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, source.indexOf('export')),
-			),
+			cases.flatMap(([source, after]) => export_starts_no_statement(source, after)),
 		);
 	});
 
@@ -2720,26 +2737,26 @@ describe('`abstract` or `declare` followed by a line break (sveltejs/acorn-types
 	});
 
 	it('reports TS1128 at `export` for `export declare` before a line break', async () => {
-		const sources = [
-			'export declare\nclass A {}',
-			'export declare\nabstract class A {}',
-			'export declare\nfunction f(): void;',
-			'export declare\nconst x: number;',
-			'export declare\nenum E {}',
-			'export declare\nnamespace N {}',
-			"export declare\nmodule 'm' {}",
-			'export declare\ninterface I {}',
-			'export declare\ntype T = 1;',
-			'export declare\nglobal {}',
-			'export declare // c\nclass A {}',
-			'export declare /* c\n */ class A {}',
-			'declare namespace N {\n\texport declare\n\tclass A {}\n}',
+		/** @type {Array<[source: string, after?: string[]]>} */
+		const cases = [
+			['export declare\nclass A {}'],
+			['export declare\nabstract class A {}'],
+			['export declare\nfunction f(): void;'],
+			// The declaration isn't ambient, and its missing initializer is TS1155.
+			['export declare\nconst x: number;', [TS_ERRORS.DECLARATION_NOT_INITIALIZED('const').code]],
+			['export declare\nenum E {}'],
+			['export declare\nnamespace N {}'],
+			["export declare\nmodule 'm' {}"],
+			['export declare\ninterface I {}'],
+			['export declare\ntype T = 1;'],
+			['export declare\nglobal {}'],
+			['export declare // c\nclass A {}'],
+			['export declare /* c\n */ class A {}'],
+			['declare namespace N {\n\texport declare\n\tclass A {}\n}'],
 		];
-		const outcomes = await parse_in_worker(in_every_mode(sources));
+		const outcomes = await parse_in_worker(in_every_mode(cases.map(([source]) => source)));
 		expect(outcomes).toEqual(
-			sources.flatMap((source) =>
-				thrown_in_every_mode(TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, source.indexOf('export')),
-			),
+			cases.flatMap(([source, after]) => export_starts_no_statement(source, after)),
 		);
 	});
 

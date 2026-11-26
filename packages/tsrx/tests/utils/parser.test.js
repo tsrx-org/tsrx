@@ -15157,20 +15157,27 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	it('reports the syntax error in a namespace named `as`, and not its place', () => {
 		// TypeScript reads a namespace named `as` and reports a syntax error in it
 		// instead (TS1005 `'{' expected.` at `any`).
-		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
-		const cases = [
-			['{\n\tnamespace as any;\n}', TS_ERRORS.TOKEN_EXPECTED('{'), 'any'],
-			[
-				'{\n\tnamespace as { readonly r: number };\n}',
-				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
-				'readonly',
-			],
-		];
-		for (const [source, error, at] of cases) {
-			expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] }), source).toThrow(
-				expect.objectContaining({ code: code_of(error), pos: source.indexOf(at) }),
-			);
-		}
+		const source = '{\n\tnamespace as any;\n}';
+		expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] }), source).toThrow(
+			expect.objectContaining({
+				code: TS_ERRORS.TOKEN_EXPECTED('{').code,
+				pos: source.indexOf('any'),
+			}),
+		);
+		// A modifier that starts no statement in it (TS1128) is thrown by a strict
+		// parse, and recorded by a collecting one, which reads on.
+		const modifier = '{\n\tnamespace as { readonly r: number };\n}';
+		const pos = modifier.indexOf('readonly');
+		expect(() => parseModule(modifier, 'App.tsrx'), modifier).toThrow(
+			expect.objectContaining({ code: 'TS1128', pos }),
+		);
+		/** @type {ParseOptions & { errors: CompileError[] }} */
+		const options = { collect: true, errors: [] };
+		parseModule(modifier, 'App.tsrx', options);
+		expect(options.errors.map(({ code, pos }) => ({ code, pos }))).toContainEqual({
+			code: 'TS1128',
+			pos,
+		});
 	});
 
 	it("reports a `break` or `continue` with no target with TypeScript's code for it", async () => {
@@ -15242,9 +15249,18 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 
 	it('throws a syntax error in a misplaced namespace before its place, as TypeScript reports it', () => {
 		const source = '{\n\tnamespace N {\n\t\treadonly r = 1;\n\t}\n}';
-		const expected = expect.objectContaining({ code: 'TS1128', pos: source.indexOf('readonly') });
-		expect(() => parseModule(source, 'App.tsrx')).toThrow(expected);
-		expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] })).toThrow(expected);
+		const pos = source.indexOf('readonly');
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			expect.objectContaining({ code: 'TS1128', pos }),
+		);
+		// A collecting parse records it, and reads on.
+		/** @type {ParseOptions & { errors: CompileError[] }} */
+		const options = { collect: true, errors: [] };
+		parseModule(source, 'App.tsrx', options);
+		expect(options.errors.map(({ code, pos }) => ({ code, pos }))).toContainEqual({
+			code: 'TS1128',
+			pos,
+		});
 	});
 
 	it("throws TS1260 for an escape in a misplaced namespace's keyword before its place", () => {
@@ -17821,15 +17837,26 @@ describe('an at-sign construct after `export` (#607)', () => {
 			['export @for (const a of b) { <div /> }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
 			['export @switch (a) { @case 1: { <div /> } }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
 			['export @try { <div /> } @catch (e) { <b /> }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
-			['export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			// `export declare` before no declaration, as TypeScript reports it.
-			['export declare @if (a) { <div /> }', 'TS1128', 'export'],
 		];
 		const outcomes = await parse_in_worker(
 			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
 		);
 		expect(outcomes).toEqual(
 			cases.flatMap(([source, error, at]) => modes.map(() => thrown(error, source.indexOf(at)))),
+		);
+		// `export declare` before no declaration, as TypeScript reports it: TS1128
+		// at `export`, which a collecting parse records and reads on after, as
+		// after `export foo;`.
+		const skipped = ['export foo;', 'export declare @if (a) { <div /> }'];
+		const recovered = await parse_in_worker(
+			skipped.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+		expect(recovered).toEqual(
+			skipped.flatMap(() => [
+				thrown(TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 0),
+				{ ok: true, errors: ['TS1128'] },
+				{ ok: true, errors: ['TS1128'] },
+			]),
 		);
 	});
 
@@ -17916,6 +17943,32 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		);
 	}
 
+	/**
+	 * A token that starts no statement in a list, `at`: a strict parse throws
+	 * `error` at it. A collecting one records it over the token and reads on
+	 * from the next token, as TypeScript's parser does, with the module's
+	 * statements `body` (an empty statement for the token).
+	 * @param {Array<[source: string, error: ErrorKind, at: string, body: string[]]>} cases
+	 */
+	async function expect_skipped(cases) {
+		const outcomes = await parse_in_worker_with_ast(
+			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
+		);
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok
+					? { errors: outcome.errors, body: outcome.ast.body.map((node) => node.type) }
+					: outcome,
+			),
+		).toEqual(
+			cases.flatMap(([source, error, at, body]) => {
+				const pos = source.indexOf(at);
+				const recorded = { errors: [{ code: code_of(error), pos, end: pos + at.length }], body };
+				return [thrown(error, pos), recorded, recorded];
+			}),
+		);
+	}
+
 	it('reports a missing `;`, or `,` in a declaration list (#1053)', async () => {
 		await expect_thrown([
 			['import "m" x;', TS_ERRORS.TOKEN_EXPECTED, 'x;'],
@@ -17938,11 +17991,17 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 	});
 
 	it('reports a modifier that starts no statement as TS1128', async () => {
-		await expect_thrown([
-			['accessor x;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'accessor'],
-			['readonly x = 1;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'readonly'],
-			['static accessor;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'static'],
-			['function f() {\n\tpublic x;\n}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'public'],
+		const expression = ['EmptyStatement', 'ExpressionStatement'];
+		await expect_skipped([
+			['accessor x;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'accessor', expression],
+			['readonly x = 1;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'readonly', expression],
+			['static accessor;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'static', expression],
+			[
+				'function f() {\n\tpublic x;\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'public',
+				['FunctionDeclaration'],
+			],
 		]);
 		// Before a line break or another token, it's a name.
 		for (const source of ['accessor\nx;', 'accessor = 1;', 'readonly;']) {
@@ -17950,19 +18009,248 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		}
 	});
 
+	it('records a token that starts no statement when collecting, and reads on after it', async () => {
+		await expect_skipped([
+			// An export of a declared class that a decorator follows, which compiled
+			// before TS1128 was reported for it: the editor keeps the file, and the
+			// class after the name `declare`, as TypeScript reads them.
+			[
+				'export declare @dec class A {}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['EmptyStatement', 'ExpressionStatement', 'ClassDeclaration'],
+			],
+			[
+				'{\n\texport declare @dec class A {}\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['BlockStatement'],
+			],
+			// At the end of the input, or of a block.
+			['export', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export', ['EmptyStatement']],
+			['{\n\texport\n}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export', ['BlockStatement']],
+			// The next token starts a statement: an element, or a regular expression.
+			[
+				'export <div />;',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['EmptyStatement', 'JSXElement', 'EmptyStatement'],
+			],
+			[
+				'export /x/.test(a);',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['EmptyStatement', 'ExpressionStatement'],
+			],
+			// Written with an escape: TypeScript reports the escape at the same place,
+			// so not at all.
+			[
+				'\\u0065xport foo;',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'\\u0065xport',
+				['EmptyStatement', 'ExpressionStatement'],
+			],
+			// In a `case` clause, TypeScript reports TS1129 `Statement expected.`
+			// there, and TS1128 in a block in it.
+			[
+				'switch (a) {\n\tcase 1:\n\t\texport foo;\n}',
+				TS_ERRORS.STATEMENT_EXPECTED,
+				'export',
+				['SwitchStatement'],
+			],
+			[
+				'switch (a) {\n\tdefault:\n\t\taccessor x;\n}',
+				TS_ERRORS.STATEMENT_EXPECTED,
+				'accessor',
+				['SwitchStatement'],
+			],
+			[
+				'switch (a) {\n\tcase 1: {\n\t\texport foo;\n\t}\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['SwitchStatement'],
+			],
+		]);
+		expect(() => parseModule('switch (a) { case 1: export foo; }', 'App.tsrx')).toThrow(
+			'Statement expected.',
+		);
+		// Each token that starts no statement gets its error, as in TypeScript.
+		const outcomes = await parse_in_worker_with_ast(
+			['export export foo;', 'export accessor x;'].map((source) => ({
+				source,
+				options: { collect: true },
+			})),
+		);
+		expect(outcomes.map((outcome) => outcome.ok && outcome.errors)).toEqual([
+			[
+				{ code: 'TS1128', pos: 0, end: 6 },
+				{ code: 'TS1128', pos: 7, end: 13 },
+			],
+			[
+				{ code: 'TS1128', pos: 0, end: 6 },
+				{ code: 'TS1128', pos: 7, end: 15 },
+			],
+		]);
+	});
+
+	it('records a token that starts no statement before the checker errors held around it', async () => {
+		// TypeScript reports the syntax error first, or alone. It isn't held with
+		// a misplaced namespace's or a method's checker errors, or dropped with a
+		// signature's when the signature fails later.
+		const outcomes = await parse_in_worker_with_ast(
+			[
+				'{namespace N{export foo;}}',
+				'class A { m(public x) {export foo;} }',
+				'type F = (x = () => { export foo; }) => ;',
+				'for (let x = () => { export foo; } in y) {}',
+				'try { export foo; } } catch {}',
+				// In a generic arrow function that acorn-typescript then abandons, or
+				// in the parameters of an async one whose body fails.
+				'function f(x = <T,>() => { export foo;',
+				'async <T,>(x = () => { export foo; }) => ;',
+			].map((source) => ({ source, options: { collect: true } })),
+		);
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok
+					? outcome.errors?.[0]
+					: { code: outcome.code, pos: outcome.pos, end: undefined, ok: false },
+			),
+		).toEqual([
+			{ code: 'TS1128', pos: 13, end: 19 },
+			{ code: 'TS1128', pos: 23, end: 29 },
+			// When the rest fails, the first is thrown.
+			{ code: 'TS1128', pos: 22, end: undefined, ok: false },
+			{ code: 'TS1128', pos: 21, end: undefined, ok: false },
+			{ code: 'TS1128', pos: 6, end: undefined, ok: false },
+			{ code: 'TS1128', pos: 27, end: undefined, ok: false },
+			{ code: 'TS1128', pos: 23, end: undefined, ok: false },
+		]);
+		// Only this parse's: a list of errors from an earlier one isn't thrown.
+		/** @type {CompileError[]} */
+		const shared = [];
+		expect(() =>
+			parseModule('export foo; a b;', 'One.tsrx', { collect: true, errors: shared }),
+		).toThrow(expect.objectContaining({ code: 'TS1128', pos: 0 }));
+		expect(() => parseModule('const =', 'Two.tsrx', { collect: true, errors: shared })).toThrow(
+			expect.objectContaining({ code: 'TS1012', pos: 6 }),
+		);
+		// The syntax errors held there come first, by position, as TypeScript
+		// reports them: an escape in a JSX name (TS17021) too.
+		const held = await parse_in_worker_with_ast(
+			['{namespace N{let x = <A\\u0042 />; export foo;}}', '{namespace N{<Inn\\u0065r />;}}'].map(
+				(source) => ({ source, options: { collect: true } }),
+			),
+		);
+		expect(
+			held.map((outcome) => outcome.ok && outcome.errors?.map(({ code, pos }) => `${code}@${pos}`)),
+		).toEqual([
+			['TS17021@22', 'TS1128@34', 'TS1235@1'],
+			['TS17021@14', 'TS1235@1'],
+		]);
+		// And a strict parse throws the one held in a generic arrow function's
+		// parameters before a syntax error in its body, which a collecting parse
+		// recorded first, where it dropped it.
+		const parameter = 'const f = async <T,>(x = <A\\u0062 />) => ;';
+		expect(() => parseModule(parameter, 'App.tsrx')).toThrow(
+			expect.objectContaining({ code: 'TS17021', pos: parameter.indexOf('A\\') }),
+		);
+	});
+
+	it('keeps the error a strict parse throws where it reads ahead as a collecting one', () => {
+		// A strict parse reads the input, or what follows, as a collecting one to
+		// tell what it throws first (`#declaresFunctionLater`, `#asCollecting`):
+		// there, a token that starts no statement still ends the read, as before.
+		for (const [source, code, pos] of /** @type {const} */ ([
+			['let x; let x; export foo; function x(){}', 'TS2451', 11],
+			['const f = (public x = () => {export foo;})=>x;', 'TS1214', 11],
+		])) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code, pos }),
+			);
+		}
+	});
+
+	it('leaves a token that starts no statement in a template out, as a `;`', async () => {
+		const outcomes = await parse_in_worker_with_ast(
+			['function A() @{ <div /> export }', 'function A() @{ export <div /> }'].map((source) => ({
+				source,
+				options: { collect: true },
+			})),
+		);
+		expect(
+			outcomes.map((outcome) => {
+				if (!outcome.ok) return outcome;
+				const body = /** @type {any} */ (outcome.ast.body[0]).body;
+				return {
+					errors: outcome.errors?.map((error) => error.code),
+					render: body.render?.type,
+					statements: body.body.length,
+				};
+			}),
+		).toEqual([
+			{ errors: ['TS1128'], render: 'JSXElement', statements: 0 },
+			{ errors: ['TS1128'], render: 'JSXElement', statements: 0 },
+		]);
+	});
+
+	it('keeps a checker error first before a token that starts no statement', () => {
+		// A strict parse that throws a checker error finds the exports declared
+		// twice before it with a collecting parse, which records TS1128 at
+		// `export` and reads on. That's a syntax error still, after which the
+		// exports don't come first, so it throws the checker error, as when the
+		// collecting parse threw TS1128.
+		const source =
+			'export const a = 1;\nexport { a as b, a as b };\nlet x = 1;\nlet x = 2;\nexport foo;';
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			expect.objectContaining({
+				code: TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED.code,
+				pos: source.lastIndexOf('x ='),
+			}),
+		);
+	});
+
 	it('reports `export`, `async` and `abstract` before no declaration as TypeScript does', async () => {
+		// `export` starts no statement before what TypeScript reads no declaration
+		// from: TS1128 at `export`, where acorn failed after it.
+		const expression = ['EmptyStatement', 'ExpressionStatement'];
+		await expect_skipped([
+			['export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export', expression],
+			['export 1;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export', expression],
+			['export\nfoo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export', expression],
+			[
+				'export declare foo;',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['EmptyStatement', 'ExpressionStatement', 'ExpressionStatement'],
+			],
+			[
+				'{\n\texport foo;\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['BlockStatement'],
+			],
+			[
+				'namespace N {\n\texport foo;\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['TSModuleDeclaration'],
+			],
+			// After `declare`, which is a name there with no error after it, the
+			// next statement starts at the word.
+			[
+				'declare export foo;',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['ExpressionStatement', 'EmptyStatement', 'ExpressionStatement'],
+			],
+		]);
 		await expect_thrown([
-			// `export` starts no statement before what TypeScript reads no
-			// declaration from: TS1128 at `export`, where acorn failed after it.
-			['export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			['export 1;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			['export\nfoo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			// A collecting parse that fails after it still throws TS1128 at
+			// `export`, which TypeScript reports first.
 			['export async foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
 			['export abstract foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			['export declare foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
 			['export declare abstract foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			['{\n\texport foo;\n}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			['namespace N {\n\texport foo;\n}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
 			// `async` and `abstract` are names before anything else: TS1434 at the
 			// name, where acorn failed at the token after it (`async`) or reported
 			// `Unexpected token` (`abstract`).
@@ -17980,7 +18268,6 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			],
 			// After `declare`, which is a name there with no error after it, the
 			// next statement starts at the word.
-			['declare export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
 			['declare async foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'async'],
 			['declare abstract foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'abstract'],
 			// A name written with an escape is the name it spells (`idText`).

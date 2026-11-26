@@ -1240,6 +1240,34 @@ export async function App() @{
 		});
 	});
 
+	describe(`[${name}] a token that starts no statement`, () => {
+		it('keeps the file in the editor, with the error over the token', () => {
+			// TypeScript reports TS1128 at `export` and reads on from `declare`, a
+			// name, as a collecting compile does, so the rest keeps its mappings.
+			const source = [
+				'export declare @dec class A {}',
+				'export function App() @{',
+				'\t<div />',
+				'}',
+				'',
+			].join('\n');
+			expect(() => compile(source, 'App.tsrx')).toThrow('Declaration or statement expected.');
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map(({ code, pos, end }) => ({ code, pos, end }))).toEqual([
+				{ code: 'TS1128', pos: 0, end: 6 },
+			]);
+			for (const word of ['class A', 'App()']) {
+				const start = source.indexOf(word);
+				expect(
+					result.mappings.some(
+						(mapping) => mapping.sourceOffsets[0] === start && isDiagnosticsEnabled(mapping.data),
+					),
+					word,
+				).toBe(true);
+			}
+		});
+	});
+
 	describe(`[${name}] diagnostics in a switch`, () => {
 		it('reports an error on a whole discriminant or case test on that expression', () => {
 			const source = `export function App(props: { n: number; s: string }) @{

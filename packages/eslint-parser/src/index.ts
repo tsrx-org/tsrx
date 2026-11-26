@@ -705,7 +705,12 @@ function is_fatal_parser_diagnostic(error: any): boolean {
 		error?.code === DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG ||
 		error?.code === DIAGNOSTIC_CODES.DETACHED_DIRECTIVE_CLAUSE ||
 		error?.code === DIAGNOSTIC_CODES.SWITCH_CASE_BREAK_STATEMENT ||
-		error?.code === DIAGNOSTIC_CODES.SWITCH_CASE_RETURN_STATEMENT
+		error?.code === DIAGNOSTIC_CODES.SWITCH_CASE_RETURN_STATEMENT ||
+		// A token that starts no statement where one in a list starts
+		// (`export foo;`, TS1128, or TS1129 in a `case` clause), which the parser
+		// used to throw, and which the tree leaves out.
+		error?.code === TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED.code ||
+		error?.code === TS_ERRORS.STATEMENT_EXPECTED.code
 	);
 }
 

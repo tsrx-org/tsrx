@@ -748,6 +748,7 @@ const TYPESCRIPT_ERROR_CODES = [
 	'TS1125  Hexadecimal digit expected.',
 	'TS1127  Invalid character.',
 	'TS1128  Declaration or statement expected.',
+	'TS1129  Statement expected.',
 	'TS1134  Variable declaration expected.',
 	'TS1136  Property assignment expected.',
 	'TS1141  String literal expected.',

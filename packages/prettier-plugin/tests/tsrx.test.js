@@ -3177,6 +3177,13 @@ describe('parse errors', () => {
 			['async export function f() {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:7'],
 			['declare export const x: number;', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:9'],
 			['abstract export default class A {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:10'],
+			// A token that starts no statement where one in a list starts (TS1128,
+			// TS1129 in a `case` clause), which the parser records when collecting,
+			// and the tree leaves out.
+			['export declare @dec class A {}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, '1:1'],
+			['export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, '1:1'],
+			['accessor x;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, '1:1'],
+			['switch (a) {\n  case 1:\n    export foo;\n}', TS_ERRORS.STATEMENT_EXPECTED, '3:5'],
 		];
 		for (const [source, error, at] of cases) {
 			await expect_reported(source, error, at);

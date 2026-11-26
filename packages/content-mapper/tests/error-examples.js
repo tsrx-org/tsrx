@@ -878,6 +878,14 @@ export { data };
 	{ error: TS_ERRORS.DECLARATION_EXPECTED, source: `static static class A {}` },
 	{ error: TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, source: `export type const x = 1;` },
 	{
+		error: TS_ERRORS.STATEMENT_EXPECTED,
+		source: `declare const a: number;
+switch (a) {
+	case 1:
+		export;
+}`,
+	},
+	{
 		error: TS_ERRORS.LINE_BREAK_NOT_PERMITTED,
 		source: `export declare type
 Foo = 1;`,
