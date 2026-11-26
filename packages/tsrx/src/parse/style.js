@@ -14,7 +14,7 @@ const REGEX_VALID_IDENTIFIER_CHAR = /[a-zA-Z0-9_-]/;
 const REGEX_LEADING_HYPHEN_OR_DIGIT = /^-?\d/;
 const REGEX_WHITESPACE_OR_COLON = /[\s:]/;
 // An escape, and the one space that ends a hex escape (`\r\n` too).
-const REGEX_VALUE_ESCAPE = /^\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^\n\r\f])/;
+const REGEX_VALUE_ESCAPE = /\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^\n\r\f])/y;
 // `--` and a name (letters, digits, `-`, `_`, non-ASCII, escapes), then `:`.
 const REGEX_CUSTOM_PROPERTY_START = /^--(?:[\w-]|[^\x00-\x7f]|\\[^\n])*\s*:/;
 const REGEX_NTH_OF =
@@ -690,11 +690,23 @@ function is_url_name(tracker) {
 function trim_value(value) {
 	const start = value.length - value.trimStart().length;
 	let end = value.trimEnd().length;
-	for (let index = value.indexOf('\\', start); index !== -1 && index < end;) {
-		const escape = REGEX_VALUE_ESCAPE.exec(value.slice(index, index + 9));
-		const length = escape ? escape[0].length : 1;
-		end = Math.max(end, index + length);
-		index = value.indexOf('\\', index + length);
+	if (end === value.length) return value.slice(start, end);
+	// Only an escape that ends where the whitespace starts can hold it: the
+	// last `\` before it, followed by nothing (`a\ `) or by up to six hex
+	// digits (`a\31 `). Anything else after that `\` ends the escape first.
+	const from = Math.max(start, end - 7);
+	let escape = end - 1;
+	while (escape >= from && value[escape] !== '\\') escape -= 1;
+	if (escape < from || !/^[0-9a-fA-F]*$/.test(value.slice(escape + 1, end))) {
+		return value.slice(start, end);
+	}
+	// That `\` starts an escape after an even number of `\` (`\\` is one).
+	let run = 0;
+	while (escape - run > start && value[escape - run - 1] === '\\') run += 1;
+	if (run % 2 === 0) {
+		REGEX_VALUE_ESCAPE.lastIndex = escape;
+		const match = REGEX_VALUE_ESCAPE.exec(value);
+		if (match) end = Math.max(end, escape + match[0].length);
 	}
 	return value.slice(start, end);
 }

@@ -212,6 +212,21 @@ describe('parseStyle declaration values', function () {
 		['.a { --x: a\\31\r\n; }', 'a\\31\r\n'],
 		['.a { --x: a\\\n; }', 'a\\'],
 		['.a { font-family: a\\\r\n; }', 'a\\'],
+		['.a { --x: a\\00003A\r\n  ; }', 'a\\00003A\r\n'],
+		[String.raw`.a { --x: a\1 ; }`, String.raw`a\1 `],
+		[String.raw`.a { --x: a\123456 ; }`, String.raw`a\123456 `],
+		// A seventh hex digit is no part of the escape, nor the space after it.
+		[String.raw`.a { --x: a\1234567 ; }`, String.raw`a\1234567`],
+		// In a run of `\`, every other one starts an escape, however long the run.
+		[String.raw`.a { font-family: a\\\ ; }`, String.raw`a\\\ `],
+		[String.raw`.a { font-family: a\\\\ ; }`, String.raw`a\\\\`],
+		[`.a { font-family: a${'\\'.repeat(11)} ; }`, `a${'\\'.repeat(11)} `],
+		[`.a { font-family: a${'\\'.repeat(12)} ; }`, `a${'\\'.repeat(12)}`],
+		[String.raw`.a { --x: a /* \\\ */ ; }`, String.raw`a /* \\\ */`],
+		[String.raw`.a { font-family: a\\\31 ; }`, String.raw`a\\\31 `],
+		[String.raw`.a { font-family: a\\31 ; }`, String.raw`a\\31`],
+		[String.raw`.a { font-family: /* \\\ */ a\31 ; }`, String.raw`/* \\\ */ a\31 `],
+		[String.raw`.a { font-family: /* \\\ */ a ; }`, String.raw`/* \\\ */ a`],
 	])('keeps the escapes in %j as written', function (css, value) {
 		expect(blocks(css)).toEqual([[[css.slice(5, css.indexOf(':')), value]]]);
 	});
