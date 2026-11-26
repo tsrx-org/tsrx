@@ -1976,6 +1976,7 @@ export function runSharedScopedStyleTests({
 		});
 
 		it('drops the whitespace around the argument of a :global(...) with its parentheses', () => {
+			const NBSP = String.fromCharCode(0xa0);
 			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
 			const cases = [
 				// Whitespace at the edges of the argument is no combinator, but it was
@@ -1993,8 +1994,18 @@ export function runSharedScopedStyleTests({
 				// A hex escape at the end of the argument would take the space after
 				// the `)` as its own, which joined the compounds: `.wrap.\31 .icon`.
 				['.wrap:global(.\\31) .icon', (hash) => `.wrap.${hash}.\\31  .icon:where(.${hash}) {`],
-				// One that ends with its own space keeps it.
+				['.wrap:global(.\\31):hover', (hash) => `.wrap.${hash}.\\31 :hover {`],
+				// So did a space that dropping a bare :global exposed.
+				[':global(.\\31):global :global(.x)', () => '.\\31  .x {'],
+				// One that ends with its own space keeps it, and one that a comment,
+				// the `)` of an :is() or the arguments of a pseudo-element end gets none.
 				['.wrap:global(.\\31 ).icon', (hash) => `.wrap.\\31 .icon.${hash} {`],
+				[':global(.\\31/**/) :global.x', () => '.\\31/**/.x {'],
+				[':global(.a):global(\\64) :global.x', () => '.a:is(\\64).x {'],
+				[':global(::slotte\\64(.x)) :global::before', () => '::slotte\\64(.x)::before {'],
+				// Whitespace that CSS reads as part of a name, which the parser skips,
+				// stays as written, with what is around it.
+				[`.wrap:global( ${NBSP}.x)`, (hash) => `.wrap.${hash} ${NBSP}.x {`],
 			];
 			for (const [selector, expected] of cases) {
 				const rule = `${selector} { color: red; }`;

@@ -1768,27 +1768,32 @@ describe('scoped style analysis', () => {
 			}
 		});
 
-		it('keeps the comment over a pruned selector whole when it drops the whitespace in a :global(...)', () => {
-			for (const minify of [false, true]) {
-				for (const [css, pruned] of [
-					[
-						'.p, .q:global( /* c */ .x /* d */ ).r { color: red; }',
-						'.q:global( /* c */ .x /* d */ ).r',
-					],
-					['.q:global( .x ), .p { color: red; }', '.q:global( .x )'],
-					['.q:global(.\\31) .r, .p { color: red; }', '.q:global(.\\31) .r'],
-				]) {
-					const rendered = render(css, [pruned], minify);
-					if (minify) {
-						expect(strip_hash(rendered), css).toBe('.p { color: red; }');
-					} else {
-						expect(rendered, css).toContain('/* (unused) ');
-						// Only the comments are left of the pruned selector.
-						expect(strip_hash(rendered.replace(/\/\*[\s\S]*?\*\//g, '')), css).toBe(
-							'.p { color: red; }',
-						);
-					}
-				}
+		it('writes nothing into a pruned selector when it drops the whitespace in a :global(...)', () => {
+			/** @type {Array<[css: string, pruned: string, full: string, minified: string]>} */
+			const cases = [
+				[
+					'.p, .q:global( /* c */ .x /* d */ ).r { color: red; }',
+					'.q:global( /* c */ .x /* d */ ).r',
+					'.p /* (unused) .q\\/* c *\\/.x\\/* d *\\/.r*/ { color: red; }',
+					'.p { color: red; }',
+				],
+				[
+					'.q:global( .x ), .p { color: red; }',
+					'.q:global( .x )',
+					'/* (unused) .q.x,*/ .p { color: red; }',
+					' .p { color: red; }',
+				],
+				// Nor the space after a hex escape, which minifying removes with it.
+				[
+					'.p, .q:global(.\\31) .r { color: red; }',
+					'.q:global(.\\31) .r',
+					'.p /* (unused) .q.\\31 .r*/ { color: red; }',
+					'.p { color: red; }',
+				],
+			];
+			for (const [css, pruned, full, minified] of cases) {
+				expect(render(css, [pruned], false), css).toBe(full);
+				expect(render(css, [pruned], true), css).toBe(minified);
 			}
 		});
 
