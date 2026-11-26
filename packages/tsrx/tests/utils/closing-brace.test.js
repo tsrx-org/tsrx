@@ -285,7 +285,8 @@ describe("reporting a missing `}` as `'}' expected.`", () => {
 			['class A { ) }', TS_ERRORS.UNEXPECTED_TOKEN, '1:10'],
 			['interface I { ) }', TS_ERRORS.UNEXPECTED_TOKEN, '1:14'],
 			['try {} catch (e)', TS_ERRORS.UNEXPECTED_TOKEN, '1:16'],
-			['export', TS_ERRORS.UNEXPECTED_TOKEN, '1:6'],
+			// `export` before no declaration, as TypeScript reports it.
+			['export', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, '1:0'],
 			['}', TS_ERRORS.UNEXPECTED_TOKEN, '1:0'],
 			['x = { a 1 }', TS_ERRORS.UNEXPECTED_TOKEN, '1:8'],
 			['x = [{ a: 1 ];', TS_ERRORS.UNEXPECTED_TOKEN, '1:12'],
