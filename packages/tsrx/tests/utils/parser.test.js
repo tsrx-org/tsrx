@@ -939,11 +939,13 @@ describe('TSRX parser', () => {
 				).toEqual(ranges);
 			}
 
-			// TypeScript reports a syntax error in the statement alone.
+			// TypeScript reports a syntax error in the statement, or in a `for` head's
+			// declaration list, alone.
 			for (const [source, code, at] of [
 				['using {x} = ;', 'TS1012', ';'],
 				['using {x} y;', 'TS1005', 'y'],
 				['using {x} = y z;', 'TS1005', 'z'],
+				['for (using {x} = y z;;) {}', 'TS1012', 'z'],
 			]) {
 				for (const options of [undefined, { collect: true, errors: [] }]) {
 					expect(() => parseModule(source, 'App.tsrx', options), source).toThrow(
@@ -972,6 +974,26 @@ describe('TSRX parser', () => {
 			const redeclared_errors = [];
 			parseModule(redeclared, 'App.tsrx', { collect: true, errors: redeclared_errors });
 			expect(redeclared_errors.map((found) => found.code)).toEqual(['TS2451', 'TSRX2011']);
+			const in_head = 'for (using x=1,x=2;;) {}';
+			expect(() => parseModule(in_head, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS2451', pos: 15, end: 16 }),
+			);
+
+			// A syntax error that a collecting parse records and reads on after (a
+			// JSX name with an escape, TS17021) is reported alone too.
+			const B = String.fromCharCode(92);
+			for (const source of [
+				`using {x} = <Inn${B}u0065r />;`,
+				`using {x = <Inn${B}u0065r />} = y;`,
+			]) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, 'App.tsrx', { collect: true, errors });
+				expect(
+					errors.map((found) => found.code),
+					source,
+				).toEqual(['TS17021']);
+			}
 
 			// In a `for` head, `await using of` is a declaration, as in TypeScript.
 			const [head] = find_all(
@@ -979,6 +1001,9 @@ describe('TSRX parser', () => {
 				'VariableDeclaration',
 			);
 			expect([head?.kind, head?.declarations[0].id.name]).toEqual(['await using', 'of']);
+			// And `using of` before `:` or `;`, where acorn took it only before `=`.
+			const [typed] = find_all('for (using of: null = null; ; ) {}', 'VariableDeclaration');
+			expect([typed?.kind, typed?.declarations[0].id.name]).toEqual(['using', 'of']);
 		});
 	});
 

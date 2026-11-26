@@ -7417,7 +7417,8 @@ export function TSRXPlugin(config) {
 			 * expression (`';' expected.`). A binding pattern is TypeScript's checker
 			 * error (see `parseVarId`). In a `for` head, `await using of` is a
 			 * declaration too, as in TypeScript, and as acorn reads it with `using` on
-			 * the line of `await`: `for (await` with `using of = x;;)` on the next line.
+			 * the line of `await`: `for (await` with `using of = x;;)` on the next line;
+			 * and so is `using of` before `:` or `;`.
 			 * @param {boolean} isAwaitUsing
 			 * @param {boolean} isFor
 			 */
@@ -7430,6 +7431,12 @@ export function TSRXPlugin(config) {
 				}
 				const next = this.lookahead(isAwaitUsing ? 2 : 1);
 				if (regex_line_break.test(this.input.slice(using.end, next.start))) return false;
+				if (isFor && !isAwaitUsing && next.type === tt.name && next.value === 'of') {
+					// acorn reads `using of` as a declaration in a `for` head only before
+					// `=`, and TypeScript before `:` and `;` too.
+					const after = this.lookahead(2).type;
+					return after === tt.colon || after === tt.semi;
+				}
 				return (
 					next.type === tt.braceL ||
 					(isAwaitUsing && Parser.acornTypeScript.tokenIsIdentifier(next.type))
@@ -7476,7 +7483,7 @@ export function TSRXPlugin(config) {
 						});
 						// Dropped after a syntax error.
 						for (const error of held) if (error.code === 'TS1492') deferred_errors.add(error);
-						this.#releaseErrors(held);
+						this.#releaseErrors(this.#withoutPatternErrorAfterSyntaxError(held));
 						const type = this.tsTryParseTypeAnnotation();
 						if (type) {
 							/** @type {AST.Pattern} */ (decl.id).typeAnnotation = type;
@@ -13977,17 +13984,35 @@ export function TSRXPlugin(config) {
 						}
 						this.next();
 					}
-					// TypeScript's checker reports the declaration before `in` (TS1493,
-					// TS1494) before the errors in it, such as TS1492 at a binding
-					// pattern (see `parseVarId`).
-					/** @type {CompileError[]} */
-					const held = [];
-					this.#holdingErrors(held, () => {
+					const read = () => {
 						this.parseVar(init, true, usingKind);
 						this.finishNode(init, 'VariableDeclaration');
 						this.#reportForInUsing(init);
-					});
-					this.#releaseErrors(held);
+					};
+					if (this.type !== tt.braceL) {
+						read();
+					} else {
+						// With a binding pattern first, its errors are held until the
+						// declaration list ends, as in a statement (see `parseStatement`):
+						// TypeScript's checker reports the declaration before `in` (TS1493,
+						// TS1494) before TS1492 at the pattern (see `parseVarId`), and a
+						// syntax error after the list alone.
+						/** @type {CompileError[]} */
+						const held = [];
+						this.#holdingErrors(held, () => {
+							read();
+							if (
+								awaitAt === -1 &&
+								this.type !== tt.semi &&
+								this.type !== tt._in &&
+								!this.isContextual('of')
+							) {
+								// What `parseFor` throws.
+								this.expect(tt.semi);
+							}
+						});
+						this.#releaseErrors(this.#withoutPatternErrorAfterSyntaxError(held));
+					}
 					return this.parseForAfterInitWithIndex(
 						/** @type {AST.ForInStatement | AST.ForOfStatement} */ (node),
 						init,
@@ -16796,13 +16821,28 @@ export function TSRXPlugin(config) {
 					/** @type {CompileError[]} */
 					const held = [];
 					const statement = this.#holdingErrors(held, read);
-					this.#releaseErrors(held);
+					this.#releaseErrors(
+						using_pattern ? this.#withoutPatternErrorAfterSyntaxError(held) : held,
+					);
 					return statement;
 				} finally {
 					this.#statementContext = outer;
 					this.#statementContextDepth = outer_context_depth;
 					this.#statementOpenBrackets = outer_open_brackets;
 				}
+			}
+
+			/**
+			 * `held` without TS1492 at a `using` declaration's binding pattern (see
+			 * `parseVarId`) when it holds a syntax error that a collecting parse
+			 * records and reads on after (TS17021, `held_syntax_errors`): TypeScript
+			 * reports the syntax error alone. A strict parse throws that one.
+			 * @param {CompileError[]} held
+			 * @returns {CompileError[]}
+			 */
+			#withoutPatternErrorAfterSyntaxError(held) {
+				if (!held.some((error) => held_syntax_errors.has(error))) return held;
+				return held.filter((error) => !(error.code === 'TS1492' && deferred_errors.has(error)));
 			}
 
 			/**
