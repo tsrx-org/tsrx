@@ -6844,8 +6844,20 @@ function contain_reported_jumps_without_target(program, transform_context) {
 							target.label === label && (label !== null || !loop || target.loop),
 					);
 					if (has_target || !is_recorded_jump(node)) return node;
-					const contained = b.do_while(b.literal(false), { ...node, label: null });
+					// The comments before the jump go before the loop, where a
+					// TypeScript directive still covers the line the loop starts.
+					const { leadingComments, ...jump } =
+						/** @type {AST.Statement & { leadingComments?: AST.Comment[] }} */ (node);
+					const contained = b.do_while(b.literal(false), {
+						.../** @type {AST.BreakStatement | AST.ContinueStatement} */ (jump),
+						label: null,
+					});
 					contained.metadata = { ...contained.metadata, contained_jump: true };
+					if (leadingComments) {
+						/** @type {AST.Statement & { leadingComments?: AST.Comment[] }} */ (
+							contained
+						).leadingComments = leadingComments;
+					}
 					return node.loc
 						? b.set_location(contained, /** @type {AST.NodeWithLocation} */ (node))
 						: contained;

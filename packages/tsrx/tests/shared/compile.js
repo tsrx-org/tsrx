@@ -760,11 +760,22 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			expect(result.errors.map((error) => error.code)).toEqual([
 				TS_ERRORS.JUMP_ACROSS_FUNCTION.code,
 			]);
-			// The comment stays before the jump, in the loop.
-			expect(result.code).toMatch(/\bdo\b[^;]*\bcontinue; while \(false\);/);
+			// The comment goes before the loop, which takes the jump's place.
+			expect(result.code).toContain(`// ${directive}\n\tdo continue; while (false);`);
 			expect(
 				virtual_semantic_diagnostics(result.code).map((diagnostic) => diagnostic.code),
 			).toEqual(codes);
+		});
+
+		it("keeps a `@ts-ignore` comment over a jump in a loop of its own covering TypeScript's unreachable code", () => {
+			const source =
+				'function f() {\n\tthrow 1;\n\t// @ts-ignore\n\tcontinue;\n}\nexport const after = 1;\n';
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(
+				virtual_semantic_diagnostics(result.code, { allowUnreachableCode: false }).map(
+					(diagnostic) => diagnostic.code,
+				),
+			).toEqual([]);
 		});
 
 		it.each([
