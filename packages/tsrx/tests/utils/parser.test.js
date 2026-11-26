@@ -18420,6 +18420,57 @@ ${lines.join('\n')}
 		}
 	});
 
+	it('ends the part of a member name after a `.` at a `-`, as TypeScript does', () => {
+		// TypeScript reads a member name's part after a `.` as an identifier,
+		// which a `-` ends, where a tag's or an attribute's own name goes on: TS1003
+		// at the `-` in an opening tag, TS1005 `'>' expected.` in a closing one.
+		/** @type {Array<[string, string]>} */
+		const scripts = [
+			[`const x = <X.A-b />;`, 'TS1003'],
+			[`const x = <X.A-b c="1" />;`, 'TS1003'],
+			[`const x = <X.A-b></X.A-b>;`, 'TS1003'],
+			[`const x = <X.A.B-c />;`, 'TS1003'],
+			[`const x = <X.A-b.C />;`, 'TS1003'],
+			[`const x = <X.A- />;`, 'TS1003'],
+			[`const x = <X.A-${escape('0062')} />;`, 'TS1003'],
+			[`const x = <X.A>x</X.A-b>;`, 'TS1005'],
+		];
+		for (const [snippet, code] of scripts) {
+			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
+			const [first] = /** @type {ts.DiagnosticWithLocation[]} */ (
+				/** @type {any} */ (file).parseDiagnostics
+			);
+			expect(['TS' + first.code, first.start], snippet).toEqual([code, snippet.indexOf('-')]);
+		}
+		/** @type {Array<[string, string]>} */
+		const templates = [
+			[`export function App() @{\n\t<X.A-b />\n}`, 'TS1003'],
+			[`export function App() @{\n\t<div><X.A-b /></div>\n}`, 'TS1003'],
+			[`export function App() @{\n\t<X.A>x</X.A-b>\n}`, 'TS1005'],
+		];
+		for (const [source, code] of [...scripts, ...templates]) {
+			for (const options of [
+				undefined,
+				{ collect: true, errors: [] },
+				{ loose: true, errors: [] },
+			]) {
+				expect(() => parseModule(source, 'App.tsrx', options), source).toThrow(
+					expect.objectContaining({ code, pos: source.indexOf('-') }),
+				);
+			}
+		}
+		// A `-` in the first part, or in a tag's or attribute's own name, is part
+		// of it; a dynamic tag can take any name.
+		for (const source of [
+			`const x = <a-b.c />;`,
+			`const x = <X.A b-c="1" />;`,
+			`const x = <my-element data-x="1" />;`,
+			`const x = <{X['A-b']} />;`,
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
+		}
+	});
+
 	it('reads a tag in children that starts with an escape or a letter outside ASCII, as TypeScript does', () => {
 		// A `<` in children opens a tag before an escape for a character a name
 		// starts with, and before a letter outside ASCII. Not before an escape for

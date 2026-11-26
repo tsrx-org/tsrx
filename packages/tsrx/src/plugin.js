@@ -14727,12 +14727,42 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * A part of a JSX member name after a `.`, which TypeScript reads as an
+			 * identifier (`parseRightSideOfDot`), and which a `-` ends, where a tag's
+			 * or an attribute's own name goes on. TypeScript then expects an
+			 * attribute or the tag's end there: it reports TS1003 `Identifier
+			 * expected.` at the `-` in an opening tag, and TS1005 `'>' expected.` in
+			 * a closing one. acorn-typescript read `<X.A-b />` with the part `A-b`,
+			 * which compiled to a tag that esbuild, oxc, Bun and vue-jsx-vapor
+			 * reject, and SWC reads as `X.A - b`. An escape before the `-` is
+			 * TypeScript's TS17021 first (see `jsx_parseIdentifier`).
+			 * @param {boolean} closing Whether the name is a closing tag's
+			 * @returns {ESTreeJSX.JSXIdentifier}
+			 */
+			#parseJSXMemberProperty(closing) {
+				const hyphen = this.type === tstt.jsxName ? this.input.indexOf('-', this.start) : -1;
+				const end = this.end;
+				const property = this.jsx_parseIdentifier();
+				if (hyphen !== -1 && hyphen < end) {
+					this.raise(
+						hyphen,
+						closing ? TS_ERRORS.TOKEN_EXPECTED('>') : TS_ERRORS.IDENTIFIER_EXPECTED,
+					);
+				}
+				return property;
+			}
+
+			/**
 			 * @type {Parse.Parser['jsx_parseElementName']}
 			 */
 			jsx_parseElementName() {
 				if (this.type === tstt.jsxTagEnd) {
 					return '';
 				}
+				// After `</`, not `<`.
+				const closing =
+					this.lastTokEnd - this.lastTokStart === 1 &&
+					this.input.charCodeAt(this.lastTokStart) === CharCode.slash;
 
 				if (this.type === tt.braceL) {
 					return this.#parseJSXDynamicElementName();
@@ -14752,7 +14782,7 @@ export function TSRXPlugin(config) {
 						)
 					);
 					memberExpr.object = node;
-					memberExpr.property = this.jsx_parseIdentifier();
+					memberExpr.property = this.#parseJSXMemberProperty(closing);
 					memberExpr.computed = false;
 					memberExpr = this.finishNode(memberExpr, 'JSXMemberExpression');
 					while (this.eat(tt.dot)) {
@@ -14763,7 +14793,7 @@ export function TSRXPlugin(config) {
 							)
 						);
 						newMemberExpr.object = memberExpr;
-						newMemberExpr.property = this.jsx_parseIdentifier();
+						newMemberExpr.property = this.#parseJSXMemberProperty(closing);
 						newMemberExpr.computed = false;
 						memberExpr = this.finishNode(newMemberExpr, 'JSXMemberExpression');
 					}
