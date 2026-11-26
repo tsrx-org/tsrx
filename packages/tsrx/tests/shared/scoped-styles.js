@@ -2137,6 +2137,131 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('reads :root, :host, :is(), :where(), :not() and :has() in any case and with escapes', () => {
+			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
+			const cases = [
+				[':ROOT', () => ':ROOT {'],
+				[':ROOT.dark .icon', (hash) => `:ROOT.dark .icon.${hash} {`],
+				[String.raw`:r\6f ot.dark .icon`, (hash) => String.raw`:r\6f ot.dark .icon.` + `${hash} {`],
+				[String.raw`:\72 oot .icon`, (hash) => String.raw`:\72 oot .icon.` + `${hash} {`],
+				[':Root:not(.dark) .icon', (hash) => `:Root:not(.dark) .icon.${hash} {`],
+				[':HOST(.open) .icon', (hash) => `:HOST(.open) .icon.${hash} {`],
+				[':ROOT:has(.icon)', (hash) => `:ROOT:has(.icon.${hash}) {`],
+				[':ROOT:HAS(.icon)', (hash) => `:ROOT:HAS(.icon.${hash}) {`],
+				[':IS(.wrap) .icon', (hash) => `:IS(.wrap:where(.${hash})) .icon.${hash} {`],
+				[
+					String.raw`.wrap:h\61s(.icon)`,
+					(hash) => `.wrap.${hash}` + String.raw`:h\61s(.icon:where(.` + `${hash})) {`,
+				],
+			];
+			for (const [selector, expected] of cases) {
+				const rule = `${selector} { color: red; }`;
+				const theme = compile(`export const theme = <style>${rule}</style>;`, 'App.tsrx');
+				const component = compile(
+					`export function App() @{
+						<>
+							<style>${rule}</style>
+							<div ${attr}="wrap"><i ${attr}="icon" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+
+				expect(theme.css, selector).toContain(expected(hashes_of(theme.cssHash)[0]));
+				expect(component.css, selector).toContain(expected(hashes_of(component.cssHash)[0]));
+			}
+
+			// A :has() that matches nothing prunes it, as it does :root.
+			const { css } = compile(
+				`export function App() @{
+					<>
+						<style>:ROOT.dark:has(.missing) .icon { color: red; }</style>
+						<i ${attr}="icon" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+			expect(css).toContain('/* (unused) :ROOT.dark:has(.missing) .icon');
+		});
+
+		it('keeps what a :root compound would lose to make its arguments empty', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							:root:not(:has(.missing)), .icon { color: red; }
+							.wrap { :root:not(&.missing), .icon { color: blue; } }
+							.wrap { :root:not(&:has(.missing)), .icon { color: green; } }
+							:root:not(:not(:has(.missing))) .icon { color: gray; }
+						</style>
+						<div ${attr}="wrap"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+			const hash = hashes_of(cssHash)[0];
+
+			// Pruned, each argument left an empty :has() or :not(), which is
+			// invalid and takes .icon with it.
+			expect(css).toContain(`:root:not(:has(.missing.${hash})), .icon.${hash} {`);
+			expect(css).toContain(`:root:not(&.missing), .icon.${hash} {`);
+			expect(css).toContain(`:root:not(&:has(.missing.${hash})), .icon.${hash} {`);
+			// A :not() around keeps its argument unscoped, but not a :has()'s, which
+			// looks at descendants: unscoped, any .missing on the page would match.
+			expect(css).toContain(`:root:not(:not(:has(.missing:where(.${hash})))) .icon.${hash} {`);
+		});
+
+		it('lets :root match the <html> a component renders', () => {
+			const { css, cssHash } = compile(
+				`export function Document() @{
+					<>
+						<style>
+							:root > body { margin: 0; }
+							:root.dark > body .icon { color: white; }
+							:root > .icon { color: red; }
+							div:root > body { color: blue; }
+							HTML:root > body { color: green; }
+							:root:has(> body) { color: gray; }
+							:ROOT:HAS(> body > .icon) { color: black; }
+							:root:has(> .icon) { color: purple; }
+						</style>
+						<html><body><i ${attr}="icon" /></body></html>
+					</>
+				}`,
+				'App.tsrx',
+			);
+			const hash = hashes_of(cssHash)[0];
+
+			expect(css).toContain(`:root > body.${hash} {`);
+			expect(css).toContain(`:root.dark > body.${hash} .icon:where(.${hash}) {`);
+			expect(css).toContain('/* (unused) :root > .icon');
+			expect(css).toContain('/* (unused) div:root > body');
+			expect(css).toContain(`HTML:root > body.${hash} {`);
+			// So does the argument of its :has(), which looks down from the root.
+			expect(css).toContain(`:root:has(> body.${hash}) {`);
+			expect(css).toContain(`:ROOT:HAS(> body.${hash} > .icon:where(.${hash})) {`);
+			expect(css).toContain('/* (unused) :root:has(> .icon)');
+		});
+
+		it('keeps an & argument of a :root compound, whose state the page may set', () => {
+			const { css, cssHash } = compile(
+				`export function Document() @{
+					<>
+						<style>
+							.doc { :root:is(&.dark) > body { color: white; } }
+							.doc { :ROOT:WHERE(&.dark, .light) > body { color: gray; } }
+						</style>
+						<html ${attr}="doc"><body /></html>
+					</>
+				}`,
+				'App.tsrx',
+			);
+			const hash = hashes_of(cssHash)[0];
+
+			expect(css).toContain(`:root:is(&.dark) > body.${hash} {`);
+			expect(css).toContain(`:ROOT:WHERE(&.dark, .light) > body.${hash} {`);
+		});
+
 		it('prunes a selector whose :root or :host compound has a :has() that matches nothing', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{
@@ -2676,8 +2801,9 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`:root:not(:root:has(.icon:where(.${hash}))) .wrap.${hash} {`);
 			// So does an & for a @scope's root, as :scope does.
 			expect(css).toContain(`:root:is(&.${hash}) { color: green; }`);
-			// An argument with an & is matched as before: no .missing, so pruned.
-			expect(css).toContain(':root:is(/* (unused) &.missing*/) { color: gray; }');
+			// An argument with an & is kept, scoped, as an assigned block keeps it:
+			// the pruner can't tell the root's state.
+			expect(css).toContain(`:root:is(&.missing.${hash}) { color: gray; }`);
 		});
 
 		it('keeps the arguments of a :global() compound in a scope without elements', () => {
