@@ -1414,6 +1414,9 @@ describe('scoped style analysis', () => {
 				[':root:global(.x i).icon { color: red; }', ':global(.x i)'],
 				[':global(.outer):has(.wrap:global(.x i).icon) { color: red; }', ':global(.x i)'],
 				['.a:global(.x/**/ .y).b { color: red; }', ':global(.x/**/ .y)'],
+				[':root { &:global(.x i).icon { color: red; } }', ':global(.x i)'],
+				[':root, :host { & { &:global(.x > i).icon { color: red; } } }', ':global(.x > i)'],
+				[':root { :is(&:global(.x i).icon) { color: red; } }', ':global(.x i)'],
 			];
 			for (const [css, anchor] of cases) {
 				const source = `const t = <style>${css}</style>;`;

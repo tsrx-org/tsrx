@@ -2912,6 +2912,8 @@ export function runSharedScopedStyleTests({
 							:global(.x i).icon { color: green; }
 							.wrap:global(.x i)::before { content: "a"; }
 							.wrap:global(.x i):after { content: "b"; }
+							:root { &:global(.x i)::before { content: "c"; } }
+							:root { &:global(.x i):before { content: "d"; } }
 							:global(.wrap.x) :global(i).icon { color: blue; }
 							.wrap:global(.x) :global(i).icon { color: gray; }
 						</style>
@@ -2926,6 +2928,8 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`.x i.icon.${hash} { color: green; }`);
 			expect(css).toContain(`.wrap.${hash}.x i::before { content: "a"; }`);
 			expect(css).toContain(`.wrap.${hash}.x i:after { content: "b"; }`);
+			expect(css).toContain(':root { &.x i::before { content: "c"; } }');
+			expect(css).toContain(':root { &.x i:before { content: "d"; } }');
 			// The spellings for a :global(...) between two selectors: the first
 			// keeps its output, the second also scopes .wrap.
 			expect(css).toContain(`.wrap.x i.icon.${hash} { color: blue; }`);
