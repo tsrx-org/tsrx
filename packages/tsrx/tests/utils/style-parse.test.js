@@ -488,3 +488,41 @@ describe('parseStyle url( and unclosed preludes', function () {
 		expect(performance.now() - start).toBeLessThan(1000);
 	});
 });
+
+describe('parseStyle comments in selectors', function () {
+	/**
+	 * The compounds of the first selector of `css`'s first rule, each as its
+	 * combinator and its simple selectors.
+	 *
+	 * @param {string} css
+	 */
+	function compounds(css) {
+		const sheet = parseStyle(css, LOCATION, { loose: false });
+		const rule = /** @type {any} */ (sheet.children[0]);
+		return rule.prelude.children[0].children.map(
+			(/** @type {any} */ relative) =>
+				`${relative.combinator?.name ?? ''}[${relative.selectors.map((/** @type {any} */ simple) => css.slice(simple.start, simple.end)).join('|')}]`,
+		);
+	}
+
+	it.each([
+		// A comment is no whitespace: one with none around it joins the compound.
+		['.a/* c */.b { color: red; }', ['[.a|.b]']],
+		['div/* c */:hover { color: red; }', ['[div|:hover]']],
+		['.a /* c */ .b { color: red; }', ['[.a]', ' [.b]']],
+		['.a/* c */ .b { color: red; }', ['[.a]', ' [.b]']],
+		['.a /* c */.b { color: red; }', ['[.a]', ' [.b]']],
+		['.a/* c */>.b { color: red; }', ['[.a]', '>[.b]']],
+		['.a /* c */ > /* d */ .b { color: red; }', ['[.a]', '>[.b]']],
+		['.a/* c *//* d */.b { color: red; }', ['[.a|.b]']],
+		['.a:is(.b/* c */.d) .e { color: red; }', ['[.a|:is(.b/* c */.d)]', ' [.e]']],
+	])('reads %j', function (css, expected) {
+		expect(compounds(css)).toEqual(expected);
+	});
+
+	it('reports a comment a selector leaves open', function () {
+		expect(function () {
+			parseStyle('.a /* c { color: red; }', LOCATION, {});
+		}).toThrow();
+	});
+});

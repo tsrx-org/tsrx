@@ -486,11 +486,9 @@ function has_global_in_middle(rule) {
  */
 function remove_global_pseudo_class(selector, combinator, state, after_start = false) {
 	if (selector.args === null) {
-		let start = selector.start;
-		if (combinator?.name === ' ') {
-			// div :global.x becomes div.x
-			while (/\s/.test(state.code.original[start - 1])) start--;
-		}
+		// div :global.x becomes div.x, and so does div /* c */ :global.x: the
+		// descendant combinator runs over the comments in it.
+		const start = combinator?.name === ' ' ? combinator.start : selector.start;
 		state.code.update(start, selector.start + ':global'.length, '');
 	} else {
 		const type = after_start ? leading_type_selector(selector.args) : null;
