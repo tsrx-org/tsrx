@@ -1,5 +1,29 @@
 # @tsrx/rspack-plugin-solid
 
+## 0.0.117
+
+### Patch Changes
+
+- Updated dependencies
+  [[`ae94a31`](https://github.com/tsrx-org/tsrx/commit/ae94a31f4e3088b0eec46fd31e2c7a44da6e8813),
+  [`8755f2c`](https://github.com/tsrx-org/tsrx/commit/8755f2c531b09c163681df6c42d38176ca443df0),
+  [`20e7155`](https://github.com/tsrx-org/tsrx/commit/20e7155b3b28ad01d313150fbc851a290c4e752c),
+  [`c7beeec`](https://github.com/tsrx-org/tsrx/commit/c7beeec9538fd49a81ffba077f9d6c7e440fc829),
+  [`e79b5ac`](https://github.com/tsrx-org/tsrx/commit/e79b5aca06cbd1bc85268d3b2d83fd35314a2a9f),
+  [`9ea9088`](https://github.com/tsrx-org/tsrx/commit/9ea9088ccd951182bf76c1ebccdaefb3ed5f5830),
+  [`fac56bc`](https://github.com/tsrx-org/tsrx/commit/fac56bc2c5cdcb45b198f94a50a58808113a90e1),
+  [`78557b4`](https://github.com/tsrx-org/tsrx/commit/78557b4544f4d146db4f8e1b79db3ae70f07a20e),
+  [`9e738d5`](https://github.com/tsrx-org/tsrx/commit/9e738d5c26cfb250f4973d2a514a1d567a77723d),
+  [`1bf9f5b`](https://github.com/tsrx-org/tsrx/commit/1bf9f5b5146a02d632075a7bd341aa620ac95a82),
+  [`d1751c1`](https://github.com/tsrx-org/tsrx/commit/d1751c134c9d2f6b1e3aa163c83935158e600d88),
+  [`1873071`](https://github.com/tsrx-org/tsrx/commit/1873071db778c2dd7dbcb93f3dbe9a9e591eba35),
+  [`b721193`](https://github.com/tsrx-org/tsrx/commit/b7211934e8774fa49a0d969a08a261bbf1d71d0b),
+  [`a572240`](https://github.com/tsrx-org/tsrx/commit/a5722401743376f37fb851ce15c3c9f0065570ab),
+  [`81e9fa8`](https://github.com/tsrx-org/tsrx/commit/81e9fa827c4525715dceda61d6630561110524c8),
+  [`252593b`](https://github.com/tsrx-org/tsrx/commit/252593b7a3596634a2c05bac63ef37bd52b0c9d3)]:
+  - @tsrx/core@0.11.0
+  - @tsrx/solid@0.4.16
+
 ## 0.0.116
 
 ### Patch Changes

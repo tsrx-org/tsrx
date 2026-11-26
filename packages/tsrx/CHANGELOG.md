@@ -1,5 +1,275 @@
 # @tsrx/core
 
+## 0.11.0
+
+### Minor Changes
+
+- [#1516](https://github.com/tsrx-org/tsrx/pull/1516)
+  [`fac56bc`](https://github.com/tsrx-org/tsrx/commit/fac56bc2c5cdcb45b198f94a50a58808113a90e1)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `:root`, `:host`,
+  `:is()`, `:where()`, `:not()` and `:has()` written in another case or with an
+  escape (`:ROOT`, `:r\6f ot`, `:HOST(.open)`, `:IS(.a)`, `:h\61s(.b)`) now
+  compile as the lowercase names do, since CSS reads pseudo-class names that way.
+  The compiler compared the names as written: `:ROOT { --c: red }` compiled to
+  `.<hash>:ROOT`, which the page's `<html>` doesn't match (only an `<html>` the
+  component renders gets the hash), `:ROOT.dark .icon` was pruned in a component,
+  and the arguments of `:HAS()` or `:IS()` were neither scoped nor pruned. The
+  parsed selector's `name` is now the lowercase name for these six pseudo-classes;
+  `:global` stays as written. A standalone `:WHERE(.icon)` now has the specificity
+  (0,0,0), as `:where(.icon)` does: it compiles to `:WHERE(.icon.<hash>)`, where
+  main gave `.<hash>:WHERE(.icon)`.
+
+  So that they don't spread to these spellings, bugs of a `:root` compound are
+  fixed too:
+
+  - An argument of its `:not()`, `:is()` or `:where()` with an `&`
+    (`.wrap { :root:not(&.missing), .icon {} }`, `.doc { :root:is(&.dark) {} }`),
+    or one of a `:has()` in its `:not()`, `:is()` or `:where()`
+    (`:root:not(:has(.missing)), .icon {}`), that matched nothing was pruned. That
+    left an empty `:not()` or `:has()`, which is invalid (outside a forgiving
+    `:is()` or `:where()` the browser drops the whole selector list with it), or,
+    in an `:is()`, dropped a state of the root the page may set
+    (`<html class="doc dark">`). It is now kept, scoped, as an assigned block
+    keeps it.
+  - The argument of a `:has()` in a `:not()` of its `:not()`
+    (`:root:not(:not(:has(.missing)))`) was left unscoped, so any `.missing` on
+    the page matched it. It is now scoped, as an assigned block scopes it.
+  - `:root` never matched an element the component renders. It now matches an
+    `<html>` (`html:root` too, not `div:root`), so `:root > body {}` and
+    `:root:has(> body) {}` in a document component are no longer pruned.
+
+  Migration: the `:global` placement errors (`TSRX3011`) these pseudo-classes give
+  in lowercase now apply to the other spellings too: a bare `:global` in an
+  argument (`:IS(.x:global), .z {}`), a `:global(...)` in the middle of an
+  argument's selector (`:IS(.a :global(.b) .c), .z {}`), or a `:global(...)`
+  selector list in one (`:IS(.a:global(.b, .c)), .z {}`). That argument never
+  matched, since browsers don't know `:global`, but the rest of its list (`.z`)
+  did. Move the `:global` out of the pseudo-class, or drop it, as for the
+  lowercase name.
+
+- [#1510](https://github.com/tsrx-org/tsrx/pull/1510)
+  [`1873071`](https://github.com/tsrx-org/tsrx/commit/1873071db778c2dd7dbcb93f3dbe9a9e591eba35)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `-` in a JSX member
+  name's part after a `.` (`<X.A-b />`) now fails as in TypeScript, which reads
+  that part as an identifier and stops it at the `-`: TS1003
+  `Identifier expected.` at the `-` in an opening tag, and TS1005 `'>' expected.`
+  in a closing one. A strict compile throws it; a collecting one (the editor)
+  records it and reads on, as for an escape in a JSX name. The compiler read `A-b`
+  as the part and printed the tag as written. esbuild, oxc (Vite), Bun and
+  vue-jsx-vapor reject that output, rspack's SWC compiles it to `X.A - b`, and
+  only Solid's Babel read it as `X["A-b"]`. A `-` in the first part (`<a-b.c />`),
+  in a namespaced name (`<x:a-b />`), or in a tag's or attribute's name without a
+  `.` (`<my-element data-x="1" />`) is unchanged.
+
+  Migration: to render a component whose property name has a `-`, name it first
+  (`const AB = X['A-b'];`, then `<AB />`), or use a dynamic tag
+  (`<{X['A-b']} />`).
+
+- [#1501](https://github.com/tsrx-org/tsrx/pull/1501)
+  [`a572240`](https://github.com/tsrx-org/tsrx/commit/a5722401743376f37fb851ce15c3c9f0065570ab)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - `export`, `async` and
+  `abstract` before something TypeScript reads no declaration from now fail with
+  TypeScript's errors. `export foo;` (also `export 1;`, `export async foo;`,
+  `export declare foo;`, and the same in a block or a namespace) is TS1128
+  `Declaration or statement expected.` at `export`, where the compiler reported
+  TS1012 `Unexpected token` after it, TS1128 at the name after `export declare`,
+  or TS1184 in a block. `async foo;` and `abstract foo;` are TS1434
+  `Unexpected keyword or identifier.` on the word, which TypeScript reads as a
+  name there, where the compiler reported TS1012 at the token after the name, or
+  at `abstract`. Before them, `declare` is the name `declare` with no error after
+  it, and the next statement starts at the word, as in TypeScript:
+  `declare export foo;` is TS1128 at `export` (it was TS1005 `';' expected.`), and
+  `declare async foo;` and `declare abstract foo;` are TS1434. A name written with
+  an escape (`\u0061sync foo;`) gets TS1434 as the name it spells does, and
+  TS1434, TS1435 and TS1440 after a name now cover only the name, as in
+  TypeScript, where the editor drew them to the end of the next token.
+
+  Migration: `export declare @dec class A {}`, which compiled to
+  `@dec export declare class A {}`, now fails with TS1128, as in TypeScript. Write
+  the decorator before `declare` (`export @dec declare class A {}`) or before
+  `export`, which compile to the same output.
+
+### Patch Changes
+
+- [#1504](https://github.com/tsrx-org/tsrx/pull/1504)
+  [`ae94a31`](https://github.com/tsrx-org/tsrx/commit/ae94a31f4e3088b0eec46fd31e2c7a44da6e8813)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `return` in a
+  template body in a class field's initializer or a class `static` block
+  (`class A { v = <div>@if (x) { return; }</div>; }`) now gets the error it gets
+  in a template at the top level, such as `TSRX2002` in an `@if` body, `TSRX2009`
+  in an `@switch` case or `TSRX2005` in an `@for` body, instead of `TS1108` from
+  the parser. acorn allows a `return` only in a function or at the top level, so
+  the parser threw `'return' outside of function` there, and the editor lost the
+  whole file. The strict compile threw it too, unless a template check rejected
+  the `return` first, as it does one right in an `@switch` case (`TSRX2009`). A
+  `return` there that isn't in a template, such as one right in a `static` block,
+  is still `TS1108`.
+
+- [#1513](https://github.com/tsrx-org/tsrx/pull/1513)
+  [`8755f2c`](https://github.com/tsrx-org/tsrx/commit/8755f2c531b09c163681df6c42d38176ca443df0)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `break` or `continue`
+  that the compiler reports, and that nothing in the compiled code can take, now
+  gets a loop of its own there (`do break; while (false);`) when collecting and in
+  the editor. Every target runs a template body in a function, so TypeScript
+  reported such a jump again in the editor, as `TS1107`, beside the error already
+  shown for it: a nested `break` in an `@switch` case on Solid beside `TSRX2008`,
+  a jump in an `@for` body beside `TSRX2006` or `TSRX2007`, one in an `@if` body
+  in a loop beside `TSRX2003` or `TSRX2004`, one in an `@try` body beside
+  `TSRX2036` or `TSRX2037`, and one in a template outside a function or after a
+  label that isn't a loop's beside the parser's `TS1104`, `TS1105` or `TS1115`.
+  The editor no longer shows `TS1107` beside these errors, and a collecting
+  compile's output parses, unless it has a `continue` to a label around it that
+  isn't a loop's, which TypeScript reports as the parser does (`TS1115`). A
+  reported jump the compiled code can take, such as a nested `break` in a case
+  that React, Preact, Vue and Hono compile to a `switch` statement, stays as
+  written. A `// @ts-expect-error` over such a jump now has nothing to suppress
+  and is reported as unused (`TS2578`), beside the jump's error. The strict
+  compile still throws the same error.
+
+- [#1506](https://github.com/tsrx-org/tsrx/pull/1506)
+  [`20e7155`](https://github.com/tsrx-org/tsrx/commit/20e7155b3b28ad01d313150fbc851a290c4e752c)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - An `animation` or
+  `animation-name` declaration with a space before its colon now gets the scope
+  hash on the keyframes name it uses. The stylesheet transform read the value from
+  the character right after the property name, so in `.a { animation :spin 1s }`
+  it read `:spin`, left the name unhashed while `@keyframes spin` became
+  `@keyframes <hash>-spin`, and the element never animated.
+
+- [#1514](https://github.com/tsrx-org/tsrx/pull/1514)
+  [`c7beeec`](https://github.com/tsrx-org/tsrx/commit/c7beeec9538fd49a81ffba077f9d6c7e440fc829)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A declaration whose
+  whole value is a `{}` block now parses as a declaration, as CSS reads it, so
+  `@property --x { syntax: "*"; initial-value: { a }; }` compiles. It was
+  `TSRX3013` (`Expected identifier`): the parser took the block for a nested
+  rule's, as it did for a custom property's before. In a style rule, a value with
+  more after the block (`color: {a} b`) is still an error, as CSS reads no
+  declaration there, and a property that takes no block (`color: {red}`) now
+  compiles to that declaration, which the browser drops. In `@property`, an
+  `initial-value` that holds a block and more (`{a} b`, `{a}{b}`, `foo(){}`) is
+  still an error too, as on main, though browsers keep it.
+
+- [#1512](https://github.com/tsrx-org/tsrx/pull/1512)
+  [`e79b5ac`](https://github.com/tsrx-org/tsrx/commit/e79b5aca06cbd1bc85268d3b2d83fd35314a2a9f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A lone `:global` that
+  shares its selector list outside a rule, as in `:global, .z { color: red }`, now
+  gets one `TSRX3011` in the editor and when errors are collected, the one that
+  says the `:global` can't share its list. It also got a second `TSRX3011` on its
+  declaration, saying a `:global { … }` block outside a rule leaves its
+  declarations outside every rule, which repeated the first. A compile still stops
+  at the first.
+
+- [#1508](https://github.com/tsrx-org/tsrx/pull/1508)
+  [`9ea9088`](https://github.com/tsrx-org/tsrx/commit/9ea9088ccd951182bf76c1ebccdaefb3ed5f5830)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - Minified CSS
+  (`renderStylesheets(sheets, true)`, as Ripple's `minify_css` uses it) no longer
+  keeps the scope hash of a selector it prunes. An argument that matched an
+  element on its own (`.icon` in `.missing:is(.icon)`) still got the hash after
+  the pruned selector's text was removed, so `.missing:is(.icon), .wrap` gave
+  `.<hash> .wrap.<hash>`, which matches only a `.wrap` inside an element with the
+  hash, and `.wrap, .missing:is(.icon)` gave `.wrap.<hash>.<hash>`. Unminified
+  output no longer writes the hash into the `/* (unused) … */` comment either.
+
+- [#1517](https://github.com/tsrx-org/tsrx/pull/1517)
+  [`78557b4`](https://github.com/tsrx-org/tsrx/commit/78557b4544f4d146db4f8e1b79db3ae70f07a20e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A compound with an `&`
+  that stands for `:root` or `:host` is now read as one with `:root` or `:host`,
+  as `:root.dark` is: it matches the page's root element (or an `<html>` the
+  component renders, whatever its state) or the shadow host. In a component,
+  `:root { --c: black; &.dark { --c: white } }` pruned `&.dark` as unused, and
+  `:root { &.dark .icon { … } }` and, for a rendered `<html><body>`,
+  `:root { &.dark > body { … } }` were pruned whole, so dark mode never applied;
+  they are now kept. The arguments of such a compound's `:not()`, `:is()` and
+  `:where()` are kept as written, as they are for `:root:not(.dark)`: an assigned
+  block compiled `:root { &:not(.dark) { … } }` to `&:not(.dark.<hash>)`, which
+  also matched in dark mode. A list such as `:root { :global.w, &:is(.z) {} }`,
+  which was `TSRX3011`, now compiles, as `:global.w, :root:is(.z)` does.
+
+- [#1509](https://github.com/tsrx-org/tsrx/pull/1509)
+  [`9e738d5`](https://github.com/tsrx-org/tsrx/commit/9e738d5c26cfb250f4973d2a514a1d567a77723d)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A comment between the
+  parts of a selector, around a combinator or between two simple selectors, now
+  parses as CSS reads it. `.wrap /* c */ .icon {}`, `.a/* c */.b {}` and
+  `.a > /* c */ .b {}` were `TSRX3013` (`Expected identifier`): the selector
+  reader skipped a comment only at the end of a selector. A comment with
+  whitespace around it is part of a descendant combinator, and one with none joins
+  the compound (`.a/* c */.b` is `.a.b`). A lone `:global` after such a combinator
+  still attaches to the compound before it (`.wrap /* c */ :global.dark` gives
+  `.wrap.<hash>.dark`, as `.wrap :global.dark` does). Comments elsewhere are read
+  as on main: one inside an attribute selector is an error or part of its value
+  (`[x=y/* c */]`), and one after a `.` or `:`, or in an An+B
+  (`:nth-child(2n/* c */+1)`), is an error.
+
+- [#1511](https://github.com/tsrx-org/tsrx/pull/1511)
+  [`1bf9f5b`](https://github.com/tsrx-org/tsrx/commit/1bf9f5b5146a02d632075a7bd341aa620ac95a82)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A type selector after a
+  `:global(...)` in the same compound now keeps its meaning. Dropping the
+  `:global(` and `)` ran it into what the wrapper held: `:global(.x)div` compiled
+  to `.xdiv`, a class, and `:global(.x)*.icon` to `.x*.icon`, which is invalid. It
+  now gets an `:is()`, as a type selector in a `:global(...)` there does:
+  `.x:is(div).<hash>`, `.x:is(*).icon.<hash>`.
+
+- [#1507](https://github.com/tsrx-org/tsrx/pull/1507)
+  [`d1751c1`](https://github.com/tsrx-org/tsrx/commit/d1751c134c9d2f6b1e3aa163c83935158e600d88)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The CSS parser keeps a
+  declaration's `value` and an at-rule's `prelude` as written. Each escaped
+  character in them was doubled with its `\`: `content: "\2713"` gave the value
+  `"\\22713"`, and `@media (\31 x)` the prelude `(\\331 x)`. The whitespace an
+  escape at the end of a value holds is kept too: the value of `font-family: a\ ;`
+  is `a\ `, where it was `a\\`, and the prelude of `@keyframes a\31 { }` is
+  `a\31 `, with the space that ends the hex escape. Compiled CSS is unchanged; it
+  is built from the source text.
+
+- [#1502](https://github.com/tsrx-org/tsrx/pull/1502)
+  [`b721193`](https://github.com/tsrx-org/tsrx/commit/b7211934e8774fa49a0d969a08a261bbf1d71d0b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `break` or `continue`
+  with no target, such as `function f() { continue; }`, a `continue` right in an
+  `@switch` case, or a `break` in an `@if` body with no loop around it, is now
+  recorded when collecting and in the editor instead of stopping the parse, as
+  TypeScript reports it from its checker (TS1104, TS1105, TS1107, TS1115, TS1116).
+  Before, `compile_to_volar_mappings` threw on it, so the editor lost the whole
+  file's virtual code and every other diagnostic in it, and Prettier could not
+  format the file. The error covers the `break` or `continue` keyword and is
+  reported once: the template checks no longer add `TSRX2004` or `TSRX2037` beside
+  it. The jump stays in the output, and where TypeScript reports the same error at
+  the same place, as in a function or a component, the editor shows it once. The
+  strict compile still throws it, and ESLint still reports it as a parsing error.
+
+- [#1505](https://github.com/tsrx-org/tsrx/pull/1505)
+  [`81e9fa8`](https://github.com/tsrx-org/tsrx/commit/81e9fa827c4525715dceda61d6630561110524c8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `using` or
+  `await using` declaration is read where TypeScript reads one. `await` with
+  `using x = y;` on the next line is an `await using` declaration, which compiles
+  to `await using x = y;`, where it failed with TS1005 `';' expected.`, and in the
+  editor `await` and `using` each map to their place in it. A binding pattern in
+  one (`using {x} = y;`, `await using {x} = y;`, a later declarator such as
+  `using a = b, [x] = y;`, or a `for` head) is TypeScript's TS1492
+  `'using' declarations may not have binding patterns.` at the pattern, which a
+  strict compile throws and the editor shows, where it failed with TS1434, TS1012
+  or TS1005. With `declare`, `declare using {x} = y;` and `declare await` with
+  `using x = y;` on the next line now get TypeScript's TS1491 and TS1495 for the
+  `declare`, where they failed with `';' expected.`. A `using` declaration before
+  `in` (`for (using x in y)`) is TS1493 or TS1494 on the declaration, as in
+  TypeScript, which the editor now shows with the file's other errors, where it
+  was reported at `in` and stopped the editor's compile. The Prettier plugin
+  refuses to format a binding pattern in a `using` declaration, as Prettier's
+  `typescript` parser does.
+
+- [#1503](https://github.com/tsrx-org/tsrx/pull/1503)
+  [`252593b`](https://github.com/tsrx-org/tsrx/commit/252593b7a3596634a2c05bac63ef37bd52b0c9d3)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - In an `@switch` used as
+  a value (`{@switch (n) { … }}`, also in a fragment), the code in a case is now
+  read as it is when the `@switch` is a child. The parser read a `{` that starts a
+  statement inside other code there, such as a `while` loop's or a label's body,
+  or a block in an `if`, a loop or a `switch`, as an expression container. So
+  `while (ready) { return <b />; }` and `while (ready) { break; }` failed with
+  `Unexpected token`, `while (ready) { f(); g(); }` and
+  `if (ready) { { f(); g(); } }` with `'}' expected`, and `while (ready) { f(); }`
+  compiled only through the container, with a spurious `TSRX1007` when collecting.
+  Each now compiles or reports the error it gets as a child, such as `TSRX2009`
+  for that `return`. A block in a class `static` block in markup
+  (`<p>{class { static { if (x) { { f(); g(); } } } }}</p>`) is read as a block
+  too.
+
 ## 0.10.0
 
 ### Minor Changes
