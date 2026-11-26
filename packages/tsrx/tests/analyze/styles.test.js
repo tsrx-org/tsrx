@@ -1420,6 +1420,8 @@ describe('scoped style analysis', () => {
 				// A pseudo-class at the end of the argument doesn't end the compound.
 				['.wrap:global(.x i:hover):focus { color: red; }', ':global(.x i:hover)'],
 				['.wrap:global(.x i).b:global(.y::before) { color: red; }', ':global(.x i)'],
+				// Only the argument's last compound counts.
+				['.wrap:global(.x::before i):hover { color: red; }', ':global(.x::before i)'],
 			];
 			for (const [css, anchor] of cases) {
 				const source = `const t = <style>${css}</style>;`;
