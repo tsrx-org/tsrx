@@ -17151,19 +17151,6 @@ export function TSRXPlugin(config) {
 						context = undefined;
 					}
 				}
-				if (
-					context !== 'for' &&
-					context !== 'if' &&
-					this.#functionBodyDepth === 0 &&
-					this.context.at(-1) === b_stat &&
-					this.type === tt.braceL &&
-					this.context.some((c) => c === tstc.tc_expr)
-				) {
-					return /** @type {ESTreeJSX.JSXExpressionContainer} */ (
-						this.#parseNativeTemplateExpressionContainer()
-					);
-				}
-
 				if (this.type === tstt.jsxTagStart) {
 					if (this.#forceScriptJSXElementDepth > 0) {
 						return /** @type {AST.Statement} */ (

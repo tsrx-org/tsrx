@@ -3915,6 +3915,102 @@ foo();`;
 		}
 	});
 
+	it('reads the body of a loop or a label in an @switch case used as a value as a block', () => {
+		// A `{` there was read as an expression container when the `@switch` was
+		// in one (`{@switch …}`), as it isn't when the `@switch` is a child.
+		/** @type {Array<[statement: string, type: string, body: string[]]>} */
+		const cases = [
+			['while (ready) { return <b />; }', 'WhileStatement', ['ReturnStatement']],
+			['while (ready) { break; }', 'WhileStatement', ['BreakStatement']],
+			[
+				'while (ready) { const z = 1; f(z); }',
+				'WhileStatement',
+				['VariableDeclaration', 'ExpressionStatement'],
+			],
+			[
+				'while (ready) { f(); f(); }',
+				'WhileStatement',
+				['ExpressionStatement', 'ExpressionStatement'],
+			],
+			['while (ready) { f(); }', 'WhileStatement', ['ExpressionStatement']],
+			[
+				'l: { const z = 1; f(z); }',
+				'LabeledStatement',
+				['VariableDeclaration', 'ExpressionStatement'],
+			],
+			['l: { break l; }', 'LabeledStatement', ['BreakStatement']],
+			['l: while (ready) { break l; }', 'LabeledStatement', ['BreakStatement']],
+			['m: l: { f(); }', 'LabeledStatement', ['ExpressionStatement']],
+		];
+		for (const [statement, type, body] of cases) {
+			const arm = `@switch (n) { @case 1: { ${statement} <i /> } @default: { <u /> } }`;
+			for (const template of [`{${arm}}`, `{<>${arm}</>}`, arm]) {
+				const source = `export function App({ n, ready, f }) {\n\treturn <p>${template}</p>;\n}\n`;
+				const label = `${template}`;
+				const program = parseModule(source, 'App.tsrx');
+				const found = /** @type {any} */ (find_first(program, (node) => node.type === type));
+				expect(found?.start, label).toBe(source.indexOf(statement));
+				// The innermost labeled or loop body.
+				let block = found;
+				while (block.type !== 'BlockStatement') block = block.body;
+				expect(
+					block.body.map((/** @type {AST.Node} */ node) => node.type),
+					label,
+				).toEqual(body);
+			}
+		}
+	});
+
+	it('reads code in an @switch case used as a value as it does when the @switch is a child', () => {
+		// A `{` that starts a statement in other code in the case, such as a
+		// block in a loop's body, was read as an expression container when the
+		// `@switch` was in one.
+		for (const statement of [
+			'if (x) { { f(); g(); } }',
+			'if (x) { {y} }',
+			'while (ready) { { break; } }',
+			'while (ready) { { f(); g(); } }',
+			'l: { { f(); } }',
+			'switch (x) { case 1: { f(); g(); } }',
+			'for (;;) { { f(); } break; }',
+			'do { { f(); g(); } } while (ready);',
+		]) {
+			const arm = `@switch (n) { @case 1: { ${statement} <i /> } @default: { <u /> } }`;
+			const [value, fragment, child] = [`{${arm}}`, `{<>${arm}</>}`, arm].map((template) => {
+				const source = `export function App({ n, x, y, ready, f, g }) {\n\treturn <p>${template}</p>;\n}\n`;
+				const shift = source.indexOf(statement);
+				const node = /** @type {any} */ (
+					find_first(parseModule(source, 'App.tsrx'), (node) => node.type === 'JSXSwitchExpression')
+				);
+				return JSON.stringify(node.cases[0].consequent, (key, value) =>
+					key === 'loc' || key === 'metadata' || key === 'range'
+						? undefined
+						: key === 'start' || key === 'end'
+							? value - shift
+							: value,
+				);
+			});
+			expect(value, statement).toBe(child);
+			expect(fragment, statement).toBe(child);
+		}
+	});
+
+	it('reads a block in a class static block in markup as a block', () => {
+		const source =
+			'export const view = <p>{class {\n\tstatic { if (x) { { f(); g(); } } }\n}}</p>;';
+		const program = parseModule(source, 'App.tsrx');
+		const block = /** @type {any} */ (find_first(program, (node) => node.type === 'StaticBlock'));
+		const consequent = block.body[0].consequent;
+		expect(consequent.type).toBe('BlockStatement');
+		expect(consequent.body.map((/** @type {AST.Node} */ node) => node.type)).toEqual([
+			'BlockStatement',
+		]);
+		expect(consequent.body[0].body.map((/** @type {AST.Node} */ node) => node.type)).toEqual([
+			'ExpressionStatement',
+			'ExpressionStatement',
+		]);
+	});
+
 	it('scopes switch case setup locals to their own case block', () => {
 		expect(() =>
 			parseModule(
