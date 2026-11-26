@@ -2272,7 +2272,8 @@ export function runSharedScopedStyleTests({
 					':root { &[data-theme="dark"] .icon { color: red } }',
 					(hash) => `&[data-theme="dark"] .icon.${hash} {`,
 				],
-				[':host { &.open .icon { color: red } }', (hash) => `&.open .icon.${hash} {`],
+				// The shadow host matches only :host and :host(), so an `&` for it is bare.
+				[':host(.open) { & .icon { color: red } }', (hash) => `& .icon.${hash} {`],
 				[':root, :host { &.dark .icon { color: red } }', (hash) => `&.dark .icon.${hash} {`],
 				[':root { &.dark { &.x .icon { color: red } } }', (hash) => `&.x .icon.${hash} {`],
 				// Its :not(), :is() and :where() arguments are kept as written.
