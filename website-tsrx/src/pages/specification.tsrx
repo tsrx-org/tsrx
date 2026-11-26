@@ -578,9 +578,9 @@ const TSRX_ERROR_CODES = [
 	'TSRX2002  Return statements are not allowed inside TSRX template @if blocks.',
 	'          @if (x) { return; }',
 	'TSRX2003  Break statements are not allowed inside TSRX template @if blocks.',
-	'          @if (x) { for (const y of ys) { break; } <p /> }',
+	'          for (const y of ys) { const v = <div>@if (x) { break; }</div>; }',
 	'TSRX2004  Continue statements are not allowed inside TSRX template @if blocks.',
-	'          @if (x) { for (const y of ys) { continue; } <p /> }',
+	'          for (const y of ys) { const v = <div>@if (x) { continue; }</div>; }',
 	'TSRX2005  Return statements are not allowed inside TSRX template for...of loops.',
 	'          @for (const x of xs) { return; }',
 	'TSRX2006  Break statements are not allowed inside TSRX template for...of loops.',
@@ -1155,6 +1155,14 @@ export function SpecificationPage() @{
 								<code class="inline-code">continue</code> in a case can only reach a loop, a{' '}
 								<code class="inline-code">switch</code> (<code class="inline-code">break</code>{' '}
 								only) or a label inside the case.
+							</p>
+							<p class="section-body">
+								A <code class="inline-code">break</code> or{' '}
+								<code class="inline-code">continue</code> in an <code class="inline-code">@if</code>{' '}
+								or <code class="inline-code">@else</code> body or an{' '}
+								<code class="inline-code">@for</code> body can only reach a loop, a{' '}
+								<code class="inline-code">switch</code> (<code class="inline-code">break</code>{' '}
+								only) or a label inside the body (TSRX2003, TSRX2004, TSRX2006, TSRX2007).
 							</p>
 							<p class="section-body">
 								Every target runs an <code class="inline-code">@try</code> body, its{' '}
