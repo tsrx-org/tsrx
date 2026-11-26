@@ -3810,11 +3810,14 @@ foo();`;
 		for (const source of [
 			'class A { static { return; } }',
 			'class A { v = <div>@if (x) { <b /> }</div>; static { return; } }',
+			// After a template with a `return` in it, in the same block.
+			'class A { static { const v = <div>@if (x) { return; }</div>; return; } }',
+			'class A { static { const v = <div>@switch (x) { @case 1: { if (x) return; <b /> } @default: { <i /> } }</div>; if (y) return; } }',
 			'class A { v = <div>@if (x) { class B { static { return; } } <b /> }</div>; }',
 			'function App() @{ <div>@if (x) { class B { static { return; } } <b /> }</div> }',
 		]) {
 			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
-				expect.objectContaining({ code: 'TS1108', pos: source.indexOf('return') }),
+				expect.objectContaining({ code: 'TS1108', pos: source.lastIndexOf('return') }),
 			);
 		}
 	});
