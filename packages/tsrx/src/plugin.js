@@ -2281,7 +2281,8 @@ export function TSRXPlugin(config) {
 			// While `parseVarId` reads a declaration's names, or `parseClassId` a class
 			// declaration's, the kind of declaration and the scope it declares them
 			// in (see `declareName`).
-			/** @type {{ kind: string, scope: Parse.Scope } | null} */
+			// `usingPattern` while it reads a `using` declaration's binding pattern.
+			/** @type {{ kind: string, scope: Parse.Scope, usingPattern?: boolean } | null} */
 			#declaration = null;
 			// While `parseClassId` reads the name of a class after `export default`,
 			// where the name starts (see `declareName`).
@@ -6287,9 +6288,11 @@ export function TSRXPlugin(config) {
 				}
 				if (text === LET_LEXICAL_BINDING) {
 					// TypeScript's checker reports it only for a `let`, `const` or `using`
-					// declaration, after the reserved word, which acorn reports first.
+					// declaration, after the reserved word, which acorn reports first, and
+					// not in a `using` declaration's binding pattern, which it reports
+					// instead (TS1492, see `parseVarId`).
 					const kind = this.#declaration?.kind;
-					if (kind && LEXICAL_DECLARATION_KINDS.has(kind)) {
+					if (kind && LEXICAL_DECLARATION_KINDS.has(kind) && !this.#declaration?.usingPattern) {
 						this.#raiseCheckerError(position, TS_ERRORS.LET_DECLARATION_NAME);
 					}
 					return;
@@ -7418,7 +7421,7 @@ export function TSRXPlugin(config) {
 			 * error (see `parseVarId`). In a `for` head, `await using of` is a
 			 * declaration too, as in TypeScript, and as acorn reads it with `using` on
 			 * the line of `await`: `for (await` with `using of = x;;)` on the next line;
-			 * and so is `using of` before `:` or `;`.
+			 * and so is `using of` before `=`, `:` or `;`, on any line.
 			 * @param {boolean} isAwaitUsing
 			 * @param {boolean} isFor
 			 */
@@ -7430,13 +7433,14 @@ export function TSRXPlugin(config) {
 					return false;
 				}
 				const next = this.lookahead(isAwaitUsing ? 2 : 1);
-				if (regex_line_break.test(this.input.slice(using.end, next.start))) return false;
 				if (isFor && !isAwaitUsing && next.type === tt.name && next.value === 'of') {
 					// acorn reads `using of` as a declaration in a `for` head only before
-					// `=`, and TypeScript before `:` and `;` too.
+					// `=` on its line, and TypeScript before `=`, `:` or `;` on any line
+					// (`nextTokenIsBindingIdentifierOrStartOfDestructuringOnSameLine`).
 					const after = this.lookahead(2).type;
-					return after === tt.colon || after === tt.semi;
+					return after === tt.eq || after === tt.colon || after === tt.semi;
 				}
+				if (regex_line_break.test(this.input.slice(using.end, next.start))) return false;
 				return (
 					next.type === tt.braceL ||
 					(isAwaitUsing && Parser.acornTypeScript.tokenIsIdentifier(next.type))
@@ -7458,10 +7462,10 @@ export function TSRXPlugin(config) {
 			 */
 			parseVarId(decl, kind) {
 				const outer = this.#declaration;
-				this.#declaration = { kind, scope: this.currentScope() };
 				const pattern =
 					(kind === 'using' || kind === 'await using') &&
 					(this.type === tt.braceL || this.type === tt.bracketL);
+				this.#declaration = { kind, scope: this.currentScope(), usingPattern: pattern };
 				try {
 					if (!pattern) {
 						super.parseVarId(decl, kind);
@@ -7483,7 +7487,7 @@ export function TSRXPlugin(config) {
 						});
 						// Dropped after a syntax error.
 						for (const error of held) if (error.code === 'TS1492') deferred_errors.add(error);
-						this.#releaseErrors(this.#withoutPatternErrorAfterSyntaxError(held));
+						this.#releaseUsingErrors(held);
 						const type = this.tsTryParseTypeAnnotation();
 						if (type) {
 							/** @type {AST.Pattern} */ (decl.id).typeAnnotation = type;
@@ -9275,7 +9279,7 @@ export function TSRXPlugin(config) {
 				/** @type {CompileError[]} */
 				const held = [];
 				const statement = this.#holdingErrors(held, read);
-				this.#releaseErrors(held);
+				this.#releaseUsingErrors(held);
 				return statement;
 			}
 
@@ -9802,7 +9806,8 @@ export function TSRXPlugin(config) {
 					/** @type {CompileError[]} */
 					const held = [];
 					const declaration = this.#holdingErrors(held, parse);
-					this.#releaseErrors(held);
+					if (using) this.#releaseUsingErrors(held);
+					else this.#releaseErrors(held);
 					return /** @type {AST.Statement} */ (declaration);
 				}
 				const node = this.startNode();
@@ -9874,7 +9879,7 @@ export function TSRXPlugin(config) {
 				/** @type {CompileError[]} */
 				const held = [];
 				const declaration = this.#holdingErrors(held, parse);
-				this.#releaseErrors(held);
+				this.#releaseUsingErrors(held);
 				return declaration;
 			}
 
@@ -14011,7 +14016,7 @@ export function TSRXPlugin(config) {
 								this.expect(tt.semi);
 							}
 						});
-						this.#releaseErrors(this.#withoutPatternErrorAfterSyntaxError(held));
+						this.#releaseUsingErrors(held);
 					}
 					return this.parseForAfterInitWithIndex(
 						/** @type {AST.ForInStatement | AST.ForOfStatement} */ (node),
@@ -16821,9 +16826,8 @@ export function TSRXPlugin(config) {
 					/** @type {CompileError[]} */
 					const held = [];
 					const statement = this.#holdingErrors(held, read);
-					this.#releaseErrors(
-						using_pattern ? this.#withoutPatternErrorAfterSyntaxError(held) : held,
-					);
+					if (using_pattern) this.#releaseUsingErrors(held);
+					else this.#releaseErrors(held);
 					return statement;
 				} finally {
 					this.#statementContext = outer;
@@ -16833,16 +16837,27 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * `held` without TS1492 at a `using` declaration's binding pattern (see
-			 * `parseVarId`) when it holds a syntax error that a collecting parse
-			 * records and reads on after (TS17021, `held_syntax_errors`): TypeScript
-			 * reports the syntax error alone. A strict parse throws that one.
+			 * Report the errors held while a `using` declaration was read. A syntax
+			 * error that a collecting parse records and reads on after (TS17021,
+			 * `held_syntax_errors`) comes first, and without TS1492 at a binding
+			 * pattern (see `parseVarId`): TypeScript reports a syntax error alone.
+			 * A strict parse throws it. Otherwise they come by position.
 			 * @param {CompileError[]} held
-			 * @returns {CompileError[]}
 			 */
-			#withoutPatternErrorAfterSyntaxError(held) {
-				if (!held.some((error) => held_syntax_errors.has(error))) return held;
-				return held.filter((error) => !(error.code === 'TS1492' && deferred_errors.has(error)));
+			#releaseUsingErrors(held) {
+				const syntax = held.filter((error) => held_syntax_errors.has(error));
+				if (syntax.length === 0) {
+					this.#releaseErrors(held);
+					return;
+				}
+				this.#releaseErrors(syntax);
+				this.#releaseErrors(
+					held.filter(
+						(error) =>
+							!held_syntax_errors.has(error) &&
+							!(error.code === 'TS1492' && deferred_errors.has(error)),
+					),
+				);
 			}
 
 			/**

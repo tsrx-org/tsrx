@@ -901,6 +901,13 @@ describe('TSRX parser', () => {
 					],
 				],
 				[
+					'using w = v, { ...x, y } = z;',
+					[
+						['TS1492', '{ ...x, y }'],
+						['TS2462', 'x'],
+					],
+				],
+				[
 					'using {a = () => { using {b} = c; }} = y;',
 					[
 						['TS1492', '{a = () => { using {b} = c; }}'],
@@ -994,6 +1001,23 @@ describe('TSRX parser', () => {
 					source,
 				).toEqual(['TS17021']);
 			}
+			// It comes first, before the modifier's error too.
+			for (const source of [
+				`declare using x = <Inn${B}u0065r />;`,
+				`export declare using x = <Inn${B}u0065r />;`,
+				`abstract using x = <Inn${B}u0065r />;`,
+			]) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, 'App.tsrx', { collect: true, errors });
+				expect(errors[0]?.code, source).toBe('TS17021');
+			}
+
+			// TypeScript checks no name in a pattern it reports (TS2480 for `let`).
+			/** @type {CompileError[]} */
+			const let_errors = [];
+			parseModule('using {let} = null;', 'App.tsrx', { collect: true, errors: let_errors });
+			expect(let_errors.map((found) => found.code)).toEqual(['TS1492', 'TS1214']);
 
 			// In a `for` head, `await using of` is a declaration, as in TypeScript.
 			const [head] = find_all(
@@ -1001,9 +1025,15 @@ describe('TSRX parser', () => {
 				'VariableDeclaration',
 			);
 			expect([head?.kind, head?.declarations[0].id.name]).toEqual(['await using', 'of']);
-			// And `using of` before `:` or `;`, where acorn took it only before `=`.
-			const [typed] = find_all('for (using of: null = null; ; ) {}', 'VariableDeclaration');
-			expect([typed?.kind, typed?.declarations[0].id.name]).toEqual(['using', 'of']);
+			// And `using of` before `=`, `:` or `;` on any line, where acorn took it
+			// only before `=` on its line.
+			for (const source of [
+				'for (using of: null = null; ; ) {}',
+				'for (using\n\tof = null; ; ) {}',
+			]) {
+				const [typed] = find_all(source, 'VariableDeclaration');
+				expect([typed?.kind, typed?.declarations[0].id.name], source).toEqual(['using', 'of']);
+			}
 		});
 	});
 
