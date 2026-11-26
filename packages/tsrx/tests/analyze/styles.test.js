@@ -1412,6 +1412,7 @@ describe('scoped style analysis', () => {
 				// The same spelling where nothing is scoped, as for the other placement errors.
 				[':global { .wrap:global(.x i).icon { color: red; } }', ':global(.x i)'],
 				[':root:global(.x i).icon { color: red; }', ':global(.x i)'],
+				[':global(.outer):has(.wrap:global(.x i).icon) { color: red; }', ':global(.x i)'],
 			];
 			for (const [css, anchor] of cases) {
 				const source = `const t = <style>${css}</style>;`;

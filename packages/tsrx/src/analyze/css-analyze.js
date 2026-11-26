@@ -22,6 +22,7 @@ function is_global_block_selector(simple_selector) {
 /**
  * True if is `:global(...)` or `:global`
  * @param {AST.CSS.SimpleSelector} simple_selector
+ * @returns {simple_selector is AST.CSS.PseudoClassSelector}
  */
 function is_global_pseudo_class(simple_selector) {
 	return simple_selector.type === 'PseudoClassSelector' && simple_selector.name === 'global';
@@ -920,15 +921,15 @@ export function analyze_css(css, options = {}) {
 			for (const { selectors } of node.children) {
 				const pseudo_element = selectors.findIndex(is_pseudo_element);
 				const compound = pseudo_element === -1 ? selectors : selectors.slice(0, pseudo_element);
-				for (let i = 0; i < compound.length; i++) {
+				const first = compound.findIndex((selector) => !is_global_pseudo_class(selector));
+				const last = compound.findLastIndex((selector) => !is_global_pseudo_class(selector));
+				for (let i = first + 1; i < last; i++) {
 					const selector = compound[i];
 					if (
 						is_global_pseudo_class(selector) &&
 						selector.args?.children.length === 1 &&
 						(selector.args.children[0].children.length > 1 ||
-							selector.args.children[0].children[0].combinator) &&
-						compound.slice(0, i).some((other) => !is_global_pseudo_class(other)) &&
-						compound.slice(i + 1).some((other) => !is_global_pseudo_class(other))
+							selector.args.children[0].children[0].combinator)
 					) {
 						report(TSRX_ERRORS.CSS_GLOBAL_COMBINATOR_IN_COMPOUND, selector);
 					}
