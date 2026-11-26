@@ -4824,6 +4824,33 @@ declare const i: number;`;
 					expect(mappings_at(result, offset, text.length)[0].data.completion).toBe(true);
 				}
 			}
+
+			// Each copy of a declaration printed more than once, as Solid prints an
+			// `@switch` discriminant twice, maps both words.
+			const copied = `export function B() @{
+	@switch ((async () => {
+		await /* c */ using d = null;
+		return 1;
+	})()) {
+		@case 1: { <p /> }
+		@case 2: { <b /> }
+	}
+}`;
+			const copies = compile_to_volar_mappings(copied, 'App.tsrx', { loose: true });
+			const printed = [...copies.code.matchAll(/await using d/g)].map((match) => match.index);
+			expect(printed.length).toBeGreaterThan(0);
+			for (const [text, offset, shift] of /** @type {Array<[string, number, number]>} */ ([
+				['await', copied.indexOf('await'), 0],
+				['using', copied.indexOf('using'), 'await '.length],
+			])) {
+				const generated = mappings_at(copies, offset, text.length).map(
+					(mapping) => mapping.generatedOffsets[0],
+				);
+				expect(
+					[...new Set(generated)].sort((a, b) => a - b),
+					text,
+				).toEqual(printed.map((start) => start + shift));
+			}
 		});
 
 		it('maps the keywords that start a statement and the ends of its blocks, for diagnostics only', () => {

@@ -939,10 +939,39 @@ describe('TSRX parser', () => {
 				).toEqual(ranges);
 			}
 
-			// TypeScript reports a syntax error in the declaration alone.
-			expect(() => parseModule('using {x} = ;', 'App.tsrx')).toThrow(
-				expect.objectContaining({ code: 'TS1012', pos: 'using {x} = '.length }),
+			// TypeScript reports a syntax error in the statement alone.
+			for (const [source, code, at] of [
+				['using {x} = ;', 'TS1012', ';'],
+				['using {x} y;', 'TS1005', 'y'],
+				['using {x} = y z;', 'TS1005', 'z'],
+			]) {
+				for (const options of [undefined, { collect: true, errors: [] }]) {
+					expect(() => parseModule(source, 'App.tsrx', options), source).toThrow(
+						expect.objectContaining({ code, pos: source.indexOf(at) }),
+					);
+				}
+			}
+
+			// In a namespace, TS2852 at `await` comes first, by position.
+			const in_namespace = 'namespace N { await using { x } = y; }';
+			expect(() => parseModule(in_namespace, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS2852', pos: in_namespace.indexOf('await') }),
 			);
+			/** @type {CompileError[]} */
+			const namespace_errors = [];
+			parseModule(in_namespace, 'App.tsrx', { collect: true, errors: namespace_errors });
+			expect(namespace_errors.map((found) => found.code)).toEqual(['TS2852', 'TS1492']);
+
+			// A declaration without a pattern reports its errors as they come, as a
+			// `let` does: TS2451 with its range, before an error in a template after it.
+			const redeclared = 'using x=1, x = () => @{ <a/>; <b/> };';
+			expect(() => parseModule(redeclared, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS2451', pos: 11, end: 12 }),
+			);
+			/** @type {CompileError[]} */
+			const redeclared_errors = [];
+			parseModule(redeclared, 'App.tsrx', { collect: true, errors: redeclared_errors });
+			expect(redeclared_errors.map((found) => found.code)).toEqual(['TS2451', 'TSRX2011']);
 
 			// In a `for` head, `await using of` is a declaration, as in TypeScript.
 			const [head] = find_all(

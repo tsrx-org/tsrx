@@ -7395,28 +7395,15 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * A `using` or `await using` declaration's errors are held until it's
-			 * read: TypeScript's checker reports TS1492 at a binding pattern (see
-			 * `parseVarId`) before the errors inside the pattern, and not after a
-			 * syntax error in the declaration (`using {x} = ;`), which it reports
-			 * alone.
 			 * @param {AST.VariableDeclaration} node
 			 * @param {boolean} isFor
 			 * @param {string} kind
 			 * @param {boolean} [allowMissingInitializer]
 			 */
 			parseVar(node, isFor, kind, allowMissingInitializer) {
-				const read = () =>
-					this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
-						super.parseVar(node, isFor, kind, allow),
-					);
-				if (kind !== 'using' && kind !== 'await using') return read();
-				/** @type {CompileError[]} */
-				const held = [];
-				const declaration = this.#holdingErrors(held, read);
-				for (const error of held) deferred_errors.delete(error);
-				this.#releaseErrors(held);
-				return declaration;
+				return this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
+					super.parseVar(node, isFor, kind, allow),
+				);
 			}
 
 			/**
@@ -7455,8 +7442,10 @@ export function TSRXPlugin(config) {
 			 * declarator after the first), which its checker reports, TS1492
 			 * `'using' declarations may not have binding patterns.`, at the pattern,
 			 * and nothing else about the declarator: a strict parse throws it, and a
-			 * collecting one records it and keeps the pattern, once the declaration
-			 * is read (see `parseVar`). acorn read only a name there.
+			 * collecting one records it and keeps the pattern. It comes before the
+			 * errors in the pattern, which are held until it's read, and TypeScript
+			 * doesn't report it after a syntax error (see `parseStatement`). acorn
+			 * read only a name there.
 			 * @param {AST.VariableDeclarator} decl
 			 * @param {AST.VariableDeclaration['kind']} kind
 			 */
@@ -7473,17 +7462,21 @@ export function TSRXPlugin(config) {
 						// acorn's and acorn-typescript's reading of a `let` declarator's
 						// name, whose binding is lexical too.
 						const start = this.start;
-						decl.id = this.parseBindingAtom();
-						this.checkLValPattern(decl.id, BINDING_TYPES.BIND_LEXICAL);
-						const held = this.#hold.held;
-						const count = held?.length ?? 0;
-						this.#recordCheckerLevelError(
-							start,
-							this.lastTokEnd,
-							TS_ERRORS.USING_BINDING_PATTERN(kind),
-						);
-						// Dropped after a syntax error in the declaration.
-						if (held && held.length > count) deferred_errors.add(held[held.length - 1]);
+						/** @type {CompileError[]} */
+						const held = [];
+						decl.id = this.#holdingErrors(held, () => {
+							const id = this.parseBindingAtom();
+							this.checkLValPattern(id, BINDING_TYPES.BIND_LEXICAL);
+							this.#recordCheckerLevelError(
+								start,
+								this.lastTokEnd,
+								TS_ERRORS.USING_BINDING_PATTERN(kind),
+							);
+							return id;
+						});
+						// Dropped after a syntax error.
+						for (const error of held) if (error.code === 'TS1492') deferred_errors.add(error);
+						this.#releaseErrors(held);
 						const type = this.tsTryParseTypeAnnotation();
 						if (type) {
 							/** @type {AST.Pattern} */ (decl.id).typeAnnotation = type;
@@ -16765,6 +16758,11 @@ export function TSRXPlugin(config) {
 				// else about it (`checkModuleDeclaration`), before the errors in it,
 				// which are held until it's read. A syntax error still comes first.
 				const place = nested_module_allowed ? null : this.#moduleDeclarationPlace();
+				// A `using` declaration with a binding pattern: TS1492 at the pattern
+				// goes after a syntax error in the statement, which TypeScript reports
+				// alone (`using {x} y;`), and after TS2852 at an `await` in a namespace,
+				// which `finishNode` reports (see `parseVarId`).
+				const using_pattern = this.#startsUsingPattern();
 				this.#statementContext = context ?? null;
 				this.#statementContextDepth = this.context.length - this.#currentTokenContextCount();
 				this.#statementOpenBrackets = this.#openBrackets;
@@ -16794,7 +16792,7 @@ export function TSRXPlugin(config) {
 					return statement;
 				};
 				try {
-					if (!place) return read();
+					if (!place && !using_pattern) return read();
 					/** @type {CompileError[]} */
 					const held = [];
 					const statement = this.#holdingErrors(held, read);
@@ -16805,6 +16803,21 @@ export function TSRXPlugin(config) {
 					this.#statementContextDepth = outer_context_depth;
 					this.#statementOpenBrackets = outer_open_brackets;
 				}
+			}
+
+			/**
+			 * Whether a `using` or `await using` declaration whose first declarator
+			 * is a binding pattern starts at the current token.
+			 */
+			#startsUsingPattern() {
+				if (this.isContextual('using')) {
+					return !!this.isUsing?.(false) && this.lookahead().type === tt.braceL;
+				}
+				return (
+					this.isContextual('await') &&
+					!!this.isAwaitUsing?.(false) &&
+					this.lookahead(2).type === tt.braceL
+				);
 			}
 
 			/**

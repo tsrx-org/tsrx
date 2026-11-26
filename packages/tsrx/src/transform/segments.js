@@ -1259,6 +1259,9 @@ export function convert_source_map_to_mappings(
 		}
 	}
 
+	/** @type {Map<number, number>} */
+	const split_keyword_visits = new Map();
+
 	/**
 	 * Map the two words of `await using`, written apart (on two lines, or with
 	 * a comment between them), each to its own place in the `await using` that
@@ -1271,8 +1274,17 @@ export function convert_source_map_to_mappings(
 	 */
 	function push_split_keyword_mappings(first, second, bound, keyword) {
 		const token = find_source_token(source_tokens, second, first.end, 'after');
-		const generated = first.loc && generated_offset_for_text(first.loc.start, keyword);
-		if (!token || token.start >= bound || generated === undefined) return;
+		if (!token || token.start >= bound || !first.loc) return;
+		// A declaration printed more than once (Solid prints an `@switch`
+		// discriminant twice) is visited once for each copy, in order.
+		const { line, column } = first.loc.start;
+		const copies = (src_to_gen_map.get(`${line}:${column}`) ?? [])
+			.map((position) => loc_to_offset(position.line, position.column, gen_line_offsets))
+			.filter((offset) => generated_code.startsWith(keyword, offset));
+		const visit = split_keyword_visits.get(first.start) ?? 0;
+		split_keyword_visits.set(first.start, visit + 1);
+		const generated = copies[Math.min(visit, copies.length - 1)];
+		if (generated === undefined) return;
 		for (const word of [first, token]) {
 			const length = word.end - word.start;
 			mappings.push({
