@@ -5265,6 +5265,38 @@ foo();`;
 		}
 	});
 
+	it('recovers from a mismatched closing tag in a function in a directive header as in other code', () => {
+		// After `</p>` closed `<b>` and `<p>`, the children of `<p>` went on as
+		// those of the element around the header: the rest of the function was
+		// `<p>`'s text. In an `@for` header it parsed while the function's body
+		// was read as a directive body.
+		for (const header of [
+			'@if ((() => { const a = <p><b></p>; return a; })())',
+			'@if ([{ f() { const a = <p><b></p>; return a; } }].length)',
+			'@for (const x of [{ f() { const a = <p><b></p>; return a; } }])',
+			'@for (const x of [(() => { const a = <p><b></p>; return a; })()])',
+		]) {
+			const source = `export function App() {\n\treturn <div>${header} { <i /> }</div>;\n}`;
+			const options = { collect: true, errors: /** @type {CompileError[]} */ ([]), comments: [] };
+			const ast = parseModule(source, 'App.tsrx', options);
+			expect(
+				options.errors.map((error) => error.code),
+				source,
+			).toEqual([TSRX_ERRORS.MISMATCHED_CLOSING_TAG('b', 'p').code]);
+			const fn = find_first(ast, (node) =>
+				['ArrowFunctionExpression', 'FunctionExpression'].includes(node.type),
+			);
+			const fn_body = as_type(
+				/** @type {AST.ArrowFunctionExpression} */ (fn).body,
+				'BlockStatement',
+			);
+			expect(
+				fn_body.body.map((child) => child.type),
+				source,
+			).toEqual(['VariableDeclaration', 'ReturnStatement']);
+		}
+	});
+
 	it('parses a directive inside an @empty clause of an @for nested in an @if', () => {
 		// The `@empty` clause redirects through a second, independent
 		// `#templateControlFlowBlockDepth` increment (separate from the one

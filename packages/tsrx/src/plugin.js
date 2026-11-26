@@ -16227,7 +16227,13 @@ export function TSRXPlugin(config) {
 				// grows with the nesting of elements, not the number of children
 				while (true) {
 					const current_template_node = this.#currentNativeTemplateNode();
-					if (!current_template_node) return;
+					// Also done once a closing tag that names an element around this one
+					// closed both (`<p><b></p>`), where the element left on `#path` is
+					// one the directive header the code is in started after: the code
+					// goes on (`@if ((() => { const a = <p><b></p>; return a; })())`).
+					if (!current_template_node || this.#readingHeaderStartedAfter(current_template_node)) {
+						return;
+					}
 					current_template_node.metadata ??= { path: [] };
 					current_template_node.metadata.templateMode = 'template';
 					this.#readSkippedTemplateText(body);
