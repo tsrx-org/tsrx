@@ -2314,6 +2314,9 @@ export function TSRXPlugin(config) {
 			#templateScriptParsingDepth = 0;
 			#controlFlowBlockAllowsNativeReturn = false;
 			#parsingJSXSwitchCaseScriptStatementDepth = 0;
+			// Set while the statement that is a `@for`'s body or the block of its
+			// `@empty` clause is read: `parseBlock` reads that block as a directive
+			// body.
 			#templateControlFlowBlockDepth = 0;
 			/** @type {AST.NodeWithLocation | null}	*/
 			#lastClauseKeywordSpan = null;
@@ -2367,6 +2370,10 @@ export function TSRXPlugin(config) {
 			#readingForDirective = false;
 			/** @type {WeakSet<AST.Node>} */
 			#forDirectiveLoops = new WeakSet();
+			// The `this.labels` entries of those loops, which is on top when the
+			// loop's body is read (see `parseStatement`).
+			/** @type {WeakSet<Parse.Parser['labels'][number]>} */
+			#forDirectiveLabels = new WeakSet();
 			// Where the last element of a `{ … }` list ended, so that `expect` can
 			// tell a comma expected after it at the end of the input is the list's
 			// missing `}`.
@@ -4652,7 +4659,6 @@ export function TSRXPlugin(config) {
 				}
 
 				if (label === 'for') {
-					this.#templateControlFlowBlockDepth++;
 					let node;
 					const previous_reading_header = this.#readingJSXControlFlowHeader;
 					this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
@@ -4668,7 +4674,6 @@ export function TSRXPlugin(config) {
 						);
 					} finally {
 						this.#readingJSXControlFlowHeader = previous_reading_header;
-						this.#templateControlFlowBlockDepth--;
 					}
 					if (node.body?.type !== 'BlockStatement') {
 						this.raise(node.body?.start ?? start, TSRX_ERRORS.DIRECTIVE_BODY_EXPECTED);
@@ -14045,7 +14050,8 @@ export function TSRXPlugin(config) {
 
 			/** @type {Parse.Parser['parseForStatement']} */
 			parseForStatement(node) {
-				if (this.#readingForDirective) {
+				const directive = this.#readingForDirective;
+				if (directive) {
 					this.#readingForDirective = false;
 					this.#forDirectiveLoops.add(node);
 				}
@@ -14055,6 +14061,7 @@ export function TSRXPlugin(config) {
 						? this.lastTokStart
 						: -1;
 				this.labels.push({ kind: 'loop' });
+				if (directive) this.#forDirectiveLabels.add(this.labels[this.labels.length - 1]);
 				this.enterScope(0);
 				this.expect(tt.parenL);
 
@@ -14319,8 +14326,12 @@ export function TSRXPlugin(config) {
 				}
 
 				this.expect(tt.parenR);
+				// A `@for`'s body is past its header. A loop in a directive's header,
+				// in a function there (`@if (xs.some((x) => { for (const y of x) … }))`),
+				// is code in that header, and so is its body.
+				const directive_body = this.#forDirectiveLoops.has(node);
 				const previous_reading_header = this.#readingJSXControlFlowHeader;
-				this.#readingJSXControlFlowHeader = false;
+				if (directive_body) this.#readingJSXControlFlowHeader = false;
 				try {
 					node.body = /** @type {AST.BlockStatement} */ (this.parseStatement('for'));
 				} finally {
@@ -16972,6 +16983,11 @@ export function TSRXPlugin(config) {
 				this.#statementContext = context ?? null;
 				this.#statementContextDepth = this.context.length - this.#currentTokenContextCount();
 				this.#statementOpenBrackets = this.#openBrackets;
+				// A `@for`'s body is a directive body (see `parseBlock`). Its head is
+				// code: a block there, such as a function's body, is a block.
+				const for_directive_body =
+					context === 'for' && this.#forDirectiveLabels.has(this.labels[this.labels.length - 1]);
+				if (for_directive_body) this.#templateControlFlowBlockDepth++;
 				const read = () => {
 					const statement = this.#parseStatement(context, topLevel, exports);
 					const node = /** @type {AST.Node | undefined} */ (statement);
@@ -17006,6 +17022,7 @@ export function TSRXPlugin(config) {
 					else this.#releaseErrors(held);
 					return statement;
 				} finally {
+					if (for_directive_body) this.#templateControlFlowBlockDepth--;
 					this.#statementContext = outer;
 					this.#statementContextDepth = outer_context_depth;
 					this.#statementOpenBrackets = outer_open_brackets;
@@ -17439,8 +17456,10 @@ export function TSRXPlugin(config) {
 				// `undefined` and that check would skip this redirect, dropping the
 				// `@for`'s body into plain statement parsing (nested directives then
 				// land in expression position instead of template position). The
-				// depth counter is set only around a `@for`'s own header+body and
-				// `@empty` clause, so plain JS `for` loops can't false-positive.
+				// depth counter is set only around a `@for`'s own body and `@empty`
+				// clause, not its head, so plain JS `for` loops and the blocks in the
+				// head (`@for (const x of xs.filter((x) => { … }))`) can't
+				// false-positive.
 				if (this.#templateControlFlowBlockDepth > 0) {
 					this.#templateControlFlowBlockDepth--;
 					try {
