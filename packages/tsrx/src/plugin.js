@@ -14628,7 +14628,18 @@ export function TSRXPlugin(config) {
 			 * @param {number} end
 			 */
 			#reportJSXNameEscape(start, end) {
-				const error = TS_ERRORS.JSX_NAME_UNICODE_ESCAPE;
+				this.#reportJSXNameError(start, end, TS_ERRORS.JSX_NAME_UNICODE_ESCAPE);
+			}
+
+			/**
+			 * A syntax error in a JSX name that TypeScript reads on after, reported
+			 * as `#reportJSXNameEscape` describes: thrown by a strict parse, held by
+			 * a speculative one, and recorded by a collecting one, which reads on.
+			 * @param {number} start
+			 * @param {number} end
+			 * @param {Diagnostic} error
+			 */
+			#reportJSXNameError(start, end, error) {
 				if (this.#collect) {
 					// Where it's recorded, which a strict parse that reads ahead as a
 					// collecting one (see `#asCollecting`) reports later.
@@ -14734,18 +14745,23 @@ export function TSRXPlugin(config) {
 			 * expected.` at the `-` in an opening tag, and TS1005 `'>' expected.` in
 			 * a closing one. acorn-typescript read `<X.A-b />` with the part `A-b`,
 			 * which compiled to a tag that esbuild, oxc, Bun and vue-jsx-vapor
-			 * reject, and SWC reads as `X.A - b`. An escape before the `-` is
-			 * TypeScript's TS17021 first (see `jsx_parseIdentifier`).
+			 * reject, and SWC reads as `X.A - b`. It's reported as an escape in a
+			 * name is (see `#reportJSXNameError`): a collecting parse records it and
+			 * reads on with the part as written, which TypeScript then reports on the
+			 * editor's code too. An escape before the `-` is TypeScript's TS17021
+			 * first (see `jsx_parseIdentifier`).
 			 * @param {boolean} closing Whether the name is a closing tag's
 			 * @returns {ESTreeJSX.JSXIdentifier}
 			 */
 			#parseJSXMemberProperty(closing) {
-				const hyphen = this.type === tstt.jsxName ? this.input.indexOf('-', this.start) : -1;
-				const end = this.end;
+				const start = this.start;
+				const hyphen =
+					this.type === tstt.jsxName ? this.input.slice(start, this.end).indexOf('-') : -1;
 				const property = this.jsx_parseIdentifier();
-				if (hyphen !== -1 && hyphen < end) {
-					this.raise(
-						hyphen,
+				if (hyphen !== -1) {
+					this.#reportJSXNameError(
+						start + hyphen,
+						start + hyphen + 1,
 						closing ? TS_ERRORS.TOKEN_EXPECTED('>') : TS_ERRORS.IDENTIFIER_EXPECTED,
 					);
 				}

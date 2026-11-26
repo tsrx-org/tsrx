@@ -18434,6 +18434,8 @@ ${lines.join('\n')}
 			[`const x = <X.A- />;`, 'TS1003'],
 			[`const x = <X.A-${escape('0062')} />;`, 'TS1003'],
 			[`const x = <X.A>x</X.A-b>;`, 'TS1005'],
+			// In a speculative parse, which goes on.
+			[`const x = f<T,>(<X.A-b />);`, 'TS1003'],
 		];
 		for (const [snippet, code] of scripts) {
 			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
@@ -18448,15 +18450,26 @@ ${lines.join('\n')}
 			[`export function App() @{\n\t<div><X.A-b /></div>\n}`, 'TS1003'],
 			[`export function App() @{\n\t<X.A>x</X.A-b>\n}`, 'TS1005'],
 		];
+		// A strict parse throws it; a collecting one records it and reads on, as
+		// for an escape in a name, so the editor keeps the file.
 		for (const [source, code] of [...scripts, ...templates]) {
-			for (const options of [
-				undefined,
-				{ collect: true, errors: [] },
-				{ loose: true, errors: [] },
-			]) {
-				expect(() => parseModule(source, 'App.tsrx', options), source).toThrow(
-					expect.objectContaining({ code, pos: source.indexOf('-') }),
-				);
+			const at = source.indexOf('-');
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code, pos: at }),
+			);
+			for (const options of [{ collect: true }, { loose: true }]) {
+				/** @type {any[]} */
+				const errors = [];
+				try {
+					parseModule(source, 'App.tsrx', { ...options, errors });
+				} catch {
+					// A closing tag's name that differs from the opening tag's.
+				}
+				expect(errors[0] && [errors[0].code, errors[0].pos, errors[0].end], source).toEqual([
+					code,
+					at,
+					at + 1,
+				]);
 			}
 		}
 		// A `-` in the first part, or in a tag's or attribute's own name, is part
