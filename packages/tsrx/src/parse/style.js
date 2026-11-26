@@ -830,6 +830,26 @@ function read_selector_list(parser, inside_pseudo_class = false) {
 }
 
 /**
+ * The pseudo-classes the compiler tells apart. CSS reads a pseudo-class name
+ * in any case and with escapes, so `:ROOT`, `:r\6f ot` and `:IS()` are these.
+ */
+const KNOWN_PSEUDO_CLASSES = new Set(['root', 'host', 'is', 'where', 'not', 'has']);
+
+/**
+ * The name of a pseudo-class as written, or, for one the compiler tells
+ * apart, as CSS reads it (`:ROOT` is `root`). `:global` is TSRX's own and
+ * stays as written.
+ *
+ * @param {string} name
+ * @returns {string}
+ */
+function pseudo_class_name(name) {
+	if (!/[A-Z\\]/.test(name)) return name;
+	const decoded = unescape_css(name).replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+	return KNOWN_PSEUDO_CLASSES.has(decoded) ? decoded : name;
+}
+
+/**
  * @param {Parser} parser
  * @returns {AST.CSS.Combinator | null}
  */
@@ -950,7 +970,7 @@ function read_selector(parser, inside_pseudo_class = false) {
 				parser.eat(')', true);
 			}
 		} else if (parser.eat(':')) {
-			const name = read_identifier(parser);
+			const name = pseudo_class_name(read_identifier(parser));
 
 			/** @type {null | AST.CSS.SelectorList} */
 			let args = null;
