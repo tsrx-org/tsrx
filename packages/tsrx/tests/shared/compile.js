@@ -4320,7 +4320,7 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 		});
 
 		it('rejects a return in a template in a class field as at the top level, not as TS1108', () => {
-			for (const [template, error] of [
+			for (const [template, error] of /** @type {Array<[string, { code: string }]>} */ ([
 				['<div>@if (x) { return; }</div>', TSRX_ERRORS.IF_RETURN_STATEMENT],
 				[
 					'<div>@switch (x) { @case 1: { return <b />; } @default: { <i /> } }</div>',
@@ -4331,7 +4331,7 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 					'<div>@try { return <b />; } @catch (e) { <i /> }</div>',
 					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
 				],
-			]) {
+			])) {
 				for (const declaration of [
 					`v = ${template};`,
 					`static v = ${template};`,
