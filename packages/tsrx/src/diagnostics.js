@@ -1047,6 +1047,11 @@ export const TS_ERRORS = {
 		code: 'TS1494',
 		message: "The left-hand side of a 'for...in' statement cannot be an 'await using' declaration.",
 	},
+	/** `kind` is `using` or `await using`. */
+	USING_BINDING_PATTERN: with_values(
+		'TS1492',
+		(kind) => `'${kind}' declarations may not have binding patterns.`,
+	),
 	// A `let`, `const` or `using` declaration's name declared again in the same
 	// scope (see `declareName` in `plugin.js`)
 	BLOCK_SCOPED_VARIABLE_REDECLARED: with_values(

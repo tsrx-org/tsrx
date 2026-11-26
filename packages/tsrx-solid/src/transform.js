@@ -659,9 +659,10 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 	}
 	if (
 		(current.type === 'BreakStatement' || current.type === 'ContinueStatement') &&
-		current.metadata?.invalid_directive_jump
+		(current.metadata?.invalid_directive_jump || current.metadata?.invalid_jump_target)
 	) {
-		// Reported by `@tsrx/core`'s directive jump check.
+		// Reported by `@tsrx/core`'s directive jump check, or by its parser,
+		// which reports a jump with no target.
 		return;
 	}
 	if (current.type === 'BreakStatement') {
@@ -736,9 +737,10 @@ function validate_if_body_control_flow(node, transform_context) {
 	}
 	if (
 		(current.type === 'BreakStatement' || current.type === 'ContinueStatement') &&
-		current.metadata?.invalid_directive_jump
+		(current.metadata?.invalid_directive_jump || current.metadata?.invalid_jump_target)
 	) {
-		// Reported by `@tsrx/core`'s directive jump check.
+		// Reported by `@tsrx/core`'s directive jump check, or by its parser,
+		// which reports a jump with no target.
 		return;
 	}
 	if (current.type === 'BreakStatement') {

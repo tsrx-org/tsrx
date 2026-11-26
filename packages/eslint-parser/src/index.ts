@@ -677,6 +677,15 @@ function token_type(
 	return keyword ? 'Keyword' : 'Punctuator';
 }
 
+/** TypeScript's codes for a `break` or `continue` with no target. */
+const JUMP_TARGET_CODES = new Set([
+	TS_ERRORS.JUMP_ACROSS_FUNCTION.code,
+	TS_ERRORS.BREAK_OUTSIDE_LOOP.code,
+	TS_ERRORS.CONTINUE_OUTSIDE_LOOP.code,
+	TS_ERRORS.BREAK_LABEL_NOT_FOUND.code,
+	TS_ERRORS.CONTINUE_LABEL_NOT_LOOP.code,
+]);
+
 /**
  * The collected errors ESLint reports as a parse error: broken markup, a
  * directive's clause that no directive takes (TSRX1012), which the parser
@@ -688,6 +697,9 @@ function token_type(
  */
 function is_fatal_parser_diagnostic(error: any): boolean {
 	return (
+		// A `break` or `continue` with no target, which the parser used to throw,
+		// as espree does.
+		JUMP_TARGET_CODES.has(error?.code) ||
 		error?.code === TS_ERRORS.JSX_NAME_UNICODE_ESCAPE.code ||
 		error?.code === DIAGNOSTIC_CODES.UNCLOSED_TAG ||
 		error?.code === DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG ||

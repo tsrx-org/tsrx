@@ -569,6 +569,47 @@ export {};`,
 		]);
 	});
 
+	// The parser records a `break` or `continue` with no target over its keyword.
+	// TypeScript reports the same code at the same start on the editor's code,
+	// so the editor shows it once, and the parser's error shows when
+	// TypeScript's validation is off.
+	it.each([
+		[
+			'CaseContinue',
+			'export function App() @{\n\t<div>@switch (1) { @case 1: { continue; } @default: { <i /> } }</div>\n}\n',
+			'continue',
+		],
+		[
+			'CaseNestedContinue',
+			'export function App({ x }: { x: boolean }) @{\n\t<div>@switch (1) { @case 1: { if (x) continue; <b /> } @default: { <i /> } }</div>\n}\n',
+			'continue',
+		],
+		[
+			'IfBreak',
+			'export function App({ x }: { x: boolean }) @{\n\t<div>@if (x) { break; }</div>\n}\n',
+			'break',
+		],
+		['FunctionContinue', 'function f() {\n\tcontinue;\n}\nexport {};\n', 'continue'],
+	])(
+		'shows the jump with no target in %s once, also with validation off',
+		async (name, source, keyword) => {
+			const offset = source.indexOf(keyword);
+			const on = await editor_diagnostics_for(name, source);
+			expect(reported(on.document, on.diagnostics, 'TS1107')).toEqual([
+				{ source: 'ts', text: `${keyword};`, offset },
+			]);
+
+			const off = await editor_diagnostics_for(`${name}Off`, source, {
+				async getConfiguration(section) {
+					return /** @type {any} */ (section === 'tsrx.validate.enable' ? false : undefined);
+				},
+			});
+			expect(reported(off.document, off.diagnostics, 'TS1107')).toEqual([
+				{ source: 'TSRX', text: keyword, offset },
+			]);
+		},
+	);
+
 	it('keeps the mistakes without the TypeScript service', async () => {
 		const { document, diagnostics } = await diagnostics_for(
 			`const b = [1];

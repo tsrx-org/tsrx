@@ -989,10 +989,13 @@ const visitors = {
 				}
 			}
 
-			// Skip scoping if we're inside a global block. A compound with :root or
-			// :host never takes the hash, nor the specificity bump, which goes to
-			// the next compound as it does after :root alone.
+			// Skip scoping if we're inside a global block, or a pruned selector,
+			// whose hash a minified output would keep on its own
+			// (`.missing:is(.icon), .wrap` gave `.<hash> .wrap.<hash>`). A compound
+			// with :root or :host never takes the hash, nor the specificity bump,
+			// which goes to the next compound as it does after :root alone.
 			if (
+				kept &&
 				relative_selector.metadata.scoped &&
 				!relative_selector.metadata.is_global_like &&
 				!is_in_global_block(context.path)

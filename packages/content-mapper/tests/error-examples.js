@@ -985,6 +985,7 @@ Foo = 1;`,
 	{ error: TS_ERRORS.DECLARATION_NOT_INITIALIZED, source: `const x: number;` },
 	{ error: TS_ERRORS.FOR_IN_USING, source: `for (using a in b) {}` },
 	{ error: TS_ERRORS.FOR_IN_AWAIT_USING, source: `for (await using a in b) {}` },
+	{ error: TS_ERRORS.USING_BINDING_PATTERN, source: `using { a } = b;` },
 	{
 		error: TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED,
 		source: `let a = 1;

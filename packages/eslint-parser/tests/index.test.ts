@@ -462,6 +462,20 @@ export function A({ items }) @{
 		).toEqual(['2: null: Parsing error: `break` is invalid inside `@switch` cases.']);
 	});
 
+	it('reports a break or continue with no target as a parse error, as espree does', () => {
+		expect(lint('function f() {\n\tcontinue;\n}\n')).toEqual([
+			'2: null: Parsing error: Jump target cannot cross function boundary.',
+		]);
+		expect(lint('break;\n')).toEqual([
+			"1: null: Parsing error: A 'break' statement can only be used within an enclosing iteration or switch statement.",
+		]);
+		expect(
+			lint(
+				'export function App({ s }) @{\n\t<div>@switch (s) { @case 1: { continue; } @default: { <i /> } }</div>\n}\n',
+			),
+		).toEqual(['2: null: Parsing error: Jump target cannot cross function boundary.']);
+	});
+
 	it('reports a plain try with only a pending block as a parse error', () => {
 		const code = `export function App() @{
 	try { <p>a</p> } pending { <p>loading</p> }

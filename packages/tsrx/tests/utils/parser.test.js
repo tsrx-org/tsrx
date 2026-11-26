@@ -808,6 +808,256 @@ describe('TSRX parser', () => {
 				expect(() => parseModule(source, 'App.tsrx')).toThrow(error_with(error));
 			}
 		});
+
+		it('reads a using declaration where TypeScript does', () => {
+			// `using x = y;` on the line after `await` is an `await using`
+			// declaration, as TypeScript reads it, which compiles to `await using`.
+			for (const source of [
+				'async function f(y) {\n\tawait\n\tusing x = y;\n}',
+				'async function f(y) {\n\tfor (await\n\tusing x of y) {}\n}',
+				'await\nusing x = y;',
+			]) {
+				const [declaration] = find_all(source, 'VariableDeclaration');
+				expect(declaration?.kind, source).toBe('await using');
+			}
+			// Without a name or `{` on the line of `using`, it's an expression: also
+			// before `/`, a division, and before a reserved word.
+			for (const source of [
+				'await\nusing;',
+				'await\nusing.x;',
+				'await\nusing\nx = y;',
+				'async function f(using, x) {\n\tawait using / x;\n}',
+				'async function f(using, x) {\n\tawait\n\tusing / x;\n}',
+			]) {
+				expect(find_all(source, 'VariableDeclaration'), source).toEqual([]);
+			}
+			const reserved = 'async function f() {\n\tawait\n\tusing enum = null;\n}';
+			expect(() => parseModule(reserved, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS1005', pos: reserved.indexOf('enum') }),
+			);
+
+			// A binding pattern, which TypeScript's checker reports at the pattern
+			// (TS1492), and nothing else about the declarator: a strict parse throws
+			// it, and a collecting one records it and keeps the pattern.
+			/** @type {Array<[source: string, kind: string, at: string]>} */
+			const patterns = [
+				['using {x} = y;', 'using', '{x}'],
+				['using {x}: T = y;', 'using', '{x}'],
+				['using {x};', 'using', '{x}'],
+				['using z = w, [x] = y;', 'using', '[x]'],
+				['async function f() {\n\tawait using {x} = y;\n}', 'await using', '{x}'],
+				['async function f() {\n\tawait\n\tusing {x} = y;\n}', 'await using', '{x}'],
+				['for (using {x} of y) {}', 'using', '{x}'],
+			];
+			for (const [source, kind, at] of patterns) {
+				const error = TS_ERRORS.USING_BINDING_PATTERN(kind);
+				const pos = source.indexOf(at);
+				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+					expect.objectContaining({
+						code: 'TS1492',
+						message: expect.stringContaining(error.message),
+						pos,
+					}),
+				);
+				/** @type {CompileError[]} */
+				const errors = [];
+				const ast = parseModule(source, 'App.tsrx', { collect: true, errors });
+				expect(
+					errors.map((found) => [found.code, found.message, found.pos, found.end]),
+					source,
+				).toEqual([['TS1492', error.message, pos, pos + at.length]]);
+				const ids = find_all(source, 'VariableDeclarator', { collect: true, errors: [] }).map(
+					(declarator) => declarator.id.type,
+				);
+				expect(ids, source).toContain(at.startsWith('{') ? 'ObjectPattern' : 'ArrayPattern');
+				expect(ast.body.length, source).toBeGreaterThan(0);
+			}
+
+			// After `declare`, TypeScript reports the modifier first.
+			for (const [source, codes] of /** @type {Array<[string, string[]]>} */ ([
+				['declare using {x} = y;', ['TS1491', 'TS1492']],
+				['declare await using {x} = y;', ['TS1495', 'TS1492']],
+				['declare await\nusing x = y;', ['TS1495']],
+				['abstract using {x} = y;', ['TS1242', 'TS1492']],
+			])) {
+				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+					expect.objectContaining({ code: codes[0], pos: 0 }),
+				);
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, 'App.tsrx', { collect: true, errors });
+				expect(
+					errors.map((found) => found.code),
+					source,
+				).toEqual(codes);
+			}
+
+			// TypeScript's checker reports a modifier, and a `using` declaration
+			// before `in` (TS1493, TS1494, on the declaration), before TS1492, and
+			// TS1492 before the errors in the pattern. The first is what a strict
+			// parse throws.
+			for (const [source, expected] of /** @type {Array<[string, Array<[string, string]>]>} */ ([
+				[
+					'export declare using {x} = y;',
+					[
+						['TS1491', 'export'],
+						['TS1492', '{x}'],
+					],
+				],
+				[
+					'using { ...x, y } = z;',
+					[
+						['TS1492', '{ ...x, y }'],
+						['TS2462', 'x'],
+					],
+				],
+				[
+					'using w = v, { ...x, y } = z;',
+					[
+						['TS1492', '{ ...x, y }'],
+						['TS2462', 'x'],
+					],
+				],
+				[
+					'using {a = () => { using {b} = c; }} = y;',
+					[
+						['TS1492', '{a = () => { using {b} = c; }}'],
+						['TS1492', '{b}'],
+					],
+				],
+				['for (using x in y) {}', [['TS1493', 'using x']]],
+				[
+					'for (using {x} in y) {}',
+					[
+						['TS1493', 'using {x}'],
+						['TS1492', '{x}'],
+					],
+				],
+				[
+					'async function f() {\n\tfor (await using {x} in y) {}\n}',
+					[
+						['TS1494', 'await using {x}'],
+						['TS1492', '{x}'],
+					],
+				],
+			])) {
+				const ranges = expected.map(([code, at]) => {
+					const pos = source.indexOf(at, at === 'x' ? source.indexOf('...') : 0);
+					return [code, pos, pos + at.length];
+				});
+				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+					expect.objectContaining({ code: ranges[0][0], pos: ranges[0][1] }),
+				);
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, 'App.tsrx', { collect: true, errors });
+				expect(
+					errors.map((found) => [found.code, found.pos, found.end]),
+					source,
+				).toEqual(ranges);
+			}
+
+			// TypeScript reports a syntax error in the statement, or in a `for` head's
+			// declaration list, alone.
+			for (const [source, code, at] of [
+				['using {x} = ;', 'TS1012', ';'],
+				['using {x} y;', 'TS1005', 'y'],
+				['using {x} = y z;', 'TS1005', 'z'],
+				['for (using {x} = y z;;) {}', 'TS1012', 'z'],
+			]) {
+				for (const options of [undefined, { collect: true, errors: [] }]) {
+					expect(() => parseModule(source, 'App.tsrx', options), source).toThrow(
+						expect.objectContaining({ code, pos: source.indexOf(at) }),
+					);
+				}
+			}
+
+			// In a namespace, TS2852 at `await` comes first, by position.
+			const in_namespace = 'namespace N { await using { x } = y; }';
+			expect(() => parseModule(in_namespace, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS2852', pos: in_namespace.indexOf('await') }),
+			);
+			/** @type {CompileError[]} */
+			const namespace_errors = [];
+			parseModule(in_namespace, 'App.tsrx', { collect: true, errors: namespace_errors });
+			expect(namespace_errors.map((found) => found.code)).toEqual(['TS2852', 'TS1492']);
+
+			// A declaration without a pattern reports its errors as they come, as a
+			// `let` does: TS2451 with its range, before an error in a template after it.
+			const redeclared = 'using x=1, x = () => @{ <a/>; <b/> };';
+			expect(() => parseModule(redeclared, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS2451', pos: 11, end: 12 }),
+			);
+			/** @type {CompileError[]} */
+			const redeclared_errors = [];
+			parseModule(redeclared, 'App.tsrx', { collect: true, errors: redeclared_errors });
+			expect(redeclared_errors.map((found) => found.code)).toEqual(['TS2451', 'TSRX2011']);
+			const in_head = 'for (using x=1,x=2;;) {}';
+			expect(() => parseModule(in_head, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS2451', pos: 15, end: 16 }),
+			);
+
+			// A syntax error that a collecting parse records and reads on after (a
+			// JSX name with an escape, TS17021) is reported alone too.
+			const B = String.fromCharCode(92);
+			for (const source of [
+				`using {x} = <Inn${B}u0065r />;`,
+				`using {x = <Inn${B}u0065r />} = y;`,
+			]) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, 'App.tsrx', { collect: true, errors });
+				expect(
+					errors.map((found) => found.code),
+					source,
+				).toEqual(['TS17021']);
+			}
+			// It comes first, before the modifier's error too.
+			for (const source of [
+				`declare using x = <Inn${B}u0065r />;`,
+				`export declare using x = <Inn${B}u0065r />;`,
+				`abstract using x = <Inn${B}u0065r />;`,
+			]) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, 'App.tsrx', { collect: true, errors });
+				expect(errors[0]?.code, source).toBe('TS17021');
+			}
+			// And a strict parse throws it, before a checker error after it in a
+			// speculative parse, when the statement stops at a syntax error.
+			const speculative = `declare using x = <T,>(a = <A${B}u0062 />, a) => 0 x;`;
+			expect(() => parseModule(speculative, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS17021', pos: speculative.indexOf('A') }),
+			);
+
+			// TypeScript checks no name in a pattern it reports (TS2480 for `let`).
+			/** @type {CompileError[]} */
+			const let_errors = [];
+			parseModule('using {let} = null;', 'App.tsrx', { collect: true, errors: let_errors });
+			expect(let_errors.map((found) => found.code)).toEqual(['TS1492', 'TS1214']);
+
+			// In a `for` head, `await using of` is a declaration, as in TypeScript.
+			const [head] = find_all(
+				'async function f() {\n\tfor (await\n\tusing of = null; ; ) {}\n}',
+				'VariableDeclaration',
+			);
+			expect([head?.kind, /** @type {any} */ (head?.declarations[0].id).name]).toEqual([
+				'await using',
+				'of',
+			]);
+			// And `using of` before `=`, `:` or `;` on any line, where acorn took it
+			// only before `=` on its line.
+			for (const source of [
+				'for (using of: null = null; ; ) {}',
+				'for (using\n\tof = null; ; ) {}',
+			]) {
+				const [typed] = find_all(source, 'VariableDeclaration');
+				expect([typed?.kind, /** @type {any} */ (typed?.declarations[0].id).name], source).toEqual([
+					'using',
+					'of',
+				]);
+			}
+		});
 	});
 
 	it('parses returned tags as JSXElement nodes', () => {
@@ -14788,15 +15038,30 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				'continue',
 			],
 			['function f() { L: { continue L; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['function f() { continue\n}', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'continue'],
 		];
-		const outcomes = await parse_in_worker(
-			cases.flatMap(([source]) => [{ source }, { source, options: { collect: true } }]),
-		);
-		expect(outcomes).toEqual(
-			cases.flatMap(([source, error, at]) => [
-				thrown(error, source.indexOf(at)),
-				thrown(error, source.indexOf(at)),
+		const sources = cases.map(([source]) => `${source}\nexport const after = 1;`);
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) => [
+				{ source },
+				{ source, options: { collect: true } },
+				{ source, options: { loose: true } },
 			]),
+		);
+		// A collecting parse records it over the keyword, and reads on.
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok ? { errors: outcome.errors, last: outcome.ast.body.at(-1)?.type } : outcome,
+			),
+		).toEqual(
+			cases.flatMap(([source, error, at]) => {
+				const pos = source.indexOf(at);
+				const collected = {
+					errors: [{ code: code_of(error), pos, end: pos + at.length }],
+					last: 'ExportNamedDeclaration',
+				};
+				return [thrown(error, pos), collected, collected];
+			}),
 		);
 	});
 
@@ -15561,8 +15826,6 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			// `TS_SYNTAX_ERROR_CODES`).
 			...[
 				['class A { m(public x) { label: label: ; } }', 'TS1114', 'label: ;'],
-				['class A { m(public x) { break; } }', 'TS1107', 'break'],
-				['class A { m(public x) { continue; } }', 'TS1107', 'continue'],
 				['class A { m(public x) { delete y; } }', 'TS1102', 'delete'],
 				['class A { m(public x) { arguments = 1; } }', 'TS1100', 'arguments'],
 				["class A { m(public x) { 'use strict'; } }", 'TS1347', '(public'],
@@ -15594,6 +15857,18 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 						source,
 						[[parameter_property, 'public x']],
 						[code, at],
+					]),
+			),
+			// A jump with no target, which a collecting parse records (TS1107).
+			...['break', 'continue'].map(
+				(keyword) =>
+					/** @type {[string, string, Array<[string | undefined, string]>]} */ ([
+						'a.ts',
+						`class A { m(public x) { ${keyword}; } }`,
+						[
+							[parameter_property, 'public x'],
+							['TS1107', keyword],
+						],
 					]),
 			),
 			[

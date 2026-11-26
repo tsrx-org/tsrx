@@ -1883,6 +1883,9 @@ export namespace Parse {
 		/** Check if current token starts 'await using' declaration */
 		isAwaitUsing?(isFor?: boolean): boolean;
 
+		/** Check if current token starts 'using' or 'await using' declaration */
+		isUsingKeyword(isAwaitUsing: boolean, isFor: boolean): boolean;
+
 		// ============================================================
 		// Function Parsing
 		// ============================================================

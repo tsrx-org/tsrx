@@ -645,6 +645,102 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 		});
 	});
 
+	describe(`[${name}] a break or continue with no target, in the editor`, () => {
+		const component = (/** @type {string} */ template) =>
+			`export function App({ s, x }: { s: number; x: boolean }) @{\n\t${template}\n}\nexport const after = 1;\n`;
+		it.each([
+			[
+				'a `continue` right in an `@switch` case',
+				component('<div>@switch (s) { @case 1: { continue; } @default: { <i /> } }</div>'),
+				'continue;',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+			],
+			[
+				'a `continue` after output in an `@switch` case',
+				component('<div>@switch (s) { @case 1: { <b /> continue; } @default: { <i /> } }</div>'),
+				'continue;',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+			],
+			[
+				'a labeled `continue` in an `@switch` case',
+				component('<div>@switch (s) { @case 1: { continue foo; } @default: { <i /> } }</div>'),
+				'continue foo;',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+			],
+			[
+				'a nested `continue` in an `@switch` case',
+				component(
+					'<div>@switch (s) { @case 1: { if (x) continue; <b /> } @default: { <i /> } }</div>',
+				),
+				'continue;',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+			],
+			[
+				'a `continue` in an `@if` body',
+				component('<div>@if (x) { continue; }</div>'),
+				'continue;',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+			],
+			[
+				'a labeled `continue` in an `@for` body',
+				component('<ul>@for (const y of [1]) { if (x) continue foo; <li /> }</ul>'),
+				'continue foo;',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+			],
+			[
+				'a labeled `break` in an `@for` body',
+				component('<ul>@for (const y of [1]) { if (x) break foo; <li /> }</ul>'),
+				'break foo;',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+			],
+			[
+				'a function',
+				'function f() {\n\tcontinue;\n}\nexport const after = 1;\n',
+				'continue;',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+			],
+			[
+				'a function, with a label no statement has',
+				'function f() {\n\tbreak foo;\n}\nexport const after = 1;\n',
+				'break foo;',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+			],
+			['the module', 'break;\nexport const after = 1;\n', 'break;', TS_ERRORS.BREAK_OUTSIDE_LOOP],
+			[
+				'a label that is not a loop',
+				'foo: {\n\tcontinue foo;\n}\nexport const after = 1;\n',
+				'continue foo;',
+				TS_ERRORS.CONTINUE_LABEL_NOT_LOOP,
+			],
+		])('is recorded once in %s, where TypeScript reports it too', (_, source, statement, error) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const start = source.indexOf(statement);
+			expect(result.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+				// Over the keyword, which the editor's code maps.
+				[error.code, start, start + (statement.startsWith('break') ? 'break' : 'continue').length],
+			]);
+			expect(result.code).toContain('export const after = 1;');
+			// TypeScript reports the same code on the jump, at the same place, where
+			// the language server leaves the error to it.
+			const reported = virtual_semantic_diagnostics(result.code)
+				.filter((diagnostic) => `TS${diagnostic.code}` === error.code)
+				.map((diagnostic) => {
+					const at = diagnostic.start ?? -1;
+					const mapping = result.mappings.find((candidate) =>
+						candidate.generatedOffsets.some(
+							(offset, i) => offset <= at && at < offset + candidate.lengths[i],
+						),
+					);
+					const i =
+						mapping?.generatedOffsets.findIndex(
+							(offset, j) => offset <= at && at < offset + mapping.lengths[j],
+						) ?? -1;
+					return mapping ? mapping.sourceOffsets[i] + at - mapping.generatedOffsets[i] : null;
+				});
+			expect(reported).toEqual([start]);
+		});
+	});
+
 	describe(`[${name}] a directive used as a value, with a return in a body, in the editor`, () => {
 		it.each([
 			[
@@ -3773,7 +3869,8 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				const expected = expect.objectContaining({ code, pos: source.indexOf(keyword) });
 
 				expect(() => compile(source, 'App.tsrx'), body).toThrow(expected);
-				expect(() => compile(source, 'App.tsrx', { collect: true }), body).toThrow(expected);
+				// Recorded when collecting, as TypeScript reports it from its checker.
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, body).toEqual([expected]);
 			}
 		});
 
