@@ -13,6 +13,8 @@ const REGEX_COMBINATOR = /^(\+|~|>|\|\|)/;
 const REGEX_VALID_IDENTIFIER_CHAR = /[a-zA-Z0-9_-]/;
 const REGEX_LEADING_HYPHEN_OR_DIGIT = /^-?\d/;
 const REGEX_WHITESPACE_OR_COLON = /[\s:]/;
+// An escape, and the one space that ends a hex escape (`\r\n` too).
+const REGEX_VALUE_ESCAPE = /\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^\n\r\f])/y;
 // `--` and a name (letters, digits, `-`, `_`, non-ASCII, escapes), then `:`.
 const REGEX_CUSTOM_PROPERTY_START = /^--(?:[\w-]|[^\x00-\x7f]|\\[^\n])*\s*:/;
 const REGEX_NTH_OF =
@@ -519,7 +521,7 @@ function read_custom_property_value(parser) {
 		} else if (closers.length > 0 && char === closers.at(-1)) {
 			closers.pop();
 		} else if (closers.length === 0 && (char === ';' || char === '}')) {
-			return parser.template.slice(start, parser.index).trim();
+			return trim_value(parser.template.slice(start, parser.index));
 		}
 
 		parser.index++;
@@ -678,6 +680,38 @@ function is_url_name(tracker) {
 }
 
 /**
+ * `value` without the whitespace around it, but with the whitespace an escape
+ * at its end holds: `a\ ` is the identifier `a `, and the space that ends the
+ * hex escape `\31 ` is part of it. A `\` before a newline is no escape.
+ *
+ * @param {string} value
+ * @returns {string}
+ */
+function trim_value(value) {
+	const start = value.length - value.trimStart().length;
+	let end = value.trimEnd().length;
+	if (end === value.length) return value.slice(start, end);
+	// Only an escape that ends where the whitespace starts can hold it: the
+	// last `\` before it, followed by nothing (`a\ `) or by up to six hex
+	// digits (`a\31 `). Anything else after that `\` ends the escape first.
+	const from = Math.max(start, end - 7);
+	let escape = end - 1;
+	while (escape >= from && value[escape] !== '\\') escape -= 1;
+	if (escape < from || !/^[0-9a-fA-F]*$/.test(value.slice(escape + 1, end))) {
+		return value.slice(start, end);
+	}
+	// That `\` starts an escape after an even number of `\` (`\\` is one).
+	let run = 0;
+	while (escape - run > start && value[escape - run - 1] === '\\') run += 1;
+	if (run % 2 === 0) {
+		REGEX_VALUE_ESCAPE.lastIndex = escape;
+		const match = REGEX_VALUE_ESCAPE.exec(value);
+		if (match) end = Math.max(end, escape + match[0].length);
+	}
+	return value.slice(start, end);
+}
+
+/**
  * @param {Parser} parser
  * @param {boolean} [prelude] whether this is an at-rule's prelude: a `{` in
  *   its brackets is a block, a `}` in them part of them, and a `(` or `[` it
@@ -713,9 +747,9 @@ function read_value(parser, prelude = false) {
 	const unclosed = () => {
 		if (parser.loose) {
 			parser.unclosed_prelude = true;
-			if (stop === -1) return value.trim();
+			if (stop === -1) return trim_value(value);
 			parser.index = stop;
-			return before_stop.trim();
+			return trim_value(before_stop);
 		}
 		const bracket = parser.template[open];
 		parser.index = open;
@@ -731,7 +765,7 @@ function read_value(parser, prelude = false) {
 		if (outside) track_name(name, parser.template, parser.index);
 
 		if (escaped) {
-			value += '\\' + char;
+			// The `\` is already in the value.
 			escaped = false;
 		} else if (char === '\\') {
 			escaped = true;
@@ -754,7 +788,7 @@ function read_value(parser, prelude = false) {
 			if (prelude && stop === -1 && closers.length > 0 && /[;{}]/.test(char)) {
 				// Once one read has run to the end of the sheet, end the later ones
 				// here, as before, rather than read it again for each.
-				if (parser.unclosed_prelude) return value.trim();
+				if (parser.unclosed_prelude) return trim_value(value);
 				stop = parser.index;
 				before_stop = value;
 			}
@@ -778,9 +812,9 @@ function read_value(parser, prelude = false) {
 			} else if (char === '}') {
 				// In a prelude's brackets a `}` is part of them, as in CSS; in a
 				// declaration's it ends the value, before the next rule is read in.
-				if (!prelude || closers.length === 0) return value.trim();
+				if (!prelude || closers.length === 0) return trim_value(value);
 			} else if (closers.length === 0 && (char === ';' || char === '{')) {
-				return value.trim();
+				return trim_value(value);
 			}
 		}
 
