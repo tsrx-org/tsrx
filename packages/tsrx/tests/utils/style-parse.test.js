@@ -420,8 +420,9 @@ describe('parseStyle custom properties', function () {
 
 	it('reads a rule, not a declaration, where more follows the block', function () {
 		expect(blocks('.a { b:hover { color: red } }')).toEqual([['Rule']]);
+		// In a style rule, CSS reads no declaration there.
 		expect(function () {
-			parseStyle('@property --x { initial-value: {a} b; }', LOCATION, {});
+			parseStyle('.a { b: {a} c; }', LOCATION, {});
 		}).toThrow(/Expected identifier/);
 	});
 
