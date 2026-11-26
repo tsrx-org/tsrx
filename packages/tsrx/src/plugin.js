@@ -741,22 +741,6 @@ const NAMES_WITH_OWN_MISSING_SEMICOLON_ERROR = new Set([
 	'namespace',
 	'type',
 ]);
-// The words that TypeScript reads as keywords also when written with an
-// escape, and that before a name on their line start a declaration
-// (`global foo;`, `let x;`, `using x = y;`) or no statement (`public foo;`,
-// TS1128) where acorn reads an escaped one as a name. That name keeps TS1005
-// at the next token (see `semicolon`).
-const ESCAPED_NAMES_READ_AS_KEYWORDS = new Set([
-	'accessor',
-	'global',
-	'let',
-	'private',
-	'protected',
-	'public',
-	'readonly',
-	'static',
-	'using',
-]);
 // A word, or any other character, after whitespace and comments. A word may
 // have identifier escapes in it, and is read up to 64 characters at a time.
 const regex_next_token =
@@ -2423,6 +2407,8 @@ export function TSRXPlugin(config) {
 			// the last expression statement or `throw` started (see `semicolon`).
 			#declaratorEnd = -1;
 			#statementExpressionStart = -1;
+			// Where the expression of the last `throw` started (see `semicolon`).
+			#throwArgumentStart = -1;
 			// The rest elements that a comma follows, by where the comma is (see
 			// `#restElementCommaError`).
 			/** @type {Map<number, { start: number, target: number, kind: 'parameter' | 'binding' | 'assignment' }>} */
@@ -17263,10 +17249,10 @@ export function TSRXPlugin(config) {
 					this.raise(this.start, TS_ERRORS.TOKEN_EXPECTED(','));
 				}
 				// TypeScript reads a name with the escapes in it decoded (`idText`),
-				// except a keyword that it reads as the keyword there.
+				// except a keyword that starts another statement there.
 				const raw = this.input.slice(this.lastTokStart, this.lastTokEnd);
 				const decoded = raw.includes('\\') ? decode_identifier_name(raw) : null;
-				const name = decoded && !ESCAPED_NAMES_READ_AS_KEYWORDS.has(decoded) ? decoded : raw;
+				const name = decoded && !this.#escapedKeywordStartsStatement(decoded) ? decoded : raw;
 				if (
 					this.lastTokStart === this.#statementExpressionStart &&
 					regex_plain_name.test(name) &&
@@ -17294,6 +17280,40 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether `word`, the name a statement starts with, written with an
+			 * escape and followed by the current token, is a keyword that starts
+			 * something other than an expression statement in TypeScript, which
+			 * reads an escaped keyword as the keyword: a declaration (`global foo;`,
+			 * `let x;`, `using x = y;`), no statement for a class member's modifier
+			 * in a statement list (TS1128, see `#checkStatementStart`), or `yield`.
+			 * acorn reads a name. TypeScript then reports the escape (TS1260) or
+			 * TS1128, which this doesn't, so the name keeps TS1005 at the next
+			 * token, as on main, and not TS1434, which TypeScript reports where it
+			 * reads a name (`throw \u0067lobal foo;`, `label: \u0061ccessor foo;`).
+			 * @param {string} word
+			 */
+			#escapedKeywordStartsStatement(word) {
+				if (this.lastTokStart === this.#throwArgumentStart) return false;
+				const name = Parser.acornTypeScript.tokenIsIdentifier(this.type);
+				switch (word) {
+					case 'global':
+						return name || this.type === tt.braceL || this.type === tt._export;
+					case 'let':
+						return name || this.type === tt.braceL || this.type === tt.bracketL;
+					case 'using':
+						return name || this.type === tt.braceL;
+					case 'yield':
+						return true;
+				}
+				return (
+					STATEMENT_START_MODIFIERS.has(word) &&
+					(name || this.type.keyword !== undefined) &&
+					// In a block, `case` or module body, not after `if (…)` or a label.
+					this.#statementContext === null
+				);
+			}
+
+			/**
 			 * See `semicolon`.
 			 * @type {Parse.Parser['parseExpressionStatement']}
 			 */
@@ -17310,6 +17330,7 @@ export function TSRXPlugin(config) {
 			parseThrowStatement(node) {
 				const argument = this.lookahead();
 				this.#statementExpressionStart = argument.start;
+				this.#throwArgumentStart = argument.start;
 				if (argument.type === tstt.declare) this.#nameDeclareStart = argument.start;
 				return super.parseThrowStatement(node);
 			}

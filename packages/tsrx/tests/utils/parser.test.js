@@ -17555,8 +17555,12 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			['\\u0061sync foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
 			['a\\u0062 c;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'a'],
 			// Except a keyword that TypeScript reads as the keyword there: `global`
-			// starts a global augmentation.
+			// starts a global augmentation. Where it reads a name, it's a name.
 			['\\u0067lobal foo;', TS_ERRORS.TOKEN_EXPECTED, 'foo'],
+			['throw \\u0067lobal foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
+			['\\u0061ccessor {}', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
+			['label: \\u0061ccessor foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
+			['if (x) \\u0072eadonly foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
 		]);
 		expect(() => parseModule('declare export foo;', 'App.tsrx')).toThrow(
 			'Declaration or statement expected.',
@@ -17574,6 +17578,29 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
 				expect.objectContaining({ code: 'TS1434', pos: 0, end: name.length }),
 			);
+		}
+		// So do TS1435 and TS1440.
+		expect(() => parseModule('cosnt x = 1;', 'App.tsrx')).toThrow(
+			expect.objectContaining({ code: 'TS1435', pos: 0, end: 5 }),
+		);
+		expect(() => parseModule('throw let foo;', 'App.tsrx', { collect: true, errors: [] })).toThrow(
+			expect.objectContaining({ code: 'TS1440', pos: 6, end: 9 }),
+		);
+		// An escaped keyword that TypeScript reads as starting a declaration, or as
+		// a modifier that starts no statement in a list, isn't a name there:
+		// TypeScript reports its escape (TS1260) or TS1128.
+		for (const source of [
+			'\\u006cet foo;',
+			'\\u0075sing foo;',
+			'\\u0061ccessor foo;',
+			'{\n\t\\u0073tatic foo;\n}',
+			'\\u0079ield foo;',
+		]) {
+			for (const options of [undefined, { collect: true, errors: [] }]) {
+				expect(() => parseModule(source, 'App.tsrx', options), source).not.toThrow(
+					'Unexpected keyword or identifier.',
+				);
+			}
 		}
 		// Before a declaration TypeScript reads (a global augmentation named
 		// `foo`, TS1005 at `foo`; a repeated modifier, TS1030), `abstract` isn't a
