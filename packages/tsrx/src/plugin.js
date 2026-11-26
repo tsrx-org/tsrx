@@ -7395,15 +7395,28 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * A `using` or `await using` declaration's errors are held until it's
+			 * read: TypeScript's checker reports TS1492 at a binding pattern (see
+			 * `parseVarId`) before the errors inside the pattern, and not after a
+			 * syntax error in the declaration (`using {x} = ;`), which it reports
+			 * alone.
 			 * @param {AST.VariableDeclaration} node
 			 * @param {boolean} isFor
 			 * @param {string} kind
 			 * @param {boolean} [allowMissingInitializer]
 			 */
 			parseVar(node, isFor, kind, allowMissingInitializer) {
-				return this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
-					super.parseVar(node, isFor, kind, allow),
-				);
+				const read = () =>
+					this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
+						super.parseVar(node, isFor, kind, allow),
+					);
+				if (kind !== 'using' && kind !== 'await using') return read();
+				/** @type {CompileError[]} */
+				const held = [];
+				const declaration = this.#holdingErrors(held, read);
+				for (const error of held) deferred_errors.delete(error);
+				this.#releaseErrors(held);
+				return declaration;
 			}
 
 			/**
@@ -7415,7 +7428,9 @@ export function TSRXPlugin(config) {
 			 * `using` (TS1434), and `await` with `using x = y;` on the next line,
 			 * which TypeScript compiles to `await using x = y;`, an `await`
 			 * expression (`';' expected.`). A binding pattern is TypeScript's checker
-			 * error (see `parseVarId`).
+			 * error (see `parseVarId`). In a `for` head, `await using of` is a
+			 * declaration too, as in TypeScript, and as acorn reads it with `using` on
+			 * the line of `await`: `for (await` with `using of = x;;)` on the next line.
 			 * @param {boolean} isAwaitUsing
 			 * @param {boolean} isFor
 			 */
@@ -7430,10 +7445,7 @@ export function TSRXPlugin(config) {
 				if (regex_line_break.test(this.input.slice(using.end, next.start))) return false;
 				return (
 					next.type === tt.braceL ||
-					(isAwaitUsing &&
-						Parser.acornTypeScript.tokenIsIdentifier(next.type) &&
-						// TypeScript's `for` head reads `await using of` as an expression.
-						!(isFor && next.type === tt.name && next.value === 'of'))
+					(isAwaitUsing && Parser.acornTypeScript.tokenIsIdentifier(next.type))
 				);
 			}
 
@@ -7443,8 +7455,8 @@ export function TSRXPlugin(config) {
 			 * declarator after the first), which its checker reports, TS1492
 			 * `'using' declarations may not have binding patterns.`, at the pattern,
 			 * and nothing else about the declarator: a strict parse throws it, and a
-			 * collecting one records it and keeps the pattern. acorn read only a name
-			 * there.
+			 * collecting one records it and keeps the pattern, once the declaration
+			 * is read (see `parseVar`). acorn read only a name there.
 			 * @param {AST.VariableDeclarator} decl
 			 * @param {AST.VariableDeclaration['kind']} kind
 			 */
@@ -7463,11 +7475,15 @@ export function TSRXPlugin(config) {
 						const start = this.start;
 						decl.id = this.parseBindingAtom();
 						this.checkLValPattern(decl.id, BINDING_TYPES.BIND_LEXICAL);
+						const held = this.#hold.held;
+						const count = held?.length ?? 0;
 						this.#recordCheckerLevelError(
 							start,
 							this.lastTokEnd,
 							TS_ERRORS.USING_BINDING_PATTERN(kind),
 						);
+						// Dropped after a syntax error in the declaration.
+						if (held && held.length > count) deferred_errors.add(held[held.length - 1]);
 						const type = this.tsTryParseTypeAnnotation();
 						if (type) {
 							/** @type {AST.Pattern} */ (decl.id).typeAnnotation = type;
@@ -9834,21 +9850,31 @@ export function TSRXPlugin(config) {
 					modifiers = [exported, ...read.modifiers];
 					skip = read.modifiers.length;
 				}
-				const declaration = this.#parseModifiedDeclaration(
-					modifiers,
-					skip,
-					read.declaration,
-					node === null,
-				);
-				if (
-					node &&
-					(declaration.type === 'TSInterfaceDeclaration' ||
-						declaration.type === 'TSTypeAliasDeclaration' ||
-						/** @type {{ declare?: boolean }} */ (declaration).declare)
-				) {
-					node.exportKind = 'type';
-				}
-				this.#raiseModifierErrors(modifiers, declaration, context, pending ? 'inner' : 'outer');
+				const parse = () => {
+					const declaration = this.#parseModifiedDeclaration(
+						modifiers,
+						skip,
+						read.declaration,
+						node === null,
+					);
+					if (
+						node &&
+						(declaration.type === 'TSInterfaceDeclaration' ||
+							declaration.type === 'TSTypeAliasDeclaration' ||
+							/** @type {{ declare?: boolean }} */ (declaration).declare)
+					) {
+						node.exportKind = 'type';
+					}
+					this.#raiseModifierErrors(modifiers, declaration, context, pending ? 'inner' : 'outer');
+					return declaration;
+				};
+				if (read.declaration !== 'using' && read.declaration !== 'await') return parse();
+				// A `using` declaration's errors come after its modifiers' (see
+				// `#parseModifiedStatement`).
+				/** @type {CompileError[]} */
+				const held = [];
+				const declaration = this.#holdingErrors(held, parse);
+				this.#releaseErrors(held);
 				return declaration;
 			}
 
@@ -13958,8 +13984,17 @@ export function TSRXPlugin(config) {
 						}
 						this.next();
 					}
-					this.parseVar(init, true, usingKind);
-					this.finishNode(init, 'VariableDeclaration');
+					// TypeScript's checker reports the declaration before `in` (TS1493,
+					// TS1494) before the errors in it, such as TS1492 at a binding
+					// pattern (see `parseVarId`).
+					/** @type {CompileError[]} */
+					const held = [];
+					this.#holdingErrors(held, () => {
+						this.parseVar(init, true, usingKind);
+						this.finishNode(init, 'VariableDeclaration');
+						this.#reportForInUsing(init);
+					});
+					this.#releaseErrors(held);
 					return this.parseForAfterInitWithIndex(
 						/** @type {AST.ForInStatement | AST.ForOfStatement} */ (node),
 						init,
@@ -14031,6 +14066,25 @@ export function TSRXPlugin(config) {
 				return this.parseFor(node, init_expr);
 			}
 
+			/**
+			 * A `using` or `await using` declaration before `in`, which TypeScript's
+			 * checker reports on the declaration, TS1493 or TS1494
+			 * (`checkGrammarForInOrForOfStatement`): a strict parse throws it, and a
+			 * collecting one records it and reads on. acorn raised it at `in`, so a
+			 * collecting parse stopped there.
+			 * @param {AST.VariableDeclaration} init
+			 */
+			#reportForInUsing(init) {
+				if (this.type !== tt._in || init.declarations.length !== 1 || init.declarations[0].init) {
+					return;
+				}
+				this.#recordCheckerLevelError(
+					/** @type {number} */ (init.start),
+					/** @type {number} */ (init.end),
+					init.kind === 'using' ? TS_ERRORS.FOR_IN_USING : TS_ERRORS.FOR_IN_AWAIT_USING,
+				);
+			}
+
 			/** @type {Parse.Parser['parseForAfterInitWithIndex']} */
 			parseForAfterInitWithIndex(node, init, awaitAt) {
 				if (
@@ -14038,17 +14092,8 @@ export function TSRXPlugin(config) {
 					// When collecting, a declaration list can be empty (`parseForStatement`).
 					init.declarations.length <= 1
 				) {
-					// Like Acorn's `parseForAfterInit`, which this replaces
-					if (
-						this.type === tt._in &&
-						(init.kind === 'using' || init.kind === 'await using') &&
-						!init.declarations[0].init
-					) {
-						this.raise(
-							this.start,
-							init.kind === 'using' ? TS_ERRORS.FOR_IN_USING : TS_ERRORS.FOR_IN_AWAIT_USING,
-						);
-					}
+					// Like Acorn's `parseForAfterInit`, which this replaces (a `using`
+					// declaration before `in` is reported in `parseForStatement`).
 					if (this.options.ecmaVersion >= 9) {
 						if (this.type === tt._in) {
 							if (awaitAt > -1) {

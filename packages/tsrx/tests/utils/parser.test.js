@@ -880,6 +880,76 @@ describe('TSRX parser', () => {
 					source,
 				).toEqual(codes);
 			}
+
+			// TypeScript's checker reports a modifier, and a `using` declaration
+			// before `in` (TS1493, TS1494, on the declaration), before TS1492, and
+			// TS1492 before the errors in the pattern. The first is what a strict
+			// parse throws.
+			for (const [source, expected] of /** @type {Array<[string, Array<[string, string]>]>} */ ([
+				[
+					'export declare using {x} = y;',
+					[
+						['TS1491', 'export'],
+						['TS1492', '{x}'],
+					],
+				],
+				[
+					'using { ...x, y } = z;',
+					[
+						['TS1492', '{ ...x, y }'],
+						['TS2462', 'x'],
+					],
+				],
+				[
+					'using {a = () => { using {b} = c; }} = y;',
+					[
+						['TS1492', '{a = () => { using {b} = c; }}'],
+						['TS1492', '{b}'],
+					],
+				],
+				['for (using x in y) {}', [['TS1493', 'using x']]],
+				[
+					'for (using {x} in y) {}',
+					[
+						['TS1493', 'using {x}'],
+						['TS1492', '{x}'],
+					],
+				],
+				[
+					'async function f() {\n\tfor (await using {x} in y) {}\n}',
+					[
+						['TS1494', 'await using {x}'],
+						['TS1492', '{x}'],
+					],
+				],
+			])) {
+				const ranges = expected.map(([code, at]) => {
+					const pos = source.indexOf(at, at === 'x' ? source.indexOf('...') : 0);
+					return [code, pos, pos + at.length];
+				});
+				expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+					expect.objectContaining({ code: ranges[0][0], pos: ranges[0][1] }),
+				);
+				/** @type {CompileError[]} */
+				const errors = [];
+				parseModule(source, 'App.tsrx', { collect: true, errors });
+				expect(
+					errors.map((found) => [found.code, found.pos, found.end]),
+					source,
+				).toEqual(ranges);
+			}
+
+			// TypeScript reports a syntax error in the declaration alone.
+			expect(() => parseModule('using {x} = ;', 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS1012', pos: 'using {x} = '.length }),
+			);
+
+			// In a `for` head, `await using of` is a declaration, as in TypeScript.
+			const [head] = find_all(
+				'async function f() {\n\tfor (await\n\tusing of = null; ; ) {}\n}',
+				'VariableDeclaration',
+			);
+			expect([head?.kind, head?.declarations[0].id.name]).toEqual(['await using', 'of']);
 		});
 	});
 

@@ -1239,17 +1239,49 @@ export function convert_source_map_to_mappings(
 		let from = node.start;
 		for (const keyword of keywords) {
 			// The printer writes `await using` as one piece.
-			const token = find_source_token(source_tokens, keyword.split(' ')[0], from, 'after');
-			if (!token?.loc || !source.startsWith(keyword, token.start)) return;
+			const [first, second] = keyword.split(' ');
+			const token = find_source_token(source_tokens, first, from, 'after');
+			if (!token?.loc) return;
 			// The first keyword starts the declaration, which a declaration the
 			// compiler adds with the location of other code does not.
 			if (keyword === keywords[0] ? token.start !== node.start : token.start >= bound) return;
+			if (second && !source.startsWith(keyword, token.start)) {
+				push_split_keyword_mappings(token, second, bound, keyword);
+				return;
+			}
+			if (!source.startsWith(keyword, token.start)) return;
 			const { line, column } = token.loc.start;
 			push_printed_token(
 				{ start: token.loc.start, end: { line, column: column + keyword.length } },
 				keyword,
 			);
 			from = token.start + keyword.length;
+		}
+	}
+
+	/**
+	 * Map the two words of `await using`, written apart (on two lines, or with
+	 * a comment between them), each to its own place in the `await using` that
+	 * the printer writes.
+	 * @param {Parse.Token} first The first word's token
+	 * @param {string} second The second word
+	 * @param {number} bound Where the second word must start before
+	 * @param {string} keyword Both words, as printed
+	 * @returns {void}
+	 */
+	function push_split_keyword_mappings(first, second, bound, keyword) {
+		const token = find_source_token(source_tokens, second, first.end, 'after');
+		const generated = first.loc && generated_offset_for_text(first.loc.start, keyword);
+		if (!token || token.start >= bound || generated === undefined) return;
+		for (const word of [first, token]) {
+			const length = word.end - word.start;
+			mappings.push({
+				sourceOffsets: [word.start],
+				lengths: [length],
+				generatedOffsets: [word === first ? generated : generated + keyword.length - length],
+				generatedLengths: [length],
+				data: { ...mapping_data, customData: {} },
+			});
 		}
 	}
 
