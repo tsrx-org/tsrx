@@ -123,9 +123,11 @@ function skip_css_string(code, start, end) {
  * @param {string} code
  * @param {number} start
  * @param {number} end
+ * @param {Map<number, number>} [ends] the ends of functions read already, which
+ *   `function_end` reads and adds to
  * @returns {CssValueToken[]}
  */
-function tokenize_css_value(code, start, end) {
+function tokenize_css_value(code, start, end, ends = new Map()) {
 	/** @type {CssValueToken[]} */
 	const tokens = [];
 	let index = start;
@@ -167,18 +169,7 @@ function tokenize_css_value(code, start, end) {
 				continue;
 			}
 
-			let depth = 0;
-			while (index < end) {
-				const char = code[index];
-				if (char === '"' || char === "'") {
-					index = skip_css_string(code, index, end);
-					continue;
-				}
-				index = char === '\\' ? skip_css_escape(code, index) : index + 1;
-				if (char === '(') depth += 1;
-				else if (char === ')' && --depth === 0) break;
-			}
-			index = Math.min(index, end);
+			index = function_end(code, index, end, ends);
 			tokens.push({ type: 'function', start: word_start, end: index, value: value.toLowerCase() });
 		}
 	}
@@ -187,38 +178,98 @@ function tokenize_css_value(code, start, end) {
 }
 
 /**
+ * The index after the `)` that closes the `(` at `open`, or `end` if none
+ * does before it: strings and escapes in between are skipped, other
+ * parentheses counted. The scan puts the end of each `(` it passes in `ends`
+ * (`end` for one it leaves open), and takes the one it finds there for
+ * `open`: a scan from that `(` would read the same text the same way, so the
+ * arguments of nested functions (a `var()` in a `var()` fallback) are read
+ * once, not once per level.
+ * @param {string} code
+ * @param {number} open
+ * @param {number} end
+ * @param {Map<number, number>} ends
+ * @returns {number}
+ */
+function function_end(code, open, end, ends) {
+	const known = ends.get(open);
+	if (known !== undefined) return Math.min(known, end);
+
+	/** @type {number[]} */
+	const opens = [];
+	let index = open;
+	while (index < end) {
+		const char = code[index];
+		if (char === '"' || char === "'") {
+			index = skip_css_string(code, index, end);
+			continue;
+		}
+		const at = index;
+		index = char === '\\' ? skip_css_escape(code, index) : index + 1;
+		if (char === '(') {
+			opens.push(at);
+		} else if (char === ')') {
+			ends.set(/** @type {number} */ (opens.pop()), index);
+			if (opens.length === 0) return index;
+		}
+	}
+	// Those left open run to `end`, as a scan from one would.
+	for (const at of opens) ends.set(at, end);
+	return Math.min(index, end);
+}
+
+/**
  * The tokens of a `var()` or `env()` fallback: the value after the first
  * top-level comma, which replaces the function when the variable is unset.
  * @param {string} code
  * @param {CssValueToken} token
+ * @param {Map<number, number>} ends see `tokenize_css_value`
  * @returns {CssValueToken[]}
  */
-function fallback_tokens(code, token) {
+function fallback_tokens(code, token, ends) {
 	const open = code.indexOf('(', token.start);
 	const close = code[token.end - 1] === ')' ? token.end - 1 : token.end;
-	const args = tokenize_css_value(code, open + 1, close);
+	const args = tokenize_css_value(code, open + 1, close, ends);
 	const comma = args.findIndex((arg) => arg.type === 'comma');
 	return comma === -1 ? [] : args.slice(comma + 1);
 }
 
 /**
  * The tokens of an `animation` or `animation-name` value that name keyframes.
+ * A `var()` or `env()` fallback is read where the function is, as the value
+ * it stands for; one in another is read without a call per level, so that
+ * thousands of them can't overflow the stack.
  * @param {string} code
  * @param {CssValueToken[]} tokens
  * @param {boolean} shorthand
- * @param {CssValueToken[]} [names]
- * @param {Set<string>} [set_longhands] longhands of the current animation that have a value
+ * @param {Map<number, number>} [ends] see `tokenize_css_value`
  * @returns {CssValueToken[]}
  */
-function keyframes_name_tokens(code, tokens, shorthand, names = [], set_longhands = new Set()) {
-	for (const token of tokens) {
+function keyframes_name_tokens(code, tokens, shorthand, ends = new Map()) {
+	/** @type {CssValueToken[]} */
+	const names = [];
+	// Longhands of the current animation that have a value
+	/** @type {Set<string>} */
+	const set_longhands = new Set();
+	// The token lists being read, innermost last, and the next token of each
+	/** @type {Array<{ tokens: CssValueToken[], next: number }>} */
+	const lists = [{ tokens, next: 0 }];
+
+	while (lists.length > 0) {
+		const list = /** @type {{ tokens: CssValueToken[], next: number }} */ (lists.at(-1));
+		if (list.next === list.tokens.length) {
+			lists.pop();
+			continue;
+		}
+		const token = list.tokens[list.next++];
+
 		if (token.type === 'comma') {
 			set_longhands.clear();
 		} else if (token.type === 'string') {
 			names.push(token);
 		} else if (token.type === 'function') {
 			if (fallback_functions.has(token.value)) {
-				keyframes_name_tokens(code, fallback_tokens(code, token), shorthand, names, set_longhands);
+				lists.push({ tokens: fallback_tokens(code, token, ends), next: 0 });
 			} else if (easing_functions.has(token.value)) {
 				set_longhands.add('easing');
 			}
@@ -782,12 +833,16 @@ const visitors = {
 			let start = node.start + node.property.length;
 			while (/\s/.test(state.code.original[start])) start += 1;
 			if (state.code.original[start] === ':') start += 1;
-			const tokens = tokenize_css_value(state.code.original, start, node.end);
+			// The ends of the functions in the value, read once for all of it.
+			/** @type {Map<number, number>} */
+			const ends = new Map();
+			const tokens = tokenize_css_value(state.code.original, start, node.end, ends);
 
 			for (const token of keyframes_name_tokens(
 				state.code.original,
 				tokens,
 				property === 'animation',
+				ends,
 			)) {
 				const index = keyframes_name_start(token);
 				const key = keyframes_key(token);

@@ -1156,6 +1156,19 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`animation: 1s var(--easing, ease) ${hash}-linear;`);
 		});
 
+		it('reads var() fallbacks nested thousands deep in linear time', () => {
+			// One call per level overflowed the stack, and each level read the
+			// rest of the value again.
+			const depth = 20_000;
+			const value = `${'var(--a, '.repeat(depth)}fade${')'.repeat(depth)}`;
+			const start = performance.now();
+			const { css, hash } = compile_keyframes(
+				`@keyframes fade ${frames} .a { animation: ${value} 1s; }`,
+			);
+			expect(performance.now() - start).toBeLessThan(2000);
+			expect(css).toContain(`var(--a, ${hash}-fade${')'.repeat(depth)} 1s;`);
+		});
+
 		it('ends a hex escape after the whitespace it consumes', () => {
 			const { css, hash } = compile_keyframes(
 				String.raw`@keyframes \33 d-spin ${frames}
