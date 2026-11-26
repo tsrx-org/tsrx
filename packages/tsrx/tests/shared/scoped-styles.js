@@ -2306,6 +2306,7 @@ export function runSharedScopedStyleTests({
 						<style>
 							:root { &:not(.missing &), &:not(:has(.missing)), .icon { color: red; } }
 							:root { &:not(&:has(.missing)), &:not(.missing:not(.absent) &), .icon { color: blue; } }
+							:root { &:not(:not(:has(.missing))) .icon { color: green; } }
 						</style>
 						<i ${attr}="icon" />
 					</>
@@ -2318,6 +2319,10 @@ export function runSharedScopedStyleTests({
 			);
 			expect(kept.css).toContain(
 				`&:not(&:has(.missing.${kept_hash})), &:not(.missing.${kept_hash}:not(.absent) &), .icon.${kept_hash} {`,
+			);
+			// Nor one of its :has() unscoped in a :not() of a :not().
+			expect(kept.css).toContain(
+				`&:not(:not(:has(.missing:where(.${kept_hash})))) .icon.${kept_hash} {`,
 			);
 
 			// An `&` for a compound that matches an element is matched against it.
