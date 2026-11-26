@@ -1430,6 +1430,7 @@ describe('scoped style analysis', () => {
 			const source = `const t = <style>
 	.a:global(.b c).d, .e:global(.f > g).h { color: red; }
 	.k:global(.x, .y z).m { color: red; }
+	.n:global(.x i, .y).o { color: red; }
 </style>;`;
 
 			expect(() => analyzeCss(first_stylesheet(source), { errors })).not.toThrow();
@@ -1437,10 +1438,13 @@ describe('scoped style analysis', () => {
 				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
 				TSRX_CSS_GLOBAL_COMBINATOR_IN_COMPOUND_ERROR,
 				TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
+				TSRX_CSS_GLOBAL_SELECTOR_LIST_ERROR,
 			]);
 			expect_anchored_on(errors[0], source, ':global(.b c)');
 			expect_anchored_on(errors[1], source, ':global(.f > g)');
 			expect_anchored_on(errors[2], source, ':global(.x, .y z)');
+			// A list gets only the list error, whichever of its items holds a combinator.
+			expect_anchored_on(errors[3], source, ':global(.x i, .y)');
 		});
 
 		it('allows a :global(...) with a combinator at the start or end of a compound', () => {
