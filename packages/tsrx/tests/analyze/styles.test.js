@@ -1417,6 +1417,9 @@ describe('scoped style analysis', () => {
 				[':root { &:global(.x i).icon { color: red; } }', ':global(.x i)'],
 				[':root, :host { & { &:global(.x > i).icon { color: red; } } }', ':global(.x > i)'],
 				[':root { :is(&:global(.x i).icon) { color: red; } }', ':global(.x i)'],
+				// A pseudo-class at the end of the argument doesn't end the compound.
+				['.wrap:global(.x i:hover):focus { color: red; }', ':global(.x i:hover)'],
+				['.wrap:global(.x i).b:global(.y::before) { color: red; }', ':global(.x i)'],
 			];
 			for (const [css, anchor] of cases) {
 				const source = `const t = <style>${css}</style>;`;
@@ -1478,6 +1481,12 @@ describe('scoped style analysis', () => {
 				'.wrap:global(.x) :global(i).icon { color: red; }',
 				':global(.x i):global(.y b) { color: red; }',
 				'.a:global(.x/**/.y).b { color: red; }',
+				// A pseudo-element at the end of the argument ends the compound too.
+				'.wrap:global(.x button::part(control)):hover { color: red; }',
+				'.wrap:global(.x i::before):hover { content: "x"; }',
+				'.wrap:global(.x i:before):hover { content: "x"; }',
+				'.wrap:global(.x i:AF\\54 ER):hover { content: "x"; }',
+				'.wrap:global(.x i):global(.y::before):hover { content: "x"; }',
 			]) {
 				expect(analyze_thrown(parse_stylesheet(css)), css).toBeNull();
 			}

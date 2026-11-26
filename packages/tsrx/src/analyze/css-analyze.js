@@ -48,6 +48,23 @@ function is_pseudo_element(simple_selector) {
 }
 
 /**
+ * True if is a pseudo-element, or a `:global(...)` whose argument ends in one
+ * (`:global(.x i::before)`): after either, the rest of the compound applies to
+ * the pseudo-element
+ * @param {AST.CSS.SimpleSelector} simple_selector
+ */
+function ends_compound(simple_selector) {
+	return (
+		is_pseudo_element(simple_selector) ||
+		(is_global_pseudo_class(simple_selector) &&
+			simple_selector.args !== null &&
+			simple_selector.args.children.some(({ children }) =>
+				children[children.length - 1].selectors.some(is_pseudo_element),
+			))
+	);
+}
+
+/**
  * True if is `:global(...)` or `:global` and no pseudo class that is scoped.
  * @param {AST.CSS.RelativeSelector} relative_selector
  * @param {boolean} [scope_root] whether an `&` in it stands for a `@scope`'s
@@ -916,11 +933,12 @@ export function analyze_css(css, options = {}) {
 			// So a `:global(...)` with a combinator between other selectors of a
 			// compound (`.a:global(.b c).d`) gives `.a.b c.d`, `.a` and `.d` on two
 			// elements, where a component's check for unused CSS matches both on
-			// one. Other `:global(...)` join the global part, and a pseudo-element
-			// belongs to the last element either way.
+			// one. Other `:global(...)` join the global part, and a pseudo-element,
+			// after the `:global(...)` or at the end of its argument, ends the
+			// compound: what follows it applies to the pseudo-element either way.
 			for (const { selectors } of node.children) {
-				const pseudo_element = selectors.findIndex(is_pseudo_element);
-				const compound = pseudo_element === -1 ? selectors : selectors.slice(0, pseudo_element);
+				const end = selectors.findIndex(ends_compound);
+				const compound = end === -1 ? selectors : selectors.slice(0, end);
 				const first = compound.findIndex((selector) => !is_global_pseudo_class(selector));
 				const last = compound.findLastIndex((selector) => !is_global_pseudo_class(selector));
 				for (let i = first + 1; i < last; i++) {
