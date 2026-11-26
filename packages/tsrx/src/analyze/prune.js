@@ -1228,8 +1228,18 @@ function relative_selector_might_apply_to_node(relative_selector, rule, element,
 		);
 	}
 
+	// A compound with an `&` that stands for `:root` or `:host`
+	// (`:root { &.dark > body {} }`) is matched by its `&` and its tag only: the
+	// page sets the root's state, as for `:root.dark`.
+	const ampersand_root =
+		other_selectors.some((selector) => selector.type === 'NestingSelector') &&
+		is_root_compound(relative_selector, rule);
+
 	for (const selector of other_selectors) {
 		if (selector.type === 'Percentage' || selector.type === 'Nth') continue;
+		if (ampersand_root && selector.type !== 'NestingSelector' && selector.type !== 'TypeSelector') {
+			continue;
+		}
 
 		const name = unescape_css(selector.name);
 

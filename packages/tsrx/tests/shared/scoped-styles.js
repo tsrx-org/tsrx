@@ -2325,6 +2325,45 @@ export function runSharedScopedStyleTests({
 				`&:not(:not(:has(.missing:where(.${kept_hash})))) .icon.${kept_hash} {`,
 			);
 
+			// It matches an <html> the component renders as :root does, whatever
+			// state it has (`:root.dark > body`), and an element or component an
+			// `&` for :root or :host stood for before still matches.
+			/** @type {Array<[source: string, expected: (hash: string) => string]>} */
+			const sources = [
+				[
+					`export function Document() @{
+						<>
+							<style>:root { &.dark > body { color: red; } }</style>
+							<html><body /></html>
+						</>
+					}`,
+					(hash) => `&.dark > body.${hash} {`,
+				],
+				[
+					`function Pass(props) { return props.children; }
+					export function App() @{
+						<>
+							<style>:host { & > .icon { color: red; } }</style>
+							<Pass><i ${attr}="icon" /></Pass>
+						</>
+					}`,
+					(hash) => `& > .icon.${hash} {`,
+				],
+				[
+					`export function Drawing() @{
+						<>
+							<style>:root { & > circle { fill: red; } }</style>
+							<svg><circle r="10" /></svg>
+						</>
+					}`,
+					(hash) => `& > circle.${hash} {`,
+				],
+			];
+			for (const [source, expected] of sources) {
+				const result = compile(source, 'App.tsrx');
+				expect(result.css).toContain(expected(hashes_of(result.cssHash)[0]));
+			}
+
 			// An `&` for a compound that matches an element is matched against it.
 			const { css } = compile(
 				`export function App() @{
