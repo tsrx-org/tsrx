@@ -889,8 +889,11 @@ export function createJsxTransform(platform) {
 		// so the ones an authored `await` or `yield` landed in are made async or
 		// generators last. Imports come after, because that can swap which
 		// iterable helper is used.
-		const final_program = suspend_generated_closures(
-			lower_remaining_jsx_code_blocks(expanded, transform_context),
+		const final_program = contain_reported_jumps_without_target(
+			suspend_generated_closures(
+				lower_remaining_jsx_code_blocks(expanded, transform_context),
+				transform_context,
+			),
 			transform_context,
 		);
 		report_deferred_template_yields(final_program, transform_context);
@@ -6340,23 +6343,11 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		return;
 	}
 	if (node.type === 'BreakStatement') {
-		error(
-			TSRX_ERRORS.FOR_BREAK_STATEMENT,
-			transform_context.filename,
-			node,
-			transform_context.errors,
-			transform_context.comments,
-		);
+		report_jump(TSRX_ERRORS.FOR_BREAK_STATEMENT, node, node, transform_context);
 		return;
 	}
 	if (node.type === 'ContinueStatement') {
-		error(
-			TSRX_ERRORS.FOR_CONTINUE_STATEMENT,
-			transform_context.filename,
-			node,
-			transform_context.errors,
-			transform_context.comments,
-		);
+		report_jump(TSRX_ERRORS.FOR_CONTINUE_STATEMENT, node, node, transform_context);
 		return;
 	}
 
@@ -6413,23 +6404,11 @@ function validate_if_body_control_flow(node, transform_context) {
 		return;
 	}
 	if (node.type === 'BreakStatement') {
-		error(
-			TSRX_ERRORS.IF_BREAK_STATEMENT,
-			transform_context.filename,
-			node,
-			transform_context.errors,
-			transform_context.comments,
-		);
+		report_jump(TSRX_ERRORS.IF_BREAK_STATEMENT, node, node, transform_context);
 		return;
 	}
 	if (node.type === 'ContinueStatement') {
-		error(
-			TSRX_ERRORS.IF_CONTINUE_STATEMENT,
-			transform_context.filename,
-			node,
-			transform_context.errors,
-			transform_context.comments,
-		);
+		report_jump(TSRX_ERRORS.IF_CONTINUE_STATEMENT, node, node, transform_context);
 		return;
 	}
 
@@ -6614,13 +6593,37 @@ function validate_directive_jumps(program, transform_context) {
 		const reused =
 			diagnostic !== TSRX_ERRORS.DIRECTIVE_BODY_BREAK &&
 			diagnostic !== TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE;
-		error(
+		report_jump(
 			diagnostic,
-			transform_context.filename,
+			node,
 			reused ? node : get_statement_keyword_node(node, is_break ? 'break' : 'continue'),
-			transform_context.errors,
-			transform_context.comments,
+			transform_context,
 		);
+	}
+}
+
+/**
+ * Reports a `break` or `continue` that a template check finds, over
+ * `error_node`, and marks the jump when a collecting compile records the
+ * error, so the output gives it a loop of its own where nothing can take it
+ * (see `contain_reported_jumps_without_target`). A comment can suppress the
+ * error (`// @tsrx-ignore`), and then the jump stays as written.
+ * @param {{ code: string | undefined, message: string }} diagnostic
+ * @param {AST.BreakStatement | AST.ContinueStatement} node
+ * @param {AST.Node} error_node
+ * @param {TransformContext} transform_context
+ */
+function report_jump(diagnostic, node, error_node, transform_context) {
+	const recorded = transform_context.errors?.length ?? 0;
+	error(
+		diagnostic,
+		transform_context.filename,
+		error_node,
+		transform_context.errors,
+		transform_context.comments,
+	);
+	if ((transform_context.errors?.length ?? 0) > recorded) {
+		node.metadata = { ...node.metadata, recorded_jump_error: true };
 	}
 }
 
@@ -6778,6 +6781,98 @@ function is_loop_statement(node) {
 		(node?.type === 'JSXForExpression' && node.statementType === 'ForInStatement') ||
 		node?.type === 'WhileStatement' ||
 		node?.type === 'DoWhileStatement'
+	);
+}
+
+/**
+ * Whether a collecting compile recorded an error for a `break` or `continue`:
+ * the parser's, for a jump with no target or a `break` right in an `@switch`
+ * case, which no comment suppresses, or a template check's
+ * (`report_jump`).
+ * @param {AST.BreakStatement | AST.ContinueStatement} node
+ * @returns {boolean}
+ */
+function is_recorded_jump(node) {
+	const metadata = /** @type {AST.BreakStatement['metadata']} */ (node.metadata);
+	return !!(
+		metadata?.invalid_jump_target ||
+		metadata?.invalid_tsrx_switch_case_break ||
+		metadata?.recorded_jump_error
+	);
+}
+
+/**
+ * A loop, `switch` statement or label around a statement in the output.
+ * @typedef {{ label: string | null, loop: boolean }} OutputJumpTarget
+ */
+
+/**
+ * Gives each `break` or `continue` whose error a collecting compile recorded,
+ * and that nothing in the output can take, a loop of its own:
+ * `do break; while (false);`. Every target runs a template body in a
+ * function, so TypeScript would report such a jump again on the editor's code
+ * (TS1107), beside the error already reported for it, and the output
+ * wouldn't parse. In its own loop the jump keeps its keyword, which the
+ * editor maps the error to, and only ends that loop, which TypeScript's
+ * control flow reads as it reads a jump with no target: as no jump. The loop
+ * takes the jump's place, so TypeScript's unreachable-code diagnostic
+ * (TS7027), which starts at the loop, still maps to the jump (see
+ * `segments.js`). Its label, which nothing around it has, goes.
+ *
+ * A jump with a target in the output stays as it is, such as a nested
+ * `break` in an `@switch` case that a target lowers to a `switch` statement,
+ * so the code after it narrows as it did. A `@ts-expect-error` comment over a
+ * contained jump has nothing left to suppress (TS2578); the jump's own error
+ * fails the build anyway.
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {AST.Program}
+ */
+function contain_reported_jumps_without_target(program, transform_context) {
+	if (!transform_context.errors?.length) return program;
+	return /** @type {AST.Program} */ (
+		walk(/** @type {AST.Node} */ (program), /** @type {OutputJumpTarget[]} */ ([]), {
+			_(node, { next, state }) {
+				if (node.type === 'BreakStatement' || node.type === 'ContinueStatement') {
+					const label = node.label?.name ?? null;
+					const loop = node.type === 'ContinueStatement';
+					// A label around it in the output names the jump's target, also
+					// for a `continue` to a label that isn't a loop's, which TypeScript
+					// reports as the parser does (TS1115).
+					const has_target = state.some(
+						(/** @type {OutputJumpTarget} */ target) =>
+							target.label === label && (label !== null || !loop || target.loop),
+					);
+					if (has_target || !is_recorded_jump(node)) return node;
+					// The comments before the jump go before the loop, where a
+					// TypeScript directive still covers the line the loop starts.
+					const { leadingComments, ...jump } =
+						/** @type {AST.Statement & { leadingComments?: AST.Comment[] }} */ (node);
+					const contained = b.do_while(b.literal(false), {
+						.../** @type {AST.BreakStatement | AST.ContinueStatement} */ (jump),
+						label: null,
+					});
+					contained.metadata = { ...contained.metadata, contained_jump: true };
+					if (leadingComments) {
+						/** @type {AST.Statement & { leadingComments?: AST.Comment[] }} */ (
+							contained
+						).leadingComments = leadingComments;
+					}
+					return node.loc
+						? b.set_location(contained, /** @type {AST.NodeWithLocation} */ (node))
+						: contained;
+				}
+				if (is_function_or_class_boundary(node)) return next([]);
+				if (node.type === 'LabeledStatement') {
+					let body = node.body;
+					while (body.type === 'LabeledStatement') body = body.body;
+					return next([...state, { label: node.label.name, loop: is_loop_statement(body) }]);
+				}
+				if (is_loop_statement(node)) return next([...state, { label: null, loop: true }]);
+				if (node.type === 'SwitchStatement') return next([...state, { label: null, loop: false }]);
+				return next();
+			},
+		})
 	);
 }
 

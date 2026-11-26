@@ -1796,3 +1796,18 @@ describe('@for runtime helpers', () => {
 		expect(swapped[0]).toEqual({ item: b, key: 0 });
 	});
 });
+
+describe('@tsrx/solid a reported jump in the output', () => {
+	it('gives a nested `break` in an `@switch` case a loop of its own in the case function', () => {
+		const source = `export function App({ s, x }: { s: number; x: boolean }) @{
+	<div>@switch (s) { @case 1: { if (x) break; <b /> } @default: { <i /> } }</div>
+}`;
+		const { code, errors } = compile(source, 'App.tsrx', { collect: true });
+		expect(errors.map((error) => error.code)).toEqual([
+			TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code,
+		]);
+		// The case runs in a function, where the `break` has no target, so it
+		// gets a loop of its own.
+		expect(code).toContain('if (x) do break; while (false);');
+	});
+});

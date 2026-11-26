@@ -1054,6 +1054,38 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map the loop the output gives a reported jump that nothing can take
+	 * (`do break; while (false);`, see `contain_reported_jumps_without_target`),
+	 * at the jump's place: its start and end, as the two points of one mapping,
+	 * to the jump's. TypeScript reports unreachable code (TS7027) from the
+	 * loop's start, so the editor shows it from the jump, also when the loop
+	 * is the last unreachable statement. The jump maps its own tokens.
+	 * @param {AST.DoWhileStatement} node
+	 * @returns {void}
+	 */
+	function push_contained_jump_mapping(node) {
+		if (!has_location(node)) return;
+		const start = generated_offset_for_text(node.loc.start, 'do');
+		if (start === undefined) return;
+		// The jump's keyword, its `;` and the loop's tail follow, with only
+		// whitespace and comments between them.
+		const keyword = node.body.type === 'BreakStatement' ? 'break' : 'continue';
+		let at = skip_trivia(generated_code, start + 'do'.length);
+		if (!generated_code.startsWith(keyword, at)) return;
+		at = skip_trivia(generated_code, at + keyword.length);
+		if (generated_code[at] === ';') at = skip_trivia(generated_code, at + 1);
+		const tail = 'while (false);';
+		if (!generated_code.startsWith(tail, at)) return;
+		mappings.push({
+			sourceOffsets: [node.start, node.end],
+			lengths: [0, 0],
+			generatedOffsets: [start, at + tail.length],
+			generatedLengths: [0, 0],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
+	}
+
+	/**
 	 * Map the start and the end of a statement as the two points of one
 	 * mapping, for diagnostics only. TypeScript reports unreachable code
 	 * (TS7027) on a whole loop, and Volar maps a range only when both of its
@@ -2595,6 +2627,9 @@ export function convert_source_map_to_mappings(
 						visit(node.body);
 						push_block_end_token(node.body);
 					}
+				} else if (node.metadata?.contained_jump) {
+					push_contained_jump_mapping(node);
+					visit(node.body);
 				} else {
 					push_statement_keyword_token(node, 'do');
 					if (node.body) {
@@ -4303,6 +4338,31 @@ function add_diagnostic_mappings(
 	}
 
 	mappings.unshift(...diagnostic_mappings);
+}
+
+/**
+ * The offset of the first character at or after `offset` in `code` that is
+ * neither whitespace nor in a comment.
+ * @param {string} code
+ * @param {number} offset
+ * @returns {number}
+ */
+function skip_trivia(code, offset) {
+	let at = offset;
+	while (at < code.length) {
+		if (regex_whitespace.test(code[at])) {
+			at++;
+		} else if (code.startsWith('//', at)) {
+			const line_end = code.slice(at).search(/[\n\r\u2028\u2029]/);
+			at = line_end === -1 ? code.length : at + line_end;
+		} else if (code.startsWith('/*', at)) {
+			const close = code.indexOf('*/', at + 2);
+			at = close === -1 ? code.length : close + 2;
+		} else {
+			break;
+		}
+	}
+	return at;
 }
 
 /**
