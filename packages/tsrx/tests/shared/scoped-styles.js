@@ -1935,6 +1935,28 @@ export function runSharedScopedStyleTests({
 			);
 		});
 
+		it("reads a @property's initial-value that is a {} block", () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							@property --x { syntax: "*"; inherits: false; initial-value: { a }; }
+							.a { color: red; }
+						</style>
+						<div ${attr}="a" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			// It was TSRX3013, read as a nested rule.
+			expect(css).toContain(
+				'@property --x { syntax: "*"; inherits: false; initial-value: { a }; }',
+			);
+			expect(css).toContain(`.a.${hash} { color: red; }`);
+		});
+
 		it('global-forms: :global leaves the wrapped part unscoped and scopes the rest of the selector', () => {
 			const { code, css, cssHash } = compile(
 				`export function App() @{

@@ -15,6 +15,12 @@ const REGEX_LEADING_HYPHEN_OR_DIGIT = /^-?\d/;
 const REGEX_WHITESPACE_OR_COLON = /[\s:]/;
 // `--` and a name (letters, digits, `-`, `_`, non-ASCII, escapes), then `:`.
 const REGEX_CUSTOM_PROPERTY_START = /^--(?:[\w-]|[^\x00-\x7f]|\\[^\n])*\s*:/;
+// A name, a `:` and a `{`: a declaration whose value may be a `{}` block. The
+// name starts as an identifier does and takes no escapes, which the
+// declaration's reader reads differently (`a\:b`), and the whitespace is
+// CSS's, so a `\u00a0`, part of a name, isn't.
+const REGEX_BLOCK_VALUE_START =
+	/^-?(?:[a-zA-Z_]|[^\x00-\x7f\s])(?:[\w-]|[^\x00-\x7f\s])*[ \t\n\r\f]*:[ \t\n\r\f]*(?=\{)/;
 const REGEX_NTH_OF =
 	/^(even|odd|\+?(\d+|\d*n(\s*[+-]\s*\d+)?)|-\d*n(\s*\+\s*\d+))((?=\s*[,)])|\s+of\s+)/;
 // Up to six hex digits, then one optional whitespace that ends the escape
@@ -413,6 +419,30 @@ function read_block_item(parser) {
 		return read_declaration(parser);
 	}
 
+	// So may another declaration's, if the block is all of it (CSS Syntax 3):
+	// `initial-value: {a}` in a `@property` is a declaration, `a:{b} c {}` no
+	// rule either, but `a:{b} c` isn't one.
+	const head = parser.match_regex(REGEX_BLOCK_VALUE_START);
+	if (head) {
+		const start = parser.index;
+		parser.index += head.length;
+		const block = read_custom_property_value(parser, true);
+		// Only whitespace and comments may follow; `<!--` and `-->` are tokens.
+		while (parser.index < parser.template.length) {
+			if (parser.eat('/*')) {
+				const close = parser.template.indexOf('*/', parser.index);
+				parser.index = close === -1 ? parser.template.length : close + 2;
+			} else if (' \t\n\r\f'.includes(parser.template[parser.index])) {
+				parser.index++;
+			} else {
+				break;
+			}
+		}
+		const block_value = block !== '' && (parser.match(';') || parser.match('}'));
+		parser.index = start;
+		if (block_value) return read_declaration(parser, true);
+	}
+
 	// read ahead to understand whether we're dealing with a declaration or a nested rule.
 	// this involves some duplicated work, but avoids a try-catch that would disguise errors
 	const start = parser.index;
@@ -425,9 +455,11 @@ function read_block_item(parser) {
 
 /**
  * @param {Parser} parser
+ * @param {boolean} [block_value] whether the value is a `{}` block, read as a
+ *   custom property's is
  * @returns {AST.CSS.Declaration}
  */
-function read_declaration(parser) {
+function read_declaration(parser, block_value = false) {
 	const start = parser.index;
 
 	const property = parser.read_until(REGEX_WHITESPACE_OR_COLON);
@@ -436,7 +468,10 @@ function read_declaration(parser) {
 	let index = parser.index;
 	parser.allow_whitespace();
 
-	const value = property.startsWith('--') ? read_custom_property_value(parser) : read_value(parser);
+	const value =
+		block_value || property.startsWith('--')
+			? read_custom_property_value(parser)
+			: read_value(parser);
 
 	if (!value && !property.startsWith('--') && !parser.loose) {
 		throw new Error('CSS Declaration cannot be empty');
@@ -463,9 +498,12 @@ function read_declaration(parser) {
  * comment.
  *
  * @param {Parser} parser
+ * @param {boolean} [one_block] read only the block the value starts with, to
+ *   just after its `}`; or nothing, if a string in it ends at a newline, which
+ *   CSS reads as a bad string
  * @returns {string}
  */
-function read_custom_property_value(parser) {
+function read_custom_property_value(parser, one_block = false) {
 	const start = parser.index;
 	/** @type {string[]} */
 	const closers = [];
@@ -488,6 +526,16 @@ function read_custom_property_value(parser) {
 				else track_name(name, parser.template, parser.index);
 			}
 			parser.index += text.length;
+			// In a string, a `\` before a newline goes on to the next line.
+			const next = parser.template[parser.index];
+			if (
+				one_block &&
+				quote_mark !== null &&
+				text.length === 1 &&
+				(next === '\n' || next === '\r' || next === '\f')
+			) {
+				parser.index += parser.template.startsWith('\r\n', parser.index) ? 2 : 1;
+			}
 			continue;
 		}
 		const url =
@@ -495,6 +543,7 @@ function read_custom_property_value(parser) {
 		if (quote_mark === null) track_name(name, parser.template, parser.index);
 		if (quote_mark !== null) {
 			if (char === quote_mark) quote_mark = null;
+			else if (one_block && (char === '\n' || char === '\r' || char === '\f')) return '';
 		} else if (char === '"' || char === "'") {
 			quote_mark = char;
 		} else if (char === '/' && parser.template[parser.index + 1] === '*') {
@@ -518,6 +567,10 @@ function read_custom_property_value(parser) {
 			closers.push(char === '{' ? '}' : char === '(' ? ')' : ']');
 		} else if (closers.length > 0 && char === closers.at(-1)) {
 			closers.pop();
+			if (one_block && closers.length === 0) {
+				parser.index++;
+				return parser.template.slice(start, parser.index);
+			}
 		} else if (closers.length === 0 && (char === ';' || char === '}')) {
 			return parser.template.slice(start, parser.index).trim();
 		}
