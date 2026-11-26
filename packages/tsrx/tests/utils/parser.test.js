@@ -18437,6 +18437,12 @@ ${lines.join('\n')}
 			// In a speculative parse, which goes on.
 			[`const x = f<T,>(<X.A-b />);`, 'TS1003'],
 		];
+		// After an escape in a name in a speculative parse's parameters, which
+		// comes first.
+		const after_escape = `const f = async <T,>(x = <A${escape('0062')} />) => <X.A-b />;`;
+		expect(() => parseModule(after_escape, 'App.tsrx')).toThrow(
+			expect.objectContaining({ code: 'TS17021', pos: after_escape.indexOf('A') }),
+		);
 		for (const [snippet, code] of scripts) {
 			const file = ts.createSourceFile('/App.tsx', snippet, ts.ScriptTarget.Latest, true);
 			const [first] = /** @type {ts.DiagnosticWithLocation[]} */ (

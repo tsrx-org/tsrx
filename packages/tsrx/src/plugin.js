@@ -741,6 +741,10 @@ const NAMES_WITH_OWN_MISSING_SEMICOLON_ERROR = new Set([
 	'namespace',
 	'type',
 ]);
+// The syntax errors in a JSX name that a parse reads on after (see
+// `#reportJSXNameError`): an escape (TS17021), and a `-` in a member name's
+// part after a `.` (TS1003, or TS1005 in a closing tag).
+const JSX_NAME_SYNTAX_ERROR_CODES = new Set(['TS17021', 'TS1003', 'TS1005']);
 // A word, or any other character, after whitespace and comments. A word may
 // have identifier escapes in it, and is read up to 64 characters at a time.
 const regex_next_token =
@@ -8250,9 +8254,15 @@ export function TSRXPlugin(config) {
 					.sort(compare_errors)[0];
 				if (!first) return null;
 				// Of two, the first is thrown, such as one an async generic arrow
-				// function's parameters held before one in its body.
+				// function's parameters held before one in its body, whichever of a
+				// JSX name's errors they are (see `#reportJSXNameError`).
 				const { code, pos } = /** @type {{ code?: string, pos?: number }} */ (thrown);
-				if (code === first.code && (pos ?? 0) <= (first.pos ?? 0)) return null;
+				if (
+					(code === first.code || JSX_NAME_SYNTAX_ERROR_CODES.has(code ?? '')) &&
+					(pos ?? 0) <= (first.pos ?? 0)
+				) {
+					return null;
+				}
 				if (thrown instanceof SyntaxError) {
 					try {
 						this.#throwHeldError(first);
