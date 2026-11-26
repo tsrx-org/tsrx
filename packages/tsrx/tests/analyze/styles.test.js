@@ -1563,6 +1563,8 @@ describe('scoped style analysis', () => {
 					['.q:global(div), .p { color: red; }', '.q:global(div)'],
 					// Nor into the argument of a global compound in one.
 					['.p, .q:global:is(.r:global(div)) { color: red; }', '.q:global:is(.r:global(div))'],
+					// Nor around a type selector after one.
+					['.q:global(.x)div, .p { color: red; }', '.q:global(.x)div'],
 				]) {
 					const rendered = render(css, [pruned], minify);
 					// Minified, the pruned selector is removed before the :global is
