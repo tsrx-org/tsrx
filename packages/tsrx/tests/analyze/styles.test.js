@@ -1573,6 +1573,51 @@ describe('scoped style analysis', () => {
 			}
 		});
 
+		it('writes no hash into a pruned selector, even for an argument that matched', () => {
+			/** @type {Array<[css: string, pruned: string, expected: string, minified: string]>} */
+			const cases = [
+				[
+					'.missing:is(.icon), .wrap { color: red; }',
+					'.missing:is(.icon)',
+					'/* (unused) .missing:is(.icon),*/ .wrap.H { color: red; }',
+					' .wrap.H { color: red; }',
+				],
+				[
+					'.wrap, .missing:has(.icon) { color: red; }',
+					'.missing:has(.icon)',
+					'.wrap.H /* (unused) .missing:has(.icon)*/ { color: red; }',
+					'.wrap.H { color: red; }',
+				],
+				[
+					'.wrap { .missing:is(*), & .icon { color: red; } }',
+					'.missing:is(*)',
+					'.wrap.H { /* (unused) .missing:is(*),*/ & .icon.H { color: red; } }',
+					'.wrap.H {  & .icon.H { color: red; } }',
+				],
+			];
+			for (const [css, pruned, expected, minified] of cases) {
+				for (const minify of [false, true]) {
+					const sheet = parseStyle(css, { filename, line: 1, column: 0 }, {});
+					analyzeCss(sheet);
+					// Every selector matched, scoped, but `pruned`, which no element did,
+					// though its argument did on its own.
+					prepareStylesheetForRender(sheet, 'scope');
+					walk(/** @type {AST.CSS.Node} */ (sheet), null, {
+						ComplexSelector(node, { next }) {
+							if (css.slice(node.start, node.end) !== pruned) return next();
+							node.metadata.used = false;
+							for (const relative_selector of node.children) {
+								relative_selector.metadata.scoped = false;
+							}
+							next();
+						},
+					});
+					const rendered = renderStylesheets([sheet], minify).replace(/tsrx-[0-9a-f]+/g, 'H');
+					expect(rendered, css).toBe(minify ? minified : expected);
+				}
+			}
+		});
+
 		it('renders a bare :global list whose other selectors need no scoping', () => {
 			/** @type {Array<[string, string]>} */
 			const cases = [
