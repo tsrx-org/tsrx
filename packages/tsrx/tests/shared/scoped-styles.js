@@ -2192,6 +2192,7 @@ export function runSharedScopedStyleTests({
 							:root:not(:has(.missing)), .icon { color: red; }
 							.wrap { :root:not(&.missing), .icon { color: blue; } }
 							.wrap { :root:not(&:has(.missing)), .icon { color: green; } }
+							:root:not(:not(:has(.missing))) .icon { color: gray; }
 						</style>
 						<div ${attr}="wrap"><i ${attr}="icon" /></div>
 					</>
@@ -2205,6 +2206,9 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`:root:not(:has(.missing.${hash})), .icon.${hash} {`);
 			expect(css).toContain(`:root:not(&.missing), .icon.${hash} {`);
 			expect(css).toContain(`:root:not(&:has(.missing.${hash})), .icon.${hash} {`);
+			// A :not() around keeps its argument unscoped, but not a :has()'s, which
+			// looks at descendants: unscoped, any .missing on the page would match.
+			expect(css).toContain(`:root:not(:not(:has(.missing:where(.${hash})))) .icon.${hash} {`);
 		});
 
 		it('lets :root match the <html> a component renders', () => {

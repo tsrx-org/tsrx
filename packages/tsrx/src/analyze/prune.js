@@ -1615,16 +1615,23 @@ export function keep_global_compound_arguments(css) {
 						},
 						// There, a :has() still looks at descendants
 						// (`:root:not(:root:has(.icon))`), scoped as before. An argument
-						// of it that matches nothing is kept, scoped, as if it matched:
-						// pruned, it would leave the :has() empty, which is invalid and
-						// takes the rule's whole selector list with it. Scoped, it
-						// matches nothing, as pruned it would.
+						// of it that matched nothing is kept, scoped, as if it matched:
+						// pruned, it would leave the :has() empty, which is invalid, and
+						// in a :not() takes the rule's whole selector list with it.
+						// Scoped, it matches nothing, as pruned it would. So is one a
+						// :not() around kept unscoped (`:root:not(:not(:has(.x)))`).
 						PseudoClassSelector(pseudo_class, context) {
 							if (global || pseudo_class.name !== 'has') return context.next();
 							for (const argument of pseudo_class.args?.children ?? []) {
-								if (argument.metadata.used) continue;
+								const relative_selectors = truncate(argument);
+								if (
+									argument.metadata.used &&
+									relative_selectors.some((relative) => relative.metadata.scoped)
+								) {
+									continue;
+								}
 								argument.metadata.used = true;
-								assume_match(truncate(argument));
+								assume_match(relative_selectors);
 							}
 						},
 					});
