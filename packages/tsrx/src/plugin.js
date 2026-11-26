@@ -2365,6 +2365,11 @@ export function TSRXPlugin(config) {
 			/** @type {number | false} */
 			#readingJSXControlFlowHeader = false;
 			#controlFlowHeaders = 0;
+			// While a directive is read, `#readingJSXControlFlowHeader` where it
+			// started: a header around it, in code there such as a function, or
+			// `false`.
+			/** @type {number | false} */
+			#directiveOuterHeader = false;
 			// Set while `@for` reads its statement, until `parseForStatement` takes it:
 			// the loop whose head may end with `index` and `key` clauses.
 			#readingForDirective = false;
@@ -2724,7 +2729,10 @@ export function TSRXPlugin(config) {
 				const pos = this.pos;
 				const reading_header = this.#readingJSXControlFlowHeader;
 				this.pos = after;
-				this.#readingJSXControlFlowHeader = false;
+				// Past the directive: in a header, where a directive can be a value
+				// in a function (`@if ((() => { return @if (c) { … }; })())`), the
+				// `;` after it is code.
+				this.#readingJSXControlFlowHeader = this.#directiveOuterHeader;
 				try {
 					return this.#shouldReadTemplateRawTextToken(true, true);
 				} finally {
@@ -2748,7 +2756,7 @@ export function TSRXPlugin(config) {
 				const pos = this.pos;
 				const reading_header = this.#readingJSXControlFlowHeader;
 				this.pos = this.end;
-				this.#readingJSXControlFlowHeader = false;
+				this.#readingJSXControlFlowHeader = this.#directiveOuterHeader;
 				try {
 					if (!this.#shouldReadTemplateRawTextToken(true, true)) return;
 				} finally {
@@ -4628,6 +4636,19 @@ export function TSRXPlugin(config) {
 			}
 
 			#parseJSXControlFlowExpression() {
+				// What reads the token after one of the directive's blocks (see
+				// `#readsTemplateTextAfterBlock`): the directive ends there, so it
+				// is read as the code around the directive is.
+				const outer_header = this.#directiveOuterHeader;
+				this.#directiveOuterHeader = this.#readingJSXControlFlowHeader;
+				try {
+					return this.#readJSXControlFlowExpression();
+				} finally {
+					this.#directiveOuterHeader = outer_header;
+				}
+			}
+
+			#readJSXControlFlowExpression() {
 				const start = this.start;
 				const startLoc = this.startLoc;
 				const keywordStart = start + 1;

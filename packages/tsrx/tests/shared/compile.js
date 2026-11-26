@@ -3464,7 +3464,8 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 		it('compiles the functions in a directive head as code', () => {
 			// A block in an `@for` head was read as a directive body, and the `)`
 			// after it as template text (TS1012); a `for…of` loop in any directive
-			// head was read as if past the head, as text (`w &gt; 1`).
+			// head was read as if past the head, as text (`w &gt; 1`), and so was
+			// the `;` after a directive that is a value there (TS1005).
 			/** @type {Array<[directive: string, code: string[]]>} */
 			const cases = [
 				[
@@ -3491,6 +3492,10 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 				[
 					'@if (ys.some((v) => { for (const w in v) w; return false; })) { <li /> }',
 					['for (const w in v) w;', 'return false;'],
+				],
+				[
+					'@if ((() => { const v = @for (const y of ys) { <b>{y}</b> }; return v; })()) { <li /> }',
+					['return v;'],
 				],
 			];
 			for (const [directive, expected] of cases) {

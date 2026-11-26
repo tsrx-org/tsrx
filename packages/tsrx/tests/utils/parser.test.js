@@ -5219,6 +5219,52 @@ foo();`;
 		}
 	});
 
+	it('parses the code after a directive that is a value in a function in a directive header', () => {
+		// The token after the inner directive's `}` was read as if past the
+		// header, in the element children around it: the `;` was template text
+		// (TS1005). In an `@for` header it parsed while the function's body was
+		// read as a directive body.
+		/** @type {Array<[header: string, after: string]>} */
+		const cases = [
+			['@if ((() => { return @if (c) { <b /> }; })())', 'ReturnStatement'],
+			['@if ((() => { const v = @if (c) { <b /> }; return v; })())', 'ReturnStatement'],
+			['@if ([{ f() { return @for (const y of ys) { <b /> }; } }].length)', 'ReturnStatement'],
+			['@for (const x of [{ f() { return @for (const y of ys) { <b /> }; } }])', 'ReturnStatement'],
+			[
+				'@for (const x of [(() => { return @if (c) { <b /> } @else { <i /> }; })()])',
+				'ReturnStatement',
+			],
+			['@for (const x of ys; key ({ f() { return @if (x) { <b /> }; } }).f())', 'ReturnStatement'],
+			[
+				'@for (const x of [(() => { const v = @for (const y of ys) { <b /> } @empty { <i /> }; return v; })()])',
+				'ReturnStatement',
+			],
+			['@switch ((() => { return @if (c) { <b /> }; })())', 'ReturnStatement'],
+		];
+		for (const [header, after] of cases) {
+			const body = header.startsWith('@switch') ? '{ @case 1: { <li /> } }' : '{ <li /> }';
+			const source = `export function App({ ys, c }) {\n\treturn <ul>${header} ${body}</ul>;\n}`;
+			for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+				const ast = parseModule(source, 'App.tsrx', options);
+				const fn = find_first(ast, (node) =>
+					['ArrowFunctionExpression', 'FunctionExpression'].includes(node.type),
+				);
+				const fn_body = as_type(
+					/** @type {AST.ArrowFunctionExpression} */ (fn).body,
+					'BlockStatement',
+				);
+				expect(fn_body.body.at(-1)?.type, source).toBe(after);
+				expect(
+					allNodes(fn_body.body).filter(
+						(node) => node.type === 'JSXText' && /\S/.test(/** @type {any} */ (node).value),
+					),
+					source,
+				).toEqual([]);
+				if (options) expect(options.errors, source).toEqual([]);
+			}
+		}
+	});
+
 	it('parses a directive inside an @empty clause of an @for nested in an @if', () => {
 		// The `@empty` clause redirects through a second, independent
 		// `#templateControlFlowBlockDepth` increment (separate from the one
