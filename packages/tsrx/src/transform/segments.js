@@ -2551,6 +2551,14 @@ export function convert_source_map_to_mappings(
 						visit(node.body);
 						push_block_end_token(node.body);
 					}
+				} else if (node.metadata?.contained_jump) {
+					// The loop the output gives a reported jump that nothing can take
+					// (see `contain_reported_jumps_without_target`), at the jump's
+					// place: its start and end map to the jump's, so TypeScript's
+					// unreachable-code diagnostic, which starts at the loop, still
+					// shows from the jump. The jump maps its own tokens.
+					push_statement_points_mapping(node, 'do');
+					visit(node.body);
 				} else {
 					push_statement_keyword_token(node, 'do');
 					if (node.body) {

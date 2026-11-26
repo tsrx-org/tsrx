@@ -614,6 +614,22 @@ function mark_solid_render_control(node) {
 }
 
 /**
+ * Reports a `break` or `continue` that a template check finds, and marks it
+ * when a collecting compile records the error, so `@tsrx/core` gives it a
+ * loop of its own where nothing in the output can take it.
+ * @param {{ code: string | undefined, message: string }} diagnostic
+ * @param {AST.BreakStatement | AST.ContinueStatement} node
+ * @param {TransformContext} transform_context
+ */
+function report_jump(diagnostic, node, transform_context) {
+	const recorded = transform_context.errors?.length ?? 0;
+	error(diagnostic, transform_context.filename, node, transform_context.errors);
+	if ((transform_context.errors?.length ?? 0) > recorded) {
+		node.metadata = { ...node.metadata, recorded_jump_error: true };
+	}
+}
+
+/**
  * Walks arbitrary values because it recurses through every own property of the
  * subtree, not just the typed child slots.
  *
@@ -665,27 +681,12 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		// which reports a jump with no target.
 		return;
 	}
-	if (current.type === 'BreakStatement' || current.type === 'ContinueStatement') {
-		// Marked, so `@tsrx/core` gives it a loop of its own where nothing in the
-		// output can take it.
-		current.metadata = { ...current.metadata, invalid_template_jump: true };
-	}
 	if (current.type === 'BreakStatement') {
-		error(
-			TSRX_ERRORS.FOR_BREAK_STATEMENT,
-			transform_context.filename,
-			current,
-			transform_context.errors,
-		);
+		report_jump(TSRX_ERRORS.FOR_BREAK_STATEMENT, current, transform_context);
 		return;
 	}
 	if (current.type === 'ContinueStatement') {
-		error(
-			TSRX_ERRORS.FOR_CONTINUE_STATEMENT,
-			transform_context.filename,
-			current,
-			transform_context.errors,
-		);
+		report_jump(TSRX_ERRORS.FOR_CONTINUE_STATEMENT, current, transform_context);
 		return;
 	}
 
@@ -748,27 +749,12 @@ function validate_if_body_control_flow(node, transform_context) {
 		// which reports a jump with no target.
 		return;
 	}
-	if (current.type === 'BreakStatement' || current.type === 'ContinueStatement') {
-		// Marked, so `@tsrx/core` gives it a loop of its own where nothing in the
-		// output can take it.
-		current.metadata = { ...current.metadata, invalid_template_jump: true };
-	}
 	if (current.type === 'BreakStatement') {
-		error(
-			TSRX_ERRORS.IF_BREAK_STATEMENT,
-			transform_context.filename,
-			current,
-			transform_context.errors,
-		);
+		report_jump(TSRX_ERRORS.IF_BREAK_STATEMENT, current, transform_context);
 		return;
 	}
 	if (current.type === 'ContinueStatement') {
-		error(
-			TSRX_ERRORS.IF_CONTINUE_STATEMENT,
-			transform_context.filename,
-			current,
-			transform_context.errors,
-		);
+		report_jump(TSRX_ERRORS.IF_CONTINUE_STATEMENT, current, transform_context);
 		return;
 	}
 

@@ -747,6 +747,41 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 				error === TS_ERRORS.CONTINUE_LABEL_NOT_LOOP ? [`${error.code} ${statement}`] : [],
 			);
 		});
+
+		it("keeps a jump after a `@ts-expect-error` comment, which takes TypeScript's report of it", () => {
+			const source =
+				'function f() {\n\t// @ts-expect-error\n\tcontinue;\n}\nexport const after = 1;\n';
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => error.code)).toEqual([
+				TS_ERRORS.JUMP_ACROSS_FUNCTION.code,
+			]);
+			// No unused-directive error (TS2578), as when the jump is left as it is.
+			expect(
+				virtual_semantic_diagnostics(result.code).map((diagnostic) => diagnostic.code),
+			).toEqual([]);
+		});
+
+		it("maps TypeScript's unreachable code from a jump in a loop of its own to the jump", () => {
+			const source =
+				'function f() {\n\tthrow 1;\n\tcontinue;\n\tf();\n}\nexport const after = 1;\n';
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			const unreachable = virtual_semantic_diagnostics(result.code, {
+				allowUnreachableCode: false,
+			}).filter((diagnostic) => diagnostic.code === 7027);
+			expect(unreachable).toHaveLength(1);
+			const at = /** @type {number} */ (unreachable[0].start);
+			// The source offsets of the mappings that report diagnostics there.
+			const mapped = result.mappings.flatMap((mapping) =>
+				mapping.data?.verification
+					? mapping.generatedOffsets.flatMap((offset, i) =>
+							offset <= at && at <= offset + (mapping.generatedLengths ?? mapping.lengths)[i]
+								? [mapping.sourceOffsets[i] + at - offset]
+								: [],
+						)
+					: [],
+			);
+			expect(mapped).toContain(source.indexOf('continue'));
+		});
 	});
 
 	describe(`[${name}] a jump a template check reports, in the editor`, () => {
