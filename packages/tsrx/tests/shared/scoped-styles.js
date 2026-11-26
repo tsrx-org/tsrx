@@ -2877,6 +2877,75 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('reports a :global(...) with a combinator in the middle of a compound', () => {
+			for (const rule of [
+				'.wrap:global(.x i).icon { color: red; }',
+				'.wrap:global(.x > i):hover { color: red; }',
+				'.wrap { &:global(.x i).icon { color: red; } }',
+			]) {
+				const source = `export function App() @{
+					<>
+						<style>${rule}</style>
+						<div ${attr}="wrap x"><i ${attr}="icon" /></div>
+					</>
+				}`;
+				const result = compile(source, 'App.tsrx', { collect: true });
+
+				expect(
+					result.errors.map((error) => error.code),
+					rule,
+				).toEqual([DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT]);
+				// Collected, the file still compiles, as the editor needs.
+				expect(result.code, rule).toContain('<div');
+				expect(() => compile(source, 'App.tsrx'), rule).toThrow(
+					expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_GLOBAL_PLACEMENT }),
+				);
+			}
+		});
+
+		it('compiles a :global(...) with a combinator at the start or end of a compound', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							.wrap:global(.x i) { color: red; }
+							:global(.x i).icon { color: green; }
+							.wrap:global(.x i)::before { content: "a"; }
+							.wrap:global(.x i):after { content: "b"; }
+							:root { &:global(.x i)::before { content: "c"; } }
+							:root { &:global(.x i):before { content: "d"; } }
+							.wrap:global(.x i::before):hover { content: "e"; }
+							.wrap:global(.x button::part(control)):hover { color: purple; }
+							.wrap:global(.x > i:hover) { color: olive; }
+							:root:global(.x) :global(i).icon { color: teal; }
+							:global(.wrap.x) :global(i).icon { color: blue; }
+							.wrap:global(.x) :global(i).icon { color: gray; }
+						</style>
+						<div ${attr}="wrap x"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+
+			const hash = hashes_of(cssHash)[0];
+			expect(css).toContain(`.wrap.${hash}.x i { color: red; }`);
+			expect(css).toContain(`.x i.icon.${hash} { color: green; }`);
+			expect(css).toContain(`.wrap.${hash}.x i::before { content: "a"; }`);
+			expect(css).toContain(`.wrap.${hash}.x i:after { content: "b"; }`);
+			expect(css).toContain(':root { &.x i::before { content: "c"; } }');
+			expect(css).toContain(':root { &.x i:before { content: "d"; } }');
+			expect(css).toContain(`.wrap.${hash}.x i::before:hover { content: "e"; }`);
+			expect(css).toContain(`.wrap.${hash}.x button::part(control):hover { color: purple; }`);
+			// The Migration's other spellings: a :hover moved inside keeps the output of
+			// .wrap:global(.x > i):hover, and in a :root compound the hash is added.
+			expect(css).toContain(`.wrap.${hash}.x > i:hover { color: olive; }`);
+			expect(css).toContain(`:root.x i.icon.${hash} { color: teal; }`);
+			// The spellings for a :global(...) between two selectors: the first
+			// keeps its output, the second also scopes .wrap.
+			expect(css).toContain(`.wrap.x i.icon.${hash} { color: blue; }`);
+			expect(css).toContain(`.wrap.${hash}.x i.icon:where(.${hash}) { color: gray; }`);
+		});
+
 		it('ends the last declaration of a dropped :global { ... } block', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{

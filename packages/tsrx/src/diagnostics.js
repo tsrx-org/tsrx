@@ -715,6 +715,10 @@ export const TSRX_ERRORS = {
 		'CSS_GLOBAL_PLACEMENT',
 		':global(...) can hold a selector list only as the whole selector, as in :global(.a, .b) { ... }: elsewhere the output drops its parentheses, which splits the selector around the list. Write a selector for each, as in :global(.a) .c, :global(.b) .c.',
 	),
+	CSS_GLOBAL_COMBINATOR_IN_COMPOUND: tsrx(
+		'CSS_GLOBAL_PLACEMENT',
+		':global(...) can hold a combinator, as in .a:global(.b c).d, only at the start or end of a compound: in the middle the output drops its parentheses, which splits the compound, and puts .a on the .b element and .d on c. Write a :global(...) for each element, as in :global(.a.b) :global(c).d, or .a:global(.b) :global(c).d to also scope .a.',
+	),
 	CSS_GLOBAL_BLOCK_IN_MIXED_LIST: tsrx(
 		'CSS_GLOBAL_PLACEMENT',
 		'A selector that starts with a bare :global makes its whole rule unscoped, so the other selectors in its list, and the rules nested in it, would lose their scoping. Move the other selectors to a rule of their own.',

@@ -20,6 +20,50 @@ function is_global_block_selector(simple_selector) {
 }
 
 /**
+ * True if is `:global(...)` or `:global`
+ * @param {AST.CSS.SimpleSelector} simple_selector
+ * @returns {simple_selector is AST.CSS.PseudoClassSelector}
+ */
+function is_global_pseudo_class(simple_selector) {
+	return simple_selector.type === 'PseudoClassSelector' && simple_selector.name === 'global';
+}
+
+/** The pseudo-elements CSS also reads with one colon, which parse as pseudo-classes. */
+const LEGACY_PSEUDO_ELEMENTS = new Set(['before', 'after', 'first-line', 'first-letter']);
+
+/**
+ * True if is a pseudo-element: `::before`, or one CSS also reads with one
+ * colon, in any case and with escapes (`:before`, `:AFTER`)
+ * @param {AST.CSS.SimpleSelector} simple_selector
+ */
+function is_pseudo_element(simple_selector) {
+	return (
+		simple_selector.type === 'PseudoElementSelector' ||
+		(simple_selector.type === 'PseudoClassSelector' &&
+			simple_selector.args === null &&
+			LEGACY_PSEUDO_ELEMENTS.has(
+				unescape_css(simple_selector.name).replace(/[A-Z]/g, (letter) => letter.toLowerCase()),
+			))
+	);
+}
+
+/**
+ * True if is a pseudo-element, or a `:global(...)` whose argument ends in one
+ * (`:global(.x i::before)`): after either, the rest of the compound applies to
+ * the pseudo-element. A selector list in a `:global(...)` here is an error of
+ * its own, and ends nothing.
+ * @param {AST.CSS.SimpleSelector} simple_selector
+ */
+function ends_compound(simple_selector) {
+	if (is_pseudo_element(simple_selector)) return true;
+	if (!is_global_pseudo_class(simple_selector) || simple_selector.args?.children.length !== 1) {
+		return false;
+	}
+	const { children } = simple_selector.args.children[0];
+	return children[children.length - 1].selectors.some(is_pseudo_element);
+}
+
+/**
  * True if is `:global(...)` or `:global` and no pseudo class that is scoped.
  * @param {AST.CSS.RelativeSelector} relative_selector
  * @param {boolean} [scope_root] whether an `&` in it stands for a `@scope`'s
@@ -881,6 +925,30 @@ export function analyze_css(css, options = {}) {
 							relative_selector.combinator)
 					) {
 						report(TSRX_ERRORS.CSS_GLOBAL_SELECTOR_LIST, selector);
+					}
+				}
+			}
+
+			// So a `:global(...)` with a combinator between other selectors of a
+			// compound (`.a:global(.b c).d`) gives `.a.b c.d`, `.a` and `.d` on two
+			// elements, where a component's check for unused CSS matches both on
+			// one. Other `:global(...)` join the global part, and a pseudo-element,
+			// after the `:global(...)` or at the end of its argument, ends the
+			// compound: what follows it applies to the pseudo-element either way.
+			for (const { selectors } of node.children) {
+				const end = selectors.findIndex(ends_compound);
+				const compound = end === -1 ? selectors : selectors.slice(0, end);
+				const first = compound.findIndex((selector) => !is_global_pseudo_class(selector));
+				const last = compound.findLastIndex((selector) => !is_global_pseudo_class(selector));
+				for (let i = first + 1; i < last; i++) {
+					const selector = compound[i];
+					if (
+						is_global_pseudo_class(selector) &&
+						selector.args?.children.length === 1 &&
+						(selector.args.children[0].children.length > 1 ||
+							selector.args.children[0].children[0].combinator)
+					) {
+						report(TSRX_ERRORS.CSS_GLOBAL_COMBINATOR_IN_COMPOUND, selector);
 					}
 				}
 			}

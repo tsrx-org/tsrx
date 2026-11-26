@@ -1257,7 +1257,12 @@ with CSS nesting:
   `TSRX3011` error: it may only start or end a selector. So is a selector list
   in `:global(...)` anywhere but as the whole selector (`:global(.a, .b) .c`
   would lose its parentheses and style every `.a`): write
-  `:global(.a) .c, :global(.b) .c`.
+  `:global(.a) .c, :global(.b) .c`. So is a `:global(...)` that holds a
+  combinator when a selector other than `:global` or a `:global(...)` comes both
+  before and after it in its compound (`.wrap:global(.x i).icon` would give
+  `.wrap.x i.icon`; a pseudo-element, after it or at the end of its argument,
+  ends the compound): write `:global(.wrap.x) :global(i).icon`, or
+  `.wrap:global(.x) :global(i).icon` to also scope `.wrap`.
 - A selector that starts with a bare `:global` (`:global .note`) leaves its
   whole rule unscoped, so outside another such rule, a selector beside it in
   the list that would get a hash on its own, as in
