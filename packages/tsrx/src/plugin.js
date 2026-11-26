@@ -17297,7 +17297,13 @@ export function TSRXPlugin(config) {
 				const name = Parser.acornTypeScript.tokenIsIdentifier(this.type);
 				switch (word) {
 					case 'global':
-						return name || this.type === tt.braceL || this.type === tt._export;
+						// Not before a keyword's name, as in `#startsDeclaration`.
+						return (
+							(this.type === tt.name &&
+								!TYPESCRIPT_KEYWORD_NAMES.has(/** @type {string} */ (this.value))) ||
+							this.type === tt.braceL ||
+							this.type === tt._export
+						);
 					case 'let':
 						return name || this.type === tt.braceL || this.type === tt.bracketL;
 					case 'using':

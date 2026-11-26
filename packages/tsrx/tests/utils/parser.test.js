@@ -17558,6 +17558,8 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			// starts a global augmentation. Where it reads a name, it's a name.
 			['\\u0067lobal foo;', TS_ERRORS.TOKEN_EXPECTED, 'foo'],
 			['throw \\u0067lobal foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
+			['\\u0067lobal async;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
+			['\\u0067lobal type;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
 			['\\u0061ccessor {}', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
 			['label: \\u0061ccessor foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
 			['if (x) \\u0072eadonly foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, '\\'],
