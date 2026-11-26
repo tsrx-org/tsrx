@@ -1916,6 +1916,38 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('puts a type selector after a :global(...) in an :is()', () => {
+			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
+			const cases = [
+				// Dropping the wrapper ran the type selector into what came before it:
+				// `.xdiv`, a class, or `.x*.icon`, which is invalid.
+				[':global(.x)div', (hash) => `.x:is(div).${hash} {`],
+				['.wrap:global(.x)div .icon', (hash) => `.wrap.x:is(div).${hash} .icon:where(.${hash}) {`],
+				[':global(.x)i.icon', (hash) => `.x:is(i).icon.${hash} {`],
+				[':global(.x)*.icon', (hash) => `.x:is(*).icon.${hash} {`],
+				[':global([data-x])div', (hash) => `[data-x]:is(div).${hash} {`],
+				// So does a name the parser reads as an Nth in an argument, and one in a
+				// compound that is global whole.
+				[':is(:global(.x)odd)', (hash) => `:is(.x:is(odd).${hash}) {`],
+				[':global:global(.x)div', () => '.x:is(div) {'],
+			];
+			for (const [selector, expected] of cases) {
+				const rule = `${selector} { color: red; }`;
+				const theme = compile(`export const theme = <style>${rule}</style>;`, 'App.tsrx');
+				const component = compile(
+					`export function App() @{
+						<>
+							<style>${rule}</style>
+							<div ${attr}="wrap x"><i ${attr}="icon x" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+				expect(theme.css, selector).toContain(expected(hashes_of(theme.cssHash)[0]));
+				expect(component.css, selector).toContain(expected(hashes_of(component.cssHash)[0]));
+			}
+		});
+
 		it('reads a custom property whose value holds {} blocks', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{

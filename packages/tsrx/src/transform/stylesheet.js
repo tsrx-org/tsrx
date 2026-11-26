@@ -539,6 +539,32 @@ function leading_type_selector(list) {
 }
 
 /**
+ * Put each type selector right after a `:global(...)` in `relative_selector`
+ * in an `:is()`: dropping the wrapper would run it into what the wrapper
+ * holds (`:global(.x)div` gave `.xdiv`), as `leading_type_selector` says of
+ * one in the wrapper. Not in a pruned selector, which minifying removes
+ * before this runs, so the text would outlast it.
+ *
+ * @param {AST.CSS.RelativeSelector} relative_selector
+ * @param {StylesheetRenderState} state
+ */
+function wrap_type_after_global(relative_selector, state) {
+	relative_selector.selectors.forEach((selector, i) => {
+		const previous = relative_selector.selectors[i - 1];
+		if (
+			previous?.type === 'PseudoClassSelector' &&
+			previous.name === 'global' &&
+			previous.args !== null &&
+			(selector.type === 'TypeSelector' ||
+				(selector.type === 'Nth' && /^-?[a-z_][\w-]*$/i.test(selector.value)))
+		) {
+			state.code.prependRight(selector.start, ':is(');
+			state.code.appendLeft(selector.end, ')');
+		}
+	});
+}
+
+/**
  * Drop the `;` of each empty declaration in `block` (`;;`, or a `;` after a
  * rule), which the parser skips: every `;` outside its children and comments
  * but the one that ends a declaration.
@@ -965,6 +991,7 @@ const visitors = {
 						remove_global_pseudo_class(selector, null, context.state, kept);
 					}
 				}
+				if (kept) wrap_type_after_global(relative_selector, context.state);
 
 				if (
 					global.args === null &&
@@ -987,6 +1014,7 @@ const visitors = {
 						remove_global_pseudo_class(selector, null, context.state, kept && i > 0);
 					}
 				}
+				if (kept) wrap_type_after_global(relative_selector, context.state);
 			}
 
 			// Skip scoping if we're inside a global block. A compound with :root or
