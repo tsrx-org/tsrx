@@ -66,8 +66,7 @@ import {
 } from '../jsx-interleave.js';
 import { is_hoist_safe_jsx_node, is_static_literal } from '../jsx-hoist.js';
 import { lower_server_module_for_types } from './server-module.js';
-import { get_hashbang, is_ts_suppression_directive } from '../../comment-utils.js';
-import { get_directive_line } from './directive-line.js';
+import { get_hashbang } from '../../comment-utils.js';
 import { get_source_tokens } from '../../parse/source-tokens.js';
 import {
 	child_nodes,
@@ -6803,29 +6802,6 @@ function is_recorded_jump(node) {
 }
 
 /**
- * The text of `source` on the line of `offset` before it, with its comments
- * left out.
- * @param {string} source
- * @param {number} offset
- * @param {AST.CommentWithLocation[]} comments
- * @returns {string}
- */
-function code_before_on_line(source, offset, comments) {
-	let line_start = offset;
-	while (line_start > 0 && !/[\n\r\u2028\u2029]/.test(source[line_start - 1])) line_start--;
-	let text = '';
-	let at = line_start;
-	for (const comment of comments) {
-		const start = /** @type {number} */ (comment.start);
-		const end = /** @type {number} */ (comment.end);
-		if (end <= line_start || start >= offset) continue;
-		text += source.slice(at, Math.max(at, start));
-		at = Math.max(at, end);
-	}
-	return text + source.slice(at, offset);
-}
-
-/**
  * A loop, `switch` statement or label around a statement in the output.
  * @typedef {{ label: string | null, loop: boolean }} OutputJumpTarget
  */
@@ -6845,39 +6821,15 @@ function code_before_on_line(source, offset, comments) {
  *
  * A jump with a target in the output stays as it is, such as a nested
  * `break` in an `@switch` case that a target lowers to a `switch` statement,
- * so the code after it narrows as it did. In the editor's code, so does one
- * that starts the line a TypeScript `@ts-expect-error` or `@ts-ignore`
- * comment on a line of its own covers: the comment takes TypeScript's report
- * of it, and would be unused (TS2578) beside the loop. Code before a jump on
- * its line, apart from comments and empty statements, may be printed apart
- * from it, so such a jump still gets a loop. The build's code leaves the
- * comments out, so a jump there always does.
+ * so the code after it narrows as it did. A `@ts-expect-error` comment over a
+ * contained jump has nothing left to suppress (TS2578); the jump's own error
+ * fails the build anyway.
  * @param {AST.Program} program
  * @param {TransformContext} transform_context
  * @returns {AST.Program}
  */
 function contain_reported_jumps_without_target(program, transform_context) {
 	if (!transform_context.errors?.length) return program;
-	// The lines that a TypeScript `@ts-expect-error` or `@ts-ignore` comment
-	// covers in the editor's code. Only a comment on a line of its own stays
-	// before the code it covers there; the build's code leaves them all out.
-	const source = transform_context.source;
-	const comments = transform_context.comments ?? [];
-	const directive_lines = new Set(
-		transform_context.typeOnly
-			? comments
-					.filter(
-						(comment) =>
-							is_ts_suppression_directive(comment) &&
-							code_before_on_line(
-								source,
-								/** @type {number} */ (comment.start),
-								comments,
-							).trim() === '',
-					)
-					.map((comment) => get_directive_line(comment, source))
-			: [],
-	);
 	return /** @type {AST.Program} */ (
 		walk(/** @type {AST.Node} */ (program), /** @type {OutputJumpTarget[]} */ ([]), {
 			_(node, { next, state }) {
@@ -6891,17 +6843,7 @@ function contain_reported_jumps_without_target(program, transform_context) {
 						(/** @type {OutputJumpTarget} */ target) =>
 							target.label === label && (label !== null || !loop || target.loop),
 					);
-					if (
-						has_target ||
-						!is_recorded_jump(node) ||
-						(node.loc &&
-							directive_lines.has(node.loc.start.line) &&
-							/^[\s;]*$/.test(
-								code_before_on_line(source, /** @type {number} */ (node.start), comments),
-							))
-					) {
-						return node;
-					}
+					if (has_target || !is_recorded_jump(node)) return node;
 					const contained = b.do_while(b.literal(false), { ...node, label: null });
 					contained.metadata = { ...contained.metadata, contained_jump: true };
 					return node.loc

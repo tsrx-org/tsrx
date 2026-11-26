@@ -748,57 +748,23 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			);
 		});
 
-		// A TypeScript directive that covers a jump starting its line takes
-		// TypeScript's report of it, so the jump stays and the directive is used.
-		// Elsewhere the jump gets a loop, which TypeScript doesn't report.
+		// A jump gets a loop of its own also under a TypeScript directive, which
+		// then has nothing to suppress: `@ts-expect-error` is unused (TS2578),
+		// beside the jump's own error, which fails the build anyway.
 		it.each([
-			['a line comment', '\t// @ts-expect-error\n\tcontinue;', 'kept'],
-			['a JSDoc comment', '\t/** @ts-expect-error */\n\tcontinue;', 'kept'],
-			['a comment before a blank line', '\t// @ts-ignore\n\n\tcontinue;', 'kept'],
-			[
-				'a block comment whose last line is not a directive',
-				'\t/* @ts-expect-error\n\tmore */\n\tcontinue;',
-				'contained',
-			],
-			[
-				'a comment over code before the jump on its line',
-				'\t// @ts-expect-error\n\tconst n: number = "no"; continue;',
-				'contained',
-			],
-			[
-				'a comment over a comment before the jump',
-				'\t// @ts-expect-error\n\t/* why */ continue;',
-				'kept',
-			],
-			[
-				'a comment over an empty statement before the jump',
-				'\t// @ts-expect-error\n\t; continue;',
-				'kept',
-			],
-			[
-				"a comment after code on its line, which the editor's code leaves out",
-				'\tlet a = 1; // @ts-expect-error\n\tcontinue;',
-				'contained',
-			],
-			[
-				'a comment before a line separator',
-				`\t// @ts-expect-error${String.fromCharCode(0x2028)}\tcontinue;`,
-				'kept',
-			],
-		])('keeps a jump after %s only where the directive covers it', (_, body, outcome) => {
-			const source = `function f() {\n${body}\n}\nexport const after = 1;\n`;
+			['@ts-expect-error', [2578]],
+			['@ts-ignore', []],
+		])('gives a jump under a `%s` comment a loop of its own', (directive, codes) => {
+			const source = `function f() {\n\t// ${directive}\n\tcontinue;\n}\nexport const after = 1;\n`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			expect(result.errors.map((error) => error.code)).toEqual([
 				TS_ERRORS.JUMP_ACROSS_FUNCTION.code,
 			]);
-			expect(result.code.includes('do continue; while (false);'), outcome).toBe(
-				outcome === 'contained',
-			);
-			// No TS1107 beside the error, and no unused directive (TS2578) or
-			// unsuppressed error in the code before the jump.
+			// The comment stays before the jump, in the loop.
+			expect(result.code).toMatch(/\bdo\b[^;]*\bcontinue; while \(false\);/);
 			expect(
 				virtual_semantic_diagnostics(result.code).map((diagnostic) => diagnostic.code),
-			).toEqual([]);
+			).toEqual(codes);
 		});
 
 		it.each([
