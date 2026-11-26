@@ -3012,6 +3012,8 @@ export function runSharedSwitchFallthroughTests({ compile, name }) {
 			['while (ready) { break; }', []],
 			['while (ready) { const z = 1; log(z); }', []],
 			['while (ready) { log(1); log(2); }', []],
+			// Compiled through the container before, with TSRX1007 when collecting.
+			['while (ready) { log(1); }', []],
 			['l: { const z = 1; log(z); }', []],
 			['l: while (ready) { break l; }', []],
 			// A block in other code.

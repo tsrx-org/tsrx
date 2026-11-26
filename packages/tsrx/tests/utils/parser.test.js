@@ -3745,6 +3745,22 @@ foo();`;
 		}
 	});
 
+	it('reads a block in a class static block in markup as a block', () => {
+		const source =
+			'export const view = <p>{class {\n\tstatic { if (x) { { f(); g(); } } }\n}}</p>;';
+		const program = parseModule(source, 'App.tsrx');
+		const block = /** @type {any} */ (find_first(program, (node) => node.type === 'StaticBlock'));
+		const consequent = block.body[0].consequent;
+		expect(consequent.type).toBe('BlockStatement');
+		expect(consequent.body.map((/** @type {AST.Node} */ node) => node.type)).toEqual([
+			'BlockStatement',
+		]);
+		expect(consequent.body[0].body.map((/** @type {AST.Node} */ node) => node.type)).toEqual([
+			'ExpressionStatement',
+			'ExpressionStatement',
+		]);
+	});
+
 	it('scopes switch case setup locals to their own case block', () => {
 		expect(() =>
 			parseModule(
