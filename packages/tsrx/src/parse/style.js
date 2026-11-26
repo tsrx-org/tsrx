@@ -16,7 +16,10 @@ const REGEX_WHITESPACE_OR_COLON = /[\s:]/;
 // An escape, and the one space that ends a hex escape (`\r\n` too).
 const REGEX_VALUE_ESCAPE = /\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^\n\r\f])/y;
 // `--` and a name (letters, digits, `-`, `_`, non-ASCII, escapes), then `:`.
-const REGEX_CUSTOM_PROPERTY_START = /^--(?:[\w-]|[^\x00-\x7f]|\\[^\n])*\s*:/;
+// The whitespace before the `:` that isn't ASCII, such as U+00A0, the name
+// takes up to the first ASCII whitespace: a character both could take made a
+// failed match quadratic.
+const REGEX_CUSTOM_PROPERTY_START = /^--(?:[\w-]|[^\x00-\x7f]|\\[^\n])*(?:[\t\n\v\f\r ]\s*)?:/;
 // A name, a `:` and a `{`: a declaration whose value may be a `{}` block. The
 // name starts as an identifier does and takes no escapes, which the
 // declaration's reader reads differently (`a\:b`), and the whitespace is

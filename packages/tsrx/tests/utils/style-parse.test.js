@@ -527,6 +527,18 @@ describe('parseStyle custom properties', function () {
 		}).toThrow(expect.objectContaining({ pos: 7 }));
 	});
 
+	it('reads a custom property name with U+00A0 after it and no colon in linear time', function () {
+		// The name and the whitespace before a colon could both take a U+00A0.
+		for (const css of [
+			`.x { --x${'\u00a0'.repeat(40_000)} }`,
+			`.x { --x${'\u00a0'.repeat(40_000)}y { color: red } }`,
+		]) {
+			const start = performance.now();
+			parseStyle(css, LOCATION, {});
+			expect(performance.now() - start).toBeLessThan(1000);
+		}
+	});
+
 	it('reads a declaration name with whitespace in it in linear time', function () {
 		for (const css of [
 			`.x { a${'\u00a0'.repeat(40_000)}x { color: red } }`,
