@@ -326,6 +326,23 @@ function is_root(selector) {
 }
 
 /**
+ * Whether a type selector named `name` may match `element`: a dynamic
+ * element's tag is only known at runtime.
+ *
+ * @param {string} name
+ * @param {AST.TSRXElementNode} element
+ * @returns {boolean}
+ */
+function type_selector_matches(name, element) {
+	if (is_dynamic_element(element) || name === '*') return true;
+	const element_name = get_element_name(element);
+	return (
+		(element_name?.type !== 'Identifier' && element_name?.type !== 'JSXIdentifier') ||
+		element_name.name.toLowerCase() === name.toLowerCase()
+	);
+}
+
+/**
  * Whether `element` may be the page's root element: an `<html>`, or a dynamic
  * element, whose tag is only known at runtime.
  *
@@ -1146,8 +1163,18 @@ function relative_selector_might_apply_to_node(relative_selector, rule, element,
 	}
 
 	// `:root` is the page's root element, so one of the component's only when it
-	// renders the `<html>`, whose state (`:root.dark`) the page may set later.
-	if (other_selectors.some((selector) => is_root(selector))) return may_be_root_element(element);
+	// renders the `<html>`, whose state (`:root.dark`) the page may set later,
+	// but not its tag (`div:root`).
+	if (other_selectors.some((selector) => is_root(selector))) {
+		return (
+			may_be_root_element(element) &&
+			other_selectors.every(
+				(selector) =>
+					selector.type !== 'TypeSelector' ||
+					type_selector_matches(unescape_css(selector.name), element),
+			)
+		);
+	}
 
 	for (const selector of other_selectors) {
 		if (selector.type === 'Percentage' || selector.type === 'Nth') continue;
@@ -1267,16 +1294,7 @@ function relative_selector_might_apply_to_node(relative_selector, rule, element,
 			}
 
 			case 'TypeSelector': {
-				if (is_dynamic_element(element)) {
-					break;
-				}
-
-				const element_name = get_element_name(element);
-				if (
-					(element_name?.type === 'Identifier' || element_name?.type === 'JSXIdentifier') &&
-					element_name.name.toLowerCase() !== name.toLowerCase() &&
-					name !== '*'
-				) {
+				if (!type_selector_matches(name, element)) {
 					return false;
 				}
 
@@ -1526,15 +1544,13 @@ export function keep_global_compound_arguments(css) {
 					walk(/** @type {AST.CSS.Node} */ (selector.args), null, {
 						ComplexSelector(complex_selector, context) {
 							// In a :root or :host compound's argument, a selector with an `&`
-							// is about the rule around it, or a `@scope`'s root, and is left
-							// as the pruner matched it, but kept in a :not(), with its own
-							// arguments, as if it matched: pruned, it would leave the :not()
-							// empty, which is invalid.
+							// is about the rule around it, or a `@scope`'s root, and is kept,
+							// with its own arguments, as if it matched, scoped: the pruner
+							// can't tell the root's state (`:root:is(&.dark)`), and pruned,
+							// it would leave a :not() empty, which is invalid.
 							if (!global && has_nesting_selector(complex_selector)) {
-								if (selector.name === 'not') {
-									complex_selector.metadata.used = true;
-									assume_match(complex_selector.children);
-								}
+								complex_selector.metadata.used = true;
+								assume_match(complex_selector.children);
 								return;
 							}
 							complex_selector.metadata.used = true;

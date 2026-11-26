@@ -2215,6 +2215,8 @@ export function runSharedScopedStyleTests({
 							:root > body { margin: 0; }
 							:root.dark > body .icon { color: white; }
 							:root > .icon { color: red; }
+							div:root > body { color: blue; }
+							HTML:root > body { color: green; }
 						</style>
 						<html><body><i ${attr}="icon" /></body></html>
 					</>
@@ -2226,6 +2228,27 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`:root > body.${hash} {`);
 			expect(css).toContain(`:root.dark > body.${hash} .icon:where(.${hash}) {`);
 			expect(css).toContain('/* (unused) :root > .icon');
+			expect(css).toContain('/* (unused) div:root > body');
+			expect(css).toContain(`HTML:root > body.${hash} {`);
+		});
+
+		it('keeps an & argument of a :root compound, whose state the page may set', () => {
+			const { css, cssHash } = compile(
+				`export function Document() @{
+					<>
+						<style>
+							.doc { :root:is(&.dark) > body { color: white; } }
+							.doc { :ROOT:WHERE(&.dark, .light) > body { color: gray; } }
+						</style>
+						<html ${attr}="doc"><body /></html>
+					</>
+				}`,
+				'App.tsrx',
+			);
+			const hash = hashes_of(cssHash)[0];
+
+			expect(css).toContain(`:root:is(&.dark) > body.${hash} {`);
+			expect(css).toContain(`:ROOT:WHERE(&.dark, .light) > body.${hash} {`);
 		});
 
 		it('prunes a selector whose :root or :host compound has a :has() that matches nothing', () => {
@@ -2767,8 +2790,9 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`:root:not(:root:has(.icon:where(.${hash}))) .wrap.${hash} {`);
 			// So does an & for a @scope's root, as :scope does.
 			expect(css).toContain(`:root:is(&.${hash}) { color: green; }`);
-			// An argument with an & is matched as before: no .missing, so pruned.
-			expect(css).toContain(':root:is(/* (unused) &.missing*/) { color: gray; }');
+			// An argument with an & is kept, scoped, as an assigned block keeps it:
+			// the pruner can't tell the root's state.
+			expect(css).toContain(`:root:is(&.missing.${hash}) { color: gray; }`);
 		});
 
 		it('keeps the arguments of a :global() compound in a scope without elements', () => {
