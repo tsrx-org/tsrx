@@ -9273,7 +9273,12 @@ export function TSRXPlugin(config) {
 					this.#raiseAbstractModifierError(start, statement, block, declare_start, ambient);
 					return statement;
 				};
-				if (declaration[0] !== 'using' && declaration[0] !== 'await') return read();
+				if (
+					(declaration[0] !== 'using' && declaration[0] !== 'await') ||
+					!this.#usingPatternAhead()
+				) {
+					return read();
+				}
 				// A `using` declaration's errors come after its modifier's (see
 				// `#parseModifiedStatement`).
 				/** @type {CompileError[]} */
@@ -9796,13 +9801,16 @@ export function TSRXPlugin(config) {
 						this.#raiseModifierErrors(read.modifiers, declaration, context, null);
 						return declaration;
 					};
-					const using = read.declaration === 'using' || read.declaration === 'await';
+					const using =
+						(read.declaration === 'using' || read.declaration === 'await') &&
+						this.#usingPatternAhead();
 					if (!context.block && !using) return /** @type {AST.Statement} */ (parse());
 					// In a block, the errors in the declaration come after TS1184 at its
-					// first modifier (#1264), and anywhere a `using` declaration's come
-					// after its modifier's (TS1492 at a binding pattern after TS1491 at
-					// `declare`), as TypeScript's checker reports a variable statement's
-					// modifiers before its declarations (`checkVariableStatement`).
+					// first modifier (#1264), and anywhere a `using` declaration's with a
+					// binding pattern first come after its modifier's (TS1492 after TS1491
+					// at `declare`), as TypeScript's checker reports a variable
+					// statement's modifiers before its declarations
+					// (`checkVariableStatement`).
 					/** @type {CompileError[]} */
 					const held = [];
 					const declaration = this.#holdingErrors(held, parse);
@@ -9873,7 +9881,12 @@ export function TSRXPlugin(config) {
 					this.#raiseModifierErrors(modifiers, declaration, context, pending ? 'inner' : 'outer');
 					return declaration;
 				};
-				if (read.declaration !== 'using' && read.declaration !== 'await') return parse();
+				if (
+					(read.declaration !== 'using' && read.declaration !== 'await') ||
+					!this.#usingPatternAhead()
+				) {
+					return parse();
+				}
 				// A `using` declaration's errors come after its modifiers' (see
 				// `#parseModifiedStatement`).
 				/** @type {CompileError[]} */
@@ -16858,6 +16871,22 @@ export function TSRXPlugin(config) {
 							!(error.code === 'TS1492' && deferred_errors.has(error)),
 					),
 				);
+			}
+
+			/**
+			 * Whether the `using` of a declaration after modifiers (see
+			 * `#readModifiedDeclaration`) comes in the next few tokens before a
+			 * binding pattern, its first declarator's.
+			 */
+			#usingPatternAhead() {
+				for (let ahead = 0; ahead < 8; ahead++) {
+					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
+					if (token.type === tt.name && token.value === 'using') {
+						return this.lookahead(ahead + 1).type === tt.braceL;
+					}
+					if (token.type === tt.eof) return false;
+				}
+				return false;
 			}
 
 			/**

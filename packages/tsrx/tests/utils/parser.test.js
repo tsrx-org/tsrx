@@ -1012,6 +1012,12 @@ describe('TSRX parser', () => {
 				parseModule(source, 'App.tsrx', { collect: true, errors });
 				expect(errors[0]?.code, source).toBe('TS17021');
 			}
+			// And a strict parse throws it, before a checker error after it in a
+			// speculative parse, when the statement stops at a syntax error.
+			const speculative = `declare using x = <T,>(a = <A${B}u0062 />, a) => 0 x;`;
+			expect(() => parseModule(speculative, 'App.tsrx')).toThrow(
+				expect.objectContaining({ code: 'TS17021', pos: speculative.indexOf('A') }),
+			);
 
 			// TypeScript checks no name in a pattern it reports (TS2480 for `let`).
 			/** @type {CompileError[]} */
@@ -1024,7 +1030,10 @@ describe('TSRX parser', () => {
 				'async function f() {\n\tfor (await\n\tusing of = null; ; ) {}\n}',
 				'VariableDeclaration',
 			);
-			expect([head?.kind, head?.declarations[0].id.name]).toEqual(['await using', 'of']);
+			expect([head?.kind, /** @type {any} */ (head?.declarations[0].id).name]).toEqual([
+				'await using',
+				'of',
+			]);
 			// And `using of` before `=`, `:` or `;` on any line, where acorn took it
 			// only before `=` on its line.
 			for (const source of [
@@ -1032,7 +1041,10 @@ describe('TSRX parser', () => {
 				'for (using\n\tof = null; ; ) {}',
 			]) {
 				const [typed] = find_all(source, 'VariableDeclaration');
-				expect([typed?.kind, typed?.declarations[0].id.name], source).toEqual(['using', 'of']);
+				expect([typed?.kind, /** @type {any} */ (typed?.declarations[0].id).name], source).toEqual([
+					'using',
+					'of',
+				]);
 			}
 		});
 	});
