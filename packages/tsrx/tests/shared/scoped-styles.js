@@ -2129,6 +2129,32 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('reads a comment inside a selector as CSS does', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							.wrap /* c */ .icon { color: red; }
+							.wrap/* c */.on { color: blue; }
+							.wrap /* c */ > /* d */ .icon { color: green; }
+							.wrap /* c */ :global.dark { color: gray; }
+						</style>
+						<div ${attr}="wrap on"><i ${attr}="icon" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+			const hash = hashes_of(cssHash)[0];
+
+			// A comment between two compounds, with whitespace, was a syntax error.
+			expect(css).toContain(`.wrap.${hash} /* c */ .icon:where(.${hash}) { color: red; }`);
+			// With none, it joins the compound, as `.wrap.on` would.
+			expect(css).toContain(`.wrap/* c */.on.${hash} { color: blue; }`);
+			expect(css).toContain(`.wrap.${hash} /* c */ > /* d */ .icon:where(.${hash}) {`);
+			// A lone :global after one attaches to the compound before, as without.
+			expect(css).toContain(`.wrap.${hash}.dark { color: gray; }`);
+		});
+
 		it('leaves the compounds after a bare :global later in a selector unscoped in a theme too', () => {
 			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
 			const cases = [

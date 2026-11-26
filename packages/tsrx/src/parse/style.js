@@ -889,14 +889,14 @@ function pseudo_class_name(name) {
  */
 function read_combinator(parser) {
 	const start = parser.index;
-	parser.allow_whitespace();
+	const spaced = allow_selector_comments(parser);
 
 	const index = parser.index;
 	const name = parser.read(REGEX_COMBINATOR);
 
 	if (name) {
 		const end = parser.index;
-		parser.allow_whitespace();
+		allow_selector_comments(parser);
 
 		return {
 			type: 'Combinator',
@@ -906,7 +906,7 @@ function read_combinator(parser) {
 		};
 	}
 
-	if (parser.index !== start) {
+	if (spaced) {
 		return {
 			type: 'Combinator',
 			name: ' ',
@@ -915,7 +915,30 @@ function read_combinator(parser) {
 		};
 	}
 
+	// A comment with no whitespace around it is no combinator: `.a/* c */.b`
+	// is `.a.b`, and the selector goes on after it.
 	return null;
+}
+
+/**
+ * Skip the whitespace and the comments between the parts of a selector.
+ * A comment is no whitespace: `.a/* c *\/.b` is `.a.b`, `.a /* c *\/.b` is
+ * `.a .b`.
+ *
+ * @param {Parser} parser
+ * @returns {boolean} whether any of it was whitespace
+ */
+function allow_selector_comments(parser) {
+	let spaced = false;
+	while (parser.index < parser.template.length) {
+		const start = parser.index;
+		parser.allow_whitespace();
+		spaced ||= parser.index > start;
+		if (!parser.eat('/*')) break;
+		parser.read_until(REGEX_COMMENT_CLOSE);
+		parser.eat('*/', true);
+	}
+	return spaced;
 }
 
 /**
