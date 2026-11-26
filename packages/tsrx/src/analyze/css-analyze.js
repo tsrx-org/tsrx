@@ -27,6 +27,25 @@ function is_global_pseudo_class(simple_selector) {
 	return simple_selector.type === 'PseudoClassSelector' && simple_selector.name === 'global';
 }
 
+/** The pseudo-elements CSS also reads with one colon, which parse as pseudo-classes. */
+const LEGACY_PSEUDO_ELEMENTS = new Set(['before', 'after', 'first-line', 'first-letter']);
+
+/**
+ * True if is a pseudo-element: `::before`, or one CSS also reads with one
+ * colon, in any case and with escapes (`:before`, `:AFTER`)
+ * @param {AST.CSS.SimpleSelector} simple_selector
+ */
+function is_pseudo_element(simple_selector) {
+	return (
+		simple_selector.type === 'PseudoElementSelector' ||
+		(simple_selector.type === 'PseudoClassSelector' &&
+			simple_selector.args === null &&
+			LEGACY_PSEUDO_ELEMENTS.has(
+				unescape_css(simple_selector.name).replace(/[A-Z]/g, (letter) => letter.toLowerCase()),
+			))
+	);
+}
+
 /**
  * True if is `:global(...)` or `:global` and no pseudo class that is scoped.
  * @param {AST.CSS.RelativeSelector} relative_selector
@@ -895,13 +914,11 @@ export function analyze_css(css, options = {}) {
 
 			// So a `:global(...)` with a combinator between other selectors of a
 			// compound (`.a:global(.b c).d`) gives `.a.b c.d`, `.a` and `.d` on two
-			// elements, where the check for unused CSS matches both on one. Other
-			// `:global(...)` join the global part, and a pseudo-element belongs to
-			// the last element either way.
+			// elements, where a component's check for unused CSS matches both on
+			// one. Other `:global(...)` join the global part, and a pseudo-element
+			// belongs to the last element either way.
 			for (const { selectors } of node.children) {
-				const pseudo_element = selectors.findIndex(
-					(selector) => selector.type === 'PseudoElementSelector',
-				);
+				const pseudo_element = selectors.findIndex(is_pseudo_element);
 				const compound = pseudo_element === -1 ? selectors : selectors.slice(0, pseudo_element);
 				for (let i = 0; i < compound.length; i++) {
 					const selector = compound[i];

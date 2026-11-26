@@ -1408,6 +1408,10 @@ describe('scoped style analysis', () => {
 				['.wrap:global(.y):global(.x i):global(.z).icon { color: red; }', ':global(.x i)'],
 				['.k .wrap:global(.x ~ i).icon .m { color: red; }', ':global(.x ~ i)'],
 				['.p:has(> .wrap:global(.x i).icon) { color: red; }', ':global(.x i)'],
+				['.wrap:global(.x i).icon:before { content: "x"; }', ':global(.x i)'],
+				// The same spelling where nothing is scoped, as for the other placement errors.
+				[':global { .wrap:global(.x i).icon { color: red; } }', ':global(.x i)'],
+				[':root:global(.x i).icon { color: red; }', ':global(.x i)'],
 			];
 			for (const [css, anchor] of cases) {
 				const source = `const t = <style>${css}</style>;`;
@@ -1447,6 +1451,10 @@ describe('scoped style analysis', () => {
 				'.p { :global(> i).icon { color: red; } }',
 				'.wrap:global(.x i)::before { content: "x"; }',
 				'.wrap:global(.x i)::before:hover { content: "x"; }',
+				'.wrap:global(.x i):before { content: "x"; }',
+				'.wrap:global(.x i):AFTER { content: "x"; }',
+				'.wrap:global(.x i):first-l\\69ne { color: red; }',
+				'.wrap:global(.x i):first-letter:hover { color: red; }',
 				':global(.y):global(.x i).icon { color: red; }',
 				'.wrap:global(.x i):global(.y) { color: red; }',
 				'.wrap:global(.x).icon { color: red; }',
