@@ -50,6 +50,7 @@ const BROKEN_MARKUP_CODES = new Set([
  * (`public class A {}`), `readonly`, `accessor` or `async` where they can't
  * appear, `async` with `declare` or in a `declare` context (TS1040),
  * `declare` before a `using` declaration, a binding pattern in one (TS1492),
+ * one before `in` (`for (using x in y)`, TS1493 and TS1494),
  * `import.<name>` other than `import.meta`, or a call of it other than
  * `import.defer()` or `import.source()` (TS17012, TS18061), a default or
  * named binding in a deferred import (`import defer a from "m"`, TS18058 and
@@ -85,6 +86,8 @@ const REJECTED_CODES = new Set([
 	'TS1491',
 	'TS1495',
 	'TS1492',
+	'TS1493',
+	'TS1494',
 	'TS17012',
 	'TS18061',
 	'TS18058',
