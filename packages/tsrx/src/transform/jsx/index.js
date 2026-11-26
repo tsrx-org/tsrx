@@ -6803,17 +6803,26 @@ function is_recorded_jump(node) {
 }
 
 /**
- * Whether only whitespace comes before `offset` on its line of `source`.
+ * The text of `source` on the line of `offset` before it, with its comments
+ * left out.
  * @param {string} source
  * @param {number} offset
- * @returns {boolean}
+ * @param {AST.CommentWithLocation[]} comments
+ * @returns {string}
  */
-function starts_its_line(source, offset) {
-	const line_start = Math.max(
-		source.lastIndexOf('\n', offset - 1),
-		source.lastIndexOf('\r', offset - 1),
-	);
-	return source.slice(line_start + 1, offset).trim() === '';
+function code_before_on_line(source, offset, comments) {
+	let line_start = offset;
+	while (line_start > 0 && !/[\n\r\u2028\u2029]/.test(source[line_start - 1])) line_start--;
+	let text = '';
+	let at = line_start;
+	for (const comment of comments) {
+		const start = /** @type {number} */ (comment.start);
+		const end = /** @type {number} */ (comment.end);
+		if (end <= line_start || start >= offset) continue;
+		text += source.slice(at, Math.max(at, start));
+		at = Math.max(at, end);
+	}
+	return text + source.slice(at, offset);
 }
 
 /**
@@ -6838,23 +6847,34 @@ function starts_its_line(source, offset) {
  * `break` in an `@switch` case that a target lowers to a `switch` statement,
  * so the code after it narrows as it did. In the editor's code, so does one
  * that starts the line a TypeScript `@ts-expect-error` or `@ts-ignore`
- * comment covers: the comment takes TypeScript's report of it, and would be
- * unused (TS2578) beside the loop. Code before a jump on its line may be
- * printed apart from it, so such a jump still gets a loop. The build's code
- * leaves the comments out, so a jump there always does.
+ * comment on a line of its own covers: the comment takes TypeScript's report
+ * of it, and would be unused (TS2578) beside the loop. Code before a jump on
+ * its line, apart from comments and empty statements, may be printed apart
+ * from it, so such a jump still gets a loop. The build's code leaves the
+ * comments out, so a jump there always does.
  * @param {AST.Program} program
  * @param {TransformContext} transform_context
  * @returns {AST.Program}
  */
 function contain_reported_jumps_without_target(program, transform_context) {
 	if (!transform_context.errors?.length) return program;
-	// The lines a TypeScript `@ts-expect-error` or `@ts-ignore` comment covers,
-	// in the editor's code, which keeps the comments.
+	// The lines that a TypeScript `@ts-expect-error` or `@ts-ignore` comment
+	// covers in the editor's code. Only a comment on a line of its own stays
+	// before the code it covers there; the build's code leaves them all out.
 	const source = transform_context.source;
+	const comments = transform_context.comments ?? [];
 	const directive_lines = new Set(
 		transform_context.typeOnly
-			? (transform_context.comments ?? [])
-					.filter(is_ts_suppression_directive)
+			? comments
+					.filter(
+						(comment) =>
+							is_ts_suppression_directive(comment) &&
+							code_before_on_line(
+								source,
+								/** @type {number} */ (comment.start),
+								comments,
+							).trim() === '',
+					)
 					.map((comment) => get_directive_line(comment, source))
 			: [],
 	);
@@ -6876,7 +6896,9 @@ function contain_reported_jumps_without_target(program, transform_context) {
 						!is_recorded_jump(node) ||
 						(node.loc &&
 							directive_lines.has(node.loc.start.line) &&
-							starts_its_line(source, /** @type {number} */ (node.start)))
+							/^[\s;]*$/.test(
+								code_before_on_line(source, /** @type {number} */ (node.start), comments),
+							))
 					) {
 						return node;
 					}

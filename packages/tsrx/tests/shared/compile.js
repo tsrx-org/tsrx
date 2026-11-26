@@ -765,6 +765,26 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 				'\t// @ts-expect-error\n\tconst n: number = "no"; continue;',
 				'contained',
 			],
+			[
+				'a comment over a comment before the jump',
+				'\t// @ts-expect-error\n\t/* why */ continue;',
+				'kept',
+			],
+			[
+				'a comment over an empty statement before the jump',
+				'\t// @ts-expect-error\n\t; continue;',
+				'kept',
+			],
+			[
+				"a comment after code on its line, which the editor's code leaves out",
+				'\tlet a = 1; // @ts-expect-error\n\tcontinue;',
+				'contained',
+			],
+			[
+				'a comment before a line separator',
+				`\t// @ts-expect-error${String.fromCharCode(0x2028)}\tcontinue;`,
+				'kept',
+			],
 		])('keeps a jump after %s only where the directive covers it', (_, body, outcome) => {
 			const source = `function f() {\n${body}\n}\nexport const after = 1;\n`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
@@ -784,6 +804,10 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 		it.each([
 			['before other code', 'function f() {\n\tthrow 1;\n\tcontinue;\n\tf();\n}'],
 			['as the last statement', 'function f() {\n\tthrow 1;\n\tcontinue;\n}'],
+			[
+				'after a comment that reads like the end of the loop',
+				'function f() {\n\tthrow 1;\n\t/** while (false); */\n\tcontinue;\n}',
+			],
 		])(
 			"maps TypeScript's unreachable code from a jump in a loop of its own, %s, to the jump",
 			(_, code) => {

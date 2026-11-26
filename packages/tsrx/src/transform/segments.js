@@ -1067,13 +1067,19 @@ export function convert_source_map_to_mappings(
 		if (!has_location(node)) return;
 		const start = generated_offset_for_text(node.loc.start, 'do');
 		if (start === undefined) return;
+		// The jump's keyword, its `;` and the loop's tail follow, with only
+		// whitespace and comments between them.
+		const keyword = node.body.type === 'BreakStatement' ? 'break' : 'continue';
+		let at = skip_trivia(generated_code, start + 'do'.length);
+		if (!generated_code.startsWith(keyword, at)) return;
+		at = skip_trivia(generated_code, at + keyword.length);
+		if (generated_code[at] === ';') at = skip_trivia(generated_code, at + 1);
 		const tail = 'while (false);';
-		const end = generated_code.indexOf(tail, start);
-		if (end === -1) return;
+		if (!generated_code.startsWith(tail, at)) return;
 		mappings.push({
 			sourceOffsets: [node.start, node.end],
 			lengths: [0, 0],
-			generatedOffsets: [start, end + tail.length],
+			generatedOffsets: [start, at + tail.length],
 			generatedLengths: [0, 0],
 			data: { ...mapping_data_verify_only, customData: {} },
 		});
@@ -4288,6 +4294,31 @@ function add_diagnostic_mappings(
 	}
 
 	mappings.unshift(...diagnostic_mappings);
+}
+
+/**
+ * The offset of the first character at or after `offset` in `code` that is
+ * neither whitespace nor in a comment.
+ * @param {string} code
+ * @param {number} offset
+ * @returns {number}
+ */
+function skip_trivia(code, offset) {
+	let at = offset;
+	while (at < code.length) {
+		if (regex_whitespace.test(code[at])) {
+			at++;
+		} else if (code.startsWith('//', at)) {
+			const line_end = code.slice(at).search(/[\n\r\u2028\u2029]/);
+			at = line_end === -1 ? code.length : at + line_end;
+		} else if (code.startsWith('/*', at)) {
+			const close = code.indexOf('*/', at + 2);
+			at = close === -1 ? code.length : close + 2;
+		} else {
+			break;
+		}
+	}
+	return at;
 }
 
 /**
