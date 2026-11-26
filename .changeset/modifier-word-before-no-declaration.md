@@ -1,7 +1,0 @@
----
-'@tsrx/core': minor
----
-
-`export`, `async` and `abstract` before something TypeScript reads no declaration from now fail with TypeScript's errors. `export foo;` (also `export 1;`, `export async foo;`, `export declare foo;`, and the same in a block or a namespace) is TS1128 `Declaration or statement expected.` at `export`, where the compiler reported TS1012 `Unexpected token` after it, TS1128 at the name after `export declare`, or TS1184 in a block. `async foo;` and `abstract foo;` are TS1434 `Unexpected keyword or identifier.` on the word, which TypeScript reads as a name there, where the compiler reported TS1012 at the token after the name, or at `abstract`. Before them, `declare` is the name `declare` with no error after it, and the next statement starts at the word, as in TypeScript: `declare export foo;` is TS1128 at `export` (it was TS1005 `';' expected.`), and `declare async foo;` and `declare abstract foo;` are TS1434. A name written with an escape (`\u0061sync foo;`) gets TS1434 as the name it spells does, and TS1434, TS1435 and TS1440 after a name now cover only the name, as in TypeScript, where the editor drew them to the end of the next token.
-
-Migration: `export declare @dec class A {}`, which compiled to `@dec export declare class A {}`, now fails with TS1128, as in TypeScript. Write the decorator before `declare` (`export @dec declare class A {}`) or before `export`, which compile to the same output.

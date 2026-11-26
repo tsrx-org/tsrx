@@ -1,5 +1,12 @@
 # @tsrx/intellij-plugin
 
+## 0.0.106
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tsrx/language-server@0.7.16
+
 ## 0.0.105
 
 ### Patch Changes

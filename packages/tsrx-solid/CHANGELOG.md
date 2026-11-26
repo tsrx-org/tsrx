@@ -1,5 +1,63 @@
 # @tsrx/solid
 
+## 0.4.16
+
+### Patch Changes
+
+- [#1513](https://github.com/tsrx-org/tsrx/pull/1513)
+  [`8755f2c`](https://github.com/tsrx-org/tsrx/commit/8755f2c531b09c163681df6c42d38176ca443df0)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `break` or `continue`
+  that the compiler reports, and that nothing in the compiled code can take, now
+  gets a loop of its own there (`do break; while (false);`) when collecting and in
+  the editor. Every target runs a template body in a function, so TypeScript
+  reported such a jump again in the editor, as `TS1107`, beside the error already
+  shown for it: a nested `break` in an `@switch` case on Solid beside `TSRX2008`,
+  a jump in an `@for` body beside `TSRX2006` or `TSRX2007`, one in an `@if` body
+  in a loop beside `TSRX2003` or `TSRX2004`, one in an `@try` body beside
+  `TSRX2036` or `TSRX2037`, and one in a template outside a function or after a
+  label that isn't a loop's beside the parser's `TS1104`, `TS1105` or `TS1115`.
+  The editor no longer shows `TS1107` beside these errors, and a collecting
+  compile's output parses, unless it has a `continue` to a label around it that
+  isn't a loop's, which TypeScript reports as the parser does (`TS1115`). A
+  reported jump the compiled code can take, such as a nested `break` in a case
+  that React, Preact, Vue and Hono compile to a `switch` statement, stays as
+  written. A `// @ts-expect-error` over such a jump now has nothing to suppress
+  and is reported as unused (`TS2578`), beside the jump's error. The strict
+  compile still throws the same error.
+
+- [#1502](https://github.com/tsrx-org/tsrx/pull/1502)
+  [`b721193`](https://github.com/tsrx-org/tsrx/commit/b7211934e8774fa49a0d969a08a261bbf1d71d0b)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `break` or `continue`
+  with no target, such as `function f() { continue; }`, a `continue` right in an
+  `@switch` case, or a `break` in an `@if` body with no loop around it, is now
+  recorded when collecting and in the editor instead of stopping the parse, as
+  TypeScript reports it from its checker (TS1104, TS1105, TS1107, TS1115, TS1116).
+  Before, `compile_to_volar_mappings` threw on it, so the editor lost the whole
+  file's virtual code and every other diagnostic in it, and Prettier could not
+  format the file. The error covers the `break` or `continue` keyword and is
+  reported once: the template checks no longer add `TSRX2004` or `TSRX2037` beside
+  it. The jump stays in the output, and where TypeScript reports the same error at
+  the same place, as in a function or a component, the editor shows it once. The
+  strict compile still throws it, and ESLint still reports it as a parsing error.
+- Updated dependencies
+  [[`ae94a31`](https://github.com/tsrx-org/tsrx/commit/ae94a31f4e3088b0eec46fd31e2c7a44da6e8813),
+  [`8755f2c`](https://github.com/tsrx-org/tsrx/commit/8755f2c531b09c163681df6c42d38176ca443df0),
+  [`20e7155`](https://github.com/tsrx-org/tsrx/commit/20e7155b3b28ad01d313150fbc851a290c4e752c),
+  [`c7beeec`](https://github.com/tsrx-org/tsrx/commit/c7beeec9538fd49a81ffba077f9d6c7e440fc829),
+  [`e79b5ac`](https://github.com/tsrx-org/tsrx/commit/e79b5aca06cbd1bc85268d3b2d83fd35314a2a9f),
+  [`9ea9088`](https://github.com/tsrx-org/tsrx/commit/9ea9088ccd951182bf76c1ebccdaefb3ed5f5830),
+  [`fac56bc`](https://github.com/tsrx-org/tsrx/commit/fac56bc2c5cdcb45b198f94a50a58808113a90e1),
+  [`78557b4`](https://github.com/tsrx-org/tsrx/commit/78557b4544f4d146db4f8e1b79db3ae70f07a20e),
+  [`9e738d5`](https://github.com/tsrx-org/tsrx/commit/9e738d5c26cfb250f4973d2a514a1d567a77723d),
+  [`1bf9f5b`](https://github.com/tsrx-org/tsrx/commit/1bf9f5b5146a02d632075a7bd341aa620ac95a82),
+  [`d1751c1`](https://github.com/tsrx-org/tsrx/commit/d1751c134c9d2f6b1e3aa163c83935158e600d88),
+  [`1873071`](https://github.com/tsrx-org/tsrx/commit/1873071db778c2dd7dbcb93f3dbe9a9e591eba35),
+  [`b721193`](https://github.com/tsrx-org/tsrx/commit/b7211934e8774fa49a0d969a08a261bbf1d71d0b),
+  [`a572240`](https://github.com/tsrx-org/tsrx/commit/a5722401743376f37fb851ce15c3c9f0065570ab),
+  [`81e9fa8`](https://github.com/tsrx-org/tsrx/commit/81e9fa827c4525715dceda61d6630561110524c8),
+  [`252593b`](https://github.com/tsrx-org/tsrx/commit/252593b7a3596634a2c05bac63ef37bd52b0c9d3)]:
+  - @tsrx/core@0.11.0
+
 ## 0.4.15
 
 ### Patch Changes

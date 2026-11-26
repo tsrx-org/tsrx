@@ -1,5 +1,19 @@
 # @tsrx/nvim-plugin
 
+## 0.0.102
+
+### Patch Changes
+
+- [#1515](https://github.com/tsrx-org/tsrx/pull/1515)
+  [`5ff06ba`](https://github.com/tsrx-org/tsrx/commit/5ff06baaf9e216dda90db5519d5d570fe017dc88)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The tree-sitter grammar
+  now reads a Unicode escape in a name (`\u0061`, `\u{61}`), as
+  tree-sitter-javascript and TypeScript do. A tag in children whose name starts
+  with one (`<\u0049nner n={5} />`), which the scanner opens as a tag since the
+  compiler reads one there, is now a `jsx_self_closing_element` with its name and
+  attributes, where it was an `ERROR` node. So is a declaration's name written
+  with an escape (`const \u0061 = 1;`).
+
 ## 0.0.101
 
 ### Patch Changes

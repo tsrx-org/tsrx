@@ -1,6 +1,0 @@
----
-'@tsrx/core': patch
-'@tsrx/solid': patch
----
-
-A `break` or `continue` that the compiler reports, and that nothing in the compiled code can take, now gets a loop of its own there (`do break; while (false);`) when collecting and in the editor. Every target runs a template body in a function, so TypeScript reported such a jump again in the editor, as `TS1107`, beside the error already shown for it: a nested `break` in an `@switch` case on Solid beside `TSRX2008`, a jump in an `@for` body beside `TSRX2006` or `TSRX2007`, one in an `@if` body in a loop beside `TSRX2003` or `TSRX2004`, one in an `@try` body beside `TSRX2036` or `TSRX2037`, and one in a template outside a function or after a label that isn't a loop's beside the parser's `TS1104`, `TS1105` or `TS1115`. The editor no longer shows `TS1107` beside these errors, and a collecting compile's output parses, unless it has a `continue` to a label around it that isn't a loop's, which TypeScript reports as the parser does (`TS1115`). A reported jump the compiled code can take, such as a nested `break` in a case that React, Preact, Vue and Hono compile to a `switch` statement, stays as written. A `// @ts-expect-error` over such a jump now has nothing to suppress and is reported as unused (`TS2578`), beside the jump's error. The strict compile still throws the same error.

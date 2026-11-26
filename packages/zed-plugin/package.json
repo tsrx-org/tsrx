@@ -1,6 +1,6 @@
 {
   "name": "@tsrx/zed-plugin",
-  "version": "0.1.20",
+  "version": "0.1.21",
   "description": "Zed editor support for TSRX",
   "private": true,
   "main": "index.js",
@@ -15,7 +15,7 @@
   "author": "Dominic Gannaway",
   "license": "MIT",
   "config": {
-    "@tsrx/language-server": "0.7.15"
+    "@tsrx/language-server": "0.7.16"
   },
   "packageManager": "pnpm@11.15.1",
   "dependencies": {
