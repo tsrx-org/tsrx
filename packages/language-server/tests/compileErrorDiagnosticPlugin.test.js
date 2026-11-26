@@ -569,34 +569,53 @@ export {};`,
 		]);
 	});
 
-	// The parser records a `break` or `continue` with no target over its keyword.
-	// TypeScript reports the same code at the same start on the editor's code,
-	// so the editor shows it once, and the parser's error shows when
-	// TypeScript's validation is off.
+	// The parser records a `break` or `continue` with no target over its keyword,
+	// and the editor's code leaves it out, so TypeScript doesn't report it again
+	// beside it, with the same code or, where the template runs in a function,
+	// as TS1107.
 	it.each([
 		[
 			'CaseContinue',
 			'export function App() @{\n\t<div>@switch (1) { @case 1: { continue; } @default: { <i /> } }</div>\n}\n',
 			'continue',
+			'TS1107',
 		],
 		[
 			'CaseNestedContinue',
 			'export function App({ x }: { x: boolean }) @{\n\t<div>@switch (1) { @case 1: { if (x) continue; <b /> } @default: { <i /> } }</div>\n}\n',
 			'continue',
+			'TS1107',
 		],
 		[
 			'IfBreak',
 			'export function App({ x }: { x: boolean }) @{\n\t<div>@if (x) { break; }</div>\n}\n',
 			'break',
+			'TS1107',
 		],
-		['FunctionContinue', 'function f() {\n\tcontinue;\n}\nexport {};\n', 'continue'],
+		['FunctionContinue', 'function f() {\n\tcontinue;\n}\nexport {};\n', 'continue', 'TS1107'],
+		[
+			'ModuleIfBreak',
+			'declare const s: number;\nexport const v = <div>@if (s) { break; }</div>;\n',
+			'break',
+			'TS1105',
+		],
+		[
+			'LabelNotLoop',
+			'export function App() {\n\tL: {\n\t\treturn <div>@if (true) { continue L; }</div>;\n\t}\n}\n',
+			'continue',
+			'TS1115',
+		],
 	])(
 		'shows the jump with no target in %s once, also with validation off',
-		async (name, source, keyword) => {
+		async (name, source, keyword, code) => {
 			const offset = source.indexOf(keyword);
+			const jumps = (/** @type {TextDocument} */ document, /** @type {Diagnostic[]} */ list) =>
+				['TS1104', 'TS1105', 'TS1107', 'TS1115', 'TS1116'].flatMap((jump_code) =>
+					reported(document, list, jump_code).map((found) => ({ code: jump_code, ...found })),
+				);
 			const on = await editor_diagnostics_for(name, source);
-			expect(reported(on.document, on.diagnostics, 'TS1107')).toEqual([
-				{ source: 'ts', text: `${keyword};`, offset },
+			expect(jumps(on.document, on.diagnostics)).toEqual([
+				{ code, source: 'TSRX', text: keyword, offset },
 			]);
 
 			const off = await editor_diagnostics_for(`${name}Off`, source, {
@@ -604,8 +623,47 @@ export {};`,
 					return /** @type {any} */ (section === 'tsrx.validate.enable' ? false : undefined);
 				},
 			});
-			expect(reported(off.document, off.diagnostics, 'TS1107')).toEqual([
-				{ source: 'TSRX', text: keyword, offset },
+			expect(jumps(off.document, off.diagnostics)).toEqual([
+				{ code, source: 'TSRX', text: keyword, offset },
+			]);
+		},
+	);
+
+	// A jump a template check reports gets a loop of its own in the editor's
+	// code where the template runs in a function, so TypeScript adds no TS1107
+	// beside it, and its keyword keeps the error on it, also on its own line.
+	it.each([
+		[
+			'ForBreak',
+			'export function App({ x }: { x: boolean }) @{\n\t<ul>@for (const y of [1]) { if (x) break; <li /> }</ul>\n}\n',
+			'TSRX2006',
+			'break;',
+		],
+		[
+			'ForContinueOwnLine',
+			'export function App({ items }: { items: number[] }) @{\n\t<ul>\n\t\t@for (const z of items) {\n\t\t\tif (z) {\n\t\t\t\tcontinue;\n\t\t\t}\n\t\t\t<li />\n\t\t}\n\t</ul>\n}\n',
+			'TSRX2007',
+			'continue;',
+		],
+		[
+			'IfBreakInLoop',
+			'export function App({ x }: { x: boolean }) {\n\tfor (;;) {\n\t\treturn <div>@if (x) { break; }</div>;\n\t}\n}\n',
+			'TSRX2003',
+			'break;',
+		],
+		[
+			'IfBreakInLoopOwnLine',
+			'export function App({ x }: { x: boolean }) {\n\tfor (;;) {\n\t\treturn (\n\t\t\t<div>\n\t\t\t\t@if (x) {\n\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t</div>\n\t\t);\n\t}\n}\n',
+			'TSRX2003',
+			'break;',
+		],
+	])(
+		'shows the template error for %s alone, on the jump',
+		async (name, source, code, statement) => {
+			const { document, diagnostics } = await editor_diagnostics_for(name, source);
+			expect(reported(document, diagnostics, 'TS1107')).toEqual([]);
+			expect(reported(document, diagnostics, code)).toEqual([
+				{ source: 'TSRX', text: statement, offset: source.indexOf(statement) },
 			]);
 		},
 	);

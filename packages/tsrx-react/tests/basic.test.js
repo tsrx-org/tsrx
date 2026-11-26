@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { TS_ERRORS } from '@tsrx/core';
+import { TS_ERRORS, TSRX_ERRORS } from '@tsrx/core';
 import { describe, expect, it } from 'vitest';
 import {
 	runSharedAnonymousComponentTests,
@@ -2271,5 +2271,19 @@ describe('destructuring', () => {
 				),
 			).toThrow(/multiple `ref=\{\.\.\.\}` attributes/);
 		});
+	});
+});
+
+describe('@tsrx/react a reported jump in the output', () => {
+	it('keeps a nested `break` in an `@switch` case, which the `switch` statement takes', () => {
+		const source = `export function App({ s, v }: { s: number; v: string | undefined }) @{
+	<div>@switch (s) { @case 1: { if (!v) break; <b>{v.length}</b> } @default: { <i /> } }</div>
+}`;
+		const { code, errors } = compile(source, 'App.tsrx', { collect: true });
+		expect(errors.map((error) => error.code)).toEqual([
+			TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code,
+		]);
+		// The code after it narrows `v` as it did.
+		expect(code).toContain('if (!v) break;');
 	});
 });

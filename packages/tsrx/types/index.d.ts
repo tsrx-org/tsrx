@@ -407,6 +407,8 @@ declare module 'estree' {
 			invalid_tsrx_switch_case_break?: boolean;
 			/** A `break` with no target, which the parser reported (TS1105, TS1107, TS1116), so the template checks don't report it again. */
 			invalid_jump_target?: boolean;
+			/** A `break` the `@if` or `@for` check reported (TSRX2003, TSRX2006), which the output puts in a loop of its own where nothing can take it. */
+			invalid_template_jump?: boolean;
 		};
 	}
 
@@ -416,6 +418,8 @@ declare module 'estree' {
 			invalid_directive_jump?: boolean;
 			/** A `continue` with no target, which the parser reported (TS1104, TS1107, TS1115), so the template checks don't report it again. */
 			invalid_jump_target?: boolean;
+			/** A `continue` the `@if` or `@for` check reported (TSRX2004, TSRX2007), which the output puts in a loop of its own where nothing can take it. */
+			invalid_template_jump?: boolean;
 		};
 	}
 

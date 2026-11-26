@@ -889,8 +889,11 @@ export function createJsxTransform(platform) {
 		// so the ones an authored `await` or `yield` landed in are made async or
 		// generators last. Imports come after, because that can swap which
 		// iterable helper is used.
-		const final_program = suspend_generated_closures(
-			lower_remaining_jsx_code_blocks(expanded, transform_context),
+		const final_program = contain_reported_jumps_without_target(
+			suspend_generated_closures(
+				lower_remaining_jsx_code_blocks(expanded, transform_context),
+				transform_context,
+			),
 			transform_context,
 		);
 		report_deferred_template_yields(final_program, transform_context);
@@ -6339,6 +6342,11 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 	) {
 		return;
 	}
+	if (node.type === 'BreakStatement' || node.type === 'ContinueStatement') {
+		// Marked, so the output gives it a loop of its own where nothing can take
+		// it (see `contain_reported_jumps_without_target`).
+		node.metadata = { ...node.metadata, invalid_template_jump: true };
+	}
 	if (node.type === 'BreakStatement') {
 		error(
 			TSRX_ERRORS.FOR_BREAK_STATEMENT,
@@ -6411,6 +6419,11 @@ function validate_if_body_control_flow(node, transform_context) {
 		(node.metadata?.invalid_directive_jump || node.metadata?.invalid_jump_target)
 	) {
 		return;
+	}
+	if (node.type === 'BreakStatement' || node.type === 'ContinueStatement') {
+		// Marked, so the output gives it a loop of its own where nothing can take
+		// it (see `contain_reported_jumps_without_target`).
+		node.metadata = { ...node.metadata, invalid_template_jump: true };
 	}
 	if (node.type === 'BreakStatement') {
 		error(
@@ -6778,6 +6791,73 @@ function is_loop_statement(node) {
 		(node?.type === 'JSXForExpression' && node.statementType === 'ForInStatement') ||
 		node?.type === 'WhileStatement' ||
 		node?.type === 'DoWhileStatement'
+	);
+}
+
+/**
+ * Whether a `break` or `continue` is already reported: by the parser, as a
+ * jump with no target or a `break` right in an `@switch` case, or by a
+ * template check.
+ * @param {AST.BreakStatement | AST.ContinueStatement} node
+ * @returns {boolean}
+ */
+function is_reported_jump(node) {
+	const metadata = /** @type {AST.BreakStatement['metadata']} */ (node.metadata);
+	return !!(
+		metadata?.invalid_jump_target ||
+		metadata?.invalid_directive_jump ||
+		metadata?.invalid_template_jump ||
+		metadata?.invalid_tsrx_switch_case_break
+	);
+}
+
+/**
+ * Gives each reported `break` or `continue` that nothing in the output can
+ * take a loop of its own: `do break; while (false);`. Every target runs a
+ * template body in a function, so TypeScript would report such a jump again
+ * on the editor's code (TS1107), beside the error already reported for it,
+ * and the output wouldn't parse. In its own loop the jump keeps its keyword,
+ * which the editor maps the error to, and only ends that loop, which
+ * TypeScript's control flow reads as it reads a jump with no target: as no
+ * jump. Its label, which nothing around it has, goes. A reported jump with
+ * a target in the output, such as a nested `break` in an `@switch` case that
+ * a target lowers to a `switch` statement, stays as it is, so the code after
+ * it narrows as it did. Only a compile that collects its errors has output
+ * with a reported jump.
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {AST.Program}
+ */
+function contain_reported_jumps_without_target(program, transform_context) {
+	if (!transform_context.errors?.length) return program;
+	/** @typedef {{ label: string | null, loop: boolean }} OutputJumpTarget */
+	return /** @type {AST.Program} */ (
+		walk(/** @type {AST.Node} */ (program), /** @type {OutputJumpTarget[]} */ ([]), {
+			_(node, { next, state }) {
+				if (node.type === 'BreakStatement' || node.type === 'ContinueStatement') {
+					const label = node.label?.name ?? null;
+					const loop = node.type === 'ContinueStatement';
+					// A label around it in the output names the jump's target, also
+					// for a `continue` to a label that isn't a loop's, which TypeScript
+					// reports as the parser does (TS1115).
+					const has_target = state.some(
+						(target) => target.label === label && (label !== null || !loop || target.loop),
+					);
+					return is_reported_jump(node) && !has_target
+						? b.do_while(b.literal(false), { ...node, label: null })
+						: node;
+				}
+				if (is_function_or_class_boundary(node)) return next([]);
+				if (node.type === 'LabeledStatement') {
+					let body = node.body;
+					while (body.type === 'LabeledStatement') body = body.body;
+					return next([...state, { label: node.label.name, loop: is_loop_statement(body) }]);
+				}
+				if (is_loop_statement(node)) return next([...state, { label: null, loop: true }]);
+				if (node.type === 'SwitchStatement') return next([...state, { label: null, loop: false }]);
+				return next();
+			},
+		})
 	);
 }
 

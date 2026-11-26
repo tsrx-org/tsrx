@@ -665,6 +665,11 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		// which reports a jump with no target.
 		return;
 	}
+	if (current.type === 'BreakStatement' || current.type === 'ContinueStatement') {
+		// Marked, so `@tsrx/core` gives it a loop of its own where nothing in the
+		// output can take it.
+		current.metadata = { ...current.metadata, invalid_template_jump: true };
+	}
 	if (current.type === 'BreakStatement') {
 		error(
 			TSRX_ERRORS.FOR_BREAK_STATEMENT,
@@ -742,6 +747,11 @@ function validate_if_body_control_flow(node, transform_context) {
 		// Reported by `@tsrx/core`'s directive jump check, or by its parser,
 		// which reports a jump with no target.
 		return;
+	}
+	if (current.type === 'BreakStatement' || current.type === 'ContinueStatement') {
+		// Marked, so `@tsrx/core` gives it a loop of its own where nothing in the
+		// output can take it.
+		current.metadata = { ...current.metadata, invalid_template_jump: true };
 	}
 	if (current.type === 'BreakStatement') {
 		error(

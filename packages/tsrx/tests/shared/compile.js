@@ -464,6 +464,24 @@ function virtual_semantic_diagnostics(code, extra_options = {}) {
 	return program.getSemanticDiagnostics(source_file);
 }
 
+/** TypeScript's codes for a `break` or `continue` with no target. */
+const JUMP_TARGET_CODES = new Set([1104, 1105, 1107, 1115, 1116]);
+
+/**
+ * TypeScript's diagnostics for a `break` or `continue` with no target in the
+ * editor's code, as `TS<code>` with the jump's text.
+ * @param {string} code
+ * @returns {string[]}
+ */
+function jump_diagnostics(code) {
+	return virtual_semantic_diagnostics(code)
+		.filter((diagnostic) => JUMP_TARGET_CODES.has(diagnostic.code))
+		.map(
+			(diagnostic) =>
+				`TS${diagnostic.code} ${code.slice(diagnostic.start, (diagnostic.start ?? 0) + (diagnostic.length ?? 0))}`,
+		);
+}
+
 /**
  * Shared compile/editor diagnostics. These do not assert source-map structure;
  * they only verify that editor-facing compile entry points collect diagnostics.
@@ -712,32 +730,82 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 				'continue foo;',
 				TS_ERRORS.CONTINUE_LABEL_NOT_LOOP,
 			],
-		])('is recorded once in %s, where TypeScript reports it too', (_, source, statement, error) => {
+		])('is recorded once in %s', (_, source, statement, error) => {
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			const start = source.indexOf(statement);
+			const keyword = statement.startsWith('break') ? 'break' : 'continue';
 			expect(result.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
 				// Over the keyword, which the editor's code maps.
-				[error.code, start, start + (statement.startsWith('break') ? 'break' : 'continue').length],
+				[error.code, start, start + keyword.length],
 			]);
 			expect(result.code).toContain('export const after = 1;');
-			// TypeScript reports the same code on the jump, at the same place, where
-			// the language server leaves the error to it.
-			const reported = virtual_semantic_diagnostics(result.code)
-				.filter((diagnostic) => `TS${diagnostic.code}` === error.code)
-				.map((diagnostic) => {
-					const at = diagnostic.start ?? -1;
-					const mapping = result.mappings.find((candidate) =>
-						candidate.generatedOffsets.some(
-							(offset, i) => offset <= at && at < offset + candidate.lengths[i],
-						),
-					);
-					const i =
-						mapping?.generatedOffsets.findIndex(
-							(offset, j) => offset <= at && at < offset + mapping.lengths[j],
-						) ?? -1;
-					return mapping ? mapping.sourceOffsets[i] + at - mapping.generatedOffsets[i] : null;
-				});
-			expect(reported).toEqual([start]);
+			// The editor's code gives a jump with no target a loop of its own, so
+			// TypeScript doesn't report it again. A `continue` to a label around it
+			// that isn't a loop's keeps it, and TypeScript reports it as the parser
+			// does, where the language server leaves it to TypeScript.
+			expect(jump_diagnostics(result.code)).toEqual(
+				error === TS_ERRORS.CONTINUE_LABEL_NOT_LOOP ? [`${error.code} ${statement}`] : [],
+			);
+		});
+	});
+
+	describe(`[${name}] a jump a template check reports, in the editor`, () => {
+		/** @param {string} body */
+		const in_loop = (body) =>
+			`export function App({ s, x }: { s: number; x: boolean }) {\n\tfor (;;) {\n\t\treturn ${body};\n\t}\n}\nexport const after = 1;\n`;
+		it.each([
+			[
+				'a `break` in an `@if` body',
+				in_loop('<div>@if (x) { break; }</div>'),
+				TSRX_ERRORS.IF_BREAK_STATEMENT,
+			],
+			[
+				'a `continue` in an `@if` body',
+				in_loop('<div>@if (x) { continue; }</div>'),
+				TSRX_ERRORS.IF_CONTINUE_STATEMENT,
+			],
+			[
+				'a `break` in an `@for` body',
+				in_loop('<ul>@for (const y of [1]) { if (x) break; <li /> }</ul>'),
+				TSRX_ERRORS.FOR_BREAK_STATEMENT,
+			],
+			[
+				'a `continue` in an `@for` body',
+				in_loop('<ul>@for (const y of [1]) { if (x) continue; <li /> }</ul>'),
+				TSRX_ERRORS.FOR_CONTINUE_STATEMENT,
+			],
+			[
+				'a nested `break` in an `@switch` case',
+				in_loop('<div>@switch (s) { @case 1: { if (x) break; <b /> } @default: { <i /> } }</div>'),
+				TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT,
+			],
+			[
+				'a `break` in an `@try` body',
+				in_loop('<div>@try { if (x) break; <b /> } @catch (e) { <i /> }</div>'),
+				TSRX_ERRORS.DIRECTIVE_BODY_BREAK,
+			],
+			[
+				'a `continue` in an `@try` body',
+				in_loop('<div>@try { if (x) continue; <b /> } @catch (e) { <i /> }</div>'),
+				TSRX_ERRORS.DIRECTIVE_BODY_CONTINUE,
+			],
+			[
+				'a `break` in an `@if` body at module level',
+				'declare const x: boolean;\nexport const view = <div>@if (x) { break; }</div>;\nexport const after = 1;\n',
+				TS_ERRORS.BREAK_OUTSIDE_LOOP,
+			],
+			[
+				'a `continue` in an `@if` body after a label that is not a loop',
+				'export function App({ x }: { x: boolean }) {\n\tL: {\n\t\treturn <div>@if (x) { continue L; }</div>;\n\t}\n}\nexport const after = 1;\n',
+				TS_ERRORS.CONTINUE_LABEL_NOT_LOOP,
+			],
+		])('is reported once for %s', (_, source, error) => {
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors.map((error) => error.code)).toEqual([error.code]);
+			expect(result.code).toContain('export const after = 1;');
+			// Where the editor's code runs the body in a function, the jump is left
+			// out, so TypeScript reports no TS1107 beside the error.
+			expect(jump_diagnostics(result.code)).toEqual([]);
 		});
 	});
 
