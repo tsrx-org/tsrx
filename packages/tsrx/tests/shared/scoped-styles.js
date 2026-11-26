@@ -1092,6 +1092,33 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`animation: ${hash}-fade/*comment*/ 1s infinite;`);
 		});
 
+		it('reads the value after a space before the colon', () => {
+			const { css, hash } = compile_keyframes(
+				`@keyframes fade ${frames} @keyframes slide ${frames}
+				.a { animation :fade 1s; }
+				.b { animation-name :slide; }
+				.c { animation\n:fade 1s, 2s "slide"; }`,
+			);
+			expect(css).toContain(`animation :${hash}-fade 1s;`);
+			expect(css).toContain(`animation-name :${hash}-slide;`);
+			expect(css).toContain(`animation\n:${hash}-fade 1s, 2s "${hash}-slide";`);
+
+			// As it reads the same declaration without the whitespace.
+			for (const property of ['animation', 'animation-name', '-webkit-animation', 'ANIMATION']) {
+				for (const space of ['\t', '\r\n', '\f', ' \t\n ']) {
+					const spaced = compile_keyframes(
+						`@keyframes fade ${frames} .a { ${property}${space}:fade; }`,
+					);
+					const unspaced = compile_keyframes(`@keyframes fade ${frames} .a { ${property}:fade; }`);
+					expect(
+						spaced.css.replaceAll(spaced.hash, 'H').replace(`${property}${space}:`, `${property}:`),
+						property,
+					).toBe(unspaced.css.replaceAll(unspaced.hash, 'H'));
+					expect(unspaced.css, property).toContain(`${property}:${unspaced.hash}-fade;`);
+				}
+			}
+		});
+
 		it('leaves animation shorthand keywords alone even when local keyframes share their name', () => {
 			const { css, hash } = compile_keyframes(
 				`@keyframes linear ${frames} @keyframes fade ${frames}

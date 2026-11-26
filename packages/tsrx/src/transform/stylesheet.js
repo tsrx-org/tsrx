@@ -779,11 +779,12 @@ const visitors = {
 	Declaration(node, { state }) {
 		const property = node.property && remove_css_prefix(node.property.toLowerCase());
 		if (property === 'animation' || property === 'animation-name') {
-			const tokens = tokenize_css_value(
-				state.code.original,
-				node.start + node.property.length + 1,
-				node.end,
-			);
+			// The value starts after the `:`, which can follow a space
+			// (`animation :spin 1s`).
+			let start = node.start + node.property.length;
+			while (/\s/.test(state.code.original[start])) start += 1;
+			if (state.code.original[start] === ':') start += 1;
+			const tokens = tokenize_css_value(state.code.original, start, node.end);
 
 			for (const token of keyframes_name_tokens(
 				state.code.original,
