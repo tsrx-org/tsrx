@@ -1975,6 +1975,44 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('drops the whitespace around the argument of a :global(...) with its parentheses', () => {
+			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
+			const cases = [
+				// Whitespace at the edges of the argument is no combinator, but it was
+				// one in the output once the parentheses were gone: `.wrap .x.icon`.
+				['.wrap:global( .x).icon', (hash) => `.wrap.x.icon.${hash} {`],
+				['.wrap:global(.x ).icon', (hash) => `.wrap.x.icon.${hash} {`],
+				['.wrap:global(\t.x\n)', (hash) => `.wrap.${hash}.x {`],
+				['.wrap :global( .x )', (hash) => `.wrap.${hash} .x {`],
+				['.wrap:global( div ).icon', (hash) => `.wrap:is(div).icon.${hash} {`],
+				// A comment stays, with no whitespace around it, which makes it none.
+				[
+					'.wrap:global( /* c */ .x /* d */ ).icon',
+					(hash) => `.wrap/* c */.x/* d */.icon.${hash} {`,
+				],
+				// A hex escape at the end of the argument would take the space after
+				// the `)` as its own, which joined the compounds: `.wrap.\31 .icon`.
+				['.wrap:global(.\\31) .icon', (hash) => `.wrap.${hash}.\\31  .icon:where(.${hash}) {`],
+				// One that ends with its own space keeps it.
+				['.wrap:global(.\\31 ).icon', (hash) => `.wrap.\\31 .icon.${hash} {`],
+			];
+			for (const [selector, expected] of cases) {
+				const rule = `${selector} { color: red; }`;
+				const theme = compile(`export const theme = <style>${rule}</style>;`, 'App.tsrx');
+				const component = compile(
+					`export function App() @{
+						<>
+							<style>${rule}</style>
+							<div ${attr}="wrap x icon"><i ${attr}="icon x" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+				expect(theme.css, selector).toContain(expected(hashes_of(theme.cssHash)[0]));
+				expect(component.css, selector).toContain(expected(hashes_of(component.cssHash)[0]));
+			}
+		});
+
 		it('reads a custom property whose value holds {} blocks', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{

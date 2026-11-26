@@ -18,6 +18,8 @@ const regex_css_ident_start = /^(-?([a-zA-Z_\\]|[^\x00-\x7f])|--)/;
 const regex_css_number = /^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i;
 const regex_css_value_word_end = /[\s,'"(]/;
 const regex_css_hex_escape = /[0-9a-fA-F]{1,6}/y;
+// What the selector parser skips as whitespace.
+const regex_whitespace = /\s/;
 
 /** `none` and the CSS-wide keywords, which never name keyframes. */
 const reserved_keyframes_names = new Set([
@@ -478,6 +480,12 @@ function has_global_in_middle(rule) {
  * with the same specificity, where dropping the wrapper gave `.adiv.x`, with
  * another class.
  *
+ * The whitespace around the argument goes too: in `:global( .x)` it is no
+ * combinator, but it would be one without the parentheses, so
+ * `.a:global( .x)` gave `.a .x`. A hex escape that ends the argument gets a
+ * space in place of the `)`, so that it doesn't take the whitespace after it
+ * as its own: `.a:global(.\31) .b` gave `.a.\31 .b`, one compound.
+ *
  * @param {AST.CSS.PseudoClassSelector} selector
  * @param {AST.CSS.Combinator | null} combinator
  * @param {StylesheetRenderState} state
@@ -491,11 +499,70 @@ function remove_global_pseudo_class(selector, combinator, state, after_start = f
 		const start = combinator?.name === ' ' ? combinator.start : selector.start;
 		state.code.update(start, selector.start + ':global'.length, '');
 	} else {
-		const type = after_start ? leading_type_selector(selector.args) : null;
+		const args = selector.args;
+		const source = state.code.original;
+		const type = after_start ? leading_type_selector(args) : null;
 		state.code.update(selector.start, selector.start + ':global('.length, type ? ':is(' : '');
 		if (type) state.code.appendLeft(type.end, ')');
-		state.code.update(selector.end - 1, selector.end, '');
+		remove_whitespace(selector.start + ':global('.length, args.start, state);
+		remove_whitespace(args.end, selector.end - 1, state);
+		const last = args.children.at(-1)?.children.at(-1)?.selectors.at(-1);
+		const space =
+			last !== undefined &&
+			ends_with_hex_escape(source, last) &&
+			regex_whitespace.test(source[selector.end] ?? '');
+		state.code.update(selector.end - 1, selector.end, space ? ' ' : '');
 	}
+}
+
+/**
+ * Drop the whitespace from `start` to `end`, which holds only whitespace and
+ * comments, as the parser reads them there, and keep the comments: one with
+ * no whitespace around it is no combinator.
+ *
+ * @param {number} start
+ * @param {number} end
+ * @param {StylesheetRenderState} state
+ */
+function remove_whitespace(start, end, state) {
+	const source = state.code.original;
+	let i = start;
+	while (i < end) {
+		const close = source.startsWith('/*', i) ? '*/' : source.startsWith('<!--', i) ? '-->' : null;
+		if (close) {
+			const index = source.indexOf(close, i + 2);
+			i = index === -1 ? end : Math.min(index + close.length, end);
+		} else if (regex_whitespace.test(source[i])) {
+			const run = i;
+			while (i < end && regex_whitespace.test(source[i])) i++;
+			state.code.update(run, i, '');
+		} else {
+			i++;
+		}
+	}
+}
+
+/**
+ * Whether the text of `node` ends with a hex escape that no whitespace ends,
+ * so that whitespace right after it would (`\31` in `.\31 .b`).
+ *
+ * @param {string} source
+ * @param {{ start: number, end: number }} node
+ * @returns {boolean}
+ */
+function ends_with_hex_escape(source, node) {
+	let open = false;
+	for (let i = node.start; i < node.end;) {
+		if (source[i] === '\\') {
+			const end = skip_css_escape(source, i);
+			open = /[0-9a-fA-F]/.test(source[i + 1] ?? '') && /[0-9a-fA-F]/.test(source[end - 1]);
+			i = end;
+		} else {
+			open = false;
+			i++;
+		}
+	}
+	return open;
 }
 
 /**

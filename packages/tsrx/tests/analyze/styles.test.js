@@ -1768,6 +1768,30 @@ describe('scoped style analysis', () => {
 			}
 		});
 
+		it('keeps the comment over a pruned selector whole when it drops the whitespace in a :global(...)', () => {
+			for (const minify of [false, true]) {
+				for (const [css, pruned] of [
+					[
+						'.p, .q:global( /* c */ .x /* d */ ).r { color: red; }',
+						'.q:global( /* c */ .x /* d */ ).r',
+					],
+					['.q:global( .x ), .p { color: red; }', '.q:global( .x )'],
+					['.q:global(.\\31) .r, .p { color: red; }', '.q:global(.\\31) .r'],
+				]) {
+					const rendered = render(css, [pruned], minify);
+					if (minify) {
+						expect(strip_hash(rendered), css).toBe('.p { color: red; }');
+					} else {
+						expect(rendered, css).toContain('/* (unused) ');
+						// Only the comments are left of the pruned selector.
+						expect(strip_hash(rendered.replace(/\/\*[\s\S]*?\*\//g, '')), css).toBe(
+							'.p { color: red; }',
+						);
+					}
+				}
+			}
+		});
+
 		it('writes no hash into a pruned selector, even for an argument that matched', () => {
 			/** @type {Array<[css: string, pruned: string, expected: string, minified: string]>} */
 			const cases = [
