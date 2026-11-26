@@ -2217,6 +2217,9 @@ export function runSharedScopedStyleTests({
 							:root > .icon { color: red; }
 							div:root > body { color: blue; }
 							HTML:root > body { color: green; }
+							:root:has(> body) { color: gray; }
+							:ROOT:HAS(> body > .icon) { color: black; }
+							:root:has(> .icon) { color: purple; }
 						</style>
 						<html><body><i ${attr}="icon" /></body></html>
 					</>
@@ -2230,6 +2233,10 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain('/* (unused) :root > .icon');
 			expect(css).toContain('/* (unused) div:root > body');
 			expect(css).toContain(`HTML:root > body.${hash} {`);
+			// So does the argument of its :has(), which looks down from the root.
+			expect(css).toContain(`:root:has(> body.${hash}) {`);
+			expect(css).toContain(`:ROOT:HAS(> body.${hash} > .icon:where(.${hash})) {`);
+			expect(css).toContain('/* (unused) :root:has(> .icon)');
 		});
 
 		it('keeps an & argument of a :root compound, whose state the page may set', () => {

@@ -326,6 +326,57 @@ function is_root(selector) {
 }
 
 /**
+ * The relative selectors to match a selector with, given as `selectors`: in
+ * the `:has()` of a `:root` compound (`:root:has(> body)`), which is
+ * global-like and so never matched itself, the argument looks down from the
+ * root, so it is matched after a `:root` compound, which an `<html>` the
+ * component renders matches. Alone, a `>` in front had nothing to match the
+ * parent with.
+ *
+ * @param {AST.CSS.RelativeSelector[]} selectors
+ * @param {AST.CSS.Node[]} path
+ * @returns {AST.CSS.RelativeSelector[]}
+ */
+function anchor_root_has_argument(selectors, path) {
+	const has = path.at(-2);
+	const compound = path.at(-3);
+	if (
+		selectors.length === 0 ||
+		has?.type !== 'PseudoClassSelector' ||
+		has.name !== 'has' ||
+		compound?.type !== 'RelativeSelector' ||
+		!compound.selectors.some(is_root)
+	) {
+		return selectors;
+	}
+	const [first, ...rest] = selectors;
+	/** @type {AST.CSS.RelativeSelector} */
+	const root = {
+		type: 'RelativeSelector',
+		selectors: [
+			{
+				type: 'PseudoClassSelector',
+				name: 'root',
+				args: null,
+				start: first.start,
+				end: first.start,
+			},
+		],
+		combinator: null,
+		metadata: { is_global: false, is_global_like: true, scoped: false },
+		start: first.start,
+		end: first.start,
+	};
+	return [
+		root,
+		first.combinator
+			? first
+			: { ...first, combinator: create_descendant_combinator(first.start, first.start) },
+		...rest,
+	];
+}
+
+/**
  * Whether a type selector named `name` may match `element`: a dynamic
  * element's tag is only known at runtime.
  *
@@ -1426,7 +1477,9 @@ export function prune_css(css, element, styleClasses, topScopedClasses, regionHa
 
 			const rule = /** @type {AST.CSS.Rule} */ (node.metadata.rule);
 
-			if (apply_selector(selectors, rule, element, BACKWARD)) {
+			if (
+				apply_selector(anchor_root_has_argument(selectors, context.path), rule, element, BACKWARD)
+			) {
 				node.metadata.used = true;
 				unmatched_animation_selectors.get(css)?.delete(node);
 			} else if (rule_has_animation(rule)) {
