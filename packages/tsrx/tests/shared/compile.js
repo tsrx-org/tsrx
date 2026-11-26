@@ -774,6 +774,52 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 		});
 	});
 
+	describe(`[${name}] a return in a template in a class field, in the editor`, () => {
+		it.each([
+			['an `@if` body', '<div>@if (x) { return; }</div>'],
+			[
+				'an `@switch` case',
+				'<div>@switch (x) { @case 1: { return <b />; } @default: { <i /> } }</div>',
+			],
+			[
+				'a nested return in an `@switch` case',
+				'<div>@switch (x) { @case 1: { if (x) return; <b /> } @default: { <i /> } }</div>',
+			],
+			[
+				'a loop in an `@for` body',
+				'<ul>@for (const z of [1]) { for (;;) { return; } <li /> }</ul>',
+			],
+			['an `@try` body', '<div>@try { return <b />; } @catch (e) { <i /> }</div>'],
+			['an `@empty` body', '<ul>@for (const z of []) { <li /> } @empty { return; }</ul>'],
+			['a nested `@{ … }` block', '<div>@{ if (x) return; <b /> }</div>'],
+			['an `@if` used as the value', '@if (x) { return <b />; } @else { <i /> }'],
+		])('in %s gets the error it gets at the top level', (_, template) => {
+			/** @param {string} source */
+			const errors = (source) => {
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				expect(result.code, source).toContain('export const after = 1;');
+				const at = source.indexOf('return');
+				return result.errors.map((error) => [error.code, /** @type {number} */ (error.pos) - at]);
+			};
+			const top_level = errors(
+				`declare const x: any;\nexport const v = ${template};\nexport const after = 1;\n`,
+			);
+			expect(top_level).toHaveLength(1);
+			for (const declaration of [
+				`v = ${template};`,
+				`static v = ${template};`,
+				`static {\n\t\tconst v = ${template};\n\t}`,
+			]) {
+				expect(
+					errors(
+						`declare const x: any;\nexport class A {\n\t${declaration}\n}\nexport const after = 1;\n`,
+					),
+					declaration,
+				).toEqual(top_level);
+			}
+		});
+	});
+
 	describe(`[${name}] class index signatures in virtual code`, () => {
 		it('keeps static on a class index signature', () => {
 			expect_static_index_signatures(
@@ -4413,6 +4459,37 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 
 			expect(code).toContain('function label');
 			expect(code).toContain('label(item)');
+		});
+
+		it('rejects a return in a template in a class field as at the top level, not as TS1108', () => {
+			for (const [template, error] of /** @type {Array<[string, { code: string }]>} */ ([
+				['<div>@if (x) { return; }</div>', TSRX_ERRORS.IF_RETURN_STATEMENT],
+				[
+					'<div>@switch (x) { @case 1: { return <b />; } @default: { <i /> } }</div>',
+					TSRX_ERRORS.SWITCH_CASE_RETURN_STATEMENT,
+				],
+				['<ul>@for (const z of [1]) { return; }</ul>', TSRX_ERRORS.FOR_RETURN_STATEMENT],
+				[
+					'<div>@try { return <b />; } @catch (e) { <i /> }</div>',
+					TSRX_ERRORS.TEMPLATE_RETURN_STATEMENT,
+				],
+			])) {
+				for (const declaration of [
+					`v = ${template};`,
+					`static v = ${template};`,
+					`static { const v = ${template}; }`,
+				]) {
+					const source = `declare const x: any;\nexport class A {\n\t${declaration}\n}\n`;
+					const expected = expect.objectContaining({
+						code: error.code,
+						pos: source.indexOf('return'),
+					});
+					expect(() => compile(source, 'App.tsrx'), declaration).toThrow(expected);
+					expect(compile(source, 'App.tsrx', { collect: true }).errors, declaration).toEqual([
+						expected,
+					]);
+				}
+			}
 		});
 	});
 }

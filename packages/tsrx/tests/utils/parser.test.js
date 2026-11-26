@@ -4106,6 +4106,68 @@ foo();`;
 		expect(trimmed.expressions.map((node) => node.type)).toEqual(['Identifier']);
 	});
 
+	it('reads a return in a template body in a class field or a static block, as at the top level', () => {
+		// acorn allows a `return` only in a function or at the top level, so it
+		// raised TS1108 (`'return' outside of function`) for one in a template
+		// there, in every mode. The template checks report it instead.
+		const templates = [
+			'<div>@if (x) { return; }</div>',
+			'<div>@switch (x) { @case 1: { if (x) return; <b /> } @default: { <i /> } }</div>',
+			'<ul>@for (const z of y) { for (;;) { return; } <li /> }</ul>',
+			'<div>@try { return <b />; } @catch (e) { <i /> }</div>',
+			'<div>@{ if (x) return; <b /> }</div>',
+			'@if (x) { return <b />; } @else { <i /> }',
+		];
+		/**
+		 * The strict parse's error and the collecting parse's errors, with their
+		 * offsets from the `return`.
+		 * @param {string} source
+		 */
+		const outcome = (source) => {
+			const at = source.indexOf('return');
+			let strict = 'ok';
+			try {
+				parseModule(source, 'App.tsrx');
+			} catch (error) {
+				strict = `${/** @type {any} */ (error).code}@${/** @type {any} */ (error).pos - at}`;
+			}
+			/** @type {any[]} */
+			const errors = [];
+			const program = parseModule(source, 'App.tsrx', { collect: true, errors });
+			return {
+				strict,
+				collected: errors.map((error) => `${error.code}@${error.pos - at}`),
+				returned: find_first(program, (node) => node.type === 'ReturnStatement')?.start === at,
+			};
+		};
+		for (const template of templates) {
+			const top_level = outcome(`const v = ${template};`);
+			expect(top_level.returned, template).toBe(true);
+			for (const source of [
+				`class A { v = ${template}; }`,
+				`class A { static v = ${template}; }`,
+				`class A { static { const v = ${template}; } }`,
+			]) {
+				expect(outcome(source), source).toEqual(top_level);
+			}
+		}
+		// A `return` there outside a template, or in a class `static` block in
+		// one, is still TS1108.
+		for (const source of [
+			'class A { static { return; } }',
+			'class A { v = <div>@if (x) { <b /> }</div>; static { return; } }',
+			// After a template with a `return` in it, in the same block.
+			'class A { static { const v = <div>@if (x) { return; }</div>; return; } }',
+			'class A { static { const v = <div>@switch (x) { @case 1: { if (x) return; <b /> } @default: { <i /> } }</div>; if (y) return; } }',
+			'class A { v = <div>@if (x) { class B { static { return; } } <b /> }</div>; }',
+			'function App() @{ <div>@if (x) { class B { static { return; } } <b /> }</div> }',
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code: 'TS1108', pos: source.lastIndexOf('return') }),
+			);
+		}
+	});
+
 	it('requires switch case and default bodies to be blocks', () => {
 		expect(() =>
 			parseModule(
