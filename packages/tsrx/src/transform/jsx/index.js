@@ -6332,10 +6332,10 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		return;
 	}
 	// The directive jump check reported a jump in a nested body, such as an
-	// `@try` in this one.
+	// `@try` in this one, and the parser a jump with no target.
 	if (
 		(node.type === 'BreakStatement' || node.type === 'ContinueStatement') &&
-		node.metadata?.invalid_directive_jump
+		(node.metadata?.invalid_directive_jump || node.metadata?.invalid_jump_target)
 	) {
 		return;
 	}
@@ -6405,10 +6405,10 @@ function validate_if_body_control_flow(node, transform_context) {
 		return;
 	}
 	// The directive jump check reported a jump in a nested body, such as an
-	// `@try` in this one.
+	// `@try` in this one, and the parser a jump with no target.
 	if (
 		(node.type === 'BreakStatement' || node.type === 'ContinueStatement') &&
-		node.metadata?.invalid_directive_jump
+		(node.metadata?.invalid_directive_jump || node.metadata?.invalid_jump_target)
 	) {
 		return;
 	}
@@ -6680,8 +6680,12 @@ function collect_directive_jumps(node, parent, scope, found) {
 			// The `@if` and `@for` checks, which see a jump in an `@try` right in
 			// their bodies, leave it to this one.
 			node.metadata = { ...node.metadata, invalid_directive_jump: true };
-			// The parser reports a `break` right in an `@switch` case.
-			if (!(node.type === 'BreakStatement' && node.metadata.invalid_tsrx_switch_case_break)) {
+			// The parser reports a `break` right in an `@switch` case, and a jump
+			// with no target.
+			if (
+				!(node.type === 'BreakStatement' && node.metadata.invalid_tsrx_switch_case_break) &&
+				!node.metadata.invalid_jump_target
+			) {
 				found.push({ node, kind: scope.kind });
 			}
 		}

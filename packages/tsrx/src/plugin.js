@@ -6174,8 +6174,19 @@ export function TSRXPlugin(config) {
 					(message === 'Unsyntactic break' || message === 'Unsyntactic continue') &&
 					this.#jumpStatement
 				) {
-					// TypeScript's code for the jump (see `#jumpError`).
-					message = kind = this.#jumpError(this.#jumpStatement, message === 'Unsyntactic break');
+					// TypeScript's checker error for the jump (see `#jumpError`): a
+					// collecting parse records it and reads on, where acorn finishes the
+					// statement. TypeScript reports it on the statement; it covers the
+					// keyword here, which the editor's code maps wherever the statement
+					// is. The template checks leave the jump to it.
+					const statement = this.#jumpStatement;
+					statement.metadata = { ...statement.metadata, invalid_jump_target: true };
+					this.#raiseCheckerError(
+						position,
+						this.#jumpError(statement, message === 'Unsyntactic break'),
+						word_end(this.input, position),
+					);
+					return /** @type {never} */ (undefined);
 				} else if (message === NESTED_IMPORT_EXPORT) {
 					// TypeScript reports each kind of import or export with its own error,
 					// on the `import` or `export` (`grammarErrorOnFirstToken`).
