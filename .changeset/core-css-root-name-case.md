@@ -2,7 +2,7 @@
 '@tsrx/core': minor
 ---
 
-`:root`, `:host`, `:is()`, `:where()`, `:not()` and `:has()` written in another case or with an escape (`:ROOT`, `:r\6f ot`, `:HOST(.open)`, `:IS(.a)`, `:h\61s(.b)`) now compile as the lowercase names do, since CSS reads pseudo-class names that way. The compiler compared the names as written: `:ROOT { --c: red }` compiled to `.<hash>:ROOT`, which the page's `<html>` doesn't match (only an `<html>` the component renders gets the hash), `:ROOT.dark .icon` was pruned in a component, and the arguments of `:HAS()` or `:IS()` were neither scoped nor pruned. The parsed selector's `name` is now the lowercase name for these six pseudo-classes; `:global` stays as written.
+`:root`, `:host`, `:is()`, `:where()`, `:not()` and `:has()` written in another case or with an escape (`:ROOT`, `:r\6f ot`, `:HOST(.open)`, `:IS(.a)`, `:h\61s(.b)`) now compile as the lowercase names do, since CSS reads pseudo-class names that way. The compiler compared the names as written: `:ROOT { --c: red }` compiled to `.<hash>:ROOT`, which the page's `<html>` doesn't match (only an `<html>` the component renders gets the hash), `:ROOT.dark .icon` was pruned in a component, and the arguments of `:HAS()` or `:IS()` were neither scoped nor pruned. The parsed selector's `name` is now the lowercase name for these six pseudo-classes; `:global` stays as written. A standalone `:WHERE(.icon)` now has the specificity (0,0,0), as `:where(.icon)` does: it compiles to `:WHERE(.icon.<hash>)`, where main gave `.<hash>:WHERE(.icon)`.
 
 So that they don't spread to these spellings, bugs of a `:root` compound are fixed too:
 
