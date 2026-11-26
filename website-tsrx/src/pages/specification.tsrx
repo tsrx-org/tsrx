@@ -814,6 +814,7 @@ const TYPESCRIPT_ERROR_CODES = [
 	"TS1487  Octal escape sequences are not allowed. Use the syntax '{0}'.",
 	"TS1488  Escape sequence '{0}' is not allowed.",
 	"TS1491  '{0}' modifier cannot appear on a 'using' declaration.",
+	"TS1492  '{0}' declarations may not have binding patterns.",
 	"TS1493  The left-hand side of a 'for...in' statement cannot be a 'using' declaration.",
 	"TS1494  The left-hand side of a 'for...in' statement cannot be an 'await using' declaration.",
 	"TS1495  '{0}' modifier cannot appear on an 'await using' declaration.",

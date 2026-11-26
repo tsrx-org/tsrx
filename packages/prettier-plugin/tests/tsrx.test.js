@@ -3143,6 +3143,21 @@ describe('parse errors', () => {
 			['accessor class A {}', TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, '1:1'],
 			['async class A {}', TS_ERRORS.MODIFIER_CANNOT_BE_USED_HERE, '1:1'],
 			['declare using x = y;', TS_ERRORS.MODIFIER_ON_USING, '1:1'],
+			// A binding pattern in a `using` declaration (TS1492).
+			['using {x} = y;', TS_ERRORS.USING_BINDING_PATTERN, '1:7'],
+			[
+				'async function f() {\n  await using z = w, [x] = y;\n}',
+				TS_ERRORS.USING_BINDING_PATTERN,
+				'2:22',
+			],
+			// One before `in` (TS1493, TS1494), first before a pattern's TS1492.
+			['for (using x in y) {}', TS_ERRORS.FOR_IN_USING, '1:6'],
+			[
+				'async function f() {\n  for (await using x in y) {}\n}',
+				TS_ERRORS.FOR_IN_AWAIT_USING,
+				'2:8',
+			],
+			['for (using {x} in y) {}', TS_ERRORS.FOR_IN_USING, '1:6'],
 			// Prettier reports the `public` (1:17); the plugin reports the first
 			// mistake, the modifier before `export` (#902).
 			['abstract export public class A {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:10'],

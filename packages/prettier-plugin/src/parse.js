@@ -49,13 +49,14 @@ const BROKEN_MARKUP_CODES = new Set([
  * class member, a class member's modifier before a module element
  * (`public class A {}`), `readonly`, `accessor` or `async` where they can't
  * appear, `async` with `declare` or in a `declare` context (TS1040),
- * `declare` before a `using` declaration, `import.<name>` other than
- * `import.meta`, or a call of it other than `import.defer()` or
- * `import.source()` (TS17012, TS18061), a default or named binding in
- * a deferred import (`import defer a from "m"`, TS18058 and TS18059), a
- * type-only import with both (`import type a, { b } from "m"`, TS1363),
- * `import type` on an import alias (TS1392), a JSX name written with a
- * Unicode escape (`<Inn\u0065r />`, TS17021), and a function body in an
+ * `declare` before a `using` declaration, a binding pattern in one (TS1492),
+ * one before `in` (`for (using x in y)`, TS1493 and TS1494),
+ * `import.<name>` other than `import.meta`, or a call of it other than
+ * `import.defer()` or `import.source()` (TS17012, TS18061), a default or
+ * named binding in a deferred import (`import defer a from "m"`, TS18058 and
+ * TS18059), a type-only import with both (`import type a, { b } from "m"`,
+ * TS1363), `import type` on an import alias (TS1392), a JSX name written with
+ * a Unicode escape (`<Inn\u0065r />`, TS17021), and a function body in an
  * ambient context (TS1183). Prettier rejects that one after `declare`
  * (`declare function f() {}`, which its tree prints wrong), and the plugin in
  * a `declare namespace` too.
@@ -84,6 +85,9 @@ const REJECTED_CODES = new Set([
 	'TS1042',
 	'TS1491',
 	'TS1495',
+	'TS1492',
+	'TS1493',
+	'TS1494',
 	'TS17012',
 	'TS18061',
 	'TS18058',

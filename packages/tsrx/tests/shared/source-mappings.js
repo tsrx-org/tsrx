@@ -4800,6 +4800,59 @@ declare const i: number;`;
 			}
 		});
 
+		it('maps await and using written apart to their places in the printed await using', () => {
+			// The printer writes `await using` as one piece, also where `using` is on
+			// a line after `await` or a comment separates them.
+			const source = `export async function A() @{
+	await
+	using a = null;
+	await /* c */ using b = null;
+	for (await
+		using c of []) {}
+	<p>{a}{b}</p>
+}`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.code).toContain('await using a = null;');
+			for (const name of ['a', 'b', 'c']) {
+				const using = source.indexOf(`using ${name}`);
+				const awaited = source.lastIndexOf('await', using);
+				for (const [text, offset] of /** @type {Array<[string, number]>} */ ([
+					['await', awaited],
+					['using', using],
+				])) {
+					expect(generated_at(result, offset, text.length), `${text} at ${offset}`).toEqual([text]);
+					expect(mappings_at(result, offset, text.length)[0].data.completion).toBe(true);
+				}
+			}
+
+			// Each copy of a declaration printed more than once, as Solid prints an
+			// `@switch` discriminant twice, maps both words.
+			const copied = `export function B() @{
+	@switch ((async () => {
+		await /* c */ using d = null;
+		return 1;
+	})()) {
+		@case 1: { <p /> }
+		@case 2: { <b /> }
+	}
+}`;
+			const copies = compile_to_volar_mappings(copied, 'App.tsrx', { loose: true });
+			const printed = [...copies.code.matchAll(/await using d/g)].map((match) => match.index);
+			expect(printed.length).toBeGreaterThan(0);
+			for (const [text, offset, shift] of /** @type {Array<[string, number, number]>} */ ([
+				['await', copied.indexOf('await'), 0],
+				['using', copied.indexOf('using'), 'await '.length],
+			])) {
+				const generated = mappings_at(copies, offset, text.length).map(
+					(mapping) => mapping.generatedOffsets[0],
+				);
+				expect(
+					[...new Set(generated)].sort((a, b) => a - b),
+					text,
+				).toEqual(printed.map((start) => start + shift));
+			}
+		});
+
 		it('maps the keywords that start a statement and the ends of its blocks, for diagnostics only', () => {
 			// TypeScript reports unreachable code (TS7027) from the start of the first
 			// unreachable statement to the end of the last, and TS2367 on a whole
