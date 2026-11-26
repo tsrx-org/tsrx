@@ -1427,6 +1427,8 @@ describe('scoped style analysis', () => {
 					'.wrap:global(.x i:is(::before, .y)):hover { color: red; }',
 					':global(.x i:is(::before, .y))',
 				],
+				// Nor does another pseudo-class whose argument ends in one.
+				['.wrap:global(.x i):is(.k::before).icon { color: red; }', ':global(.x i)'],
 			];
 			for (const [css, anchor] of cases) {
 				const source = `const t = <style>${css}</style>;`;
