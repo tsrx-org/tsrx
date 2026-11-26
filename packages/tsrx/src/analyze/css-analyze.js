@@ -64,11 +64,13 @@ function is_global(relative_selector, scope_root = false) {
  * Runs once the rule's selectors and nested rules have their metadata.
  *
  * @param {AST.CSS.Rule} rule
- * @param {(diagnostic: Diagnostic, node: AST.CSS.Node) => void} report
+ * @param {(diagnostic: Diagnostic, node: AST.CSS.Node) => boolean} report
+ * @returns {boolean} whether it reported a lone `:global` beside other
+ *   selectors (`CSS_GLOBAL_BLOCK_NOT_ALONE`)
  */
 function check_global_block_list(rule, report) {
 	const selectors = rule.prelude.children;
-	if (selectors.length < 2) return;
+	if (selectors.length < 2) return false;
 	const leading = selectors.map((selector) => {
 		const first = selector.children[0]?.selectors[0];
 		return first && is_global_block_selector(first) ? first : null;
@@ -81,13 +83,14 @@ function check_global_block_list(rule, report) {
 			selector.children[0].selectors.length === 1,
 	);
 	if (lone !== -1 && styles && !has_parent_rule_in_output(rule)) {
-		report(TSRX_ERRORS.CSS_GLOBAL_BLOCK_NOT_ALONE, /** @type {AST.CSS.Node} */ (leading[lone]));
-		not_alone_rules.add(rule);
-		return;
+		return report(
+			TSRX_ERRORS.CSS_GLOBAL_BLOCK_NOT_ALONE,
+			/** @type {AST.CSS.Node} */ (leading[lone]),
+		);
 	}
-	if (!leading.includes(null)) return;
+	if (!leading.includes(null)) return false;
 	for (let parent = rule.metadata.parent_rule; parent; parent = parent.metadata.parent_rule) {
-		if (parent.metadata.is_global_block) return;
+		if (parent.metadata.is_global_block) return false;
 	}
 	if (
 		(styles &&
@@ -101,6 +104,7 @@ function check_global_block_list(rule, report) {
 			/** @type {AST.CSS.Node} */ (leading.find((first) => first)),
 		);
 	}
+	return false;
 }
 
 /**
@@ -651,25 +655,18 @@ function first_bare_declaration(block) {
 }
 
 /**
- * Rules whose lone `:global` shares their selector list, reported as
- * `CSS_GLOBAL_BLOCK_NOT_ALONE`: the output drops their selectors for it, and
- * that error already says why their declarations would be left outside every
- * rule (`:global, .z { color: red }`).
- *
- * @type {WeakSet<AST.CSS.Rule>}
- */
-const not_alone_rules = new WeakSet();
-
-/**
  * Report what would be left outside every rule in the output: an `&` with
  * no rule or `@scope` around it, which would match the page's root element,
  * and the declarations of a `:global { ... }` block the output drops with no
  * rule around it, which would be invalid CSS.
  *
  * @param {AST.CSS.Rule[]} rules every rule of the sheet, in source order
- * @param {(diagnostic: Diagnostic, node: AST.CSS.Node) => void} report
+ * @param {(diagnostic: Diagnostic, node: AST.CSS.Node) => boolean} report
+ * @param {Set<AST.CSS.Rule>} not_alone_rules rules whose lone `:global`
+ *   beside other selectors was reported (`:global, .z { color: red }`): that
+ *   error already says why their declarations would be left outside every rule
  */
-function check_rules_without_parent(rules, report) {
+function check_rules_without_parent(rules, report, not_alone_rules) {
 	for (const rule of rules) {
 		// A selector the output drops (`:global & { @font-face { ... } }`)
 		// leaves no & behind.
@@ -715,8 +712,10 @@ export function analyze_css(css, options = {}) {
 	/**
 	 * @param {Diagnostic} diagnostic
 	 * @param {AST.CSS.Node} node
+	 * @returns {boolean} whether it was recorded
 	 */
 	function report(diagnostic, node) {
+		const count = options.errors?.length ?? 0;
 		error(
 			diagnostic,
 			filename,
@@ -724,7 +723,12 @@ export function analyze_css(css, options = {}) {
 			options.errors,
 			options.comments,
 		);
+		// Without `errors` it threw; with them, a suppressing comment skips it.
+		return (options.errors?.length ?? 0) > count;
 	}
+
+	/** @type {Set<AST.CSS.Rule>} */
+	const not_alone_rules = new Set();
 
 	/** @type {AST.CSS.Rule[]} */
 	const rules = [];
@@ -790,7 +794,9 @@ export function analyze_css(css, options = {}) {
 			const state = { rule: node };
 			context.visit(node.prelude, state);
 			context.visit(node.block, state);
-			if (node.metadata.is_global_block) check_global_block_list(node, report);
+			if (node.metadata.is_global_block && check_global_block_list(node, report)) {
+				not_alone_rules.add(node);
+			}
 		},
 
 		ComplexSelector(node, context) {
@@ -882,5 +888,5 @@ export function analyze_css(css, options = {}) {
 		},
 	});
 
-	check_rules_without_parent(rules, report);
+	check_rules_without_parent(rules, report, not_alone_rules);
 }

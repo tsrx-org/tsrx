@@ -1311,6 +1311,49 @@ describe('scoped style analysis', () => {
 					css,
 				).toEqual([TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR]);
 			}
+
+			// A rule nested in it keeps its own.
+			for (const [css, second] of [
+				[':global, .z { :global { color: red; } }', TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR],
+				[':global, .z { & { color: red; } }', TSRX_CSS_NESTING_SELECTOR_WITHOUT_RULE_ERROR],
+			]) {
+				/** @type {CompileError[]} */
+				const errors = [];
+				analyzeCss(first_stylesheet(`const t = <style>${css}</style>;`), { errors });
+				expect(
+					errors.map((error) => error.message),
+					css,
+				).toEqual([TSRX_CSS_GLOBAL_BLOCK_NOT_ALONE_ERROR, second]);
+			}
+		});
+
+		it('reports the declarations of a lone :global in a list when its own error is suppressed', () => {
+			const source = '// @tsrx-ignore\nconst t = <style>:global, .z {\n\tcolor: red;\n}</style>;';
+			/** @type {CompileError[]} */
+			const errors = [];
+			/** @type {AST.CommentWithLocation[]} */
+			const comments = [];
+			const ast = parseModule(source, filename, { collect: true, errors: [], comments });
+			const declaration = /** @type {AST.VariableDeclaration} */ (ast.body[0]);
+			const style = /** @type {AST.JSXStyleElement} */ (declaration.declarations[0].init);
+			analyzeCss(style.children[0], { errors, comments });
+
+			expect(errors.map((error) => error.message)).toEqual([
+				TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+			]);
+		});
+
+		it('reports the declarations of a :global block again once its list is a lone :global', () => {
+			const sheet = parseStyle(':global, .z { color: red; }', { filename, line: 1, column: 0 }, {});
+			analyzeCss(sheet, { errors: [] });
+			/** @type {AST.CSS.Rule} */ (sheet.children[0]).prelude.children.splice(1);
+
+			/** @type {CompileError[]} */
+			const errors = [];
+			analyzeCss(sheet, { errors });
+			expect(errors.map((error) => error.message)).toEqual([
+				TSRX_CSS_GLOBAL_BLOCK_DECLARATION_ERROR,
+			]);
 		});
 
 		it('reports a :global(...) selector list in a longer selector', () => {
