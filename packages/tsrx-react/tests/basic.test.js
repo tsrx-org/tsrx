@@ -2287,6 +2287,14 @@ describe('@tsrx/react a reported jump in the output', () => {
 		expect(code).toContain('if (!v) break;');
 	});
 
+	it('gives a jump after a `@ts-expect-error` comment a loop in the build, which leaves the comment out', () => {
+		const source =
+			'function f() {\n\t// @ts-expect-error\n\tcontinue;\n}\nexport const after = 1;\n';
+		const { code, errors } = compile(source, 'App.tsrx', { collect: true });
+		expect(errors.map((error) => error.code)).toEqual([TS_ERRORS.JUMP_ACROSS_FUNCTION.code]);
+		expect(code).toContain('do continue; while (false);');
+	});
+
 	it('leaves a jump whose error a comment suppresses as it is, also beside another error', () => {
 		const source = `export function App({ x }: { x: boolean }) {
 	for (;;) {

@@ -1054,6 +1054,32 @@ export function convert_source_map_to_mappings(
 	}
 
 	/**
+	 * Map the loop the output gives a reported jump that nothing can take
+	 * (`do break; while (false);`, see `contain_reported_jumps_without_target`),
+	 * at the jump's place: its start and end, as the two points of one mapping,
+	 * to the jump's. TypeScript reports unreachable code (TS7027) from the
+	 * loop's start, so the editor shows it from the jump, also when the loop
+	 * is the last unreachable statement. The jump maps its own tokens.
+	 * @param {AST.DoWhileStatement} node
+	 * @returns {void}
+	 */
+	function push_contained_jump_mapping(node) {
+		if (!has_location(node)) return;
+		const start = generated_offset_for_text(node.loc.start, 'do');
+		if (start === undefined) return;
+		const tail = 'while (false);';
+		const end = generated_code.indexOf(tail, start);
+		if (end === -1) return;
+		mappings.push({
+			sourceOffsets: [node.start, node.end],
+			lengths: [0, 0],
+			generatedOffsets: [start, end + tail.length],
+			generatedLengths: [0, 0],
+			data: { ...mapping_data_verify_only, customData: {} },
+		});
+	}
+
+	/**
 	 * Map the start and the end of a statement as the two points of one
 	 * mapping, for diagnostics only. TypeScript reports unreachable code
 	 * (TS7027) on a whole loop, and Volar maps a range only when both of its
@@ -2552,12 +2578,7 @@ export function convert_source_map_to_mappings(
 						push_block_end_token(node.body);
 					}
 				} else if (node.metadata?.contained_jump) {
-					// The loop the output gives a reported jump that nothing can take
-					// (see `contain_reported_jumps_without_target`), at the jump's
-					// place: its start and end map to the jump's, so TypeScript's
-					// unreachable-code diagnostic, which starts at the loop, still
-					// shows from the jump. The jump maps its own tokens.
-					push_statement_points_mapping(node, 'do');
+					push_contained_jump_mapping(node);
 					visit(node.body);
 				} else {
 					push_statement_keyword_token(node, 'do');

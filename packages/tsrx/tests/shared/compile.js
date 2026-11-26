@@ -748,40 +748,71 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			);
 		});
 
-		it("keeps a jump after a `@ts-expect-error` comment, which takes TypeScript's report of it", () => {
-			const source =
-				'function f() {\n\t// @ts-expect-error\n\tcontinue;\n}\nexport const after = 1;\n';
+		// A TypeScript directive that covers a jump starting its line takes
+		// TypeScript's report of it, so the jump stays and the directive is used.
+		// Elsewhere the jump gets a loop, which TypeScript doesn't report.
+		it.each([
+			['a line comment', '\t// @ts-expect-error\n\tcontinue;', 'kept'],
+			['a JSDoc comment', '\t/** @ts-expect-error */\n\tcontinue;', 'kept'],
+			['a comment before a blank line', '\t// @ts-ignore\n\n\tcontinue;', 'kept'],
+			[
+				'a block comment whose last line is not a directive',
+				'\t/* @ts-expect-error\n\tmore */\n\tcontinue;',
+				'contained',
+			],
+			[
+				'a comment over code before the jump on its line',
+				'\t// @ts-expect-error\n\tconst n: number = "no"; continue;',
+				'contained',
+			],
+		])('keeps a jump after %s only where the directive covers it', (_, body, outcome) => {
+			const source = `function f() {\n${body}\n}\nexport const after = 1;\n`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 			expect(result.errors.map((error) => error.code)).toEqual([
 				TS_ERRORS.JUMP_ACROSS_FUNCTION.code,
 			]);
-			// No unused-directive error (TS2578), as when the jump is left as it is.
+			expect(result.code.includes('do continue; while (false);'), outcome).toBe(
+				outcome === 'contained',
+			);
+			// No TS1107 beside the error, and no unused directive (TS2578) or
+			// unsuppressed error in the code before the jump.
 			expect(
 				virtual_semantic_diagnostics(result.code).map((diagnostic) => diagnostic.code),
 			).toEqual([]);
 		});
 
-		it("maps TypeScript's unreachable code from a jump in a loop of its own to the jump", () => {
-			const source =
-				'function f() {\n\tthrow 1;\n\tcontinue;\n\tf();\n}\nexport const after = 1;\n';
-			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-			const unreachable = virtual_semantic_diagnostics(result.code, {
-				allowUnreachableCode: false,
-			}).filter((diagnostic) => diagnostic.code === 7027);
-			expect(unreachable).toHaveLength(1);
-			const at = /** @type {number} */ (unreachable[0].start);
-			// The source offsets of the mappings that report diagnostics there.
-			const mapped = result.mappings.flatMap((mapping) =>
-				mapping.data?.verification
-					? mapping.generatedOffsets.flatMap((offset, i) =>
-							offset <= at && at <= offset + (mapping.generatedLengths ?? mapping.lengths)[i]
-								? [mapping.sourceOffsets[i] + at - offset]
-								: [],
-						)
-					: [],
-			);
-			expect(mapped).toContain(source.indexOf('continue'));
-		});
+		it.each([
+			['before other code', 'function f() {\n\tthrow 1;\n\tcontinue;\n\tf();\n}'],
+			['as the last statement', 'function f() {\n\tthrow 1;\n\tcontinue;\n}'],
+		])(
+			"maps TypeScript's unreachable code from a jump in a loop of its own, %s, to the jump",
+			(_, code) => {
+				const source = `${code}\nexport const after = 1;\n`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const unreachable = virtual_semantic_diagnostics(result.code, {
+					allowUnreachableCode: false,
+				}).filter((diagnostic) => diagnostic.code === 7027);
+				expect(unreachable).toHaveLength(1);
+				const start = /** @type {number} */ (unreachable[0].start);
+				const end = start + /** @type {number} */ (unreachable[0].length);
+				// Volar maps each end of the range through a mapping that reports
+				// diagnostics: the start to the jump.
+				/** @param {number} at */
+				const sources_of = (at) =>
+					result.mappings.flatMap((mapping) =>
+						mapping.data?.verification
+							? mapping.generatedOffsets.flatMap((offset, i) =>
+									offset <= at && at <= offset + (mapping.generatedLengths ?? mapping.lengths)[i]
+										? [mapping.sourceOffsets[i] + at - offset]
+										: [],
+								)
+							: [],
+					);
+				expect(sources_of(end)).not.toEqual([]);
+				const mapped = sources_of(start);
+				expect(mapped).toContain(source.indexOf('continue'));
+			},
+		);
 	});
 
 	describe(`[${name}] a jump a template check reports, in the editor`, () => {

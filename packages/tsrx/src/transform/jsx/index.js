@@ -66,7 +66,8 @@ import {
 } from '../jsx-interleave.js';
 import { is_hoist_safe_jsx_node, is_static_literal } from '../jsx-hoist.js';
 import { lower_server_module_for_types } from './server-module.js';
-import { get_hashbang } from '../../comment-utils.js';
+import { get_hashbang, is_ts_suppression_directive } from '../../comment-utils.js';
+import { get_directive_line } from './directive-line.js';
 import { get_source_tokens } from '../../parse/source-tokens.js';
 import {
 	child_nodes,
@@ -6802,6 +6803,20 @@ function is_recorded_jump(node) {
 }
 
 /**
+ * Whether only whitespace comes before `offset` on its line of `source`.
+ * @param {string} source
+ * @param {number} offset
+ * @returns {boolean}
+ */
+function starts_its_line(source, offset) {
+	const line_start = Math.max(
+		source.lastIndexOf('\n', offset - 1),
+		source.lastIndexOf('\r', offset - 1),
+	);
+	return source.slice(line_start + 1, offset).trim() === '';
+}
+
+/**
  * A loop, `switch` statement or label around a statement in the output.
  * @typedef {{ label: string | null, loop: boolean }} OutputJumpTarget
  */
@@ -6821,20 +6836,27 @@ function is_recorded_jump(node) {
  *
  * A jump with a target in the output stays as it is, such as a nested
  * `break` in an `@switch` case that a target lowers to a `switch` statement,
- * so the code after it narrows as it did. So does one after a TypeScript
- * `@ts-expect-error` or `@ts-ignore` comment, which takes TypeScript's
- * report of it.
+ * so the code after it narrows as it did. In the editor's code, so does one
+ * that starts the line a TypeScript `@ts-expect-error` or `@ts-ignore`
+ * comment covers: the comment takes TypeScript's report of it, and would be
+ * unused (TS2578) beside the loop. Code before a jump on its line may be
+ * printed apart from it, so such a jump still gets a loop. The build's code
+ * leaves the comments out, so a jump there always does.
  * @param {AST.Program} program
  * @param {TransformContext} transform_context
  * @returns {AST.Program}
  */
 function contain_reported_jumps_without_target(program, transform_context) {
 	if (!transform_context.errors?.length) return program;
-	// The lines after a comment that suppresses TypeScript's errors on them.
-	const suppressed_lines = new Set(
-		(transform_context.comments ?? [])
-			.filter((comment) => /^\s*@ts-(?:expect-error|ignore)\b/.test(comment.value))
-			.map((comment) => comment.loc.end.line + 1),
+	// The lines a TypeScript `@ts-expect-error` or `@ts-ignore` comment covers,
+	// in the editor's code, which keeps the comments.
+	const source = transform_context.source;
+	const directive_lines = new Set(
+		transform_context.typeOnly
+			? (transform_context.comments ?? [])
+					.filter(is_ts_suppression_directive)
+					.map((comment) => get_directive_line(comment, source))
+			: [],
 	);
 	return /** @type {AST.Program} */ (
 		walk(/** @type {AST.Node} */ (program), /** @type {OutputJumpTarget[]} */ ([]), {
@@ -6852,7 +6874,9 @@ function contain_reported_jumps_without_target(program, transform_context) {
 					if (
 						has_target ||
 						!is_recorded_jump(node) ||
-						(node.loc && suppressed_lines.has(node.loc.start.line))
+						(node.loc &&
+							directive_lines.has(node.loc.start.line) &&
+							starts_its_line(source, /** @type {number} */ (node.start)))
 					) {
 						return node;
 					}
