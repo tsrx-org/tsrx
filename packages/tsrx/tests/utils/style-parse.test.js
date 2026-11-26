@@ -448,6 +448,96 @@ describe('parseStyle custom properties', function () {
 			parseStyle('.a { --x: {a; }', LOCATION, {});
 		}).toThrow(/Unexpected end of input/);
 	});
+
+	it.each([
+		// Another declaration whose whole value is a `{}` block is one too, as
+		// `@property`'s initial-value: the read-ahead took it for a nested rule.
+		[
+			'@property --x { syntax: "*"; initial-value: { a; b }; inherits: false }',
+			[
+				['syntax', '"*"'],
+				['initial-value', '{ a; b }'],
+				['inherits', 'false'],
+			],
+		],
+		['@property --x { initial-value: {a} /* c */ }', [['initial-value', '{a} /* c */']]],
+		['@property --x { initial-value : {a}; }', [['initial-value', '{a}']]],
+	])('reads %j', function (css, declarations) {
+		const property = /** @type {any} */ (parseStyle(css, LOCATION, {}).children[0]);
+		expect(
+			property.block.children.map((/** @type {any} */ child) => [child.property, child.value]),
+		).toEqual(declarations);
+	});
+
+	it('reads a rule, not a declaration, where more follows the block', function () {
+		expect(blocks('.a { b:hover { color: red } }')).toEqual([['Rule']]);
+		// In a style rule, CSS reads no declaration there.
+		expect(function () {
+			parseStyle('.a { b: {a} c; }', LOCATION, {});
+		}).toThrow(/Expected identifier/);
+	});
+
+	it('reads no declaration where a string in the block ends at a newline', function () {
+		// CSS ends a string at a newline (a bad string), so `.a` is a rule of its own.
+		expect(function () {
+			parseStyle(
+				'@property --x { initial-value: {"\n}} .a { color: red } /*"*/ }; }',
+				LOCATION,
+				{},
+			);
+		}).toThrow(/Expected identifier/);
+		// A `\` before the newline goes on to the next line.
+		const property = /** @type {any} */ (
+			parseStyle('@property --x { initial-value: {"a\\\nb"} } .a {}', LOCATION, {}).children[0]
+		);
+		expect(property.block.children[0].value).toBe('{"a\\\nb"}');
+	});
+
+	it('reads no declaration where more than a comment follows the block', function () {
+		// `<!--` and `-->` are tokens there, not a comment around the rule.
+		expect(function () {
+			parseStyle(
+				'@property --x { initial-value: {}<!--"\n} .a { color: red } /*"*/-->; }',
+				LOCATION,
+				{},
+			);
+		}).toThrow(/Expected identifier/);
+		// Nor where an escape ends right before the newline that ends a string,
+		// though a hex escape takes the newline as its end.
+		expect(function () {
+			parseStyle(
+				'@property --x { initial-value: {"\\g\n}} .a { color: red } /*"*/; }',
+				LOCATION,
+				{},
+			);
+		}).toThrow(/Expected identifier/);
+		const hex = /** @type {any} */ (
+			parseStyle('@property --x { initial-value: {"\\a\nb"}; }', LOCATION, {}).children[0]
+		);
+		expect(hex.block.children[0].value).toBe('{"\\a\nb"}');
+		// A name starts as an identifier does.
+		expect(function () {
+			parseStyle('a { 1: {} }', LOCATION, {});
+		}).toThrow();
+	});
+
+	it('reports a string left open at the end of the sheet within it', function () {
+		expect(function () {
+			parseStyle('a{b:{"\\', LOCATION, {});
+		}).toThrow(expect.objectContaining({ pos: 7 }));
+	});
+
+	it('reads a declaration name with whitespace in it in linear time', function () {
+		for (const css of [
+			`.x { a${'\u00a0'.repeat(40_000)}x { color: red } }`,
+			// A `\u00a0` is part of a name, not whitespace before a block.
+			`.x { ${'a:\u00a0{'.repeat(400)}--x: ${'a'.repeat(40_000)}; ${'} b {}'.repeat(400)} }`,
+		]) {
+			const start = performance.now();
+			parseStyle(css, LOCATION, {});
+			expect(performance.now() - start).toBeLessThan(1000);
+		}
+	});
 });
 
 describe('parseStyle url( and unclosed preludes', function () {
