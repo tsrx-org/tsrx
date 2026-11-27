@@ -1769,6 +1769,7 @@ describe('scoped style analysis', () => {
 		});
 
 		it('writes nothing into a pruned selector when it drops the whitespace in a :global(...)', () => {
+			const CR = String.fromCharCode(13);
 			/** @type {Array<[css: string, pruned: string, full: string, minified: string]>} */
 			const cases = [
 				[
@@ -1788,6 +1789,19 @@ describe('scoped style analysis', () => {
 					'.p, .q:global(.\\31) .r { color: red; }',
 					'.q:global(.\\31) .r',
 					'.p /* (unused) .q.\\31 .r*/ { color: red; }',
+					'.p { color: red; }',
+				],
+				// Nor the space for a CR that ends one.
+				[
+					`.p, .q:global(.\\31${CR})\n.r { color: red; }`,
+					`.q:global(.\\31${CR})\n.r`,
+					`.p /* (unused) .q.\\31${CR}\n.r*/ { color: red; }`,
+					'.p { color: red; }',
+				],
+				[
+					`.p, .q.\\31${CR} :global\n.r { color: red; }`,
+					`.q.\\31${CR} :global\n.r`,
+					`.p /* (unused) .q.\\31${CR}\n.r*/ { color: red; }`,
 					'.p { color: red; }',
 				],
 			];

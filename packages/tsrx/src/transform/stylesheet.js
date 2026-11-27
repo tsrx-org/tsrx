@@ -500,6 +500,7 @@ function remove_global_pseudo_class(selector, combinator, state, kept, after_sta
 		// div :global.x becomes div.x, and so does div /* c */ :global.x: the
 		// descendant combinator runs over the comments in it.
 		const start = combinator?.name === ' ' ? combinator.start : selector.start;
+		if (kept) write_cr_as_space(start, state);
 		state.code.update(start, selector.start + ':global'.length, '');
 	} else {
 		const args = selector.args;
@@ -517,7 +518,33 @@ function remove_global_pseudo_class(selector, combinator, state, kept, after_sta
 			last !== type &&
 			ends_with_hex_escape(state.code.original, last.start, args.end);
 		state.code.update(selector.end - 1, selector.end, space ? ' ' : '');
+		if (kept) write_cr_as_space(args.end, state);
 	}
+}
+
+/**
+ * Write a CR that ends a hex escape right before `index`, where the output
+ * drops text, as a space. CSS reads a CR and an LF after it as one newline,
+ * so the escape would take an LF that dropping the text brings next to it,
+ * and the combinator with it: `:global(.\31<CR>)<LF>.x` gave `.\31<CR><LF>.x`,
+ * one compound, and so did `:global(.\31<CR>):global<LF>:global(.x)`. A space
+ * ends the escape as the CR did. Not a CR right after a `\`, which CSS reads as
+ * no escape, where a space would make one; nor a CR before an LF, which is one
+ * newline already.
+ *
+ * @param {number} index
+ * @param {StylesheetRenderState} state
+ */
+function write_cr_as_space(index, state) {
+	const source = state.code.original;
+	if (source[index - 1] !== '\r' || source[index] === '\n') return;
+	let i = index - 2;
+	while (i >= index - 7 && /[0-9a-fA-F]/.test(source[i] ?? '')) i--;
+	if (i === index - 2 || source[i] !== '\\') return;
+	// The `\` starts the escape only after an even number of others.
+	let backslashes = 0;
+	while (source[i - 1 - backslashes] === '\\') backslashes++;
+	if (backslashes % 2 === 0) state.code.update(index - 1, index, ' ');
 }
 
 /**

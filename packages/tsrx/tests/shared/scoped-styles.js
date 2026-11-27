@@ -1977,6 +1977,7 @@ export function runSharedScopedStyleTests({
 
 		it('drops the whitespace around the argument of a :global(...) with its parentheses', () => {
 			const NBSP = String.fromCharCode(0xa0);
+			const CR = String.fromCharCode(13);
 			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
 			const cases = [
 				// Whitespace at the edges of the argument is no combinator, but it was
@@ -2003,6 +2004,46 @@ export function runSharedScopedStyleTests({
 				[':global(.\\31/**/) :global.x', () => '.\\31/**/.x {'],
 				[':global(.a):global(\\64) :global.x', () => '.a:is(\\64).x {'],
 				[':global(::slotte\\64(.x)) :global::before', () => '::slotte\\64(.x)::before {'],
+				// CSS reads CRLF as one newline: a CR that ends the escape met an LF
+				// after the `)` once the whitespace between them was gone, and the
+				// escape took both, which joined the compounds (`.wrap.\31<CR><LF>.icon`).
+				// The CR is written as a space, which ends the escape as well.
+				[
+					`.wrap:global(.\\31${CR} )\n.icon`,
+					(hash) => `.wrap.${hash}.\\31 \n.icon:where(.${hash}) {`,
+				],
+				[
+					`.wrap:global(.\\31${CR}\t)\n.icon`,
+					(hash) => `.wrap.${hash}.\\31 \n.icon:where(.${hash}) {`,
+				],
+				[
+					`.wrap:global(.\\31${CR})\n.icon`,
+					(hash) => `.wrap.${hash}.\\31 \n.icon:where(.${hash}) {`,
+				],
+				[
+					`.wrap:global(.\\31${CR})\n\n.icon`,
+					(hash) => `.wrap.${hash}.\\31 \n\n.icon:where(.${hash}) {`,
+				],
+				// A space or a CRLF that ends it needs none.
+				['.wrap:global(.\\31 )\n.icon', (hash) => `.wrap.${hash}.\\31 \n.icon:where(.${hash}) {`],
+				[
+					`.wrap:global(.\\31${CR}\n )${CR}\n.icon`,
+					(hash) => `.wrap.${hash}.\\31${CR}\n${CR}\n.icon:where(.${hash}) {`,
+				],
+				// The same goes for an LF that dropping a bare :global brings next to
+				// the CR. A space for the `)` instead would be a combinator where a bare
+				// :global takes the LF before it away (`:global(.\31<CR>)<LF>:global.x`).
+				[
+					`.wrap:global(.\\31${CR}):global\n.icon`,
+					(hash) => `.wrap.${hash}.\\31 \n.icon:where(.${hash}) {`,
+				],
+				[`:global(.\\31${CR}) :global\n:global(.x)`, () => '.\\31 \n.x {'],
+				[`:global.\\31${CR} :global\n:global(.x)`, () => '.\\31 \n.x {'],
+				[`:global(.\\31${CR})\n:global.x`, () => '.\\31 .x {'],
+				[`:global(.a):global(\\64${CR})\n:global.x`, () => '.a:is(\\64 ).x {'],
+				// Not a CR right after a `\`, which CSS reads as no escape: a space
+				// would make one.
+				[`:global#a\\${CR} :global.x`, () => `#a\\${CR}.x {`],
 				// Whitespace that CSS reads as part of a name, which the parser skips,
 				// stays as written, with what is around it.
 				[`.wrap:global( ${NBSP}.x)`, (hash) => `.wrap.${hash} ${NBSP}.x {`],
