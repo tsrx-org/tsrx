@@ -935,7 +935,7 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 				'RejectingNearest',
 				[
 					mapping(0, 0, 6, true),
-					mapping(7, 7, 5, { shouldReport: (source) => source !== DIAGNOSTIC_SOURCE }),
+					mapping(7, 7, 5, { shouldReport: (_source, code) => code !== 'TSRX2008' }),
 				],
 				14,
 				16,
@@ -1126,6 +1126,53 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 				'x'.repeat(80),
 			),
 		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
+	});
+
+	// A token whose generated code the editor maps through another error's
+	// anchor first shows the error on that error's place, though inside the
+	// token: the next token is the place.
+	it("skips a nearest token the editor shows through another error's anchor", async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'NearestThroughAnchor',
+				[
+					mapping(30, 70, 5, false),
+					{
+						sourceOffsets: [22],
+						generatedOffsets: [40],
+						lengths: [3],
+						generatedLengths: [1],
+						data: { verification: true, customData: { diagnosticAnchor: true } },
+					},
+					{
+						sourceOffsets: [20],
+						generatedOffsets: [40],
+						lengths: [9],
+						generatedLengths: [1],
+						data: { verification: true, customData: {} },
+					},
+					mapping(0, 20, 6, true),
+				],
+				30,
+				35,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
+	});
+
+	// With no place the editor shows on code, the error keeps the range it
+	// had, which the editor drops, not one at the start of the file.
+	it('leaves an error with no place to show it on as before', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'NoPlace',
+				[mapping(30, 50, 3, false), mapping(0, 0, 1, true)],
+				30,
+				33,
+				'x'.repeat(80),
+				` ${'x'.repeat(80)}`,
+			),
+		).toEqual([]);
 	});
 
 	// A later place the start maps to is tried when the first is past every

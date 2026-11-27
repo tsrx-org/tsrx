@@ -226,15 +226,14 @@ function shown_at(diagnostic, code, document, sourceMap) {
 
 /**
  * The source range the editor shows a diagnostic on the generated `range` at,
- * or `undefined` when it leaves it out. Volar maps the diagnostic's range, as
- * positions, back through the mappings that report it (`transformDiagnostic`
- * in `@volar/language-service`), and a position can't fall between a `\r` and
- * its `\n`.
+ * with the mappings of its ends, or `undefined` when it leaves it out. Volar
+ * maps the diagnostic's range, as positions, back through the mappings that
+ * report it (`transformDiagnostic` in `@volar/language-service`), and a
+ * position can't fall between a `\r` and its `\n`.
  * @param {[number, number]} range
  * @param {(data: CodeInformation) => boolean} reports Whether a mapping reports the diagnostic
  * @param {TextDocument} document
  * @param {Mapper} sourceMap
- * @returns {[number, number] | undefined}
  */
 function shown_range(range, reports, document, sourceMap) {
 	const start = document.offsetAt(document.positionAt(range[0]));
@@ -338,13 +337,17 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			// whitespace. With none, the range stays, as before.
 			const map = sourceMap;
 			// Another error's anchor is that error's place (see
-			// `findGeneratedRangeBySourceRange`), so not this one's.
+			// `findGeneratedRangeBySourceRange`), so not this one's, neither to
+			// look for a place through nor for the editor to show it through.
 			const reaches = (/** @type {CodeInformation} */ data) =>
 				reports(data) && !(/** @type {any} */ (data).customData?.diagnosticAnchor);
 			/** @param {[number, number] | null | undefined} range */
 			const shown_on_code = (range) => {
 				const shown = range && shown_range(range, reports, document, map);
-				return shown && /\S/.test(virtualCode.originalCode.slice(shown[0], shown[1]))
+				return shown &&
+					reaches(shown[2].data) &&
+					reaches(shown[3].data) &&
+					/\S/.test(virtualCode.originalCode.slice(shown[0], shown[1]))
 					? shown
 					: null;
 			};
