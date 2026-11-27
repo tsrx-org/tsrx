@@ -39,8 +39,10 @@ const REGEX_NTH_OF =
 const REGEX_HEX_ESCAPE = /^[0-9a-fA-F]{1,6}(\r\n|[ \t\n\r\f])?/;
 // In a string, an escaped newline is a line continuation and decodes to nothing
 const REGEX_ESCAPE = /\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\n\r\f])?|(\r\n|[\n\r\f])|([\s\S]))/g;
-// A `@property`'s `initial-value` descriptor, in any case.
-const REGEX_INITIAL_VALUE_START = /^initial-value[ \t\n\r\f]*:/i;
+// A `@property`'s `initial-value` descriptor, in any case, to its colon, after
+// whitespace and comments, which CSS reads as nothing there.
+const REGEX_INITIAL_VALUE_START =
+	/^initial-value(?:[ \t\n\r\f]|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*:/i;
 
 const regex_whitespace = /\s/;
 

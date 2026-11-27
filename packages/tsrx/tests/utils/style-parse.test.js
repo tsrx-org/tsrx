@@ -545,6 +545,11 @@ describe('parseStyle custom properties', function () {
 				['inherits', 'false'],
 			],
 		],
+		// Comments before the colon are nothing, as before another declaration's.
+		['@property --x { initial-value /* c */ : ; }', [['initial-value', '']]],
+		['@property --x { initial-value/**/: {a} b; }', [['initial-value', '{a} b']]],
+		['@property --x { Initial-Value /* a */ /* b */ :{a}{b} }', [['Initial-Value', '{a}{b}']]],
+		['@property --x { initial-value /* } */ : {a} b }', [['initial-value', '{a} b']]],
 	])('reads the initial-value in %j', function (css, declarations) {
 		/** @param {any} node @returns {any} */
 		const property = (node) => (node.type === 'Atrule' ? node : property(node.block.children[0]));
