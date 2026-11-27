@@ -664,12 +664,39 @@ export class TSRXVirtualCode {
 	 *   token overlaps the range
 	 */
 	findGeneratedRangeBySourceRange(start, end) {
+		// The editor shows a diagnostic only where a mapping that reports
+		// diagnostics maps it back, so the tokens that report them come first: a
+		// mapping of a whole directive (an `@switch` around a `break`) that
+		// doesn't would put the range on other code, or on none.
+		return (
+			this.#generatedRangeOfTokens(start, end, true) ??
+			this.#generatedRangeOfTokens(start, end, false)
+		);
+	}
+
+	/**
+	 * See `findGeneratedRangeBySourceRange`.
+	 * @param {number} start
+	 * @param {number} end
+	 * @param {boolean} reporting Whether to span only the mappings that report diagnostics
+	 * @returns {[number, number] | null}
+	 */
+	#generatedRangeOfTokens(start, end, reporting) {
 		/** @type {CodeMapping | null} */
 		let first = null;
 		/** @type {CodeMapping | null} */
 		let last = null;
 		for (let i = 0; i < this.mappings.length; i++) {
 			const mapping = this.mappings[i];
+			if (reporting && !mapping.data?.verification) {
+				continue;
+			}
+			// An anchor is one error's range on one character of code that isn't
+			// it (see `add_diagnostic_mappings` in `@tsrx/core`): only that error,
+			// whose range `findMappingBySourceRange` finds, is shown through it.
+			if (/** @type {any} */ (mapping.data?.customData)?.diagnosticAnchor) {
+				continue;
+			}
 			const sourceStart = mapping.sourceOffsets[0];
 			const sourceEnd = sourceStart + mapping.lengths[0];
 			// Skip tokens that do not overlap the half-open range [start, end).

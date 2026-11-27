@@ -671,6 +671,18 @@ export {};`,
 			'break;',
 		],
 		[
+			'CaseNestedBreak',
+			'export function App({ x, y }: { x: number; y: boolean }) @{\n\t<div>@switch (x) { @case 1: { if (y) break; <b /> } @default: { <i /> } }</div>\n}\n',
+			'TSRX2008',
+			'break;',
+		],
+		[
+			'CaseNestedBreakOwnLine',
+			'export function App({ x, y }: { x: number; y: boolean }) @{\n\t<div>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tif (y) {\n\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t\t<b />\n\t\t\t}\n\t\t}\n\t</div>\n}\n',
+			'TSRX2008',
+			'break;',
+		],
+		[
 			'IfBreakInLoopOwnLine',
 			'export function App({ x }: { x: boolean }) {\n\tfor (;;) {\n\t\treturn (\n\t\t\t<div>\n\t\t\t\t@if (x) {\n\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t</div>\n\t\t);\n\t}\n}\n',
 			'TSRX2003',
