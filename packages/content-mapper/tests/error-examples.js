@@ -1076,6 +1076,14 @@ let E;`,
 	break;
 }`,
 	},
+	{
+		error: TS_ERRORS.STATIC_BLOCK_RETURN,
+		source: `export class A {
+	static {
+		return;
+	}
+}`,
+	},
 	// A plain `try`'s `pending` block, which only `@tsrx/ripple` compiles
 	{
 		error: TS_ERRORS.CATCH_OR_FINALLY_EXPECTED,

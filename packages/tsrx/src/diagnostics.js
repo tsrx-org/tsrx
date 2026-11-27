@@ -981,6 +981,13 @@ export const TS_ERRORS = {
 		code: 'TS1115',
 		message: "A 'continue' statement can only jump to a label of an enclosing iteration statement.",
 	},
+	// A `return` right in a class `static` block, which acorn reports as
+	// `'return' outside of function`, as TypeScript's checker reports it
+	// (`checkReturnStatement`)
+	STATIC_BLOCK_RETURN: {
+		code: 'TS18041',
+		message: "A 'return' statement cannot be used inside a class static block.",
+	},
 
 	// `await` outside an async function, where only a namespace makes it parse
 	AWAIT_EXPRESSION_NOT_ALLOWED: {

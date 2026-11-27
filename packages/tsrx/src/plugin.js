@@ -2391,6 +2391,9 @@ export function TSRXPlugin(config) {
 			// Whether acorn-typescript raised its error for modifiers before the class
 			// `static` block being read (see `parseClassElement`).
 			#staticBlockModifiers = false;
+			// Set while the `return` in a class `static` block that TS18041 was
+			// raised for is read (see `raise`).
+			#readingStaticBlockReturn = false;
 			// Whether decorators come before the class member being read.
 			#memberDecorated = false;
 			// Where the methods with an `async` before another modifier start, and
@@ -6047,7 +6050,9 @@ export function TSRXPlugin(config) {
 				if (
 					node.type === 'FunctionDeclaration' ||
 					node.type === 'FunctionExpression' ||
-					node.type === 'ArrowFunctionExpression'
+					node.type === 'ArrowFunctionExpression' ||
+					// A `return` in a class `static` block is TS18041 (see `raise`).
+					node.type === 'StaticBlock'
 				) {
 					inside_nested_function = true;
 				}
@@ -6232,6 +6237,29 @@ export function TSRXPlugin(config) {
 					// class `static` block, outside any function there: acorn allows one
 					// only in a function or at the top level. The template checks report
 					// it, as they do at the top level.
+					return /** @type {never} */ (undefined);
+				} else if (message === "'return' outside of function" && this.#inClassStaticBlock()) {
+					// One right in a class `static` block, which TypeScript's parser reads
+					// and its checker reports at the keyword (TS18041): a strict parse
+					// throws it, and a collecting one records it and reads on, where acorn
+					// stopped. TypeScript's checker doesn't check the operand of a
+					// `return` it reports (see `parseReturnStatement`), and in an ambient
+					// class reports the first statement of a block as TS1036 instead,
+					// which TSRX leaves to it, as for any statement there.
+					const first_in_ambient_block =
+						this.isAmbientContext &&
+						this.lastTokStart !== -1 &&
+						this.input[this.lastTokStart] === '{' &&
+						this.lastTokEnd === this.lastTokStart + 1;
+					const reported = !first_in_ambient_block && !this.#readingStaticBlockReturn;
+					this.#readingStaticBlockReturn = true;
+					if (reported) {
+						this.#raiseCheckerError(
+							position,
+							TS_ERRORS.STATIC_BLOCK_RETURN,
+							position + 'return'.length,
+						);
+					}
 					return /** @type {never} */ (undefined);
 				} else if (
 					message === 'Unsyntactic break' &&
@@ -8358,8 +8386,12 @@ export function TSRXPlugin(config) {
 			 * @returns {CompileError[]}
 			 */
 			#withoutUncheckedDefaults(errors, params, return_type) {
-				const code = TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER.code;
-				if (!errors.some((error) => error.code === code)) return errors;
+				// The checker errors in a default it doesn't check.
+				const codes = new Set([
+					TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER.code,
+					TS_ERRORS.STATIC_BLOCK_RETURN.code,
+				]);
+				if (!errors.some((error) => codes.has(/** @type {string} */ (error.code)))) return errors;
 				const queried = type_query_names([...params, return_type]);
 				/** @type {Array<[number, number]>} */
 				const unchecked = [];
@@ -8381,7 +8413,7 @@ export function TSRXPlugin(config) {
 				}
 				return errors.filter(
 					(error) =>
-						error.code !== code ||
+						!codes.has(/** @type {string} */ (error.code)) ||
 						!unchecked.some(
 							([start, end]) => start <= (error.pos ?? -1) && (error.pos ?? -1) < end,
 						),
@@ -17122,10 +17154,30 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether the var scope is a class `static` block's: acorn-typescript
+			 * gives a namespace's scope `SCOPE_CLASS_STATIC_BLOCK` too.
+			 */
+			#inClassStaticBlock() {
+				const { flags } = this.currentVarScope();
+				return (flags & SCOPE_CLASS_STATIC_BLOCK) !== 0 && (flags & TS_SCOPE_TS_MODULE) === 0;
+			}
+
+			/**
 			 * @type {Parse.Parser['parseReturnStatement']}
 			 */
 			parseReturnStatement(node) {
-				const statement = super.parseReturnStatement(node);
+				const reading_static_block_return = this.#readingStaticBlockReturn;
+				// TypeScript reports a `return` outside a function, which TSRX allows
+				// at the top level (TS1108), and doesn't check its operand either.
+				if (!this.inFunction && !this.#inClassStaticBlock()) {
+					this.#readingStaticBlockReturn = true;
+				}
+				let statement;
+				try {
+					statement = super.parseReturnStatement(node);
+				} finally {
+					this.#readingStaticBlockReturn = reading_static_block_return;
+				}
 				this.#checkInlinedCodeBlockLabels(/** @type {AST.ReturnStatement} */ (statement).argument);
 				return statement;
 			}
