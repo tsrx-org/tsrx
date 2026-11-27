@@ -667,3 +667,62 @@ describe('parseStyle comments in selectors', function () {
 		}).toThrow();
 	});
 });
+
+describe('parseStyle type selectors', function () {
+	it.each([
+		// CSS reads no rule with one after another simple selector, and a comment
+		// with no whitespace around it is no combinator.
+		['[x]div { color: red; }', 3],
+		['.wrap* { color: red; }', 5],
+		['.wrap/**/div { color: red; }', 9],
+		['.wrap/**/* { color: red; }', 9],
+		[':hover*.a { color: red; }', 6],
+		['.a .b/**/svg|a { color: red; }', 9],
+		['.wrap::before/* c */div { color: red; }', 20],
+		// Nor after an `&`, which CSS Nesting writes after it: `div&`.
+		['.p { &div { color: red; } }', 6],
+		['.p { &&* { color: red; } }', 7],
+		['.p { .a&div { color: red; } }', 8],
+		// In the argument of a pseudo-class that takes selectors too, even a
+		// forgiving one, where a browser drops just that selector.
+		['div:is(.a*, .b) { color: red; }', 9],
+		[':not(.a*) { color: red; }', 7],
+		[':host(.a*) { color: red; }', 8],
+		// In any case, and in an :is() in another argument.
+		[':HOST-CONTEXT(.a*) { color: red; }', 16],
+		[':nth-child(2n of :not(.a*)) { color: red; }', 24],
+		// There the parser reads a name such as odd as an An+B.
+		[':is([x]odd) { color: red; }', 7],
+	])('reports the type selector in %j', function (css, pos) {
+		expect(function () {
+			parseStyle(css, LOCATION, { loose: false });
+		}).toThrow(
+			expect.objectContaining({
+				code: 'TSRX3013',
+				pos,
+				message:
+					'A type selector or * must come first in its compound selector, as in div.x or div&',
+			}),
+		);
+	});
+
+	it.each([
+		'div.a { color: red; }',
+		'*.a { color: red; }',
+		'.a div, .a > *, .a /**/ div { color: red; }',
+		'*|div, svg|a { color: red; }',
+		'.p { div&, *&, div&& { color: red; } }',
+		// After bare :globals, which the output drops, and a :global(...), which
+		// the output puts it in an :is() after.
+		':global*, :global/**/div, :global(.x)div, :global(.x)* { color: red; }',
+		// Not in an argument that isn't a selector: a pseudo-element's (part
+		// names), or an An+B's, which the parser reads in parts around comments.
+		'::part(foo/**/bar), ::part(foo/**/odd) { color: red; }',
+		':nth-child(2n of div), :nth-child(odd), :nth-child(n/**/of div) { color: red; }',
+		':nth-child(n of/**/div), :nth-of-type(n/**/- 1) { color: red; }',
+	])('reads %j', function (css) {
+		expect(function () {
+			parseStyle(css, LOCATION, { loose: false });
+		}).not.toThrow();
+	});
+});

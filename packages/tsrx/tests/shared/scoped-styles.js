@@ -2177,6 +2177,36 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`.wrap.${hash}.dark { color: gray; }`);
 		});
 
+		it('reports a type selector after another selector of its compound', () => {
+			// The output was invalid (`.wrap/**/div.<hash>`), or valid and styling
+			// `.wrap` where CSS reads no rule (`.wrap*` gave `.wrap.<hash>`).
+			for (const rule of ['.wrap/**/div', '.wrap/**/*', '[x]div', '.wrap*', '.wrap { &div']) {
+				const source = `export function App() @{
+					<>
+						<style>${rule} { color: red; }${rule.includes(' {') ? ' }' : ''}</style>
+						<div ${attr}="wrap" x="1" />
+					</>
+				}`;
+				const at = source.indexOf(rule) + rule.search(/div|\*$/);
+				for (const options of [{}, { collect: true }]) {
+					expect(() => compile(source, 'App.tsrx', options), rule).toThrow(
+						expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_SYNTAX, pos: at }),
+					);
+				}
+			}
+			// One before an `&` is fine, as CSS Nesting writes it.
+			const { css } = compile(
+				`export function App() @{
+					<>
+						<style>.wrap { div& { color: red; } }</style>
+						<div ${attr}="wrap" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+			expect(css).toContain('{ div& { color: red; } }');
+		});
+
 		it('leaves the compounds after a bare :global later in a selector unscoped in a theme too', () => {
 			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
 			const cases = [
