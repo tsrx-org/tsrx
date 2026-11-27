@@ -5247,7 +5247,10 @@ export function TSRXPlugin(config) {
 				const contentStart = open.end;
 				const input = this.input.slice(contentStart);
 				const parent = this.#path.at(-2);
-				const insideTemplate = this.#isNativeTemplateNode(parent);
+				// Not in a directive header that started after the parent: code there,
+				// such as a function's body, goes on after the element.
+				const insideTemplate =
+					this.#isNativeTemplateNode(parent) && !this.#readingHeaderStartedAfter(parent);
 				let relativeCloseStart = -1;
 				let closeTagLength = 0;
 				if (tagName === 'script') {
@@ -16401,11 +16404,13 @@ export function TSRXPlugin(config) {
 								openingTagName = currentElement.openingElement?.name
 									? this.getElementName(currentElement.openingElement.name)
 									: null;
+								// A closing tag without a name is a fragment's (`</>`), which closes
+								// the innermost open fragment below, as a fragment's name is `''`.
 								closingTagName = closingElement.name
 									? closingElement.name?.type === 'JSXNamespacedName'
 										? closingElement.name.namespace.name + ':' + closingElement.name.name.name
 										: this.getElementName(closingElement.name)
-									: null;
+									: '';
 							}
 
 							if (openingTagName !== closingTagName) {

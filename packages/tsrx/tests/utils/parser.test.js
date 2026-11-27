@@ -5265,12 +5265,15 @@ foo();`;
 		}
 	});
 
-	it('recovers from broken markup in a function in a directive header as in other code', () => {
+	it('reads markup in a function in a directive header as in other code, also when broken', () => {
 		// When collecting, an element left open, or closed by a closing tag that
 		// names an element around it, ended where the code goes on in a function,
 		// but not in a directive header there: the rest of the function was the
-		// element's text, or the parse failed (TS1012). In an `@for` header some
-		// of these parsed while a function's body was read as a directive body.
+		// element's text, or the parse failed (TS1012). So did a `<script>` or
+		// `<style>` there, also a valid one, and a `</>` closing a fragment across
+		// an open element closed the elements around the header too. In an `@for`
+		// header some of these parsed while a function's body was read as a
+		// directive body.
 		/** @type {Array<(statement: string) => string>} */
 		const contexts = [
 			(statement) => `@if ((() => { ${statement}; return a; })()) { <i /> }`,
@@ -5291,6 +5294,12 @@ foo();`;
 			'const a = <p><b><i><u>t</p>',
 			'const a = (<p><b>)',
 			'const a = [<p><b>]',
+			'const a = <><b></>',
+			'const a = <><b><i></>',
+			'const a = (<>)',
+			'const a = <script>foo();</script>',
+			'const a = <style>.x { color: red; }</style>',
+			'const a = <p><script>f()</script></p>',
 		]) {
 			/**
 			 * @param {string} source
@@ -5315,6 +5324,8 @@ foo();`;
 				expect(parse(source, ['ArrowFunctionExpression', 'FunctionExpression']), source).toEqual(
 					expected,
 				);
+				// Valid markup parses strictly too.
+				if (expected.codes.length === 0) parseModule(source, 'App.tsrx');
 			}
 		}
 	});
