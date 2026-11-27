@@ -4152,7 +4152,8 @@ foo();`;
 			}
 		}
 		// A `return` there outside a template, or in a class `static` block in
-		// one, is still TS1108.
+		// one, is TypeScript's checker error for a `return` in a `static` block
+		// (TS18041).
 		for (const source of [
 			'class A { static { return; } }',
 			'class A { v = <div>@if (x) { <b /> }</div>; static { return; } }',
@@ -4163,7 +4164,7 @@ foo();`;
 			'function App() @{ <div>@if (x) { class B { static { return; } } <b /> }</div> }',
 		]) {
 			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
-				expect.objectContaining({ code: 'TS1108', pos: source.lastIndexOf('return') }),
+				expect.objectContaining({ code: 'TS18041', pos: source.lastIndexOf('return') }),
 			);
 		}
 	});
@@ -15221,6 +15222,53 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				return [thrown(error, pos), collected, collected];
 			}),
 		);
+	});
+
+	it("reports a `return` right in a class `static` block with TypeScript's code for it", async () => {
+		// acorn reports `'return' outside of function` (TS1108) and stops;
+		// TypeScript's parser reads it and its checker reports TS18041 at the
+		// keyword, also in a block or a loop in the `static` block.
+		const sources = [
+			'class A { static { return; } }',
+			'class A { static { if (x) return 1; } }',
+			'class A { static { for (;;) { return; } } }',
+			'function f() { class A { static { return; } } return A; }',
+			'function App() @{ class A { static { return; } } <div /> }',
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) => {
+				const full = `${source}\nexport const after = 1;`;
+				return [{ source: full }, { source: full, options: { collect: true } }];
+			}),
+		);
+		// A collecting parse records it over the keyword, and reads on.
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok ? { errors: outcome.errors, last: outcome.ast.body.at(-1)?.type } : outcome,
+			),
+		).toEqual(
+			sources.flatMap((source) => {
+				const pos = source.indexOf('return');
+				return [
+					thrown(TS_ERRORS.STATIC_BLOCK_RETURN, pos),
+					{
+						errors: [{ code: TS_ERRORS.STATIC_BLOCK_RETURN.code, pos, end: pos + 'return'.length }],
+						last: 'ExportNamedDeclaration',
+					},
+				];
+			}),
+		);
+		// Each one, as TypeScript reports each.
+		const errors = /** @type {CompileError[]} */ ([]);
+		parseModule('class A { static { return; return; } }', 'App.tsrx', { collect: true, errors });
+		expect(errors.map((error) => [error.code, error.pos])).toEqual([
+			['TS18041', 19],
+			['TS18041', 27],
+		]);
+		// One in a function in the block is the function's.
+		expect(
+			parseModule('class A { static { const f = () => { return 1; }; } }', 'App.tsrx').body,
+		).toHaveLength(1);
 	});
 
 	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {

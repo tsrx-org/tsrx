@@ -407,6 +407,25 @@ export {};`,
 		]);
 	});
 
+	it("leaves a `return` in a class `static` block to TypeScript, and keeps the file's other diagnostics", async () => {
+		// The parser used to stop at it (TS1108), so the editor lost the file.
+		const source = `export class A {
+	static {
+		return;
+	}
+}
+export const n: number = 'x';
+`;
+		const { document, diagnostics } = await editor_diagnostics_for('StaticBlockReturn', source);
+
+		expect(reported(document, diagnostics, 'TS18041')).toEqual([
+			{ source: 'ts', text: 'return', offset: source.indexOf('return') },
+		]);
+		expect(reported(document, diagnostics, 'TS2322')).toEqual([
+			{ source: 'ts', text: 'n', offset: source.indexOf('n:') },
+		]);
+	});
+
 	it('leaves a redeclaration in a template body to TypeScript', async () => {
 		const { document, diagnostics } = await editor_diagnostics_for(
 			'TemplateRedeclaration',

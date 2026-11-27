@@ -6205,6 +6205,20 @@ export function TSRXPlugin(config) {
 					// it, as they do at the top level.
 					return /** @type {never} */ (undefined);
 				} else if (
+					message === "'return' outside of function" &&
+					this.currentVarScope().flags & SCOPE_CLASS_STATIC_BLOCK
+				) {
+					// One right in a class `static` block, which TypeScript's parser reads
+					// and its checker reports at the keyword (TS18041): a strict parse
+					// throws it, and a collecting one records it and reads on, where acorn
+					// stopped.
+					this.#raiseCheckerError(
+						position,
+						TS_ERRORS.STATIC_BLOCK_RETURN,
+						position + 'return'.length,
+					);
+					return /** @type {never} */ (undefined);
+				} else if (
 					message === 'Unsyntactic break' &&
 					this.#jumpStatement?.start === this.#reportedSwitchCaseBreak
 				) {

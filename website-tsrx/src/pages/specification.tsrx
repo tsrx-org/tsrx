@@ -884,6 +884,7 @@ const TYPESCRIPT_ERROR_CODES = [
 	'TS18016  Private identifiers are not allowed outside class bodies.',
 	"TS18019  '{0}' modifier cannot be used with a private identifier.",
 	"TS18037  'await' expression cannot be used inside a class static block.",
+	"TS18041  A 'return' statement cannot be used inside a class static block.",
 	'TS18058  Default imports are not allowed in a deferred import.',
 	'TS18059  Named imports are not allowed in a deferred import.',
 	"TS18061  '{0}' is not a valid meta-property for keyword 'import'. Did you mean 'meta' or 'defer'?",
