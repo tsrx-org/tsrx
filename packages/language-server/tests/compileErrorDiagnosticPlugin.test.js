@@ -692,6 +692,16 @@ export {};`,
 		},
 	);
 
+	it('shows each of two `break`s on lines of their own in a case', async () => {
+		const source =
+			'export function App({ x }: { x: number }) @{\n\t<div>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tbreak;\n\t\t\t\tbreak;\n\t\t\t}\n\t\t}\n\t</div>\n}\n';
+		const { document, diagnostics } = await editor_diagnostics_for('TwoCaseBreaks', source);
+		expect(reported(document, diagnostics, 'TSRX2008').map((found) => found.offset)).toEqual([
+			source.indexOf('break'),
+			source.lastIndexOf('break'),
+		]);
+	});
+
 	it("shows an error inside another one's range on its own range", async () => {
 		// The forgotten fragment's TSRX2010 gets an anchor over the whole fragment;
 		// the misplaced `<style>`'s TSRX3008 inside it used to be spanned through

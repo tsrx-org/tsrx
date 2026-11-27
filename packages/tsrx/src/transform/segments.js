@@ -4279,13 +4279,29 @@ function add_diagnostic_mappings(
 			const preceding = loc
 				? get_preceding_source_line_generated_position(source_line_generated_map, loc.line)
 				: null;
-			if (preceding) {
-				const line_end = (gen_line_offsets[preceding.line] ?? generated_code.length) - 1;
+			// Each such anchor gets a character of its own, which no other anchor
+			// or mapping that reports diagnostics has: the editor maps a
+			// diagnostic back through the first mapping at its character, so two
+			// errors there would show as one (two `break`s in a case, or cases
+			// Solid prints on one line).
+			const at = preceding
+				? free_whitespace_before(
+						Math.min(
+							(gen_line_offsets[preceding.line] ?? generated_code.length) - 1,
+							generated_code.length - 1,
+						),
+						gen_line_offsets[preceding.line - 1] ?? 0,
+						diagnostic_mappings,
+						mappings,
+						generated_code,
+					)
+				: -1;
+			if (at !== -1) {
 				diagnostic_mappings.push({
 					sourceOffsets: [start],
-					generatedOffsets: [Math.max(0, Math.min(line_end, generated_code.length - 1))],
+					generatedOffsets: [at],
 					lengths: [length],
-					generatedLengths: [generated_code.length === 0 ? 0 : 1],
+					generatedLengths: [1],
 					data: {
 						...mapping_data_verify_only,
 						customData: { diagnosticAnchor: true },
@@ -4654,6 +4670,34 @@ function get_nearest_source_line_generated_position(source_line_generated_map, l
 	const entry = line_positions[best];
 	const position = entry.position;
 	return { line: position.line, column: position.column, sourceColumn: entry.column };
+}
+
+/**
+ * The last offset from `from` back to `line_start` in `generated_code` that is
+ * whitespace, where no anchor in `anchors` is and no mapping that reports
+ * diagnostics covers, or -1.
+ * @param {number} from
+ * @param {number} line_start
+ * @param {CodeMapping[]} anchors
+ * @param {CodeMapping[]} mappings
+ * @param {string} generated_code
+ * @returns {number}
+ */
+function free_whitespace_before(from, line_start, anchors, mappings, generated_code) {
+	const used = new Set(anchors.map((anchor) => anchor.generatedOffsets[0]));
+	for (let at = from; at >= line_start; at--) {
+		if (used.has(at) || !regex_whitespace.test(generated_code[at] ?? '')) continue;
+		const reported = mappings.some(
+			(mapping) =>
+				mapping.data?.verification &&
+				mapping.generatedOffsets.some(
+					(offset, i) =>
+						offset <= at && at < offset + (mapping.generatedLengths ?? mapping.lengths)[i],
+				),
+		);
+		if (!reported) return at;
+	}
+	return -1;
 }
 
 /**

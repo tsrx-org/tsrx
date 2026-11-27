@@ -663,6 +663,36 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			}
 		});
 
+		it('gives each of two on lines of their own an anchor of its own', () => {
+			// The editor maps a diagnostic back through the first mapping at its
+			// character, so two errors on one anchor would show as one (Solid
+			// prints the cases on one line).
+			for (const cases of [
+				'@case 1: {\n\t\t\tbreak;\n\t\t\tbreak;\n\t\t}',
+				'@case 1: {\n\t\t\tbreak;\n\t\t}\n\t\t@case 2: {\n\t\t\tbreak;\n\t\t}',
+			]) {
+				const source = `export function App({ s }: { s: number }) @{\n\t<div>\n\t\t@switch (s) {\n\t\t${cases}\n\t\t}\n\t</div>\n}\n`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const starts = result.errors.map((error) => error.pos);
+				expect(starts, cases).toHaveLength(2);
+				const anchored = starts.map((start) =>
+					result.mappings
+						.filter(
+							(mapping) =>
+								mapping.data.verification &&
+								mapping.sourceOffsets[0] === start &&
+								mapping.lengths[0] === 'break'.length,
+						)
+						.map((mapping) => mapping.generatedOffsets[0]),
+				);
+				expect(
+					anchored.map((offsets) => offsets.length),
+					cases,
+				).toEqual([1, 1]);
+				expect(anchored[0][0], cases).not.toBe(anchored[1][0]);
+			}
+		});
+
 		it('keeps the code after it in the output', () => {
 			const source = `export function App({ s }: { s: number }) @{\n\t<div>@switch (s) { @case 1: { break;\n\t\tconst bad: number = 1;\n\t\t<b>{bad}</b> } @default: { <i /> } }</div>\n}\n`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
