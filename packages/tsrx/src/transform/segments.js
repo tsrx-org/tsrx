@@ -4268,7 +4268,30 @@ function add_diagnostic_mappings(
 					mappings,
 					generated_code,
 				);
-			if (anchor) diagnostic_mappings.push(anchor);
+			if (anchor) {
+				diagnostic_mappings.push(anchor);
+				continue;
+			}
+			// Nothing on its line is printed, as for a `break` right in an
+			// `@switch` case on a line of its own, which the editor's code leaves
+			// out: an anchor at the end of the generated line of the code printed
+			// last before it, as for one after that code on its line.
+			const preceding = loc
+				? get_preceding_source_line_generated_position(source_line_generated_map, loc.line)
+				: null;
+			if (preceding) {
+				const line_end = (gen_line_offsets[preceding.line] ?? generated_code.length) - 1;
+				diagnostic_mappings.push({
+					sourceOffsets: [start],
+					generatedOffsets: [Math.max(0, Math.min(line_end, generated_code.length - 1))],
+					lengths: [length],
+					generatedLengths: [generated_code.length === 0 ? 0 : 1],
+					data: {
+						...mapping_data_verify_only,
+						customData: { diagnosticAnchor: true },
+					},
+				});
+			}
 			continue;
 		}
 
@@ -4631,6 +4654,29 @@ function get_nearest_source_line_generated_position(source_line_generated_map, l
 	const entry = line_positions[best];
 	const position = entry.position;
 	return { line: position.line, column: position.column, sourceColumn: entry.column };
+}
+
+/**
+ * The generated position of the last code printed on the nearest source line
+ * before `line` that has any, or `null`.
+ * @param {Map<number, Array<{ column: number, position: { line: number, column: number } }>>} source_line_generated_map
+ * @param {number} line
+ * @returns {{ line: number, column: number } | null}
+ */
+function get_preceding_source_line_generated_position(source_line_generated_map, line) {
+	/** @type {number | null} */
+	let nearest = null;
+	for (const [other, entries] of source_line_generated_map) {
+		if (other < line && entries.length && (nearest === null || other > nearest)) nearest = other;
+	}
+	if (nearest === null) return null;
+	let found = null;
+	for (const entry of /** @type {Array<{ column: number, position: { line: number, column: number } }>} */ (
+		source_line_generated_map.get(nearest)
+	)) {
+		if (!found || entry.column > found.column) found = entry;
+	}
+	return found?.position ?? null;
 }
 
 /**

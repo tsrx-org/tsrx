@@ -620,6 +620,49 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			expect(result.code).not.toMatch(/\bbreak\b/);
 		});
 
+		it('gets a mapping that reports diagnostics, also on a line of its own', () => {
+			// The editor shows an error where a mapping that reports diagnostics maps
+			// it back. The `break` is left out of the output, so one alone on its
+			// line, where nothing is printed, had none, and the editor showed no
+			// TSRX2008.
+			for (const body of [
+				'{ break; }',
+				'{\n\t\t\tbreak;\n\t\t}',
+				'{\n\t\t\tbreak;\n\t\t\t<b />\n\t\t}',
+				'{\n\t\t\tconst a = 1;\n\t\t\tbreak;\n\t\t\t<b>{a}</b>\n\t\t}',
+			]) {
+				const source = `export function App({ s }: { s: number }) @{\n\t<div>\n\t\t@switch (s) {\n\t\t@case 1: ${body}\n\t\t@default: { <i /> }\n\t\t}\n\t</div>\n}\n`;
+				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+				const start = source.indexOf('break');
+				expect(result.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
+					[TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code, start, start + 'break'.length],
+				]);
+				const anchors = result.mappings.filter(
+					(mapping) =>
+						mapping.data.verification &&
+						mapping.sourceOffsets[0] === start &&
+						mapping.lengths[0] === 'break'.length,
+				);
+				expect(anchors.length, body).toBe(1);
+				// On one character that no other mapping that reports diagnostics
+				// covers, so the editor maps the error there back to the `break`.
+				const [generated] = anchors[0].generatedOffsets;
+				expect(
+					result.mappings.filter(
+						(mapping) =>
+							mapping !== anchors[0] &&
+							mapping.data.verification &&
+							mapping.generatedOffsets.some(
+								(offset, i) =>
+									offset <= generated &&
+									generated < offset + (mapping.generatedLengths ?? mapping.lengths)[i],
+							),
+					),
+					body,
+				).toEqual([]);
+			}
+		});
+
 		it('keeps the code after it in the output', () => {
 			const source = `export function App({ s }: { s: number }) @{\n\t<div>@switch (s) { @case 1: { break;\n\t\tconst bad: number = 1;\n\t\t<b>{bad}</b> } @default: { <i /> } }</div>\n}\n`;
 			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });

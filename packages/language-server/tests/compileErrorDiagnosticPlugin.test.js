@@ -652,6 +652,18 @@ export {};`,
 			'break;',
 		],
 		[
+			'CaseBreakOwnLine',
+			'export function App({ x }: { x: number }) @{\n\t<div>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tbreak;\n\t\t\t}\n\t\t\t@default: {\n\t\t\t\t<i />\n\t\t\t}\n\t\t}\n\t</div>\n}\n',
+			'TSRX2008',
+			'break',
+		],
+		[
+			'CaseBreakOwnLineBeforeOutput',
+			'export function App({ x }: { x: number }) @{\n\t<div>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tbreak;\n\t\t\t\t<b />\n\t\t\t}\n\t\t}\n\t</div>\n}\n',
+			'TSRX2008',
+			'break',
+		],
+		[
 			'IfBreakInLoopOwnLine',
 			'export function App({ x }: { x: boolean }) {\n\tfor (;;) {\n\t\treturn (\n\t\t\t<div>\n\t\t\t\t@if (x) {\n\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t</div>\n\t\t);\n\t}\n}\n',
 			'TSRX2003',
