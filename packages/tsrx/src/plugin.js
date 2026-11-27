@@ -253,6 +253,48 @@ const STATEMENT_START_MODIFIERS = new Set([
 	'readonly',
 	'static',
 ]);
+// The words before a declaration's name: modifiers and the keywords that start
+// one (see `#escapedModifierStartsDeclaration`).
+const DECLARATION_PREFIX_WORDS = new Set([
+	'abstract',
+	'accessor',
+	'async',
+	'class',
+	'const',
+	'declare',
+	'defer',
+	'enum',
+	'function',
+	'global',
+	'interface',
+	'let',
+	'module',
+	'namespace',
+	'override',
+	'private',
+	'protected',
+	'public',
+	'readonly',
+	'static',
+	'type',
+	'using',
+	'var',
+]);
+// The keywords a declaration's name follows.
+const NAMED_AFTER_WORDS = new Set([
+	'class',
+	'const',
+	'defer',
+	'enum',
+	'function',
+	'interface',
+	'let',
+	'module',
+	'namespace',
+	'type',
+	'using',
+	'var',
+]);
 const DECLARATION_MODIFIERS = new Set([
 	'abstract',
 	'accessor',
@@ -976,6 +1018,8 @@ const SCOPE_ASYNC = 4;
 const SCOPE_SIMPLE_CATCH = 32;
 const SCOPE_CLASS_STATIC_BLOCK = 256;
 const SCOPE_CLASS_FIELD_INIT = 512;
+// A `switch` statement's body, where its `case` clauses' statements are read.
+const SCOPE_SWITCH = 1024;
 const TS_SCOPE_OTHER = 1 << 20;
 const TS_SCOPE_TS_MODULE = 1 << 21;
 // The scopes whose names are one symbol table in TypeScript's binder, where a
@@ -10381,6 +10425,16 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether `token` is a name TypeScript's parser reads as a binding's
+			 * (`isBindingIdentifier`): not `enum`, a reserved word, which
+			 * acorn-typescript's `tokenIsIdentifier` takes.
+			 * @param {Parse.LookaheadState} token
+			 */
+			#isBindingName(token) {
+				return Parser.acornTypeScript.tokenIsIdentifier(token.type) && token.value !== 'enum';
+			}
+
+			/**
 			 * Whether TypeScript's parser reads a declaration from the current token
 			 * (`isDeclaration`): a word or keyword that starts one there (see
 			 * `#declarationAfterModifier`), `export` before `=`, `*`, `{`, `default`,
@@ -17596,6 +17650,24 @@ export function TSRXPlugin(config) {
 				// except a keyword that starts another statement there.
 				const raw = this.input.slice(this.lastTokStart, this.lastTokEnd);
 				const decoded = raw.includes('\\') ? decode_identifier_name(raw) : null;
+				let keyword_error = null;
+				if (decoded && this.lastTokStart === this.#statementExpressionStart) {
+					try {
+						keyword_error = this.#escapedKeywordError(decoded);
+					} catch {
+						// A scanner error ahead, which the statement's own error comes
+						// before.
+					}
+				}
+				if (keyword_error) {
+					// On the word, as TypeScript reports it.
+					try {
+						this.raise(this.lastTokStart, keyword_error);
+					} catch (thrown) {
+						/** @type {{ end?: number }} */ (thrown).end = this.lastTokEnd;
+						throw thrown;
+					}
+				}
 				const name = decoded && !this.#escapedKeywordStartsStatement(decoded) ? decoded : raw;
 				if (
 					this.lastTokStart === this.#statementExpressionStart &&
@@ -17624,6 +17696,88 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * TypeScript's error for `word`, the name a statement starts with,
+			 * written with an escape and followed by the current token, where its
+			 * parser reads the escaped keyword as the keyword, or `null`: TS1260
+			 * `Keywords cannot contain escape characters.` for a modifier before a
+			 * declaration on its line (`isDeclaration`: `async function f() {}`,
+			 * `if (x) accessor class C {}`), `async` before a name and `=>` on its
+			 * line (`isUnParenthesizedAsyncArrowFunctionWorker`), and `let`, `using`
+			 * or `yield` where they start a declaration or a `yield`; and TS1128
+			 * for a class member's modifier that starts no statement in a list (see
+			 * `#checkStatementStart`). A `global` before a name starts a global
+			 * augmentation, whose missing `{` TypeScript reports (TS1005), as here.
+			 * @param {string} word
+			 * @returns {Diagnostic | null}
+			 */
+			#escapedKeywordError(word) {
+				if (this.lastTokStart === this.#throwArgumentStart) return null;
+				if (word === 'let' || word === 'using') {
+					return this.#escapedKeywordStartsStatement(word) ? TS_ERRORS.KEYWORD_ESCAPE : null;
+				}
+				if (word === 'yield') {
+					// Before a name, keyword or literal on its line, which a `yield`
+					// expression is outside a generator too (`isYieldExpression`).
+					return (Parser.acornTypeScript.tokenIsIdentifier(this.type) ||
+						this.type.keyword !== undefined ||
+						this.type === tt.num ||
+						this.type === tt.string) &&
+						!this.hasPrecedingLineBreak()
+						? TS_ERRORS.KEYWORD_ESCAPE
+						: null;
+				}
+				if (!DECLARATION_MODIFIERS.has(word) || this.hasPrecedingLineBreak()) return null;
+				// Not before `await` or `yield`, which TypeScript reads as no name, and
+				// so as no arrow function's parameter, in its await or yield context.
+				if (
+					word === 'async' &&
+					this.#isBindingName(this.getCurLookaheadState()) &&
+					this.value !== 'await' &&
+					this.value !== 'yield' &&
+					this.lookahead().type === tt.arrow &&
+					!this.#lineBreakAfter(this.end)
+				) {
+					return TS_ERRORS.KEYWORD_ESCAPE;
+				}
+				if (this.#escapedModifierStartsDeclaration()) return TS_ERRORS.KEYWORD_ESCAPE;
+				// Not in a `case` clause, where TypeScript reports TS1129.
+				return STATEMENT_START_MODIFIERS.has(word) &&
+					this.#escapedKeywordStartsStatement(word) &&
+					(this.currentScope().flags & SCOPE_SWITCH) === 0
+					? TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED
+					: null;
+			}
+
+			/**
+			 * Whether TypeScript reads a declaration after an escaped modifier from
+			 * the current token (`#startsDeclaration`), leaving out what it can't
+			 * tell: a declaration named `await` or `yield`, after its modifiers and
+			 * keywords, which TypeScript reads as no name in its await or yield
+			 * context.
+			 */
+			#escapedModifierStartsDeclaration() {
+				// The modifiers and keywords before the declaration's name, and the
+				// name, which TypeScript doesn't read as one when it's `await` or
+				// `yield`, or `enum` after a keyword that a name follows.
+				let previous = '';
+				for (let ahead = 0; ; ahead++) {
+					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
+					const value = /** @type {string} */ (token.value);
+					if (value === 'await' || value === 'yield') return false;
+					if (value === 'enum' && NAMED_AFTER_WORDS.has(previous)) return false;
+					if (
+						token.type === tt.eof ||
+						(!(token.type === tt._export || token.type === tt._default) &&
+							!DECLARATION_PREFIX_WORDS.has(value))
+					) {
+						break;
+					}
+					previous = value;
+				}
+				return this.#startsDeclaration();
+			}
+
+			/**
 			 * Whether `word`, the name a statement starts with, written with an
 			 * escape and followed by the current token, is a keyword that starts
 			 * something other than an expression statement in TypeScript, which
@@ -17639,6 +17793,7 @@ export function TSRXPlugin(config) {
 			#escapedKeywordStartsStatement(word) {
 				if (this.lastTokStart === this.#throwArgumentStart) return false;
 				const name = Parser.acornTypeScript.tokenIsIdentifier(this.type);
+				const binding = this.#isBindingName(this.getCurLookaheadState());
 				switch (word) {
 					case 'global':
 						// Not before a keyword's name, as in `#startsDeclaration`.
@@ -17649,9 +17804,9 @@ export function TSRXPlugin(config) {
 							this.type === tt._export
 						);
 					case 'let':
-						return name || this.type === tt.braceL || this.type === tt.bracketL;
+						return binding || this.type === tt.braceL || this.type === tt.bracketL;
 					case 'using':
-						return name || this.type === tt.braceL;
+						return binding || this.type === tt.braceL;
 					case 'yield':
 						return true;
 				}
