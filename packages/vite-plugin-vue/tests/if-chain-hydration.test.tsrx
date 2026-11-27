@@ -246,4 +246,37 @@ describe("tsrx-vue hydrating an element's @else if chain or v-show branch (#1402
 			app.unmount();
 		}
 	});
+
+	it('hydrates a v-show branch hidden on the server with a style mismatch, then follows', async () => {
+		// vue-jsx-vapor's server build renders a hidden `v-show` element shown
+		// (vapor-for-ssr.test.js), so Vue reports the style and hides it.
+		state.value = { ...states.on, shown: false };
+		container.innerHTML = server_markup.Shown.on;
+		const span = container.querySelector('span') as HTMLElement;
+		const errors: unknown[] = [];
+		const warnings: string[] = [];
+		const app = createVaporSSRApp(ShownHost);
+		app.config.errorHandler = (error) => {
+			errors.push(error);
+		};
+		app.config.warnHandler = (message) => {
+			warnings.push(message);
+		};
+		try {
+			app.mount(container);
+			await flush();
+			expect(errors).toEqual([]);
+			expect(warnings.map((warning) => warning.split(' on')[0])).toEqual([
+				'Hydration style mismatch',
+			]);
+			expect(container.querySelector('span')).toBe(span);
+			expect(span.style.display).toBe('none');
+			state.value = { ...state.value, shown: true };
+			await flush();
+			expect(container.querySelector('span')).toBe(span);
+			expect(span.style.display).toBe('');
+		} finally {
+			app.unmount();
+		}
+	});
 });

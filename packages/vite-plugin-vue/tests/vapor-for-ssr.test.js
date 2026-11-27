@@ -549,5 +549,14 @@ describe("[vue] an element's @else if chain or v-show branch on the server", () 
 		const app = createSSRApp(App, { shown: false });
 		app.config.warnHandler = () => {};
 		expect(await renderToString(app)).toBe('<p>x</p>');
+		// In a branch too; if-chain-hydration.test.tsrx hydrates it.
+		const shapes = await server.ssrLoadModule('/if-chain.tsrx');
+		const branch = createSSRApp(shapes.Shown, {
+			state: { on: true, away: false, shown: false, name: 'Ann' },
+		});
+		branch.config.warnHandler = () => {};
+		expect(await renderToString(branch)).toBe(
+			'<p><span><button class="counter">on:0</button></span>Ann</p>',
+		);
 	});
 });

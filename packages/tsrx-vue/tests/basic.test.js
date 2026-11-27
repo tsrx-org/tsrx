@@ -2687,6 +2687,45 @@ export function Card(${params}: any) @{
 		expect(code).not.toContain('v-else-if');
 	});
 
+	it('keeps the shared lowering for an @if chain with a branch that is no element', () => {
+		const { code } = compile(
+			`function App({ on, away, k, shown }: { on: boolean; away: boolean; k: string; shown: boolean }) @{
+				<div>
+					@if (on) {
+						<b>{'on'}</b>
+					} @else {
+						@switch (k) {
+							@case 'a': {
+								<i>{'a'}</i>
+							}
+						}
+					}
+					@if (on) {
+						<b v-show:arg={shown}>{'on'}</b>
+					}
+					{k}
+					@if (on) {
+						<b>{'on'}</b>
+					} @else if (away) {
+						<i>{'away'}</i>
+					}
+					<u v-else-if={shown}>{'authored'}</u>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		// An \`@else\` that renders a \`@switch\` keeps its IIFE.
+		expect(code).toMatch(/\{on\s*\? <b>\{'on'\}<\/b>\s*: \(\(\) => \{\s*switch \(k\)/);
+		// Only a plain \`v-show\` takes \`v-if\` with it.
+		expect(code).toContain("{on ? <b v-show:arg={shown}>{'on'}</b> : null}");
+		// An authored \`v-else-if\` after the chain would join it.
+		expect(code).toContain(
+			"{on ? <b>{'on'}</b> : away ? <i>{'away'}</i> : null}<u v-else-if={shown}>",
+		);
+		expect(code).not.toMatch(/<[bi] v-(if|else)/);
+	});
+
 	it("gives an element's @if / @else v-if and v-else branches", () => {
 		// Alone, \`v-if\` / \`v-else\` is the same \`createIf\` as the ternary; beside
 		// another expression child, the ternary would run in that child's
