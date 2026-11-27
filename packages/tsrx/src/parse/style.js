@@ -51,6 +51,11 @@ class Parser {
 	// Whether, in loose mode, an at-rule's prelude has left a `(` or `[` open,
 	// so its read ran to the end of the sheet.
 	unclosed_prelude = false;
+	// Whether the selector being read is one, as a rule's or an `:is()`'s are,
+	// where `check_type_selector_placement` applies; not in the argument of a
+	// pseudo-element (`::part(a b)`) or of another pseudo-class (an An+B), but
+	// again in an `:is()` in one of those.
+	selector = true;
 
 	/**
 	 * @param {string} template
@@ -1077,6 +1082,58 @@ function allow_selector_comments(parser) {
 	return spaced;
 }
 
+// An An+B that is a name, as `odd` and `n-1` are, which a type selector can be.
+const REGEX_NAME = /^-?[a-z_][\w-]*$/i;
+
+/**
+ * The pseudo-classes whose argument is a selector or a list of them, where a
+ * type selector has to start its compound as in a rule's.
+ */
+const SELECTOR_PSEUDO_CLASSES = new Set([
+	'is',
+	'where',
+	'not',
+	'has',
+	'global',
+	'host',
+	'host-context',
+]);
+
+/**
+ * Throw for a type selector (`div`, `*`, `svg|a`) at `start` that doesn't
+ * start its compound, which CSS reads no rule with: `.a*`, `[x]div`, `&div`
+ * (CSS Nesting wants `div&`), and `.a/* c *\/div`, where the comment is no
+ * combinator. One may follow only bare `:global`s, which the output drops,
+ * a `:global(...)`, after which the output puts it in an `:is()`
+ * (`:global(.x)div`), or an An+B, as the parser reads `2n of` before a
+ * selector list.
+ *
+ * @param {Parser} parser
+ * @param {AST.CSS.SimpleSelector[]} selectors the compound's selectors before it
+ * @param {number} start
+ */
+function check_type_selector_placement(parser, selectors, start) {
+	const previous = selectors.at(-1);
+	if (
+		!parser.selector ||
+		previous === undefined ||
+		(previous.type === 'PseudoClassSelector' && previous.name === 'global' && previous.args) ||
+		previous.type === 'Nth' ||
+		// Last, since it reads the compound: one with many bare :globals and
+		// then many `:global(.x)div`s took quadratic time when it came first.
+		selectors.every(
+			(selector) =>
+				selector.type === 'PseudoClassSelector' && selector.name === 'global' && !selector.args,
+		)
+	) {
+		return;
+	}
+	parser.index = start;
+	throw new Error(
+		'A type selector or * must come first in its compound selector, as in div.x or div&',
+	);
+}
+
 /**
  * @param {Parser} parser
  * @param {boolean} [inside_pseudo_class]
@@ -1122,6 +1179,7 @@ function read_selector(parser, inside_pseudo_class = false) {
 				end: parser.index,
 			});
 		} else if (parser.eat('*')) {
+			check_type_selector_placement(parser, relative_selector.selectors, start);
 			let name = '*';
 
 			if (parser.eat('|')) {
@@ -1159,7 +1217,13 @@ function read_selector(parser, inside_pseudo_class = false) {
 			// We read the inner selectors of a pseudo element to ensure it parses correctly,
 			// but we don't do anything with the result.
 			if (parser.eat('(')) {
-				read_selector_list(parser, true);
+				const selector = parser.selector;
+				parser.selector = false;
+				try {
+					read_selector_list(parser, true);
+				} finally {
+					parser.selector = selector;
+				}
 				parser.eat(')', true);
 			}
 		} else if (parser.eat(':')) {
@@ -1169,7 +1233,15 @@ function read_selector(parser, inside_pseudo_class = false) {
 			let args = null;
 
 			if (parser.eat('(')) {
-				args = read_selector_list(parser, true);
+				const selector = parser.selector;
+				parser.selector = SELECTOR_PSEUDO_CLASSES.has(
+					unescape_css(name).replace(/[A-Z]/g, (c) => c.toLowerCase()),
+				);
+				try {
+					args = read_selector_list(parser, true);
+				} finally {
+					parser.selector = selector;
+				}
 				parser.eat(')', true);
 			}
 
@@ -1214,9 +1286,16 @@ function read_selector(parser, inside_pseudo_class = false) {
 		} else if (inside_pseudo_class && parser.match_regex(REGEX_NTH_OF)) {
 			// nth of matcher must come before combinator matcher to prevent collision else the '+' in '+2n-1' would be parsed as a combinator
 
+			const value = /**@type {string} */ (parser.read(REGEX_NTH_OF));
+			// One that is a name (`odd`, `n-1`) after another selector is a type
+			// selector (`[x]odd`).
+			if (REGEX_NAME.test(value)) {
+				check_type_selector_placement(parser, relative_selector.selectors, start);
+			}
+
 			relative_selector.selectors.push({
 				type: 'Nth',
-				value: /**@type {string} */ (parser.read(REGEX_NTH_OF)),
+				value,
 				start,
 				end: parser.index,
 			});
@@ -1229,6 +1308,7 @@ function read_selector(parser, inside_pseudo_class = false) {
 			});
 		} else if (!parser.match_regex(REGEX_COMBINATOR)) {
 			let name = read_identifier(parser);
+			check_type_selector_placement(parser, relative_selector.selectors, start);
 
 			if (parser.eat('|')) {
 				// we ignore the namespace when trying to find matching element classes
