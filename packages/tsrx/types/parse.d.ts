@@ -1005,6 +1005,15 @@ export namespace Parse {
 		lookahead(number?: number): LookaheadState;
 
 		/**
+		 * Restore the token fields of a `lookahead()` snapshot, without `context`.
+		 * Added by @sveltejs/acorn-typescript.
+		 */
+		setLookaheadTokenState(state: LookaheadState): void;
+
+		/** Whether tokens are being read by `lookahead`, which updates no context. */
+		isLookahead: boolean;
+
+		/**
 		 * Get next token start position
 		 */
 		nextTokenStart(): number;

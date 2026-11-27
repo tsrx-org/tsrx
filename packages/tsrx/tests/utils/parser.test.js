@@ -18038,6 +18038,11 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			['\\u0079ield foo;', ['TS1214', '\\'], ['TS1260', '\\', 10]],
 			['\\u0061ccessor foo;', ['TS1128', '\\'], ['TS1128', '\\', 13]],
 			['{\n\t\\u0073tatic foo;\n}', ['TS1214', '\\'], ['TS1128', '\\', 11]],
+			// `enum` after `const` is the keyword of a `const enum`, and a string is
+			// no name.
+			['if (x) \\u0061sync const enum E {}', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['if (x) \\u0061sync module "await" {}', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['{ \\u0061ccessor module "await" {} }', ['TS1260', '\\'], ['TS1260', '\\', 13]],
 		];
 		for (const [source, [strict_code, strict_at], [code, at, length]] of escaped_keywords) {
 			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
@@ -18101,6 +18106,34 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		expect(() => parseModule('for (async of xs) {}', 'App.tsrx')).toThrow(
 			expect.objectContaining({ code: 'TS1012', pos: 'for (async of '.length }),
 		);
+	});
+
+	it('reads a long run of modifiers before a declaration in linear time', () => {
+		// The tokens after an escaped modifier, and after modifiers that start a
+		// statement, are read once each, not again for each of them: 5,000 took
+		// seconds.
+		const words = 'async '.repeat(5000);
+		for (const [source, code] of [
+			[`if (x) \\u0061sync ${words}function f() {}`, 'TS1260'],
+			[`if (x) \\u0061sync function ${words}f() {}`, 'TS1260'],
+			[`\\u0061ccessor ${words}x;`, 'TS1128'],
+			[`accessor ${words}x;`, 'TS1128'],
+		]) {
+			const start = performance.now();
+			expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] })).toThrow(
+				expect.objectContaining({ code }),
+			);
+			expect(performance.now() - start, source.slice(0, 24)).toBeLessThan(1000);
+		}
+		// And a run of `declare` in a block, read for a namespace declaration's
+		// place too.
+		const source = `{ ${'declare '.repeat(1500)}let x; }`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		const start = performance.now();
+		parseModule(source, 'App.tsrx', { collect: true, errors });
+		expect(performance.now() - start).toBeLessThan(1000);
+		expect(errors.map((error) => [error.code, error.pos])).toEqual([['TS1184', 2]]);
 	});
 
 	it('reports `import` after `new` as a missing expression', async () => {

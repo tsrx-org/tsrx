@@ -9613,11 +9613,15 @@ export function TSRXPlugin(config) {
 			 * declaration (`['declare', 'class']`), or `null` where TypeScript reads
 			 * no declaration, or another modifier (`public`) comes first.
 			 * @param {number} ahead
+			 * @param {Parse.LookaheadState} [token] That token, when the caller has it
+			 *   (see `#tokenAfter`)
 			 * @returns {string[] | null}
 			 */
-			#declarationAfterModifier(ahead) {
+			#declarationAfterModifier(
+				ahead,
+				token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead),
+			) {
 				const is_identifier = Parser.acornTypeScript.tokenIsIdentifier;
-				const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
 				switch (token.type) {
 					case tt._class:
 					case tt._function:
@@ -9626,7 +9630,7 @@ export function TSRXPlugin(config) {
 						return [/** @type {string} */ (token.type.keyword)];
 					case tt._import: {
 						// An import declaration, not `import(…)` or `import.meta`.
-						const after = this.lookahead(ahead + 1).type;
+						const after = this.#tokenAfter(token).type;
 						return after === tt.string ||
 							after === tt.star ||
 							after === tt.braceL ||
@@ -9638,7 +9642,7 @@ export function TSRXPlugin(config) {
 				}
 				if (!is_identifier(token.type)) return null;
 				const word = /** @type {string} */ (token.value);
-				const next = this.lookahead(ahead + 1);
+				const next = this.#tokenAfter(token);
 				const same_line = !regex_line_break.test(this.input.slice(token.end, next.start));
 				switch (word) {
 					case 'let':
@@ -9663,7 +9667,7 @@ export function TSRXPlugin(config) {
 						// `await using x = y;`, with `using` on the line or a later one (see
 						// `isUsingKeyword`).
 						if (next.type !== tt.name || next.value !== 'using') return null;
-						const after = this.lookahead(ahead + 2);
+						const after = this.#tokenAfter(next);
 						return !regex_line_break.test(this.input.slice(next.end, after.start)) &&
 							(is_identifier(after.type) || after.type === tt.braceL)
 							? ['await']
@@ -9674,7 +9678,7 @@ export function TSRXPlugin(config) {
 					case 'abstract':
 					case 'declare': {
 						if (!same_line) return null;
-						const declaration = this.#declarationAfterModifier(ahead + 1);
+						const declaration = this.#declarationAfterModifier(ahead + 1, next);
 						return declaration && [word, ...declaration];
 					}
 				}
@@ -9704,9 +9708,10 @@ export function TSRXPlugin(config) {
 				if (!words || (keyword !== 'namespace' && keyword !== 'module' && keyword !== 'global')) {
 					return null;
 				}
-				const tokens = words.map((_, i) =>
-					i === 0 ? this.getCurLookaheadState() : this.lookahead(i),
-				);
+				const tokens = [this.getCurLookaheadState()];
+				while (tokens.length < words.length) {
+					tokens.push(this.#tokenAfter(/** @type {Parse.LookaheadState} */ (tokens.at(-1))));
+				}
 				// An escape in a keyword but `global` is TS1260, which the parse throws
 				// as TypeScript's parser reports it, before anything else.
 				if (
@@ -9726,6 +9731,38 @@ export function TSRXPlugin(config) {
 					end: first.end,
 					error: ambient ? TS_ERRORS.NESTED_AMBIENT_MODULE : TS_ERRORS.NESTED_NAMESPACE,
 				};
+			}
+
+			/**
+			 * The token after `token`, which is the current token's lookahead state
+			 * or one this gave, read as `lookahead` reads the tokens after the
+			 * current one. A loop over the tokens ahead that steps with this reads
+			 * each token once, where `this.lookahead(ahead)` for each `ahead` reads
+			 * them all again every time, which is quadratic in a long run of words.
+			 * @param {Parse.LookaheadState} token
+			 * @returns {Parse.LookaheadState}
+			 */
+			#tokenAfter(token) {
+				const state = this.getCurLookaheadState();
+				const context = this.context;
+				const pre_value = this.preValue;
+				const pre_token = this.preToken;
+				const is_lookahead = this.isLookahead;
+				try {
+					this.setLookaheadTokenState(token);
+					// `lookahead`'s context from the current token, which it starts with
+					// the current context alone, and carries from token to token.
+					this.context = token.context === context ? [this.curContext()] : token.context.slice();
+					this.isLookahead = true;
+					this.nextToken();
+					return this.getCurLookaheadState();
+				} finally {
+					this.setLookaheadTokenState(state);
+					this.context = context;
+					this.preValue = pre_value;
+					this.preToken = pre_token;
+					this.isLookahead = is_lookahead;
+				}
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#155): remove once a release includes the fix
@@ -9749,8 +9786,9 @@ export function TSRXPlugin(config) {
 				/** @type {Parse.LookaheadState[]} */
 				const modifiers = [];
 				let declaration_expected = -1;
+				// Each token read once (see `#tokenAfter`).
+				let token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
 				for (;;) {
-					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
 					const word = is_identifier(token.type) ? /** @type {string} */ (token.value) : '';
 					if (DECLARATION_MODIFIERS.has(word)) {
 						if (word === 'static') {
@@ -9763,17 +9801,18 @@ export function TSRXPlugin(config) {
 						}
 						if (declaration_expected === -1) modifiers.push(token);
 						ahead++;
+						token = this.#tokenAfter(token);
 						continue;
 					}
 					if (token.type === tt._export) {
-						const next = this.lookahead(ahead + 1);
+						const next = this.#tokenAfter(token);
 						if (next.type === tt._default) {
 							const exported = this.#defaultExportedDeclaration(ahead + 2);
 							if (exported === null) return null;
 							modifiers.push(token, next, ...exported.modifiers);
 							return { modifiers, declaration: exported.declaration, declaration_expected };
 						}
-						const after = next.type === tstt.type ? this.lookahead(ahead + 2) : next;
+						const after = next.type === tstt.type ? this.#tokenAfter(next) : next;
 						if (
 							after.type === tt.eq ||
 							after.type === tt.star ||
@@ -9785,10 +9824,11 @@ export function TSRXPlugin(config) {
 						}
 						if (declaration_expected === -1) modifiers.push(token);
 						ahead++;
+						token = next;
 						continue;
 					}
 					if (modifiers.length === 0) return null;
-					const declaration = this.#declarationAfterModifier(ahead);
+					const declaration = this.#declarationAfterModifier(ahead, token);
 					return declaration?.length === 1
 						? { modifiers, declaration: declaration[0], declaration_expected }
 						: null;
@@ -10443,12 +10483,13 @@ export function TSRXPlugin(config) {
 			 */
 			#startsDeclaration() {
 				const is_identifier = Parser.acornTypeScript.tokenIsIdentifier;
-				for (let ahead = 0; ; ahead++) {
-					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
+				// Each token read once (see `#tokenAfter`).
+				let token = this.getCurLookaheadState();
+				for (;;) {
 					if (!is_identifier(token.type)) {
 						if (token.type === tt._import) {
 							// An import declaration, not `import(…)` or `import.meta`.
-							const after = this.lookahead(ahead + 1).type;
+							const after = this.#tokenAfter(token).type;
 							return (
 								after === tt.string ||
 								after === tt.star ||
@@ -10458,8 +10499,8 @@ export function TSRXPlugin(config) {
 							);
 						}
 						if (token.type === tt._export) {
-							let after = this.lookahead(ahead + 1);
-							if (after.type === tstt.type) after = this.lookahead(ahead + 2);
+							const next = this.#tokenAfter(token);
+							const after = next.type === tstt.type ? this.#tokenAfter(next) : next;
 							if (
 								after.type === tt.eq ||
 								after.type === tt.star ||
@@ -10470,6 +10511,7 @@ export function TSRXPlugin(config) {
 							) {
 								return true;
 							}
+							token = next;
 							continue;
 						}
 						return (
@@ -10480,7 +10522,7 @@ export function TSRXPlugin(config) {
 						);
 					}
 					const word = /** @type {string} */ (token.value);
-					const next = this.lookahead(ahead + 1);
+					const next = this.#tokenAfter(token);
 					const same_line = !regex_line_break.test(this.input.slice(token.end, next.start));
 					switch (word) {
 						case 'let':
@@ -10491,7 +10533,7 @@ export function TSRXPlugin(config) {
 						case 'await': {
 							// `await using x = y;`, with `using` on the line or the next.
 							if (next.type !== tt.name || next.value !== 'using') return false;
-							const after = this.lookahead(ahead + 2);
+							const after = this.#tokenAfter(next);
 							return (
 								!regex_line_break.test(this.input.slice(next.end, after.start)) &&
 								(is_identifier(after.type) || after.type === tt.braceL)
@@ -10514,6 +10556,7 @@ export function TSRXPlugin(config) {
 									!TYPESCRIPT_KEYWORD_NAMES.has(/** @type {string} */ (next.value)))
 							);
 						case 'static':
+							token = next;
 							continue;
 						case 'abstract':
 						case 'accessor':
@@ -10526,6 +10569,7 @@ export function TSRXPlugin(config) {
 							if (!same_line) return false;
 							// `declare type` starts a type alias.
 							if (word === 'declare' && next.type === tstt.type) return true;
+							token = next;
 							continue;
 					}
 					return false;
@@ -17758,21 +17802,28 @@ export function TSRXPlugin(config) {
 			#escapedModifierStartsDeclaration() {
 				// The modifiers and keywords before the declaration's name, and the
 				// name, which TypeScript doesn't read as one when it's `await` or
-				// `yield`, or `enum` after a keyword that a name follows.
+				// `yield`, or `enum` after a keyword that a name follows (not after
+				// `const`, where it's the keyword of `const enum`). A string's value
+				// isn't a name (`module "await"`). Each token read once (see
+				// `#tokenAfter`).
 				let previous = '';
-				for (let ahead = 0; ; ahead++) {
-					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
-					const value = /** @type {string} */ (token.value);
-					if (value === 'await' || value === 'yield') return false;
-					if (value === 'enum' && NAMED_AFTER_WORDS.has(previous)) return false;
+				for (let token = this.getCurLookaheadState(); ; token = this.#tokenAfter(token)) {
+					const word =
+						Parser.acornTypeScript.tokenIsIdentifier(token.type) || token.type.keyword
+							? /** @type {string} */ (token.value)
+							: '';
+					if (word === 'await' || word === 'yield') return false;
+					if (word === 'enum' && previous !== 'const' && NAMED_AFTER_WORDS.has(previous)) {
+						return false;
+					}
 					if (
 						token.type === tt.eof ||
 						(!(token.type === tt._export || token.type === tt._default) &&
-							!DECLARATION_PREFIX_WORDS.has(value))
+							!DECLARATION_PREFIX_WORDS.has(word))
 					) {
 						break;
 					}
-					previous = value;
+					previous = word;
 				}
 				return this.#startsDeclaration();
 			}
