@@ -623,7 +623,13 @@ function mark_solid_render_control(node) {
  */
 function report_jump(diagnostic, node, transform_context) {
 	const recorded = transform_context.errors?.length ?? 0;
-	error(diagnostic, transform_context.filename, node, transform_context.errors);
+	error(
+		diagnostic,
+		transform_context.filename,
+		node,
+		transform_context.errors,
+		transform_context.comments,
+	);
 	if ((transform_context.errors?.length ?? 0) > recorded) {
 		node.metadata = { ...node.metadata, recorded_jump_error: true };
 	}
@@ -670,6 +676,7 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 			transform_context.filename,
 			current,
 			transform_context.errors,
+			transform_context.comments,
 		);
 		return;
 	}
@@ -738,6 +745,7 @@ function validate_if_body_control_flow(node, transform_context) {
 			transform_context.filename,
 			current,
 			transform_context.errors,
+			transform_context.comments,
 		);
 		return;
 	}
