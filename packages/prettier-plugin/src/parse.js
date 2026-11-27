@@ -152,19 +152,61 @@ const regex_static_block_modifiers =
  * @returns {boolean}
  */
 function isDeclareUsingInBlock(error, text) {
-	return (
-		error.code === 'TS1184' &&
-		error.pos !== undefined &&
-		regex_declared_using.test(text.slice(error.pos))
-	);
+	if (error.code !== 'TS1184' || error.pos === undefined) return false;
+	let declared = false;
+	let word = wordAt(text, error.pos);
+	let end = error.pos + word.length;
+	while (STATEMENT_MODIFIERS.has(word)) {
+		declared ||= word === 'declare';
+		const start = gapEnd(text, end);
+		word = wordAt(text, start);
+		end = start + word.length;
+	}
+	if (word === 'await') word = wordAt(text, gapEnd(text, end));
+	return declared && word === 'using';
+}
+
+/** The modifiers that TypeScript reads before a declaration in a block. */
+const STATEMENT_MODIFIERS = new Set([
+	'abstract',
+	'accessor',
+	'async',
+	'declare',
+	'export',
+	'private',
+	'protected',
+	'public',
+	'readonly',
+	'static',
+]);
+
+/** Whitespace and comments, from where they start. */
+const regex_gap = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*/y;
+/** A word, with any escapes in it, from where it starts. */
+const regex_word = /[\p{ID_Continue}$\u200c\u200d\\]*/uy;
+
+/**
+ * Where the whitespace and comments from `position` end.
+ * @param {string} text
+ * @param {number} position
+ * @returns {number}
+ */
+function gapEnd(text, position) {
+	regex_gap.lastIndex = position;
+	regex_gap.test(text);
+	return regex_gap.lastIndex;
 }
 
 /**
- * Modifiers, `declare` among them, then `using` or `await using`, with comments
- * between them.
+ * The word at `position`, or `''`.
+ * @param {string} text
+ * @param {number} position
+ * @returns {string}
  */
-const regex_declared_using =
-	/^(?:(?:abstract|accessor|async|declare|private|protected|public|readonly|static)(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)*?declare(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+(?:(?:abstract|accessor|async|declare|private|protected|public|readonly|static)(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)*(?:await(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)?using(?![\p{ID_Continue}$\u200c\u200d])/u;
+function wordAt(text, position) {
+	regex_word.lastIndex = position;
+	return regex_word.exec(text)?.[0] ?? '';
+}
 
 /**
  * Whether `error` is for an `async` constructor (`async constructor() {}`,

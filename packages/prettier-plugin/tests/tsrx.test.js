@@ -2936,6 +2936,16 @@ describe('parse errors', () => {
 		);
 		await expectFormat('declare import x from "m";', 'import x from "m";\n');
 		await expectFormat('{ public using x = y; }', '{\n  using x = y;\n}\n');
+		// And `declare` before another declaration: the modifiers are the words
+		// before its keyword, not a later statement's or words in a comment.
+		await expectFormat(
+			'{ declare /*a*/ let x; /*b*/ using y = f(); }',
+			'{\n  declare let /*a*/ x;\n  /*b*/ using y = f();\n}\n',
+		);
+		await expectFormat(
+			'{ static // declare using\nlet x; }',
+			'{\n  // declare using\n  let x;\n}\n',
+		);
 		// Exports TypeScript's binder declares twice (#882).
 		await expectFormat(
 			'export default 1;\nexport default 2;',
@@ -3159,6 +3169,7 @@ describe('parse errors', () => {
 				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
 				'2:3',
 			],
+			['{\n  declare export using x = y;\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:3'],
 			// A `using` declaration's name without an initializer (TS1155), where
 			// Prettier formats a `const` one's.
 			['using x;', TS_ERRORS.DECLARATION_NOT_INITIALIZED, '1:7'],
@@ -3208,6 +3219,17 @@ describe('parse errors', () => {
 		for (const [source, error, at] of cases) {
 			await expect_reported(source, error, at);
 		}
+	});
+
+	test('reads the modifiers before a declaration in a block in linear time', async () => {
+		// The comments between them were read with a backtracking pattern, which
+		// took seconds for a few dozen.
+		const start = performance.now();
+		await expectFormat(
+			`{ declare ${'/* */'.repeat(28)} let x; }`,
+			`{\n  declare let ${'/* */ '.repeat(28)}x;\n}\n`,
+		);
+		expect(performance.now() - start).toBeLessThan(1000);
 	});
 
 	// A rest element's or rest parameter's default (#770, #726) prints as
