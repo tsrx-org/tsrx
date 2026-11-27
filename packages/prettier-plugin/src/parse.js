@@ -40,7 +40,9 @@ const BROKEN_MARKUP_CODES = new Set([
 
 /**
  * The codes of the mistakes the parser records when collecting that Prettier's
- * `typescript` parser rejects: a declaration list without a declarator
+ * `typescript` parser rejects: a token that starts no statement where one in a
+ * list starts (`export foo;`, `accessor x;`, TS1128, or TS1129 in a `case`
+ * clause), which the tree leaves out, a declaration list without a declarator
  * (`const` on its own, `for (const of x)`), a modifier on a type member or type
  * parameter or where only a type parameter takes one, a second accessibility
  * modifier, a parameter property outside a constructor, with a binding pattern
@@ -68,6 +70,8 @@ const BROKEN_MARKUP_CODES = new Set([
  * in an ambient class (`declare class A { x = 1 }`).
  */
 const REJECTED_CODES = new Set([
+	'TS1128',
+	'TS1129',
 	'TS1123',
 	'TS1070',
 	'TS1273',

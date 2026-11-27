@@ -190,6 +190,7 @@ export const TS_SYNTAX_ERROR_CODES = [
 	'TS1125',
 	'TS1127',
 	'TS1128',
+	'TS1129',
 	'TS1134',
 	'TS1136',
 	'TS1145',
@@ -840,6 +841,9 @@ export const TS_ERRORS = {
 		code: 'TS1128',
 		message: 'Declaration or statement expected.',
 	},
+	// A token that starts no statement in a `case` clause, where TypeScript reports
+	// this instead of TS1128.
+	STATEMENT_EXPECTED: { code: 'TS1129', message: 'Statement expected.' },
 	LINE_BREAK_NOT_PERMITTED: { code: 'TS1142', message: 'Line break not permitted here.' },
 	KEYWORD_ESCAPE: { code: 'TS1260', message: 'Keywords cannot contain escape characters.' },
 	// A JSX name written with a Unicode escape (`<Inn\u0065r />`)

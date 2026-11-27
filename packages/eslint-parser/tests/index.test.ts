@@ -462,6 +462,16 @@ export function A({ items }) @{
 		).toEqual(['2: null: Parsing error: `break` is invalid inside `@switch` cases.']);
 	});
 
+	it('reports a token that starts no statement as a parse error', () => {
+		// The parser records it when collecting, and the tree leaves it out.
+		expect(lint('export declare @dec class A {}\n')).toEqual([
+			'1: null: Parsing error: Declaration or statement expected.',
+		]);
+		expect(lint('switch (a) {\n\tcase 1:\n\t\taccessor x;\n}\n')).toEqual([
+			'3: null: Parsing error: Statement expected.',
+		]);
+	});
+
 	it('reports a break or continue with no target as a parse error, as espree does', () => {
 		expect(lint('function f() {\n\tcontinue;\n}\n')).toEqual([
 			'2: null: Parsing error: Jump target cannot cross function boundary.',
