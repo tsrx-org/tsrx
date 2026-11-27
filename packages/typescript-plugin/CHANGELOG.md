@@ -1,5 +1,29 @@
 # @tsrx/typescript-plugin
 
+## 0.7.17
+
+### Patch Changes
+
+- [#1538](https://github.com/tsrx-org/tsrx/pull/1538)
+  [`067df6e`](https://github.com/tsrx-org/tsrx/commit/067df6e29a610d862df19fd381608ce0c0fd6ce9)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The editor now shows a
+  compile error that has no mapping of its own range over the code in its range
+  that reports diagnostics. The language server spanned the error over every
+  mapping that overlaps its range, so a mapping of a whole directive around it,
+  which doesn't report diagnostics, put it on code that doesn't map back, and the
+  editor showed it nowhere: a nested `break` in an `@switch` case
+  (`if (x) break;`, `TSRX2008`) on React, Preact, Vue and Hono. It now spans the
+  mappings that report diagnostics first, and no other error's anchor; with none,
+  it spans all of them, as before.
+- Updated dependencies
+  [[`b28a7b2`](https://github.com/tsrx-org/tsrx/commit/b28a7b204daab0607316394e5358b07dea5d91a8),
+  [`5e57f47`](https://github.com/tsrx-org/tsrx/commit/5e57f47073b630f2c1162ad798c022fe4cab85f7)]:
+  - @tsrx/solid@0.4.17
+  - @tsrx/content-mapper@0.1.6
+  - @tsrx/preact@0.4.17
+  - @tsrx/react@0.5.17
+  - @tsrx/vue@0.4.17
+
 ## 0.7.16
 
 ### Patch Changes

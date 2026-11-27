@@ -1,5 +1,87 @@
 # @tsrx/prettier-plugin
 
+## 0.7.17
+
+### Patch Changes
+
+- [#1525](https://github.com/tsrx-org/tsrx/pull/1525)
+  [`3331fc2`](https://github.com/tsrx-org/tsrx/commit/3331fc278e5e606a82cefdb956809a742cc23f74)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `-` in a JSX member
+  name's part after a `.` (`<X.A-b />`), which a compile reports as TS1003
+  `Identifier expected.` at the `-` (TS1005 `'>' expected.` in a closing tag), is
+  now rejected by the Prettier plugin, as Prettier's `typescript` parser rejects
+  it, where the plugin formatted it, and reported by the ESLint parser as a parse
+  error, as it does an escape in a JSX name, where it linted the code. The error
+  now comes before a scanner error at the next token, as in TypeScript:
+  `<X.A-b # />`, `<X.A-b " />` and an invalid escape after the `-` report TS1003,
+  where they reported the scanner's TS1127, TS1002 or TS1125. A collecting or
+  loose compile reads on in two more places, so the editor keeps the file: past
+  the `=` of a `-=` (`<X.A-=b />`), and where a closing tag differs from its
+  opening tag only after a `-` in a member's part (`<X.A></X.A-b>`,
+  `<X.A-b></X.A>`), which TypeScript reads as the same name, where they threw
+  TS1012 or TSRX1003.
+
+- [#1526](https://github.com/tsrx-org/tsrx/pull/1526)
+  [`9f1b43d`](https://github.com/tsrx-org/tsrx/commit/9f1b43d66c2d37e5f8ec2633c9ed22e1835943c8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A token that starts no
+  statement where a statement in a list starts (`export` before no declaration, as
+  in `export foo;` or `export declare @dec class A {}`, or a class member
+  modifier, as in `accessor x;`) no longer makes the editor lose the file. A
+  collecting or loose compile records TS1128 `Declaration or statement expected.`
+  over the token and reads on from the next token, as TypeScript's parser does, so
+  the rest of the file keeps its mappings; a strict compile still throws it. Where
+  the rest of the file fails to parse, the compile still throws TS1128 at the
+  token, as before. In a `case` clause the error is now TS1129
+  `Statement expected.`, as in TypeScript. The Prettier plugin rejects both codes,
+  as Prettier's `typescript` parser does, and the ESLint parser reports them as
+  parse errors, since the tree leaves the token out.
+
+  A syntax error that a collecting compile records and reads on after, as these
+  and an escape in a JSX name (`<Inn\u0065r />`, TS17021), now comes before the
+  checker errors held around it, as in TypeScript
+  (`{ namespace N { export foo; } }` records TS1128 before the namespace's
+  TS1235), and is no longer dropped with them when the code around it fails later:
+  `async <T,>(x = <A\u0062 />) => ;` now throws TS17021, which TypeScript reports
+  first, where it threw TS1012 at the `;`.
+
+- [#1527](https://github.com/tsrx-org/tsrx/pull/1527)
+  [`142d459`](https://github.com/tsrx-org/tsrx/commit/142d459bf7805b8c7df049442f9ef5ccadd87d5a)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `using` or
+  `await using` declaration's name without an initializer is now TypeScript's
+  TS1155 `'using' declarations must be initialized.` on the name, as for a `const`
+  one: a strict compile throws it, and a collecting or loose compile records it
+  and reads on, so the editor keeps the file. It was acorn's error at the token
+  after the name, thrown in every mode (`using x;`, `await using x;`,
+  `for (using of;;) {}`). After `declare`, which makes the declaration ambient to
+  TypeScript, there is none: `declare using x;` is TS1491 on `declare` alone, as
+  in TypeScript. A missing initializer inside a `using` declaration's binding
+  pattern now comes after the pattern's TS1492, and after a modifier's error
+  before it (`abstract using {x} = y, z;`), as TypeScript reports them. TS1155 on
+  a name written with an escape (`const \u0078;`) now covers the whole name. The
+  Prettier plugin rejects a `using` declaration without an initializer, as
+  Prettier's `typescript` parser does, where it formats a `const` one, and
+  `declare` before a `using` or `await using` declaration in a block (TS1184),
+  which it printed without the `declare` (`{ declare using x = y; }` became
+  `{ using x = y; }`).
+- Updated dependencies
+  [[`b28a7b2`](https://github.com/tsrx-org/tsrx/commit/b28a7b204daab0607316394e5358b07dea5d91a8),
+  [`890f4d8`](https://github.com/tsrx-org/tsrx/commit/890f4d82d6f2a36e0283d1986d12ff1c4748666d),
+  [`b1d2761`](https://github.com/tsrx-org/tsrx/commit/b1d27612d59da3ab14ddd5898de7f6baa99ebaba),
+  [`3eb6403`](https://github.com/tsrx-org/tsrx/commit/3eb640322526da59621d0d01fb3a415e322baf55),
+  [`0a6939e`](https://github.com/tsrx-org/tsrx/commit/0a6939eab8f51695a77ff45f600dff54ed0d6fe1),
+  [`4fd52c8`](https://github.com/tsrx-org/tsrx/commit/4fd52c8982d0ea85dbe53d3ead093e6f5dc3eb0a),
+  [`5958301`](https://github.com/tsrx-org/tsrx/commit/5958301f33dc9968f5ffca972a1abdcab266a91b),
+  [`0cbd22d`](https://github.com/tsrx-org/tsrx/commit/0cbd22d1e6fc17c77e3a85dd4afc3c23ce24b7ab),
+  [`d8afb8e`](https://github.com/tsrx-org/tsrx/commit/d8afb8e37274cbecd95913141cf169f1a0bef563),
+  [`24e698f`](https://github.com/tsrx-org/tsrx/commit/24e698f5cbb7b4706def61742ea9a1bdeb440a0a),
+  [`83fd00e`](https://github.com/tsrx-org/tsrx/commit/83fd00ea9ee5dff7915d9912538fb86f36f52936),
+  [`3331fc2`](https://github.com/tsrx-org/tsrx/commit/3331fc278e5e606a82cefdb956809a742cc23f74),
+  [`b6905e4`](https://github.com/tsrx-org/tsrx/commit/b6905e474b9a0e158e96ec4b623e1f23aa7a8d87),
+  [`9f1b43d`](https://github.com/tsrx-org/tsrx/commit/9f1b43d66c2d37e5f8ec2633c9ed22e1835943c8),
+  [`ce368a8`](https://github.com/tsrx-org/tsrx/commit/ce368a82627a263eb49c0168a4e4b3a93c65fe82),
+  [`142d459`](https://github.com/tsrx-org/tsrx/commit/142d459bf7805b8c7df049442f9ef5ccadd87d5a)]:
+  - @tsrx/core@0.12.0
+
 ## 0.7.16
 
 ### Patch Changes

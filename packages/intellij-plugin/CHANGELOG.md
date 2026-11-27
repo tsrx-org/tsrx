@@ -1,5 +1,13 @@
 # @tsrx/intellij-plugin
 
+## 0.0.107
+
+### Patch Changes
+
+- Updated dependencies
+  [[`067df6e`](https://github.com/tsrx-org/tsrx/commit/067df6e29a610d862df19fd381608ce0c0fd6ce9)]:
+  - @tsrx/language-server@0.7.17
+
 ## 0.0.106
 
 ### Patch Changes
