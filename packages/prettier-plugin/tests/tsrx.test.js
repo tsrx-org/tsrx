@@ -3143,6 +3143,11 @@ describe('parse errors', () => {
 			['accessor class A {}', TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, '1:1'],
 			['async class A {}', TS_ERRORS.MODIFIER_CANNOT_BE_USED_HERE, '1:1'],
 			['declare using x = y;', TS_ERRORS.MODIFIER_ON_USING, '1:1'],
+			// A `using` declaration's name without an initializer (TS1155), where
+			// Prettier formats a `const` one's.
+			['using x;', TS_ERRORS.DECLARATION_NOT_INITIALIZED, '1:7'],
+			['async function f() {\n  await using x;\n}', TS_ERRORS.DECLARATION_NOT_INITIALIZED, '2:15'],
+			['for (using of;;) {}', TS_ERRORS.DECLARATION_NOT_INITIALIZED, '1:12'],
 			// A binding pattern in a `using` declaration (TS1492).
 			['using {x} = y;', TS_ERRORS.USING_BINDING_PATTERN, '1:7'],
 			[

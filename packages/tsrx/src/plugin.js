@@ -2157,6 +2157,9 @@ export function TSRXPlugin(config) {
 			// Set while `parseVarStatement` or `parseVar` lets `const` declarators omit
 			// the initializer (see `#parseConstWithoutInitializer`).
 			#readingConstWithoutInitializer = false;
+			// Whether the `using` or `await using` declaration about to be read has
+			// `declare` before it (see `#parseConstWithoutInitializer`).
+			#declaredUsing = false;
 			/** @type {import('../types/index').CompileError[] | undefined} */
 			#errors = undefined;
 			/** @type {string | null} */
@@ -7335,10 +7338,17 @@ export function TSRXPlugin(config) {
 			 */
 			#parseConstWithoutInitializer(kind, allowMissingInitializer, parse) {
 				const outer = this.#readingConstWithoutInitializer;
+				const declared = this.#declaredUsing;
+				this.#declaredUsing = false;
 				this.#readingConstWithoutInitializer =
-					kind === 'const' && !allowMissingInitializer && !this.isAmbientContext;
+					(kind === 'const' || kind === 'using' || kind === 'await using') &&
+					!allowMissingInitializer &&
+					!this.isAmbientContext &&
+					!declared;
 				try {
-					return parse(!!allowMissingInitializer || this.#readingConstWithoutInitializer);
+					return parse(
+						!!allowMissingInitializer || declared || this.#readingConstWithoutInitializer,
+					);
 				} finally {
 					this.#readingConstWithoutInitializer = outer;
 				}
@@ -7586,11 +7596,12 @@ export function TSRXPlugin(config) {
 				}
 				if (decl.id.type !== 'Identifier') this.unexpected();
 				const start = /** @type {number} */ (decl.id.start);
-				this.#recordCheckerLevelError(
-					start,
-					start + decl.id.name.length,
-					TS_ERRORS.DECLARATION_NOT_INITIALIZED('const'),
-				);
+				// The name as written, escapes and all, without its type.
+				regex_escaped_identifier.lastIndex = start;
+				const end = regex_escaped_identifier.test(this.input)
+					? regex_escaped_identifier.lastIndex
+					: start + 1;
+				this.#recordCheckerLevelError(start, end, TS_ERRORS.DECLARATION_NOT_INITIALIZED(kind));
 			}
 
 			/**
@@ -10080,6 +10091,16 @@ export function TSRXPlugin(config) {
 					if (!ambient) this.unexpected();
 					/** @type {{ declare?: boolean }} */ (ambient).declare = true;
 					return /** @type {AST.Node} */ (ambient);
+				}
+				if (has('declare') && (declaration === 'using' || declaration === 'await')) {
+					// An ambient declaration to TypeScript, whose names need no
+					// initializer (see `#parseConstWithoutInitializer`).
+					this.#declaredUsing = true;
+					try {
+						return this.parseStatement(null, this.#atTopLevel());
+					} finally {
+						this.#declaredUsing = false;
+					}
 				}
 				return this.parseStatement(null, this.#atTopLevel());
 			}

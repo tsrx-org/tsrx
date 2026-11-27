@@ -151,6 +151,20 @@ function isAsyncConstructor(error) {
 }
 
 /**
+ * Whether `error` is for a `using` or `await using` declaration's name without
+ * an initializer (`using x;`, TS1155), which Prettier's `typescript` parser
+ * rejects, where it formats a `const` one's (`const x;`, TS1155 too).
+ * @param {ParseError} error
+ * @returns {boolean}
+ */
+function isUsingWithoutInitializer(error) {
+	return ['using', 'await using'].some((kind) => {
+		const { code, message } = TS_ERRORS.DECLARATION_NOT_INITIALIZED(kind);
+		return error.code === code && error.message === message;
+	});
+}
+
+/**
  * Whether `error` is for decorators on a class `static` block (`@dec static
  * {}`, TS1206), which Prettier's `typescript` parser leaves out, as the plugin
  * does, instead of rejecting them as it does decorators elsewhere.
@@ -176,7 +190,8 @@ function isRejected(error, text) {
 			(REJECTED_CODES.has(error.code) && !isStaticBlockDecorator(error)) ||
 			isModifierBeforeExport(error, text) ||
 			isAbstractInBlock(error, text) ||
-			isAsyncConstructor(error))
+			isAsyncConstructor(error) ||
+			isUsingWithoutInitializer(error))
 	);
 }
 
