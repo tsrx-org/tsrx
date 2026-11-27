@@ -15538,6 +15538,77 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		);
 	});
 
+	it("reports a `using` declaration's missing initializer at the name, as a `const` one's", async () => {
+		// TypeScript's checker reports TS1155 on the name, without its type, for
+		// `using` and `await using` as for `const`, and not after `declare`, which
+		// makes the declaration ambient. acorn threw it at the token after the
+		// name in every mode.
+		/** @type {Array<[source: string, errors: Array<[code: string, at: string, length: number]>]>} */
+		const cases = [
+			['using x;', [['TS1155', 'x;', 1]]],
+			['using x: T, y = 1;', [['TS1155', 'x:', 1]]],
+			['async function f() {\n\tawait using x;\n}', [['TS1155', 'x;', 1]]],
+			['for (using of;;) {}', [['TS1155', 'of;', 2]]],
+			[`using ${'x'.repeat(70)};`, [['TS1155', 'x', 70]]],
+			['const \\u0078: number;', [['TS1155', '\\u0078', 6]]],
+			['declare using x;', [['TS1491', 'declare', 7]]],
+			['export declare await using x;', [['TS1495', 'export', 6]]],
+			// Not the declarations in a statement after `declare` that isn't a
+			// `using` declaration to acorn, as when the `using` has an escape
+			// (TypeScript reports TS1260 there first, not changed here).
+			[
+				'declare \\u0075sing as any + (() => { using x; })();',
+				[
+					['TS1155', 'x;', 1],
+					['TS1079', 'declare', 7],
+				],
+			],
+			[
+				'declare \\u0075sing as any + (() => { const x; const y; })();',
+				[
+					['TS1155', 'x;', 1],
+					['TS1155', 'y;', 1],
+					['TS1079', 'declare', 7],
+				],
+			],
+			// After a binding pattern's TS1492, and a modifier's error.
+			[
+				'using { x = (() => { using y; })() } = z;',
+				[
+					['TS1492', '{ x', 30],
+					['TS1155', 'y;', 1],
+				],
+			],
+			[
+				'abstract using { x } = y, z;',
+				[
+					['TS1242', 'abstract', 8],
+					['TS1492', '{ x }', 5],
+					['TS1155', 'z;', 1],
+				],
+			],
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			cases.flatMap(([source]) =>
+				[undefined, { collect: true }, { loose: true }].map((options) => ({ source, options })),
+			),
+		);
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok ? outcome.errors : { code: outcome.code, pos: outcome.pos },
+			),
+		).toEqual(
+			cases.flatMap(([source, errors]) => {
+				const recorded = errors.map(([code, at, length]) => {
+					const pos = source.indexOf(at);
+					return { code, pos, end: pos + length };
+				});
+				const [first] = recorded;
+				return [{ code: first.code, pos: first.pos }, recorded, recorded];
+			}),
+		);
+	});
+
 	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {
 		// `global` is a global augmentation only before `{` (or a name or
 		// `export`), so `export` starts no declaration there: TS1128, as in
