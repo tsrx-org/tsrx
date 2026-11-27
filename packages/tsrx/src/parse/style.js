@@ -33,6 +33,8 @@ const REGEX_NTH_OF =
 const REGEX_HEX_ESCAPE = /^[0-9a-fA-F]{1,6}(\r\n|[ \t\n\r\f])?/;
 // In a string, an escaped newline is a line continuation and decodes to nothing
 const REGEX_ESCAPE = /\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\n\r\f])?|(\r\n|[\n\r\f])|([\s\S]))/g;
+// A `@property`'s `initial-value` descriptor, in any case.
+const REGEX_INITIAL_VALUE_START = /^initial-value[ \t\n\r\f]*:/i;
 
 const regex_whitespace = /\s/;
 
@@ -334,7 +336,10 @@ function read_at_rule(parser) {
 
 	if (parser.match('{')) {
 		// e.g. `@media (...) {...}`
-		block = read_block(parser);
+		block = read_block(
+			parser,
+			unescape_css(name).replace(/[A-Z]/g, (c) => c.toLowerCase()) === 'property',
+		);
 	} else {
 		// e.g. `@import '...'`
 		parser.eat(';', true);
@@ -373,9 +378,10 @@ function read_rule(parser) {
 
 /**
  * @param {Parser} parser
+ * @param {boolean} [property] whether it is the block of a `@property`
  * @returns {AST.CSS.Block}
  */
-function read_block(parser) {
+function read_block(parser, property = false) {
 	const start = parser.index;
 
 	parser.eat('{', true);
@@ -392,7 +398,7 @@ function read_block(parser) {
 			// An empty declaration, as in `color: red;;`, which CSS allows.
 			continue;
 		} else {
-			children.push(read_block_item(parser));
+			children.push(read_block_item(parser, property));
 		}
 	}
 
@@ -410,11 +416,18 @@ function read_block(parser) {
  * Reads a declaration, rule or at-rule
  *
  * @param {Parser} parser
+ * @param {boolean} [property] whether the block is a `@property`'s
  * @returns {AST.CSS.Declaration | AST.CSS.Rule | AST.CSS.Atrule}
  */
-function read_block_item(parser) {
+function read_block_item(parser, property = false) {
 	if (parser.match('@')) {
 		return read_at_rule(parser);
+	}
+
+	// A `@property`'s `initial-value` takes any value, as a custom property's
+	// does (`{a} b`, `foo(){}`), and a `@property` holds no rules.
+	if (property && parser.match_regex(REGEX_INITIAL_VALUE_START)) {
+		return read_declaration(parser, true);
 	}
 
 	// A custom property's value may hold `{}` blocks (`--x: {a}`), which the
@@ -460,8 +473,9 @@ function read_block_item(parser) {
 
 /**
  * @param {Parser} parser
- * @param {boolean} [block_value] whether the value is a `{}` block, read as a
- *   custom property's is
+ * @param {boolean} [block_value] whether the value may hold `{}` blocks: one
+ *   that is a `{}` block, or a `@property`'s `initial-value`, read as a custom
+ *   property's is, with its strings ending at a newline
  * @returns {AST.CSS.Declaration}
  */
 function read_declaration(parser, block_value = false) {
@@ -473,12 +487,14 @@ function read_declaration(parser, block_value = false) {
 	let index = parser.index;
 	parser.allow_whitespace();
 
-	const value =
-		block_value || property.startsWith('--')
+	const value = block_value
+		? read_custom_property_value(parser, false, true)
+		: property.startsWith('--')
 			? read_custom_property_value(parser)
 			: read_value(parser);
 
-	if (!value && !property.startsWith('--') && !parser.loose) {
+	// A custom property's value may be empty, and so may an `initial-value`'s.
+	if (!value && !block_value && !property.startsWith('--') && !parser.loose) {
 		throw new Error('CSS Declaration cannot be empty');
 	}
 
@@ -506,9 +522,11 @@ function read_declaration(parser, block_value = false) {
  * @param {boolean} [one_block] read only the block the value starts with, to
  *   just after its `}`; or nothing, if a string in it ends at a newline, which
  *   CSS reads as a bad string
+ * @param {boolean} [bad_strings] end a string at a newline, as CSS does (a bad
+ *   string), not at its closing quote
  * @returns {string}
  */
-function read_custom_property_value(parser, one_block = false) {
+function read_custom_property_value(parser, one_block = false, bad_strings = one_block) {
 	const start = parser.index;
 	/** @type {string[]} */
 	const closers = [];
@@ -534,7 +552,7 @@ function read_custom_property_value(parser, one_block = false) {
 			// In a string, a `\` before a newline goes on to the next line.
 			const next = parser.template[parser.index];
 			if (
-				one_block &&
+				bad_strings &&
 				quote_mark !== null &&
 				text.length === 1 &&
 				(next === '\n' || next === '\r' || next === '\f')
@@ -547,8 +565,12 @@ function read_custom_property_value(parser, one_block = false) {
 			quote_mark === null && char === '(' && is_unquoted_url(name, parser.template, parser.index);
 		if (quote_mark === null) track_name(name, parser.template, parser.index);
 		if (quote_mark !== null) {
-			if (char === quote_mark) quote_mark = null;
-			else if (one_block && (char === '\n' || char === '\r' || char === '\f')) return '';
+			if (char === quote_mark) {
+				quote_mark = null;
+			} else if (bad_strings && (char === '\n' || char === '\r' || char === '\f')) {
+				if (one_block) return '';
+				quote_mark = null;
+			}
 		} else if (char === '"' || char === "'") {
 			quote_mark = char;
 		} else if (char === '/' && parser.template[parser.index + 1] === '*') {
