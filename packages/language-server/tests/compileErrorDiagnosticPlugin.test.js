@@ -1052,64 +1052,43 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		},
 	);
 
-	// TypeScript's diagnostic and the error, shown on one place through
-	// different offsets around a CRLF line break, are one diagnostic.
-	it('leaves an error to TypeScript where both show it on one place across a CRLF line break', async () => {
-		const source = `abc${String.fromCharCode(13, 10)}${'x'.repeat(115)}`;
-		const generated = `let abc=1;\nlet abc=2;\nabc;\n//${'x'.repeat(80)}`;
-		/** @type {import('@volar/language-service').LanguageServicePlugin} */
-		const typescript = {
-			name: 'typescript-semantic',
-			capabilities: {
-				diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false },
-			},
-			create: () => ({
-				provideDiagnostics: (document) => [
-					{
-						range: { start: document.positionAt(4), end: document.positionAt(7) },
-						message: "Cannot redeclare block-scoped variable 'abc'.",
-						source: 'ts',
-						code: 2451,
-					},
+	// Each place the error's start maps to is tried with each place its end
+	// maps to, not only the first end for each start.
+	it('maps an error through a later place its end maps to', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'LaterEnd',
+				[
+					mapping(27, 50, 5, false),
+					mapping(27, 40, 0, true),
+					mapping(32, 40, 0, true),
+					mapping(32, 45, 0, true),
 				],
-			}),
-		};
-		for (const [name, plugins, expected] of /** @type {const} */ ([
-			['CrlfDedupe', [typescript], 'ts'],
-			['CrlfDedupeAlone', [], 'TSRX'],
-		])) {
-			const { document, service, uri, language } = create_service_harness(
-				source,
-				[...plugins, createCompileErrorDiagnosticPlugin()],
-				`react/${name}.tsrx`,
-			);
-			const virtual_code = /** @type {any} */ (language.scripts.get(uri)?.generated?.root);
-			virtual_code.mappings = [
-				mapping(30, 50, 3, false),
-				mapping(30, 22, 0, true),
-				mapping(33, 24, 0, true),
-				mapping(4, 22, 2, true),
-				mapping(3, 4, 3, true),
-			];
-			virtual_code.snapshot = {
-				getText: (/** @type {number} */ start, /** @type {number} */ end) =>
-					generated.substring(start, end),
-				getLength: () => generated.length,
-				getChangeRange: () => undefined,
-			};
-			virtual_code.usageErrors = [
-				Object.assign(new Error("Cannot redeclare block-scoped variable 'abc'."), {
-					code: 'TS2451',
-					type: 'usage',
-					pos: 30,
-					end: 33,
-				}),
-			];
-			const diagnostics = await service.getDiagnostics(uri);
-			expect(reported(document, diagnostics, 'TS2451')).toEqual([
-				{ source: expected, text: `${String.fromCharCode(13, 10)}x`, offset: 3 },
-			]);
-		}
+				27,
+				32,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
+	});
+
+	// A place its ends map to that the editor shows on whitespace only is no
+	// code to show the error on.
+	it('shows an error whose ends map to whitespace on the nearest code instead', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'WhitespaceEnds',
+				[
+					mapping(27, 50, 5, false),
+					mapping(27, 10, 0, true),
+					mapping(32, 11, 0, true),
+					mapping(6, 10, 1, true),
+					mapping(0, 20, 6, true),
+				],
+				27,
+				32,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
 	});
 });
 
