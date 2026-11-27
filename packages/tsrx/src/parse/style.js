@@ -503,11 +503,31 @@ function read_declaration(parser, block_value = false) {
 	let index = parser.index;
 	parser.allow_whitespace();
 
-	const value = block_value
+	let value = block_value
 		? read_custom_property_value(parser, false, true)
 		: property.startsWith('--')
 			? read_custom_property_value(parser)
 			: read_value(parser);
+
+	// With comments before the colon and no value after it, it is read as it
+	// was, with the comments and the colon as its value, so it compiles as
+	// before: CSS reads an empty value there, which some declarations may have
+	// that the check below doesn't know (a custom property with an escaped
+	// name, `\--x /* c */ : ;`, or a `@function`'s `result`), and browsers drop
+	// the others.
+	if (
+		!value &&
+		!block_value &&
+		!property.startsWith('--') &&
+		parser.template.slice(start, index).includes('/*')
+	) {
+		parser.index = start;
+		property = parser.read_until(REGEX_WHITESPACE_OR_COLON);
+		parser.allow_whitespace();
+		parser.eat(':');
+		parser.allow_whitespace();
+		value = read_value(parser);
+	}
 
 	// A custom property's value may be empty, and so may an `initial-value`'s.
 	if (!value && !block_value && !property.startsWith('--') && !parser.loose) {

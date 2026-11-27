@@ -210,6 +210,36 @@ describe('parseStyle declaration values', function () {
 	});
 
 	it.each([
+		// With no value after the colon it is read as it was, the comments and
+		// the colon as its value: CSS reads an empty value, which some
+		// declarations may have that the empty-value check doesn't know.
+		['.a { color /* c */ : ; }', [[['color', '/* c */ :']]]],
+		['.a { \\--x /* c */ : ; }', [[['\\--x', '/* c */ :']]]],
+		[
+			'.a { color: red; foo /* c */ : ; }',
+			[
+				[
+					['color', 'red'],
+					['foo', '/* c */ :'],
+				],
+			],
+		],
+		// A custom property's is read without the comment.
+		['.a { --x /* c */ : ; }', [[['--x', '']]]],
+	])('reads an empty value after a comment and a colon in %j', function (css, expected) {
+		expect(blocks(css)).toEqual(expected);
+	});
+
+	it("reads a @function's empty result after a comment as before", function () {
+		const rule = /** @type {any} */ (
+			parseStyle('@function --e() { result /* c */ : ; }', LOCATION, {}).children[0]
+		);
+		expect(
+			rule.block.children.map((/** @type {any} */ child) => [child.property, child.value]),
+		).toEqual([['result', '/* c */ :']]);
+	});
+
+	it.each([
 		// A hex escape ends at a space, or a \r\n, which is part of it.
 		['.a{background:ur\\6c (/*x)}.b{color:red/* } */}', 2],
 		['.a{background:ur\\6c\r\n(/*x)}.b{color:red/* } */}', 2],
@@ -550,6 +580,8 @@ describe('parseStyle custom properties', function () {
 		['@property --x { initial-value/**/: {a} b; }', [['initial-value', '{a} b']]],
 		['@property --x { Initial-Value /* a */ /* b */ :{a}{b} }', [['Initial-Value', '{a}{b}']]],
 		['@property --x { initial-value /* } */ : {a} b }', [['initial-value', '{a} b']]],
+		// An escaped name is read as before.
+		['@property --x { \\69nitial-value /* c */ : ; }', [['\\69nitial-value', '/* c */ :']]],
 	])('reads the initial-value in %j', function (css, declarations) {
 		/** @param {any} node @returns {any} */
 		const property = (node) => (node.type === 'Atrule' ? node : property(node.block.children[0]));
