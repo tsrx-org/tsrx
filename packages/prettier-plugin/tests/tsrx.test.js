@@ -3158,6 +3158,9 @@ describe('parse errors', () => {
 				'2:8',
 			],
 			['for (using {x} in y) {}', TS_ERRORS.FOR_IN_USING, '1:6'],
+			// A `-` in a JSX member name's part (TS1003, TS1005 in a closing tag).
+			['const x = <X.A-b />;', TS_ERRORS.IDENTIFIER_EXPECTED, '1:15'],
+			['const x = <X.A></X.A-b>;', TS_ERRORS.TOKEN_EXPECTED, '1:21'],
 			// Prettier reports the `public` (1:17); the plugin reports the first
 			// mistake, the modifier before `export` (#902).
 			['abstract export public class A {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:10'],

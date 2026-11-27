@@ -446,6 +446,16 @@ export function A({ items }) @{
 		]);
 	});
 
+	it('reports a `-` in a JSX member name as a parse error', () => {
+		// The parser records it when collecting, and reads the part as written.
+		expect(lint('export const x = <X.A-b />;\n')).toEqual([
+			'1: null: Parsing error: Identifier expected.',
+		]);
+		expect(lint('export const x = <X.A></X.A-b>;\n')).toEqual([
+			"1: null: Parsing error: '>' expected.",
+		]);
+	});
+
 	it('reports a return right in an @switch case as a parse error', () => {
 		expect(
 			lint(

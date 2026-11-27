@@ -19660,6 +19660,48 @@ ${lines.join('\n')}
 		}
 	});
 
+	it('reports a `-` in a member name before the token after it, and reads on past it', async () => {
+		// TypeScript reports it before the scanner's error at the next token.
+		for (const [source, at] of [
+			['const x = <X.A-b # />;', '-'],
+			['const x = <X.A-b " />;', '-'],
+			[`const x = <X.A-${escape('ZZZZ')} />;`, '-'],
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code: 'TS1003', pos: source.indexOf(at) }),
+			);
+		}
+		// A collecting parse reads on: past the `=` of TypeScript's `-=` token, and
+		// a closing tag matches by the name TypeScript reads, up to the `-`.
+		const sources = [
+			'const x = <X.A-=b />;',
+			'const x = <X.A-= c="1"></X.A>;',
+			'const x = <X.A></X.A-b>;',
+			'const x = <X.A-b></X.A>;',
+			'const x = <X.A-b></X.A-c>;',
+			'export function App() @{\n\t<X.A>x</X.A-b>\n}',
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) =>
+				[{ collect: true }, { loose: true }].map((options) => ({ source, options })),
+			),
+		);
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok ? outcome.errors?.map(({ code, pos }) => `${code}@${pos}`) : outcome.message,
+			),
+		).toEqual(
+			[
+				['TS1003@14'],
+				['TS1003@14'],
+				['TS1005@20'],
+				['TS1003@14'],
+				['TS1003@14', 'TS1005@22'],
+				['TS1005@37'],
+			].flatMap((expected) => [expected, expected]),
+		);
+	});
+
 	it('reads a tag in children that starts with an escape or a letter outside ASCII, as TypeScript does', () => {
 		// A `<` in children opens a tag before an escape for a character a name
 		// starts with, and before a letter outside ASCII. Not before an escape for

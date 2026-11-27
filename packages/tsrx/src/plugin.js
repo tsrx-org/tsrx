@@ -12115,8 +12115,12 @@ export function TSRXPlugin(config) {
 				if (node.type === 'Identifier' || node.type === 'JSXIdentifier') {
 					return node.name;
 				} else if (node.type === 'MemberExpression' || node.type === 'JSXMemberExpression') {
-					// For components like <Foo.Bar>, return "Foo.Bar"
-					return this.getElementName(node.object) + '.' + this.getElementName(node.property);
+					// For components like <Foo.Bar>, return "Foo.Bar". TypeScript reads a
+					// part after a `.` up to a `-` (see `#parseJSXMemberProperty`), so
+					// the name ends there: `</X.A-b>` closes `<X.A>`.
+					const name = this.#writtenElementName(node);
+					const hyphen = name.indexOf('-', name.indexOf('.'));
+					return hyphen === -1 ? name : name.slice(0, hyphen);
 				} else if (this.#isDynamicJSXElementName(node)) {
 					// Dynamic tags (`<{Tag}>`) name by expression source. The braces keep
 					// them from colliding with static tag names ('style', 'head', ...) and
@@ -12125,6 +12129,17 @@ export function TSRXPlugin(config) {
 					return `{${this.input.slice(expression.start, expression.end).trim()}}`;
 				}
 				return null;
+			}
+
+			/**
+			 * A member name's parts as written, `Foo.Bar-baz`.
+			 * @param {any} node
+			 * @returns {string}
+			 */
+			#writtenElementName(node) {
+				return node.type === 'MemberExpression' || node.type === 'JSXMemberExpression'
+					? this.#writtenElementName(node.object) + '.' + this.#writtenElementName(node.property)
+					: String(this.getElementName(node));
 			}
 
 			/**
@@ -15080,6 +15095,17 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['jsx_parseIdentifier']}
 			 */
 			jsx_parseIdentifier() {
+				return this.#parseJSXIdentifier(null);
+			}
+
+			/**
+			 * `jsx_parseIdentifier`, which calls `before_next`, when given, once the
+			 * name is read and before the token after it is, so that an error
+			 * reported there comes before the scanner's at that token.
+			 * @param {(() => void) | null} before_next
+			 * @returns {ESTreeJSX.JSXIdentifier}
+			 */
+			#parseJSXIdentifier(before_next) {
 				const node = /** @type {ESTreeJSX.JSXIdentifier} */ (this.startNode());
 
 				if (this.type === tt.name || this.type.keyword || this.type === tstt.jsxName) {
@@ -15096,6 +15122,7 @@ export function TSRXPlugin(config) {
 							this.#reportJSXNameEscape(this.start, end);
 						}
 					}
+					before_next?.();
 					this.next();
 				} else {
 					return super.jsx_parseIdentifier();
@@ -15168,17 +15195,24 @@ export function TSRXPlugin(config) {
 				const start = this.start;
 				const hyphen =
 					this.type === tstt.jsxName ? this.input.slice(start, this.end).indexOf('-') : -1;
-				const property = this.jsx_parseIdentifier();
-				if (hyphen !== -1) {
-					// On the token TypeScript reads there: `-`, or `--` or `-=`.
-					const at = start + hyphen;
-					const after = this.input[at + 1];
+				if (hyphen === -1) return this.jsx_parseIdentifier();
+				// On the token TypeScript reads there: `-`, or `--` or `-=`. It's
+				// reported before the next token is read, which the scanner can fail
+				// at (`<X.A-b # />`), as TypeScript reports it first.
+				const at = start + hyphen;
+				const after = this.input[at + 1];
+				// The name ends at the `-` of a `-=`.
+				const assignment = after === '=' && at + 1 === this.end;
+				const property = this.#parseJSXIdentifier(() =>
 					this.#reportJSXNameError(
 						at,
 						at + (after === '-' || after === '=' ? 2 : 1),
 						closing ? TS_ERRORS.TOKEN_EXPECTED('>') : TS_ERRORS.IDENTIFIER_EXPECTED,
-					);
-				}
+					),
+				);
+				// TypeScript skips the `-=` in an opening tag, where it reads
+				// attributes, and reads on: so does a collecting parse, past the `=`.
+				if (assignment && !closing && this.#collect && this.type === tt.eq) this.next();
 				return property;
 			}
 
