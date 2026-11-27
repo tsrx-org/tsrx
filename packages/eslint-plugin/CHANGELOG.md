@@ -1,5 +1,14 @@
 # @tsrx/eslint-plugin
 
+## 0.7.17
+
+### Patch Changes
+
+- Updated dependencies
+  [[`3331fc2`](https://github.com/tsrx-org/tsrx/commit/3331fc278e5e606a82cefdb956809a742cc23f74),
+  [`9f1b43d`](https://github.com/tsrx-org/tsrx/commit/9f1b43d66c2d37e5f8ec2633c9ed22e1835943c8)]:
+  - @tsrx/eslint-parser@0.7.17
+
 ## 0.7.16
 
 ### Patch Changes

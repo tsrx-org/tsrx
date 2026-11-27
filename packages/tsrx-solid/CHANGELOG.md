@@ -1,5 +1,48 @@
 # @tsrx/solid
 
+## 0.4.17
+
+### Patch Changes
+
+- [#1524](https://github.com/tsrx-org/tsrx/pull/1524)
+  [`b28a7b2`](https://github.com/tsrx-org/tsrx/commit/b28a7b204daab0607316394e5358b07dea5d91a8)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `break` or `continue`
+  in an `@if`, `@else` or `@for` body that a loop, a `switch` statement or a label
+  inside the body takes now compiles. The `@if` check reported every `break` and
+  `continue` in its body (`TSRX2003`, `TSRX2004`), such as
+  `@if (x) { switch (y) { case 1: break; } <b /> }`, a `break` in a plain loop
+  there, or `L: { break L; }`, and the `@for` check reported one that a `switch`
+  or a label in its body takes (`TSRX2006`, `TSRX2007`), as if it left the body;
+  so did Solid's checks, which also cover `@else if` bodies. A jump that leaves
+  the body, such as a `continue` in a `switch` there or a `break` to a label
+  outside it, is still reported.
+
+- [#1540](https://github.com/tsrx-org/tsrx/pull/1540)
+  [`5e57f47`](https://github.com/tsrx-org/tsrx/commit/5e57f47073b630f2c1162ad798c022fe4cab85f7)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - A `// @tsrx-ignore`
+  comment now suppresses Solid's errors for a `break`, `continue` or `return` in
+  an `@if`, `@else if`, `@else` or `@for` body (`TSRX2002` to `TSRX2007`) when
+  collecting and in the editor, as on the other targets. Solid's checks passed no
+  comments to the error, so they reported it anyway.
+- Updated dependencies
+  [[`b28a7b2`](https://github.com/tsrx-org/tsrx/commit/b28a7b204daab0607316394e5358b07dea5d91a8),
+  [`890f4d8`](https://github.com/tsrx-org/tsrx/commit/890f4d82d6f2a36e0283d1986d12ff1c4748666d),
+  [`b1d2761`](https://github.com/tsrx-org/tsrx/commit/b1d27612d59da3ab14ddd5898de7f6baa99ebaba),
+  [`3eb6403`](https://github.com/tsrx-org/tsrx/commit/3eb640322526da59621d0d01fb3a415e322baf55),
+  [`0a6939e`](https://github.com/tsrx-org/tsrx/commit/0a6939eab8f51695a77ff45f600dff54ed0d6fe1),
+  [`4fd52c8`](https://github.com/tsrx-org/tsrx/commit/4fd52c8982d0ea85dbe53d3ead093e6f5dc3eb0a),
+  [`5958301`](https://github.com/tsrx-org/tsrx/commit/5958301f33dc9968f5ffca972a1abdcab266a91b),
+  [`0cbd22d`](https://github.com/tsrx-org/tsrx/commit/0cbd22d1e6fc17c77e3a85dd4afc3c23ce24b7ab),
+  [`d8afb8e`](https://github.com/tsrx-org/tsrx/commit/d8afb8e37274cbecd95913141cf169f1a0bef563),
+  [`24e698f`](https://github.com/tsrx-org/tsrx/commit/24e698f5cbb7b4706def61742ea9a1bdeb440a0a),
+  [`83fd00e`](https://github.com/tsrx-org/tsrx/commit/83fd00ea9ee5dff7915d9912538fb86f36f52936),
+  [`3331fc2`](https://github.com/tsrx-org/tsrx/commit/3331fc278e5e606a82cefdb956809a742cc23f74),
+  [`b6905e4`](https://github.com/tsrx-org/tsrx/commit/b6905e474b9a0e158e96ec4b623e1f23aa7a8d87),
+  [`9f1b43d`](https://github.com/tsrx-org/tsrx/commit/9f1b43d66c2d37e5f8ec2633c9ed22e1835943c8),
+  [`ce368a8`](https://github.com/tsrx-org/tsrx/commit/ce368a82627a263eb49c0168a4e4b3a93c65fe82),
+  [`142d459`](https://github.com/tsrx-org/tsrx/commit/142d459bf7805b8c7df049442f9ef5ccadd87d5a)]:
+  - @tsrx/core@0.12.0
+
 ## 0.4.16
 
 ### Patch Changes
