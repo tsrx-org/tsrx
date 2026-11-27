@@ -725,4 +725,16 @@ describe('parseStyle type selectors', function () {
 			parseStyle(css, LOCATION, { loose: false });
 		}).not.toThrow();
 	});
+
+	it('checks a compound of many :globals and type selectors in linear time', function () {
+		// The test for only bare :globals before a type selector reads the
+		// compound, and it ran for each type selector after a `:global(...)`:
+		// 8 s each, where a linear read takes about 0.1 s.
+		for (const type of ['div', '*']) {
+			const css = `${':global'.repeat(40_000)}${`:global(.x)${type}`.repeat(40_000)} { color: red; }`;
+			const start = performance.now();
+			parseStyle(css, LOCATION, { loose: false });
+			expect(performance.now() - start).toBeLessThan(4000);
+		}
+	});
 });

@@ -1034,12 +1034,14 @@ function check_type_selector_placement(parser, selectors, start) {
 	if (
 		!parser.selector ||
 		previous === undefined ||
+		(previous.type === 'PseudoClassSelector' && previous.name === 'global' && previous.args) ||
+		previous.type === 'Nth' ||
+		// Last, since it reads the compound: one with many bare :globals and
+		// then many `:global(.x)div`s took quadratic time when it came first.
 		selectors.every(
 			(selector) =>
 				selector.type === 'PseudoClassSelector' && selector.name === 'global' && !selector.args,
-		) ||
-		(previous.type === 'PseudoClassSelector' && previous.name === 'global' && previous.args) ||
-		previous.type === 'Nth'
+		)
 	) {
 		return;
 	}
