@@ -777,6 +777,33 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		},
 	);
 
+	// A `break` right after the case's `{` gets an anchor of its own; the next
+	// one, on a line of its own, isn't shown on that anchor too.
+	it.each(['react', 'preact', 'vue', 'hono', 'hono-dom'])(
+		"shows a direct case `break`'s TSRX2008 apart from another `break`'s anchor on %s",
+		async (target) => {
+			const source = `export function App(x: number) @{
+	@switch (x) {
+		@case 1: { break;
+			break;
+			<b />
+		}
+	}
+}
+`;
+			const { document, service, uri } = create_service_harness(
+				source,
+				[createCompileErrorDiagnosticPlugin()],
+				`${target}/DirectCaseBreakAfterAnchor.tsrx`,
+			);
+			const diagnostics = await service.getDiagnostics(uri);
+			expect(reported(document, diagnostics, 'TSRX2008')).toEqual([
+				{ source: 'TSRX', text: '1', offset: source.indexOf('1: {') },
+				{ source: 'TSRX', text: 'break', offset: source.indexOf('break') },
+			]);
+		},
+	);
+
 	// An `@switch` used as a statement where no template is, whose own mapping
 	// spans the error's range exactly, shows it on its code, as `@if` does.
 	it('shows TSRX2010 on an @switch statement outside a template', async () => {
@@ -1067,6 +1094,48 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 				27,
 				32,
 				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
+	});
+
+	// A later place the start maps to is tried when the first is past every
+	// place the end maps to.
+	it('maps an error through a later place its start maps to', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'LaterStart',
+				[
+					mapping(27, 50, 5, false),
+					mapping(27, 70, 0, true),
+					mapping(27, 40, 0, true),
+					mapping(32, 45, 0, true),
+					mapping(20, 20, 6, true),
+				],
+				27,
+				32,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
+	});
+
+	// A place its ends map to that the editor shows on other code, through
+	// another mapping of the same generated code, isn't the error's place.
+	it('maps an error through the ends the editor shows on its own range', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'EndsOnOtherCode',
+				[
+					mapping(27, 50, 5, false),
+					mapping(0, 40, 5, true),
+					mapping(27, 40, 0, true),
+					mapping(32, 45, 0, true),
+					mapping(27, 60, 0, true),
+					mapping(32, 65, 0, true),
+					mapping(20, 20, 6, true),
+				],
+				27,
+				32,
+				'x'.repeat(100),
 			),
 		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
 	});

@@ -331,32 +331,52 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			// mappings don't report it, such as an `@switch`'s own mapping over a
 			// `break` right in a case, which the editor's code leaves out, or over
 			// the whole directive used as a statement outside a template. Show it
-			// on the first of these that the editor shows on some code, not only
-			// whitespace: the tokens in the range that report it, its ends mapped
-			// through the mappings that report it, or the nearest code that reports
-			// it, such as the case's test. With none, the range stays, as before.
+			// on the tokens in the range that report it, or on its ends mapped
+			// through the mappings that do, where the editor shows that within the
+			// range, or else on the nearest code that reports it, such as the
+			// case's test: the first the editor shows on some code, not only
+			// whitespace. With none, the range stays, as before.
 			const map = sourceMap;
-			const on_code = (/** @type {[number, number] | null | undefined} */ range) => {
+			// Another error's anchor is that error's place (see
+			// `findGeneratedRangeBySourceRange`), so not this one's.
+			const reaches = (/** @type {CodeInformation} */ data) =>
+				reports(data) && !(/** @type {any} */ (data).customData?.diagnosticAnchor);
+			/** @param {[number, number] | null | undefined} range */
+			const shown_on_code = (range) => {
 				const shown = range && shown_range(range, reports, document, map);
-				return !!shown && /\S/.test(virtualCode.originalCode.slice(shown[0], shown[1]));
+				return shown && /\S/.test(virtualCode.originalCode.slice(shown[0], shown[1]))
+					? shown
+					: null;
 			};
-			const candidates = (function* () {
+			const in_range = (function* () {
 				if (mapping) yield virtualCode.findGeneratedRangeBySourceRange(start_offset, end_offset);
 				// Every pair of places the ends map to, as `toGeneratedRange` stops
 				// at the first end for each start.
-				for (const [from] of map.toGeneratedLocation(start_offset, reports)) {
-					for (const [to] of map.toGeneratedLocation(end_offset, reports)) {
+				for (const [from] of map.toGeneratedLocation(start_offset, reaches)) {
+					for (const [to] of map.toGeneratedLocation(end_offset, reaches)) {
 						if (to >= from) yield /** @type {[number, number]} */ ([from, to]);
 					}
 				}
-				yield nearest_reported_range(virtualCode, reports, start_offset, error.raisedAt, on_code);
 			})();
-			for (const range of candidates) {
-				if (on_code(range)) {
-					generated = range;
+			/** @type {[number, number] | null | undefined} */
+			let found;
+			for (const range of in_range) {
+				// These are for the error's own range, so where the editor shows them
+				// on code outside it, they aren't.
+				const shown = shown_on_code(range);
+				if (shown && shown[0] >= start_offset && shown[1] <= end_offset) {
+					found = range;
 					break;
 				}
 			}
+			found ??= nearest_reported_range(
+				virtualCode,
+				reaches,
+				start_offset,
+				error.raisedAt,
+				(range) => !!shown_on_code(range),
+			);
+			if (found) generated = found;
 		}
 
 		if (generated) {
