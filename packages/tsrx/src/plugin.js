@@ -6216,10 +6216,16 @@ export function TSRXPlugin(config) {
 					// One right in a class `static` block, which TypeScript's parser reads
 					// and its checker reports at the keyword (TS18041): a strict parse
 					// throws it, and a collecting one records it and reads on, where acorn
-					// stopped. TypeScript's checker doesn't check the operand of one it
-					// reports, nor one in an ambient class, which is TS1036 as any
-					// statement there is.
-					if (!this.isAmbientContext && !this.#readingStaticBlockReturn) {
+					// stopped. TypeScript's checker doesn't check the operand of a
+					// `return` it reports (see `parseReturnStatement`), and in an ambient
+					// class reports the first statement of a block as TS1036 instead,
+					// which TSRX leaves to it, as for any statement there.
+					const first_in_ambient_block =
+						this.isAmbientContext &&
+						this.lastTokStart !== -1 &&
+						this.input[this.lastTokStart] === '{' &&
+						this.lastTokEnd === this.lastTokStart + 1;
+					if (!first_in_ambient_block && !this.#readingStaticBlockReturn) {
 						this.#readingStaticBlockReturn = true;
 						this.#raiseCheckerError(
 							position,
@@ -8353,8 +8359,12 @@ export function TSRXPlugin(config) {
 			 * @returns {CompileError[]}
 			 */
 			#withoutUncheckedDefaults(errors, params, return_type) {
-				const code = TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER.code;
-				if (!errors.some((error) => error.code === code)) return errors;
+				// The checker errors in a default it doesn't check.
+				const codes = new Set([
+					TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER.code,
+					TS_ERRORS.STATIC_BLOCK_RETURN.code,
+				]);
+				if (!errors.some((error) => codes.has(/** @type {string} */ (error.code)))) return errors;
 				const queried = type_query_names([...params, return_type]);
 				/** @type {Array<[number, number]>} */
 				const unchecked = [];
@@ -8376,7 +8386,7 @@ export function TSRXPlugin(config) {
 				}
 				return errors.filter(
 					(error) =>
-						error.code !== code ||
+						!codes.has(/** @type {string} */ (error.code)) ||
 						!unchecked.some(
 							([start, end]) => start <= (error.pos ?? -1) && (error.pos ?? -1) < end,
 						),
@@ -17096,6 +17106,11 @@ export function TSRXPlugin(config) {
 			 */
 			parseReturnStatement(node) {
 				const reading_static_block_return = this.#readingStaticBlockReturn;
+				// TypeScript reports a `return` outside a function, which TSRX allows
+				// at the top level (TS1108), and doesn't check its operand either.
+				if (!this.inFunction && !(this.currentVarScope().flags & SCOPE_CLASS_STATIC_BLOCK)) {
+					this.#readingStaticBlockReturn = true;
+				}
 				let statement;
 				try {
 					statement = super.parseReturnStatement(node);

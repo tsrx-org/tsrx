@@ -15276,11 +15276,25 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			['class A { static { return class { static { return; } }; } }', [19]],
 			['declare class A { static { return; } }', []],
 			['declare class A { static { x; } }', []],
+			// TS1036 is the first statement's in each block, so a later one, or one
+			// in an `if`, is still TS18041.
+			['declare class A { static { return; return; } }', [35]],
+			['declare class A { static { if (x) return; } }', [34]],
+			['declare class A { static { { return; } } }', []],
+			// Nor does TypeScript check a default it doesn't check (TS2371), or the
+			// operand of a `return` outside a function, which TSRX allows (TS1108).
+			['type F = (x = class { static { return; } }) => void;', []],
+			['interface I { m(x = class { static { return; } }): void; }', []],
+			['return class { static { return; } };', []],
+			// An overload's default is checked.
+			['function f(x = class { static { return; } }): void;\nfunction f() {}', [32]],
 		])) {
 			const collected = /** @type {CompileError[]} */ ([]);
 			parseModule(source, 'App.tsrx', { collect: true, errors: collected });
 			expect(
-				collected.map((error) => [error.code, error.pos]),
+				collected
+					.filter((error) => error.code === 'TS18041')
+					.map((error) => [error.code, error.pos]),
 				source,
 			).toEqual(at.map((pos) => ['TS18041', pos]));
 		}
