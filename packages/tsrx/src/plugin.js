@@ -16177,8 +16177,12 @@ export function TSRXPlugin(config) {
 					// another context sat on top of it. In expression position,
 					// unwind back to the pre-element depth so the following JS token (e.g. a
 					// comma/brace closing an enclosing object) tokenizes as code, not text.
+					// So is the position in a directive header that started after the
+					// element on `#path`, such as after one that a closing tag naming an
+					// element around it closed (`<p><b><i></p>`; see `parseTemplateBody`).
 					const parent = this.#path.at(-1);
-					const insideTemplate = this.#isNativeTemplateNode(parent);
+					const insideTemplate =
+						this.#isNativeTemplateNode(parent) && !this.#readingHeaderStartedAfter(parent);
 
 					// The token after the closing tag is already read, so only the residue
 					// under the contexts it pushed goes (a sibling's `<`, a template

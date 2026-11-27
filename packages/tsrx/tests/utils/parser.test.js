@@ -5287,6 +5287,10 @@ foo();`;
 			'const a = c ? <p> : 1',
 			'const a = g(<p>, 1)',
 			'const a = <div><span></div>',
+			'const a = <p><b><i></p>',
+			'const a = <p><b><i><u>t</p>',
+			'const a = (<p><b>)',
+			'const a = [<p><b>]',
 		]) {
 			/**
 			 * @param {string} source
