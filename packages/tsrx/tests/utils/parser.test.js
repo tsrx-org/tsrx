@@ -1047,9 +1047,12 @@ describe('TSRX parser', () => {
 			]);
 			// And `using of` before `=`, `:` or `;` on any line, where acorn took it
 			// only before `=` on its line.
+			// The name it spells, written with an escape too, as TypeScript reads it.
 			for (const source of [
 				'for (using of: null = null; ; ) {}',
 				'for (using\n\tof = null; ; ) {}',
+				`for (using\n\t${B}u006ff = null; ; ) {}`,
+				`for (using\n\t${B}u{6f}f: null = null; ; ) {}`,
 			]) {
 				const [typed] = find_all(source, 'VariableDeclaration');
 				expect([typed?.kind, /** @type {any} */ (typed?.declarations[0].id).name], source).toEqual([

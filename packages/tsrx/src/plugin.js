@@ -7592,7 +7592,7 @@ export function TSRXPlugin(config) {
 				// (`await using / x`).
 				const next = this.#wordAt(using.end);
 				if (!next) return false;
-				if (isFor && !isAwaitUsing && next.word === 'of') {
+				if (isFor && !isAwaitUsing && next.name === 'of') {
 					// acorn reads `using of` as a declaration in a `for` head only before
 					// `=` on its line, and TypeScript before `=`, `:` or `;` on any line
 					// (`nextTokenIsBindingIdentifierOrStartOfDestructuringOnSameLine`).
