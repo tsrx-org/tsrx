@@ -149,21 +149,47 @@ const regex_static_block_modifiers =
  * that needs one (`{ using x; }`).
  * @param {ParseError} error
  * @param {string} text
+ * @param {ModifierRun} run The modifiers read last in `text`, which each
+ *   dropped modifier's TS1184 in a declaration reads again
  * @returns {boolean}
  */
-function isDeclareUsingInBlock(error, text) {
+function isDeclareUsingInBlock(error, text, run) {
 	if (error.code !== 'TS1184' || error.pos === undefined) return false;
-	let declared = false;
-	let word = wordAt(text, error.pos);
-	let end = error.pos + word.length;
+	if (error.pos < run.start || error.pos >= run.end) readModifierRun(text, error.pos, run);
+	return run.using && run.declare >= error.pos;
+}
+
+/**
+ * Modifiers read from `start` to `end`, where the word after them starts: where
+ * the last `declare` among them is (or -1), and whether `using` or
+ * `await using` follows them.
+ * @typedef {{ start: number, end: number, declare: number, using: boolean }} ModifierRun
+ */
+
+/** @returns {ModifierRun} */
+function createModifierRun() {
+	return { start: 0, end: 0, declare: -1, using: false };
+}
+
+/**
+ * Read the modifiers from `position` into `run`.
+ * @param {string} text
+ * @param {number} position
+ * @param {ModifierRun} run
+ */
+function readModifierRun(text, position, run) {
+	run.start = position;
+	run.declare = -1;
+	let start = position;
+	let word = wordAt(text, start);
 	while (STATEMENT_MODIFIERS.has(word)) {
-		declared ||= word === 'declare';
-		const start = gapEnd(text, end);
+		if (word === 'declare') run.declare = start;
+		start = gapEnd(text, start + word.length);
 		word = wordAt(text, start);
-		end = start + word.length;
 	}
-	if (word === 'await') word = wordAt(text, gapEnd(text, end));
-	return declared && word === 'using';
+	run.end = start;
+	if (word === 'await') word = wordAt(text, gapEnd(text, start + word.length));
+	run.using = word === 'using';
 }
 
 /** The modifiers that TypeScript reads before a declaration in a block. */
@@ -251,16 +277,17 @@ function isStaticBlockDecorator(error) {
 /**
  * @param {ParseError} error
  * @param {string} text
+ * @param {ModifierRun} run See `isDeclareUsingInBlock`
  * @returns {boolean}
  */
-function isRejected(error, text) {
+function isRejected(error, text, run) {
 	return (
 		!!error.code &&
 		(BROKEN_MARKUP_CODES.has(error.code) ||
 			(REJECTED_CODES.has(error.code) && !isStaticBlockDecorator(error)) ||
 			isModifierBeforeExport(error, text) ||
 			isAbstractInBlock(error, text) ||
-			isDeclareUsingInBlock(error, text) ||
+			isDeclareUsingInBlock(error, text, run) ||
 			isAsyncConstructor(error) ||
 			isUsingWithoutInitializer(error))
 	);
@@ -313,7 +340,8 @@ export function parse(text, options) {
 	} catch (error) {
 		throw createParseError(/** @type {ParseError} */ (error));
 	}
-	const rejected = errors.find((error) => isRejected(error, text));
+	const run = createModifierRun();
+	const rejected = errors.find((error) => isRejected(error, text, run));
 	if (rejected) throw createParseError(rejected);
 	const adapter = new Adapter(text, comments);
 	const program = adapter.visit(ast);
@@ -413,6 +441,8 @@ class Adapter {
 		 * @type {Set<Comment>}
 		 */
 		this.jsxComments = new Set();
+		/** See `isDeclareUsingInBlock`. */
+		this.modifierRun = createModifierRun();
 	}
 
 	/**
@@ -522,7 +552,7 @@ class Adapter {
 		// TypeScript reports only the declaration's first modifier error, which
 		// the parser records, and keeps the others in the metadata.
 		const dropped = node.metadata?.dropped_modifiers?.find((/** @type {ParseError} */ error) =>
-			isRejected(error, this.text),
+			isRejected(error, this.text, this.modifierRun),
 		);
 		if (dropped) throw createParseError(dropped);
 
