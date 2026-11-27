@@ -4279,29 +4279,13 @@ function add_diagnostic_mappings(
 			const preceding = loc
 				? get_preceding_source_line_generated_position(source_line_generated_map, loc.line)
 				: null;
-			// Each such anchor gets a character of its own, which no other anchor
-			// or mapping that reports diagnostics has: the editor maps a
-			// diagnostic back through the first mapping at its character, so two
-			// errors there would show as one (two `break`s in a case, or cases
-			// Solid prints on one line).
-			const at = preceding
-				? free_whitespace_before(
-						Math.min(
-							(gen_line_offsets[preceding.line] ?? generated_code.length) - 1,
-							generated_code.length - 1,
-						),
-						gen_line_offsets[preceding.line - 1] ?? 0,
-						diagnostic_mappings,
-						mappings,
-						generated_code,
-					)
-				: -1;
-			if (at !== -1) {
+			if (preceding) {
+				const line_end = (gen_line_offsets[preceding.line] ?? generated_code.length) - 1;
 				diagnostic_mappings.push({
 					sourceOffsets: [start],
-					generatedOffsets: [at],
+					generatedOffsets: [Math.max(0, Math.min(line_end, generated_code.length - 1))],
 					lengths: [length],
-					generatedLengths: [1],
+					generatedLengths: [generated_code.length === 0 ? 0 : 1],
 					data: {
 						...mapping_data_verify_only,
 						customData: { diagnosticAnchor: true },
@@ -4374,6 +4358,29 @@ function add_diagnostic_mappings(
 		const line_end = generated_code.indexOf('\n', generated);
 		const room = (line_end === -1 ? generated_code.length : line_end) - generated;
 		anchor.generatedLengths = [Math.max(1, Math.min(anchor.lengths[0], room))];
+	}
+
+	// An anchor on whitespace where an anchor of another error's range already
+	// is moves to a free whitespace character before it: the editor maps a
+	// diagnostic back through the first mapping at its character, so the two
+	// errors would show as one (two `break`s right in a case on lines of their
+	// own, or in cases that Solid prints on one line).
+	/** @type {Map<number, string>} */
+	const anchored = new Map();
+	for (const anchor of diagnostic_mappings) {
+		const generated = anchor.generatedOffsets[0];
+		const range = `${anchor.sourceOffsets[0]}:${anchor.lengths[0]}`;
+		const other = anchored.get(generated);
+		if (
+			other !== undefined &&
+			other !== range &&
+			anchor.generatedLengths?.[0] === 1 &&
+			regex_whitespace.test(generated_code[generated] ?? '')
+		) {
+			const free = free_whitespace_before(generated - 1, anchored, mappings, generated_code);
+			if (free !== -1) anchor.generatedOffsets = [free];
+		}
+		if (!anchored.has(anchor.generatedOffsets[0])) anchored.set(anchor.generatedOffsets[0], range);
 	}
 
 	mappings.unshift(...diagnostic_mappings);
@@ -4673,21 +4680,24 @@ function get_nearest_source_line_generated_position(source_line_generated_map, l
 }
 
 /**
- * The last offset from `from` back to `line_start` in `generated_code` that is
- * whitespace, where no anchor in `anchors` is and no mapping that reports
- * diagnostics covers, or -1.
+ * The nearest offset at or before `from` in `generated_code` that is
+ * whitespace, where no anchor in `anchored` is and no mapping that reports
+ * diagnostics covers, or -1. One between two whitespace characters comes
+ * first: no TypeScript diagnostic starts or ends there.
  * @param {number} from
- * @param {number} line_start
- * @param {CodeMapping[]} anchors
+ * @param {Map<number, string>} anchored
  * @param {CodeMapping[]} mappings
  * @param {string} generated_code
  * @returns {number}
  */
-function free_whitespace_before(from, line_start, anchors, mappings, generated_code) {
-	const used = new Set(anchors.map((anchor) => anchor.generatedOffsets[0]));
-	for (let at = from; at >= line_start; at--) {
-		if (used.has(at) || !regex_whitespace.test(generated_code[at] ?? '')) continue;
-		const reported = mappings.some(
+function free_whitespace_before(from, anchored, mappings, generated_code) {
+	/** @param {number} at */
+	const is_whitespace = (at) => regex_whitespace.test(generated_code[at] ?? '');
+	/** @param {number} at */
+	const free = (at) =>
+		is_whitespace(at) &&
+		!anchored.has(at) &&
+		!mappings.some(
 			(mapping) =>
 				mapping.data?.verification &&
 				mapping.generatedOffsets.some(
@@ -4695,7 +4705,11 @@ function free_whitespace_before(from, line_start, anchors, mappings, generated_c
 						offset <= at && at < offset + (mapping.generatedLengths ?? mapping.lengths)[i],
 				),
 		);
-		if (!reported) return at;
+	for (let at = from; at >= 0; at--) {
+		if (is_whitespace(at - 1) && is_whitespace(at + 1) && free(at)) return at;
+	}
+	for (let at = from; at >= 0; at--) {
+		if (free(at)) return at;
 	}
 	return -1;
 }

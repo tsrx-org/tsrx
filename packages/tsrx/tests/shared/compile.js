@@ -663,18 +663,22 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			}
 		});
 
-		it('gives each of two on lines of their own an anchor of its own', () => {
+		it('gives each of several an anchor of its own', () => {
 			// The editor maps a diagnostic back through the first mapping at its
 			// character, so two errors on one anchor would show as one (Solid
 			// prints the cases on one line).
 			for (const cases of [
 				'@case 1: {\n\t\t\tbreak;\n\t\t\tbreak;\n\t\t}',
 				'@case 1: {\n\t\t\tbreak;\n\t\t}\n\t\t@case 2: {\n\t\t\tbreak;\n\t\t}',
+				// One on a line of its own beside one after code on its line.
+				`@case 1: {\n\t\t\tbreak;\n\t\t}\n\t\t@case 2: {${' '.repeat(32)}break; }`,
+				// More than a line's free whitespace holds.
+				`@case 1: {\n${'\t\t\tbreak;\n'.repeat(7)}\t\t}`,
 			]) {
 				const source = `export function App({ s }: { s: number }) @{\n\t<div>\n\t\t@switch (s) {\n\t\t${cases}\n\t\t}\n\t</div>\n}\n`;
 				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
 				const starts = result.errors.map((error) => error.pos);
-				expect(starts, cases).toHaveLength(2);
+				expect(starts.length, cases).toBe(cases.split('break').length - 1);
 				const anchored = starts.map((start) =>
 					result.mappings
 						.filter(
@@ -688,8 +692,8 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 				expect(
 					anchored.map((offsets) => offsets.length),
 					cases,
-				).toEqual([1, 1]);
-				expect(anchored[0][0], cases).not.toBe(anchored[1][0]);
+				).toEqual(starts.map(() => 1));
+				expect(new Set(anchored.map((offsets) => offsets[0])).size, cases).toBe(starts.length);
 			}
 		});
 
