@@ -374,7 +374,12 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 				reaches,
 				start_offset,
 				error.raisedAt,
-				(range) => !!shown_on_code(range),
+				// On the token itself, not on code another mapping of the same
+				// generated code (another error's anchor) maps it to.
+				(range, token) => {
+					const shown = shown_on_code(range);
+					return !!shown && shown[0] >= token[0] && shown[1] <= token[1];
+				},
 			);
 			if (found) generated = found;
 		}
@@ -411,17 +416,17 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
  * ends nearest before `offset`, or starts nearest after it when none ends
  * before it. Of tokens the same distance away, the shortest. A mapping over
  * whitespace only, such as the indentation before a template's output, is not
- * code to show the error on, and neither is a token whose range `shows`
+ * code to show the error on, and neither is a token whose ranges `shows`
  * rejects: the next one in that order is.
  * @param {TSRXVirtualCodeInstance} virtualCode
  * @param {(data: CodeInformation) => boolean} reports Whether a mapping reports the error
  * @param {number} offset
  * @param {number} [reach] Where the error's parser stopped, such as the token that ended a template
- * @param {(range: [number, number]) => boolean} [shows] Whether the editor shows the error on a token's generated range
+ * @param {(range: [number, number], token: [number, number]) => boolean} [shows] Whether the editor shows the error on a token's generated `range` and where its source `token` is
  * @returns {[number, number] | null}
  */
 function nearest_reported_range(virtualCode, reports, offset, reach = offset, shows = () => true) {
-	/** @type {{ range: [number, number], distance: number, length: number, rank: number }[]} */
+	/** @type {{ range: [number, number], token: [number, number], distance: number, length: number, rank: number }[]} */
 	const tokens = [];
 	for (const mapping of virtualCode.mappings ?? []) {
 		if (!mapping.data || !reports(mapping.data)) continue;
@@ -440,6 +445,7 @@ function nearest_reported_range(virtualCode, reports, offset, reach = offset, sh
 			if (!ends_before && source_start < offset) continue;
 			tokens.push({
 				range: [generated_start, generated_start + generated_length],
+				token: [source_start, source_start + length],
 				distance: ends_before ? offset - (source_start + length) : source_start - offset,
 				length,
 				// A token after the offset that starts before `reach` first, then
@@ -450,7 +456,7 @@ function nearest_reported_range(virtualCode, reports, offset, reach = offset, sh
 	}
 	// A stable sort keeps the first of tokens alike.
 	tokens.sort((a, b) => a.rank - b.rank || a.distance - b.distance || a.length - b.length);
-	return tokens.find((token) => shows(token.range))?.range ?? null;
+	return tokens.find((token) => shows(token.range, token.token))?.range ?? null;
 }
 
 /**

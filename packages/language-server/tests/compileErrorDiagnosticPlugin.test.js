@@ -804,6 +804,35 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		},
 	);
 
+	// The code before the `break` here shares its generated code with the
+	// repeated modifier's anchor, so the editor would show the error on that
+	// modifier's TS1028: it goes on the code before, which the editor shows it
+	// on.
+	it.each(['react', 'preact', 'vue', 'hono', 'hono-dom'])(
+		"keeps a direct case `break`'s TSRX2008 off another error's place on %s",
+		async (target) => {
+			const source = `export function App(x: number) @{
+	@switch (x) {
+		@case 1: {
+			class Q { public public x; }
+			break;
+			<b />
+		}
+	}
+}
+`;
+			const { document, service, uri } = create_service_harness(
+				source,
+				[createCompileErrorDiagnosticPlugin()],
+				`${target}/DirectCaseBreakAfterModifier.tsrx`,
+			);
+			const diagnostics = await service.getDiagnostics(uri);
+			expect(reported(document, diagnostics, 'TSRX2008')).toEqual([
+				{ source: 'TSRX', text: 'public', offset: source.indexOf('public public') },
+			]);
+		},
+	);
+
 	// An `@switch` used as a statement where no template is, whose own mapping
 	// spans the error's range exactly, shows it on its code, as `@if` does.
 	it('shows TSRX2010 on an @switch statement outside a template', async () => {
@@ -972,24 +1001,25 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 	});
 
 	// A source range over only a `\r` is empty in the editor, as a position
-	// between it and its `\n` is one before it.
-	it('shows an error whose ends map to a lone CR on the nearest code instead', async () => {
+	// between it and its `\n` is one before it, so it is no code to show the
+	// error on, though it is in the error's range.
+	it('shows an error whose range maps to a lone CR in it on the nearest code instead', async () => {
 		expect(
 			await diagnostics_with_mappings(
 				'LoneCarriageReturn',
 				[
-					mapping(30, 50, 3, false),
-					mapping(3, 10, 1, true),
+					mapping(30, 50, 4, false),
+					mapping(31, 10, 1, true),
 					mapping(30, 10, 0, true),
-					mapping(33, 11, 0, true),
+					mapping(34, 11, 0, true),
 					mapping(0, 20, 3, true),
 				],
 				30,
-				33,
+				34,
 				'x'.repeat(80),
-				`abc${String.fromCharCode(13, 10)}${'x'.repeat(115)}`,
+				`${'x'.repeat(31)}${String.fromCharCode(13, 10)}${'x'.repeat(80)}`,
 			),
-		).toEqual([{ source: 'TSRX', text: 'abc', offset: 0 }]);
+		).toEqual([{ source: 'TSRX', text: 'xxx', offset: 0 }]);
 	});
 
 	// The editor maps the range as positions, and one inside a CRLF line break
@@ -1140,24 +1170,24 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
 	});
 
-	// A place its ends map to that the editor shows on whitespace only is no
-	// code to show the error on.
-	it('shows an error whose ends map to whitespace on the nearest code instead', async () => {
+	// A place in the error's range that the editor shows on whitespace only is
+	// no code to show the error on.
+	it('shows an error whose range maps to whitespace in it on the nearest code instead', async () => {
 		expect(
 			await diagnostics_with_mappings(
-				'WhitespaceEnds',
+				'WhitespaceInRange',
 				[
-					mapping(27, 50, 5, false),
+					mapping(27, 50, 7, false),
+					mapping(32, 10, 1, true),
 					mapping(27, 10, 0, true),
-					mapping(32, 11, 0, true),
-					mapping(6, 10, 1, true),
-					mapping(0, 20, 6, true),
+					mapping(34, 11, 0, true),
+					mapping(20, 20, 6, true),
 				],
 				27,
-				32,
+				34,
 				'x'.repeat(80),
 			),
-		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 20 }]);
 	});
 });
 
