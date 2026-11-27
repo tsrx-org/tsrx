@@ -2827,6 +2827,7 @@ function lower_setup_switches(fn, transform_context) {
 			FunctionExpression: skip,
 			ArrowFunctionExpression: skip,
 			ClassBody: skip,
+			// A `return` runs once, also in a loop, and its `computed` joins it.
 			ReturnStatement(node) {
 				if (!node.argument) return;
 				/** @type {AST.Statement[]} */

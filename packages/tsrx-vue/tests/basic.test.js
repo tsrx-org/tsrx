@@ -4091,6 +4091,17 @@ describe("@tsrx/vue an element's @switch", () => {
 					}
 				</p> as any;
 			}
+			export function Looped(props: { kinds: string[] }) {
+				for (const kind of props.kinds) {
+					return <p>
+						@switch (kind) {
+							@case 'a': {
+								<b>{'a'}</b>
+							}
+						}
+					</p>;
+				}
+			}
 			export const Authored = defineVaporComponent((props: { kind: string }) => <p>
 				@switch (props.kind) {
 					@case 'a': {
@@ -4124,9 +4135,13 @@ describe("@tsrx/vue an element's @switch", () => {
 		expect(flat(code)).toMatch(/if \(props\.on\) \{const _\$_case_6 = [^]*\}\); const view = <p>/);
 		expect(flat(code)).toMatch(/case 'b': const _\$_case_7 = [^]*\}\); const other = <p>/);
 		expect(code).toMatch(/const _\$_case_8 = [^]*return <p><b v-if=[^]*<\/p> as any;/);
+		// A \`return\` in a loop runs once too.
+		expect(flat(code)).toMatch(
+			/for \(const kind of props\.kinds\) \{const _\$_case_9 = [^]*return <p><b v-if=/,
+		);
 		// An authored \`defineVaporComponent\` is a component too.
-		expect(code).toContain('const _$_case_9 = _$_vapor_computed(');
-		expect(code.match(/<b v-if=\{/g)).toHaveLength(8);
+		expect(code).toContain('const _$_case_10 = _$_vapor_computed(');
+		expect(code.match(/<b v-if=\{/g)).toHaveLength(9);
 		expect(code.match(/return null;/g)).toBeNull();
 	});
 
