@@ -816,13 +816,15 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 
 	/**
 	 * The TSRX2008 diagnostics for one over `[pos, end)` when the virtual code
-	 * has only `mappings`, as a compiler may make them.
+	 * has only `mappings`, as a compiler may make them, and, if given, the
+	 * `generated` code.
 	 * @param {string} name
 	 * @param {ReturnType<typeof mapping>[]} mappings
 	 * @param {number} pos
 	 * @param {number} end
+	 * @param {string} [generated]
 	 */
-	async function diagnostics_with_mappings(name, mappings, pos, end) {
+	async function diagnostics_with_mappings(name, mappings, pos, end, generated) {
 		const source = 'export const a = 1;\nexport const b = 2;\nexport const c = 3;\n';
 		const { document, service, uri, language } = create_service_harness(
 			source,
@@ -831,6 +833,14 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		);
 		const virtual_code = /** @type {any} */ (language.scripts.get(uri)?.generated?.root);
 		virtual_code.mappings = mappings;
+		if (generated !== undefined) {
+			virtual_code.snapshot = {
+				getText: (/** @type {number} */ start, /** @type {number} */ end) =>
+					generated.substring(start, end),
+				getLength: () => generated.length,
+				getChangeRange: () => undefined,
+			};
+		}
 		virtual_code.usageErrors = [
 			Object.assign(new Error('Invalid jump'), { code: 'TSRX2008', type: 'usage', pos, end }),
 		];
@@ -868,6 +878,39 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 				16,
 			),
 		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
+	});
+
+	// An error whose ends both map to one generated character maps back to an
+	// empty range, which is no code to show it on.
+	it('shows an error whose ends map to one point on the nearest code instead', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'EmptyEnds',
+				[
+					mapping(27, 50, 5, false),
+					mapping(20, 20, 6, true),
+					mapping(27, 40, 0, true),
+					mapping(32, 40, 0, true),
+				],
+				27,
+				32,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 20 }]);
+	});
+
+	// The editor maps the range as positions, and one inside a CRLF line break
+	// moves to before it: an error whose range the editor shows that way stays.
+	it('keeps an error on the range the editor shows it on, across a CRLF line break', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'CrlfEnd',
+				[mapping(10, 1, 2, true), mapping(17, 20, 1, true), mapping(30, 1, 3, false)],
+				30,
+				33,
+				`abc${String.fromCharCode(13, 10)}${'z'.repeat(115)}`,
+			),
+		).toEqual([{ source: 'TSRX', text: 'st', offset: 10 }]);
 	});
 });
 

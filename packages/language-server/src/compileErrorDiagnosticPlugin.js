@@ -225,6 +225,23 @@ function shown_at(diagnostic, code, document, sourceMap) {
 }
 
 /**
+ * The source range the editor shows a diagnostic on the generated `range` at,
+ * or `undefined` when it leaves it out. Volar maps the diagnostic's range, as
+ * positions, back through the mappings that report it (`transformDiagnostic`
+ * in `@volar/language-service`), and a position can't fall between a `\r` and
+ * its `\n`.
+ * @param {[number, number]} range
+ * @param {(data: CodeInformation) => boolean} reports Whether a mapping reports the diagnostic
+ * @param {TextDocument} document
+ * @param {Mapper} sourceMap
+ * @returns {[number, number] | undefined}
+ */
+function shown_range(range, reports, document, sourceMap) {
+	const [start, end] = range.map((offset) => document.offsetAt(document.positionAt(offset)));
+	return sourceMap.toSourceRange(start, end, true, reports).next().value;
+}
+
+/**
  * Whether a mapping reports `diagnostic`, as Volar's `shouldReportDiagnostics`
  * decides it.
  * @param {CodeInformation} data
@@ -266,28 +283,20 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 		const diagnostic_id = { source: DIAGNOSTIC_SOURCE, code: error.code ?? 'tsrx-usage-error' };
 		/** @param {CodeInformation} data */
 		const reports = (data) => reports_diagnostic(data, diagnostic_id);
-		// Volar shows the diagnostic only where the mappings that report it map
-		// its generated range back to the source, and leaves it out otherwise
-		// (`transformDiagnostic` in `@volar/language-service`), so a range that
-		// doesn't map back is no place for it: try the next way to find one.
-		/** @param {[number, number] | null | undefined} range */
-		const maps_back = (range) =>
-			!!range &&
-			(!sourceMap || !sourceMap.toSourceRange(range[0], range[1], true, reports).next().done);
 
 		// try to find exact mapping
 		// TODO: perhaps it's best to just switch to sourceMap entirely?
 		const mapping = virtualCode.findMappingBySourceRange(start_offset, end_offset);
 		/** @type {[number, number] | null | undefined} */
-		let generated = mapping && [
-			mapping.generatedOffsets[0],
-			mapping.generatedOffsets[0] + mapping.generatedLengths[0],
-		];
+		let generated;
 
-		if (!maps_back(generated)) {
-			// No single mapping spans the whole range, or the one that does
-			// doesn't report the error (an `@switch` statement's own mapping, which
-			// a TSRX2010 outside a template spans): statements and elements are
+		if (mapping) {
+			generated = [
+				mapping.generatedOffsets[0],
+				mapping.generatedOffsets[0] + mapping.generatedLengths[0],
+			];
+		} else {
+			// No single mapping spans the whole range: statements and elements are
 			// only covered by granular token mappings (e.g. `const test = 5;` maps
 			// as `const `, `test`, ` = `, `5`, `;`, with keywords often dropped), so
 			// an exact range lookup never matches them. Span the generated range
@@ -301,20 +310,35 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			}
 		}
 
-		if (!maps_back(generated) && sourceMap) {
-			// The range is on code whose mappings don't report the error, such as
-			// an `@switch`'s own mapping over a `break` right in a case, which the
-			// editor's code leaves out: map its ends through the ones that do.
-			generated = sourceMap.toGeneratedRange(start_offset, end_offset, true, reports).next().value;
+		if (generated && sourceMap && !shown_range(generated, reports, document, sourceMap)) {
+			// The editor would leave the error out: its range is on code whose
+			// mappings don't report it, such as an `@switch`'s own mapping (over a
+			// `break` right in a case, which the editor's code leaves out, or over
+			// the whole directive used as a statement outside a template). Span the
+			// tokens in it that do, or map its ends through the mappings that do,
+			// when that shows it on some code.
+			const on_code = (/** @type {[number, number] | null | undefined} */ range) => {
+				const shown = range && shown_range(range, reports, document, sourceMap);
+				return !!shown && shown[1] > shown[0];
+			};
+			generated = mapping
+				? virtualCode.findGeneratedRangeBySourceRange(start_offset, end_offset)
+				: null;
+			if (!on_code(generated)) {
+				generated = sourceMap
+					.toGeneratedRange(start_offset, end_offset, true, reports)
+					.next().value;
+			}
+			if (!on_code(generated)) generated = null;
 		}
 
-		if (!maps_back(generated)) {
+		if (!generated) {
 			// No mapping that reports the error covers it, such as a repeated
 			// modifier the editor's code leaves out (`public public`), a `<>` left
-			// open, which has none in a template, or that `break` on a line of its
-			// own. Show it on the code the error reaches, such as a `<>`'s first
-			// child, or else the nearest code before it that does, such as the
-			// case's test, not at the start of the file.
+			// open, which has none in a template, or that `break`. Show it on the
+			// code the error reaches, such as a `<>`'s first child, or else the
+			// nearest code before it that does, such as the case's test, not at the
+			// start of the file.
 			generated = nearest_reported_range(virtualCode, reports, start_offset, error.raisedAt);
 		}
 
