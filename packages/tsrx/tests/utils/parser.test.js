@@ -5265,35 +5265,53 @@ foo();`;
 		}
 	});
 
-	it('recovers from a mismatched closing tag in a function in a directive header as in other code', () => {
-		// After `</p>` closed `<b>` and `<p>`, the children of `<p>` went on as
-		// those of the element around the header: the rest of the function was
-		// `<p>`'s text. In an `@for` header it parsed while the function's body
-		// was read as a directive body.
-		for (const header of [
-			'@if ((() => { const a = <p><b></p>; return a; })())',
-			'@if ([{ f() { const a = <p><b></p>; return a; } }].length)',
-			'@for (const x of [{ f() { const a = <p><b></p>; return a; } }])',
-			'@for (const x of [(() => { const a = <p><b></p>; return a; })()])',
+	it('recovers from broken markup in a function in a directive header as in other code', () => {
+		// When collecting, an element left open, or closed by a closing tag that
+		// names an element around it, ended where the code goes on in a function,
+		// but not in a directive header there: the rest of the function was the
+		// element's text, or the parse failed (TS1012). In an `@for` header some
+		// of these parsed while a function's body was read as a directive body.
+		/** @type {Array<(statement: string) => string>} */
+		const contexts = [
+			(statement) => `@if ((() => { ${statement}; return a; })()) { <i /> }`,
+			(statement) => `@if ([{ f() { ${statement}; return a; } }].length) { <i /> }`,
+			(statement) => `@for (const x of [{ f() { ${statement}; return a; } }]) { <i /> }`,
+			(statement) => `@for (const x of [(() => { ${statement}; return a; })()]) { <i /> }`,
+			(statement) => `@for (const x of xs; key (() => { ${statement}; return a; })()) { <i /> }`,
+			(statement) => `@switch ((() => { ${statement}; return a; })()) { @case 1: { <i /> } }`,
+		];
+		for (const statement of [
+			'const a = <p><b></p>',
+			'const a = (<p>)',
+			'const a = [<p>]',
+			'const a = c ? <p> : 1',
+			'const a = g(<p>, 1)',
+			'const a = <div><span></div>',
 		]) {
-			const source = `export function App() {\n\treturn <div>${header} { <i /> }</div>;\n}`;
-			const options = { collect: true, errors: /** @type {CompileError[]} */ ([]), comments: [] };
-			const ast = parseModule(source, 'App.tsrx', options);
-			expect(
-				options.errors.map((error) => error.code),
-				source,
-			).toEqual([TSRX_ERRORS.MISMATCHED_CLOSING_TAG('b', 'p').code]);
-			const fn = find_first(ast, (node) =>
-				['ArrowFunctionExpression', 'FunctionExpression'].includes(node.type),
-			);
-			const fn_body = as_type(
-				/** @type {AST.ArrowFunctionExpression} */ (fn).body,
-				'BlockStatement',
-			);
-			expect(
-				fn_body.body.map((child) => child.type),
-				source,
-			).toEqual(['VariableDeclaration', 'ReturnStatement']);
+			/**
+			 * @param {string} source
+			 * @param {string[]} types The function's node types
+			 */
+			const parse = (source, types) => {
+				const options = { collect: true, errors: /** @type {CompileError[]} */ ([]), comments: [] };
+				const ast = parseModule(source, 'App.tsrx', options);
+				const fn = find_first(ast, (node) => types.includes(node.type));
+				return {
+					codes: options.errors.map((error) => error.code),
+					statements: as_type(
+						/** @type {AST.ArrowFunctionExpression} */ (fn).body,
+						'BlockStatement',
+					).body.map((child) => child.type),
+				};
+			};
+			const expected = parse(`function f() { ${statement}; return a; }`, ['FunctionDeclaration']);
+			expect(expected.statements).toEqual(['VariableDeclaration', 'ReturnStatement']);
+			for (const context of contexts) {
+				const source = `export function App() {\n\treturn <div>${context(statement)}</div>;\n}`;
+				expect(parse(source, ['ArrowFunctionExpression', 'FunctionExpression']), source).toEqual(
+					expected,
+				);
+			}
 		}
 	});
 

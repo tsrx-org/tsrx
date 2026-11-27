@@ -16153,14 +16153,15 @@ export function TSRXPlugin(config) {
 						this.#path.pop();
 						// In code: no template parent, none opened in the `{ … }` container
 						// the element is in, or code that started after the parent opened (a
-						// `@{ … }` body's setup statement).
+						// `@{ … }` body's setup statement, or a directive header).
 						const parent_index = this.#path.length - 1;
 						const parent = this.#path[parent_index];
 						if (
 							type_parameter === null &&
 							(parent_index < this.#containerPathBaseline() ||
 								!this.#isNativeTemplateNode(parent) ||
-								this.#templateScriptParsingDepth > this.#elementStart(parent).scriptDepth)
+								this.#templateScriptParsingDepth > this.#elementStart(parent).scriptDepth ||
+								this.#readingHeaderStartedAfter(parent))
 						) {
 							this.#rereadTrailingCodeOfUnclosedElement(
 								/** @type {AST.NativeTSRXTemplateNode} */ (node),
