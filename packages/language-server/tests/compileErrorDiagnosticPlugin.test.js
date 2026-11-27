@@ -777,6 +777,39 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		},
 	);
 
+	// In a larger `@switch`, a span clamped into the directive's own mapping
+	// can land on another case's code, which the editor shows: such a range is
+	// no place for the error either, so each `break` gets the code before it.
+	it.each(
+		['react', 'preact', 'solid', 'vue', 'hono', 'hono-dom'].flatMap((target) => [
+			[target, 8],
+			[target, 40],
+		]),
+	)(
+		"shows each direct case `break`'s TSRX2008 in its own case on %s, with %i cases",
+		async (target, count) => {
+			const cases = Array.from(
+				{ length: count },
+				(_, i) =>
+					`\t\t@case ${i}: {\n\t\t\tconst q${i} = ${i};\n\t\t\tbreak;\n\t\t\t<b>{q${i}}</b>\n\t\t}\n`,
+			).join('');
+			const source = `export function App(x: number) @{\n\t@switch (x) {\n${cases}\t}\n}\n`;
+			const { document, service, uri } = create_service_harness(
+				source,
+				[createCompileErrorDiagnosticPlugin()],
+				`${target}/DirectCaseBreaksLargeSwitch${count}.tsrx`,
+			);
+			const diagnostics = await service.getDiagnostics(uri);
+			expect(reported(document, diagnostics, 'TSRX2008')).toEqual(
+				Array.from({ length: count }, (_, i) => ({
+					source: 'TSRX',
+					text: ';',
+					offset: source.indexOf(`q${i} = ${i};`) + `q${i} = ${i}`.length,
+				})),
+			);
+		},
+	);
+
 	// A `break` right after the case's `{` gets an anchor of its own; the next
 	// one, on a line of its own, isn't shown on that anchor too.
 	it.each(['react', 'preact', 'vue', 'hono', 'hono-dom'])(
@@ -1023,17 +1056,40 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 	});
 
 	// The editor maps the range as positions, and one inside a CRLF line break
-	// moves to before it: an error whose range the editor shows that way stays.
+	// moves to before it: an error whose range the editor shows that way, on
+	// the error, stays (here through another error's anchor, which the
+	// fallback would leave out).
 	it('keeps an error on the range the editor shows it on, across a CRLF line break', async () => {
 		expect(
 			await diagnostics_with_mappings(
 				'CrlfEnd',
+				[
+					{
+						...mapping(30, 1, 2, true),
+						data: { verification: true, customData: { diagnosticAnchor: true } },
+					},
+					mapping(17, 20, 1, true),
+					mapping(30, 1, 3, false),
+				],
+				30,
+				33,
+				`abc${String.fromCharCode(13, 10)}${'z'.repeat(115)}`,
+			),
+		).toEqual([{ source: 'TSRX', text: 'st', offset: 30 }]);
+	});
+
+	// A range the editor shows only on other code is no place for the error
+	// either: it goes on the nearest code instead.
+	it('moves an error the editor shows only outside it, across a CRLF line break', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'CrlfEndOutside',
 				[mapping(10, 1, 2, true), mapping(17, 20, 1, true), mapping(30, 1, 3, false)],
 				30,
 				33,
 				`abc${String.fromCharCode(13, 10)}${'z'.repeat(115)}`,
 			),
-		).toEqual([{ source: 'TSRX', text: 'st', offset: 10 }]);
+		).toEqual([{ source: 'TSRX', text: '1', offset: 17 }]);
 	});
 
 	// Each place the error's ends map to through the mappings that report it

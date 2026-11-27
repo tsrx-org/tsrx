@@ -310,6 +310,8 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			}
 		}
 
+		// The nearest code is other code than the error's by design.
+		const nearest_placement = !generated;
 		if (!generated) {
 			// No mapping covers the error, such as a repeated modifier the
 			// editor's code leaves out (`public public`), or a `<>` left open,
@@ -325,11 +327,23 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			);
 		}
 
-		if (generated && sourceMap && !shown_range(generated, reports, document, sourceMap)) {
-			// The editor would leave the error out: its range is on code whose
-			// mappings don't report it, such as an `@switch`'s own mapping over a
-			// `break` right in a case, which the editor's code leaves out, or over
-			// the whole directive used as a statement outside a template. Show it
+		// A range found for the error's own source range that the editor shows
+		// only on other code is no better than one it drops: a span clamped into
+		// an `@switch`'s own mapping can land on another case's code, and an
+		// error's anchor can share its generated character with another
+		// error's.
+		const shown_first =
+			generated && sourceMap && shown_range(generated, reports, document, sourceMap);
+		const off_range =
+			!!shown_first &&
+			!nearest_placement &&
+			(shown_first[0] > end_offset || shown_first[1] < start_offset);
+		if (generated && sourceMap && (!shown_first || off_range)) {
+			// The editor would leave the error out, or show it on other code: its
+			// range is on code whose mappings don't report it, such as an
+			// `@switch`'s own mapping over a `break` right in a case, which the
+			// editor's code leaves out, or over the whole directive used as a
+			// statement outside a template. Show it
 			// on the tokens in the range that report it, or on its ends mapped
 			// through the mappings that do, where the editor shows that within the
 			// range, or else on the nearest code that reports it, such as the
@@ -354,9 +368,13 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			const in_range = (function* () {
 				if (mapping) yield virtualCode.findGeneratedRangeBySourceRange(start_offset, end_offset);
 				// Every pair of places the ends map to, as `toGeneratedRange` stops
-				// at the first end for each start.
-				for (const [from] of map.toGeneratedLocation(start_offset, reaches)) {
-					for (const [to] of map.toGeneratedLocation(end_offset, reaches)) {
+				// at the first end for each start. Each distinct place once.
+				const froms = new Set(
+					Array.from(map.toGeneratedLocation(start_offset, reaches), ([o]) => o),
+				);
+				const tos = new Set(Array.from(map.toGeneratedLocation(end_offset, reaches), ([o]) => o));
+				for (const from of froms) {
+					for (const to of tos) {
 						if (to >= from) yield /** @type {[number, number]} */ ([from, to]);
 					}
 				}
