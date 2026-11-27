@@ -887,6 +887,26 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
 	});
 
+	// Where the editor would drop the error's own range, the nearest code that
+	// reports it is the place for it, not code whose `verification` object
+	// rejects it, though the editor shows that through another mapping.
+	it("shows a dropped error on the nearest code that reports it, past code whose 'shouldReport' rejects it", async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'RejectingNearestDropped',
+				[
+					mapping(14, 50, 2, false),
+					mapping(0, 0, 6, true),
+					mapping(7, 40, 5, { shouldReport: () => false }),
+					mapping(27, 40, 5, true),
+				],
+				14,
+				16,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
+	});
+
 	// The nearest code before reported any diagnostic. When the editor shows the
 	// error through another mapping of the same generated code, it stays there.
 	it("keeps an error with no mapping where the editor shows it through code whose 'shouldReport' rejects it", async () => {
@@ -957,6 +977,139 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 				`abc${String.fromCharCode(13, 10)}${'z'.repeat(115)}`,
 			),
 		).toEqual([{ source: 'TSRX', text: 'st', offset: 10 }]);
+	});
+
+	// Each place the error's ends map to through the mappings that report it
+	// is tried, not only the first.
+	it('maps an error through the ends that show it on code, past ones that map to one point', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'LaterEnds',
+				[
+					mapping(27, 50, 5, false),
+					mapping(20, 20, 6, true),
+					mapping(27, 40, 0, true),
+					mapping(32, 40, 0, true),
+					mapping(27, 60, 0, true),
+					mapping(32, 65, 0, true),
+				],
+				27,
+				32,
+				'x'.repeat(100),
+			),
+		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
+	});
+
+	// The nearest code is only a place for the error where the editor shows it
+	// there: otherwise the next nearest is.
+	it.each([
+		[
+			// A token whose generated code starts inside a CRLF line break.
+			'NearestInLineBreak',
+			[mapping(30, 50, 3, false), mapping(20, 4, 1, true), mapping(0, 20, 6, true)],
+			`abc${String.fromCharCode(13, 10)}${'x'.repeat(75)}`,
+			undefined,
+			{ source: 'TSRX', text: 'export', offset: 0 },
+		],
+		[
+			// A token whose generated code another mapping maps to a lone CR first.
+			'NearestOnLoneCarriageReturn',
+			[
+				mapping(30, 50, 3, false),
+				mapping(3, 10, 1, true),
+				mapping(20, 10, 1, true),
+				mapping(0, 20, 3, true),
+			],
+			'x'.repeat(80),
+			`abc${String.fromCharCode(13, 10)}${'x'.repeat(115)}`,
+			{ source: 'TSRX', text: 'abc', offset: 0 },
+		],
+		[
+			// A token in a mapping of several ranges whose generated code touches
+			// the next one's.
+			'NearestInMultiRangeMapping',
+			[
+				mapping(30, 50, 3, false),
+				{
+					sourceOffsets: [20, 0, 40],
+					generatedOffsets: [10, 11, 12],
+					lengths: [2, 1, 1],
+					generatedLengths: [2, 1, 1],
+					data: { verification: true, customData: {} },
+				},
+				mapping(7, 20, 5, true),
+			],
+			'x'.repeat(100),
+			undefined,
+			{ source: 'TSRX', text: 'const', offset: 7 },
+		],
+	])(
+		'skips a nearest token the editor shows nowhere or on no code: %s',
+		async (name, mappings, generated, source, expected) => {
+			expect(await diagnostics_with_mappings(name, mappings, 30, 33, generated, source)).toEqual([
+				expected,
+			]);
+		},
+	);
+
+	// TypeScript's diagnostic and the error, shown on one place through
+	// different offsets around a CRLF line break, are one diagnostic.
+	it('leaves an error to TypeScript where both show it on one place across a CRLF line break', async () => {
+		const source = `abc${String.fromCharCode(13, 10)}${'x'.repeat(115)}`;
+		const generated = `let abc=1;\nlet abc=2;\nabc;\n//${'x'.repeat(80)}`;
+		/** @type {import('@volar/language-service').LanguageServicePlugin} */
+		const typescript = {
+			name: 'typescript-semantic',
+			capabilities: {
+				diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false },
+			},
+			create: () => ({
+				provideDiagnostics: (document) => [
+					{
+						range: { start: document.positionAt(4), end: document.positionAt(7) },
+						message: "Cannot redeclare block-scoped variable 'abc'.",
+						source: 'ts',
+						code: 2451,
+					},
+				],
+			}),
+		};
+		for (const [name, plugins, expected] of /** @type {const} */ ([
+			['CrlfDedupe', [typescript], 'ts'],
+			['CrlfDedupeAlone', [], 'TSRX'],
+		])) {
+			const { document, service, uri, language } = create_service_harness(
+				source,
+				[...plugins, createCompileErrorDiagnosticPlugin()],
+				`react/${name}.tsrx`,
+			);
+			const virtual_code = /** @type {any} */ (language.scripts.get(uri)?.generated?.root);
+			virtual_code.mappings = [
+				mapping(30, 50, 3, false),
+				mapping(30, 22, 0, true),
+				mapping(33, 24, 0, true),
+				mapping(4, 22, 2, true),
+				mapping(3, 4, 3, true),
+			];
+			virtual_code.snapshot = {
+				getText: (/** @type {number} */ start, /** @type {number} */ end) =>
+					generated.substring(start, end),
+				getLength: () => generated.length,
+				getChangeRange: () => undefined,
+			};
+			virtual_code.usageErrors = [
+				Object.assign(new Error("Cannot redeclare block-scoped variable 'abc'."), {
+					code: 'TS2451',
+					type: 'usage',
+					pos: 30,
+					end: 33,
+				}),
+			];
+			const diagnostics = await service.getDiagnostics(uri);
+			expect(reported(document, diagnostics, 'TS2451')).toEqual([
+				{ source: expected, text: `${String.fromCharCode(13, 10)}x`, offset: 3 },
+			]);
+		}
 	});
 });
 

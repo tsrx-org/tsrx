@@ -78,9 +78,16 @@ export function createCompileErrorDiagnosticPlugin() {
 								context,
 								document,
 								sourceMap,
+								virtualCode.originalCode,
 								token,
 							);
-							const place = shown_at(diagnostic, error.code, document, sourceMap);
+							const place = shown_at(
+								diagnostic,
+								error.code,
+								document,
+								sourceMap,
+								virtualCode.originalCode,
+							);
 							if (place && typescript_diagnostics.has(place)) {
 								log('Leaving', error.code, 'to TypeScript:', error.message);
 								continue;
@@ -179,10 +186,11 @@ function css_region_diagnostics(root, css, document) {
  * @param {LanguageServiceContext} context
  * @param {TextDocument} document
  * @param {Mapper} sourceMap
+ * @param {string} source The source code
  * @param {CancellationToken} token
  * @returns {Promise<Set<string>>}
  */
-async function get_typescript_diagnostics(context, document, sourceMap, token) {
+async function get_typescript_diagnostics(context, document, sourceMap, source, token) {
 	/** @type {Set<string>} */
 	const places = new Set();
 	const typescript = context.plugins.find(
@@ -193,7 +201,7 @@ async function get_typescript_diagnostics(context, document, sourceMap, token) {
 
 	for (const diagnostic of diagnostics) {
 		if (typeof diagnostic.code !== 'number') continue;
-		const place = shown_at(diagnostic, `TS${diagnostic.code}`, document, sourceMap);
+		const place = shown_at(diagnostic, `TS${diagnostic.code}`, document, sourceMap, source);
 		if (place) places.add(place);
 	}
 
@@ -210,9 +218,10 @@ async function get_typescript_diagnostics(context, document, sourceMap, token) {
  * @param {string} code
  * @param {TextDocument} document
  * @param {Mapper} sourceMap
+ * @param {string} source The source code
  * @returns {string | null}
  */
-function shown_at(diagnostic, code, document, sourceMap) {
+function shown_at(diagnostic, code, document, sourceMap, source) {
 	const range = sourceMap
 		.toSourceRange(
 			document.offsetAt(diagnostic.range.start),
@@ -221,7 +230,18 @@ function shown_at(diagnostic, code, document, sourceMap) {
 			(data) => reports_diagnostic(data, diagnostic),
 		)
 		.next().value;
-	return range ? `${code}@${range[0]}` : null;
+	return range ? `${code}@${position_offset(source, range[0])}` : null;
+}
+
+/**
+ * The offset of the position the editor gives `offset` in `text`: one between
+ * a `\r` and its `\n` is the `\r`'s.
+ * @param {string} text
+ * @param {number} offset
+ * @returns {number}
+ */
+function position_offset(text, offset) {
+	return text[offset - 1] === '\r' && text[offset] === '\n' ? offset - 1 : offset;
 }
 
 /**
@@ -229,7 +249,7 @@ function shown_at(diagnostic, code, document, sourceMap) {
  * or `undefined` when it leaves it out. Volar maps the diagnostic's range, as
  * positions, back through the mappings that report it (`transformDiagnostic`
  * in `@volar/language-service`), and a position can't fall between a `\r` and
- * its `\n`.
+ * its `\n` (see `position_offset`).
  * @param {[number, number]} range
  * @param {(data: CodeInformation) => boolean} reports Whether a mapping reports the diagnostic
  * @param {TextDocument} document
@@ -237,7 +257,8 @@ function shown_at(diagnostic, code, document, sourceMap) {
  * @returns {[number, number] | undefined}
  */
 function shown_range(range, reports, document, sourceMap) {
-	const [start, end] = range.map((offset) => document.offsetAt(document.positionAt(offset)));
+	const start = document.offsetAt(document.positionAt(range[0]));
+	const end = document.offsetAt(document.positionAt(range[1]));
 	return sourceMap.toSourceRange(start, end, true, reports).next().value;
 }
 
@@ -310,58 +331,49 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			}
 		}
 
-		const dropped =
-			!!generated && !!sourceMap && !shown_range(generated, reports, document, sourceMap);
-		if (dropped) {
-			// The editor would leave the error out: its range is on code whose
-			// mappings don't report it, such as an `@switch`'s own mapping (over a
-			// `break` right in a case, which the editor's code leaves out, or over
-			// the whole directive used as a statement outside a template). Span the
-			// tokens in it that do, or map its ends through the mappings that do,
-			// when that shows it on some code.
-			const code = virtualCode.originalCode;
-			// An offset between a `\r` and its `\n` is a position before the `\r`.
-			const at = (/** @type {number} */ offset) =>
-				code[offset - 1] === '\r' && code[offset] === '\n' ? offset - 1 : offset;
-			const on_code = (/** @type {[number, number] | null | undefined} */ range) => {
-				const shown = range && shown_range(range, reports, document, sourceMap);
-				return !!shown && at(shown[1]) > at(shown[0]);
-			};
-			generated = mapping
-				? virtualCode.findGeneratedRangeBySourceRange(start_offset, end_offset)
-				: null;
-			if (!on_code(generated)) {
-				generated = sourceMap
-					.toGeneratedRange(start_offset, end_offset, true, reports)
-					.next().value;
-			}
-			if (!on_code(generated)) generated = null;
+		if (!generated) {
+			// No mapping covers the error, such as a repeated modifier the
+			// editor's code leaves out (`public public`), or a `<>` left open,
+			// which has none in a template. The editor shows a diagnostic only
+			// where the generated code maps back, so show it on the code the error
+			// reaches, such as a `<>`'s first child, or else the nearest code before
+			// it that does, not at the start of the file.
+			generated = nearest_reported_range(
+				virtualCode,
+				(data) => !!data.verification,
+				start_offset,
+				error.raisedAt,
+			);
 		}
 
-		if (!generated) {
-			// No mapping that reports the error covers it, such as a repeated
-			// modifier the editor's code leaves out (`public public`), a `<>` left
-			// open, which has none in a template, or that `break`. Show it on the
-			// code the error reaches, such as a `<>`'s first child, or else the
-			// nearest code before it that does, such as the case's test, not at the
-			// start of the file. Code whose `verification` object rejects the error
-			// is no place for it. Where the lookups above found nothing, the nearest
-			// code that reports any diagnostic, as before, stays where the editor
-			// shows the error through it.
-			/** @type {[number, number] | null} */
-			let nearest = dropped
-				? null
-				: nearest_reported_range(
-						virtualCode,
-						(data) => !!data.verification,
-						start_offset,
-						error.raisedAt,
-					);
-			if (nearest && sourceMap && !shown_range(nearest, reports, document, sourceMap)) {
-				nearest = null;
+		if (generated && sourceMap && !shown_range(generated, reports, document, sourceMap)) {
+			// The editor would leave the error out: its range is on code whose
+			// mappings don't report it, such as an `@switch`'s own mapping over a
+			// `break` right in a case, which the editor's code leaves out, or over
+			// the whole directive used as a statement outside a template. Show it
+			// on the first of these that the editor shows on some code: the tokens
+			// in the range that report it, its ends mapped through the mappings
+			// that report it, or the nearest code that reports it, such as the
+			// case's test. With none, the range stays, as before.
+			const map = sourceMap;
+			const source = virtualCode.originalCode;
+			const on_code = (/** @type {[number, number] | null | undefined} */ range) => {
+				const shown = range && shown_range(range, reports, document, map);
+				return !!shown && position_offset(source, shown[1]) > position_offset(source, shown[0]);
+			};
+			const candidates = (function* () {
+				if (mapping) yield virtualCode.findGeneratedRangeBySourceRange(start_offset, end_offset);
+				for (const [from, to] of map.toGeneratedRange(start_offset, end_offset, true, reports)) {
+					yield /** @type {[number, number]} */ ([from, to]);
+				}
+				yield nearest_reported_range(virtualCode, reports, start_offset, error.raisedAt, on_code);
+			})();
+			for (const range of candidates) {
+				if (on_code(range)) {
+					generated = range;
+					break;
+				}
 			}
-			generated =
-				nearest ?? nearest_reported_range(virtualCode, reports, start_offset, error.raisedAt);
 		}
 
 		if (generated) {
@@ -396,18 +408,18 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
  * ends nearest before `offset`, or starts nearest after it when none ends
  * before it. Of tokens the same distance away, the shortest. A mapping over
  * whitespace only, such as the indentation before a template's output, is not
- * code to show the error on.
+ * code to show the error on, and neither is a token whose range `shows`
+ * rejects: the next one in that order is.
  * @param {TSRXVirtualCodeInstance} virtualCode
  * @param {(data: CodeInformation) => boolean} reports Whether a mapping reports the error
  * @param {number} offset
  * @param {number} [reach] Where the error's parser stopped, such as the token that ended a template
+ * @param {(range: [number, number]) => boolean} [shows] Whether the editor shows the error on a token's generated range
  * @returns {[number, number] | null}
  */
-function nearest_reported_range(virtualCode, reports, offset, reach = offset) {
-	/** @type {{ range: [number, number], distance: number, length: number } | null} */
-	let before = null;
-	/** @type {{ range: [number, number], distance: number, length: number, start: number } | null} */
-	let after = null;
+function nearest_reported_range(virtualCode, reports, offset, reach = offset, shows = () => true) {
+	/** @type {{ range: [number, number], distance: number, length: number, rank: number }[]} */
+	const tokens = [];
 	for (const mapping of virtualCode.mappings ?? []) {
 		if (!mapping.data || !reports(mapping.data)) continue;
 		for (let i = 0; i < mapping.sourceOffsets.length; i++) {
@@ -423,34 +435,19 @@ function nearest_reported_range(virtualCode, reports, offset, reach = offset) {
 			const generated_start = mapping.generatedOffsets[i];
 			const ends_before = source_start + length <= offset;
 			if (!ends_before && source_start < offset) continue;
-			const candidate = {
-				/** @type {[number, number]} */
+			tokens.push({
 				range: [generated_start, generated_start + generated_length],
 				distance: ends_before ? offset - (source_start + length) : source_start - offset,
 				length,
-				start: source_start,
-			};
-			if (ends_before) {
-				if (is_nearer(candidate, before)) before = candidate;
-			} else if (is_nearer(candidate, after)) {
-				after = candidate;
-			}
+				// A token after the offset that starts before `reach` first, then
+				// the tokens before it, then the others after it.
+				rank: ends_before ? 1 : source_start < reach ? 0 : 2,
+			});
 		}
 	}
-	if (after && after.start < reach) return after.range;
-	return (before ?? after)?.range ?? null;
-}
-
-/**
- * @param {{ distance: number, length: number }} candidate
- * @param {{ distance: number, length: number } | null} best
- */
-function is_nearer(candidate, best) {
-	return (
-		!best ||
-		candidate.distance < best.distance ||
-		(candidate.distance === best.distance && candidate.length < best.length)
-	);
+	// A stable sort keeps the first of tokens alike.
+	tokens.sort((a, b) => a.rank - b.rank || a.distance - b.distance || a.length - b.length);
+	return tokens.find((token) => shows(token.range))?.range ?? null;
 }
 
 /**
