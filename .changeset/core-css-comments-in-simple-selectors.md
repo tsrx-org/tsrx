@@ -1,0 +1,5 @@
+---
+'@tsrx/core': patch
+---
+
+A comment inside a simple selector now parses where CSS reads it as nothing: between the parts of an attribute selector (`[x /* c */ = y]`, `[x="y" /* c */ i]`), right after `.`, `:` or `::` (`./* c */icon`, `:/* c */hover`), and in the An+B of `:nth-child()` and the like wherever whitespace may go (`:nth-child(2n /* c */ + 1 /* c */ of .a)`). These were `TSRX3013`, except an unquoted attribute value with a comment right after it, which took the comment in (`[x=y/**/]` matched `x="y/**/"`, so a component dropped the rule). An attribute selector's flag is read as CSS reads an identifier, so an escaped one is the flag too (`[x=y \69]` is `[x=y i]`, which was `TSRX3013`). A comment with whitespace after `.` or `:`, in an id (`#/* c */a`), before a function's `(`, inside `|=`, or inside `:global` is still an error, as CSS reads no selector there.
