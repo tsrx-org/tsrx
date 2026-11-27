@@ -15269,6 +15269,29 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		expect(
 			parseModule('class A { static { const f = () => { return 1; }; } }', 'App.tsrx').body,
 		).toHaveLength(1);
+		// TypeScript's checker doesn't check the operand of one it reports, and in
+		// an ambient class reports any statement in a `static` block as TS1036,
+		// which TSRX leaves to it, as for any other statement there.
+		for (const [source, at] of /** @type {Array<[string, number[]]>} */ ([
+			['class A { static { return class { static { return; } }; } }', [19]],
+			['declare class A { static { return; } }', []],
+			['declare class A { static { x; } }', []],
+		])) {
+			const collected = /** @type {CompileError[]} */ ([]);
+			parseModule(source, 'App.tsrx', { collect: true, errors: collected });
+			expect(
+				collected.map((error) => [error.code, error.pos]),
+				source,
+			).toEqual(at.map((pos) => ['TS18041', pos]));
+		}
+		// One in a class in a template is the class's, not the template's (TSRX2001).
+		const in_template = /** @type {CompileError[]} */ ([]);
+		parseModule(
+			'class A { static { const t = @{ class B { static { return; } } <b /> }; } }',
+			'App.tsrx',
+			{ collect: true, errors: in_template },
+		);
+		expect(in_template.map((error) => error.code)).toEqual(['TS18041']);
 	});
 
 	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {

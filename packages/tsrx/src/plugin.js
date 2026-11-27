@@ -2379,6 +2379,9 @@ export function TSRXPlugin(config) {
 			// Whether acorn-typescript raised its error for modifiers before the class
 			// `static` block being read (see `parseClassElement`).
 			#staticBlockModifiers = false;
+			// Set while the `return` in a class `static` block that TS18041 was
+			// raised for is read (see `raise`).
+			#readingStaticBlockReturn = false;
 			// Whether decorators come before the class member being read.
 			#memberDecorated = false;
 			// Where the methods with an `async` before another modifier start, and
@@ -6018,7 +6021,9 @@ export function TSRXPlugin(config) {
 				if (
 					node.type === 'FunctionDeclaration' ||
 					node.type === 'FunctionExpression' ||
-					node.type === 'ArrowFunctionExpression'
+					node.type === 'ArrowFunctionExpression' ||
+					// A `return` in a class `static` block is TS18041 (see `raise`).
+					node.type === 'StaticBlock'
 				) {
 					inside_nested_function = true;
 				}
@@ -6211,12 +6216,17 @@ export function TSRXPlugin(config) {
 					// One right in a class `static` block, which TypeScript's parser reads
 					// and its checker reports at the keyword (TS18041): a strict parse
 					// throws it, and a collecting one records it and reads on, where acorn
-					// stopped.
-					this.#raiseCheckerError(
-						position,
-						TS_ERRORS.STATIC_BLOCK_RETURN,
-						position + 'return'.length,
-					);
+					// stopped. TypeScript's checker doesn't check the operand of one it
+					// reports, nor one in an ambient class, which is TS1036 as any
+					// statement there is.
+					if (!this.isAmbientContext && !this.#readingStaticBlockReturn) {
+						this.#readingStaticBlockReturn = true;
+						this.#raiseCheckerError(
+							position,
+							TS_ERRORS.STATIC_BLOCK_RETURN,
+							position + 'return'.length,
+						);
+					}
 					return /** @type {never} */ (undefined);
 				} else if (
 					message === 'Unsyntactic break' &&
@@ -17085,7 +17095,13 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['parseReturnStatement']}
 			 */
 			parseReturnStatement(node) {
-				const statement = super.parseReturnStatement(node);
+				const reading_static_block_return = this.#readingStaticBlockReturn;
+				let statement;
+				try {
+					statement = super.parseReturnStatement(node);
+				} finally {
+					this.#readingStaticBlockReturn = reading_static_block_return;
+				}
 				this.#checkInlinedCodeBlockLabels(/** @type {AST.ReturnStatement} */ (statement).argument);
 				return statement;
 			}
