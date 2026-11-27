@@ -228,6 +228,102 @@ export function Local({ n }: { n: number }) {
 	</p>;
 	return view;
 }`,
+
+	// if-chain-hydration.test.tsrx hydrates what these render.
+	'if-chain.tsrx': `import { ref } from 'vue';
+
+type State = { on: boolean; away: boolean; shown: boolean; name: string };
+
+function BranchCounter(props: { label: string }) @{
+	const count = ref(0);
+	<button class="counter" onClick={() => count.value++}>{props.label + ':' + count.value}</button>
+}
+
+export function Chain({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			<BranchCounter label="on" />
+		} @else if (state.away) {
+			<i>{'away'}</i>
+		} @else {
+			<b>{'off'}</b>
+		}
+		{state.name}
+	</p>
+}
+
+export function ChainNoElse({ state }: { state: State }) @{
+	<p>
+		{state.name}
+		@if (state.on) {
+			<BranchCounter label="on" />
+		} @else if (state.away) {
+			<i>{'away'}</i>
+		}
+	</p>
+}
+
+export function Alone({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			<BranchCounter label="on" />
+		} @else if (state.away) {
+			<i>{'away'}</i>
+		} @else {
+			<b>{'off'}</b>
+		}
+	</p>
+}
+
+export function Shown({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			<span v-show={state.shown}>
+				<BranchCounter label="on" />
+			</span>
+		}
+		{state.name}
+	</p>
+}
+
+export function LaterCounter({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			<i>{'on'}</i>
+		} @else if (state.away) {
+			<BranchCounter label="away" />
+		} @else {
+			<b>{'off'}</b>
+		}
+		{state.name}
+	</p>
+}
+
+export function NestedElse({ state }: { state: State }) @{
+	<p>
+		{state.name}
+		@if (state.on) {
+			<BranchCounter label="on" />
+		} @else {
+			@if (state.away) {
+				<i>{'away'}</i>
+			}
+		}
+	</p>
+}
+
+export function ShownComponent({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			<BranchCounter v-show={state.shown} label="on" />
+		}
+		{state.name}
+	</p>
+}`,
+
+	'v-show.tsrx': `export function App({ shown }: { shown: boolean }) @{
+	<p v-show={shown}>{'x'}</p>
+}`,
 };
 
 /** @type {string} */
@@ -374,5 +470,84 @@ describe("[vue] an element's @switch on the server", () => {
 		expect(await renderToString(createSSRApp(App, { n: 1 }))).toBe(
 			'<div class="child extra" data-x="1"><span class="inner">inner</span></div>',
 		);
+	});
+});
+
+// An element's `@else if` chain renders as `v-if` / `v-else-if` / `v-else`
+// elements, without the fragment the nested ternary put around a later
+// branch; if-chain-hydration.test.tsrx hydrates this markup.
+describe("[vue] an element's @else if chain or v-show branch on the server", () => {
+	it('renders the picked branch, or a comment', async () => {
+		const shapes = await server.ssrLoadModule('/if-chain.tsrx');
+		const states = {
+			on: { on: true, away: false, shown: true, name: 'Ann' },
+			away: { on: false, away: true, shown: true, name: 'Ann' },
+			off: { on: false, away: false, shown: true, name: 'Ann' },
+		};
+		/** @type {Record<string, Record<string, string>>} */
+		const rendered = {};
+		for (const shape of [
+			'Chain',
+			'ChainNoElse',
+			'Alone',
+			'Shown',
+			'LaterCounter',
+			'NestedElse',
+			'ShownComponent',
+		]) {
+			rendered[shape] = {};
+			for (const [name, state] of Object.entries(states)) {
+				rendered[shape][name] = await renderToString(createSSRApp(shapes[shape], { state }));
+			}
+		}
+		expect(rendered).toEqual({
+			Chain: {
+				on: '<p><button class="counter">on:0</button>Ann</p>',
+				away: '<p><i>away</i>Ann</p>',
+				off: '<p><b>off</b>Ann</p>',
+			},
+			ChainNoElse: {
+				on: '<p>Ann<button class="counter">on:0</button></p>',
+				away: '<p>Ann<i>away</i></p>',
+				off: '<p>Ann<!----></p>',
+			},
+			Alone: {
+				on: '<p><button class="counter">on:0</button></p>',
+				away: '<p><i>away</i></p>',
+				off: '<p><b>off</b></p>',
+			},
+			Shown: {
+				on: '<p><span><button class="counter">on:0</button></span>Ann</p>',
+				away: '<p><!---->Ann</p>',
+				off: '<p><!---->Ann</p>',
+			},
+			LaterCounter: {
+				on: '<p><i>on</i>Ann</p>',
+				away: '<p><button class="counter">away:0</button>Ann</p>',
+				off: '<p><b>off</b>Ann</p>',
+			},
+			NestedElse: {
+				on: '<p>Ann<button class="counter">on:0</button></p>',
+				away: '<p>Ann<i>away</i></p>',
+				off: '<p>Ann<!----></p>',
+			},
+			ShownComponent: {
+				on: '<p><button class="counter">on:0</button>Ann</p>',
+				away: '<p><!---->Ann</p>',
+				off: '<p><!---->Ann</p>',
+			},
+		});
+	});
+
+	// Pins a limit, not a feature: vue-jsx-vapor 3.2.29's server build applies
+	// `v-show` through `withDirectives` outside a render function, which Vue
+	// skips with a warning, so a hidden element renders shown and hydrating it
+	// reports a style mismatch. That holds for any `v-show`, in a branch or
+	// not. A release that renders it hidden fails this test.
+	it('renders a hidden v-show element shown', async () => {
+		const { App } = await server.ssrLoadModule('/v-show.tsrx');
+		const app = createSSRApp(App, { shown: false });
+		app.config.warnHandler = () => {};
+		expect(await renderToString(app)).toBe('<p>x</p>');
 	});
 });

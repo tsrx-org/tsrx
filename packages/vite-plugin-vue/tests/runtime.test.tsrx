@@ -6258,6 +6258,136 @@ describe('tsrx-vue an element whose child is an @if / @else', () => {
 	}
 });
 
+const chain_user = ref({ name: 'Ann', online: true, away: false, shown: true });
+
+function ChainCounter({ label }: { label: string }) @{
+	const count = ref(0);
+	<button class="chain-counter" onClick={() => count.value++}>
+		{label + ':' + count.value}
+	</button>
+}
+
+function ChainUser() @{
+	<div class="chain-user">
+		@if (chain_user.value.online) {
+			<ChainCounter label="online" />
+		} @else if (chain_user.value.away) {
+			<i>{'away'}</i>
+		} @else {
+			<b>{'off'}</b>
+		}
+		{chain_user.value.name}
+	</div>
+}
+
+function NestedElseUser() @{
+	<div class="nested-else-user">
+		{chain_user.value.name}
+		@if (chain_user.value.online) {
+			<ChainCounter label="online" />
+		} @else {
+			@if (chain_user.value.away) {
+				<i>{'away'}</i>
+			}
+		}
+	</div>
+}
+
+function ShownUser() @{
+	<div class="shown-user">
+		@if (chain_user.value.online) {
+			<p v-show={chain_user.value.shown}>
+				<ChainCounter label="online" />
+			</p>
+		}
+		{chain_user.value.name}
+	</div>
+}
+
+function ShownCase() @{
+	<div class="shown-case">
+		@switch (chain_user.value.online) {
+			@case true: {
+				<p v-show={chain_user.value.shown}>
+					<ChainCounter label="case" />
+				</p>
+			}
+		}
+		{chain_user.value.name}
+	</div>
+}
+
+function ShownComponentUser() @{
+	<div class="shown-component">
+		@if (chain_user.value.online) {
+			<ChainCounter v-show={chain_user.value.shown} label="online" />
+		}
+		{chain_user.value.name}
+	</div>
+}
+
+describe("tsrx-vue an element's @else if chain or v-show branch (#1402)", () => {
+	beforeEach(() => {
+		chain_user.value = { name: 'Ann', online: true, away: false, shown: true };
+	});
+
+	it.each([
+		['an @else if chain', ChainUser, '.chain-user', ['awayBo', 'offBo']],
+		['an @else that renders only an @if', NestedElseUser, '.nested-else-user', ['Boaway', 'Bo']],
+	] as const)(
+		'keeps the branch of %s when a sibling expression changes',
+		async (_name, component, selector, later) => {
+			await render(component);
+			await click('.chain-counter');
+			chain_user.value = { ...chain_user.value };
+			await flush();
+			expect(text('.chain-counter')).toBe('online:1');
+			chain_user.value = { ...chain_user.value, name: 'Bo' };
+			await flush();
+			expect(text('.chain-counter')).toBe('online:1');
+
+			chain_user.value = { ...chain_user.value, online: false, away: true };
+			await flush();
+			expect(text(selector)).toBe(later[0]);
+			chain_user.value = { ...chain_user.value, away: false };
+			await flush();
+			expect(text(selector)).toBe(later[1]);
+			chain_user.value = { ...chain_user.value, online: true };
+			await flush();
+			expect(text('.chain-counter')).toBe('online:0');
+		},
+	);
+
+	it.each([
+		['an @if branch', ShownUser, '.shown-user', '.shown-user p'],
+		['a @switch case', ShownCase, '.shown-case', '.shown-case p'],
+		['a component @if branch', ShownComponentUser, '.shown-component', '.chain-counter'],
+	] as const)(
+		'keeps %s with v-show when a sibling expression changes, and shows and hides it',
+		async (_name, component, selector, shown_selector) => {
+			await render(component);
+			await click('.chain-counter');
+			chain_user.value = { ...chain_user.value, name: 'Bo' };
+			await flush();
+			expect(text(selector)?.endsWith(':1Bo')).toBe(true);
+
+			const shown = container.querySelector(shown_selector) as HTMLElement;
+			chain_user.value = { ...chain_user.value, shown: false };
+			await flush();
+			expect(container.querySelector(shown_selector)).toBe(shown);
+			expect(shown.style.display).toBe('none');
+			chain_user.value = { ...chain_user.value, shown: true };
+			await flush();
+			expect(shown.style.display).toBe('');
+			expect(text('.chain-counter')?.endsWith(':1')).toBe(true);
+
+			chain_user.value = { ...chain_user.value, online: false };
+			await flush();
+			expect(container.querySelector('.chain-counter')).toBeNull();
+		},
+	);
+});
+
 describe('tsrx-vue for_items', () => {
 	it('hands a reactive array to VaporFor as it is (#1147)', () => {
 		const list = reactive(['a', 'b']);

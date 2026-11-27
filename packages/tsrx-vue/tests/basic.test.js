@@ -2581,9 +2581,110 @@ export function Card(${params}: any) @{
 		);
 
 		expect(code).toContain("<b v-if={on}>{'on'}</b>");
-		// An \`@else if\` chain keeps the shared lowering: \`VaporKeepAlive\` caches
-		// the nested ternary's keyed \`createIf\`, not a \`v-else-if\` one.
-		expect(code).toContain("{level === 1 ? <b>{'one'}</b> : level === 2 ? <Item /> : null}");
+		expect(code).toContain("<b v-if={level === 1}>{'one'}</b><Item v-else-if={level === 2} />");
+	});
+
+	it("gives an element's @else if chain and v-show branches v-if, v-else-if and v-else", () => {
+		// Beside an expression child, the nested ternary would render its branch
+		// again whenever what it reads changes (#1402), and alone its inner
+		// \`createIf\` doesn't hydrate the fragment the server renders around a
+		// later branch. \`v-show\` applies with \`v-if\` on the same element.
+		const { code, errors } = compile(
+			`function App({ on, away, shown, name, kind, Item }: { on: boolean; away: boolean; shown: boolean; name: string; kind: string; Item: any }) @{
+				<div>
+					@if (on) {
+						<b>{'on'}</b>
+					} @else if (away) {
+						<i>{'away'}</i>
+					} @else if (shown) {
+						<Item />
+					} @else {
+						<u>{'off'}</u>
+					}
+					{name}
+					@if (on) {
+						<b>{'on'}</b>
+					} @else {
+						@if (away) {
+							<i>{'away'}</i>
+						}
+					}
+					@if (on) {
+						<p v-show={shown}>{'shown'}</p>
+					}
+					@if (on) {
+						<Item v-show={shown} />
+					} @else if (away) {
+						<i v-show={!shown}>{'away'}</i>
+					}
+					@switch (kind) {
+						@case 'a': {
+							<p v-show={shown}>{'case'}</p>
+						}
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).toContain(
+			"<b v-if={on}>{'on'}</b><i v-else-if={away}>{'away'}</i><Item v-else-if={shown} /><u v-else>{'off'}</u>{name}",
+		);
+		// An \`@else\` that renders only an \`@if\` is the same nested ternary.
+		expect(code).toContain("{name}<b v-if={on}>{'on'}</b><i v-else-if={away}>{'away'}</i>");
+		expect(code).toContain("<p v-if={on} v-show={shown}>{'shown'}</p>");
+		expect(code).toContain(
+			"<Item v-if={on} v-show={shown} /><i v-else-if={away} v-show={!shown}>{'away'}</i>",
+		);
+		expect(code).toMatch(
+			/<p v-if=\{\(typeof _\$_case_1\.value[^]*?=== 0\} v-show=\{shown\}>\{'case'\}<\/p>/,
+		);
+		expect(code).not.toMatch(/\{(on|away)\s*\?/);
+	});
+
+	it("keeps the shared lowering for a component's @else if chain or v-show branch", () => {
+		const { code } = compile(
+			`function App({ on, away, shown, Wrap }: { on: boolean; away: boolean; shown: boolean; Wrap: any }) @{
+				<div>
+					<Wrap>
+						@if (on) {
+							<b>{'on'}</b>
+						} @else if (away) {
+							<i>{'away'}</i>
+						}
+					</Wrap>
+					<Wrap>
+						@if (on) {
+							<p v-show={shown}>{'shown'}</p>
+						}
+					</Wrap>
+					@if (on) {
+						<b>{'on'}</b>
+					} @else if (away) {
+						const label = 'away';
+						<i>{label}</i>
+					}
+					@if (on) {
+						<b>{'on'}</b>
+					} @else if (away) {
+						<i>{'away'}</i>
+					}
+					<i v-else>{'authored else'}</i>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		// vue-jsx-vapor's server build would pass the branches to the component
+		// as separate children.
+		expect(code).toContain("<Wrap>{on ? <b>{'on'}</b> : away ? <i>{'away'}</i> : null}</Wrap>");
+		expect(code).toContain("<Wrap>{on ? <p v-show={shown}>{'shown'}</p> : null}</Wrap>");
+		// A branch with setup statements can't take \`v-else-if\`.
+		expect(code).toMatch(/\{on\s*\? <b>\{'on'\}<\/b>\s*: away\s*\? \(\(\) => \{/);
+		// An authored \`v-else\` after the chain would join it.
+		expect(code).toContain("{on ? <b>{'on'}</b> : away ? <i>{'away'}</i> : null}<i v-else>");
+		expect(code).not.toContain('v-else-if');
 	});
 
 	it("gives an element's @if / @else v-if and v-else branches", () => {
