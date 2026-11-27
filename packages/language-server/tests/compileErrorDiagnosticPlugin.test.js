@@ -407,6 +407,25 @@ export {};`,
 		]);
 	});
 
+	it("leaves a `return` in a class `static` block to TypeScript, and keeps the file's other diagnostics", async () => {
+		// The parser used to stop at it (TS1108), so the editor lost the file.
+		const source = `export class A {
+	static {
+		return;
+	}
+}
+export const n: number = 'x';
+`;
+		const { document, diagnostics } = await editor_diagnostics_for('StaticBlockReturn', source);
+
+		expect(reported(document, diagnostics, 'TS18041')).toEqual([
+			{ source: 'ts', text: 'return', offset: source.indexOf('return') },
+		]);
+		expect(reported(document, diagnostics, 'TS2322')).toEqual([
+			{ source: 'ts', text: 'n', offset: source.indexOf('n:') },
+		]);
+	});
+
 	it('leaves a redeclaration in a template body to TypeScript', async () => {
 		const { document, diagnostics } = await editor_diagnostics_for(
 			'TemplateRedeclaration',
@@ -649,6 +668,18 @@ export {};`,
 			'IfBreakInLoop',
 			'export function App({ x }: { x: boolean }) {\n\tfor (;;) {\n\t\treturn <div>@if (x) { break; }</div>;\n\t}\n}\n',
 			'TSRX2003',
+			'break;',
+		],
+		[
+			'CaseNestedBreak',
+			'export function App({ x, y }: { x: number; y: boolean }) @{\n\t<div>@switch (x) { @case 1: { if (y) break; <b /> } @default: { <i /> } }</div>\n}\n',
+			'TSRX2008',
+			'break;',
+		],
+		[
+			'CaseNestedBreakOwnLine',
+			'export function App({ x, y }: { x: number; y: boolean }) @{\n\t<div>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tif (y) {\n\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t\t<b />\n\t\t\t}\n\t\t}\n\t</div>\n}\n',
+			'TSRX2008',
 			'break;',
 		],
 		[

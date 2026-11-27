@@ -3158,6 +3158,9 @@ describe('parse errors', () => {
 				'2:8',
 			],
 			['for (using {x} in y) {}', TS_ERRORS.FOR_IN_USING, '1:6'],
+			// A `-` in a JSX member name's part (TS1003, TS1005 in a closing tag).
+			['const x = <X.A-b />;', TS_ERRORS.IDENTIFIER_EXPECTED, '1:15'],
+			['const x = <X.A></X.A-b>;', TS_ERRORS.TOKEN_EXPECTED, '1:21'],
 			// Prettier reports the `public` (1:17); the plugin reports the first
 			// mistake, the modifier before `export` (#902).
 			['abstract export public class A {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:10'],
@@ -3177,6 +3180,13 @@ describe('parse errors', () => {
 			['async export function f() {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:7'],
 			['declare export const x: number;', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:9'],
 			['abstract export default class A {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:10'],
+			// A token that starts no statement where one in a list starts (TS1128,
+			// TS1129 in a `case` clause), which the parser records when collecting,
+			// and the tree leaves out.
+			['export declare @dec class A {}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, '1:1'],
+			['export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, '1:1'],
+			['accessor x;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, '1:1'],
+			['switch (a) {\n  case 1:\n    export foo;\n}', TS_ERRORS.STATEMENT_EXPECTED, '3:5'],
 		];
 		for (const [source, error, at] of cases) {
 			await expect_reported(source, error, at);
@@ -3625,6 +3635,56 @@ class A {}
 // prints it: on two lines, except a `@catch` body, which stays `{}` as a
 // `catch` without `finally` does (#897). From `@tsrx/prettier-plugin`'s
 // "expands empty braces" tests.
+describe('functions in a directive head', () => {
+	// A block in an `@for` head, and a `for…of` loop in any directive head,
+	// were read as template text, so formatting failed.
+	test('a block-bodied function in an @for head and key clause', async () => {
+		await expectFormat(
+			`function App({ ys }) @{
+  <ul>@for (const y of ys.filter((v) => { return v > 0; }); key (() => { return y; })()) { <li>{y}</li> }</ul>
+}`,
+			`function App({ ys }) @{
+  <ul>
+    @for (
+      const y of ys.filter((v) => {
+        return v > 0;
+      });
+      key (() => {
+        return y;
+      })()
+    ) {
+      <li>{y}</li>
+    }
+  </ul>
+}
+`,
+		);
+	});
+
+	test('a for…of loop in a function in an @if head', async () => {
+		await expectFormat(
+			`function App({ ys }) @{
+  <ul>@if (ys.some((v) => { for (const w of v) { if (w > 1) return true; } return false; })) { <li /> }</ul>
+}`,
+			`function App({ ys }) @{
+  <ul>
+    @if (
+      ys.some((v) => {
+        for (const w of v) {
+          if (w > 1) return true;
+        }
+        return false;
+      })
+    ) {
+      <li />
+    }
+  </ul>
+}
+`,
+		);
+	});
+});
+
 describe('empty directive bodies', () => {
 	test('@if, @else, @for and @empty', async () => {
 		await expectFormat(

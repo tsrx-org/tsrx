@@ -446,6 +446,16 @@ export function A({ items }) @{
 		]);
 	});
 
+	it('reports a `-` in a JSX member name as a parse error', () => {
+		// The parser records it when collecting, and reads the part as written.
+		expect(lint('export const x = <X.A-b />;\n')).toEqual([
+			'1: null: Parsing error: Identifier expected.',
+		]);
+		expect(lint('export const x = <X.A></X.A-b>;\n')).toEqual([
+			"1: null: Parsing error: '>' expected.",
+		]);
+	});
+
 	it('reports a return right in an @switch case as a parse error', () => {
 		expect(
 			lint(
@@ -460,6 +470,16 @@ export function A({ items }) @{
 				'export function App({ s }) @{\n\t<div>@switch (s) { @case 1: { <b /> break; } @default: { <i /> } }</div>\n}\n',
 			),
 		).toEqual(['2: null: Parsing error: `break` is invalid inside `@switch` cases.']);
+	});
+
+	it('reports a token that starts no statement as a parse error', () => {
+		// The parser records it when collecting, and the tree leaves it out.
+		expect(lint('export declare @dec class A {}\n')).toEqual([
+			'1: null: Parsing error: Declaration or statement expected.',
+		]);
+		expect(lint('switch (a) {\n\tcase 1:\n\t\taccessor x;\n}\n')).toEqual([
+			'3: null: Parsing error: Statement expected.',
+		]);
 	});
 
 	it('reports a break or continue with no target as a parse error, as espree does', () => {

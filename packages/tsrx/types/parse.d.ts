@@ -211,6 +211,13 @@ export namespace Parse {
 			 * caller keeps as the code reads them.
 			 */
 			textReadAsCode?: Array<[number, number]>;
+			/**
+			 * Throw at a token that starts no statement where a statement in a list
+			 * starts, as a strict parse does, instead of recording it and reading
+			 * on: the collecting parse of the input that a strict parse reads its
+			 * errors from.
+			 */
+			stopAtStatementStart?: boolean;
 		};
 		// The type has "latest" but it's converted to 1e8 at runtime
 		// and if (ecmaVersion >= 2015) { ecmaVersion -= 2009 }

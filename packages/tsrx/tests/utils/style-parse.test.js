@@ -522,6 +522,49 @@ describe('parseStyle custom properties', function () {
 		).toEqual(declarations);
 	});
 
+	it.each([
+		// A `@property`'s initial-value takes any value, as a custom property's
+		// does, blocks and all.
+		[
+			'@property --x { initial-value: {a} b; inherits: false }',
+			[
+				['initial-value', '{a} b'],
+				['inherits', 'false'],
+			],
+		],
+		['@property --x { initial-value: b {a} }', [['initial-value', 'b {a}']]],
+		['@property --x { initial-value: {a}{b}; }', [['initial-value', '{a}{b}']]],
+		['@property --x { initial-value: foo(){}; }', [['initial-value', 'foo(){}']]],
+		['@PROPERTY --x { Initial-Value: {a} b; }', [['Initial-Value', '{a} b']]],
+		['.a { @property --x { initial-value: {a} b } }', [['initial-value', '{a} b']]],
+		// It may be empty, as `syntax: "*"` allows.
+		[
+			'@property --x { initial-value: ; inherits: false }',
+			[
+				['initial-value', ''],
+				['inherits', 'false'],
+			],
+		],
+	])('reads the initial-value in %j', function (css, declarations) {
+		/** @param {any} node @returns {any} */
+		const property = (node) => (node.type === 'Atrule' ? node : property(node.block.children[0]));
+		expect(
+			property(parseStyle(css, LOCATION, {}).children[0]).block.children.map(
+				(/** @type {any} */ child) => [child.property, child.value],
+			),
+		).toEqual(declarations);
+	});
+
+	it("ends a string in a @property's initial-value at a newline, as CSS does", function () {
+		// A bad string: the `}` after it ends the `@property`, and `.a` is a rule.
+		const sheet = parseStyle(
+			'@property --x { initial-value: x "\n} .a { color: red }',
+			LOCATION,
+			{},
+		);
+		expect(sheet.children.map((child) => child.type)).toEqual(['Atrule', 'Rule']);
+	});
+
 	it('reads a rule, not a declaration, where more follows the block', function () {
 		expect(blocks('.a { b:hover { color: red } }')).toEqual([['Rule']]);
 		// In a style rule, CSS reads no declaration there.
@@ -578,6 +621,18 @@ describe('parseStyle custom properties', function () {
 		expect(function () {
 			parseStyle('a{b:{"\\', LOCATION, {});
 		}).toThrow(expect.objectContaining({ pos: 7 }));
+	});
+
+	it('reads a custom property name with U+00A0 after it and no colon in linear time', function () {
+		// The name and the whitespace before a colon could both take a U+00A0.
+		for (const css of [
+			`.x { --x${'\u00a0'.repeat(40_000)} }`,
+			`.x { --x${'\u00a0'.repeat(40_000)}y { color: red } }`,
+		]) {
+			const start = performance.now();
+			parseStyle(css, LOCATION, {});
+			expect(performance.now() - start).toBeLessThan(1000);
+		}
 	});
 
 	it('reads a declaration name with whitespace in it in linear time', function () {

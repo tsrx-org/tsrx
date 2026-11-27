@@ -552,3 +552,41 @@ let b\u{63} = \u0061;
       name: (identifier)
       (initializer
         (identifier)))))
+
+==================
+Private Names Written With A Unicode Escape
+==================
+
+class C {
+  #\u0061b = 1;
+  #c\u{64} = 2;
+  read() {
+    return this.#\u0061b;
+  }
+}
+
+---
+
+(program
+  (class_declaration
+    name: (identifier)
+    body: (class_body
+      (field_definition
+        property: (property_name
+          (private_property_identifier))
+        (initializer
+          (number)))
+      (field_definition
+        property: (property_name
+          (private_property_identifier))
+        (initializer
+          (number)))
+      (method_definition
+        name: (property_name
+          (identifier))
+        parameters: (formal_parameters)
+        body: (statement_block
+          (return_statement
+            (member_expression
+              object: (this)
+              property: (private_property_identifier))))))))
