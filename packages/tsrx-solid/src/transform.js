@@ -630,21 +630,72 @@ function report_jump(diagnostic, node, transform_context) {
 }
 
 /**
+ * A loop, `switch` statement or label that a `break` or `continue` inside it
+ * can reach: `loop` is whether a `continue` can, `label` the label's name
+ * (`null` for a loop or `switch` without one).
+ * @typedef {{ loop: boolean, label: string | null }} JumpTarget
+ */
+
+/**
+ * Whether a `break` or `continue` reaches one of `targets`: a `break`
+ * without a label the innermost loop or `switch`, a `continue` without one
+ * the innermost loop, and one with a label that label.
+ * @param {AST.BreakStatement | AST.ContinueStatement} node
+ * @param {JumpTarget[]} targets
+ * @returns {boolean}
+ */
+function jump_reaches(node, targets) {
+	const is_break = node.type === 'BreakStatement';
+	const label = node.label?.name ?? null;
+	return targets.some((target) =>
+		label === null ? target.label === null && (is_break || target.loop) : target.label === label,
+	);
+}
+
+/**
+ * The jump targets around the value of `node[key]`, given `targets`, those
+ * around `node`: a label's statement, a loop's body and a `switch`
+ * statement's cases add one.
+ * @param {AST.TraversableAstNode} node
+ * @param {string} key
+ * @param {JumpTarget[]} targets
+ * @returns {JumpTarget[]}
+ */
+function child_jump_targets(node, key, targets) {
+	if (node.type === 'LabeledStatement' && key === 'body') {
+		return [...targets, { loop: is_loop_statement(node.body), label: node.label.name }];
+	}
+	if (
+		(is_loop_statement(node) && key === 'body') ||
+		(node.type === 'SwitchStatement' && key === 'cases')
+	) {
+		return [...targets, { loop: node.type !== 'SwitchStatement', label: null }];
+	}
+	return targets;
+}
+
+/**
+ * Reports a `return` in an `@for` body, and a `break` or `continue` there
+ * that leaves the body: one whose loop, `switch` or label isn't in it. A jump
+ * in a loop in the body is `@tsrx/core`'s directive jump check's.
+ *
  * Walks arbitrary values because it recurses through every own property of the
  * subtree, not just the typed child slots.
  *
  * @param {unknown} node
  * @param {TransformContext} transform_context
  * @param {boolean} [is_root]
+ * @param {JumpTarget[]} [targets] The `switch` statements and labels around `node` in the body.
  * @returns {void}
  */
-function validate_for_body_control_flow(node, transform_context, is_root = true) {
+function validate_for_body_control_flow(node, transform_context, is_root = true, targets = []) {
 	if (Array.isArray(node)) {
 		for (const child of node) {
 			validate_for_body_control_flow(
 				child,
 				transform_context,
 				is_root && !is_loop_statement(child),
+				targets,
 			);
 		}
 		return;
@@ -681,6 +732,12 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		// which reports a jump with no target.
 		return;
 	}
+	if (
+		(current.type === 'BreakStatement' || current.type === 'ContinueStatement') &&
+		jump_reaches(current, targets)
+	) {
+		return;
+	}
 	if (current.type === 'BreakStatement') {
 		report_jump(TSRX_ERRORS.FOR_BREAK_STATEMENT, current, transform_context);
 		return;
@@ -698,21 +755,31 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') {
 			continue;
 		}
-		validate_for_body_control_flow(current[key], transform_context, false);
+		validate_for_body_control_flow(
+			current[key],
+			transform_context,
+			false,
+			child_jump_targets(current, key, targets),
+		);
 	}
 }
 
 /**
+ * Reports a `return` in an `@if`, `@else if` or `@else` body, and a `break`
+ * or `continue` there that leaves the body: one whose loop, `switch` or
+ * label isn't in it.
+ *
  * See {@link validate_for_body_control_flow} for why this walks `unknown`.
  *
  * @param {unknown} node
  * @param {TransformContext} transform_context
+ * @param {JumpTarget[]} [targets] The loops, `switch` statements and labels around `node` in the body.
  * @returns {void}
  */
-function validate_if_body_control_flow(node, transform_context) {
+function validate_if_body_control_flow(node, transform_context, targets = []) {
 	if (Array.isArray(node)) {
 		for (const child of node) {
-			validate_if_body_control_flow(child, transform_context);
+			validate_if_body_control_flow(child, transform_context, targets);
 		}
 		return;
 	}
@@ -749,6 +816,12 @@ function validate_if_body_control_flow(node, transform_context) {
 		// which reports a jump with no target.
 		return;
 	}
+	if (
+		(current.type === 'BreakStatement' || current.type === 'ContinueStatement') &&
+		jump_reaches(current, targets)
+	) {
+		return;
+	}
 	if (current.type === 'BreakStatement') {
 		report_jump(TSRX_ERRORS.IF_BREAK_STATEMENT, current, transform_context);
 		return;
@@ -766,7 +839,11 @@ function validate_if_body_control_flow(node, transform_context) {
 		if (key === 'loc' || key === 'start' || key === 'end' || key === 'metadata') {
 			continue;
 		}
-		validate_if_body_control_flow(current[key], transform_context);
+		validate_if_body_control_flow(
+			current[key],
+			transform_context,
+			child_jump_targets(current, key, targets),
+		);
 	}
 }
 

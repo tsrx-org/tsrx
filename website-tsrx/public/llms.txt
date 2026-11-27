@@ -882,11 +882,12 @@ components. They can be returned directly or nested inside JSX. Direct children
 inside each braced branch render into the current template. Use ordinary
 JavaScript `if` statements for guard returns before template output; direct
 `return`, `continue`, and `break` statements are invalid inside template `@if`
-branches. `@if`, `@for`, `@switch`, and `@try` bodies are implicit statement
-containers, so every body uses `{...}`. Declare a body's variables with `const`
-or `let`: a `var` in a body, or in a plain block or loop inside it, is an error,
-since it can't be read outside the body. A function inside the body keeps
-ordinary `var` scoping.
+branches: a `break` or `continue` there can only reach a loop, a `switch`
+(`break` only) or a label inside the branch. `@if`, `@for`, `@switch`, and
+`@try` bodies are implicit statement containers, so every body uses `{...}`.
+Declare a body's variables with `const` or `let`: a `var` in a body, or in a
+plain block or loop inside it, is an error, since it can't be read outside the
+body. A function inside the body keeps ordinary `var` scoping.
 
 ### `if` / `else if` / `else`
 
@@ -925,8 +926,9 @@ Regular `for`, `for...in`, `while`, and `do...while` are not template
 rendering constructs. Use `for...of` for rendered lists, filter the iterable
 before rendering when some items should be skipped, and use `@empty { ... }` for
 the no-items fallback. Direct `continue` and `break` statements are not allowed
-in `@for` template loop bodies, and neither is a `return`, also inside a loop
-there. Move imperative loops into a nested function. The head declares its loop variable with `const` or `let`, as in
+in `@for` template loop bodies (one there can only reach a loop, a `switch`
+(`break` only) or a label inside the body), and neither is a `return`, also
+inside a loop there. Move imperative loops into a nested function. The head declares its loop variable with `const` or `let`, as in
 `@for (const item of items)`: assigning to an existing variable or property
 (`@for (state.item of items)`), `var` loop variables, which can't be read after
 the loop, and `using` loop variables are errors.

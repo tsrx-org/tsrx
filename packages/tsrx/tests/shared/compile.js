@@ -876,6 +876,37 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 		});
 	});
 
+	describe(`[${name}] a jump to a loop, \`switch\` or label inside an \`@if\` or \`@for\` body, in the editor`, () => {
+		it.each([
+			[
+				'a `break` to a `switch` in an `@for` body',
+				'<ul>@for (const y of [1]) { switch (s) { case 1: break; } <li /> }</ul>',
+			],
+			[
+				'a `break` to a label in an `@for` body',
+				'<ul>@for (const y of [1]) { L: { if (x) break L; } <li /> }</ul>',
+			],
+			[
+				'a `break` to a `switch` in an `@if` body',
+				'<div>@if (x) { switch (s) { case 1: break; } <b /> }</div>',
+			],
+			[
+				'a `continue` to a loop in an `@if` body',
+				'<div>@if (x) { for (const y of [1]) { if (y) continue; } <b /> }</div>',
+			],
+			[
+				'a `break` to a label in an `@else` body',
+				'<div>@if (x) { <b /> } @else { L: { break L; } <i /> }</div>',
+			],
+		])('is not reported for %s', (_, body) => {
+			const source = `export function App({ s, x }: { s: number; x: boolean }) {\n\tfor (;;) {\n\t\treturn ${body};\n\t}\n}\n`;
+			const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
+			expect(result.errors).toEqual([]);
+			expect(result.code).toMatch(/\b(break|continue)\b/);
+			expect(jump_diagnostics(result.code)).toEqual([]);
+		});
+	});
+
 	describe(`[${name}] a directive used as a value, with a return in a body, in the editor`, () => {
 		it.each([
 			[
@@ -3799,24 +3830,110 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 		});
 
 		it('rejects nested exits inside @if template blocks', () => {
+			// A `break` or `continue` in a loop in the body that leaves the body,
+			// to a label outside it; one that the loop takes stays (see below).
 			for (const [statement, expected] of [
 				['return null', TSRX_ERRORS.IF_RETURN_STATEMENT],
-				['break', TSRX_ERRORS.IF_BREAK_STATEMENT],
-				['continue', TSRX_ERRORS.IF_CONTINUE_STATEMENT],
+				['break outer', TSRX_ERRORS.IF_BREAK_STATEMENT],
+				['continue outer', TSRX_ERRORS.IF_CONTINUE_STATEMENT],
 			]) {
 				expect(() =>
 					compile(
 						`export function App({ ready, items }: { ready: boolean; items: string[] }) @{
-							@if (ready) {
-								for (const item of items) {
-									${statement}
-								}
-								<div>{'Ready'}</div>
+							outer: for (const group of items) {
+								const view = <section>
+									@if (ready) {
+										for (const item of items) {
+											${statement}
+										}
+										<div>{'Ready'}</div>
+									}
+								</section>;
+								console.log(group, view);
 							}
+							<p />
 						}`,
 						'App.tsrx',
 					),
 				).toThrow(error_with(expected));
+			}
+		});
+
+		it('allows a jump to a loop, `switch` or label inside an `@if` or `@for` body, strictly and when collecting', () => {
+			// The checks reported any `break` or `continue` in an `@if` body, and
+			// one in an `@for` body outside a loop there, though one that a loop,
+			// `switch` or label in the body takes doesn't leave it.
+			for (const template of [
+				'@for (const y of items) { switch (y) { case "a": break; } <b /> }',
+				'@for (const y of items) { switch (y) { case "a": if (log) break; log(y); } <b /> }',
+				'@for (const y of items) { L: { if (log) break L; } <b /> }',
+				'@for (const y of items) { L: switch (y) { case "a": break L; } <b /> }',
+				'@for (const y of items) { A: { B: { break A; } } <b /> }',
+				'@for (const y of items) { @try { switch (y) { case "a": break; } <b /> } @catch (e) { <i /> } }',
+				'@if (log) { switch (items[0]) { case "a": break; } <b /> }',
+				'@if (log) { let n = 0; switch (items[0]) { case "a": n = 1; break; default: n = 2; } <b>{n}</b> }',
+				'@if (log) { for (const y of items) { if (y) break; } <b /> }',
+				'@if (log) { for (const y of items) { if (y) continue; log(y); } <b /> }',
+				'@if (log) { do { continue; } while (false); <b /> }',
+				'@if (log) { L: { if (log) break L; } <b /> }',
+				'@if (log) { L: for (const a of items) { for (const b of items) { continue L; } } <b /> }',
+				'@if (log) { @try { for (const y of items) { break; } <b /> } @catch (e) { <i /> } }',
+				'@if (log) { <b /> } @else { switch (items[0]) { case "a": break; } <i /> }',
+				'@if (log) { <b /> } @else if (items) { switch (items[0]) { case "a": break; } <i /> }',
+				'@if (log) { <b /> } @else if (items) { L: { break L; } <i /> }',
+			]) {
+				const source = `export function App({ items, log }: { items: string[]; log: (x: unknown) => void }) {\n\treturn <div>${template}</div>;\n}`;
+				const { code } = compile(source, 'App.tsrx');
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([]);
+				expect(code, template).toMatch(/\b(break|continue)\b/);
+				expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			}
+		});
+
+		it('still rejects a jump from a `switch` or label in an `@if` or `@for` body that leaves the body', () => {
+			for (const [template, jump, error] of /** @type {const} */ ([
+				[
+					'<div>@for (const y of items) { switch (y) { case "a": JUMP; } <b /> }</div>',
+					'continue',
+					TSRX_ERRORS.FOR_CONTINUE_STATEMENT,
+				],
+				[
+					'<div>@if (log) { switch (item) { case "a": JUMP; } <b /> }</div>',
+					'continue',
+					TSRX_ERRORS.IF_CONTINUE_STATEMENT,
+				],
+				[
+					'<div>@if (log) { switch (item) { case "a": JUMP; } <b /> }</div>',
+					'break outer',
+					TSRX_ERRORS.IF_BREAK_STATEMENT,
+				],
+				[
+					'<div>@if (log) { L: { } JUMP; <b /> }</div>',
+					'break outer',
+					TSRX_ERRORS.IF_BREAK_STATEMENT,
+				],
+				[
+					'<div>@for (const y of items) { L: { JUMP; } <b /> }</div>',
+					'continue outer',
+					TSRX_ERRORS.FOR_CONTINUE_STATEMENT,
+				],
+			])) {
+				const source = `export function App({ items, log }: { items: string[]; log: unknown }) @{
+					outer: for (const item of items) {
+						const view = ${template.replace('JUMP', jump)};
+						console.log(item, view);
+					}
+					<p />
+				}`;
+				const start = source.indexOf(`${jump};`);
+				const expected = expect.objectContaining({
+					code: error.code,
+					pos: start,
+					end: start + `${jump};`.length,
+				});
+
+				expect(() => compile(source, 'App.tsrx'), template).toThrow(expected);
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([expected]);
 			}
 		});
 
