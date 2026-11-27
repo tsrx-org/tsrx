@@ -3496,6 +3496,33 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			}
 		});
 
+		it('lets a `// @tsrx-ignore` comment suppress an `@if` or `@for` body jump or return error when collecting', () => {
+			// Solid's checks passed no comments to the error, so it reported them.
+			for (const template of [
+				'@if (x) {\n\t\t\t// @tsrx-ignore\n\t\t\tbreak;\n\t\t}',
+				'@if (x) {\n\t\t\t// @tsrx-ignore\n\t\t\tcontinue;\n\t\t}',
+				'@if (x) { <b /> } @else {\n\t\t\t// @tsrx-ignore\n\t\t\tbreak;\n\t\t}',
+				'@for (const y of [1]) {\n\t\t\t// @tsrx-ignore\n\t\t\tif (x) break;\n\t\t\t<b />\n\t\t}',
+				'@for (const y of [1]) {\n\t\t\t// @tsrx-ignore\n\t\t\tif (x) continue;\n\t\t\t<b />\n\t\t}',
+			]) {
+				const source = `export function App({ x }: { x: boolean }) {\n\tfor (;;) {\n\t\treturn <div>${template}</div>;\n\t}\n}\n`;
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([]);
+				// Without the comment, the error.
+				expect(
+					compile(source.replace('// @tsrx-ignore\n\t\t\t', ''), 'App.tsrx', { collect: true })
+						.errors.length,
+					template,
+				).toBe(1);
+			}
+			for (const template of [
+				'@if (x) {\n\t\t// @tsrx-ignore\n\t\treturn;\n\t}',
+				'@for (const y of ys) {\n\t\t// @tsrx-ignore\n\t\tif (y) return;\n\t\t<b />\n\t}',
+			]) {
+				const source = `export function App({ x, ys }: { x: boolean; ys: number[] }) @{\n\t<div>${template}</div>\n}\n`;
+				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([]);
+			}
+		});
+
 		it('reports a `return` in a directive used as a value as it does one in a child, strictly and when collecting', () => {
 			// The `return` belongs to the directive's body, as in a child position;
 			// it used to take the directive off the template lowering, which then
