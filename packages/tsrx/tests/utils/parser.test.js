@@ -15174,56 +15174,6 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		}
 	});
 
-	it("reports a `break` or `continue` with no target with TypeScript's code for it", async () => {
-		// acorn reports `Unsyntactic break` or `Unsyntactic continue` (TS1105,
-		// TS1104 for any of them). TypeScript looks for the target up to the
-		// function or class `static` block around the statement.
-		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
-		const cases = [
-			['break;', TS_ERRORS.BREAK_OUTSIDE_LOOP, 'break'],
-			['continue;', TS_ERRORS.CONTINUE_OUTSIDE_LOOP, 'continue'],
-			['switch (a) { case 1: continue; }', TS_ERRORS.CONTINUE_OUTSIDE_LOOP, 'continue'],
-			['L: for (;;) { break M; }', TS_ERRORS.BREAK_LABEL_NOT_FOUND, 'break'],
-			['for (;;) { continue M; }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
-			['L: { continue L; }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
-			['M: { L: for (;;) { continue M; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
-			['namespace N { break; }', TS_ERRORS.BREAK_OUTSIDE_LOOP, 'break'],
-			['function f() { break; }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
-			['function f() { L: for (;;) { break M; } }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
-			['L: for (;;) { const g = () => { break L; }; }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
-			[
-				'L: for (;;) { class K { static { continue L; } } }',
-				TS_ERRORS.JUMP_ACROSS_FUNCTION,
-				'continue',
-			],
-			['function f() { L: { continue L; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
-			['function f() { continue\n}', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'continue'],
-		];
-		const sources = cases.map(([source]) => `${source}\nexport const after = 1;`);
-		const outcomes = await parse_in_worker_with_ast(
-			sources.flatMap((source) => [
-				{ source },
-				{ source, options: { collect: true } },
-				{ source, options: { loose: true } },
-			]),
-		);
-		// A collecting parse records it over the keyword, and reads on.
-		expect(
-			outcomes.map((outcome) =>
-				outcome.ok ? { errors: outcome.errors, last: outcome.ast.body.at(-1)?.type } : outcome,
-			),
-		).toEqual(
-			cases.flatMap(([source, error, at]) => {
-				const pos = source.indexOf(at);
-				const collected = {
-					errors: [{ code: code_of(error), pos, end: pos + at.length }],
-					last: 'ExportNamedDeclaration',
-				};
-				return [thrown(error, pos), collected, collected];
-			}),
-		);
-	});
-
 	it("reports a `return` right in a class `static` block with TypeScript's code for it", async () => {
 		// acorn reports `'return' outside of function` (TS1108) and stops;
 		// TypeScript's parser reads it and its checker reports TS18041 at the
@@ -15315,6 +15265,56 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			{ collect: true, errors: in_template },
 		);
 		expect(in_template.map((error) => error.code)).toEqual(['TS18041']);
+	});
+
+	it("reports a `break` or `continue` with no target with TypeScript's code for it", async () => {
+		// acorn reports `Unsyntactic break` or `Unsyntactic continue` (TS1105,
+		// TS1104 for any of them). TypeScript looks for the target up to the
+		// function or class `static` block around the statement.
+		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
+		const cases = [
+			['break;', TS_ERRORS.BREAK_OUTSIDE_LOOP, 'break'],
+			['continue;', TS_ERRORS.CONTINUE_OUTSIDE_LOOP, 'continue'],
+			['switch (a) { case 1: continue; }', TS_ERRORS.CONTINUE_OUTSIDE_LOOP, 'continue'],
+			['L: for (;;) { break M; }', TS_ERRORS.BREAK_LABEL_NOT_FOUND, 'break'],
+			['for (;;) { continue M; }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['L: { continue L; }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['M: { L: for (;;) { continue M; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['namespace N { break; }', TS_ERRORS.BREAK_OUTSIDE_LOOP, 'break'],
+			['function f() { break; }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			['function f() { L: for (;;) { break M; } }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			['L: for (;;) { const g = () => { break L; }; }', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'break'],
+			[
+				'L: for (;;) { class K { static { continue L; } } }',
+				TS_ERRORS.JUMP_ACROSS_FUNCTION,
+				'continue',
+			],
+			['function f() { L: { continue L; } }', TS_ERRORS.CONTINUE_LABEL_NOT_LOOP, 'continue'],
+			['function f() { continue\n}', TS_ERRORS.JUMP_ACROSS_FUNCTION, 'continue'],
+		];
+		const sources = cases.map(([source]) => `${source}\nexport const after = 1;`);
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) => [
+				{ source },
+				{ source, options: { collect: true } },
+				{ source, options: { loose: true } },
+			]),
+		);
+		// A collecting parse records it over the keyword, and reads on.
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok ? { errors: outcome.errors, last: outcome.ast.body.at(-1)?.type } : outcome,
+			),
+		).toEqual(
+			cases.flatMap(([source, error, at]) => {
+				const pos = source.indexOf(at);
+				const collected = {
+					errors: [{ code: code_of(error), pos, end: pos + at.length }],
+					last: 'ExportNamedDeclaration',
+				};
+				return [thrown(error, pos), collected, collected];
+			}),
+		);
 	});
 
 	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {
