@@ -310,16 +310,22 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			}
 		}
 
-		if (generated && sourceMap && !shown_range(generated, reports, document, sourceMap)) {
+		const dropped =
+			!!generated && !!sourceMap && !shown_range(generated, reports, document, sourceMap);
+		if (dropped) {
 			// The editor would leave the error out: its range is on code whose
 			// mappings don't report it, such as an `@switch`'s own mapping (over a
 			// `break` right in a case, which the editor's code leaves out, or over
 			// the whole directive used as a statement outside a template). Span the
 			// tokens in it that do, or map its ends through the mappings that do,
 			// when that shows it on some code.
+			const code = virtualCode.originalCode;
+			// An offset between a `\r` and its `\n` is a position before the `\r`.
+			const at = (/** @type {number} */ offset) =>
+				code[offset - 1] === '\r' && code[offset] === '\n' ? offset - 1 : offset;
 			const on_code = (/** @type {[number, number] | null | undefined} */ range) => {
 				const shown = range && shown_range(range, reports, document, sourceMap);
-				return !!shown && shown[1] > shown[0];
+				return !!shown && at(shown[1]) > at(shown[0]);
 			};
 			generated = mapping
 				? virtualCode.findGeneratedRangeBySourceRange(start_offset, end_offset)
@@ -338,8 +344,24 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			// open, which has none in a template, or that `break`. Show it on the
 			// code the error reaches, such as a `<>`'s first child, or else the
 			// nearest code before it that does, such as the case's test, not at the
-			// start of the file.
-			generated = nearest_reported_range(virtualCode, reports, start_offset, error.raisedAt);
+			// start of the file. Code whose `verification` object rejects the error
+			// is no place for it. Where the lookups above found nothing, the nearest
+			// code that reports any diagnostic, as before, stays where the editor
+			// shows the error through it.
+			/** @type {[number, number] | null} */
+			let nearest = dropped
+				? null
+				: nearest_reported_range(
+						virtualCode,
+						(data) => !!data.verification,
+						start_offset,
+						error.raisedAt,
+					);
+			if (nearest && sourceMap && !shown_range(nearest, reports, document, sourceMap)) {
+				nearest = null;
+			}
+			generated =
+				nearest ?? nearest_reported_range(virtualCode, reports, start_offset, error.raisedAt);
 		}
 
 		if (generated) {

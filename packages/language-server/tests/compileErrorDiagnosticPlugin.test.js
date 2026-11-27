@@ -823,9 +823,16 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 	 * @param {number} pos
 	 * @param {number} end
 	 * @param {string} [generated]
+	 * @param {string} [source]
 	 */
-	async function diagnostics_with_mappings(name, mappings, pos, end, generated) {
-		const source = 'export const a = 1;\nexport const b = 2;\nexport const c = 3;\n';
+	async function diagnostics_with_mappings(
+		name,
+		mappings,
+		pos,
+		end,
+		generated,
+		source = 'export const a = 1;\nexport const b = 2;\nexport const c = 3;\n',
+	) {
 		const { document, service, uri, language } = create_service_harness(
 			source,
 			[createCompileErrorDiagnosticPlugin()],
@@ -880,6 +887,24 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
 	});
 
+	// The nearest code before reported any diagnostic. When the editor shows the
+	// error through another mapping of the same generated code, it stays there.
+	it("keeps an error with no mapping where the editor shows it through code whose 'shouldReport' rejects it", async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'RejectingNearestShown',
+				[
+					mapping(0, 0, 6, true),
+					mapping(7, 40, 5, { shouldReport: () => false }),
+					mapping(27, 40, 5, true),
+				],
+				14,
+				16,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
+	});
+
 	// An error whose ends both map to one generated character maps back to an
 	// empty range, which is no code to show it on.
 	it('shows an error whose ends map to one point on the nearest code instead', async () => {
@@ -897,6 +922,27 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 				'x'.repeat(80),
 			),
 		).toEqual([{ source: 'TSRX', text: 'export', offset: 20 }]);
+	});
+
+	// A source range over only a `\r` is empty in the editor, as a position
+	// between it and its `\n` is one before it.
+	it('shows an error whose ends map to a lone CR on the nearest code instead', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'LoneCarriageReturn',
+				[
+					mapping(30, 50, 3, false),
+					mapping(3, 10, 1, true),
+					mapping(30, 10, 0, true),
+					mapping(33, 11, 0, true),
+					mapping(0, 20, 3, true),
+				],
+				30,
+				33,
+				'x'.repeat(80),
+				`abc${String.fromCharCode(13, 10)}${'x'.repeat(115)}`,
+			),
+		).toEqual([{ source: 'TSRX', text: 'abc', offset: 0 }]);
 	});
 
 	// The editor maps the range as positions, and one inside a CRLF line break
