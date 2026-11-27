@@ -40,6 +40,7 @@ const bare_package_specifier_pattern =
  * @typedef {object} ProjectState
  * @property {string | undefined} configFileName
  * @property {MapperOptions} options
+ * @property {string | undefined} defaultIntrinsics The effective project JSX import source.
  * @property {Set<string>} dependencies Files whose content affects transform output.
  * @property {Map<string, AST.Program>} lastGood Last successfully parsed source AST per file, for the compile-failure stub. Shared by every project state of a mapper (see {@link create_tsrx_content_mapper}).
  */
@@ -92,7 +93,16 @@ export function create_tsrx_content_mapper(context = {}) {
 		// (installed compilers, package manifests) may be stale.
 		invalidateCompilerResolutionCaches();
 		const { options, optionDiagnostics } = validate_options(params.options);
-		const state = create_project_state(params.configFileName || undefined, options);
+		const jsx_import_source = params.compilerOptions?.jsxImportSource;
+		const default_intrinsics =
+			typeof jsx_import_source === 'string' && jsx_import_source !== ''
+				? jsx_import_source
+				: undefined;
+		const state = create_project_state(
+			params.configFileName || undefined,
+			options,
+			default_intrinsics,
+		);
 		projects.set(params.projectHandle, state);
 
 		// Resolve the compiler once up front so the tsconfig chain and the
@@ -170,7 +180,10 @@ export function create_tsrx_content_mapper(context = {}) {
 			});
 		}
 
-		const result = transform_tsrx(compiler, file_name, content, { platform });
+		const result = transform_tsrx(compiler, file_name, content, {
+			platform,
+			defaultIntrinsics: state.defaultIntrinsics,
+		});
 		if (result.fatalError) {
 			// The file has no generated code for TypeScript to check, so the error
 			// goes to TypeScript whatever its code.
@@ -227,12 +240,14 @@ export function create_tsrx_content_mapper(context = {}) {
 	/**
 	 * @param {string | undefined} config_file_name
 	 * @param {MapperOptions} options
+	 * @param {string} [default_intrinsics]
 	 * @returns {ProjectState}
 	 */
-	function create_project_state(config_file_name, options) {
+	function create_project_state(config_file_name, options, default_intrinsics) {
 		return {
 			configFileName: config_file_name ? path.normalize(config_file_name) : undefined,
 			options,
+			defaultIntrinsics: default_intrinsics,
 			dependencies: new Set(),
 			lastGood: last_good,
 		};
@@ -315,6 +330,8 @@ export function create_tsrx_content_mapper(context = {}) {
 	function compute_identity(state, watched_files) {
 		const hash = createHash('sha256');
 		hash.update(JSON.stringify(state.options));
+		hash.update('\0');
+		hash.update(state.defaultIntrinsics ?? '');
 		hash.update('\0');
 		for (const file of watched_files) {
 			hash.update(file);

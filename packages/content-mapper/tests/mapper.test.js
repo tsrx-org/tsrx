@@ -530,6 +530,48 @@ export function B() @{
 		expect(directives.some(([, , start, end]) => start <= wrong_at && wrong_at < end)).toBe(false);
 	});
 
+	it('forwards the effective project JSX source and includes it in the configuration identity', () => {
+		const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsrx-project-jsx-'));
+		cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
+		const configFileName = path.join(dir, 'tsconfig.json');
+		fs.writeFileSync(configFileName, '{}');
+		const compiler = 'fixture-jsx-compiler';
+		const compilerDir = path.join(dir, 'node_modules', compiler);
+		fs.mkdirSync(compilerDir, { recursive: true });
+		fs.writeFileSync(path.join(compilerDir, 'package.json'), JSON.stringify({ main: 'index.cjs' }));
+		fs.writeFileSync(
+			path.join(compilerDir, 'index.cjs'),
+			String.raw`exports.compile_to_volar_mappings = (code, filename, options) => ({
+				code: '/** @jsxImportSource ' + (options.defaultIntrinsics ?? 'fixture-default') + ' */\n' + code,
+			});`,
+		);
+
+		const mapper = create_tsrx_content_mapper();
+		const projectHandle = 'project';
+		/** @param {string | undefined} jsxImportSource */
+		const open = (jsxImportSource) =>
+			mapper.openProject({
+				configFileName,
+				projectHandle,
+				compilerOptions: { jsxImportSource },
+				options: { compiler },
+			});
+		const transform = () =>
+			mapper.transform({
+				projectHandle,
+				fileName: path.join(dir, 'Panel.tsrx'),
+				content: 'export const answer = 42;',
+			});
+
+		const first = open('first-jsx');
+		expect(transform().text).toContain('@jsxImportSource first-jsx');
+		const second = open('second-jsx');
+		expect(second.configIdentity).not.toBe(first.configIdentity);
+		expect(transform().text).toContain('@jsxImportSource second-jsx');
+		open(undefined);
+		expect(transform().text).toContain('@jsxImportSource fixture-default');
+	});
+
 	it('keeps the export stub across a project reopen while the file still fails', () => {
 		// TypeScript reopens a project (with the same or a new handle) when its
 		// identity or a watched file changes; the last good AST must survive that.

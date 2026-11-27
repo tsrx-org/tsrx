@@ -14,6 +14,7 @@
 /**
  * @typedef {object} TsrxTransformOptions
  * @property {'web' | 'ios' | 'android'} [platform] Platform selected for `import.meta.env.platform` flags.
+ * @property {string} [defaultIntrinsics] Project JSX import source for files without an authored pragma.
  */
 
 /**
@@ -64,6 +65,7 @@ export function transform_tsrx(compiler, file_name, content, options = {}) {
 		transpiled = compiler.compile_to_volar_mappings(content, file_name, {
 			loose: true,
 			platform: options.platform,
+			defaultIntrinsics: options.defaultIntrinsics,
 		});
 	} catch (e) {
 		const error = /** @type {CompileError} */ (e);
