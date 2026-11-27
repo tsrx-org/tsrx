@@ -432,6 +432,83 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 }
 
 /**
+ * @typedef {{ range: [number, number], token: [number, number], length: number, data: CodeInformation }} SourceToken
+ */
+
+/**
+ * The tokens of `virtualCode`'s mappings that code can show an error on, in
+ * mapping order: one per mapped range that isn't empty or whitespace only,
+ * sorted by where they end (`by_end`: ascending, and of those ending together
+ * the longest and last first) and by where they start (`by_start`: ascending,
+ * and of those starting together the shortest and first first). Built once
+ * for each version of the mappings.
+ * @type {WeakMap<object, { code: string, by_end: SourceToken[], by_start: SourceToken[] }>}
+ */
+const source_tokens = new WeakMap();
+
+/**
+ * @param {TSRXVirtualCodeInstance} virtualCode
+ */
+function get_source_tokens(virtualCode) {
+	const mappings = virtualCode.mappings ?? [];
+	const cached = source_tokens.get(mappings);
+	if (cached && cached.code === virtualCode.originalCode) return cached;
+	/** @type {(SourceToken & { order: number })[]} */
+	const tokens = [];
+	for (const mapping of mappings) {
+		if (!mapping.data) continue;
+		for (let i = 0; i < mapping.sourceOffsets.length; i++) {
+			const source_start = mapping.sourceOffsets[i];
+			const length = mapping.lengths[i];
+			const generated_length = mapping.generatedLengths?.[i] ?? length;
+			// A hoisted sibling can leave a token a mapping that runs backwards in
+			// the generated code, and Volar drops a diagnostic on such a range.
+			if (length === 0 || generated_length <= 0) continue;
+			if (!/\S/.test(virtualCode.originalCode.slice(source_start, source_start + length))) {
+				continue;
+			}
+			const generated_start = mapping.generatedOffsets[i];
+			tokens.push({
+				range: [generated_start, generated_start + generated_length],
+				token: [source_start, source_start + length],
+				length,
+				data: mapping.data,
+				order: tokens.length,
+			});
+		}
+	}
+	const index = {
+		code: virtualCode.originalCode,
+		by_end: [...tokens].sort(
+			(a, b) => a.token[1] - b.token[1] || b.length - a.length || b.order - a.order,
+		),
+		by_start: [...tokens].sort(
+			(a, b) => a.token[0] - b.token[0] || a.length - b.length || a.order - b.order,
+		),
+	};
+	source_tokens.set(mappings, index);
+	return index;
+}
+
+/**
+ * The first index in `tokens` whose `at` value is at least `offset`, as
+ * `tokens` is sorted by it.
+ * @param {SourceToken[]} tokens
+ * @param {(token: SourceToken) => number} at
+ * @param {number} offset
+ */
+function first_at(tokens, at, offset) {
+	let low = 0;
+	let high = tokens.length;
+	while (low < high) {
+		const middle = (low + high) >> 1;
+		if (at(tokens[middle]) < offset) low = middle + 1;
+		else high = middle;
+	}
+	return low;
+}
+
+/**
  * The generated range of the source token that reports the error and starts
  * nearest after `offset`, when it starts before `reach`. Otherwise the one that
  * ends nearest before `offset`, or starts nearest after it when none ends
@@ -447,37 +524,24 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
  * @returns {[number, number] | null}
  */
 function nearest_reported_range(virtualCode, reports, offset, reach = offset, shows = () => true) {
-	/** @type {{ range: [number, number], token: [number, number], distance: number, length: number, rank: number }[]} */
-	const tokens = [];
-	for (const mapping of virtualCode.mappings ?? []) {
-		if (!mapping.data || !reports(mapping.data)) continue;
-		for (let i = 0; i < mapping.sourceOffsets.length; i++) {
-			const source_start = mapping.sourceOffsets[i];
-			const length = mapping.lengths[i];
-			const generated_length = mapping.generatedLengths?.[i] ?? length;
-			// A hoisted sibling can leave a token a mapping that runs backwards in
-			// the generated code, and Volar drops a diagnostic on such a range.
-			if (length === 0 || generated_length <= 0) continue;
-			if (!/\S/.test(virtualCode.originalCode.slice(source_start, source_start + length))) {
-				continue;
-			}
-			const generated_start = mapping.generatedOffsets[i];
-			const ends_before = source_start + length <= offset;
-			if (!ends_before && source_start < offset) continue;
-			tokens.push({
-				range: [generated_start, generated_start + generated_length],
-				token: [source_start, source_start + length],
-				distance: ends_before ? offset - (source_start + length) : source_start - offset,
-				length,
-				// A token after the offset that starts before `reach` first, then
-				// the tokens before it, then the others after it.
-				rank: ends_before ? 1 : source_start < reach ? 0 : 2,
-			});
-		}
+	const { by_end, by_start } = get_source_tokens(virtualCode);
+	/** @param {SourceToken} token */
+	const takes = (token) => reports(token.data) && shows(token.range, token.token);
+	// The tokens that start at or after the offset, nearest first; those that
+	// start before `reach` come first of all.
+	const after = first_at(by_start, (token) => token.token[0], offset);
+	let i = after;
+	for (; i < by_start.length && by_start[i].token[0] < reach; i++) {
+		if (takes(by_start[i])) return by_start[i].range;
 	}
-	// A stable sort keeps the first of tokens alike.
-	tokens.sort((a, b) => a.rank - b.rank || a.distance - b.distance || a.length - b.length);
-	return tokens.find((token) => shows(token.range, token.token))?.range ?? null;
+	// Then the tokens that end at or before it, nearest first.
+	for (let j = first_at(by_end, (token) => token.token[1], offset + 1) - 1; j >= 0; j--) {
+		if (takes(by_end[j])) return by_end[j].range;
+	}
+	for (; i < by_start.length; i++) {
+		if (takes(by_start[i])) return by_start[i].range;
+	}
+	return null;
 }
 
 /**
