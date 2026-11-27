@@ -712,6 +712,165 @@ export {};`,
 	});
 });
 
+// The editor shows a compile error only where the mappings that report it map
+// its range back to the source. One whose range lands on other mappings gets
+// the nearest code that does.
+describe('compile error diagnostic plugin — an error on code with no mapping that reports it', () => {
+	const off = /** @type {Partial<LanguageServiceEnvironment>} */ ({
+		async getConfiguration(/** @type {string} */ section) {
+			return /** @type {any} */ (section === 'tsrx.validate.enable' ? false : undefined);
+		},
+	});
+
+	// The editor's code leaves out a `break` right in an `@switch` case, and the
+	// directive's own mapping over it doesn't report diagnostics, so its TSRX2008
+	// goes on the code before it, the case's test, as Solid's code always had it.
+	it.each(['react', 'preact', 'solid', 'vue', 'hono', 'hono-dom'])(
+		"shows a direct case `break`'s TSRX2008 on the case's test on %s, with validation on and off",
+		async (target) => {
+			const source =
+				'export function App({ x }: { x: number }) @{\n\t<div>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tbreak;\n\t\t\t\t<b />\n\t\t\t}\n\t\t}\n\t</div>\n}\n';
+			const expected = [{ source: 'TSRX', text: '1', offset: source.indexOf('1: {') }];
+			for (const [name, env] of /** @type {const} */ ([
+				['DirectCaseBreak', undefined],
+				['DirectCaseBreakOff', off],
+			])) {
+				const { document, service, uri } = create_typescript_harness(
+					source,
+					[createCompileErrorDiagnosticPlugin(), createTypeScriptDiagnosticFilterPlugin()],
+					`${target}/${name}.tsrx`,
+					env,
+				);
+				const diagnostics = await service.getDiagnostics(uri);
+				expect(reported(document, diagnostics, 'TSRX2008')).toEqual(expected);
+			}
+		},
+	);
+
+	it.each(['react', 'preact', 'solid', 'vue', 'hono', 'hono-dom'])(
+		"shows each direct case `break`'s TSRX2008 on the code before it on %s",
+		async (target) => {
+			const source = `export function App({ x }: { x: number }) @{
+	@switch (x) {
+		@case 1: {
+			const q = 1;
+			break;
+			<b>{q}</b>
+		}
+		@case 2: {
+			break;
+			<i />
+		}
+	}
+}
+`;
+			const { document, service, uri } = create_service_harness(
+				source,
+				[createCompileErrorDiagnosticPlugin()],
+				`${target}/DirectCaseBreaks.tsrx`,
+			);
+			const diagnostics = await service.getDiagnostics(uri);
+			expect(reported(document, diagnostics, 'TSRX2008')).toEqual([
+				{ source: 'TSRX', text: ';', offset: source.indexOf('1;') + 1 },
+				{ source: 'TSRX', text: '2', offset: source.indexOf('2: {') },
+			]);
+		},
+	);
+
+	// An `@switch` used as a statement where no template is, whose own mapping
+	// spans the error's range exactly, shows it on its code, as `@if` does.
+	it('shows TSRX2010 on an @switch statement outside a template', async () => {
+		const source =
+			'export function Test(ok: boolean, value: number) {\n\t@if (ok) { <div /> } @else { <span /> };\n\t@switch (value) { @case 1: { <div /> } @default: { <span /> } };\n}\n';
+		const { document, diagnostics } = await diagnostics_for(source);
+		expect(reported(document, diagnostics, 'TSRX2010')).toEqual([
+			{
+				source: 'TSRX',
+				text: 'ok) { <div /> } @else { <span />',
+				offset: source.indexOf('ok) {'),
+			},
+			{
+				source: 'TSRX',
+				text: 'value) { @case 1: { <div /> } @default: { <span />',
+				offset: source.indexOf('value) {'),
+			},
+		]);
+	});
+
+	/**
+	 * A mapping of one source range.
+	 * @param {number} source_offset
+	 * @param {number} generated_offset
+	 * @param {number} length
+	 * @param {import('@volar/language-service').CodeInformation['verification']} verification
+	 */
+	function mapping(source_offset, generated_offset, length, verification) {
+		return {
+			sourceOffsets: [source_offset],
+			generatedOffsets: [generated_offset],
+			lengths: [length],
+			generatedLengths: [length],
+			data: { verification, customData: {} },
+		};
+	}
+
+	/**
+	 * The TSRX2008 diagnostics for one over `[pos, end)` when the virtual code
+	 * has only `mappings`, as a compiler may make them.
+	 * @param {string} name
+	 * @param {ReturnType<typeof mapping>[]} mappings
+	 * @param {number} pos
+	 * @param {number} end
+	 */
+	async function diagnostics_with_mappings(name, mappings, pos, end) {
+		const source = 'export const a = 1;\nexport const b = 2;\nexport const c = 3;\n';
+		const { document, service, uri, language } = create_service_harness(
+			source,
+			[createCompileErrorDiagnosticPlugin()],
+			`react/${name}.tsrx`,
+		);
+		const virtual_code = /** @type {any} */ (language.scripts.get(uri)?.generated?.root);
+		virtual_code.mappings = mappings;
+		virtual_code.usageErrors = [
+			Object.assign(new Error('Invalid jump'), { code: 'TSRX2008', type: 'usage', pos, end }),
+		];
+		const diagnostics = await service.getDiagnostics(uri);
+		return reported(document, diagnostics, 'TSRX2008');
+	}
+
+	// A token whose `verification` object rejects the error is no place for it,
+	// though it reports other diagnostics, while the error's ends map back.
+	it("maps an error through the mappings that report it, not a token whose 'shouldReport' rejects it", async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'RejectingToken',
+				[
+					mapping(0, 0, 30, false),
+					mapping(7, 7, 0, true),
+					mapping(18, 18, 0, true),
+					mapping(13, 40, 1, { shouldReport: (source) => source !== DIAGNOSTIC_SOURCE }),
+				],
+				7,
+				18,
+			),
+		).toEqual([{ source: 'TSRX', text: 'const a = 1', offset: 7 }]);
+	});
+
+	it("shows an error with no mapping on the nearest code that reports it, not code whose 'shouldReport' rejects it", async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'RejectingNearest',
+				[
+					mapping(0, 0, 6, true),
+					mapping(7, 7, 5, { shouldReport: (source) => source !== DIAGNOSTIC_SOURCE }),
+				],
+				14,
+				16,
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
+	});
+});
+
 // The editor's compile is loose: it recovers unclosed and mismatched markup,
 // so the rest of the file keeps working, and reports it as a collecting
 // compile does (#978).
