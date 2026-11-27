@@ -1160,6 +1160,25 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
 	});
 
+	// A token the editor shows on other code, through another mapping of the
+	// same generated code, isn't the place either.
+	it('skips a nearest token the editor shows on other code', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'NearestShownElsewhere',
+				[
+					mapping(14, 50, 2, false),
+					mapping(27, 40, 5, true),
+					mapping(7, 40, 5, true),
+					mapping(0, 0, 6, true),
+				],
+				14,
+				16,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
+	});
+
 	// With no place the editor shows on code, the error keeps the range it
 	// had, which the editor drops, not one at the start of the file.
 	it('leaves an error with no place to show it on as before', async () => {
