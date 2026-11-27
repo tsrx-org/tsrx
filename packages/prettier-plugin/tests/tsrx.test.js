@@ -2935,6 +2935,7 @@ describe('parse errors', () => {
 `,
 		);
 		await expectFormat('declare import x from "m";', 'import x from "m";\n');
+		await expectFormat('{ public using x = y; }', '{\n  using x = y;\n}\n');
 		// Exports TypeScript's binder declares twice (#882).
 		await expectFormat(
 			'export default 1;\nexport default 2;',
@@ -3143,11 +3144,32 @@ describe('parse errors', () => {
 			['accessor class A {}', TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, '1:1'],
 			['async class A {}', TS_ERRORS.MODIFIER_CANNOT_BE_USED_HERE, '1:1'],
 			['declare using x = y;', TS_ERRORS.MODIFIER_ON_USING, '1:1'],
+			// In a block, where TypeScript reports TS1184 at the first modifier
+			// first, and the tree has no place for `declare`: without an
+			// initializer, the output wouldn't format again (`{ using x; }`).
+			['{\n  declare using x;\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:3'],
+			['function f() {\n  declare using x = y;\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:3'],
+			[
+				'async function f() {\n  public declare await using x;\n}',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'2:3',
+			],
+			[
+				'export function App() @{\n  declare using x;\n  <div />\n}',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'2:3',
+			],
 			// A `using` declaration's name without an initializer (TS1155), where
 			// Prettier formats a `const` one's.
 			['using x;', TS_ERRORS.DECLARATION_NOT_INITIALIZED, '1:7'],
 			['async function f() {\n  await using x;\n}', TS_ERRORS.DECLARATION_NOT_INITIALIZED, '2:15'],
 			['for (using of;;) {}', TS_ERRORS.DECLARATION_NOT_INITIALIZED, '1:12'],
+			// One in a statement after `declare` that isn't a `using` declaration.
+			[
+				'declare \\u0075sing as any + (() => { using x; })();',
+				TS_ERRORS.DECLARATION_NOT_INITIALIZED,
+				'1:44',
+			],
 			// A binding pattern in a `using` declaration (TS1492).
 			['using {x} = y;', TS_ERRORS.USING_BINDING_PATTERN, '1:7'],
 			[

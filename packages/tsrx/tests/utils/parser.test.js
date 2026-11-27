@@ -15238,6 +15238,24 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			['const \\u0078: number;', [['TS1155', '\\u0078', 6]]],
 			['declare using x;', [['TS1491', 'declare', 7]]],
 			['export declare await using x;', [['TS1495', 'export', 6]]],
+			// Not the declarations in a statement after `declare` that isn't a
+			// `using` declaration to acorn, as when the `using` has an escape
+			// (TypeScript reports TS1260 there first, not changed here).
+			[
+				'declare \\u0075sing as any + (() => { using x; })();',
+				[
+					['TS1155', 'x;', 1],
+					['TS1079', 'declare', 7],
+				],
+			],
+			[
+				'declare \\u0075sing as any + (() => { const x; const y; })();',
+				[
+					['TS1155', 'x;', 1],
+					['TS1155', 'y;', 1],
+					['TS1079', 'declare', 7],
+				],
+			],
 			// After a binding pattern's TS1492, and a modifier's error.
 			[
 				'using { x = (() => { using y; })() } = z;',

@@ -49,7 +49,8 @@ const BROKEN_MARKUP_CODES = new Set([
  * class member, a class member's modifier before a module element
  * (`public class A {}`), `readonly`, `accessor` or `async` where they can't
  * appear, `async` with `declare` or in a `declare` context (TS1040),
- * `declare` before a `using` declaration, a binding pattern in one (TS1492),
+ * `declare` before a `using` declaration (TS1491, TS1495; in a block, see
+ * `isDeclareUsingInBlock`), a binding pattern in one (TS1492),
  * one before `in` (`for (using x in y)`, TS1493 and TS1494),
  * `import.<name>` other than `import.meta`, or a call of it other than
  * `import.defer()` or `import.source()` (TS17012, TS18061), a default or
@@ -139,6 +140,33 @@ const regex_static_block_modifiers =
 	/^(?:(?:abstract|accessor|declare|override|private|protected|public|readonly)(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)+static(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*\{/u;
 
 /**
+ * Whether `error` is for modifiers that include `declare` before a `using` or
+ * `await using` declaration in a block (`{ declare using x = y; }`): TS1184 at
+ * the first one, which TypeScript reports there before TS1491 or TS1495.
+ * Prettier's `typescript` parser rejects `declare` on a `using` declaration
+ * wherever it is, as the plugin does outside a block (TS1491, TS1495), where
+ * the tree would leave it out, and print a declaration without an initializer
+ * that needs one (`{ using x; }`).
+ * @param {ParseError} error
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isDeclareUsingInBlock(error, text) {
+	return (
+		error.code === 'TS1184' &&
+		error.pos !== undefined &&
+		regex_declared_using.test(text.slice(error.pos))
+	);
+}
+
+/**
+ * Modifiers, `declare` among them, then `using` or `await using`, with comments
+ * between them.
+ */
+const regex_declared_using =
+	/^(?:(?:abstract|accessor|async|declare|private|protected|public|readonly|static)(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)*?declare(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+(?:(?:abstract|accessor|async|declare|private|protected|public|readonly|static)(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)*(?:await(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)?using(?![\p{ID_Continue}$\u200c\u200d])/u;
+
+/**
  * Whether `error` is for an `async` constructor (`async constructor() {}`,
  * TS1089), which Prettier's `typescript` parser rejects, where it formats a
  * `static` constructor (`static constructor() {}`, TS1089 too).
@@ -190,6 +218,7 @@ function isRejected(error, text) {
 			(REJECTED_CODES.has(error.code) && !isStaticBlockDecorator(error)) ||
 			isModifierBeforeExport(error, text) ||
 			isAbstractInBlock(error, text) ||
+			isDeclareUsingInBlock(error, text) ||
 			isAsyncConstructor(error) ||
 			isUsingWithoutInitializer(error))
 	);

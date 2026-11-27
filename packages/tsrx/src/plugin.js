@@ -2157,9 +2157,9 @@ export function TSRXPlugin(config) {
 			// Set while `parseVarStatement` or `parseVar` lets `const` declarators omit
 			// the initializer (see `#parseConstWithoutInitializer`).
 			#readingConstWithoutInitializer = false;
-			// Whether the `using` or `await using` declaration about to be read has
-			// `declare` before it (see `#parseConstWithoutInitializer`).
-			#declaredUsing = false;
+			// Where the `using` or `await using` declaration with `declare` before it
+			// that is being read starts, or -1 (see `#parseConstWithoutInitializer`).
+			#declaredUsingStart = -1;
 			/** @type {import('../types/index').CompileError[] | undefined} */
 			#errors = undefined;
 			/** @type {string | null} */
@@ -7331,15 +7331,16 @@ export function TSRXPlugin(config) {
 			 * error for a name, which a strict parse throws and a collecting one
 			 * records (#963), or throws acorn's error for a pattern.
 			 * @template T
+			 * @param {AST.VariableDeclaration} node
 			 * @param {string} kind
 			 * @param {boolean | undefined} allowMissingInitializer
 			 * @param {(allowMissingInitializer: boolean) => T} parse
 			 * @returns {T}
 			 */
-			#parseConstWithoutInitializer(kind, allowMissingInitializer, parse) {
+			#parseConstWithoutInitializer(node, kind, allowMissingInitializer, parse) {
 				const outer = this.#readingConstWithoutInitializer;
-				const declared = this.#declaredUsing;
-				this.#declaredUsing = false;
+				// That declaration, not one inside it.
+				const declared = node.start === this.#declaredUsingStart;
 				this.#readingConstWithoutInitializer =
 					(kind === 'const' || kind === 'using' || kind === 'await using') &&
 					!allowMissingInitializer &&
@@ -7366,7 +7367,7 @@ export function TSRXPlugin(config) {
 				if ((kind === 'const' || kind === 'var') && this.#isEmptyDeclarationList()) {
 					return this.#parseEmptyVarStatement(node, kind);
 				}
-				return this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
+				return this.#parseConstWithoutInitializer(node, kind, allowMissingInitializer, (allow) =>
 					super.parseVarStatement(node, kind, allow),
 				);
 			}
@@ -7455,7 +7456,7 @@ export function TSRXPlugin(config) {
 			 * @param {boolean} [allowMissingInitializer]
 			 */
 			parseVar(node, isFor, kind, allowMissingInitializer) {
-				return this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
+				return this.#parseConstWithoutInitializer(node, kind, allowMissingInitializer, (allow) =>
 					super.parseVar(node, isFor, kind, allow),
 				);
 			}
@@ -10094,12 +10095,15 @@ export function TSRXPlugin(config) {
 				}
 				if (has('declare') && (declaration === 'using' || declaration === 'await')) {
 					// An ambient declaration to TypeScript, whose names need no
-					// initializer (see `#parseConstWithoutInitializer`).
-					this.#declaredUsing = true;
+					// initializer (see `#parseConstWithoutInitializer`), when the
+					// statement is one: not an escaped `using` read as a name, with a
+					// declaration inside it.
+					const outer = this.#declaredUsingStart;
+					this.#declaredUsingStart = this.start;
 					try {
 						return this.parseStatement(null, this.#atTopLevel());
 					} finally {
-						this.#declaredUsing = false;
+						this.#declaredUsingStart = outer;
 					}
 				}
 				return this.parseStatement(null, this.#atTopLevel());
