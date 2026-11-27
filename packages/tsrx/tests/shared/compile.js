@@ -1854,6 +1854,22 @@ export const p = 1
 			expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
 		});
 
+		it('reads a block-bodied function in an `@for` head in the editor', () => {
+			for (const head of [
+				'const y of ys.filter((v) => { return v > 0; })',
+				'const y of ys; key ((() => { return y; })())',
+				'const y of ys.filter((v) => { for (const w of v) w; return true; })',
+			]) {
+				const result = compile_to_volar_mappings(
+					`export function App({ ys }: { ys: number[] }) {\n\treturn <ul>@for (${head}) { <li>{y}</li> }</ul>;\n}`,
+					'App.tsrx',
+					{ loose: true },
+				);
+				expect(result.errors, head).toEqual([]);
+				expect(virtual_parse_diagnostics(result.code), result.code).toEqual([]);
+			}
+		});
+
 		it('reports an `@for` head that assigns instead of declaring (#267)', () => {
 			for (const [head, setup] of [
 				['state.item', 'const state = { item: 0 };'],
@@ -3474,6 +3490,54 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 
 			expect(code).toContain('<div>{item}</div>');
 			expect(code).toContain('No items');
+		});
+
+		it('compiles the functions in a directive head as code', () => {
+			// A block in an `@for` head was read as a directive body, and the `)`
+			// after it as template text (TS1012); a `for…of` loop in any directive
+			// head was read as if past the head, as text (`w &gt; 1`), and so was
+			// the `;` after a directive that is a value there (TS1005).
+			/** @type {Array<[directive: string, code: string[]]>} */
+			const cases = [
+				[
+					'@for (const y of ys.filter((v) => { return v > 0; })) { <li>{y}</li> }',
+					['return v > 0;'],
+				],
+				[
+					'@for (const y of ys.filter(function (v) { return v > 0; })) { <li>{y}</li> }',
+					['return v > 0;'],
+				],
+				['@for (const y of ys.map(() => {})) { <li>{y}</li> }', ['() => {}']],
+				[
+					'@for (const y of ys; key ((() => { return y.id; })())) { <li>{y.id}</li> }',
+					['return y.id;'],
+				],
+				[
+					'@for (const y of ys.filter((v) => { for (const w of v) { if (w > 1) return true; } return false; })) { <li>{y}</li> }',
+					['if (w > 1) return true;', 'return false;'],
+				],
+				[
+					'@if (ys.some((v) => { for (const w of v) { if (w > 1) return true; } return false; })) { <li /> }',
+					['if (w > 1) return true;', 'return false;'],
+				],
+				[
+					'@if (ys.some((v) => { for (const w in v) w; return false; })) { <li /> }',
+					['for (const w in v) w;', 'return false;'],
+				],
+				[
+					'@if ((() => { const v = @for (const y of ys) { <b>{y}</b> }; return v; })()) { <li /> }',
+					['return v;'],
+				],
+			];
+			for (const [directive, expected] of cases) {
+				const { code } = compile(
+					`export function App({ ys }: { ys: any[] }) {\n\treturn <ul>${directive}</ul>;\n}`,
+					'App.tsrx',
+				);
+				for (const text of expected) expect(code, directive).toContain(text);
+				expect(code, directive).not.toContain('&gt;');
+				expect(virtual_parse_diagnostics(code), code).toEqual([]);
+			}
 		});
 
 		it('rejects direct loop exits inside for...of template loops', () => {

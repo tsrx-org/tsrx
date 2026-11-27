@@ -3625,6 +3625,56 @@ class A {}
 // prints it: on two lines, except a `@catch` body, which stays `{}` as a
 // `catch` without `finally` does (#897). From `@tsrx/prettier-plugin`'s
 // "expands empty braces" tests.
+describe('functions in a directive head', () => {
+	// A block in an `@for` head, and a `for…of` loop in any directive head,
+	// were read as template text, so formatting failed.
+	test('a block-bodied function in an @for head and key clause', async () => {
+		await expectFormat(
+			`function App({ ys }) @{
+  <ul>@for (const y of ys.filter((v) => { return v > 0; }); key (() => { return y; })()) { <li>{y}</li> }</ul>
+}`,
+			`function App({ ys }) @{
+  <ul>
+    @for (
+      const y of ys.filter((v) => {
+        return v > 0;
+      });
+      key (() => {
+        return y;
+      })()
+    ) {
+      <li>{y}</li>
+    }
+  </ul>
+}
+`,
+		);
+	});
+
+	test('a for…of loop in a function in an @if head', async () => {
+		await expectFormat(
+			`function App({ ys }) @{
+  <ul>@if (ys.some((v) => { for (const w of v) { if (w > 1) return true; } return false; })) { <li /> }</ul>
+}`,
+			`function App({ ys }) @{
+  <ul>
+    @if (
+      ys.some((v) => {
+        for (const w of v) {
+          if (w > 1) return true;
+        }
+        return false;
+      })
+    ) {
+      <li />
+    }
+  </ul>
+}
+`,
+		);
+	});
+});
+
 describe('empty directive bodies', () => {
 	test('@if, @else, @for and @empty', async () => {
 		await expectFormat(

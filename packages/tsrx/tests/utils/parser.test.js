@@ -5083,12 +5083,10 @@ foo();`;
 	});
 
 	it('parses a function body inside an @for header nested in an @if as plain code', () => {
-		// `#templateControlFlowBlockDepth` is held for the whole `@for`
-		// statement, header included, so an arrow body in the header reaches
-		// `parseBlock` while the counter is positive and takes the
-		// template-control-flow redirect. That routing must stay tolerable:
-		// the arrow's body parses as ordinary statements and the `@for` still
-		// gets its right-hand side and body.
+		// `#templateControlFlowBlockDepth` is set for the `@for`'s body, not
+		// its header, so an arrow body in the header is an ordinary block, not
+		// a directive body, and the `@for` still gets its right-hand side and
+		// body.
 		const returned = getReturned(`function App() { return <div>
 			@if (show) {
 				@for (const item of items.filter((x) => { return x.keep; })) {
@@ -5112,15 +5110,231 @@ foo();`;
 			'BlockStatement',
 		);
 		expect(arrowBody.body.map((child) => child.type)).toEqual(['ReturnStatement']);
+		expect(arrowBody.metadata?.native_tsrx_template_block).toBeUndefined();
 
 		expect(blockBody(forDirective.body)[0]?.type).toBe('JSXElement');
+	});
+
+	it('parses the blocks in an @for header in element children as code', () => {
+		// Read as directive bodies, they were followed by template text, so the
+		// `)` after one in element children was text and the head failed to
+		// parse (TS1012).
+		/** @type {Array<[head: string, ...statements: string[]]>} */
+		const cases = [
+			['const y of ys.filter((v) => { return v > 0; })', 'ReturnStatement'],
+			['const y of ys.map(() => {})'],
+			['const y of ys.filter(function (v) { return v > 0; })', 'ReturnStatement'],
+			['const y of ys.map(async (v) => { await v; })', 'ExpressionStatement'],
+			['const y of (function* () { yield 1; })()', 'ExpressionStatement'],
+			[
+				'const y of ys.filter((v) => { L: { if (v) { break L; } } return v; })',
+				'LabeledStatement',
+				'ReturnStatement',
+			],
+			['const y of [class { static { if (c) { d; } } }]', 'IfStatement'],
+			['const y of [{ get a() { return 1; } }]', 'ReturnStatement'],
+			['const y of ys; key ((() => { return y.id; })())', 'ReturnStatement'],
+			['const y of ys; index i; key (() => { return i; })()', 'ReturnStatement'],
+			['const y of ys.filter((v) => { return v; }); index i', 'ReturnStatement'],
+		];
+		for (const [head, ...statements] of cases) {
+			const source = `export function App({ ys, c, d }) {\n\treturn <ul>@for (${head}) { <li>{y}</li> }</ul>;\n}`;
+			for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+				const loop = /** @type {AST.JSXForOfExpression} */ (
+					as_type(
+						find_first(
+							parseModule(source, 'App.tsrx', options),
+							(node) => node.type === 'JSXForExpression',
+						),
+						'JSXForExpression',
+					)
+				);
+				expect(loop.statementType).toBe('ForOfStatement');
+				const block = find_first([loop.right, loop.key], (node) =>
+					['BlockStatement', 'StaticBlock'].includes(node.type),
+				);
+				assert_found(block);
+				expect(
+					/** @type {AST.BlockStatement} */ (block).body.map((child) => child.type),
+					source,
+				).toEqual(statements);
+				expect(block.metadata?.native_tsrx_template_block, source).toBeUndefined();
+				expect(blockBody(loop.body).map((child) => child.type)).toEqual(['JSXElement']);
+				if (options) expect(options.errors).toEqual([]);
+			}
+		}
+	});
+
+	it('parses a for…of or for…in loop in a directive header as code', () => {
+		// Its body was read as if past the header, in the element children
+		// around the directive: as template text (`w &gt; 1` in the output), the
+		// rest of the function too, and a body without braces failed to parse
+		// (TS1434).
+		/** @type {Array<[label: string, directive: string]>} */
+		const cases = [
+			['@if', '@if (ys.some((v) => { LOOP return false; })) { <li /> }'],
+			['@for', '@for (const y of ys.filter((v) => { LOOP return false; })) { <li>{y}</li> }'],
+			['@for key', '@for (const y of ys; key ((() => { LOOP return y; })())) { <li>{y}</li> }'],
+			['@switch', '@switch ((() => { LOOP return 1; })()) { @case 1: { <li /> } }'],
+			['@case', '@switch (c) { @case ((() => { LOOP return 1; })()): { <li /> } }'],
+		];
+		/** @type {Array<[loop: string, body: string]>} */
+		const loops = [
+			['for (const w of v) { if (w > 1) return true; }', 'BlockStatement'],
+			['for (const w of v) if (w > 1) return true;', 'IfStatement'],
+			['for (const w in v) { w; }', 'BlockStatement'],
+			['for (const w of v) w;', 'ExpressionStatement'],
+		];
+		for (const [label, directive] of cases) {
+			for (const [loop, body] of loops) {
+				const source = `export function App({ ys, c }) {\n\treturn <ul>${directive.replace('LOOP', loop)}</ul>;\n}`;
+				for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+					const ast = parseModule(source, 'App.tsrx', options);
+					const statement = /** @type {AST.ForOfStatement | AST.ForInStatement | undefined} */ (
+						find_first(
+							ast,
+							(node) => node.type === 'ForOfStatement' || node.type === 'ForInStatement',
+						)
+					);
+					assert_found(statement);
+					expect(statement.body.type, `${label}: ${source}`).toBe(body);
+					const fn = find_first(ast, (node) =>
+						['ArrowFunctionExpression', 'FunctionExpression'].includes(node.type),
+					);
+					const fn_body = as_type(
+						/** @type {AST.ArrowFunctionExpression} */ (fn).body,
+						'BlockStatement',
+					);
+					expect(
+						fn_body.body.map((child) => child.type),
+						`${label}: ${source}`,
+					).toEqual([statement.type, 'ReturnStatement']);
+					expect(
+						allNodes(fn_body).filter((node) => node.type === 'JSXText'),
+						`${label}: ${source}`,
+					).toEqual([]);
+					if (options) expect(options.errors).toEqual([]);
+				}
+			}
+		}
+	});
+
+	it('parses the code after a directive that is a value in a function in a directive header', () => {
+		// The token after the inner directive's `}` was read as if past the
+		// header, in the element children around it: the `;` was template text
+		// (TS1005). In an `@for` header it parsed while the function's body was
+		// read as a directive body.
+		/** @type {Array<[header: string, after: string]>} */
+		const cases = [
+			['@if ((() => { return @if (c) { <b /> }; })())', 'ReturnStatement'],
+			['@if ((() => { const v = @if (c) { <b /> }; return v; })())', 'ReturnStatement'],
+			['@if ([{ f() { return @for (const y of ys) { <b /> }; } }].length)', 'ReturnStatement'],
+			['@for (const x of [{ f() { return @for (const y of ys) { <b /> }; } }])', 'ReturnStatement'],
+			[
+				'@for (const x of [(() => { return @if (c) { <b /> } @else { <i /> }; })()])',
+				'ReturnStatement',
+			],
+			['@for (const x of ys; key ({ f() { return @if (x) { <b /> }; } }).f())', 'ReturnStatement'],
+			[
+				'@for (const x of [(() => { const v = @for (const y of ys) { <b /> } @empty { <i /> }; return v; })()])',
+				'ReturnStatement',
+			],
+			['@switch ((() => { return @if (c) { <b /> }; })())', 'ReturnStatement'],
+		];
+		for (const [header, after] of cases) {
+			const body = header.startsWith('@switch') ? '{ @case 1: { <li /> } }' : '{ <li /> }';
+			const source = `export function App({ ys, c }) {\n\treturn <ul>${header} ${body}</ul>;\n}`;
+			for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+				const ast = parseModule(source, 'App.tsrx', options);
+				const fn = find_first(ast, (node) =>
+					['ArrowFunctionExpression', 'FunctionExpression'].includes(node.type),
+				);
+				const fn_body = as_type(
+					/** @type {AST.ArrowFunctionExpression} */ (fn).body,
+					'BlockStatement',
+				);
+				expect(fn_body.body.at(-1)?.type, source).toBe(after);
+				expect(
+					allNodes(fn_body.body).filter(
+						(node) => node.type === 'JSXText' && /\S/.test(/** @type {any} */ (node).value),
+					),
+					source,
+				).toEqual([]);
+				if (options) expect(options.errors, source).toEqual([]);
+			}
+		}
+	});
+
+	it('reads markup in a function in a directive header as in other code, also when broken', () => {
+		// When collecting, an element left open, or closed by a closing tag that
+		// names an element around it, ended where the code goes on in a function,
+		// but not in a directive header there: the rest of the function was the
+		// element's text, or the parse failed (TS1012). So did a `<script>` or
+		// `<style>` there, also a valid one, and a `</>` closing a fragment across
+		// an open element closed the elements around the header too. In an `@for`
+		// header some of these parsed while a function's body was read as a
+		// directive body.
+		/** @type {Array<(statement: string) => string>} */
+		const contexts = [
+			(statement) => `@if ((() => { ${statement}; return a; })()) { <i /> }`,
+			(statement) => `@if ([{ f() { ${statement}; return a; } }].length) { <i /> }`,
+			(statement) => `@for (const x of [{ f() { ${statement}; return a; } }]) { <i /> }`,
+			(statement) => `@for (const x of [(() => { ${statement}; return a; })()]) { <i /> }`,
+			(statement) => `@for (const x of xs; key (() => { ${statement}; return a; })()) { <i /> }`,
+			(statement) => `@switch ((() => { ${statement}; return a; })()) { @case 1: { <i /> } }`,
+		];
+		for (const statement of [
+			'const a = <p><b></p>',
+			'const a = (<p>)',
+			'const a = [<p>]',
+			'const a = c ? <p> : 1',
+			'const a = g(<p>, 1)',
+			'const a = <div><span></div>',
+			'const a = <p><b><i></p>',
+			'const a = <p><b><i><u>t</p>',
+			'const a = (<p><b>)',
+			'const a = [<p><b>]',
+			'const a = <><b></>',
+			'const a = <><b><i></>',
+			'const a = (<>)',
+			'const a = <script>foo();</script>',
+			'const a = <style>.x { color: red; }</style>',
+			'const a = <p><script>f()</script></p>',
+		]) {
+			/**
+			 * @param {string} source
+			 * @param {string[]} types The function's node types
+			 */
+			const parse = (source, types) => {
+				const options = { collect: true, errors: /** @type {CompileError[]} */ ([]), comments: [] };
+				const ast = parseModule(source, 'App.tsrx', options);
+				const fn = find_first(ast, (node) => types.includes(node.type));
+				return {
+					codes: options.errors.map((error) => error.code),
+					statements: as_type(
+						/** @type {AST.ArrowFunctionExpression} */ (fn).body,
+						'BlockStatement',
+					).body.map((child) => child.type),
+				};
+			};
+			const expected = parse(`function f() { ${statement}; return a; }`, ['FunctionDeclaration']);
+			expect(expected.statements).toEqual(['VariableDeclaration', 'ReturnStatement']);
+			for (const context of contexts) {
+				const source = `export function App() {\n\treturn <div>${context(statement)}</div>;\n}`;
+				expect(parse(source, ['ArrowFunctionExpression', 'FunctionExpression']), source).toEqual(
+					expected,
+				);
+				// Valid markup parses strictly too.
+				if (expected.codes.length === 0) parseModule(source, 'App.tsrx');
+			}
+		}
 	});
 
 	it('parses a directive inside an @empty clause of an @for nested in an @if', () => {
 		// The `@empty` clause redirects through a second, independent
 		// `#templateControlFlowBlockDepth` increment (separate from the one
-		// around the `@for` header+body), so it needs its own regression
-		// coverage for the nested-in-@if shape.
+		// around the `@for` body), so it needs its own regression coverage for
+		// the nested-in-@if shape.
 		const returned = getReturned(`function App() { return <div>
 			@if (show) {
 				@for (const item of items) {
