@@ -3929,22 +3929,7 @@ describe('@tsrx/vue @switch rows', () => {
 		expect(code).toContain('const _$_case_2 = _$_vapor_computed((_$_previous) => {');
 	});
 
-	it('keeps the shared lowering for a @switch outside a row and in the type-only output', () => {
-		const outside = compile(
-			`export function Kind(props: { kind: string }) @{
-				<div>
-					@switch (props.kind) {
-						@case 'a': {
-							<b>{'a'}</b>
-						}
-					}
-				</div>
-			}`,
-			'Kind.tsrx',
-		).code;
-		expect(outside).toContain('switch (props.kind) {');
-		expect(outside).not.toContain('_$_case');
-
+	it('keeps the shared lowering for a @switch in the type-only output', () => {
 		const { code: type_only } = compile_to_volar_mappings(
 			`export function List(props: { rows: { id: string; kind: string }[] }) @{
 				<ul>
@@ -3956,10 +3941,369 @@ describe('@tsrx/vue @switch rows', () => {
 						}
 					}
 				</ul>
+				<div>
+					@switch (props.rows.length) {
+						@case 0: {
+							<b>{'none'}</b>
+						}
+					}
+				</div>
 			}`,
 			'List.tsrx',
 		);
 		expect(type_only).toContain('switch (row.value.kind)');
+		expect(type_only).toContain('switch (props.rows.length)');
 		expect(type_only).not.toContain('_$_case');
+		expect(type_only).not.toContain('v-if');
+	});
+});
+
+describe("@tsrx/vue an element's @switch", () => {
+	it('renders it as v-if / v-else-if elements, with a computed in the component setup', () => {
+		const { code, errors } = compile(
+			`function Item(props: { label: string }) @{
+				<em>{props.label}</em>
+			}
+			export function Kind(props: { kind: string }) @{
+				const label = 'b';
+				<div>
+					@switch (props.kind) {
+						@case 'a': {
+							<b>{'a'}</b>
+						}
+						@case 'none': {}
+						@default: {
+							<Item label={label} />
+						}
+					}
+					{props.kind}
+				</div>
+			}`,
+			'Kind.tsrx',
+		);
+
+		// vue-jsx-vapor renders an expression child with \`setNodes\`, which doesn't
+		// hydrate (#1403); a \`v-if\` / \`v-else-if\` element is a \`createIf\`. The
+		// component's setup runs once, so it holds the \`computed\`, which runs
+		// the \`switch\` once per change; a case that renders nothing has no
+		// element, and the first choice throws what the \`switch\` threw.
+		expect(errors).toEqual([]);
+		expect(flat(code)).toContain(
+			flat(`const label = 'b';
+			const _$_case_1 = _$_vapor_computed((_$_previous) => {
+				try {
+					switch (props.kind) {
+						case 'a': return 0;
+						case 'none': return 1;
+						default: return 2;
+					}
+					return -1;
+				} catch(_$_error) {
+					return {
+						error: _$_error,
+						index: typeof _$_previous === 'object' ? _$_previous.index : _$_previous ?? -1
+					};
+				}
+			});
+			return <div><b v-if={(typeof _$_case_1.value === 'object'
+				? (() => {
+					throw _$_case_1.value.error;
+				})()
+				: _$_case_1.value) === 0}>{'a'}</b><Item v-else-if={(typeof _$_case_1.value === 'object' ? _$_case_1.value.index : _$_case_1.value) === 2} label={label} />{props.kind}</div>;`),
+		);
+		expect(code).toContain("import { computed as _$_vapor_computed } from 'vue';");
+	});
+
+	it('lowers one reached through host elements, in each kind of component', () => {
+		const { code, errors } = compile(
+			`export function Nested(props: { kind: string; on: boolean }) @{
+				if (props.on) return;
+				<section>
+					<header v-show={props.on}>
+						@switch (props.kind) {
+							@case 'a': {
+								<b>{'a'}</b>
+							}
+						}
+					</header>
+					<svg>
+						@switch (props.kind) {
+							@case 'a': {
+								<circle r="1" />
+							}
+						}
+					</svg>
+				</section>
+			}
+			export const Arrow = (props: { kind: string }) => <p>
+				@switch (props.kind) {
+					@case 'a': {
+						<b>{'a'}</b>
+					}
+				}
+			</p>;
+			export function Plain(props: { kind: string }) {
+				return <p>
+					@switch (props.kind) {
+						@case 'a': {
+							<b>{'a'}</b>
+						}
+					}
+				</p>;
+			}
+			export function Local(props: { kind: string }) {
+				const view = <p>
+					@switch (props.kind) {
+						@case 'a': {
+							<b>{'a'}</b>
+						}
+					}
+				</p>;
+				return view;
+			}
+			export function Blocks(props: { kind: string; on: boolean }) {
+				if (props.on) {
+					const view = <p>
+						@switch (props.kind) {
+							@case 'a': {
+								<b>{'a'}</b>
+							}
+						}
+					</p>;
+					return view;
+				}
+				switch (props.kind) {
+					case 'b':
+						const other = <p>
+							@switch (props.kind) {
+								@case 'b': {
+									<b>{'b'}</b>
+								}
+							}
+						</p>;
+						return other;
+				}
+				return <p>
+					@switch (props.kind) {
+						@case 'c': {
+							<b>{'c'}</b>
+						}
+					}
+				</p> as any;
+			}
+			export const Authored = defineVaporComponent((props: { kind: string }) => <p>
+				@switch (props.kind) {
+					@case 'a': {
+						<b>{'a'}</b>
+					}
+				}
+			</p>);`,
+			'Kinds.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		// Each \`@switch\` has a \`computed\` of its own, after an early \`return\`.
+		expect(flat(code)).toContain(
+			flat(`if (props.on) return;
+			const _$_case_1 = _$_vapor_computed(`),
+		);
+		expect(code).toContain('const _$_case_2 = _$_vapor_computed(');
+		expect(code).toMatch(/<circle v-if=\{/);
+		// An arrow with an expression body takes a block.
+		expect(flat(code)).toContain(
+			flat(`export const Arrow = defineVaporComponent((props: { kind: string }) => {
+				const _$_case_3 = _$_vapor_computed(`),
+		);
+		expect(code).toContain('const _$_case_4 = _$_vapor_computed(');
+		// JSX a declaration in the body holds is created once too.
+		expect(flat(code)).toMatch(
+			/const _\$_case_5 = _\$_vapor_computed\([^]*\}\); const view = <p><b v-if=/,
+		);
+		// Inside a block or a \`case\` of the setup, the \`computed\` joins the
+		// declaration's scope.
+		expect(flat(code)).toMatch(/if \(props\.on\) \{const _\$_case_6 = [^]*\}\); const view = <p>/);
+		expect(flat(code)).toMatch(/case 'b': const _\$_case_7 = [^]*\}\); const other = <p>/);
+		expect(code).toMatch(/const _\$_case_8 = [^]*return <p><b v-if=[^]*<\/p> as any;/);
+		// An authored \`defineVaporComponent\` is a component too.
+		expect(code).toContain('const _$_case_9 = _$_vapor_computed(');
+		expect(code.match(/<b v-if=\{/g)).toHaveLength(8);
+		expect(code.match(/return null;/g)).toBeNull();
+	});
+
+	it("keeps the shared lowering for one its component's setup doesn't render once", () => {
+		const { code, errors } = compile(
+			`function Wrap(props: { children?: any }) @{
+				<div>{props.children}</div>
+			}
+			function Item() @{
+				<em>{'item'}</em>
+			}
+			function helper(kind: string) @{
+				<p>
+					@switch (kind) {
+						@case 'a': {
+							<b>{'helper'}</b>
+						}
+					}
+				</p>
+			}
+			export function Kind(props: { kind: string; on: boolean; rows: string[] }) @{
+				const items = [];
+				for (const row of props.rows) {
+					const item = <li>
+						@switch (row) {
+							@case 'a': {
+								<b>{'setup loop'}</b>
+							}
+						}
+					</li>;
+					items.push(item);
+				}
+				const later = () => {
+					return <p>
+						@switch (props.kind) {
+							@case 'a': {
+								<b>{'later'}</b>
+							}
+						}
+					</p>;
+				};
+				<div>
+					{later()}
+					@if (props.on) {
+						<section>
+							@switch (props.kind) {
+								@case 'a': {
+									<b>{'branch'}</b>
+								}
+							}
+						</section>
+					}
+					@for (const row of props.rows; key row) {
+						<li>
+							@switch (row) {
+								@case 'a': {
+									<b>{'row'}</b>
+								}
+							}
+						</li>
+					}
+					@try {
+						<p>
+							@switch (props.kind) {
+								@case 'a': {
+									<b>{'try'}</b>
+								}
+							}
+						</p>
+					} @catch (e) {
+						<i>{'caught'}</i>
+					}
+					<Wrap>
+						@switch (props.kind) {
+							@case 'a': {
+								<b>{'slot'}</b>
+							}
+						}
+					</Wrap>
+					<Wrap>
+						<p>
+							@switch (props.kind) {
+								@case 'a': {
+									<b>{'slot element'}</b>
+								}
+							}
+						</p>
+					</Wrap>
+					<p v-once>
+						@switch (props.kind) {
+							@case 'a': {
+								<b>{'once'}</b>
+							}
+						}
+					</p>
+					<p key={props.kind}>
+						@switch (props.kind) {
+							@case 'a': {
+								<b>{'keyed'}</b>
+							}
+						}
+					</p>
+					<p>
+						@switch (props.kind) {
+							@case 'a': {
+								const text = 'setup';
+								<b>{text}</b>
+							}
+						}
+						@switch (props.kind) {
+							@case 'a': {
+								<>
+									<b>{'fragment'}</b>
+									<i>{'two'}</i>
+								</>
+							}
+						}
+						@switch (props.kind) {
+							@case 'a': {
+								@if (props.on) {
+									<b>{'choice'}</b>
+								}
+							}
+						}
+						@switch (props.kind) {
+							@case 'a': {
+								<Item v-slot={{}}>
+									<b>{'slot prop'}</b>
+								</Item>
+							}
+						}
+						@switch (props.kind) {
+							@case 'a': {
+								<template>
+									<b>{'template'}</b>
+								</template>
+							}
+						}
+						@switch (props.kind) {
+							@case 'a': {}
+						}
+					</p>
+					<p>
+						@switch (props.kind) {
+							@case 'a': {
+								<b>{'before else'}</b>
+							}
+						}
+						{null}
+						<i v-else>{'authored else'}</i>
+					</p>
+				</div>
+			}
+			export function Root(props: { kind: string }) @{
+				<>
+					<span />
+					@switch (props.kind) {
+						@case 'a': {
+							<b>{'fragment child'}</b>
+						}
+					}
+				</>
+			}
+			export function Only(props: { kind: string }) @{
+				@switch (props.kind) {
+					@case 'a': {
+						<b>{'root'}</b>
+					}
+				}
+			}`,
+			'Kind.tsrx',
+		);
+
+		expect(errors).toEqual([]);
+		expect(code).not.toContain('_$_vapor_computed');
+		expect(code).not.toContain('_$_case');
+		// Each \`@switch\` keeps its IIFE.
+		expect(code.match(/return null;/g)).toHaveLength(20);
 	});
 });

@@ -65,14 +65,17 @@ const VAPOR_FOR_INTERNAL_NAME = '__VaporFor';
 const FOR_ITEMS_INTERNAL_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'for_items';
 /** The `computed` that walks the source of a `VaporFor` loop with `@empty`. */
 const VAPOR_ITEMS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'vapor_items';
-/** The `computed` that picks the case of a `@switch` row, numbered per row. */
+/**
+ * The `computed` that picks the case of a lowered `@switch` (a row, or a host
+ * element's child), numbered per compile.
+ */
 const SWITCH_CASE_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'case';
-/** What a `@switch` row's `computed` caught. */
+/** What a lowered `@switch`'s `computed` caught. */
 const SWITCH_ERROR_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'error';
-/** The value a `@switch` row's `computed` held before it runs again. */
+/** The value a lowered `@switch`'s `computed` held before it runs again. */
 const SWITCH_PREVIOUS_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'previous';
 /**
- * How many `@switch` rows each compile has lowered, so a nested one's
+ * How many `@switch`es each compile has lowered, so a nested one's
  * `computed` can't capture an outer one's name.
  * @type {WeakMap<TransformContext, number>}
  */
@@ -84,7 +87,7 @@ const switch_counts = new WeakMap();
 const VAPOR_SWITCH_METADATA = 'vapor_switch';
 /** The metadata flag on an `@if`'s shared lowering. */
 const VAPOR_IF_METADATA = 'vapor_if';
-/** The most cases a `@switch` row turns into a chain of `createIf`s. */
+/** The most cases a lowered `@switch` turns into a chain of `createIf`s. */
 const MAX_SWITCH_ROW_CASES = 64;
 
 const DEFINE_VAPOR_COMPONENT = 'defineVaporComponent';
@@ -236,6 +239,9 @@ const vue_platform = {
 				place_boundaries_as_children(program);
 			}
 			wrap_native_function_components(program, ctx);
+			if (!ctx.typeOnly) {
+				render_element_switches_as_directives(program, ctx);
+			}
 			inject_vue_imports(program, ctx);
 		},
 	},
@@ -2197,12 +2203,13 @@ function to_vapor_branch(node) {
 /**
  * `@switch` on Vue: the shared lowering, an IIFE around a `switch`, marked so
  * a `VaporFor` row that is a `@switch` can render through
- * `switch_in_fragment`. A row slot runs once, so the shared IIFE would keep
- * the case it picked first and return `null` when no case matches, which
- * Vapor can't mount. Elsewhere vue-jsx-vapor evaluates the IIFE in an effect,
- * which follows the value.
+ * `switch_in_fragment`, and a host element's child `@switch` through
+ * `render_element_switches_as_directives`. A row slot runs once, so the
+ * shared IIFE would keep the case it picked first and return `null` when no
+ * case matches, which Vapor can't mount. Elsewhere vue-jsx-vapor evaluates
+ * the IIFE in an effect, which follows the value but doesn't hydrate.
  *
- * Not marked, so a row keeps the IIFE: the type-only output; a `@switch` that
+ * Not marked, so a row or an element's child keeps the IIFE: the type-only output; a `@switch` that
  * awaits or yields; one whose case has setup statements or renders anything
  * but an element, a fragment or a choice of them (a nested `@switch`, a loop
  * through `map_iterable`), which as a branch of its own would render again,
@@ -2476,11 +2483,12 @@ function takes_directive(node) {
 }
 
 /**
- * `element` with `v-if={test}`, or `v-else`, first among its attributes.
+ * `element` with `v-if={test}`, `v-else-if={test}` or `v-else`, first among
+ * its attributes.
  *
  * @param {ESTreeJSX.JSXElement} element
- * @param {'v-if' | 'v-else'} name
- * @param {AST.Expression} [test] For `v-if`.
+ * @param {'v-if' | 'v-else-if' | 'v-else'} name
+ * @param {AST.Expression} [test] For `v-if` and `v-else-if`.
  * @returns {ESTreeJSX.JSXElement}
  */
 function with_directive(element, name, test) {
@@ -2591,54 +2599,13 @@ function switch_in_fragment(node, transform_context) {
 	const case_ref = create_generated_identifier(
 		`${SWITCH_CASE_NAME}_${(switch_counts.get(transform_context) ?? 0) + 1}`,
 	);
-	const error_ref = create_generated_identifier(SWITCH_ERROR_NAME);
-	const previous_ref = create_generated_identifier(SWITCH_PREVIOUS_NAME);
-	/** The index the `computed` holds, or the last one it picked while it holds a throw. */
-	const held_index = () =>
-		b.conditional(
-			b.binary(
-				'===',
-				b.unary('typeof', create_value_member_expression(case_ref)),
-				b.literal('object'),
-			),
-			b.member(create_value_member_expression(case_ref), 'index'),
-			create_value_member_expression(case_ref),
-		);
 
 	/** @type {AST.Expression} */
 	let chain = b.jsx_fragment();
 	for (let index = statement.cases.length - 1; index >= 0; index--) {
 		const output = /** @type {AST.ReturnStatement} */ (statement.cases[index].consequent[0]);
 		chain = b.conditional(
-			b.binary(
-				'===',
-				// The first choice throws what the `switch` threw, in its
-				// `createIf`'s effect, which keeps following the `computed`;
-				// the others keep the case picked before the throw.
-				index === 0
-					? b.conditional(
-							b.binary(
-								'===',
-								b.unary('typeof', create_value_member_expression(case_ref)),
-								b.literal('object'),
-							),
-							b.call(
-								b.arrow(
-									[],
-									b.block([
-										/** @type {AST.ThrowStatement} */ ({
-											type: 'ThrowStatement',
-											argument: b.member(create_value_member_expression(case_ref), 'error'),
-											metadata: { path: [] },
-										}),
-									]),
-								),
-							),
-							create_value_member_expression(case_ref),
-						)
-					: held_index(),
-				b.literal(index),
-			),
+			switch_case_test(case_ref, index, index === 0),
 			to_vapor_branch(output.argument ?? b.literal(null)),
 			chain,
 		);
@@ -2648,66 +2615,486 @@ function switch_in_fragment(node, transform_context) {
 		b.arrow(
 			[],
 			b.block([
-				// Vue stops running an effect that read a `computed` whose getter
-				// threw, so the `computed` returns what the `switch` threw, with
-				// the index it held before.
-				b.const(
-					case_ref,
-					b.call(
-						VUE_COMPUTED_INTERNAL_NAME,
-						b.arrow(
-							[previous_ref],
-							b.block([
-								b.try(
-									b.block([
-										setLocation(
-											b.switch(
-												statement.discriminant,
-												statement.cases.map((switch_case, index) =>
-													setLocation(
-														b.switch_case(switch_case.test, [b.return(b.literal(index))]),
-														has_location(switch_case) ? switch_case : undefined,
-													),
-												),
-											),
-											has_location(statement) ? statement : undefined,
-										),
-										b.return(b.literal(-1)),
-									]),
-									b.catch_clause(
-										error_ref,
-										null,
-										b.block([
-											b.return(
-												b.object([
-													b.prop('init', b.id('error'), clone_identifier(error_ref)),
-													b.prop(
-														'init',
-														b.id('index'),
-														b.conditional(
-															b.binary(
-																'===',
-																b.unary('typeof', clone_identifier(previous_ref)),
-																b.literal('object'),
-															),
-															b.member(clone_identifier(previous_ref), 'index'),
-															b.logical('??', clone_identifier(previous_ref), b.literal(-1)),
-														),
-													),
-												]),
-											),
-										]),
-									),
-									null,
-								),
-							]),
-						),
-					),
-				),
+				switch_case_computed(statement, case_ref),
 				b.return(b.jsx_fragment([to_jsx_expression_container(chain)])),
 			]),
 		),
 	);
+}
+
+/**
+ * Whether the `computed` from `switch_case_computed` picked the case at
+ * `index`. The first choice evaluated (`throws`) throws what the `switch`
+ * threw, in its `createIf`'s effect, which keeps following the `computed`;
+ * the others keep the case picked before the throw.
+ *
+ * @param {AST.Identifier} case_ref
+ * @param {number} index
+ * @param {boolean} throws
+ * @returns {AST.Expression}
+ */
+function switch_case_test(case_ref, index, throws) {
+	const holds_throw = () =>
+		b.binary(
+			'===',
+			b.unary('typeof', create_value_member_expression(case_ref)),
+			b.literal('object'),
+		);
+	return b.binary(
+		'===',
+		b.conditional(
+			holds_throw(),
+			throws
+				? b.call(
+						b.arrow(
+							[],
+							b.block([
+								/** @type {AST.ThrowStatement} */ ({
+									type: 'ThrowStatement',
+									argument: b.member(create_value_member_expression(case_ref), 'error'),
+									metadata: { path: [] },
+								}),
+							]),
+						),
+					)
+				: // The last index it picked, while it holds a throw.
+					b.member(create_value_member_expression(case_ref), 'index'),
+			create_value_member_expression(case_ref),
+		),
+		b.literal(index),
+	);
+}
+
+/**
+ * `const case_ref = computed(…)`, which runs the `switch` of a lowered
+ * `@switch` for the index of the case it picks, or `-1` when none matches.
+ * Vue stops running an effect that read a `computed` whose getter threw, so
+ * the `computed` returns what the `switch` threw, with the index it held
+ * before.
+ *
+ * @param {AST.SwitchStatement} statement
+ * @param {AST.Identifier} case_ref
+ * @returns {AST.VariableDeclaration}
+ */
+function switch_case_computed(statement, case_ref) {
+	const error_ref = create_generated_identifier(SWITCH_ERROR_NAME);
+	const previous_ref = create_generated_identifier(SWITCH_PREVIOUS_NAME);
+	return b.const(
+		case_ref,
+		b.call(
+			VUE_COMPUTED_INTERNAL_NAME,
+			b.arrow(
+				[previous_ref],
+				b.block([
+					b.try(
+						b.block([
+							setLocation(
+								b.switch(
+									statement.discriminant,
+									statement.cases.map((switch_case, index) =>
+										setLocation(
+											b.switch_case(switch_case.test, [b.return(b.literal(index))]),
+											has_location(switch_case) ? switch_case : undefined,
+										),
+									),
+								),
+								has_location(statement) ? statement : undefined,
+							),
+							b.return(b.literal(-1)),
+						]),
+						b.catch_clause(
+							error_ref,
+							null,
+							b.block([
+								b.return(
+									b.object([
+										b.prop('init', b.id('error'), clone_identifier(error_ref)),
+										b.prop(
+											'init',
+											b.id('index'),
+											b.conditional(
+												b.binary(
+													'===',
+													b.unary('typeof', clone_identifier(previous_ref)),
+													b.literal('object'),
+												),
+												b.member(clone_identifier(previous_ref), 'index'),
+												b.logical('??', clone_identifier(previous_ref), b.literal(-1)),
+											),
+										),
+									]),
+								),
+							]),
+						),
+						null,
+					),
+				]),
+			),
+		),
+	);
+}
+
+/** Marks the block a lowered `return` became, which its block takes apart. */
+const SETUP_SWITCHES_METADATA = 'vapor_setup_switches';
+
+/**
+ * Renders a host element's child `@switch` as `v-if` / `v-else-if` elements
+ * when each case renders one element that can take one, or nothing, with a
+ * `computed` in the component's setup that runs the `switch` for the index of
+ * the case it picks (#1403). The shared lowering is an IIFE in an expression
+ * child, which vue-jsx-vapor renders with `setNodes`, and `setNodes` doesn't
+ * hydrate: Vue throws reading `nodeType` on the server's case and the page
+ * stops updating, and a server's case followed by no match is emptied, not
+ * removed. A `v-if` / `v-else-if` element is a `createIf`, which hydrates the
+ * server's case or its `<!---->`, and keeps the case mounted while the index
+ * stays the same. The `switch` runs once for each change it reads, and a
+ * throw in it goes where it did (`switch_case_test`).
+ *
+ * The `computed` lives as long as the component, so only a `@switch` that a
+ * component's setup renders once changes: one in the JSX a component returns
+ * or a declaration outside a loop in its setup holds, reached through host
+ * elements and fragments (and TypeScript's `as` and the like). One in a branch, a loop row, a `@try` or `@pending` body, a
+ * component's children (a slot), a keyed element or an element with a `v-`
+ * directive other than `v-show` keeps the shared lowering, since that scope
+ * can render it again or declare what its discriminant reads. So does one
+ * whose next sibling element has `v-else` or `v-else-if`, which would join
+ * the chain, a fragment's own child, and a function that isn't a component.
+ *
+ * The `switch` now runs where an `@if` in the same place evaluates its
+ * condition: in its `createIf`, after the effects of the attributes before
+ * it, where the expression child's `setNodes` ran before them.
+ *
+ * @param {AST.Program} program
+ * @param {TransformContext} transform_context
+ * @returns {void}
+ */
+function render_element_switches_as_directives(program, transform_context) {
+	const walked = /** @type {AST.Program} */ (
+		walk(/** @type {AST.Node} */ (program), null, {
+			CallExpression(node, { next }) {
+				const call = /** @type {AST.CallExpression} */ (next() ?? node);
+				const fn = call.arguments[0];
+				// vue-jsx-vapor reads any `defineVaporComponent(…)` call as a
+				// component, an authored one too.
+				const lowered =
+					call.callee.type === 'Identifier' &&
+					call.callee.name === DEFINE_VAPOR_COMPONENT &&
+					(fn?.type === 'FunctionExpression' || fn?.type === 'ArrowFunctionExpression')
+						? lower_setup_switches(fn, transform_context)
+						: null;
+				if (lowered) {
+					return /** @type {AST.Node} */ ({
+						...call,
+						arguments: [lowered, ...call.arguments.slice(1)],
+					});
+				}
+				return call === node ? undefined : call;
+			},
+		})
+	);
+	program.body = walked.body;
+}
+
+/**
+ * A component's function with the `@switch`es its returned JSX renders
+ * lowered (`render_element_switches_as_directives`), and their `computed`s
+ * declared just before the `return`, or `null` when it has none. The same
+ * goes for JSX a declaration outside a loop holds, before the declaration.
+ *
+ * @param {AST.FunctionExpression | AST.ArrowFunctionExpression} fn
+ * @param {TransformContext} transform_context
+ * @returns {AST.FunctionExpression | AST.ArrowFunctionExpression | null}
+ */
+function lower_setup_switches(fn, transform_context) {
+	if (fn.body.type !== 'BlockStatement') {
+		/** @type {AST.Statement[]} */
+		const declarations = [];
+		const output = lower_output_switches(fn.body, declarations, transform_context);
+		return declarations.length
+			? /** @type {AST.ArrowFunctionExpression} */ ({
+					...fn,
+					expression: false,
+					body: b.block([...declarations, b.return(output)]),
+				})
+			: null;
+	}
+
+	/** Leaves a nested function or class alone: its `return` isn't the component's. */
+	const skip = () => {};
+	const body = /** @type {AST.BlockStatement} */ (
+		walk(/** @type {AST.Node} */ (fn.body), null, {
+			FunctionDeclaration: skip,
+			FunctionExpression: skip,
+			ArrowFunctionExpression: skip,
+			ClassBody: skip,
+			ReturnStatement(node) {
+				if (!node.argument) return;
+				/** @type {AST.Statement[]} */
+				const declarations = [];
+				const argument = lower_output_switches(node.argument, declarations, transform_context);
+				if (!declarations.length) return;
+				return setup_switches_block([...declarations, { ...node, argument }]);
+			},
+			// JSX that a declaration holds, such as one the component returns
+			// (`const view = <div>…</div>; return view;`), is created once too,
+			// unless the declaration is in a loop.
+			VariableDeclaration(node, { path }) {
+				if (path.some(is_loop_statement)) return;
+				/** @type {AST.Statement[]} */
+				const declarations = [];
+				const declarators = node.declarations.map((declarator) =>
+					declarator.init
+						? {
+								...declarator,
+								init: lower_output_switches(declarator.init, declarations, transform_context),
+							}
+						: declarator,
+				);
+				if (!declarations.length) return;
+				return setup_switches_block([...declarations, { ...node, declarations: declarators }]);
+			},
+			// The `computed`s join the statements before the `return` or the
+			// declaration, which stays in its scope; their names are the
+			// compile's own.
+			BlockStatement(node, { next }) {
+				const block = /** @type {AST.BlockStatement} */ (next() ?? node);
+				if (block === node) return;
+				return /** @type {AST.Node} */ ({ ...block, body: take_apart_setup_blocks(block.body) });
+			},
+			SwitchCase(node, { next }) {
+				const switch_case = /** @type {AST.SwitchCase} */ (next() ?? node);
+				if (switch_case === node) return;
+				return /** @type {AST.Node} */ ({
+					...switch_case,
+					consequent: take_apart_setup_blocks(switch_case.consequent),
+				});
+			},
+		})
+	);
+	return body === fn.body ? null : { ...fn, body };
+}
+
+/**
+ * `statements` with each block `setup_switches_block` made spread in place.
+ *
+ * @param {AST.Statement[]} statements
+ * @returns {AST.Statement[]}
+ */
+function take_apart_setup_blocks(statements) {
+	return statements.flatMap((statement) =>
+		statement.type === 'BlockStatement' &&
+		/** @type {Record<string, unknown> | undefined} */ (
+			/** @type {unknown} */ (statement.metadata)
+		)?.[SETUP_SWITCHES_METADATA]
+			? statement.body
+			: [statement],
+	);
+}
+
+/**
+ * @param {AST.Node} node
+ * @returns {boolean}
+ */
+function is_loop_statement(node) {
+	return (
+		node.type === 'ForStatement' ||
+		node.type === 'ForInStatement' ||
+		node.type === 'ForOfStatement' ||
+		node.type === 'WhileStatement' ||
+		node.type === 'DoWhileStatement'
+	);
+}
+
+/**
+ * A block of `statements`, marked so the block around it takes it apart.
+ *
+ * @param {AST.Statement[]} statements
+ * @returns {AST.BlockStatement}
+ */
+function setup_switches_block(statements) {
+	const block = b.block(statements);
+	/** @type {Record<string, unknown>} */ (/** @type {unknown} */ (block.metadata))[
+		SETUP_SWITCHES_METADATA
+	] = true;
+	return block;
+}
+
+/**
+ * `node`, a component's returned JSX, with the `@switch`es of its host
+ * elements lowered, pushing their `computed`s to `declarations`.
+ *
+ * @param {AST.Expression} node
+ * @param {AST.Statement[]} declarations
+ * @param {TransformContext} transform_context
+ * @returns {AST.Expression}
+ */
+function lower_output_switches(node, declarations, transform_context) {
+	// `<div>…</div> as Props` and the like.
+	if (
+		node.type === 'TSAsExpression' ||
+		node.type === 'TSSatisfiesExpression' ||
+		node.type === 'TSNonNullExpression' ||
+		node.type === 'TSTypeAssertion' ||
+		node.type === 'ParenthesizedExpression'
+	) {
+		const wrapped = /** @type {AST.Expression} */ (
+			/** @type {{ expression: AST.Expression }} */ (/** @type {unknown} */ (node)).expression
+		);
+		const lowered = lower_output_switches(wrapped, declarations, transform_context);
+		return lowered === wrapped
+			? node
+			: /** @type {AST.Expression} */ ({ ...node, expression: lowered });
+	}
+	const jsx = /** @type {ESTreeJSX.JSXElement | ESTreeJSX.JSXFragment} */ (
+		/** @type {unknown} */ (node)
+	);
+	if (jsx.type === 'JSXFragment') {
+		const children = lower_child_switches(jsx.children, false, declarations, transform_context);
+		return children
+			? /** @type {AST.Expression} */ (/** @type {unknown} */ ({ ...jsx, children }))
+			: node;
+	}
+	if (jsx.type !== 'JSXElement' || !renders_children_once(jsx)) return node;
+	const children = lower_child_switches(jsx.children, true, declarations, transform_context);
+	return children
+		? /** @type {AST.Expression} */ (/** @type {unknown} */ ({ ...jsx, children }))
+		: node;
+}
+
+/**
+ * `children` with each `@switch` that `switch_directive_elements` takes
+ * lowered, when `host` (they're a host element's), and with the same done
+ * inside each child element and fragment; `null` when nothing changed.
+ *
+ * @param {ESTreeJSX.JSXElement['children']} children
+ * @param {boolean} host
+ * @param {AST.Statement[]} declarations
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXElement['children'] | null}
+ */
+function lower_child_switches(children, host, declarations, transform_context) {
+	let changed = false;
+	/** @type {ESTreeJSX.JSXElement['children']} */
+	const lowered = [];
+	children.forEach((child, index) => {
+		if (child.type === 'JSXElement' || child.type === 'JSXFragment') {
+			const next = /** @type {typeof child} */ (
+				/** @type {unknown} */ (
+					lower_output_switches(
+						/** @type {AST.Expression} */ (/** @type {unknown} */ (child)),
+						declarations,
+						transform_context,
+					)
+				)
+			);
+			if (next !== child) changed = true;
+			lowered.push(next);
+			return;
+		}
+		const elements =
+			host &&
+			child.type === 'JSXExpressionContainer' &&
+			child.expression.type !== 'JSXEmptyExpression' &&
+			!continues_directive_chain(children.slice(index + 1))
+				? switch_directive_elements(
+						/** @type {AST.Expression} */ (child.expression),
+						declarations,
+						transform_context,
+					)
+				: null;
+		if (!elements) {
+			lowered.push(child);
+			return;
+		}
+		changed = true;
+		lowered.push(...elements);
+	});
+	return changed ? lowered : null;
+}
+
+/**
+ * Whether a host element renders its children once, where its own setup
+ * renders it: not a component, whose children are a slot, nor a
+ * `<template>`, `<slot>` or `<component>`, without a `key`, which
+ * vue-jsx-vapor renders through a keyed fragment that renders the children
+ * again when the key changes, and without a `v-` directive other than
+ * `v-show` (`v-if`, `v-for`, `v-once`, `v-html`, …).
+ *
+ * @param {ESTreeJSX.JSXElement} element
+ * @returns {boolean}
+ */
+function renders_children_once(element) {
+	const opening = element.openingElement;
+	if (
+		is_component_like_element(/** @type {AST.TSRXJSXElement} */ (/** @type {unknown} */ (element)))
+	) {
+		return false;
+	}
+	if (
+		opening.name.type === 'JSXIdentifier' &&
+		['template', 'slot', 'component'].includes(opening.name.name)
+	) {
+		return false;
+	}
+	return opening.attributes.every((attribute) => {
+		if (attribute.type !== 'JSXAttribute') return true;
+		const name =
+			attribute.name.type === 'JSXNamespacedName'
+				? attribute.name.namespace.name
+				: attribute.name.name;
+		return name !== 'key' && (!name.startsWith('v-') || name === 'v-show');
+	});
+}
+
+/**
+ * The `v-if` / `v-else-if` elements for a `@switch` that
+ * `render_switch_statement` marked, when each case renders one element that
+ * can take one (`takes_directive`) or nothing and one renders an element,
+ * pushing the `computed` they read to `declarations`; otherwise `null`.
+ *
+ * @param {AST.Expression} node
+ * @param {AST.Statement[]} declarations
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXElement[] | null}
+ */
+function switch_directive_elements(node, declarations, transform_context) {
+	if (!is_lowered_switch(node)) return null;
+	const statement = lowered_switch_statement(node);
+	const outputs = statement.cases.map(
+		(switch_case) =>
+			/** @type {AST.ReturnStatement} */ (switch_case.consequent[0]).argument ?? null,
+	);
+	if (
+		!outputs.some((output) => output?.type === 'JSXElement') ||
+		!outputs.every(
+			(output) =>
+				output === null ||
+				(output.type === 'Literal' && output.value === null) ||
+				takes_directive(output),
+		)
+	) {
+		return null;
+	}
+
+	const count = (switch_counts.get(transform_context) ?? 0) + 1;
+	switch_counts.set(transform_context, count);
+	transform_context.needs_vapor_computed = true;
+	const case_ref = create_generated_identifier(`${SWITCH_CASE_NAME}_${count}`);
+	declarations.push(switch_case_computed(statement, case_ref));
+
+	/** @type {ESTreeJSX.JSXElement[]} */
+	const elements = [];
+	outputs.forEach((output, index) => {
+		if (output?.type !== 'JSXElement') return;
+		elements.push(
+			with_directive(
+				/** @type {ESTreeJSX.JSXElement} */ (/** @type {unknown} */ (output)),
+				elements.length ? 'v-else-if' : 'v-if',
+				switch_case_test(case_ref, index, elements.length === 0),
+			),
+		);
+	});
+	return elements;
 }
 
 /**

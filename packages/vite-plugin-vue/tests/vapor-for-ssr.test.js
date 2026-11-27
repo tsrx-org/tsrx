@@ -122,6 +122,112 @@ export function App({ on }: { on: boolean }) @{
 		</ul>
 	</div>
 }`,
+
+	'element-switch-attrs.tsrx': `function Inner() @{
+	<span class="inner">{'inner'}</span>
+}
+function Child({ n }: { n: number }) @{
+	<div class="child">
+		@switch (n) {
+			@case 1: {
+				<Inner />
+			}
+		}
+	</div>
+}
+export function App({ n }: { n: number }) @{
+	<Child class="extra" data-x="1" n={n} />
+}`,
+
+	// element-switch-hydration.test.tsrx hydrates what these render.
+	'element-switch.tsrx': `import { ref } from 'vue';
+
+function CaseCounter(props: { label: string }) @{
+	const count = ref(0);
+	<button class="counter" onClick={() => count.value++}>{props.label + ':' + count.value}</button>
+}
+
+export function Plain(props: { n: number }) @{
+	<section>
+		<p>
+			@switch (props.n) {
+				@case 1: {
+					<b>{'one'}</b>
+				}
+				@default: {
+					<i>{'other'}</i>
+				}
+			}
+		</p>
+	</section>
+}
+
+export function Counted({ n }: { n: number }) @{
+	<p>
+		@switch (n) {
+			@case 1: {
+				<CaseCounter label="one" />
+			}
+			@default: {
+				<CaseCounter label="other" />
+			}
+		}
+		{'n=' + n}
+	</p>
+}
+
+export function Between({ n }: { n: number }) @{
+	<p>
+		{'n=' + n}
+		@switch (n) {
+			@case 1: {
+				<b>{'one'}</b>
+			}
+			@default: {
+				<i>{'other'}</i>
+			}
+		}
+		<em>{'after'}</em>
+	</p>
+}
+
+export function Partial({ n }: { n: number }) @{
+	<p>
+		@switch (n) {
+			@case 1: {
+				<b>{'one'}</b>
+			}
+			@case 2: {}
+		}
+	</p>
+}
+
+export function BesideIf({ n }: { n: number }) @{
+	<p>
+		@if (n === 1) {
+			<b>{'if'}</b>
+		}
+		@switch (n) {
+			@case 1: {
+				<i>{'mode a'}</i>
+			}
+		}
+	</p>
+}
+
+export function Local({ n }: { n: number }) {
+	const view = <p>
+		@switch (n) {
+			@case 1: {
+				<b>{'one'}</b>
+			}
+			@default: {
+				<i>{'other'}</i>
+			}
+		}
+	</p>;
+	return view;
+}`,
 };
 
 /** @type {string} */
@@ -223,5 +329,50 @@ describe('[vue] @switch on the server', () => {
 			'<div><p>2 items</p><ul><li>one</li></ul></div>',
 		);
 		expect(await render('switch.tsrx', [])).toBe('<div><p>zero</p><ul><li>none</li></ul></div>');
+	});
+});
+
+// An element's `@switch` renders as `v-if` / `v-else-if` elements; the server
+// renders the picked case, or a `<!---->`, which
+// element-switch-hydration.test.tsrx hydrates (comments kept here).
+describe("[vue] an element's @switch on the server", () => {
+	it('renders the picked case, or a comment', async () => {
+		const shapes = await server.ssrLoadModule('/element-switch.tsrx');
+		/** @type {Record<string, string[]>} */
+		const rendered = {};
+		for (const shape of ['Plain', 'Counted', 'Between', 'Partial', 'BesideIf', 'Local']) {
+			rendered[shape] = [];
+			for (const n of [1, 2, 3]) {
+				rendered[shape].push(await renderToString(createSSRApp(shapes[shape], { n })));
+			}
+		}
+		expect(rendered).toEqual({
+			Plain: [
+				'<section><p><b>one</b></p></section>',
+				'<section><p><i>other</i></p></section>',
+				'<section><p><i>other</i></p></section>',
+			],
+			Counted: [
+				'<p><button class="counter">one:0</button>n=1</p>',
+				'<p><button class="counter">other:0</button>n=2</p>',
+				'<p><button class="counter">other:0</button>n=3</p>',
+			],
+			Between: [
+				'<p>n=1<b>one</b><em>after</em></p>',
+				'<p>n=2<i>other</i><em>after</em></p>',
+				'<p>n=3<i>other</i><em>after</em></p>',
+			],
+			Partial: ['<p><b>one</b></p>', '<p><!----></p>', '<p><!----></p>'],
+			BesideIf: ['<p><b>if</b><i>mode a</i></p>', '<p><!----><!----></p>', '<p><!----><!----></p>'],
+			Local: ['<p><b>one</b></p>', '<p><i>other</i></p>', '<p><i>other</i></p>'],
+		});
+	});
+
+	it("gives a component case none of its parent component's fallthrough attributes", async () => {
+		// runtime.test.tsrx checks the same on the client.
+		const { App } = await server.ssrLoadModule('/element-switch-attrs.tsrx');
+		expect(await renderToString(createSSRApp(App, { n: 1 }))).toBe(
+			'<div class="child extra" data-x="1"><span class="inner">inner</span></div>',
+		);
 	});
 });
