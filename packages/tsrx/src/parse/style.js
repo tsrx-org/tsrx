@@ -13,6 +13,12 @@ const REGEX_COMBINATOR = /^(\+|~|>|\|\|)/;
 const REGEX_VALID_IDENTIFIER_CHAR = /[a-zA-Z0-9_-]/;
 const REGEX_LEADING_HYPHEN_OR_DIGIT = /^-?\d/;
 const REGEX_WHITESPACE_OR_COLON = /[\s:]/;
+// The end of a declaration's name: whitespace, its `:`, or a comment.
+const REGEX_PROPERTY_END = /[\s:]|\/\*/;
+// A declaration's name: an identifier, of letters, digits, `-`, `_`,
+// non-ASCII and escapes, which starts with no digit after an optional `-`.
+const REGEX_DECLARATION_NAME =
+	/^(?:--|-?(?:[a-zA-Z_]|[^\x00-\x7f]|\\[^\n]))(?:[\w-]|[^\x00-\x7f]|\\[^\n])*$/;
 // An escape, and the one space that ends a hex escape (`\r\n` too).
 const REGEX_VALUE_ESCAPE = /\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^\n\r\f])/y;
 // `--` and a name (letters, digits, `-`, `_`, non-ASCII, escapes), then `:`.
@@ -464,9 +470,17 @@ function read_block_item(parser) {
 function read_declaration(parser, block_value = false) {
 	const start = parser.index;
 
-	const property = parser.read_until(REGEX_WHITESPACE_OR_COLON);
-	parser.allow_whitespace();
-	parser.eat(':');
+	let property = parser.read_until(REGEX_PROPERTY_END);
+	// CSS reads comments before the colon as nothing (`animation /* c */ : spin`),
+	// after a name; not a `/*` in a string (`"/*"`), which is no comment.
+	if (!REGEX_DECLARATION_NAME.test(property) || !eat_colon_after_comments(parser)) {
+		// With no colon, which CSS reads no declaration without, it is read as it
+		// was: the name up to whitespace or a colon, the value after it.
+		parser.index = start;
+		property = parser.read_until(REGEX_WHITESPACE_OR_COLON);
+		parser.allow_whitespace();
+		parser.eat(':');
+	}
 	let index = parser.index;
 	parser.allow_whitespace();
 
@@ -492,6 +506,28 @@ function read_declaration(parser, block_value = false) {
 		property,
 		value,
 	};
+}
+
+/**
+ * Eat the whitespace, the comments and the `:` at the parser's index, if a
+ * `:` comes after them; if not, or a comment is left open, eat nothing of
+ * the comments and return false.
+ *
+ * @param {Parser} parser
+ * @returns {boolean}
+ */
+function eat_colon_after_comments(parser) {
+	const start = parser.index;
+	parser.allow_whitespace();
+	while (parser.match('/*')) {
+		const close = parser.template.indexOf('*/', parser.index + 2);
+		if (close === -1) break;
+		parser.index = close + 2;
+		parser.allow_whitespace();
+	}
+	if (parser.eat(':')) return true;
+	parser.index = start;
+	return false;
 }
 
 /**

@@ -1119,6 +1119,26 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('reads the value after a comment before the colon', () => {
+			// As it reads the same declaration without the comment, which CSS reads
+			// as nothing.
+			for (const property of ['animation', 'animation-name', '-webkit-animation', 'ANIMATION']) {
+				for (const between of [' /* c */ ', ' /**/', '/**/', '/* a */ /* b */ ', '\n/* : */']) {
+					const commented = compile_keyframes(
+						`@keyframes fade ${frames} .a { ${property}${between}:fade; }`,
+					);
+					const plain = compile_keyframes(`@keyframes fade ${frames} .a { ${property}:fade; }`);
+					expect(
+						commented.css
+							.replaceAll(commented.hash, 'H')
+							.replace(`${property}${between}:`, `${property}:`),
+						property + between,
+					).toBe(plain.css.replaceAll(plain.hash, 'H'));
+					expect(commented.css, property + between).toContain(`:${commented.hash}-fade;`);
+				}
+			}
+		});
+
 		it('leaves animation shorthand keywords alone even when local keyframes share their name', () => {
 			const { css, hash } = compile_keyframes(
 				`@keyframes linear ${frames} @keyframes fade ${frames}

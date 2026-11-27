@@ -157,6 +157,59 @@ describe('parseStyle declaration values', function () {
 	});
 
 	it.each([
+		// CSS reads a comment there as nothing; the value was read from the
+		// comment on, and the name took one right after it.
+		['.a { animation /* c */ :spin 1s }', [[['animation', 'spin 1s']]]],
+		['.a { animation/**/: spin }', [[['animation', 'spin']]]],
+		[
+			'.a { color/* a */ /* b */:red; --x/**/: 1 }',
+			[
+				[
+					['color', 'red'],
+					['--x', '1'],
+				],
+			],
+		],
+		// Not a / on its own.
+		['.a { color/x: red }', [[['color/x', 'red']]]],
+		// With no colon, which CSS reads no declaration without, it is read as it
+		// was.
+		['.a { b /* c */ }', [[['b', '/* c */']]]],
+		['.a { b;/* c */; }', [[['b;/*', 'c */']]]],
+		['.a { color/**/x:red }', [[['color/**/x', 'red']]]],
+		['.a { 1 /* c */: red }', [[['1', '/* c */: red']]]],
+		// A `/*` in a string is no comment, even with a `*/` and a colon later.
+		[
+			'.a { "/*" x; color: red } .b { color /* c */: blue }',
+			[
+				[
+					['"/*"', 'x'],
+					['color', 'red'],
+				],
+				[['color', 'blue']],
+			],
+		],
+		[
+			'.a { color: red; "/*" x } .b { color: blue }',
+			[
+				[
+					['color', 'red'],
+					['"/*"', 'x'],
+				],
+				[['color', 'blue']],
+			],
+		],
+	])('reads past a comment before the colon in %j', function (css, expected) {
+		expect(blocks(css)).toEqual(expected);
+	});
+
+	it('reports a comment before the colon that is left open', function () {
+		expect(function () {
+			parseStyle('.a { color /* c : red }', LOCATION, {});
+		}).toThrow(expect.objectContaining({ code: 'TSRX3013' }));
+	});
+
+	it.each([
 		// A hex escape ends at a space, or a \r\n, which is part of it.
 		['.a{background:ur\\6c (/*x)}.b{color:red/* } */}', 2],
 		['.a{background:ur\\6c\r\n(/*x)}.b{color:red/* } */}', 2],

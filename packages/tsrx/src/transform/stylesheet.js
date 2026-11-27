@@ -777,10 +777,20 @@ const visitors = {
 	Declaration(node, { state }) {
 		const property = node.property && remove_css_prefix(node.property.toLowerCase());
 		if (property === 'animation' || property === 'animation-name') {
-			// The value starts after the `:`, which can follow a space
-			// (`animation :spin 1s`).
+			// The value starts after the `:`, which can follow whitespace and
+			// comments (`animation :spin 1s`, `animation /* c */ :spin 1s`).
+			const source = state.code.original;
 			let start = node.start + node.property.length;
-			while (/\s/.test(state.code.original[start])) start += 1;
+			while (start < node.end) {
+				if (/\s/.test(source[start])) {
+					start += 1;
+				} else if (source.startsWith('/*', start)) {
+					const close = source.indexOf('*/', start + 2);
+					start = close === -1 ? node.end : close + 2;
+				} else {
+					break;
+				}
+			}
 			if (state.code.original[start] === ':') start += 1;
 			const tokens = tokenize_css_value(state.code.original, start, node.end);
 
