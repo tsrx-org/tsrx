@@ -1768,6 +1768,49 @@ describe('scoped style analysis', () => {
 			}
 		});
 
+		it('writes nothing into a pruned selector when it drops the whitespace in a :global(...)', () => {
+			const CR = String.fromCharCode(13);
+			/** @type {Array<[css: string, pruned: string, full: string, minified: string]>} */
+			const cases = [
+				[
+					'.p, .q:global( /* c */ .x /* d */ ).r { color: red; }',
+					'.q:global( /* c */ .x /* d */ ).r',
+					'.p /* (unused) .q\\/* c *\\/.x\\/* d *\\/.r*/ { color: red; }',
+					'.p { color: red; }',
+				],
+				[
+					'.q:global( .x ), .p { color: red; }',
+					'.q:global( .x )',
+					'/* (unused) .q.x,*/ .p { color: red; }',
+					' .p { color: red; }',
+				],
+				// Nor the space after a hex escape, which minifying removes with it.
+				[
+					'.p, .q:global(.\\31) .r { color: red; }',
+					'.q:global(.\\31) .r',
+					'.p /* (unused) .q.\\31 .r*/ { color: red; }',
+					'.p { color: red; }',
+				],
+				// Nor the space for a CR that ends one.
+				[
+					`.p, .q:global(.\\31${CR})\n.r { color: red; }`,
+					`.q:global(.\\31${CR})\n.r`,
+					`.p /* (unused) .q.\\31${CR}\n.r*/ { color: red; }`,
+					'.p { color: red; }',
+				],
+				[
+					`.p, .q.\\31${CR} :global\n.r { color: red; }`,
+					`.q.\\31${CR} :global\n.r`,
+					`.p /* (unused) .q.\\31${CR}\n.r*/ { color: red; }`,
+					'.p { color: red; }',
+				],
+			];
+			for (const [css, pruned, full, minified] of cases) {
+				expect(render(css, [pruned], false), css).toBe(full);
+				expect(render(css, [pruned], true), css).toBe(minified);
+			}
+		});
+
 		it('writes no hash into a pruned selector, even for an argument that matched', () => {
 			/** @type {Array<[css: string, pruned: string, expected: string, minified: string]>} */
 			const cases = [

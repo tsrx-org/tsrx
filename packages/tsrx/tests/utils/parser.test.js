@@ -1047,9 +1047,12 @@ describe('TSRX parser', () => {
 			]);
 			// And `using of` before `=`, `:` or `;` on any line, where acorn took it
 			// only before `=` on its line.
+			// The name it spells, written with an escape too, as TypeScript reads it.
 			for (const source of [
 				'for (using of: null = null; ; ) {}',
 				'for (using\n\tof = null; ; ) {}',
+				`for (using\n\t${B}u006ff = null; ; ) {}`,
+				`for (using\n\t${B}u{6f}f: null = null; ; ) {}`,
 			]) {
 				const [typed] = find_all(source, 'VariableDeclaration');
 				expect([typed?.kind, /** @type {any} */ (typed?.declarations[0].id).name], source).toEqual([
@@ -15538,6 +15541,77 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		);
 	});
 
+	it("reports a `using` declaration's missing initializer at the name, as a `const` one's", async () => {
+		// TypeScript's checker reports TS1155 on the name, without its type, for
+		// `using` and `await using` as for `const`, and not after `declare`, which
+		// makes the declaration ambient. acorn threw it at the token after the
+		// name in every mode.
+		/** @type {Array<[source: string, errors: Array<[code: string, at: string, length: number]>]>} */
+		const cases = [
+			['using x;', [['TS1155', 'x;', 1]]],
+			['using x: T, y = 1;', [['TS1155', 'x:', 1]]],
+			['async function f() {\n\tawait using x;\n}', [['TS1155', 'x;', 1]]],
+			['for (using of;;) {}', [['TS1155', 'of;', 2]]],
+			[`using ${'x'.repeat(70)};`, [['TS1155', 'x', 70]]],
+			['const \\u0078: number;', [['TS1155', '\\u0078', 6]]],
+			['declare using x;', [['TS1491', 'declare', 7]]],
+			['export declare await using x;', [['TS1495', 'export', 6]]],
+			// Not the declarations in a statement after `declare` that isn't a
+			// `using` declaration to acorn, as when the `using` has an escape
+			// (TypeScript reports TS1260 there first, not changed here).
+			[
+				'declare \\u0075sing as any + (() => { using x; })();',
+				[
+					['TS1155', 'x;', 1],
+					['TS1079', 'declare', 7],
+				],
+			],
+			[
+				'declare \\u0075sing as any + (() => { const x; const y; })();',
+				[
+					['TS1155', 'x;', 1],
+					['TS1155', 'y;', 1],
+					['TS1079', 'declare', 7],
+				],
+			],
+			// After a binding pattern's TS1492, and a modifier's error.
+			[
+				'using { x = (() => { using y; })() } = z;',
+				[
+					['TS1492', '{ x', 30],
+					['TS1155', 'y;', 1],
+				],
+			],
+			[
+				'abstract using { x } = y, z;',
+				[
+					['TS1242', 'abstract', 8],
+					['TS1492', '{ x }', 5],
+					['TS1155', 'z;', 1],
+				],
+			],
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			cases.flatMap(([source]) =>
+				[undefined, { collect: true }, { loose: true }].map((options) => ({ source, options })),
+			),
+		);
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok ? outcome.errors : { code: outcome.code, pos: outcome.pos },
+			),
+		).toEqual(
+			cases.flatMap(([source, errors]) => {
+				const recorded = errors.map(([code, at, length]) => {
+					const pos = source.indexOf(at);
+					return { code, pos, end: pos + length };
+				});
+				const [first] = recorded;
+				return [{ code: first.code, pos: first.pos }, recorded, recorded];
+			}),
+		);
+	});
+
 	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {
 		// `global` is a global augmentation only before `{` (or a name or
 		// `export`), so `export` starts no declaration there: TS1128, as in
@@ -18616,21 +18690,61 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		expect(() => parseModule('throw let foo;', 'App.tsrx', { collect: true, errors: [] })).toThrow(
 			expect.objectContaining({ code: 'TS1440', pos: 6, end: 9 }),
 		);
-		// An escaped keyword that TypeScript reads as starting a declaration, or as
-		// a modifier that starts no statement in a list, isn't a name there:
-		// TypeScript reports its escape (TS1260) or TS1128.
+		// An escaped keyword that TypeScript reads as the keyword there isn't a
+		// name: TypeScript reports its escape (TS1260) on it, or TS1128 for a
+		// modifier that starts no statement in a list, where it starts a
+		// declaration (`isDeclaration`), an async arrow function, a `let` or
+		// `using` declaration, or a `yield` expression. A strict parse throws
+		// TS1214 first for a word reserved in strict mode, as it reads the name.
+		/** @type {Array<[source: string, strict: [string, string], collect: [string, string, number]]>} */
+		const escaped_keywords = [
+			['\\u0061sync function f() {}', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['\\u0061sync foo => foo;', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['if (x) \\u0061ccessor class C {}', ['TS1260', '\\'], ['TS1260', '\\', 13]],
+			['\\u0061ccessor export {};', ['TS1260', '\\'], ['TS1260', '\\', 13]],
+			['\\u0075sing foo;', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['\\u006cet foo;', ['TS1214', '\\'], ['TS1260', '\\', 8]],
+			['\\u0079ield foo;', ['TS1214', '\\'], ['TS1260', '\\', 10]],
+			['\\u0061ccessor foo;', ['TS1128', '\\'], ['TS1128', '\\', 13]],
+			['{\n\t\\u0073tatic foo;\n}', ['TS1214', '\\'], ['TS1128', '\\', 11]],
+			// `enum` after `const` is the keyword of a `const enum`, and a string is
+			// no name.
+			['if (x) \\u0061sync const enum E {}', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['if (x) \\u0061sync module "await" {}', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['{ \\u0061ccessor module "await" {} }', ['TS1260', '\\'], ['TS1260', '\\', 13]],
+		];
+		for (const [source, [strict_code, strict_at], [code, at, length]] of escaped_keywords) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code: strict_code, pos: source.indexOf(strict_at) }),
+			);
+			const pos = source.indexOf(at);
+			expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] }), source).toThrow(
+				expect.objectContaining({ code, pos, end: pos + length }),
+			);
+		}
+		// Where TypeScript reads a name, it's a name (TS1434), as `\\u0061sync foo;`
+		// above: a modifier before no declaration after `if (…)`, and before what
+		// TypeScript reads as no name there (`enum`, `await` in an async function,
+		// `yield` in a generator).
 		for (const source of [
-			'\\u006cet foo;',
-			'\\u0075sing foo;',
-			'\\u0061ccessor foo;',
-			'{\n\t\\u0073tatic foo;\n}',
-			'\\u0079ield foo;',
+			'if (x) \\u0061ccessor foo;',
+			'\\u0075sing enum E {}',
+			'if (x) \\u0061ccessor interface enum {}',
+			'async function f() { \\u0061sync await => x; }',
+			'function* f() { \\u0061sync yield => x; }',
+			// TypeScript's await and yield contexts reach through a namespace, and
+			// a class `static` block is an await context.
+			'function* f() { namespace N { \\u0061sync yield => x; } }',
+			'class C { static { \\u0061sync await => x; } }',
+			// Nor where a declaration's name is `await` or `yield`, after any
+			// modifiers, or a scanner error comes after it.
+			'async function f() { \\u0061sync export declare namespace await {} }',
+			'async function f() { \\u0061sync defer await; }',
+			'if (x) \\u0061sync foo "',
 		]) {
-			for (const options of [undefined, { collect: true, errors: [] }]) {
-				expect(() => parseModule(source, 'App.tsrx', options), source).not.toThrow(
-					'Unexpected keyword or identifier.',
-				);
-			}
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code: 'TS1434', pos: source.indexOf('\\') }),
+			);
 		}
 		// Before a declaration TypeScript reads (a global augmentation named
 		// `foo`, TS1005 at `foo`; a repeated modifier, TS1030), `abstract` isn't a
@@ -18661,6 +18775,34 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		expect(() => parseModule('for (async of xs) {}', 'App.tsrx')).toThrow(
 			expect.objectContaining({ code: 'TS1012', pos: 'for (async of '.length }),
 		);
+	});
+
+	it('reads a long run of modifiers before a declaration in linear time', () => {
+		// The tokens after an escaped modifier, and after modifiers that start a
+		// statement, are read once each, not again for each of them: 5,000 took
+		// seconds.
+		const words = 'async '.repeat(5000);
+		for (const [source, code] of [
+			[`if (x) \\u0061sync ${words}function f() {}`, 'TS1260'],
+			[`if (x) \\u0061sync function ${words}f() {}`, 'TS1260'],
+			[`\\u0061ccessor ${words}x;`, 'TS1128'],
+			[`accessor ${words}x;`, 'TS1128'],
+		]) {
+			const start = performance.now();
+			expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] })).toThrow(
+				expect.objectContaining({ code }),
+			);
+			expect(performance.now() - start, source.slice(0, 24)).toBeLessThan(1000);
+		}
+		// And a run of `declare` in a block, read for a namespace declaration's
+		// place too.
+		const source = `{ ${'declare '.repeat(1500)}let x; }`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		const start = performance.now();
+		parseModule(source, 'App.tsrx', { collect: true, errors });
+		expect(performance.now() - start).toBeLessThan(1000);
+		expect(errors.map((error) => [error.code, error.pos])).toEqual([['TS1184', 2]]);
 	});
 
 	it('reports `import` after `new` as a missing expression', async () => {

@@ -157,6 +157,89 @@ describe('parseStyle declaration values', function () {
 	});
 
 	it.each([
+		// CSS reads a comment there as nothing; the value was read from the
+		// comment on, and the name took one right after it.
+		['.a { animation /* c */ :spin 1s }', [[['animation', 'spin 1s']]]],
+		['.a { animation/**/: spin }', [[['animation', 'spin']]]],
+		[
+			'.a { color/* a */ /* b */:red; --x/**/: 1 }',
+			[
+				[
+					['color', 'red'],
+					['--x', '1'],
+				],
+			],
+		],
+		// Not a / on its own.
+		['.a { color/x: red }', [[['color/x', 'red']]]],
+		// With no colon, which CSS reads no declaration without, it is read as it
+		// was.
+		['.a { b /* c */ }', [[['b', '/* c */']]]],
+		['.a { b;/* c */; }', [[['b;/*', 'c */']]]],
+		['.a { color/**/x:red }', [[['color/**/x', 'red']]]],
+		['.a { 1 /* c */: red }', [[['1', '/* c */: red']]]],
+		// A `/*` in a string is no comment, even with a `*/` and a colon later.
+		[
+			'.a { "/*" x; color: red } .b { color /* c */: blue }',
+			[
+				[
+					['"/*"', 'x'],
+					['color', 'red'],
+				],
+				[['color', 'blue']],
+			],
+		],
+		[
+			'.a { color: red; "/*" x } .b { color: blue }',
+			[
+				[
+					['color', 'red'],
+					['"/*"', 'x'],
+				],
+				[['color', 'blue']],
+			],
+		],
+	])('reads past a comment before the colon in %j', function (css, expected) {
+		expect(blocks(css)).toEqual(expected);
+	});
+
+	it('reports a comment before the colon that is left open', function () {
+		expect(function () {
+			parseStyle('.a { color /* c : red }', LOCATION, {});
+		}).toThrow(expect.objectContaining({ code: 'TSRX3013' }));
+	});
+
+	it.each([
+		// With no value after the colon it is read as it was, the comments and
+		// the colon as its value: CSS reads an empty value, which some
+		// declarations may have that the empty-value check doesn't know.
+		['.a { color /* c */ : ; }', [[['color', '/* c */ :']]]],
+		['.a { \\--x /* c */ : ; }', [[['\\--x', '/* c */ :']]]],
+		[
+			'.a { color: red; foo /* c */ : ; }',
+			[
+				[
+					['color', 'red'],
+					['foo', '/* c */ :'],
+				],
+			],
+		],
+		// A custom property's is read without the comment.
+		['.a { --x /* c */ : ; }', [[['--x', '']]]],
+	])('reads an empty value after a comment and a colon in %j', function (css, expected) {
+		expect(blocks(css)).toEqual(expected);
+	});
+
+	it("reads a @function's empty result after a comment as before", function () {
+		const rule = /** @type {any} */ (
+			parseStyle('@function --e() { result /* c */ : ; }', LOCATION, {}).children[0]
+		);
+		expect(
+			rule.block.children.map((/** @type {any} */ child) => [child.property, child.value]),
+		).toEqual([['result', '/* c */ :']]);
+	});
+
+	it.each([
 		// A hex escape ends at a space, or a \r\n, which is part of it.
 		['.a{background:ur\\6c (/*x)}.b{color:red/* } */}', 2],
 		['.a{background:ur\\6c\r\n(/*x)}.b{color:red/* } */}', 2],
@@ -492,6 +575,13 @@ describe('parseStyle custom properties', function () {
 				['inherits', 'false'],
 			],
 		],
+		// Comments before the colon are nothing, as before another declaration's.
+		['@property --x { initial-value /* c */ : ; }', [['initial-value', '']]],
+		['@property --x { initial-value/**/: {a} b; }', [['initial-value', '{a} b']]],
+		['@property --x { Initial-Value /* a */ /* b */ :{a}{b} }', [['Initial-Value', '{a}{b}']]],
+		['@property --x { initial-value /* } */ : {a} b }', [['initial-value', '{a} b']]],
+		// An escaped name is read as before.
+		['@property --x { \\69nitial-value /* c */ : ; }', [['\\69nitial-value', '/* c */ :']]],
 	])('reads the initial-value in %j', function (css, declarations) {
 		/** @param {any} node @returns {any} */
 		const property = (node) => (node.type === 'Atrule' ? node : property(node.block.children[0]));
@@ -720,5 +810,182 @@ describe('parseStyle comments in selectors', function () {
 		expect(function () {
 			parseStyle('.a /* c { color: red; }', LOCATION, {});
 		}).toThrow();
+	});
+
+	/**
+	 * The simple selectors of the first selector of `css`'s first rule, with
+	 * what the parser read of each.
+	 *
+	 * @param {string} css
+	 */
+	function simple_selectors(css) {
+		const rule = /** @type {any} */ (parseStyle(css, LOCATION, { loose: false }).children[0]);
+		return rule.prelude.children[0].children.flatMap((/** @type {any} */ relative) =>
+			relative.selectors.map((/** @type {any} */ simple) =>
+				simple.type === 'AttributeSelector'
+					? [simple.type, simple.name, simple.matcher, simple.value, simple.flags]
+					: [simple.type, simple.name ?? simple.value],
+			),
+		);
+	}
+
+	it.each([
+		// Inside a simple selector, CSS reads a comment as nothing: between the
+		// parts of an attribute selector, after `.`, `:` and `::`, and in an An+B
+		// wherever it takes whitespace.
+		['[/* c */x/* c */=/* c */y/* c */] {}', [['AttributeSelector', 'x', '=', 'y', null]]],
+		[
+			'[x /* c */ |= /* c */ "y" /* c */ i /* c */] {}',
+			[['AttributeSelector', 'x', '|=', 'y', 'i']],
+		],
+		['[x=y/* c */i] {}', [['AttributeSelector', 'x', '=', 'y', 'i']]],
+		// A flag is an identifier, escapes and all.
+		['[x=y/* c */\\69 ] {}', [['AttributeSelector', 'x', '=', 'y', 'i']]],
+		['./* c */a {}', [['ClassSelector', 'a']]],
+		[
+			'a:/* c */hover {}',
+			[
+				['TypeSelector', 'a'],
+				['PseudoClassSelector', 'hover'],
+			],
+		],
+		[
+			'a::/* c */before, a:/* c */:after {}',
+			[
+				['TypeSelector', 'a'],
+				['PseudoElementSelector', 'before'],
+			],
+		],
+		[':/* c */is(.a) {}', [['PseudoClassSelector', 'is']]],
+	])('reads %j', function (css, expected) {
+		expect(simple_selectors(css)).toEqual(expected);
+	});
+
+	it.each([
+		['2n/* c */+1', '2n/* c */+1'],
+		['2n + /* c */ 1', '2n + /* c */ 1'],
+		['2n+1/* c */', '2n+1'],
+		['odd/* c */', 'odd'],
+		['n/* c */of div', 'n/* c */of '],
+		['2n/* c */of/* c */.a', '2n/* c */of/* c */'],
+	])('reads the An+B in :nth-child(%s)', function (argument, nth) {
+		const [pseudo] = simple_selectors(`:nth-child(${argument}) {}`);
+		expect(pseudo).toEqual(['PseudoClassSelector', 'nth-child']);
+		const rule = /** @type {any} */ (
+			parseStyle(`:nth-child(${argument}) {}`, LOCATION, {}).children[0]
+		);
+		expect(
+			rule.prelude.children[0].children[0].selectors[0].args.children[0].children[0].selectors[0],
+		).toMatchObject({
+			type: 'Nth',
+			value: nth,
+		});
+	});
+
+	it('reads an An+B with comments only at the start of the argument', function () {
+		// After `of`, and in the next selector of the list, `n` is a type selector.
+		const rule = /** @type {any} */ (
+			parseStyle(':nth-child(1 of .a, n/* c */ of .b) {}', LOCATION, {}).children[0]
+		);
+		const [, second] = rule.prelude.children[0].children[0].selectors[0].args.children;
+		expect(
+			second.children.map((/** @type {any} */ relative) => relative.selectors[0].type),
+		).toEqual(['TypeSelector', 'TypeSelector', 'ClassSelector']);
+	});
+
+	it('reads no An+B with comments outside an :nth-child() and the like', function () {
+		// In an :is(), `n /* c */ of .a` is type selectors and descendant combinators.
+		const rule = /** @type {any} */ (
+			parseStyle(':is(n/* c */ of .a) {}', LOCATION, {}).children[0]
+		);
+		const argument = rule.prelude.children[0].children[0].selectors[0].args.children[0];
+		expect(
+			argument.children.map((/** @type {any} */ relative) => relative.selectors[0].type),
+		).toEqual(['TypeSelector', 'TypeSelector', 'ClassSelector']);
+	});
+
+	it.each([
+		// Not where CSS reads none either: whitespace with it ends the selector,
+		// and a hash, a function's `(` and `:global` are written whole.
+		'./* c */ a {}',
+		'#/* c */a {}',
+		':is/* c */(.a) {}',
+		'[x|/* c */=y] {}',
+		':/* c */global(.a) {}',
+	])('reports %j', function (css) {
+		expect(function () {
+			parseStyle(css, LOCATION, {});
+		}).toThrow(expect.objectContaining({ code: 'TSRX3013' }));
+	});
+});
+
+describe('parseStyle type selectors', function () {
+	it.each([
+		// CSS reads no rule with one after another simple selector, and a comment
+		// with no whitespace around it is no combinator.
+		['[x]div { color: red; }', 3],
+		['.wrap* { color: red; }', 5],
+		['.wrap/**/div { color: red; }', 9],
+		['.wrap/**/* { color: red; }', 9],
+		[':hover*.a { color: red; }', 6],
+		['.a .b/**/svg|a { color: red; }', 9],
+		['.wrap::before/* c */div { color: red; }', 20],
+		// Nor after an `&`, which CSS Nesting writes after it: `div&`.
+		['.p { &div { color: red; } }', 6],
+		['.p { &&* { color: red; } }', 7],
+		['.p { .a&div { color: red; } }', 8],
+		// In the argument of a pseudo-class that takes selectors too, even a
+		// forgiving one, where a browser drops just that selector.
+		['div:is(.a*, .b) { color: red; }', 9],
+		[':not(.a*) { color: red; }', 7],
+		[':host(.a*) { color: red; }', 8],
+		// In any case, and in an :is() in another argument.
+		[':HOST-CONTEXT(.a*) { color: red; }', 16],
+		[':nth-child(2n of :not(.a*)) { color: red; }', 24],
+		// There the parser reads a name such as odd as an An+B.
+		[':is([x]odd) { color: red; }', 7],
+	])('reports the type selector in %j', function (css, pos) {
+		expect(function () {
+			parseStyle(css, LOCATION, { loose: false });
+		}).toThrow(
+			expect.objectContaining({
+				code: 'TSRX3013',
+				pos,
+				message:
+					'A type selector or * must come first in its compound selector, as in div.x or div&',
+			}),
+		);
+	});
+
+	it.each([
+		'div.a { color: red; }',
+		'*.a { color: red; }',
+		'.a div, .a > *, .a /**/ div { color: red; }',
+		'*|div, svg|a { color: red; }',
+		'.p { div&, *&, div&& { color: red; } }',
+		// After bare :globals, which the output drops, and a :global(...), which
+		// the output puts it in an :is() after.
+		':global*, :global/**/div, :global(.x)div, :global(.x)* { color: red; }',
+		// Not in an argument that isn't a selector: a pseudo-element's (part
+		// names), or an An+B's, which the parser reads in parts around comments.
+		'::part(foo/**/bar), ::part(foo/**/odd) { color: red; }',
+		':nth-child(2n of div), :nth-child(odd), :nth-child(n/**/of div) { color: red; }',
+		':nth-child(n of/**/div), :nth-of-type(n/**/- 1) { color: red; }',
+	])('reads %j', function (css) {
+		expect(function () {
+			parseStyle(css, LOCATION, { loose: false });
+		}).not.toThrow();
+	});
+
+	it('checks a compound of many :globals and type selectors in linear time', function () {
+		// The test for only bare :globals before a type selector reads the
+		// compound, and it ran for each type selector after a `:global(...)`:
+		// 8 s each, where a linear read takes about 0.1 s.
+		for (const type of ['div', '*']) {
+			const css = `${':global'.repeat(40_000)}${`:global(.x)${type}`.repeat(40_000)} { color: red; }`;
+			const start = performance.now();
+			parseStyle(css, LOCATION, { loose: false });
+			expect(performance.now() - start).toBeLessThan(4000);
+		}
 	});
 });

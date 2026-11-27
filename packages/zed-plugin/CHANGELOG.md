@@ -1,5 +1,21 @@
 # @tsrx/zed-plugin
 
+## 0.1.22
+
+### Patch Changes
+
+- [#1535](https://github.com/tsrx-org/tsrx/pull/1535)
+  [`3cdf48f`](https://github.com/tsrx-org/tsrx/commit/3cdf48ff4a4f2bdc10d7154a790c9c5aa721e4fd)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The tree-sitter grammar
+  now reads a private name the way it reads any other name: with a Unicode escape
+  (`#\u0061b`, `#c\u{64}`) or a letter outside ASCII (`#é`), as
+  tree-sitter-javascript and TypeScript do. `class C { #\u0061b = 1; }` is a field
+  named `#\u0061b`, where the `#` became an `ERROR` and the rest (`\u0061b = 1`) a
+  public field.
+- Updated dependencies
+  [[`067df6e`](https://github.com/tsrx-org/tsrx/commit/067df6e29a610d862df19fd381608ce0c0fd6ce9)]:
+  - @tsrx/language-server@0.7.17
+
 ## 0.1.21
 
 ### Patch Changes

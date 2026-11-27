@@ -1,5 +1,27 @@
 # @tsrx/nvim-plugin
 
+## 0.0.105
+
+### Patch Changes
+
+- [#1541](https://github.com/tsrx-org/tsrx/pull/1541)
+  [`cdac591`](https://github.com/tsrx-org/tsrx/commit/cdac5910f86f3cc6f2b92fa7bab4445674e93c46)
+  Thanks [@github-actions](https://github.com/apps/github-actions)! - Install
+  `@tsrx/language-server` 0.7.17 when a project has no server of its own.
+
+## 0.0.104
+
+### Patch Changes
+
+- [#1535](https://github.com/tsrx-org/tsrx/pull/1535)
+  [`3cdf48f`](https://github.com/tsrx-org/tsrx/commit/3cdf48ff4a4f2bdc10d7154a790c9c5aa721e4fd)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The tree-sitter grammar
+  now reads a private name the way it reads any other name: with a Unicode escape
+  (`#\u0061b`, `#c\u{64}`) or a letter outside ASCII (`#é`), as
+  tree-sitter-javascript and TypeScript do. `class C { #\u0061b = 1; }` is a field
+  named `#\u0061b`, where the `#` became an `ERROR` and the rest (`\u0061b = 1`) a
+  public field.
+
 ## 0.0.103
 
 ### Patch Changes

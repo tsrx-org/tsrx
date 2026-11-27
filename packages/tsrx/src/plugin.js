@@ -253,6 +253,48 @@ const STATEMENT_START_MODIFIERS = new Set([
 	'readonly',
 	'static',
 ]);
+// The words before a declaration's name: modifiers and the keywords that start
+// one (see `#escapedModifierStartsDeclaration`).
+const DECLARATION_PREFIX_WORDS = new Set([
+	'abstract',
+	'accessor',
+	'async',
+	'class',
+	'const',
+	'declare',
+	'defer',
+	'enum',
+	'function',
+	'global',
+	'interface',
+	'let',
+	'module',
+	'namespace',
+	'override',
+	'private',
+	'protected',
+	'public',
+	'readonly',
+	'static',
+	'type',
+	'using',
+	'var',
+]);
+// The keywords a declaration's name follows.
+const NAMED_AFTER_WORDS = new Set([
+	'class',
+	'const',
+	'defer',
+	'enum',
+	'function',
+	'interface',
+	'let',
+	'module',
+	'namespace',
+	'type',
+	'using',
+	'var',
+]);
 const DECLARATION_MODIFIERS = new Set([
 	'abstract',
 	'accessor',
@@ -2178,6 +2220,9 @@ export function TSRXPlugin(config) {
 			// Set while `parseVarStatement` or `parseVar` lets `const` declarators omit
 			// the initializer (see `#parseConstWithoutInitializer`).
 			#readingConstWithoutInitializer = false;
+			// Where the `using` or `await using` declaration with `declare` before it
+			// that is being read starts, or -1 (see `#parseConstWithoutInitializer`).
+			#declaredUsingStart = -1;
 			/** @type {import('../types/index').CompileError[] | undefined} */
 			#errors = undefined;
 			/** @type {string | null} */
@@ -7431,17 +7476,25 @@ export function TSRXPlugin(config) {
 			 * error for a name, which a strict parse throws and a collecting one
 			 * records (#963), or throws acorn's error for a pattern.
 			 * @template T
+			 * @param {AST.VariableDeclaration} node
 			 * @param {string} kind
 			 * @param {boolean | undefined} allowMissingInitializer
 			 * @param {(allowMissingInitializer: boolean) => T} parse
 			 * @returns {T}
 			 */
-			#parseConstWithoutInitializer(kind, allowMissingInitializer, parse) {
+			#parseConstWithoutInitializer(node, kind, allowMissingInitializer, parse) {
 				const outer = this.#readingConstWithoutInitializer;
+				// That declaration, not one inside it.
+				const declared = node.start === this.#declaredUsingStart;
 				this.#readingConstWithoutInitializer =
-					kind === 'const' && !allowMissingInitializer && !this.isAmbientContext;
+					(kind === 'const' || kind === 'using' || kind === 'await using') &&
+					!allowMissingInitializer &&
+					!this.isAmbientContext &&
+					!declared;
 				try {
-					return parse(!!allowMissingInitializer || this.#readingConstWithoutInitializer);
+					return parse(
+						!!allowMissingInitializer || declared || this.#readingConstWithoutInitializer,
+					);
 				} finally {
 					this.#readingConstWithoutInitializer = outer;
 				}
@@ -7459,7 +7512,7 @@ export function TSRXPlugin(config) {
 				if ((kind === 'const' || kind === 'var') && this.#isEmptyDeclarationList()) {
 					return this.#parseEmptyVarStatement(node, kind);
 				}
-				return this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
+				return this.#parseConstWithoutInitializer(node, kind, allowMissingInitializer, (allow) =>
 					super.parseVarStatement(node, kind, allow),
 				);
 			}
@@ -7548,7 +7601,7 @@ export function TSRXPlugin(config) {
 			 * @param {boolean} [allowMissingInitializer]
 			 */
 			parseVar(node, isFor, kind, allowMissingInitializer) {
-				return this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
+				return this.#parseConstWithoutInitializer(node, kind, allowMissingInitializer, (allow) =>
 					super.parseVar(node, isFor, kind, allow),
 				);
 			}
@@ -7581,7 +7634,7 @@ export function TSRXPlugin(config) {
 				// (`await using / x`).
 				const next = this.#wordAt(using.end);
 				if (!next) return false;
-				if (isFor && !isAwaitUsing && next.word === 'of') {
+				if (isFor && !isAwaitUsing && next.name === 'of') {
 					// acorn reads `using of` as a declaration in a `for` head only before
 					// `=` on its line, and TypeScript before `=`, `:` or `;` on any line
 					// (`nextTokenIsBindingIdentifierOrStartOfDestructuringOnSameLine`).
@@ -7689,11 +7742,12 @@ export function TSRXPlugin(config) {
 				}
 				if (decl.id.type !== 'Identifier') this.unexpected();
 				const start = /** @type {number} */ (decl.id.start);
-				this.#recordCheckerLevelError(
-					start,
-					start + decl.id.name.length,
-					TS_ERRORS.DECLARATION_NOT_INITIALIZED('const'),
-				);
+				// The name as written, escapes and all, without its type.
+				regex_escaped_identifier.lastIndex = start;
+				const end = regex_escaped_identifier.test(this.input)
+					? regex_escaped_identifier.lastIndex
+					: start + 1;
+				this.#recordCheckerLevelError(start, end, TS_ERRORS.DECLARATION_NOT_INITIALIZED(kind));
 			}
 
 			/**
@@ -9676,11 +9730,15 @@ export function TSRXPlugin(config) {
 			 * declaration (`['declare', 'class']`), or `null` where TypeScript reads
 			 * no declaration, or another modifier (`public`) comes first.
 			 * @param {number} ahead
+			 * @param {Parse.LookaheadState} [token] That token, when the caller has it
+			 *   (see `#tokenAfter`)
 			 * @returns {string[] | null}
 			 */
-			#declarationAfterModifier(ahead) {
+			#declarationAfterModifier(
+				ahead,
+				token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead),
+			) {
 				const is_identifier = Parser.acornTypeScript.tokenIsIdentifier;
-				const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
 				switch (token.type) {
 					case tt._class:
 					case tt._function:
@@ -9689,7 +9747,7 @@ export function TSRXPlugin(config) {
 						return [/** @type {string} */ (token.type.keyword)];
 					case tt._import: {
 						// An import declaration, not `import(…)` or `import.meta`.
-						const after = this.lookahead(ahead + 1).type;
+						const after = this.#tokenAfter(token).type;
 						return after === tt.string ||
 							after === tt.star ||
 							after === tt.braceL ||
@@ -9701,7 +9759,7 @@ export function TSRXPlugin(config) {
 				}
 				if (!is_identifier(token.type)) return null;
 				const word = /** @type {string} */ (token.value);
-				const next = this.lookahead(ahead + 1);
+				const next = this.#tokenAfter(token);
 				const same_line = !regex_line_break.test(this.input.slice(token.end, next.start));
 				switch (word) {
 					case 'let':
@@ -9726,7 +9784,7 @@ export function TSRXPlugin(config) {
 						// `await using x = y;`, with `using` on the line or a later one (see
 						// `isUsingKeyword`).
 						if (next.type !== tt.name || next.value !== 'using') return null;
-						const after = this.lookahead(ahead + 2);
+						const after = this.#tokenAfter(next);
 						return !regex_line_break.test(this.input.slice(next.end, after.start)) &&
 							(is_identifier(after.type) || after.type === tt.braceL)
 							? ['await']
@@ -9737,7 +9795,7 @@ export function TSRXPlugin(config) {
 					case 'abstract':
 					case 'declare': {
 						if (!same_line) return null;
-						const declaration = this.#declarationAfterModifier(ahead + 1);
+						const declaration = this.#declarationAfterModifier(ahead + 1, next);
 						return declaration && [word, ...declaration];
 					}
 				}
@@ -9767,9 +9825,10 @@ export function TSRXPlugin(config) {
 				if (!words || (keyword !== 'namespace' && keyword !== 'module' && keyword !== 'global')) {
 					return null;
 				}
-				const tokens = words.map((_, i) =>
-					i === 0 ? this.getCurLookaheadState() : this.lookahead(i),
-				);
+				const tokens = [this.getCurLookaheadState()];
+				while (tokens.length < words.length) {
+					tokens.push(this.#tokenAfter(/** @type {Parse.LookaheadState} */ (tokens.at(-1))));
+				}
 				// An escape in a keyword but `global` is TS1260, which the parse throws
 				// as TypeScript's parser reports it, before anything else.
 				if (
@@ -9789,6 +9848,38 @@ export function TSRXPlugin(config) {
 					end: first.end,
 					error: ambient ? TS_ERRORS.NESTED_AMBIENT_MODULE : TS_ERRORS.NESTED_NAMESPACE,
 				};
+			}
+
+			/**
+			 * The token after `token`, which is the current token's lookahead state
+			 * or one this gave, read as `lookahead` reads the tokens after the
+			 * current one. A loop over the tokens ahead that steps with this reads
+			 * each token once, where `this.lookahead(ahead)` for each `ahead` reads
+			 * them all again every time, which is quadratic in a long run of words.
+			 * @param {Parse.LookaheadState} token
+			 * @returns {Parse.LookaheadState}
+			 */
+			#tokenAfter(token) {
+				const state = this.getCurLookaheadState();
+				const context = this.context;
+				const pre_value = this.preValue;
+				const pre_token = this.preToken;
+				const is_lookahead = this.isLookahead;
+				try {
+					this.setLookaheadTokenState(token);
+					// `lookahead`'s context from the current token, which it starts with
+					// the current context alone, and carries from token to token.
+					this.context = token.context === context ? [this.curContext()] : token.context.slice();
+					this.isLookahead = true;
+					this.nextToken();
+					return this.getCurLookaheadState();
+				} finally {
+					this.setLookaheadTokenState(state);
+					this.context = context;
+					this.preValue = pre_value;
+					this.preToken = pre_token;
+					this.isLookahead = is_lookahead;
+				}
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#155): remove once a release includes the fix
@@ -9812,8 +9903,9 @@ export function TSRXPlugin(config) {
 				/** @type {Parse.LookaheadState[]} */
 				const modifiers = [];
 				let declaration_expected = -1;
+				// Each token read once (see `#tokenAfter`).
+				let token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
 				for (;;) {
-					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
 					const word = is_identifier(token.type) ? /** @type {string} */ (token.value) : '';
 					if (DECLARATION_MODIFIERS.has(word)) {
 						if (word === 'static') {
@@ -9826,17 +9918,18 @@ export function TSRXPlugin(config) {
 						}
 						if (declaration_expected === -1) modifiers.push(token);
 						ahead++;
+						token = this.#tokenAfter(token);
 						continue;
 					}
 					if (token.type === tt._export) {
-						const next = this.lookahead(ahead + 1);
+						const next = this.#tokenAfter(token);
 						if (next.type === tt._default) {
 							const exported = this.#defaultExportedDeclaration(ahead + 2);
 							if (exported === null) return null;
 							modifiers.push(token, next, ...exported.modifiers);
 							return { modifiers, declaration: exported.declaration, declaration_expected };
 						}
-						const after = next.type === tstt.type ? this.lookahead(ahead + 2) : next;
+						const after = next.type === tstt.type ? this.#tokenAfter(next) : next;
 						if (
 							after.type === tt.eq ||
 							after.type === tt.star ||
@@ -9848,10 +9941,11 @@ export function TSRXPlugin(config) {
 						}
 						if (declaration_expected === -1) modifiers.push(token);
 						ahead++;
+						token = next;
 						continue;
 					}
 					if (modifiers.length === 0) return null;
-					const declaration = this.#declarationAfterModifier(ahead);
+					const declaration = this.#declarationAfterModifier(ahead, token);
 					return declaration?.length === 1
 						? { modifiers, declaration: declaration[0], declaration_expected }
 						: null;
@@ -10188,6 +10282,19 @@ export function TSRXPlugin(config) {
 					/** @type {{ declare?: boolean }} */ (ambient).declare = true;
 					return /** @type {AST.Node} */ (ambient);
 				}
+				if (has('declare') && (declaration === 'using' || declaration === 'await')) {
+					// An ambient declaration to TypeScript, whose names need no
+					// initializer (see `#parseConstWithoutInitializer`), when the
+					// statement is one: not an escaped `using` read as a name, with a
+					// declaration inside it.
+					const outer = this.#declaredUsingStart;
+					this.#declaredUsingStart = this.start;
+					try {
+						return this.parseStatement(null, this.#atTopLevel());
+					} finally {
+						this.#declaredUsingStart = outer;
+					}
+				}
 				return this.parseStatement(null, this.#atTopLevel());
 			}
 
@@ -10488,6 +10595,16 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether `token` is a name TypeScript's parser reads as a binding's
+			 * (`isBindingIdentifier`): not `enum`, a reserved word, which
+			 * acorn-typescript's `tokenIsIdentifier` takes.
+			 * @param {Parse.LookaheadState} token
+			 */
+			#isBindingName(token) {
+				return Parser.acornTypeScript.tokenIsIdentifier(token.type) && token.value !== 'enum';
+			}
+
+			/**
 			 * Whether TypeScript's parser reads a declaration from the current token
 			 * (`isDeclaration`): a word or keyword that starts one there (see
 			 * `#declarationAfterModifier`), `export` before `=`, `*`, `{`, `default`,
@@ -10496,12 +10613,13 @@ export function TSRXPlugin(config) {
 			 */
 			#startsDeclaration() {
 				const is_identifier = Parser.acornTypeScript.tokenIsIdentifier;
-				for (let ahead = 0; ; ahead++) {
-					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
+				// Each token read once (see `#tokenAfter`).
+				let token = this.getCurLookaheadState();
+				for (;;) {
 					if (!is_identifier(token.type)) {
 						if (token.type === tt._import) {
 							// An import declaration, not `import(…)` or `import.meta`.
-							const after = this.lookahead(ahead + 1).type;
+							const after = this.#tokenAfter(token).type;
 							return (
 								after === tt.string ||
 								after === tt.star ||
@@ -10511,8 +10629,8 @@ export function TSRXPlugin(config) {
 							);
 						}
 						if (token.type === tt._export) {
-							let after = this.lookahead(ahead + 1);
-							if (after.type === tstt.type) after = this.lookahead(ahead + 2);
+							const next = this.#tokenAfter(token);
+							const after = next.type === tstt.type ? this.#tokenAfter(next) : next;
 							if (
 								after.type === tt.eq ||
 								after.type === tt.star ||
@@ -10523,6 +10641,7 @@ export function TSRXPlugin(config) {
 							) {
 								return true;
 							}
+							token = next;
 							continue;
 						}
 						return (
@@ -10533,7 +10652,7 @@ export function TSRXPlugin(config) {
 						);
 					}
 					const word = /** @type {string} */ (token.value);
-					const next = this.lookahead(ahead + 1);
+					const next = this.#tokenAfter(token);
 					const same_line = !regex_line_break.test(this.input.slice(token.end, next.start));
 					switch (word) {
 						case 'let':
@@ -10544,7 +10663,7 @@ export function TSRXPlugin(config) {
 						case 'await': {
 							// `await using x = y;`, with `using` on the line or the next.
 							if (next.type !== tt.name || next.value !== 'using') return false;
-							const after = this.lookahead(ahead + 2);
+							const after = this.#tokenAfter(next);
 							return (
 								!regex_line_break.test(this.input.slice(next.end, after.start)) &&
 								(is_identifier(after.type) || after.type === tt.braceL)
@@ -10567,6 +10686,7 @@ export function TSRXPlugin(config) {
 									!TYPESCRIPT_KEYWORD_NAMES.has(/** @type {string} */ (next.value)))
 							);
 						case 'static':
+							token = next;
 							continue;
 						case 'abstract':
 						case 'accessor':
@@ -10579,6 +10699,7 @@ export function TSRXPlugin(config) {
 							if (!same_line) return false;
 							// `declare type` starts a type alias.
 							if (word === 'declare' && next.type === tstt.type) return true;
+							token = next;
 							continue;
 					}
 					return false;
@@ -17852,6 +17973,24 @@ export function TSRXPlugin(config) {
 				// except a keyword that starts another statement there.
 				const raw = this.input.slice(this.lastTokStart, this.lastTokEnd);
 				const decoded = raw.includes('\\') ? decode_identifier_name(raw) : null;
+				let keyword_error = null;
+				if (decoded && this.lastTokStart === this.#statementExpressionStart) {
+					try {
+						keyword_error = this.#escapedKeywordError(decoded);
+					} catch {
+						// A scanner error ahead, which the statement's own error comes
+						// before.
+					}
+				}
+				if (keyword_error) {
+					// On the word, as TypeScript reports it.
+					try {
+						this.raise(this.lastTokStart, keyword_error);
+					} catch (thrown) {
+						/** @type {{ end?: number }} */ (thrown).end = this.lastTokEnd;
+						throw thrown;
+					}
+				}
 				const name = decoded && !this.#escapedKeywordStartsStatement(decoded) ? decoded : raw;
 				if (
 					this.lastTokStart === this.#statementExpressionStart &&
@@ -17880,6 +18019,95 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * TypeScript's error for `word`, the name a statement starts with,
+			 * written with an escape and followed by the current token, where its
+			 * parser reads the escaped keyword as the keyword, or `null`: TS1260
+			 * `Keywords cannot contain escape characters.` for a modifier before a
+			 * declaration on its line (`isDeclaration`: `async function f() {}`,
+			 * `if (x) accessor class C {}`), `async` before a name and `=>` on its
+			 * line (`isUnParenthesizedAsyncArrowFunctionWorker`), and `let`, `using`
+			 * or `yield` where they start a declaration or a `yield`; and TS1128
+			 * for a class member's modifier that starts no statement in a list (see
+			 * `#checkStatementStart`). A `global` before a name starts a global
+			 * augmentation, whose missing `{` TypeScript reports (TS1005), as here.
+			 * @param {string} word
+			 * @returns {Diagnostic | null}
+			 */
+			#escapedKeywordError(word) {
+				if (this.lastTokStart === this.#throwArgumentStart) return null;
+				if (word === 'let' || word === 'using') {
+					return this.#escapedKeywordStartsStatement(word) ? TS_ERRORS.KEYWORD_ESCAPE : null;
+				}
+				if (word === 'yield') {
+					// Before a name, keyword or literal on its line, which a `yield`
+					// expression is outside a generator too (`isYieldExpression`).
+					return (Parser.acornTypeScript.tokenIsIdentifier(this.type) ||
+						this.type.keyword !== undefined ||
+						this.type === tt.num ||
+						this.type === tt.string) &&
+						!this.hasPrecedingLineBreak()
+						? TS_ERRORS.KEYWORD_ESCAPE
+						: null;
+				}
+				if (!DECLARATION_MODIFIERS.has(word) || this.hasPrecedingLineBreak()) return null;
+				// Not before `await` or `yield`, which TypeScript reads as no name, and
+				// so as no arrow function's parameter, in its await or yield context.
+				if (
+					word === 'async' &&
+					this.#isBindingName(this.getCurLookaheadState()) &&
+					this.value !== 'await' &&
+					this.value !== 'yield' &&
+					this.lookahead().type === tt.arrow &&
+					!this.#lineBreakAfter(this.end)
+				) {
+					return TS_ERRORS.KEYWORD_ESCAPE;
+				}
+				if (this.#escapedModifierStartsDeclaration()) return TS_ERRORS.KEYWORD_ESCAPE;
+				// Not in a `case` clause, where TypeScript reports TS1129.
+				return STATEMENT_START_MODIFIERS.has(word) &&
+					this.#escapedKeywordStartsStatement(word) &&
+					(this.currentScope().flags & SCOPE_SWITCH) === 0
+					? TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED
+					: null;
+			}
+
+			/**
+			 * Whether TypeScript reads a declaration after an escaped modifier from
+			 * the current token (`#startsDeclaration`), leaving out what it can't
+			 * tell: a declaration named `await` or `yield`, after its modifiers and
+			 * keywords, which TypeScript reads as no name in its await or yield
+			 * context.
+			 */
+			#escapedModifierStartsDeclaration() {
+				// The modifiers and keywords before the declaration's name, and the
+				// name, which TypeScript doesn't read as one when it's `await` or
+				// `yield`, or `enum` after a keyword that a name follows (not after
+				// `const`, where it's the keyword of `const enum`). A string's value
+				// isn't a name (`module "await"`). Each token read once (see
+				// `#tokenAfter`).
+				let previous = '';
+				for (let token = this.getCurLookaheadState(); ; token = this.#tokenAfter(token)) {
+					const word =
+						Parser.acornTypeScript.tokenIsIdentifier(token.type) || token.type.keyword
+							? /** @type {string} */ (token.value)
+							: '';
+					if (word === 'await' || word === 'yield') return false;
+					if (word === 'enum' && previous !== 'const' && NAMED_AFTER_WORDS.has(previous)) {
+						return false;
+					}
+					if (
+						token.type === tt.eof ||
+						(!(token.type === tt._export || token.type === tt._default) &&
+							!DECLARATION_PREFIX_WORDS.has(word))
+					) {
+						break;
+					}
+					previous = word;
+				}
+				return this.#startsDeclaration();
+			}
+
+			/**
 			 * Whether `word`, the name a statement starts with, written with an
 			 * escape and followed by the current token, is a keyword that starts
 			 * something other than an expression statement in TypeScript, which
@@ -17895,6 +18123,7 @@ export function TSRXPlugin(config) {
 			#escapedKeywordStartsStatement(word) {
 				if (this.lastTokStart === this.#throwArgumentStart) return false;
 				const name = Parser.acornTypeScript.tokenIsIdentifier(this.type);
+				const binding = this.#isBindingName(this.getCurLookaheadState());
 				switch (word) {
 					case 'global':
 						// Not before a keyword's name, as in `#startsDeclaration`.
@@ -17905,9 +18134,9 @@ export function TSRXPlugin(config) {
 							this.type === tt._export
 						);
 					case 'let':
-						return name || this.type === tt.braceL || this.type === tt.bracketL;
+						return binding || this.type === tt.braceL || this.type === tt.bracketL;
 					case 'using':
-						return name || this.type === tt.braceL;
+						return binding || this.type === tt.braceL;
 					case 'yield':
 						return true;
 				}
