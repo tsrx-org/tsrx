@@ -15288,6 +15288,11 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 			['return class { static { return; } };', []],
 			// An overload's default is checked.
 			['function f(x = class { static { return; } }): void;\nfunction f() {}', [32]],
+			// Nor the operand of a `return` TypeScript reports as TS1036.
+			['declare class A { static { return class { static { return; return; } }; } }', []],
+			// A namespace's scope isn't a `static` block's, though acorn-typescript
+			// gives it the same flag; a class's in a namespace is.
+			['namespace N { class A { static { return; } } }', [33]],
 		])) {
 			const collected = /** @type {CompileError[]} */ ([]);
 			parseModule(source, 'App.tsrx', { collect: true, errors: collected });
@@ -15298,6 +15303,10 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 				source,
 			).toEqual(at.map((pos) => ['TS18041', pos]));
 		}
+		// One right in a namespace is still TS1108, as on main.
+		expect(() => parseModule('namespace N { return; }', 'App.tsrx')).toThrow(
+			expect.objectContaining({ code: 'TS1108', pos: 14 }),
+		);
 		// One in a class in a template is the class's, not the template's (TSRX2001).
 		const in_template = /** @type {CompileError[]} */ ([]);
 		parseModule(

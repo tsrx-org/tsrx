@@ -6209,10 +6209,7 @@ export function TSRXPlugin(config) {
 					// only in a function or at the top level. The template checks report
 					// it, as they do at the top level.
 					return /** @type {never} */ (undefined);
-				} else if (
-					message === "'return' outside of function" &&
-					this.currentVarScope().flags & SCOPE_CLASS_STATIC_BLOCK
-				) {
+				} else if (message === "'return' outside of function" && this.#inClassStaticBlock()) {
 					// One right in a class `static` block, which TypeScript's parser reads
 					// and its checker reports at the keyword (TS18041): a strict parse
 					// throws it, and a collecting one records it and reads on, where acorn
@@ -6225,8 +6222,9 @@ export function TSRXPlugin(config) {
 						this.lastTokStart !== -1 &&
 						this.input[this.lastTokStart] === '{' &&
 						this.lastTokEnd === this.lastTokStart + 1;
-					if (!first_in_ambient_block && !this.#readingStaticBlockReturn) {
-						this.#readingStaticBlockReturn = true;
+					const reported = !first_in_ambient_block && !this.#readingStaticBlockReturn;
+					this.#readingStaticBlockReturn = true;
+					if (reported) {
 						this.#raiseCheckerError(
 							position,
 							TS_ERRORS.STATIC_BLOCK_RETURN,
@@ -17102,13 +17100,22 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether the var scope is a class `static` block's: acorn-typescript
+			 * gives a namespace's scope `SCOPE_CLASS_STATIC_BLOCK` too.
+			 */
+			#inClassStaticBlock() {
+				const { flags } = this.currentVarScope();
+				return (flags & SCOPE_CLASS_STATIC_BLOCK) !== 0 && (flags & TS_SCOPE_TS_MODULE) === 0;
+			}
+
+			/**
 			 * @type {Parse.Parser['parseReturnStatement']}
 			 */
 			parseReturnStatement(node) {
 				const reading_static_block_return = this.#readingStaticBlockReturn;
 				// TypeScript reports a `return` outside a function, which TSRX allows
 				// at the top level (TS1108), and doesn't check its operand either.
-				if (!this.inFunction && !(this.currentVarScope().flags & SCOPE_CLASS_STATIC_BLOCK)) {
+				if (!this.inFunction && !this.#inClassStaticBlock()) {
 					this.#readingStaticBlockReturn = true;
 				}
 				let statement;
