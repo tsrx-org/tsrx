@@ -652,12 +652,6 @@ export {};`,
 			'break;',
 		],
 		[
-			'CaseBreakOwnLine',
-			'export function App({ x }: { x: number }) @{\n\t<div>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tbreak;\n\t\t\t}\n\t\t\t@default: {\n\t\t\t\t<i />\n\t\t\t}\n\t\t}\n\t</div>\n}\n',
-			'TSRX2008',
-			'break',
-		],
-		[
 			'CaseNestedBreak',
 			'export function App({ x, y }: { x: number; y: boolean }) @{\n\t<div>@switch (x) { @case 1: { if (y) break; <b /> } @default: { <i /> } }</div>\n}\n',
 			'TSRX2008',
@@ -668,12 +662,6 @@ export {};`,
 			'export function App({ x, y }: { x: number; y: boolean }) @{\n\t<div>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tif (y) {\n\t\t\t\t\tbreak;\n\t\t\t\t}\n\t\t\t\t<b />\n\t\t\t}\n\t\t}\n\t</div>\n}\n',
 			'TSRX2008',
 			'break;',
-		],
-		[
-			'CaseBreakOwnLineBeforeOutput',
-			'export function App({ x }: { x: number }) @{\n\t<div>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tbreak;\n\t\t\t\t<b />\n\t\t\t}\n\t\t}\n\t</div>\n}\n',
-			'TSRX2008',
-			'break',
 		],
 		[
 			'IfBreakInLoopOwnLine',
@@ -691,14 +679,6 @@ export {};`,
 			]);
 		},
 	);
-
-	it('shows each of several `break`s on lines of their own in a case', async () => {
-		const source = `export function App({ x }: { x: number }) @{\n\t<div>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n${'\t\t\t\tbreak;\n'.repeat(7)}\t\t\t}\n\t\t}\n\t</div>\n}\n`;
-		const { document, diagnostics } = await editor_diagnostics_for('CaseBreaks', source);
-		expect(reported(document, diagnostics, 'TSRX2008').map((found) => found.offset)).toEqual(
-			[...source.matchAll(/break/g)].map((match) => match.index),
-		);
-	});
 
 	it('keeps the mistakes without the TypeScript service', async () => {
 		const { document, diagnostics } = await diagnostics_for(

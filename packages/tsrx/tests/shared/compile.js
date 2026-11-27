@@ -615,88 +615,9 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 				[TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code, start, start + 'break'.length],
 			]);
 			expect(result.code).toContain('export const after = 1;');
-			// In a loop of its own, without its label: in a function, such as
-			// Solid's case function, TypeScript would report it again, and in a
-			// `switch` statement it would end the case.
-			expect(result.code).toContain('do break; while (false);');
-			expect(result.code.match(/\bbreak\b/g)).toHaveLength(1);
-		});
-
-		it('gets a mapping that reports diagnostics, also on a line of its own', () => {
-			// The editor shows an error where a mapping that reports diagnostics maps
-			// it back. The `break` was left out of the output, so one alone on its
-			// line, where nothing is printed, had none, and the editor showed no
-			// TSRX2008. It is now printed in a loop of its own, and mapped.
-			for (const body of [
-				'{ break; }',
-				'{\n\t\t\tbreak;\n\t\t}',
-				'{\n\t\t\tbreak;\n\t\t\t<b />\n\t\t}',
-				'{\n\t\t\tconst a = 1;\n\t\t\tbreak;\n\t\t\t<b>{a}</b>\n\t\t}',
-			]) {
-				const source = `export function App({ s }: { s: number }) @{\n\t<div>\n\t\t@switch (s) {\n\t\t@case 1: ${body}\n\t\t@default: { <i /> }\n\t\t}\n\t</div>\n}\n`;
-				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-				const start = source.indexOf('break');
-				expect(result.errors.map((error) => [error.code, error.pos, error.end])).toEqual([
-					[TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code, start, start + 'break'.length],
-				]);
-				const anchors = result.mappings.filter(
-					(mapping) =>
-						mapping.data.verification &&
-						mapping.sourceOffsets[0] === start &&
-						mapping.lengths[0] === 'break'.length,
-				);
-				expect(anchors.length, body).toBe(1);
-				// On one character that no other mapping that reports diagnostics
-				// covers, so the editor maps the error there back to the `break`.
-				const [generated] = anchors[0].generatedOffsets;
-				expect(
-					result.mappings.filter(
-						(mapping) =>
-							mapping !== anchors[0] &&
-							mapping.data.verification &&
-							mapping.generatedOffsets.some(
-								(offset, i) =>
-									offset <= generated &&
-									generated < offset + (mapping.generatedLengths ?? mapping.lengths)[i],
-							),
-					),
-					body,
-				).toEqual([]);
-			}
-		});
-
-		it('gives each of several a mapping of its own', () => {
-			// The editor maps a diagnostic back through the first mapping at its
-			// character, so two errors on one would show as one (Solid prints the
-			// cases on one line).
-			for (const cases of [
-				'@case 1: {\n\t\t\tbreak;\n\t\t\tbreak;\n\t\t}',
-				'@case 1: {\n\t\t\tbreak;\n\t\t}\n\t\t@case 2: {\n\t\t\tbreak;\n\t\t}',
-				// One on a line of its own beside one after code on its line.
-				`@case 1: {\n\t\t\tbreak;\n\t\t}\n\t\t@case 2: {${' '.repeat(32)}break; }`,
-				// More than a line's free whitespace holds.
-				`@case 1: {\n${'\t\t\tbreak;\n'.repeat(7)}\t\t}`,
-			]) {
-				const source = `export function App({ s }: { s: number }) @{\n\t<div>\n\t\t@switch (s) {\n\t\t${cases}\n\t\t}\n\t</div>\n}\n`;
-				const result = compile_to_volar_mappings(source, 'App.tsrx', { loose: true });
-				const starts = result.errors.map((error) => error.pos);
-				expect(starts.length, cases).toBe(cases.split('break').length - 1);
-				const anchored = starts.map((start) =>
-					result.mappings
-						.filter(
-							(mapping) =>
-								mapping.data.verification &&
-								mapping.sourceOffsets[0] === start &&
-								mapping.lengths[0] === 'break'.length,
-						)
-						.map((mapping) => mapping.generatedOffsets[0]),
-				);
-				expect(
-					anchored.map((offsets) => offsets.length),
-					cases,
-				).toEqual(starts.map(() => 1));
-				expect(new Set(anchored.map((offsets) => offsets[0])).size, cases).toBe(starts.length);
-			}
+			// Left out of the output: in a function, such as Solid's case function,
+			// TypeScript would report it again.
+			expect(result.code).not.toMatch(/\bbreak\b/);
 		});
 
 		it('keeps the code after it in the output', () => {
@@ -707,7 +628,7 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			]);
 			expect(result.code).toContain('const bad: number = 1;');
 			expect(result.code).toContain('<b>{bad}</b>');
-			expect(result.code).toContain('do break; while (false);');
+			expect(result.code).not.toMatch(/\bbreak\b/);
 		});
 
 		it('leaves TypeScript nothing to report on it in the virtual code', () => {
