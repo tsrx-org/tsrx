@@ -3445,6 +3445,26 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			expect(code).toContain('No items');
 		});
 
+		it('rejects direct loop exits inside for...of template loops', () => {
+			for (const [statement, error] of [
+				['continue', TSRX_ERRORS.FOR_CONTINUE_STATEMENT],
+				['break', TSRX_ERRORS.FOR_BREAK_STATEMENT],
+				['return null', TSRX_ERRORS.FOR_RETURN_STATEMENT],
+			]) {
+				expect(() =>
+					compile(
+						`export function App({ items }: { items: string[] }) @{
+							@for (const item of items) {
+								${statement}
+								<div>{item}</div>
+							}
+						}`,
+						'App.tsrx',
+					),
+				).toThrow(error_with(error));
+			}
+		});
+
 		it('lets a `// @tsrx-ignore` comment suppress an `@if` or `@for` body jump or return error when collecting', () => {
 			// Solid's checks passed no comments to the error, so it reported them.
 			for (const template of [
@@ -3469,26 +3489,6 @@ export function runSharedComponentLoopControlFlowTests({ compile, name }) {
 			]) {
 				const source = `export function App({ x, ys }: { x: boolean; ys: number[] }) @{\n\t<div>${template}</div>\n}\n`;
 				expect(compile(source, 'App.tsrx', { collect: true }).errors, template).toEqual([]);
-			}
-		});
-
-		it('rejects direct loop exits inside for...of template loops', () => {
-			for (const [statement, error] of [
-				['continue', TSRX_ERRORS.FOR_CONTINUE_STATEMENT],
-				['break', TSRX_ERRORS.FOR_BREAK_STATEMENT],
-				['return null', TSRX_ERRORS.FOR_RETURN_STATEMENT],
-			]) {
-				expect(() =>
-					compile(
-						`export function App({ items }: { items: string[] }) @{
-							@for (const item of items) {
-								${statement}
-								<div>{item}</div>
-							}
-						}`,
-						'App.tsrx',
-					),
-				).toThrow(error_with(error));
 			}
 		});
 
