@@ -18,6 +18,8 @@ const regex_css_ident_start = /^(-?([a-zA-Z_\\]|[^\x00-\x7f])|--)/;
 const regex_css_number = /^[+-]?(\d+(\.\d*)?|\.\d+)(e[+-]?\d+)?$/i;
 const regex_css_value_word_end = /[\s,'"(]/;
 const regex_css_hex_escape = /[0-9a-fA-F]{1,6}/y;
+// Whitespace as CSS reads it.
+const regex_css_whitespace = /[ \t\n\r\f]/;
 
 /** `none` and the CSS-wide keywords, which never name keyframes. */
 const reserved_keyframes_names = new Set([
@@ -529,24 +531,136 @@ function has_global_in_middle(rule) {
  * with the same specificity, where dropping the wrapper gave `.adiv.x`, with
  * another class.
  *
+ * The whitespace around the argument goes too: in `:global( .x)` it is no
+ * combinator, but it would be one without the parentheses, so
+ * `.a:global( .x)` gave `.a .x`. A hex escape that ends the argument gets a
+ * space in place of the `)`, which it takes as its own, so that it can't take
+ * whitespace that follows instead: `.a:global(.\31) .b` gave `.a.\31 .b`,
+ * one compound.
+ *
  * @param {AST.CSS.PseudoClassSelector} selector
  * @param {AST.CSS.Combinator | null} combinator
  * @param {StylesheetRenderState} state
+ * @param {boolean} kept whether the output keeps the selector, which
+ *   minifying removes before this runs if not
  * @param {boolean} [after_start] whether `selector` isn't the first of its
  *   compound, in a selector the output keeps
  */
-function remove_global_pseudo_class(selector, combinator, state, after_start = false) {
+function remove_global_pseudo_class(selector, combinator, state, kept, after_start = false) {
 	if (selector.args === null) {
 		// div :global.x becomes div.x, and so does div /* c */ :global.x: the
 		// descendant combinator runs over the comments in it.
 		const start = combinator?.name === ' ' ? combinator.start : selector.start;
+		if (kept) write_cr_as_space(start, state);
 		state.code.update(start, selector.start + ':global'.length, '');
 	} else {
-		const type = after_start ? leading_type_selector(selector.args) : null;
+		const args = selector.args;
+		const type = after_start ? leading_type_selector(args) : null;
 		state.code.update(selector.start, selector.start + ':global('.length, type ? ':is(' : '');
 		if (type) state.code.appendLeft(type.end, ')');
-		state.code.update(selector.end - 1, selector.end, '');
+		remove_whitespace(selector.start + ':global('.length, args.start, state);
+		const closed = remove_whitespace(args.end, selector.end - 1, state);
+		const last = args.children.at(-1)?.children.at(-1)?.selectors.at(-1);
+		// Not after a comment, or the `)` of the `:is()`, which end it already.
+		const space =
+			kept &&
+			closed &&
+			last !== undefined &&
+			last !== type &&
+			ends_with_hex_escape(state.code.original, last.start, args.end);
+		state.code.update(selector.end - 1, selector.end, space ? ' ' : '');
+		if (kept) write_cr_as_space(args.end, state);
 	}
+}
+
+/**
+ * Write a CR that ends a hex escape right before `index`, where the output
+ * drops text, as a space. CSS reads a CR and an LF after it as one newline,
+ * so the escape would take an LF that dropping the text brings next to it,
+ * and the combinator with it: `:global(.\31<CR>)<LF>.x` gave `.\31<CR><LF>.x`,
+ * one compound, and so did `:global(.\31<CR>):global<LF>:global(.x)`. A space
+ * ends the escape as the CR did. Not a CR right after a `\`, which CSS reads as
+ * no escape, where a space would make one; nor a CR before an LF, which is one
+ * newline already.
+ *
+ * @param {number} index
+ * @param {StylesheetRenderState} state
+ */
+function write_cr_as_space(index, state) {
+	const source = state.code.original;
+	if (source[index - 1] !== '\r' || source[index] === '\n') return;
+	let i = index - 2;
+	while (i >= index - 7 && /[0-9a-fA-F]/.test(source[i] ?? '')) i--;
+	if (i === index - 2 || source[i] !== '\\') return;
+	// The `\` starts the escape only after an even number of others.
+	let backslashes = 0;
+	while (source[i - 1 - backslashes] === '\\') backslashes++;
+	if (backslashes % 2 === 0) state.code.update(index - 1, index, ' ');
+}
+
+/**
+ * Drop the CSS whitespace from `start` to `end`, which holds only whitespace
+ * and comments, as the parser reads them there, and keep the comments: one
+ * with no whitespace around it is no combinator. Whitespace that CSS reads as
+ * part of a name, such as U+00A0, which the parser skips there too, leaves it
+ * all as written.
+ *
+ * @param {number} start
+ * @param {number} end
+ * @param {StylesheetRenderState} state
+ * @returns {boolean} whether nothing is left of it
+ */
+function remove_whitespace(start, end, state) {
+	const source = state.code.original;
+	/** @type {Array<[number, number]>} */
+	const runs = [];
+	let comments = false;
+	let i = start;
+	while (i < end) {
+		const [open, close] = source.startsWith('/*', i)
+			? ['/*', '*/']
+			: source.startsWith('<!--', i)
+				? ['<!--', '-->']
+				: [null, null];
+		if (open) {
+			const index = source.indexOf(close, i + open.length);
+			i = index === -1 ? end : Math.min(index + close.length, end);
+			comments = true;
+		} else if (regex_css_whitespace.test(source[i])) {
+			const run = i;
+			while (i < end && regex_css_whitespace.test(source[i])) i++;
+			runs.push([run, i]);
+		} else {
+			return false;
+		}
+	}
+	for (const [run_start, run_end] of runs) state.code.update(run_start, run_end, '');
+	return !comments;
+}
+
+/**
+ * Whether the text from `start` to `end` ends with a hex escape that no
+ * whitespace ends, so that whitespace right after it would (`\31` in
+ * `.\31 .b`).
+ *
+ * @param {string} source
+ * @param {number} start the start of a simple selector
+ * @param {number} end
+ * @returns {boolean}
+ */
+function ends_with_hex_escape(source, start, end) {
+	let open = false;
+	for (let i = start; i < end;) {
+		if (source[i] === '\\') {
+			const escape_end = skip_css_escape(source, i);
+			open = /[0-9a-fA-F]/.test(source[i + 1] ?? '') && /[0-9a-fA-F]/.test(source[escape_end - 1]);
+			i = escape_end;
+		} else {
+			open = false;
+			i++;
+		}
+	}
+	return open;
 }
 
 /**
@@ -1048,11 +1162,11 @@ const visitors = {
 		for (const relative_selector of node.children) {
 			if (relative_selector.metadata.is_global && !insideScopingPseudo) {
 				const global = /** @type {AST.CSS.PseudoClassSelector} */ (relative_selector.selectors[0]);
-				remove_global_pseudo_class(global, relative_selector.combinator, context.state);
+				remove_global_pseudo_class(global, relative_selector.combinator, context.state, kept);
 				// So is any other :global(...) of the compound (`:global(div):global(.x)`).
 				for (const selector of relative_selector.selectors.slice(1)) {
 					if (selector.type === 'PseudoClassSelector' && selector.name === 'global') {
-						remove_global_pseudo_class(selector, null, context.state, kept);
+						remove_global_pseudo_class(selector, null, context.state, kept, kept);
 					}
 				}
 				if (kept) wrap_type_after_global(relative_selector, context.state);
@@ -1075,7 +1189,7 @@ const visitors = {
 				// for any :global() or :global at the middle of compound selector
 				for (const [i, selector] of relative_selector.selectors.entries()) {
 					if (selector.type === 'PseudoClassSelector' && selector.name === 'global') {
-						remove_global_pseudo_class(selector, null, context.state, kept && i > 0);
+						remove_global_pseudo_class(selector, null, context.state, kept, kept && i > 0);
 					}
 				}
 				if (kept) wrap_type_after_global(relative_selector, context.state);

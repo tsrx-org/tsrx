@@ -2008,6 +2008,96 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('drops the whitespace around the argument of a :global(...) with its parentheses', () => {
+			const NBSP = String.fromCharCode(0xa0);
+			const CR = String.fromCharCode(13);
+			/** @type {Array<[selector: string, expected: (hash: string) => string]>} */
+			const cases = [
+				// Whitespace at the edges of the argument is no combinator, but it was
+				// one in the output once the parentheses were gone: `.wrap .x.icon`.
+				['.wrap:global( .x).icon', (hash) => `.wrap.x.icon.${hash} {`],
+				['.wrap:global(.x ).icon', (hash) => `.wrap.x.icon.${hash} {`],
+				['.wrap:global(\t.x\n)', (hash) => `.wrap.${hash}.x {`],
+				['.wrap :global( .x )', (hash) => `.wrap.${hash} .x {`],
+				['.wrap:global( div ).icon', (hash) => `.wrap:is(div).icon.${hash} {`],
+				// A comment stays, with no whitespace around it, which makes it none.
+				[
+					'.wrap:global( /* c */ .x /* d */ ).icon',
+					(hash) => `.wrap/* c */.x/* d */.icon.${hash} {`,
+				],
+				// A hex escape at the end of the argument would take the space after
+				// the `)` as its own, which joined the compounds: `.wrap.\31 .icon`.
+				['.wrap:global(.\\31) .icon', (hash) => `.wrap.${hash}.\\31  .icon:where(.${hash}) {`],
+				['.wrap:global(.\\31):hover', (hash) => `.wrap.${hash}.\\31 :hover {`],
+				// So did a space that dropping a bare :global exposed.
+				[':global(.\\31):global :global(.x)', () => '.\\31  .x {'],
+				// One that ends with its own space keeps it, and one that a comment,
+				// the `)` of an :is() or the arguments of a pseudo-element end gets none.
+				['.wrap:global(.\\31 ).icon', (hash) => `.wrap.\\31 .icon.${hash} {`],
+				[':global(.\\31/**/) :global.x', () => '.\\31/**/.x {'],
+				[':global(.a):global(\\64) :global.x', () => '.a:is(\\64).x {'],
+				[':global(::slotte\\64(.x)) :global::before', () => '::slotte\\64(.x)::before {'],
+				// CSS reads CRLF as one newline: a CR that ends the escape met an LF
+				// after the `)` once the whitespace between them was gone, and the
+				// escape took both, which joined the compounds (`.wrap.\31<CR><LF>.icon`).
+				// The CR is written as a space, which ends the escape as well.
+				[
+					`.wrap:global(.\\31${CR} )\n.icon`,
+					(hash) => `.wrap.${hash}.\\31 \n.icon:where(.${hash}) {`,
+				],
+				[
+					`.wrap:global(.\\31${CR}\t)\n.icon`,
+					(hash) => `.wrap.${hash}.\\31 \n.icon:where(.${hash}) {`,
+				],
+				[
+					`.wrap:global(.\\31${CR})\n.icon`,
+					(hash) => `.wrap.${hash}.\\31 \n.icon:where(.${hash}) {`,
+				],
+				[
+					`.wrap:global(.\\31${CR})\n\n.icon`,
+					(hash) => `.wrap.${hash}.\\31 \n\n.icon:where(.${hash}) {`,
+				],
+				// A space or a CRLF that ends it needs none.
+				['.wrap:global(.\\31 )\n.icon', (hash) => `.wrap.${hash}.\\31 \n.icon:where(.${hash}) {`],
+				[
+					`.wrap:global(.\\31${CR}\n )${CR}\n.icon`,
+					(hash) => `.wrap.${hash}.\\31${CR}\n${CR}\n.icon:where(.${hash}) {`,
+				],
+				// The same goes for an LF that dropping a bare :global brings next to
+				// the CR. A space for the `)` instead would be a combinator where a bare
+				// :global takes the LF before it away (`:global(.\31<CR>)<LF>:global.x`).
+				[
+					`.wrap:global(.\\31${CR}):global\n.icon`,
+					(hash) => `.wrap.${hash}.\\31 \n.icon:where(.${hash}) {`,
+				],
+				[`:global(.\\31${CR}) :global\n:global(.x)`, () => '.\\31 \n.x {'],
+				[`:global.\\31${CR} :global\n:global(.x)`, () => '.\\31 \n.x {'],
+				[`:global(.\\31${CR})\n:global.x`, () => '.\\31 .x {'],
+				[`:global(.a):global(\\64${CR})\n:global.x`, () => '.a:is(\\64 ).x {'],
+				// Not a CR right after a `\`, which CSS reads as no escape: a space
+				// would make one.
+				[`:global#a\\${CR} :global.x`, () => `#a\\${CR}.x {`],
+				// Whitespace that CSS reads as part of a name, which the parser skips,
+				// stays as written, with what is around it.
+				[`.wrap:global( ${NBSP}.x)`, (hash) => `.wrap.${hash} ${NBSP}.x {`],
+			];
+			for (const [selector, expected] of cases) {
+				const rule = `${selector} { color: red; }`;
+				const theme = compile(`export const theme = <style>${rule}</style>;`, 'App.tsrx');
+				const component = compile(
+					`export function App() @{
+						<>
+							<style>${rule}</style>
+							<div ${attr}="wrap x icon"><i ${attr}="icon x" /></div>
+						</>
+					}`,
+					'App.tsrx',
+				);
+				expect(theme.css, selector).toContain(expected(hashes_of(theme.cssHash)[0]));
+				expect(component.css, selector).toContain(expected(hashes_of(component.cssHash)[0]));
+			}
+		});
+
 		it('reads a custom property whose value holds {} blocks', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{
