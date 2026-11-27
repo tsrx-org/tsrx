@@ -1047,9 +1047,12 @@ describe('TSRX parser', () => {
 			]);
 			// And `using of` before `=`, `:` or `;` on any line, where acorn took it
 			// only before `=` on its line.
+			// The name it spells, written with an escape too, as TypeScript reads it.
 			for (const source of [
 				'for (using of: null = null; ; ) {}',
 				'for (using\n\tof = null; ; ) {}',
+				`for (using\n\t${B}u006ff = null; ; ) {}`,
+				`for (using\n\t${B}u{6f}f: null = null; ; ) {}`,
 			]) {
 				const [typed] = find_all(source, 'VariableDeclaration');
 				expect([typed?.kind, /** @type {any} */ (typed?.declarations[0].id).name], source).toEqual([
@@ -4152,7 +4155,8 @@ foo();`;
 			}
 		}
 		// A `return` there outside a template, or in a class `static` block in
-		// one, is still TS1108.
+		// one, is TypeScript's checker error for a `return` in a `static` block
+		// (TS18041).
 		for (const source of [
 			'class A { static { return; } }',
 			'class A { v = <div>@if (x) { <b /> }</div>; static { return; } }',
@@ -4163,7 +4167,7 @@ foo();`;
 			'function App() @{ <div>@if (x) { class B { static { return; } } <b /> }</div> }',
 		]) {
 			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
-				expect.objectContaining({ code: 'TS1108', pos: source.lastIndexOf('return') }),
+				expect.objectContaining({ code: 'TS18041', pos: source.lastIndexOf('return') }),
 			);
 		}
 	});
@@ -5083,12 +5087,10 @@ foo();`;
 	});
 
 	it('parses a function body inside an @for header nested in an @if as plain code', () => {
-		// `#templateControlFlowBlockDepth` is held for the whole `@for`
-		// statement, header included, so an arrow body in the header reaches
-		// `parseBlock` while the counter is positive and takes the
-		// template-control-flow redirect. That routing must stay tolerable:
-		// the arrow's body parses as ordinary statements and the `@for` still
-		// gets its right-hand side and body.
+		// `#templateControlFlowBlockDepth` is set for the `@for`'s body, not
+		// its header, so an arrow body in the header is an ordinary block, not
+		// a directive body, and the `@for` still gets its right-hand side and
+		// body.
 		const returned = getReturned(`function App() { return <div>
 			@if (show) {
 				@for (const item of items.filter((x) => { return x.keep; })) {
@@ -5112,15 +5114,231 @@ foo();`;
 			'BlockStatement',
 		);
 		expect(arrowBody.body.map((child) => child.type)).toEqual(['ReturnStatement']);
+		expect(arrowBody.metadata?.native_tsrx_template_block).toBeUndefined();
 
 		expect(blockBody(forDirective.body)[0]?.type).toBe('JSXElement');
+	});
+
+	it('parses the blocks in an @for header in element children as code', () => {
+		// Read as directive bodies, they were followed by template text, so the
+		// `)` after one in element children was text and the head failed to
+		// parse (TS1012).
+		/** @type {Array<[head: string, ...statements: string[]]>} */
+		const cases = [
+			['const y of ys.filter((v) => { return v > 0; })', 'ReturnStatement'],
+			['const y of ys.map(() => {})'],
+			['const y of ys.filter(function (v) { return v > 0; })', 'ReturnStatement'],
+			['const y of ys.map(async (v) => { await v; })', 'ExpressionStatement'],
+			['const y of (function* () { yield 1; })()', 'ExpressionStatement'],
+			[
+				'const y of ys.filter((v) => { L: { if (v) { break L; } } return v; })',
+				'LabeledStatement',
+				'ReturnStatement',
+			],
+			['const y of [class { static { if (c) { d; } } }]', 'IfStatement'],
+			['const y of [{ get a() { return 1; } }]', 'ReturnStatement'],
+			['const y of ys; key ((() => { return y.id; })())', 'ReturnStatement'],
+			['const y of ys; index i; key (() => { return i; })()', 'ReturnStatement'],
+			['const y of ys.filter((v) => { return v; }); index i', 'ReturnStatement'],
+		];
+		for (const [head, ...statements] of cases) {
+			const source = `export function App({ ys, c, d }) {\n\treturn <ul>@for (${head}) { <li>{y}</li> }</ul>;\n}`;
+			for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+				const loop = /** @type {AST.JSXForOfExpression} */ (
+					as_type(
+						find_first(
+							parseModule(source, 'App.tsrx', options),
+							(node) => node.type === 'JSXForExpression',
+						),
+						'JSXForExpression',
+					)
+				);
+				expect(loop.statementType).toBe('ForOfStatement');
+				const block = find_first([loop.right, loop.key], (node) =>
+					['BlockStatement', 'StaticBlock'].includes(node.type),
+				);
+				assert_found(block);
+				expect(
+					/** @type {AST.BlockStatement} */ (block).body.map((child) => child.type),
+					source,
+				).toEqual(statements);
+				expect(block.metadata?.native_tsrx_template_block, source).toBeUndefined();
+				expect(blockBody(loop.body).map((child) => child.type)).toEqual(['JSXElement']);
+				if (options) expect(options.errors).toEqual([]);
+			}
+		}
+	});
+
+	it('parses a for…of or for…in loop in a directive header as code', () => {
+		// Its body was read as if past the header, in the element children
+		// around the directive: as template text (`w &gt; 1` in the output), the
+		// rest of the function too, and a body without braces failed to parse
+		// (TS1434).
+		/** @type {Array<[label: string, directive: string]>} */
+		const cases = [
+			['@if', '@if (ys.some((v) => { LOOP return false; })) { <li /> }'],
+			['@for', '@for (const y of ys.filter((v) => { LOOP return false; })) { <li>{y}</li> }'],
+			['@for key', '@for (const y of ys; key ((() => { LOOP return y; })())) { <li>{y}</li> }'],
+			['@switch', '@switch ((() => { LOOP return 1; })()) { @case 1: { <li /> } }'],
+			['@case', '@switch (c) { @case ((() => { LOOP return 1; })()): { <li /> } }'],
+		];
+		/** @type {Array<[loop: string, body: string]>} */
+		const loops = [
+			['for (const w of v) { if (w > 1) return true; }', 'BlockStatement'],
+			['for (const w of v) if (w > 1) return true;', 'IfStatement'],
+			['for (const w in v) { w; }', 'BlockStatement'],
+			['for (const w of v) w;', 'ExpressionStatement'],
+		];
+		for (const [label, directive] of cases) {
+			for (const [loop, body] of loops) {
+				const source = `export function App({ ys, c }) {\n\treturn <ul>${directive.replace('LOOP', loop)}</ul>;\n}`;
+				for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+					const ast = parseModule(source, 'App.tsrx', options);
+					const statement = /** @type {AST.ForOfStatement | AST.ForInStatement | undefined} */ (
+						find_first(
+							ast,
+							(node) => node.type === 'ForOfStatement' || node.type === 'ForInStatement',
+						)
+					);
+					assert_found(statement);
+					expect(statement.body.type, `${label}: ${source}`).toBe(body);
+					const fn = find_first(ast, (node) =>
+						['ArrowFunctionExpression', 'FunctionExpression'].includes(node.type),
+					);
+					const fn_body = as_type(
+						/** @type {AST.ArrowFunctionExpression} */ (fn).body,
+						'BlockStatement',
+					);
+					expect(
+						fn_body.body.map((child) => child.type),
+						`${label}: ${source}`,
+					).toEqual([statement.type, 'ReturnStatement']);
+					expect(
+						allNodes(fn_body).filter((node) => node.type === 'JSXText'),
+						`${label}: ${source}`,
+					).toEqual([]);
+					if (options) expect(options.errors).toEqual([]);
+				}
+			}
+		}
+	});
+
+	it('parses the code after a directive that is a value in a function in a directive header', () => {
+		// The token after the inner directive's `}` was read as if past the
+		// header, in the element children around it: the `;` was template text
+		// (TS1005). In an `@for` header it parsed while the function's body was
+		// read as a directive body.
+		/** @type {Array<[header: string, after: string]>} */
+		const cases = [
+			['@if ((() => { return @if (c) { <b /> }; })())', 'ReturnStatement'],
+			['@if ((() => { const v = @if (c) { <b /> }; return v; })())', 'ReturnStatement'],
+			['@if ([{ f() { return @for (const y of ys) { <b /> }; } }].length)', 'ReturnStatement'],
+			['@for (const x of [{ f() { return @for (const y of ys) { <b /> }; } }])', 'ReturnStatement'],
+			[
+				'@for (const x of [(() => { return @if (c) { <b /> } @else { <i /> }; })()])',
+				'ReturnStatement',
+			],
+			['@for (const x of ys; key ({ f() { return @if (x) { <b /> }; } }).f())', 'ReturnStatement'],
+			[
+				'@for (const x of [(() => { const v = @for (const y of ys) { <b /> } @empty { <i /> }; return v; })()])',
+				'ReturnStatement',
+			],
+			['@switch ((() => { return @if (c) { <b /> }; })())', 'ReturnStatement'],
+		];
+		for (const [header, after] of cases) {
+			const body = header.startsWith('@switch') ? '{ @case 1: { <li /> } }' : '{ <li /> }';
+			const source = `export function App({ ys, c }) {\n\treturn <ul>${header} ${body}</ul>;\n}`;
+			for (const options of [undefined, { collect: true, errors: [], comments: [] }]) {
+				const ast = parseModule(source, 'App.tsrx', options);
+				const fn = find_first(ast, (node) =>
+					['ArrowFunctionExpression', 'FunctionExpression'].includes(node.type),
+				);
+				const fn_body = as_type(
+					/** @type {AST.ArrowFunctionExpression} */ (fn).body,
+					'BlockStatement',
+				);
+				expect(fn_body.body.at(-1)?.type, source).toBe(after);
+				expect(
+					allNodes(fn_body.body).filter(
+						(node) => node.type === 'JSXText' && /\S/.test(/** @type {any} */ (node).value),
+					),
+					source,
+				).toEqual([]);
+				if (options) expect(options.errors, source).toEqual([]);
+			}
+		}
+	});
+
+	it('reads markup in a function in a directive header as in other code, also when broken', () => {
+		// When collecting, an element left open, or closed by a closing tag that
+		// names an element around it, ended where the code goes on in a function,
+		// but not in a directive header there: the rest of the function was the
+		// element's text, or the parse failed (TS1012). So did a `<script>` or
+		// `<style>` there, also a valid one, and a `</>` closing a fragment across
+		// an open element closed the elements around the header too. In an `@for`
+		// header some of these parsed while a function's body was read as a
+		// directive body.
+		/** @type {Array<(statement: string) => string>} */
+		const contexts = [
+			(statement) => `@if ((() => { ${statement}; return a; })()) { <i /> }`,
+			(statement) => `@if ([{ f() { ${statement}; return a; } }].length) { <i /> }`,
+			(statement) => `@for (const x of [{ f() { ${statement}; return a; } }]) { <i /> }`,
+			(statement) => `@for (const x of [(() => { ${statement}; return a; })()]) { <i /> }`,
+			(statement) => `@for (const x of xs; key (() => { ${statement}; return a; })()) { <i /> }`,
+			(statement) => `@switch ((() => { ${statement}; return a; })()) { @case 1: { <i /> } }`,
+		];
+		for (const statement of [
+			'const a = <p><b></p>',
+			'const a = (<p>)',
+			'const a = [<p>]',
+			'const a = c ? <p> : 1',
+			'const a = g(<p>, 1)',
+			'const a = <div><span></div>',
+			'const a = <p><b><i></p>',
+			'const a = <p><b><i><u>t</p>',
+			'const a = (<p><b>)',
+			'const a = [<p><b>]',
+			'const a = <><b></>',
+			'const a = <><b><i></>',
+			'const a = (<>)',
+			'const a = <script>foo();</script>',
+			'const a = <style>.x { color: red; }</style>',
+			'const a = <p><script>f()</script></p>',
+		]) {
+			/**
+			 * @param {string} source
+			 * @param {string[]} types The function's node types
+			 */
+			const parse = (source, types) => {
+				const options = { collect: true, errors: /** @type {CompileError[]} */ ([]), comments: [] };
+				const ast = parseModule(source, 'App.tsrx', options);
+				const fn = find_first(ast, (node) => types.includes(node.type));
+				return {
+					codes: options.errors.map((error) => error.code),
+					statements: as_type(
+						/** @type {AST.ArrowFunctionExpression} */ (fn).body,
+						'BlockStatement',
+					).body.map((child) => child.type),
+				};
+			};
+			const expected = parse(`function f() { ${statement}; return a; }`, ['FunctionDeclaration']);
+			expect(expected.statements).toEqual(['VariableDeclaration', 'ReturnStatement']);
+			for (const context of contexts) {
+				const source = `export function App() {\n\treturn <div>${context(statement)}</div>;\n}`;
+				expect(parse(source, ['ArrowFunctionExpression', 'FunctionExpression']), source).toEqual(
+					expected,
+				);
+				// Valid markup parses strictly too.
+				if (expected.codes.length === 0) parseModule(source, 'App.tsrx');
+			}
+		}
 	});
 
 	it('parses a directive inside an @empty clause of an @for nested in an @if', () => {
 		// The `@empty` clause redirects through a second, independent
 		// `#templateControlFlowBlockDepth` increment (separate from the one
-		// around the `@for` header+body), so it needs its own regression
-		// coverage for the nested-in-@if shape.
+		// around the `@for` body), so it needs its own regression coverage for
+		// the nested-in-@if shape.
 		const returned = getReturned(`function App() { return <div>
 			@if (show) {
 				@for (const item of items) {
@@ -15157,20 +15375,120 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 	it('reports the syntax error in a namespace named `as`, and not its place', () => {
 		// TypeScript reads a namespace named `as` and reports a syntax error in it
 		// instead (TS1005 `'{' expected.` at `any`).
-		/** @type {Array<[source: string, error: ErrorKind, at: string]>} */
-		const cases = [
-			['{\n\tnamespace as any;\n}', TS_ERRORS.TOKEN_EXPECTED('{'), 'any'],
-			[
-				'{\n\tnamespace as { readonly r: number };\n}',
-				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
-				'readonly',
-			],
+		const source = '{\n\tnamespace as any;\n}';
+		expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] }), source).toThrow(
+			expect.objectContaining({
+				code: TS_ERRORS.TOKEN_EXPECTED('{').code,
+				pos: source.indexOf('any'),
+			}),
+		);
+		// A modifier that starts no statement in it (TS1128) is thrown by a strict
+		// parse, and recorded by a collecting one, which reads on.
+		const modifier = '{\n\tnamespace as { readonly r: number };\n}';
+		const pos = modifier.indexOf('readonly');
+		expect(() => parseModule(modifier, 'App.tsrx'), modifier).toThrow(
+			expect.objectContaining({ code: 'TS1128', pos }),
+		);
+		/** @type {ParseOptions & { errors: CompileError[] }} */
+		const options = { collect: true, errors: [] };
+		parseModule(modifier, 'App.tsrx', options);
+		expect(options.errors.map(({ code, pos }) => ({ code, pos }))).toContainEqual({
+			code: 'TS1128',
+			pos,
+		});
+	});
+
+	it("reports a `return` right in a class `static` block with TypeScript's code for it", async () => {
+		// acorn reports `'return' outside of function` (TS1108) and stops;
+		// TypeScript's parser reads it and its checker reports TS18041 at the
+		// keyword, also in a block or a loop in the `static` block.
+		const sources = [
+			'class A { static { return; } }',
+			'class A { static { if (x) return 1; } }',
+			'class A { static { for (;;) { return; } } }',
+			'function f() { class A { static { return; } } return A; }',
+			'function App() @{ class A { static { return; } } <div /> }',
 		];
-		for (const [source, error, at] of cases) {
-			expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] }), source).toThrow(
-				expect.objectContaining({ code: code_of(error), pos: source.indexOf(at) }),
-			);
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) => {
+				const full = `${source}\nexport const after = 1;`;
+				return [{ source: full }, { source: full, options: { collect: true } }];
+			}),
+		);
+		// A collecting parse records it over the keyword, and reads on.
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok ? { errors: outcome.errors, last: outcome.ast.body.at(-1)?.type } : outcome,
+			),
+		).toEqual(
+			sources.flatMap((source) => {
+				const pos = source.indexOf('return');
+				return [
+					thrown(TS_ERRORS.STATIC_BLOCK_RETURN, pos),
+					{
+						errors: [{ code: TS_ERRORS.STATIC_BLOCK_RETURN.code, pos, end: pos + 'return'.length }],
+						last: 'ExportNamedDeclaration',
+					},
+				];
+			}),
+		);
+		// Each one, as TypeScript reports each.
+		const errors = /** @type {CompileError[]} */ ([]);
+		parseModule('class A { static { return; return; } }', 'App.tsrx', { collect: true, errors });
+		expect(errors.map((error) => [error.code, error.pos])).toEqual([
+			['TS18041', 19],
+			['TS18041', 27],
+		]);
+		// One in a function in the block is the function's.
+		expect(
+			parseModule('class A { static { const f = () => { return 1; }; } }', 'App.tsrx').body,
+		).toHaveLength(1);
+		// TypeScript's checker doesn't check the operand of one it reports, and in
+		// an ambient class reports any statement in a `static` block as TS1036,
+		// which TSRX leaves to it, as for any other statement there.
+		for (const [source, at] of /** @type {Array<[string, number[]]>} */ ([
+			['class A { static { return class { static { return; } }; } }', [19]],
+			['declare class A { static { return; } }', []],
+			['declare class A { static { x; } }', []],
+			// TS1036 is the first statement's in each block, so a later one, or one
+			// in an `if`, is still TS18041.
+			['declare class A { static { return; return; } }', [35]],
+			['declare class A { static { if (x) return; } }', [34]],
+			['declare class A { static { { return; } } }', []],
+			// Nor does TypeScript check a default it doesn't check (TS2371), or the
+			// operand of a `return` outside a function, which TSRX allows (TS1108).
+			['type F = (x = class { static { return; } }) => void;', []],
+			['interface I { m(x = class { static { return; } }): void; }', []],
+			['return class { static { return; } };', []],
+			// An overload's default is checked.
+			['function f(x = class { static { return; } }): void;\nfunction f() {}', [32]],
+			// Nor the operand of a `return` TypeScript reports as TS1036.
+			['declare class A { static { return class { static { return; return; } }; } }', []],
+			// A namespace's scope isn't a `static` block's, though acorn-typescript
+			// gives it the same flag; a class's in a namespace is.
+			['namespace N { class A { static { return; } } }', [33]],
+		])) {
+			const collected = /** @type {CompileError[]} */ ([]);
+			parseModule(source, 'App.tsrx', { collect: true, errors: collected });
+			expect(
+				collected
+					.filter((error) => error.code === 'TS18041')
+					.map((error) => [error.code, error.pos]),
+				source,
+			).toEqual(at.map((pos) => ['TS18041', pos]));
 		}
+		// One right in a namespace is still TS1108, as on main.
+		expect(() => parseModule('namespace N { return; }', 'App.tsrx')).toThrow(
+			expect.objectContaining({ code: 'TS1108', pos: 14 }),
+		);
+		// One in a class in a template is the class's, not the template's (TSRX2001).
+		const in_template = /** @type {CompileError[]} */ ([]);
+		parseModule(
+			'class A { static { const t = @{ class B { static { return; } } <b /> }; } }',
+			'App.tsrx',
+			{ collect: true, errors: in_template },
+		);
+		expect(in_template.map((error) => error.code)).toEqual(['TS18041']);
 	});
 
 	it("reports a `break` or `continue` with no target with TypeScript's code for it", async () => {
@@ -15223,6 +15541,77 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 		);
 	});
 
+	it("reports a `using` declaration's missing initializer at the name, as a `const` one's", async () => {
+		// TypeScript's checker reports TS1155 on the name, without its type, for
+		// `using` and `await using` as for `const`, and not after `declare`, which
+		// makes the declaration ambient. acorn threw it at the token after the
+		// name in every mode.
+		/** @type {Array<[source: string, errors: Array<[code: string, at: string, length: number]>]>} */
+		const cases = [
+			['using x;', [['TS1155', 'x;', 1]]],
+			['using x: T, y = 1;', [['TS1155', 'x:', 1]]],
+			['async function f() {\n\tawait using x;\n}', [['TS1155', 'x;', 1]]],
+			['for (using of;;) {}', [['TS1155', 'of;', 2]]],
+			[`using ${'x'.repeat(70)};`, [['TS1155', 'x', 70]]],
+			['const \\u0078: number;', [['TS1155', '\\u0078', 6]]],
+			['declare using x;', [['TS1491', 'declare', 7]]],
+			['export declare await using x;', [['TS1495', 'export', 6]]],
+			// Not the declarations in a statement after `declare` that isn't a
+			// `using` declaration to acorn, as when the `using` has an escape
+			// (TypeScript reports TS1260 there first, not changed here).
+			[
+				'declare \\u0075sing as any + (() => { using x; })();',
+				[
+					['TS1155', 'x;', 1],
+					['TS1079', 'declare', 7],
+				],
+			],
+			[
+				'declare \\u0075sing as any + (() => { const x; const y; })();',
+				[
+					['TS1155', 'x;', 1],
+					['TS1155', 'y;', 1],
+					['TS1079', 'declare', 7],
+				],
+			],
+			// After a binding pattern's TS1492, and a modifier's error.
+			[
+				'using { x = (() => { using y; })() } = z;',
+				[
+					['TS1492', '{ x', 30],
+					['TS1155', 'y;', 1],
+				],
+			],
+			[
+				'abstract using { x } = y, z;',
+				[
+					['TS1242', 'abstract', 8],
+					['TS1492', '{ x }', 5],
+					['TS1155', 'z;', 1],
+				],
+			],
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			cases.flatMap(([source]) =>
+				[undefined, { collect: true }, { loose: true }].map((options) => ({ source, options })),
+			),
+		);
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok ? outcome.errors : { code: outcome.code, pos: outcome.pos },
+			),
+		).toEqual(
+			cases.flatMap(([source, errors]) => {
+				const recorded = errors.map(([code, at, length]) => {
+					const pos = source.indexOf(at);
+					return { code, pos, end: pos + length };
+				});
+				const [first] = recorded;
+				return [{ code: first.code, pos: first.pos }, recorded, recorded];
+			}),
+		);
+	});
+
 	it('reports `export global` before anything but `{` in a block as an export, not a global', () => {
 		// `global` is a global augmentation only before `{` (or a name or
 		// `export`), so `export` starts no declaration there: TS1128, as in
@@ -15242,9 +15631,18 @@ describe('mistakes that TypeScript reports only from its checker', () => {
 
 	it('throws a syntax error in a misplaced namespace before its place, as TypeScript reports it', () => {
 		const source = '{\n\tnamespace N {\n\t\treadonly r = 1;\n\t}\n}';
-		const expected = expect.objectContaining({ code: 'TS1128', pos: source.indexOf('readonly') });
-		expect(() => parseModule(source, 'App.tsrx')).toThrow(expected);
-		expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] })).toThrow(expected);
+		const pos = source.indexOf('readonly');
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			expect.objectContaining({ code: 'TS1128', pos }),
+		);
+		// A collecting parse records it, and reads on.
+		/** @type {ParseOptions & { errors: CompileError[] }} */
+		const options = { collect: true, errors: [] };
+		parseModule(source, 'App.tsrx', options);
+		expect(options.errors.map(({ code, pos }) => ({ code, pos }))).toContainEqual({
+			code: 'TS1128',
+			pos,
+		});
 	});
 
 	it("throws TS1260 for an escape in a misplaced namespace's keyword before its place", () => {
@@ -17821,15 +18219,26 @@ describe('an at-sign construct after `export` (#607)', () => {
 			['export @for (const a of b) { <div /> }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
 			['export @switch (a) { @case 1: { <div /> } }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
 			['export @try { <div /> } @catch (e) { <b /> }', TS_ERRORS.UNEXPECTED_TOKEN, '@'],
-			['export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			// `export declare` before no declaration, as TypeScript reports it.
-			['export declare @if (a) { <div /> }', 'TS1128', 'export'],
 		];
 		const outcomes = await parse_in_worker(
 			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
 		);
 		expect(outcomes).toEqual(
 			cases.flatMap(([source, error, at]) => modes.map(() => thrown(error, source.indexOf(at)))),
+		);
+		// `export declare` before no declaration, as TypeScript reports it: TS1128
+		// at `export`, which a collecting parse records and reads on after, as
+		// after `export foo;`.
+		const skipped = ['export foo;', 'export declare @if (a) { <div /> }'];
+		const recovered = await parse_in_worker(
+			skipped.flatMap((source) => modes.map((options) => ({ source, options }))),
+		);
+		expect(recovered).toEqual(
+			skipped.flatMap(() => [
+				thrown(TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 0),
+				{ ok: true, errors: ['TS1128'] },
+				{ ok: true, errors: ['TS1128'] },
+			]),
 		);
 	});
 
@@ -17916,6 +18325,32 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		);
 	}
 
+	/**
+	 * A token that starts no statement in a list, `at`: a strict parse throws
+	 * `error` at it. A collecting one records it over the token and reads on
+	 * from the next token, as TypeScript's parser does, with the module's
+	 * statements `body` (an empty statement for the token).
+	 * @param {Array<[source: string, error: ErrorKind, at: string, body: string[]]>} cases
+	 */
+	async function expect_skipped(cases) {
+		const outcomes = await parse_in_worker_with_ast(
+			cases.flatMap(([source]) => modes.map((options) => ({ source, options }))),
+		);
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok
+					? { errors: outcome.errors, body: outcome.ast.body.map((node) => node.type) }
+					: outcome,
+			),
+		).toEqual(
+			cases.flatMap(([source, error, at, body]) => {
+				const pos = source.indexOf(at);
+				const recorded = { errors: [{ code: code_of(error), pos, end: pos + at.length }], body };
+				return [thrown(error, pos), recorded, recorded];
+			}),
+		);
+	}
+
 	it('reports a missing `;`, or `,` in a declaration list (#1053)', async () => {
 		await expect_thrown([
 			['import "m" x;', TS_ERRORS.TOKEN_EXPECTED, 'x;'],
@@ -17938,11 +18373,17 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 	});
 
 	it('reports a modifier that starts no statement as TS1128', async () => {
-		await expect_thrown([
-			['accessor x;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'accessor'],
-			['readonly x = 1;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'readonly'],
-			['static accessor;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'static'],
-			['function f() {\n\tpublic x;\n}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'public'],
+		const expression = ['EmptyStatement', 'ExpressionStatement'];
+		await expect_skipped([
+			['accessor x;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'accessor', expression],
+			['readonly x = 1;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'readonly', expression],
+			['static accessor;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'static', expression],
+			[
+				'function f() {\n\tpublic x;\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'public',
+				['FunctionDeclaration'],
+			],
 		]);
 		// Before a line break or another token, it's a name.
 		for (const source of ['accessor\nx;', 'accessor = 1;', 'readonly;']) {
@@ -17950,19 +18391,248 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		}
 	});
 
+	it('records a token that starts no statement when collecting, and reads on after it', async () => {
+		await expect_skipped([
+			// An export of a declared class that a decorator follows, which compiled
+			// before TS1128 was reported for it: the editor keeps the file, and the
+			// class after the name `declare`, as TypeScript reads them.
+			[
+				'export declare @dec class A {}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['EmptyStatement', 'ExpressionStatement', 'ClassDeclaration'],
+			],
+			[
+				'{\n\texport declare @dec class A {}\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['BlockStatement'],
+			],
+			// At the end of the input, or of a block.
+			['export', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export', ['EmptyStatement']],
+			['{\n\texport\n}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export', ['BlockStatement']],
+			// The next token starts a statement: an element, or a regular expression.
+			[
+				'export <div />;',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['EmptyStatement', 'JSXElement', 'EmptyStatement'],
+			],
+			[
+				'export /x/.test(a);',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['EmptyStatement', 'ExpressionStatement'],
+			],
+			// Written with an escape: TypeScript reports the escape at the same place,
+			// so not at all.
+			[
+				'\\u0065xport foo;',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'\\u0065xport',
+				['EmptyStatement', 'ExpressionStatement'],
+			],
+			// In a `case` clause, TypeScript reports TS1129 `Statement expected.`
+			// there, and TS1128 in a block in it.
+			[
+				'switch (a) {\n\tcase 1:\n\t\texport foo;\n}',
+				TS_ERRORS.STATEMENT_EXPECTED,
+				'export',
+				['SwitchStatement'],
+			],
+			[
+				'switch (a) {\n\tdefault:\n\t\taccessor x;\n}',
+				TS_ERRORS.STATEMENT_EXPECTED,
+				'accessor',
+				['SwitchStatement'],
+			],
+			[
+				'switch (a) {\n\tcase 1: {\n\t\texport foo;\n\t}\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['SwitchStatement'],
+			],
+		]);
+		expect(() => parseModule('switch (a) { case 1: export foo; }', 'App.tsrx')).toThrow(
+			'Statement expected.',
+		);
+		// Each token that starts no statement gets its error, as in TypeScript.
+		const outcomes = await parse_in_worker_with_ast(
+			['export export foo;', 'export accessor x;'].map((source) => ({
+				source,
+				options: { collect: true },
+			})),
+		);
+		expect(outcomes.map((outcome) => outcome.ok && outcome.errors)).toEqual([
+			[
+				{ code: 'TS1128', pos: 0, end: 6 },
+				{ code: 'TS1128', pos: 7, end: 13 },
+			],
+			[
+				{ code: 'TS1128', pos: 0, end: 6 },
+				{ code: 'TS1128', pos: 7, end: 15 },
+			],
+		]);
+	});
+
+	it('records a token that starts no statement before the checker errors held around it', async () => {
+		// TypeScript reports the syntax error first, or alone. It isn't held with
+		// a misplaced namespace's or a method's checker errors, or dropped with a
+		// signature's when the signature fails later.
+		const outcomes = await parse_in_worker_with_ast(
+			[
+				'{namespace N{export foo;}}',
+				'class A { m(public x) {export foo;} }',
+				'type F = (x = () => { export foo; }) => ;',
+				'for (let x = () => { export foo; } in y) {}',
+				'try { export foo; } } catch {}',
+				// In a generic arrow function that acorn-typescript then abandons, or
+				// in the parameters of an async one whose body fails.
+				'function f(x = <T,>() => { export foo;',
+				'async <T,>(x = () => { export foo; }) => ;',
+			].map((source) => ({ source, options: { collect: true } })),
+		);
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok
+					? outcome.errors?.[0]
+					: { code: outcome.code, pos: outcome.pos, end: undefined, ok: false },
+			),
+		).toEqual([
+			{ code: 'TS1128', pos: 13, end: 19 },
+			{ code: 'TS1128', pos: 23, end: 29 },
+			// When the rest fails, the first is thrown.
+			{ code: 'TS1128', pos: 22, end: undefined, ok: false },
+			{ code: 'TS1128', pos: 21, end: undefined, ok: false },
+			{ code: 'TS1128', pos: 6, end: undefined, ok: false },
+			{ code: 'TS1128', pos: 27, end: undefined, ok: false },
+			{ code: 'TS1128', pos: 23, end: undefined, ok: false },
+		]);
+		// Only this parse's: a list of errors from an earlier one isn't thrown.
+		/** @type {CompileError[]} */
+		const shared = [];
+		expect(() =>
+			parseModule('export foo; a b;', 'One.tsrx', { collect: true, errors: shared }),
+		).toThrow(expect.objectContaining({ code: 'TS1128', pos: 0 }));
+		expect(() => parseModule('const =', 'Two.tsrx', { collect: true, errors: shared })).toThrow(
+			expect.objectContaining({ code: 'TS1012', pos: 6 }),
+		);
+		// The syntax errors held there come first, by position, as TypeScript
+		// reports them: an escape in a JSX name (TS17021) too.
+		const held = await parse_in_worker_with_ast(
+			['{namespace N{let x = <A\\u0042 />; export foo;}}', '{namespace N{<Inn\\u0065r />;}}'].map(
+				(source) => ({ source, options: { collect: true } }),
+			),
+		);
+		expect(
+			held.map((outcome) => outcome.ok && outcome.errors?.map(({ code, pos }) => `${code}@${pos}`)),
+		).toEqual([
+			['TS17021@22', 'TS1128@34', 'TS1235@1'],
+			['TS17021@14', 'TS1235@1'],
+		]);
+		// And a strict parse throws the one held in a generic arrow function's
+		// parameters before a syntax error in its body, which a collecting parse
+		// recorded first, where it dropped it.
+		const parameter = 'const f = async <T,>(x = <A\\u0062 />) => ;';
+		expect(() => parseModule(parameter, 'App.tsrx')).toThrow(
+			expect.objectContaining({ code: 'TS17021', pos: parameter.indexOf('A\\') }),
+		);
+	});
+
+	it('keeps the error a strict parse throws where it reads ahead as a collecting one', () => {
+		// A strict parse reads the input, or what follows, as a collecting one to
+		// tell what it throws first (`#declaresFunctionLater`, `#asCollecting`):
+		// there, a token that starts no statement still ends the read, as before.
+		for (const [source, code, pos] of /** @type {const} */ ([
+			['let x; let x; export foo; function x(){}', 'TS2451', 11],
+			['const f = (public x = () => {export foo;})=>x;', 'TS1214', 11],
+		])) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code, pos }),
+			);
+		}
+	});
+
+	it('leaves a token that starts no statement in a template out, as a `;`', async () => {
+		const outcomes = await parse_in_worker_with_ast(
+			['function A() @{ <div /> export }', 'function A() @{ export <div /> }'].map((source) => ({
+				source,
+				options: { collect: true },
+			})),
+		);
+		expect(
+			outcomes.map((outcome) => {
+				if (!outcome.ok) return outcome;
+				const body = /** @type {any} */ (outcome.ast.body[0]).body;
+				return {
+					errors: outcome.errors?.map((error) => error.code),
+					render: body.render?.type,
+					statements: body.body.length,
+				};
+			}),
+		).toEqual([
+			{ errors: ['TS1128'], render: 'JSXElement', statements: 0 },
+			{ errors: ['TS1128'], render: 'JSXElement', statements: 0 },
+		]);
+	});
+
+	it('keeps a checker error first before a token that starts no statement', () => {
+		// A strict parse that throws a checker error finds the exports declared
+		// twice before it with a collecting parse, which records TS1128 at
+		// `export` and reads on. That's a syntax error still, after which the
+		// exports don't come first, so it throws the checker error, as when the
+		// collecting parse threw TS1128.
+		const source =
+			'export const a = 1;\nexport { a as b, a as b };\nlet x = 1;\nlet x = 2;\nexport foo;';
+		expect(() => parseModule(source, 'App.tsrx')).toThrow(
+			expect.objectContaining({
+				code: TS_ERRORS.BLOCK_SCOPED_VARIABLE_REDECLARED.code,
+				pos: source.lastIndexOf('x ='),
+			}),
+		);
+	});
+
 	it('reports `export`, `async` and `abstract` before no declaration as TypeScript does', async () => {
+		// `export` starts no statement before what TypeScript reads no declaration
+		// from: TS1128 at `export`, where acorn failed after it.
+		const expression = ['EmptyStatement', 'ExpressionStatement'];
+		await expect_skipped([
+			['export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export', expression],
+			['export 1;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export', expression],
+			['export\nfoo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export', expression],
+			[
+				'export declare foo;',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['EmptyStatement', 'ExpressionStatement', 'ExpressionStatement'],
+			],
+			[
+				'{\n\texport foo;\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['BlockStatement'],
+			],
+			[
+				'namespace N {\n\texport foo;\n}',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['TSModuleDeclaration'],
+			],
+			// After `declare`, which is a name there with no error after it, the
+			// next statement starts at the word.
+			[
+				'declare export foo;',
+				TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED,
+				'export',
+				['ExpressionStatement', 'EmptyStatement', 'ExpressionStatement'],
+			],
+		]);
 		await expect_thrown([
-			// `export` starts no statement before what TypeScript reads no
-			// declaration from: TS1128 at `export`, where acorn failed after it.
-			['export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			['export 1;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			['export\nfoo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
+			// A collecting parse that fails after it still throws TS1128 at
+			// `export`, which TypeScript reports first.
 			['export async foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
 			['export abstract foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			['export declare foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
 			['export declare abstract foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			['{\n\texport foo;\n}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
-			['namespace N {\n\texport foo;\n}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
 			// `async` and `abstract` are names before anything else: TS1434 at the
 			// name, where acorn failed at the token after it (`async`) or reported
 			// `Unexpected token` (`abstract`).
@@ -17980,7 +18650,6 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 			],
 			// After `declare`, which is a name there with no error after it, the
 			// next statement starts at the word.
-			['declare export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, 'export'],
 			['declare async foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'async'],
 			['declare abstract foo;', TS_ERRORS.UNEXPECTED_KEYWORD_OR_IDENTIFIER, 'abstract'],
 			// A name written with an escape is the name it spells (`idText`).
@@ -18021,21 +18690,61 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		expect(() => parseModule('throw let foo;', 'App.tsrx', { collect: true, errors: [] })).toThrow(
 			expect.objectContaining({ code: 'TS1440', pos: 6, end: 9 }),
 		);
-		// An escaped keyword that TypeScript reads as starting a declaration, or as
-		// a modifier that starts no statement in a list, isn't a name there:
-		// TypeScript reports its escape (TS1260) or TS1128.
+		// An escaped keyword that TypeScript reads as the keyword there isn't a
+		// name: TypeScript reports its escape (TS1260) on it, or TS1128 for a
+		// modifier that starts no statement in a list, where it starts a
+		// declaration (`isDeclaration`), an async arrow function, a `let` or
+		// `using` declaration, or a `yield` expression. A strict parse throws
+		// TS1214 first for a word reserved in strict mode, as it reads the name.
+		/** @type {Array<[source: string, strict: [string, string], collect: [string, string, number]]>} */
+		const escaped_keywords = [
+			['\\u0061sync function f() {}', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['\\u0061sync foo => foo;', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['if (x) \\u0061ccessor class C {}', ['TS1260', '\\'], ['TS1260', '\\', 13]],
+			['\\u0061ccessor export {};', ['TS1260', '\\'], ['TS1260', '\\', 13]],
+			['\\u0075sing foo;', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['\\u006cet foo;', ['TS1214', '\\'], ['TS1260', '\\', 8]],
+			['\\u0079ield foo;', ['TS1214', '\\'], ['TS1260', '\\', 10]],
+			['\\u0061ccessor foo;', ['TS1128', '\\'], ['TS1128', '\\', 13]],
+			['{\n\t\\u0073tatic foo;\n}', ['TS1214', '\\'], ['TS1128', '\\', 11]],
+			// `enum` after `const` is the keyword of a `const enum`, and a string is
+			// no name.
+			['if (x) \\u0061sync const enum E {}', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['if (x) \\u0061sync module "await" {}', ['TS1260', '\\'], ['TS1260', '\\', 10]],
+			['{ \\u0061ccessor module "await" {} }', ['TS1260', '\\'], ['TS1260', '\\', 13]],
+		];
+		for (const [source, [strict_code, strict_at], [code, at, length]] of escaped_keywords) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code: strict_code, pos: source.indexOf(strict_at) }),
+			);
+			const pos = source.indexOf(at);
+			expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] }), source).toThrow(
+				expect.objectContaining({ code, pos, end: pos + length }),
+			);
+		}
+		// Where TypeScript reads a name, it's a name (TS1434), as `\\u0061sync foo;`
+		// above: a modifier before no declaration after `if (…)`, and before what
+		// TypeScript reads as no name there (`enum`, `await` in an async function,
+		// `yield` in a generator).
 		for (const source of [
-			'\\u006cet foo;',
-			'\\u0075sing foo;',
-			'\\u0061ccessor foo;',
-			'{\n\t\\u0073tatic foo;\n}',
-			'\\u0079ield foo;',
+			'if (x) \\u0061ccessor foo;',
+			'\\u0075sing enum E {}',
+			'if (x) \\u0061ccessor interface enum {}',
+			'async function f() { \\u0061sync await => x; }',
+			'function* f() { \\u0061sync yield => x; }',
+			// TypeScript's await and yield contexts reach through a namespace, and
+			// a class `static` block is an await context.
+			'function* f() { namespace N { \\u0061sync yield => x; } }',
+			'class C { static { \\u0061sync await => x; } }',
+			// Nor where a declaration's name is `await` or `yield`, after any
+			// modifiers, or a scanner error comes after it.
+			'async function f() { \\u0061sync export declare namespace await {} }',
+			'async function f() { \\u0061sync defer await; }',
+			'if (x) \\u0061sync foo "',
 		]) {
-			for (const options of [undefined, { collect: true, errors: [] }]) {
-				expect(() => parseModule(source, 'App.tsrx', options), source).not.toThrow(
-					'Unexpected keyword or identifier.',
-				);
-			}
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code: 'TS1434', pos: source.indexOf('\\') }),
+			);
 		}
 		// Before a declaration TypeScript reads (a global augmentation named
 		// `foo`, TS1005 at `foo`; a repeated modifier, TS1030), `abstract` isn't a
@@ -18066,6 +18775,34 @@ describe("TypeScript's syntax error where acorn reports another", () => {
 		expect(() => parseModule('for (async of xs) {}', 'App.tsrx')).toThrow(
 			expect.objectContaining({ code: 'TS1012', pos: 'for (async of '.length }),
 		);
+	});
+
+	it('reads a long run of modifiers before a declaration in linear time', () => {
+		// The tokens after an escaped modifier, and after modifiers that start a
+		// statement, are read once each, not again for each of them: 5,000 took
+		// seconds.
+		const words = 'async '.repeat(5000);
+		for (const [source, code] of [
+			[`if (x) \\u0061sync ${words}function f() {}`, 'TS1260'],
+			[`if (x) \\u0061sync function ${words}f() {}`, 'TS1260'],
+			[`\\u0061ccessor ${words}x;`, 'TS1128'],
+			[`accessor ${words}x;`, 'TS1128'],
+		]) {
+			const start = performance.now();
+			expect(() => parseModule(source, 'App.tsrx', { collect: true, errors: [] })).toThrow(
+				expect.objectContaining({ code }),
+			);
+			expect(performance.now() - start, source.slice(0, 24)).toBeLessThan(1000);
+		}
+		// And a run of `declare` in a block, read for a namespace declaration's
+		// place too.
+		const source = `{ ${'declare '.repeat(1500)}let x; }`;
+		/** @type {CompileError[]} */
+		const errors = [];
+		const start = performance.now();
+		parseModule(source, 'App.tsrx', { collect: true, errors });
+		expect(performance.now() - start).toBeLessThan(1000);
+		expect(errors.map((error) => [error.code, error.pos])).toEqual([['TS1184', 2]]);
 	});
 
 	it('reports `import` after `new` as a missing expression', async () => {
@@ -19063,6 +19800,48 @@ ${lines.join('\n')}
 		]) {
 			expect(() => parseModule(source, 'App.tsrx'), source).not.toThrow();
 		}
+	});
+
+	it('reports a `-` in a member name before the token after it, and reads on past it', async () => {
+		// TypeScript reports it before the scanner's error at the next token.
+		for (const [source, at] of [
+			['const x = <X.A-b # />;', '-'],
+			['const x = <X.A-b " />;', '-'],
+			[`const x = <X.A-${escape('ZZZZ')} />;`, '-'],
+		]) {
+			expect(() => parseModule(source, 'App.tsrx'), source).toThrow(
+				expect.objectContaining({ code: 'TS1003', pos: source.indexOf(at) }),
+			);
+		}
+		// A collecting parse reads on: past the `=` of TypeScript's `-=` token, and
+		// a closing tag matches by the name TypeScript reads, up to the `-`.
+		const sources = [
+			'const x = <X.A-=b />;',
+			'const x = <X.A-= c="1"></X.A>;',
+			'const x = <X.A></X.A-b>;',
+			'const x = <X.A-b></X.A>;',
+			'const x = <X.A-b></X.A-c>;',
+			'export function App() @{\n\t<X.A>x</X.A-b>\n}',
+		];
+		const outcomes = await parse_in_worker_with_ast(
+			sources.flatMap((source) =>
+				[{ collect: true }, { loose: true }].map((options) => ({ source, options })),
+			),
+		);
+		expect(
+			outcomes.map((outcome) =>
+				outcome.ok ? outcome.errors?.map(({ code, pos }) => `${code}@${pos}`) : outcome.message,
+			),
+		).toEqual(
+			[
+				['TS1003@14'],
+				['TS1003@14'],
+				['TS1005@20'],
+				['TS1003@14'],
+				['TS1003@14', 'TS1005@22'],
+				['TS1005@37'],
+			].flatMap((expected) => [expected, expected]),
+		);
 	});
 
 	it('reads a tag in children that starts with an escape or a letter outside ASCII, as TypeScript does', () => {

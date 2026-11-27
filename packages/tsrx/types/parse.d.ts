@@ -211,6 +211,13 @@ export namespace Parse {
 			 * caller keeps as the code reads them.
 			 */
 			textReadAsCode?: Array<[number, number]>;
+			/**
+			 * Throw at a token that starts no statement where a statement in a list
+			 * starts, as a strict parse does, instead of recording it and reading
+			 * on: the collecting parse of the input that a strict parse reads its
+			 * errors from.
+			 */
+			stopAtStatementStart?: boolean;
 		};
 		// The type has "latest" but it's converted to 1e8 at runtime
 		// and if (ecmaVersion >= 2015) { ecmaVersion -= 2009 }
@@ -1003,6 +1010,15 @@ export namespace Parse {
 		 * @param number How many tokens to look ahead (default 1)
 		 */
 		lookahead(number?: number): LookaheadState;
+
+		/**
+		 * Restore the token fields of a `lookahead()` snapshot, without `context`.
+		 * Added by @sveltejs/acorn-typescript.
+		 */
+		setLookaheadTokenState(state: LookaheadState): void;
+
+		/** Whether tokens are being read by `lookahead`, which updates no context. */
+		isLookahead: boolean;
 
 		/**
 		 * Get next token start position

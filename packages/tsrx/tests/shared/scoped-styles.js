@@ -1119,6 +1119,26 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('reads the value after a comment before the colon', () => {
+			// As it reads the same declaration without the comment, which CSS reads
+			// as nothing.
+			for (const property of ['animation', 'animation-name', '-webkit-animation', 'ANIMATION']) {
+				for (const between of [' /* c */ ', ' /**/', '/**/', '/* a */ /* b */ ', '\n/* : */']) {
+					const commented = compile_keyframes(
+						`@keyframes fade ${frames} .a { ${property}${between}:fade; }`,
+					);
+					const plain = compile_keyframes(`@keyframes fade ${frames} .a { ${property}:fade; }`);
+					expect(
+						commented.css
+							.replaceAll(commented.hash, 'H')
+							.replace(`${property}${between}:`, `${property}:`),
+						property + between,
+					).toBe(plain.css.replaceAll(plain.hash, 'H'));
+					expect(commented.css, property + between).toContain(`:${commented.hash}-fade;`);
+				}
+			}
+		});
+
 		it('leaves animation shorthand keywords alone even when local keyframes share their name', () => {
 			const { css, hash } = compile_keyframes(
 				`@keyframes linear ${frames} @keyframes fade ${frames}
@@ -1154,6 +1174,19 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`animation-name: var(--name, var(--other, ${hash}-fade));`);
 			expect(css).toContain(`animation: env(--x, linear 1s, ${hash}-fade 2s);`);
 			expect(css).toContain(`animation: 1s var(--easing, ease) ${hash}-linear;`);
+		});
+
+		it('reads var() fallbacks nested thousands deep in linear time', () => {
+			// One call per level overflowed the stack, and each level read the
+			// rest of the value again.
+			const depth = 20_000;
+			const value = `${'var(--a, '.repeat(depth)}fade${')'.repeat(depth)}`;
+			const start = performance.now();
+			const { css, hash } = compile_keyframes(
+				`@keyframes fade ${frames} .a { animation: ${value} 1s; }`,
+			);
+			expect(performance.now() - start).toBeLessThan(2000);
+			expect(css).toContain(`var(--a, ${hash}-fade${')'.repeat(depth)} 1s;`);
 		});
 
 		it('ends a hex escape after the whitespace it consumes', () => {
@@ -2016,6 +2049,27 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`.a.${hash} { color: red; }`);
 		});
 
+		it("reads a @property's initial-value that holds a {} block and more", () => {
+			for (const value of ['{a} b', 'b {a}', '{a}{b}', 'foo(){}']) {
+				const property = `@property --x { syntax: "*"; inherits: false; initial-value: ${value}; }`;
+				const { css, cssHash } = compile(
+					`export function App() @{
+						<>
+							<style>
+								${property}
+								.a { color: red; }
+							</style>
+							<div ${attr}="a" />
+						</>
+					}`,
+					'App.tsrx',
+				);
+				// It was TSRX3013, though browsers register the value.
+				expect(css, value).toContain(property);
+				expect(css, value).toContain(`.a.${hashes_of(cssHash)[0]} { color: red; }`);
+			}
+		});
+
 		it('global-forms: :global leaves the wrapped part unscoped and scopes the rest of the selector', () => {
 			const { code, css, cssHash } = compile(
 				`export function App() @{
@@ -2206,6 +2260,36 @@ export function runSharedScopedStyleTests({
 			expect(css).toContain(`.wrap.${hash} /* c */ > /* d */ .icon:where(.${hash}) {`);
 			// A lone :global after one attaches to the compound before, as without.
 			expect(css).toContain(`.wrap.${hash}.dark { color: gray; }`);
+		});
+
+		it('reports a type selector after another selector of its compound', () => {
+			// The output was invalid (`.wrap/**/div.<hash>`), or valid and styling
+			// `.wrap` where CSS reads no rule (`.wrap*` gave `.wrap.<hash>`).
+			for (const rule of ['.wrap/**/div', '.wrap/**/*', '[x]div', '.wrap*', '.wrap { &div']) {
+				const source = `export function App() @{
+					<>
+						<style>${rule} { color: red; }${rule.includes(' {') ? ' }' : ''}</style>
+						<div ${attr}="wrap" x="1" />
+					</>
+				}`;
+				const at = source.indexOf(rule) + rule.search(/div|\*$/);
+				for (const options of [{}, { collect: true }]) {
+					expect(() => compile(source, 'App.tsrx', options), rule).toThrow(
+						expect.objectContaining({ code: DIAGNOSTIC_CODES.CSS_SYNTAX, pos: at }),
+					);
+				}
+			}
+			// One before an `&` is fine, as CSS Nesting writes it.
+			const { css } = compile(
+				`export function App() @{
+					<>
+						<style>.wrap { div& { color: red; } }</style>
+						<div ${attr}="wrap" />
+					</>
+				}`,
+				'App.tsrx',
+			);
+			expect(css).toContain('{ div& { color: red; } }');
 		});
 
 		it('leaves the compounds after a bare :global later in a selector unscoped in a theme too', () => {

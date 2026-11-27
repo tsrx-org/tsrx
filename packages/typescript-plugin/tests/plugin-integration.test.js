@@ -950,6 +950,40 @@ describe('typescript-plugin language plugin integration', () => {
 		expect(virtual_code.findGeneratedRangeBySourceRange(0, 5)).toBeNull();
 	});
 
+	it('spans the tokens that report diagnostics, not a mapping around them or an anchor', () => {
+		const plugin = create_plugin();
+		const workspace = create_fixture_workspace('ripple-only');
+		const file_name = path.join(workspace, 'src', 'App.tsrx');
+		const virtual_code = create_virtual_code(plugin, file_name, '<div/>');
+		/** @param {ReturnType<typeof token_mapping>} mapping */
+		const reporting = (mapping) => ({ ...mapping, data: { verification: true, customData: {} } });
+
+		// A `break;` ([30,36)) in an `@switch` ([10,60)), whose mapping covers the
+		// whole directive and doesn't report diagnostics: the error on the
+		// `break;` spans its own tokens, which do.
+		virtual_code.mappings = [
+			token_mapping(10, 50, 200, 80), // the `@switch`
+			reporting(token_mapping(30, 5, 250, 5)), // break
+			reporting(token_mapping(35, 1, 255, 1)), // ;
+		];
+		expect(virtual_code.findGeneratedRangeBySourceRange(30, 36)).toEqual([250, 256]);
+
+		// An anchor of another error, over a range around this one, is that error's
+		// own: the error still spans its tokens.
+		virtual_code.mappings = [
+			{
+				...reporting(token_mapping(0, 100, 120, 1)),
+				data: { verification: true, customData: { diagnosticAnchor: true } },
+			},
+			reporting(token_mapping(30, 5, 250, 5)),
+		];
+		expect(virtual_code.findGeneratedRangeBySourceRange(30, 36)).toEqual([250, 255]);
+
+		// With no token that reports them, it spans the others, as before.
+		virtual_code.mappings = [token_mapping(10, 50, 200, 80)];
+		expect(virtual_code.findGeneratedRangeBySourceRange(30, 36)).toEqual([220, 226]);
+	});
+
 	it('returns undefined for non-tsrx files before compiler resolution', () => {
 		const plugin = create_plugin();
 		const create_virtual_code_fn = /** @type {any} */ (plugin.createVirtualCode);

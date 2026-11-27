@@ -6296,17 +6296,23 @@ function find_key_expression_in_body(body_nodes) {
 }
 
 /**
+ * Reports a `return` in an `@for` body, and a `break` or `continue` there
+ * that leaves the body: one whose loop, `switch` or label isn't in it. A jump
+ * in a loop in the body is the directive jump check's (see
+ * `collect_directive_jumps`).
  * @param {AST.Node | AST.Node[] | null | undefined} node
  * @param {TransformContext} transform_context
  * @param {boolean} [is_root]
+ * @param {JumpTarget[]} [targets] The `switch` statements and labels around `node` in the body.
  */
-function validate_for_body_control_flow(node, transform_context, is_root = true) {
+function validate_for_body_control_flow(node, transform_context, is_root = true, targets = []) {
 	if (Array.isArray(node)) {
 		for (const child of node) {
 			validate_for_body_control_flow(
 				child,
 				transform_context,
 				is_root && !is_loop_statement(child),
+				targets,
 			);
 		}
 		return;
@@ -6342,6 +6348,12 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 	) {
 		return;
 	}
+	if (
+		(node.type === 'BreakStatement' || node.type === 'ContinueStatement') &&
+		jump_reaches(node, targets)
+	) {
+		return;
+	}
 	if (node.type === 'BreakStatement') {
 		report_jump(TSRX_ERRORS.FOR_BREAK_STATEMENT, node, node, transform_context);
 		return;
@@ -6356,18 +6368,27 @@ function validate_for_body_control_flow(node, transform_context, is_root = true)
 	}
 
 	for (const child of child_nodes(node)) {
-		validate_for_body_control_flow(child, transform_context, false);
+		validate_for_body_control_flow(
+			child,
+			transform_context,
+			false,
+			child_jump_targets(node, child, targets),
+		);
 	}
 }
 
 /**
+ * Reports a `return` in an `@if` or `@else` body, and a `break` or
+ * `continue` there that leaves the body: one whose loop, `switch` or label
+ * isn't in it.
  * @param {AST.Node | AST.Node[] | null | undefined} node
  * @param {TransformContext} transform_context
+ * @param {JumpTarget[]} [targets] The loops, `switch` statements and labels around `node` in the body.
  */
-function validate_if_body_control_flow(node, transform_context) {
+function validate_if_body_control_flow(node, transform_context, targets = []) {
 	if (Array.isArray(node)) {
 		for (const child of node) {
-			validate_if_body_control_flow(child, transform_context);
+			validate_if_body_control_flow(child, transform_context, targets);
 		}
 		return;
 	}
@@ -6403,6 +6424,12 @@ function validate_if_body_control_flow(node, transform_context) {
 	) {
 		return;
 	}
+	if (
+		(node.type === 'BreakStatement' || node.type === 'ContinueStatement') &&
+		jump_reaches(node, targets)
+	) {
+		return;
+	}
 	if (node.type === 'BreakStatement') {
 		report_jump(TSRX_ERRORS.IF_BREAK_STATEMENT, node, node, transform_context);
 		return;
@@ -6417,7 +6444,11 @@ function validate_if_body_control_flow(node, transform_context) {
 	}
 
 	for (const child of child_nodes(node)) {
-		validate_if_body_control_flow(child, transform_context);
+		validate_if_body_control_flow(
+			child,
+			transform_context,
+			child_jump_targets(node, child, targets),
+		);
 	}
 }
 
@@ -6638,7 +6669,7 @@ function report_jump(diagnostic, node, error_node, transform_context) {
  * labels inside the body. `nested` is whether the jump is in a loop in the
  * body: the `@for` check reports a jump in an `@for` body outside such a
  * loop, and this one a jump in it that leaves the body.
- * @typedef {{ kind: 'none' | 'body' | 'case' | 'for' | 'if' | 'chain', targets: Array<{ loop: boolean, label: string | null }>, nested?: boolean }} JumpScope
+ * @typedef {{ kind: 'none' | 'body' | 'case' | 'for' | 'if' | 'chain', targets: JumpTarget[], nested?: boolean }} JumpScope
  */
 
 /**
@@ -6669,11 +6700,7 @@ function collect_directive_jumps(node, parent, scope, found) {
 		found.push({ node, kind: scope.kind });
 	}
 	if (node.type === 'BreakStatement' || node.type === 'ContinueStatement') {
-		const is_break = node.type === 'BreakStatement';
-		const label = node.label?.name ?? null;
-		const reaches = scope.targets.some((target) =>
-			label === null ? target.label === null && (is_break || target.loop) : target.label === label,
-		);
+		const reaches = jump_reaches(node, scope.targets);
 		const reported =
 			scope.kind === 'body' ||
 			scope.kind === 'case' ||
@@ -6702,6 +6729,51 @@ function collect_directive_jumps(node, parent, scope, found) {
 
 /** @type {JumpScope} */
 const NO_JUMP_SCOPE = { kind: 'none', targets: [] };
+
+/**
+ * A loop, `switch` statement or label that a `break` or `continue` inside it
+ * can reach: `loop` is whether a `continue` can, `label` the label's name
+ * (`null` for a loop or `switch` without one).
+ * @typedef {{ loop: boolean, label: string | null }} JumpTarget
+ */
+
+/**
+ * Whether a `break` or `continue` reaches one of `targets`: a `break`
+ * without a label the innermost loop or `switch`, a `continue` without one
+ * the innermost loop, and one with a label that label.
+ * @param {AST.BreakStatement | AST.ContinueStatement} node
+ * @param {JumpTarget[]} targets
+ * @returns {boolean}
+ */
+function jump_reaches(node, targets) {
+	const is_break = node.type === 'BreakStatement';
+	const label = node.label?.name ?? null;
+	return targets.some((target) =>
+		label === null ? target.label === null && (is_break || target.loop) : target.label === label,
+	);
+}
+
+/**
+ * The jump targets around `child`, a child of `node`, given `targets`, those
+ * around `node`: a label's statement, a loop's body and a `switch`
+ * statement's cases add one.
+ * @param {AST.Node} node
+ * @param {AST.Node} child
+ * @param {JumpTarget[]} targets
+ * @returns {JumpTarget[]}
+ */
+function child_jump_targets(node, child, targets) {
+	if (node.type === 'LabeledStatement' && child === node.body) {
+		return [...targets, { loop: is_loop_statement(child), label: node.label.name }];
+	}
+	if (
+		(is_loop_statement(node) && child === /** @type {AST.ForOfStatement} */ (node).body) ||
+		(node.type === 'SwitchStatement' && node.cases.includes(/** @type {AST.SwitchCase} */ (child)))
+	) {
+		return [...targets, { loop: node.type !== 'SwitchStatement', label: null }];
+	}
+	return targets;
+}
 
 /**
  * The jump scope of `child`, a child of `node` (whose parent is `parent`) in
@@ -6747,21 +6819,14 @@ function child_jump_scope(node, parent, child, scope) {
 	) {
 		return { kind: 'case', targets: [] };
 	}
-	if (node.type === 'LabeledStatement' && child === node.body) {
+	const targets = child_jump_targets(node, child, scope.targets);
+	if (targets !== scope.targets) {
 		return {
 			kind: scope.kind,
-			targets: [...scope.targets, { loop: is_loop_statement(child), label: node.label.name }],
-			nested: scope.nested,
-		};
-	}
-	if (
-		(is_loop_statement(node) && child === /** @type {AST.ForOfStatement} */ (node).body) ||
-		(node.type === 'SwitchStatement' && node.cases.includes(/** @type {AST.SwitchCase} */ (child)))
-	) {
-		return {
-			kind: scope.kind,
-			targets: [...scope.targets, { loop: node.type !== 'SwitchStatement', label: null }],
-			nested: scope.nested || is_loop_statement(node),
+			targets,
+			nested:
+				scope.nested ||
+				(is_loop_statement(node) && child === /** @type {AST.ForOfStatement} */ (node).body),
 		};
 	}
 	return scope;

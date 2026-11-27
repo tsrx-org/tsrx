@@ -40,7 +40,9 @@ const BROKEN_MARKUP_CODES = new Set([
 
 /**
  * The codes of the mistakes the parser records when collecting that Prettier's
- * `typescript` parser rejects: a declaration list without a declarator
+ * `typescript` parser rejects: a token that starts no statement where one in a
+ * list starts (`export foo;`, `accessor x;`, TS1128, or TS1129 in a `case`
+ * clause), which the tree leaves out, a declaration list without a declarator
  * (`const` on its own, `for (const of x)`), a modifier on a type member or type
  * parameter or where only a type parameter takes one, a second accessibility
  * modifier, a parameter property outside a constructor, with a binding pattern
@@ -49,14 +51,17 @@ const BROKEN_MARKUP_CODES = new Set([
  * class member, a class member's modifier before a module element
  * (`public class A {}`), `readonly`, `accessor` or `async` where they can't
  * appear, `async` with `declare` or in a `declare` context (TS1040),
- * `declare` before a `using` declaration, a binding pattern in one (TS1492),
+ * `declare` before a `using` declaration (TS1491, TS1495; in a block, see
+ * `isDeclareUsingInBlock`), a binding pattern in one (TS1492),
  * one before `in` (`for (using x in y)`, TS1493 and TS1494),
  * `import.<name>` other than `import.meta`, or a call of it other than
  * `import.defer()` or `import.source()` (TS17012, TS18061), a default or
  * named binding in a deferred import (`import defer a from "m"`, TS18058 and
  * TS18059), a type-only import with both (`import type a, { b } from "m"`,
  * TS1363), `import type` on an import alias (TS1392), a JSX name written with
- * a Unicode escape (`<Inn\u0065r />`, TS17021), and a function body in an
+ * a Unicode escape (`<Inn\u0065r />`, TS17021) or with a `-` in a member's
+ * part (`<X.A-b />`, TS1003 at the `-`, TS1005 in a closing tag, which the
+ * parser records only there), and a function body in an
  * ambient context (TS1183). Prettier rejects that one after `declare`
  * (`declare function f() {}`, which its tree prints wrong), and the plugin in
  * a `declare namespace` too.
@@ -68,6 +73,8 @@ const BROKEN_MARKUP_CODES = new Set([
  * in an ambient class (`declare class A { x = 1 }`).
  */
 const REJECTED_CODES = new Set([
+	'TS1128',
+	'TS1129',
 	'TS1123',
 	'TS1070',
 	'TS1273',
@@ -95,6 +102,8 @@ const REJECTED_CODES = new Set([
 	'TS1363',
 	'TS1392',
 	'TS17021',
+	'TS1003',
+	'TS1005',
 	'TS1183',
 ]);
 
@@ -139,6 +148,101 @@ const regex_static_block_modifiers =
 	/^(?:(?:abstract|accessor|declare|override|private|protected|public|readonly)(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)+)+static(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*\{/u;
 
 /**
+ * Whether `error` is for modifiers that include `declare` before a `using` or
+ * `await using` declaration in a block (`{ declare using x = y; }`): TS1184 at
+ * the first one, which TypeScript reports there before TS1491 or TS1495.
+ * Prettier's `typescript` parser rejects `declare` on a `using` declaration
+ * wherever it is, as the plugin does outside a block (TS1491, TS1495), where
+ * the tree would leave it out, and print a declaration without an initializer
+ * that needs one (`{ using x; }`).
+ * @param {ParseError} error
+ * @param {string} text
+ * @param {ModifierRun} run The modifiers read last in `text`, which each
+ *   dropped modifier's TS1184 in a declaration reads again
+ * @returns {boolean}
+ */
+function isDeclareUsingInBlock(error, text, run) {
+	if (error.code !== 'TS1184' || error.pos === undefined) return false;
+	if (error.pos < run.start || error.pos >= run.end) readModifierRun(text, error.pos, run);
+	return run.using && run.declare >= error.pos;
+}
+
+/**
+ * Modifiers read from `start` to `end`, where the word after them starts: where
+ * the last `declare` among them is (or -1), and whether `using` or
+ * `await using` follows them.
+ * @typedef {{ start: number, end: number, declare: number, using: boolean }} ModifierRun
+ */
+
+/** @returns {ModifierRun} */
+function createModifierRun() {
+	return { start: 0, end: 0, declare: -1, using: false };
+}
+
+/**
+ * Read the modifiers from `position` into `run`.
+ * @param {string} text
+ * @param {number} position
+ * @param {ModifierRun} run
+ */
+function readModifierRun(text, position, run) {
+	run.start = position;
+	run.declare = -1;
+	let start = position;
+	let word = wordAt(text, start);
+	while (STATEMENT_MODIFIERS.has(word)) {
+		if (word === 'declare') run.declare = start;
+		start = gapEnd(text, start + word.length);
+		word = wordAt(text, start);
+	}
+	run.end = start;
+	if (word === 'await') word = wordAt(text, gapEnd(text, start + word.length));
+	run.using = word === 'using';
+}
+
+/** The modifiers that TypeScript reads before a declaration in a block. */
+const STATEMENT_MODIFIERS = new Set([
+	'abstract',
+	'accessor',
+	'async',
+	'declare',
+	'export',
+	'private',
+	'protected',
+	'public',
+	'readonly',
+	'static',
+]);
+
+/** Whitespace and comments, from where they start. */
+const regex_gap = /(?:\s|\/\*[\s\S]*?\*\/|\/\/.*)*/y;
+/** A word, with any escapes in it, from where it starts. */
+const regex_word = /[\p{ID_Continue}$\u200c\u200d\\]*/uy;
+
+/**
+ * Where the whitespace and comments from `position` end.
+ * @param {string} text
+ * @param {number} position
+ * @returns {number}
+ */
+function gapEnd(text, position) {
+	regex_gap.lastIndex = position;
+	regex_gap.test(text);
+	return regex_gap.lastIndex;
+}
+
+/**
+ * The word at `position`, or `''`.
+ * @param {string} text
+ * @param {number} position
+ * @returns {string}
+ */
+function wordAt(text, position) {
+	regex_word.lastIndex = position;
+	return regex_word.exec(text)?.[0] ?? '';
+}
+
+/**
  * Whether `error` is for an `async` constructor (`async constructor() {}`,
  * TS1089), which Prettier's `typescript` parser rejects, where it formats a
  * `static` constructor (`static constructor() {}`, TS1089 too).
@@ -148,6 +252,20 @@ const regex_static_block_modifiers =
 function isAsyncConstructor(error) {
 	const { code, message } = TS_ERRORS.MODIFIER_ON_CONSTRUCTOR('async');
 	return error.code === code && error.message === message;
+}
+
+/**
+ * Whether `error` is for a `using` or `await using` declaration's name without
+ * an initializer (`using x;`, TS1155), which Prettier's `typescript` parser
+ * rejects, where it formats a `const` one's (`const x;`, TS1155 too).
+ * @param {ParseError} error
+ * @returns {boolean}
+ */
+function isUsingWithoutInitializer(error) {
+	return ['using', 'await using'].some((kind) => {
+		const { code, message } = TS_ERRORS.DECLARATION_NOT_INITIALIZED(kind);
+		return error.code === code && error.message === message;
+	});
 }
 
 /**
@@ -167,16 +285,19 @@ function isStaticBlockDecorator(error) {
 /**
  * @param {ParseError} error
  * @param {string} text
+ * @param {ModifierRun} run See `isDeclareUsingInBlock`
  * @returns {boolean}
  */
-function isRejected(error, text) {
+function isRejected(error, text, run) {
 	return (
 		!!error.code &&
 		(BROKEN_MARKUP_CODES.has(error.code) ||
 			(REJECTED_CODES.has(error.code) && !isStaticBlockDecorator(error)) ||
 			isModifierBeforeExport(error, text) ||
 			isAbstractInBlock(error, text) ||
-			isAsyncConstructor(error))
+			isDeclareUsingInBlock(error, text, run) ||
+			isAsyncConstructor(error) ||
+			isUsingWithoutInitializer(error))
 	);
 }
 
@@ -227,7 +348,8 @@ export function parse(text, options) {
 	} catch (error) {
 		throw createParseError(/** @type {ParseError} */ (error));
 	}
-	const rejected = errors.find((error) => isRejected(error, text));
+	const run = createModifierRun();
+	const rejected = errors.find((error) => isRejected(error, text, run));
 	if (rejected) throw createParseError(rejected);
 	const adapter = new Adapter(text, comments);
 	const program = adapter.visit(ast);
@@ -327,6 +449,8 @@ class Adapter {
 		 * @type {Set<Comment>}
 		 */
 		this.jsxComments = new Set();
+		/** See `isDeclareUsingInBlock`. */
+		this.modifierRun = createModifierRun();
 	}
 
 	/**
@@ -436,7 +560,7 @@ class Adapter {
 		// TypeScript reports only the declaration's first modifier error, which
 		// the parser records, and keeps the others in the metadata.
 		const dropped = node.metadata?.dropped_modifiers?.find((/** @type {ParseError} */ error) =>
-			isRejected(error, this.text),
+			isRejected(error, this.text, this.modifierRun),
 		);
 		if (dropped) throw createParseError(dropped);
 

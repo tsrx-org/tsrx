@@ -36,23 +36,27 @@ describe('error codes', () => {
 			[
 				'TSRX2003',
 				`function App() @{
-	@if (x) {
-		for (const y of ys) {
-			break;
-		}
-		<p />
+	for (const y of ys) {
+		const view = <div>
+			@if (x) {
+				break;
+			}
+		</div>;
 	}
+	<p />
 }`,
 			],
 			[
 				'TSRX2004',
 				`function App() @{
-	@if (x) {
-		for (const y of ys) {
-			continue;
-		}
-		<p />
+	for (const y of ys) {
+		const view = <div>
+			@if (x) {
+				continue;
+			}
+		</div>;
 	}
+	<p />
 }`,
 			],
 			[

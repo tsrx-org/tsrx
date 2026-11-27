@@ -12,10 +12,19 @@ const REGEX_COMBINATOR = /^(\+|~|>|\|\|)/;
 const REGEX_VALID_IDENTIFIER_CHAR = /[a-zA-Z0-9_-]/;
 const REGEX_LEADING_HYPHEN_OR_DIGIT = /^-?\d/;
 const REGEX_WHITESPACE_OR_COLON = /[\s:]/;
+// The end of a declaration's name: whitespace, its `:`, or a comment.
+const REGEX_PROPERTY_END = /[\s:]|\/\*/;
+// A declaration's name: an identifier, of letters, digits, `-`, `_`,
+// non-ASCII and escapes, which starts with no digit after an optional `-`.
+const REGEX_DECLARATION_NAME =
+	/^(?:--|-?(?:[a-zA-Z_]|[^\x00-\x7f]|\\[^\n]))(?:[\w-]|[^\x00-\x7f]|\\[^\n])*$/;
 // An escape, and the one space that ends a hex escape (`\r\n` too).
 const REGEX_VALUE_ESCAPE = /\\(?:[0-9a-fA-F]{1,6}(?:\r\n|[ \t\n\r\f])?|[^\n\r\f])/y;
 // `--` and a name (letters, digits, `-`, `_`, non-ASCII, escapes), then `:`.
-const REGEX_CUSTOM_PROPERTY_START = /^--(?:[\w-]|[^\x00-\x7f]|\\[^\n])*\s*:/;
+// The whitespace before the `:` that isn't ASCII, such as U+00A0, the name
+// takes up to the first ASCII whitespace: a character both could take made a
+// failed match quadratic.
+const REGEX_CUSTOM_PROPERTY_START = /^--(?:[\w-]|[^\x00-\x7f]|\\[^\n])*(?:[\t\n\v\f\r ]\s*)?:/;
 // A name, a `:` and a `{`: a declaration whose value may be a `{}` block. The
 // name starts as an identifier does and takes no escapes, which the
 // declaration's reader reads differently (`a\:b`), and the whitespace is
@@ -35,6 +44,10 @@ const REGEX_NTH_OF_COMMENTS = new RegExp(
 const REGEX_HEX_ESCAPE = /^[0-9a-fA-F]{1,6}(\r\n|[ \t\n\r\f])?/;
 // In a string, an escaped newline is a line continuation and decodes to nothing
 const REGEX_ESCAPE = /\\(?:([0-9a-fA-F]{1,6})(?:\r\n|[ \t\n\r\f])?|(\r\n|[\n\r\f])|([\s\S]))/g;
+// A `@property`'s `initial-value` descriptor, in any case, to its colon, after
+// whitespace and comments, which CSS reads as nothing there.
+const REGEX_INITIAL_VALUE_START =
+	/^initial-value(?:[ \t\n\r\f]|\/\*[^*]*\*+(?:[^/*][^*]*\*+)*\/)*:/i;
 
 const regex_whitespace = /\s/;
 
@@ -46,6 +59,11 @@ class Parser {
 	// Whether, in loose mode, an at-rule's prelude has left a `(` or `[` open,
 	// so its read ran to the end of the sheet.
 	unclosed_prelude = false;
+	// Whether the selector being read is one, as a rule's or an `:is()`'s are,
+	// where `check_type_selector_placement` applies; not in the argument of a
+	// pseudo-element (`::part(a b)`) or of another pseudo-class (an An+B), but
+	// again in an `:is()` in one of those.
+	selector = true;
 
 	/**
 	 * @param {string} template
@@ -339,7 +357,10 @@ function read_at_rule(parser) {
 
 	if (parser.match('{')) {
 		// e.g. `@media (...) {...}`
-		block = read_block(parser);
+		block = read_block(
+			parser,
+			unescape_css(name).replace(/[A-Z]/g, (c) => c.toLowerCase()) === 'property',
+		);
 	} else {
 		// e.g. `@import '...'`
 		parser.eat(';', true);
@@ -378,9 +399,10 @@ function read_rule(parser) {
 
 /**
  * @param {Parser} parser
+ * @param {boolean} [property] whether it is the block of a `@property`
  * @returns {AST.CSS.Block}
  */
-function read_block(parser) {
+function read_block(parser, property = false) {
 	const start = parser.index;
 
 	parser.eat('{', true);
@@ -397,7 +419,7 @@ function read_block(parser) {
 			// An empty declaration, as in `color: red;;`, which CSS allows.
 			continue;
 		} else {
-			children.push(read_block_item(parser));
+			children.push(read_block_item(parser, property));
 		}
 	}
 
@@ -415,11 +437,18 @@ function read_block(parser) {
  * Reads a declaration, rule or at-rule
  *
  * @param {Parser} parser
+ * @param {boolean} [property] whether the block is a `@property`'s
  * @returns {AST.CSS.Declaration | AST.CSS.Rule | AST.CSS.Atrule}
  */
-function read_block_item(parser) {
+function read_block_item(parser, property = false) {
 	if (parser.match('@')) {
 		return read_at_rule(parser);
+	}
+
+	// A `@property`'s `initial-value` takes any value, as a custom property's
+	// does (`{a} b`, `foo(){}`), and a `@property` holds no rules.
+	if (property && parser.match_regex(REGEX_INITIAL_VALUE_START)) {
+		return read_declaration(parser, true);
 	}
 
 	// A custom property's value may hold `{}` blocks (`--x: {a}`), which the
@@ -465,25 +494,56 @@ function read_block_item(parser) {
 
 /**
  * @param {Parser} parser
- * @param {boolean} [block_value] whether the value is a `{}` block, read as a
- *   custom property's is
+ * @param {boolean} [block_value] whether the value may hold `{}` blocks: one
+ *   that is a `{}` block, or a `@property`'s `initial-value`, read as a custom
+ *   property's is, with its strings ending at a newline
  * @returns {AST.CSS.Declaration}
  */
 function read_declaration(parser, block_value = false) {
 	const start = parser.index;
 
-	const property = parser.read_until(REGEX_WHITESPACE_OR_COLON);
-	parser.allow_whitespace();
-	parser.eat(':');
+	let property = parser.read_until(REGEX_PROPERTY_END);
+	// CSS reads comments before the colon as nothing (`animation /* c */ : spin`),
+	// after a name; not a `/*` in a string (`"/*"`), which is no comment.
+	if (!REGEX_DECLARATION_NAME.test(property) || !eat_colon_after_comments(parser)) {
+		// With no colon, which CSS reads no declaration without, it is read as it
+		// was: the name up to whitespace or a colon, the value after it.
+		parser.index = start;
+		property = parser.read_until(REGEX_WHITESPACE_OR_COLON);
+		parser.allow_whitespace();
+		parser.eat(':');
+	}
 	let index = parser.index;
 	parser.allow_whitespace();
 
-	const value =
-		block_value || property.startsWith('--')
+	let value = block_value
+		? read_custom_property_value(parser, false, true)
+		: property.startsWith('--')
 			? read_custom_property_value(parser)
 			: read_value(parser);
 
-	if (!value && !property.startsWith('--') && !parser.loose) {
+	// With comments before the colon and no value after it, it is read as it
+	// was, with the comments and the colon as its value, so it compiles as
+	// before: CSS reads an empty value there, which some declarations may have
+	// that the check below doesn't know (a custom property with an escaped
+	// name, `\--x /* c */ : ;`, or a `@function`'s `result`), and browsers drop
+	// the others.
+	if (
+		!value &&
+		!block_value &&
+		!property.startsWith('--') &&
+		parser.template.slice(start, index).includes('/*')
+	) {
+		parser.index = start;
+		property = parser.read_until(REGEX_WHITESPACE_OR_COLON);
+		parser.allow_whitespace();
+		parser.eat(':');
+		parser.allow_whitespace();
+		value = read_value(parser);
+	}
+
+	// A custom property's value may be empty, and so may an `initial-value`'s.
+	if (!value && !block_value && !property.startsWith('--') && !parser.loose) {
 		throw new Error('CSS Declaration cannot be empty');
 	}
 
@@ -503,6 +563,28 @@ function read_declaration(parser, block_value = false) {
 }
 
 /**
+ * Eat the whitespace, the comments and the `:` at the parser's index, if a
+ * `:` comes after them; if not, or a comment is left open, eat nothing of
+ * the comments and return false.
+ *
+ * @param {Parser} parser
+ * @returns {boolean}
+ */
+function eat_colon_after_comments(parser) {
+	const start = parser.index;
+	parser.allow_whitespace();
+	while (parser.match('/*')) {
+		const close = parser.template.indexOf('*/', parser.index + 2);
+		if (close === -1) break;
+		parser.index = close + 2;
+		parser.allow_whitespace();
+	}
+	if (parser.eat(':')) return true;
+	parser.index = start;
+	return false;
+}
+
+/**
  * Read a custom property's value, which may hold `{}`, `()` and `[]` blocks
  * (`--x: {a}`): it ends at a `;` or a `}` outside every block, string and
  * comment.
@@ -511,9 +593,11 @@ function read_declaration(parser, block_value = false) {
  * @param {boolean} [one_block] read only the block the value starts with, to
  *   just after its `}`; or nothing, if a string in it ends at a newline, which
  *   CSS reads as a bad string
+ * @param {boolean} [bad_strings] end a string at a newline, as CSS does (a bad
+ *   string), not at its closing quote
  * @returns {string}
  */
-function read_custom_property_value(parser, one_block = false) {
+function read_custom_property_value(parser, one_block = false, bad_strings = one_block) {
 	const start = parser.index;
 	/** @type {string[]} */
 	const closers = [];
@@ -539,7 +623,7 @@ function read_custom_property_value(parser, one_block = false) {
 			// In a string, a `\` before a newline goes on to the next line.
 			const next = parser.template[parser.index];
 			if (
-				one_block &&
+				bad_strings &&
 				quote_mark !== null &&
 				text.length === 1 &&
 				(next === '\n' || next === '\r' || next === '\f')
@@ -552,8 +636,12 @@ function read_custom_property_value(parser, one_block = false) {
 			quote_mark === null && char === '(' && is_unquoted_url(name, parser.template, parser.index);
 		if (quote_mark === null) track_name(name, parser.template, parser.index);
 		if (quote_mark !== null) {
-			if (char === quote_mark) quote_mark = null;
-			else if (one_block && (char === '\n' || char === '\r' || char === '\f')) return '';
+			if (char === quote_mark) {
+				quote_mark = null;
+			} else if (bad_strings && (char === '\n' || char === '\r' || char === '\f')) {
+				if (one_block) return '';
+				quote_mark = null;
+			}
 		} else if (char === '"' || char === "'") {
 			quote_mark = char;
 		} else if (char === '/' && parser.template[parser.index + 1] === '*') {
@@ -1002,6 +1090,58 @@ function allow_selector_comments(parser) {
 	return spaced;
 }
 
+// An An+B that is a name, as `odd` and `n-1` are, which a type selector can be.
+const REGEX_NAME = /^-?[a-z_][\w-]*$/i;
+
+/**
+ * The pseudo-classes whose argument is a selector or a list of them, where a
+ * type selector has to start its compound as in a rule's.
+ */
+const SELECTOR_PSEUDO_CLASSES = new Set([
+	'is',
+	'where',
+	'not',
+	'has',
+	'global',
+	'host',
+	'host-context',
+]);
+
+/**
+ * Throw for a type selector (`div`, `*`, `svg|a`) at `start` that doesn't
+ * start its compound, which CSS reads no rule with: `.a*`, `[x]div`, `&div`
+ * (CSS Nesting wants `div&`), and `.a/* c *\/div`, where the comment is no
+ * combinator. One may follow only bare `:global`s, which the output drops,
+ * a `:global(...)`, after which the output puts it in an `:is()`
+ * (`:global(.x)div`), or an An+B, as the parser reads `2n of` before a
+ * selector list.
+ *
+ * @param {Parser} parser
+ * @param {AST.CSS.SimpleSelector[]} selectors the compound's selectors before it
+ * @param {number} start
+ */
+function check_type_selector_placement(parser, selectors, start) {
+	const previous = selectors.at(-1);
+	if (
+		!parser.selector ||
+		previous === undefined ||
+		(previous.type === 'PseudoClassSelector' && previous.name === 'global' && previous.args) ||
+		previous.type === 'Nth' ||
+		// Last, since it reads the compound: one with many bare :globals and
+		// then many `:global(.x)div`s took quadratic time when it came first.
+		selectors.every(
+			(selector) =>
+				selector.type === 'PseudoClassSelector' && selector.name === 'global' && !selector.args,
+		)
+	) {
+		return;
+	}
+	parser.index = start;
+	throw new Error(
+		'A type selector or * must come first in its compound selector, as in div.x or div&',
+	);
+}
+
 /**
  * @param {Parser} parser
  * @param {boolean} [inside_pseudo_class]
@@ -1047,6 +1187,7 @@ function read_selector(parser, inside_pseudo_class = false) {
 				end: parser.index,
 			});
 		} else if (parser.eat('*')) {
+			check_type_selector_placement(parser, relative_selector.selectors, start);
 			let name = '*';
 
 			if (parser.eat('|')) {
@@ -1087,7 +1228,13 @@ function read_selector(parser, inside_pseudo_class = false) {
 			// We read the inner selectors of a pseudo element to ensure it parses correctly,
 			// but we don't do anything with the result.
 			if (parser.eat('(')) {
-				read_selector_list(parser, true);
+				const selector = parser.selector;
+				parser.selector = false;
+				try {
+					read_selector_list(parser, true);
+				} finally {
+					parser.selector = selector;
+				}
 				parser.eat(')', true);
 			}
 		} else if (parser.eat(':')) {
@@ -1107,7 +1254,15 @@ function read_selector(parser, inside_pseudo_class = false) {
 			parser.nth = /^nth-/i.test(name);
 
 			if (parser.eat('(')) {
-				args = read_selector_list(parser, true);
+				const selector = parser.selector;
+				parser.selector = SELECTOR_PSEUDO_CLASSES.has(
+					unescape_css(name).replace(/[A-Z]/g, (c) => c.toLowerCase()),
+				);
+				try {
+					args = read_selector_list(parser, true);
+				} finally {
+					parser.selector = selector;
+				}
 				parser.eat(')', true);
 			}
 
@@ -1158,9 +1313,16 @@ function read_selector(parser, inside_pseudo_class = false) {
 		} else if (inside_pseudo_class && parser.match_regex(nth_pattern(parser))) {
 			// nth of matcher must come before combinator matcher to prevent collision else the '+' in '+2n-1' would be parsed as a combinator
 
+			const value = /**@type {string} */ (parser.read(nth_pattern(parser)));
+			// One that is a name (`odd`, `n-1`) after another selector is a type
+			// selector (`[x]odd`).
+			if (REGEX_NAME.test(value)) {
+				check_type_selector_placement(parser, relative_selector.selectors, start);
+			}
+
 			relative_selector.selectors.push({
 				type: 'Nth',
-				value: /**@type {string} */ (parser.read(nth_pattern(parser))),
+				value,
 				start,
 				end: parser.index,
 			});
@@ -1173,6 +1335,7 @@ function read_selector(parser, inside_pseudo_class = false) {
 			});
 		} else if (!parser.match_regex(REGEX_COMBINATOR)) {
 			let name = read_identifier(parser);
+			check_type_selector_placement(parser, relative_selector.selectors, start);
 
 			if (parser.eat('|')) {
 				// we ignore the namespace when trying to find matching element classes

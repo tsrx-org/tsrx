@@ -2935,6 +2935,17 @@ describe('parse errors', () => {
 `,
 		);
 		await expectFormat('declare import x from "m";', 'import x from "m";\n');
+		await expectFormat('{ public using x = y; }', '{\n  using x = y;\n}\n');
+		// And `declare` before another declaration: the modifiers are the words
+		// before its keyword, not a later statement's or words in a comment.
+		await expectFormat(
+			'{ declare /*a*/ let x; /*b*/ using y = f(); }',
+			'{\n  declare let /*a*/ x;\n  /*b*/ using y = f();\n}\n',
+		);
+		await expectFormat(
+			'{ static // declare using\nlet x; }',
+			'{\n  // declare using\n  let x;\n}\n',
+		);
 		// Exports TypeScript's binder declares twice (#882).
 		await expectFormat(
 			'export default 1;\nexport default 2;',
@@ -3143,6 +3154,33 @@ describe('parse errors', () => {
 			['accessor class A {}', TS_ERRORS.ACCESSOR_MODIFIER_NOT_ALLOWED, '1:1'],
 			['async class A {}', TS_ERRORS.MODIFIER_CANNOT_BE_USED_HERE, '1:1'],
 			['declare using x = y;', TS_ERRORS.MODIFIER_ON_USING, '1:1'],
+			// In a block, where TypeScript reports TS1184 at the first modifier
+			// first, and the tree has no place for `declare`: without an
+			// initializer, the output wouldn't format again (`{ using x; }`).
+			['{\n  declare using x;\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:3'],
+			['function f() {\n  declare using x = y;\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:3'],
+			[
+				'async function f() {\n  public declare await using x;\n}',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'2:3',
+			],
+			[
+				'export function App() @{\n  declare using x;\n  <div />\n}',
+				TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE,
+				'2:3',
+			],
+			['{\n  declare export using x = y;\n}', TS_ERRORS.MODIFIERS_CANNOT_APPEAR_HERE, '2:3'],
+			// A `using` declaration's name without an initializer (TS1155), where
+			// Prettier formats a `const` one's.
+			['using x;', TS_ERRORS.DECLARATION_NOT_INITIALIZED, '1:7'],
+			['async function f() {\n  await using x;\n}', TS_ERRORS.DECLARATION_NOT_INITIALIZED, '2:15'],
+			['for (using of;;) {}', TS_ERRORS.DECLARATION_NOT_INITIALIZED, '1:12'],
+			// One in a statement after `declare` that isn't a `using` declaration.
+			[
+				'declare \\u0075sing as any + (() => { using x; })();',
+				TS_ERRORS.DECLARATION_NOT_INITIALIZED,
+				'1:44',
+			],
 			// A binding pattern in a `using` declaration (TS1492).
 			['using {x} = y;', TS_ERRORS.USING_BINDING_PATTERN, '1:7'],
 			[
@@ -3158,6 +3196,9 @@ describe('parse errors', () => {
 				'2:8',
 			],
 			['for (using {x} in y) {}', TS_ERRORS.FOR_IN_USING, '1:6'],
+			// A `-` in a JSX member name's part (TS1003, TS1005 in a closing tag).
+			['const x = <X.A-b />;', TS_ERRORS.IDENTIFIER_EXPECTED, '1:15'],
+			['const x = <X.A></X.A-b>;', TS_ERRORS.TOKEN_EXPECTED, '1:21'],
 			// Prettier reports the `public` (1:17); the plugin reports the first
 			// mistake, the modifier before `export` (#902).
 			['abstract export public class A {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:10'],
@@ -3177,10 +3218,28 @@ describe('parse errors', () => {
 			['async export function f() {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:7'],
 			['declare export const x: number;', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:9'],
 			['abstract export default class A {}', TS_ERRORS.MODIFIER_MUST_PRECEDE, '1:10'],
+			// A token that starts no statement where one in a list starts (TS1128,
+			// TS1129 in a `case` clause), which the parser records when collecting,
+			// and the tree leaves out.
+			['export declare @dec class A {}', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, '1:1'],
+			['export foo;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, '1:1'],
+			['accessor x;', TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED, '1:1'],
+			['switch (a) {\n  case 1:\n    export foo;\n}', TS_ERRORS.STATEMENT_EXPECTED, '3:5'],
 		];
 		for (const [source, error, at] of cases) {
 			await expect_reported(source, error, at);
 		}
+	});
+
+	test('reads the modifiers before a declaration in a block in linear time', async () => {
+		// The comments between them were read with a backtracking pattern, which
+		// took seconds for a few dozen.
+		const start = performance.now();
+		await expectFormat(
+			`{ declare ${'/* */'.repeat(28)} let x; }`,
+			`{\n  declare let ${'/* */ '.repeat(28)}x;\n}\n`,
+		);
+		expect(performance.now() - start).toBeLessThan(1000);
 	});
 
 	// A rest element's or rest parameter's default (#770, #726) prints as
@@ -3625,6 +3684,56 @@ class A {}
 // prints it: on two lines, except a `@catch` body, which stays `{}` as a
 // `catch` without `finally` does (#897). From `@tsrx/prettier-plugin`'s
 // "expands empty braces" tests.
+describe('functions in a directive head', () => {
+	// A block in an `@for` head, and a `for…of` loop in any directive head,
+	// were read as template text, so formatting failed.
+	test('a block-bodied function in an @for head and key clause', async () => {
+		await expectFormat(
+			`function App({ ys }) @{
+  <ul>@for (const y of ys.filter((v) => { return v > 0; }); key (() => { return y; })()) { <li>{y}</li> }</ul>
+}`,
+			`function App({ ys }) @{
+  <ul>
+    @for (
+      const y of ys.filter((v) => {
+        return v > 0;
+      });
+      key (() => {
+        return y;
+      })()
+    ) {
+      <li>{y}</li>
+    }
+  </ul>
+}
+`,
+		);
+	});
+
+	test('a for…of loop in a function in an @if head', async () => {
+		await expectFormat(
+			`function App({ ys }) @{
+  <ul>@if (ys.some((v) => { for (const w of v) { if (w > 1) return true; } return false; })) { <li /> }</ul>
+}`,
+			`function App({ ys }) @{
+  <ul>
+    @if (
+      ys.some((v) => {
+        for (const w of v) {
+          if (w > 1) return true;
+        }
+        return false;
+      })
+    ) {
+      <li />
+    }
+  </ul>
+}
+`,
+		);
+	});
+});
+
 describe('empty directive bodies', () => {
 	test('@if, @else, @for and @empty', async () => {
 		await expectFormat(

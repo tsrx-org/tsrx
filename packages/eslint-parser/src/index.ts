@@ -692,8 +692,10 @@ const JUMP_TARGET_CODES = new Set([
  * reads as text and an expression container, as it throws a clause written
  * without its `@` (TSRX1009), a `break` or `return` right in an `@switch`
  * case (TSRX2008, TSRX2009), which the parser used to throw, and a JSX name
- * written with a Unicode escape (TS17021), which a build throws and Prettier
- * rejects, and which TypeScript reports as a syntax error.
+ * written with a Unicode escape (TS17021) or with a `-` in a member's part
+ * (`<X.A-b />`, TS1003, or TS1005 in a closing tag, which the parser records
+ * only there), which a build throws and Prettier rejects, and which
+ * TypeScript reports as a syntax error.
  */
 function is_fatal_parser_diagnostic(error: any): boolean {
 	return (
@@ -701,11 +703,18 @@ function is_fatal_parser_diagnostic(error: any): boolean {
 		// as espree does.
 		JUMP_TARGET_CODES.has(error?.code) ||
 		error?.code === TS_ERRORS.JSX_NAME_UNICODE_ESCAPE.code ||
+		error?.code === TS_ERRORS.IDENTIFIER_EXPECTED.code ||
+		error?.code === TS_ERRORS.TOKEN_EXPECTED.code ||
 		error?.code === DIAGNOSTIC_CODES.UNCLOSED_TAG ||
 		error?.code === DIAGNOSTIC_CODES.MISMATCHED_CLOSING_TAG ||
 		error?.code === DIAGNOSTIC_CODES.DETACHED_DIRECTIVE_CLAUSE ||
 		error?.code === DIAGNOSTIC_CODES.SWITCH_CASE_BREAK_STATEMENT ||
-		error?.code === DIAGNOSTIC_CODES.SWITCH_CASE_RETURN_STATEMENT
+		error?.code === DIAGNOSTIC_CODES.SWITCH_CASE_RETURN_STATEMENT ||
+		// A token that starts no statement where one in a list starts
+		// (`export foo;`, TS1128, or TS1129 in a `case` clause), which the parser
+		// used to throw, and which the tree leaves out.
+		error?.code === TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED.code ||
+		error?.code === TS_ERRORS.STATEMENT_EXPECTED.code
 	);
 }
 

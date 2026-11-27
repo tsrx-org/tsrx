@@ -253,6 +253,48 @@ const STATEMENT_START_MODIFIERS = new Set([
 	'readonly',
 	'static',
 ]);
+// The words before a declaration's name: modifiers and the keywords that start
+// one (see `#escapedModifierStartsDeclaration`).
+const DECLARATION_PREFIX_WORDS = new Set([
+	'abstract',
+	'accessor',
+	'async',
+	'class',
+	'const',
+	'declare',
+	'defer',
+	'enum',
+	'function',
+	'global',
+	'interface',
+	'let',
+	'module',
+	'namespace',
+	'override',
+	'private',
+	'protected',
+	'public',
+	'readonly',
+	'static',
+	'type',
+	'using',
+	'var',
+]);
+// The keywords a declaration's name follows.
+const NAMED_AFTER_WORDS = new Set([
+	'class',
+	'const',
+	'defer',
+	'enum',
+	'function',
+	'interface',
+	'let',
+	'module',
+	'namespace',
+	'type',
+	'using',
+	'var',
+]);
 const DECLARATION_MODIFIERS = new Set([
 	'abstract',
 	'accessor',
@@ -976,6 +1018,8 @@ const SCOPE_ASYNC = 4;
 const SCOPE_SIMPLE_CATCH = 32;
 const SCOPE_CLASS_STATIC_BLOCK = 256;
 const SCOPE_CLASS_FIELD_INIT = 512;
+// A `switch` statement's body, where its `case` clauses' statements are read.
+const SCOPE_SWITCH = 1024;
 const TS_SCOPE_OTHER = 1 << 20;
 const TS_SCOPE_TS_MODULE = 1 << 21;
 // The scopes whose names are one symbol table in TypeScript's binder, where a
@@ -1086,6 +1130,21 @@ const raised_errors = new WeakSet();
  * @type {WeakSet<CompileError>}
  */
 const held_syntax_errors = new WeakSet();
+
+/**
+ * The errors a collecting parse records for a token that starts no statement
+ * in a list, and reads on after (see `#checkStatementStart`).
+ * @type {WeakSet<CompileError>}
+ */
+const statement_start_errors = new WeakSet();
+
+/**
+ * The empty statements a collecting parse reads a token that starts no
+ * statement as (see `#checkStatementStart`), which a template's body leaves out
+ * as it does a `;`.
+ * @type {WeakSet<AST.Node>}
+ */
+const skipped_statement_starts = new WeakSet();
 
 /**
  * The held errors that a strict parse raises later than where they're held,
@@ -2144,6 +2203,10 @@ export function TSRXPlugin(config) {
 			#path = [];
 			#collect = false;
 			#loose = false;
+			// Whether a collecting parse records a token that starts no statement
+			// and reads on (see `#checkStatementStart`), which neither a strict one
+			// nor its lookaheads (see `#asCollecting`) do.
+			#recoversStatementStart = false;
 			// Where the caller collects the line comments the tokenizer recorded that
 			// template text reads as text, to drop them after the parse (see
 			// `#readSkippedTemplateText`).
@@ -2157,6 +2220,9 @@ export function TSRXPlugin(config) {
 			// Set while `parseVarStatement` or `parseVar` lets `const` declarators omit
 			// the initializer (see `#parseConstWithoutInitializer`).
 			#readingConstWithoutInitializer = false;
+			// Where the `using` or `await using` declaration with `declare` before it
+			// that is being read starts, or -1 (see `#parseConstWithoutInitializer`).
+			#declaredUsingStart = -1;
 			/** @type {import('../types/index').CompileError[] | undefined} */
 			#errors = undefined;
 			/** @type {string | null} */
@@ -2314,6 +2380,9 @@ export function TSRXPlugin(config) {
 			#templateScriptParsingDepth = 0;
 			#controlFlowBlockAllowsNativeReturn = false;
 			#parsingJSXSwitchCaseScriptStatementDepth = 0;
+			// Set while the statement that is a `@for`'s body or the block of its
+			// `@empty` clause is read: `parseBlock` reads that block as a directive
+			// body.
 			#templateControlFlowBlockDepth = 0;
 			/** @type {AST.NodeWithLocation | null}	*/
 			#lastClauseKeywordSpan = null;
@@ -2362,11 +2431,20 @@ export function TSRXPlugin(config) {
 			/** @type {number | false} */
 			#readingJSXControlFlowHeader = false;
 			#controlFlowHeaders = 0;
+			// While a directive is read, `#readingJSXControlFlowHeader` where it
+			// started: a header around it, in code there such as a function, or
+			// `false`.
+			/** @type {number | false} */
+			#directiveOuterHeader = false;
 			// Set while `@for` reads its statement, until `parseForStatement` takes it:
 			// the loop whose head may end with `index` and `key` clauses.
 			#readingForDirective = false;
 			/** @type {WeakSet<AST.Node>} */
 			#forDirectiveLoops = new WeakSet();
+			// The `this.labels` entries of those loops, which is on top when the
+			// loop's body is read (see `parseStatement`).
+			/** @type {WeakSet<Parse.Parser['labels'][number]>} */
+			#forDirectiveLabels = new WeakSet();
 			// Where the last element of a `{ … }` list ended, so that `expect` can
 			// tell a comma expected after it at the end of the input is the list's
 			// missing `}`.
@@ -2379,6 +2457,9 @@ export function TSRXPlugin(config) {
 			// Whether acorn-typescript raised its error for modifiers before the class
 			// `static` block being read (see `parseClassElement`).
 			#staticBlockModifiers = false;
+			// Set while the `return` in a class `static` block that TS18041 was
+			// raised for is read (see `raise`).
+			#readingStaticBlockReturn = false;
 			// Whether decorators come before the class member being read.
 			#memberDecorated = false;
 			// Where the methods with an `async` before another modifier start, and
@@ -2531,6 +2612,7 @@ export function TSRXPlugin(config) {
 				const tsrx_options = options?.tsrxOptions;
 				this.#collect = tsrx_options?.collect === true || tsrx_options?.loose === true;
 				this.#loose = tsrx_options?.loose === true;
+				this.#recoversStatementStart = this.#collect && tsrx_options?.stopAtStatementStart !== true;
 				this.#errors = tsrx_options?.errors;
 				this.#filename = tsrx_options?.filename || null;
 				this.#jsxFile = !regex_file_without_jsx.test(this.#filename ?? '');
@@ -2717,7 +2799,10 @@ export function TSRXPlugin(config) {
 				const pos = this.pos;
 				const reading_header = this.#readingJSXControlFlowHeader;
 				this.pos = after;
-				this.#readingJSXControlFlowHeader = false;
+				// Past the directive: in a header, where a directive can be a value
+				// in a function (`@if ((() => { return @if (c) { … }; })())`), the
+				// `;` after it is code.
+				this.#readingJSXControlFlowHeader = this.#directiveOuterHeader;
 				try {
 					return this.#shouldReadTemplateRawTextToken(true, true);
 				} finally {
@@ -2741,7 +2826,7 @@ export function TSRXPlugin(config) {
 				const pos = this.pos;
 				const reading_header = this.#readingJSXControlFlowHeader;
 				this.pos = this.end;
-				this.#readingJSXControlFlowHeader = false;
+				this.#readingJSXControlFlowHeader = this.#directiveOuterHeader;
 				try {
 					if (!this.#shouldReadTemplateRawTextToken(true, true)) return;
 				} finally {
@@ -4281,6 +4366,8 @@ export function TSRXPlugin(config) {
 						continue;
 					}
 					const statement = this.#parseCodeBlockSetupStatement();
+					// A token that starts no statement, as a `;` (see `#checkStatementStart`).
+					if (statement && skipped_statement_starts.has(statement)) continue;
 					if (statement) {
 						if (last_render) {
 							// A statement after the rendered output: code must come first.
@@ -4621,6 +4708,19 @@ export function TSRXPlugin(config) {
 			}
 
 			#parseJSXControlFlowExpression() {
+				// What reads the token after one of the directive's blocks (see
+				// `#readsTemplateTextAfterBlock`): the directive ends there, so it
+				// is read as the code around the directive is.
+				const outer_header = this.#directiveOuterHeader;
+				this.#directiveOuterHeader = this.#readingJSXControlFlowHeader;
+				try {
+					return this.#readJSXControlFlowExpression();
+				} finally {
+					this.#directiveOuterHeader = outer_header;
+				}
+			}
+
+			#readJSXControlFlowExpression() {
 				const start = this.start;
 				const startLoc = this.startLoc;
 				const keywordStart = start + 1;
@@ -4652,7 +4752,6 @@ export function TSRXPlugin(config) {
 				}
 
 				if (label === 'for') {
-					this.#templateControlFlowBlockDepth++;
 					let node;
 					const previous_reading_header = this.#readingJSXControlFlowHeader;
 					this.#readingJSXControlFlowHeader = ++this.#controlFlowHeaders;
@@ -4668,7 +4767,6 @@ export function TSRXPlugin(config) {
 						);
 					} finally {
 						this.#readingJSXControlFlowHeader = previous_reading_header;
-						this.#templateControlFlowBlockDepth--;
 					}
 					if (node.body?.type !== 'BlockStatement') {
 						this.raise(node.body?.start ?? start, TSRX_ERRORS.DIRECTIVE_BODY_EXPECTED);
@@ -5221,7 +5319,10 @@ export function TSRXPlugin(config) {
 				const contentStart = open.end;
 				const input = this.input.slice(contentStart);
 				const parent = this.#path.at(-2);
-				const insideTemplate = this.#isNativeTemplateNode(parent);
+				// Not in a directive header that started after the parent: code there,
+				// such as a function's body, goes on after the element.
+				const insideTemplate =
+					this.#isNativeTemplateNode(parent) && !this.#readingHeaderStartedAfter(parent);
 				let relativeCloseStart = -1;
 				let closeTagLength = 0;
 				if (tagName === 'script') {
@@ -6018,7 +6119,9 @@ export function TSRXPlugin(config) {
 				if (
 					node.type === 'FunctionDeclaration' ||
 					node.type === 'FunctionExpression' ||
-					node.type === 'ArrowFunctionExpression'
+					node.type === 'ArrowFunctionExpression' ||
+					// A `return` in a class `static` block is TS18041 (see `raise`).
+					node.type === 'StaticBlock'
 				) {
 					inside_nested_function = true;
 				}
@@ -6203,6 +6306,29 @@ export function TSRXPlugin(config) {
 					// class `static` block, outside any function there: acorn allows one
 					// only in a function or at the top level. The template checks report
 					// it, as they do at the top level.
+					return /** @type {never} */ (undefined);
+				} else if (message === "'return' outside of function" && this.#inClassStaticBlock()) {
+					// One right in a class `static` block, which TypeScript's parser reads
+					// and its checker reports at the keyword (TS18041): a strict parse
+					// throws it, and a collecting one records it and reads on, where acorn
+					// stopped. TypeScript's checker doesn't check the operand of a
+					// `return` it reports (see `parseReturnStatement`), and in an ambient
+					// class reports the first statement of a block as TS1036 instead,
+					// which TSRX leaves to it, as for any statement there.
+					const first_in_ambient_block =
+						this.isAmbientContext &&
+						this.lastTokStart !== -1 &&
+						this.input[this.lastTokStart] === '{' &&
+						this.lastTokEnd === this.lastTokStart + 1;
+					const reported = !first_in_ambient_block && !this.#readingStaticBlockReturn;
+					this.#readingStaticBlockReturn = true;
+					if (reported) {
+						this.#raiseCheckerError(
+							position,
+							TS_ERRORS.STATIC_BLOCK_RETURN,
+							position + 'return'.length,
+						);
+					}
 					return /** @type {never} */ (undefined);
 				} else if (
 					message === 'Unsyntactic break' &&
@@ -6841,12 +6967,29 @@ export function TSRXPlugin(config) {
 			 * or module body has been read, which the first of two declarations of an
 			 * export is in, and when the error isn't a syntax error, which TypeScript
 			 * reports alone.
+			 *
+			 * A collecting parse that throws after it recorded a token that starts
+			 * no statement (see `#checkStatementStart`) throws the first such error
+			 * instead, as it did before it read on after them: a syntax error, which
+			 * TypeScript reports before a checker error, and before the syntax
+			 * errors after it. Only a parse that reads to the end keeps the file.
 			 * @type {Parse.Parser['parseTopLevel']}
 			 */
 			parseTopLevel(node) {
+				// The errors this parse records, after any the caller's list holds.
+				const recorded_before = this.#errors?.length ?? 0;
 				try {
 					return super.parseTopLevel(node);
 				} catch (error) {
+					const skipped = this.#collect
+						? this.#errors
+								?.slice(recorded_before)
+								.find((recorded) => statement_start_errors.has(recorded))
+						: undefined;
+					if (skipped) {
+						skipped.type = 'fatal';
+						throw skipped;
+					}
 					if (
 						!this.#collect &&
 						!this.#moduleRead &&
@@ -7286,7 +7429,12 @@ export function TSRXPlugin(config) {
 							allowReturnOutsideFunction: this.options.allowReturnOutsideFunction,
 							locations: true,
 							preserveParens: this.options.preserveParens,
-							tsrxOptions: { filename: this.#filename, collect: true, errors },
+							tsrxOptions: {
+								filename: this.#filename,
+								collect: true,
+								errors,
+								stopAtStatementStart: true,
+							},
 						}),
 					);
 				} catch {
@@ -7328,17 +7476,25 @@ export function TSRXPlugin(config) {
 			 * error for a name, which a strict parse throws and a collecting one
 			 * records (#963), or throws acorn's error for a pattern.
 			 * @template T
+			 * @param {AST.VariableDeclaration} node
 			 * @param {string} kind
 			 * @param {boolean | undefined} allowMissingInitializer
 			 * @param {(allowMissingInitializer: boolean) => T} parse
 			 * @returns {T}
 			 */
-			#parseConstWithoutInitializer(kind, allowMissingInitializer, parse) {
+			#parseConstWithoutInitializer(node, kind, allowMissingInitializer, parse) {
 				const outer = this.#readingConstWithoutInitializer;
+				// That declaration, not one inside it.
+				const declared = node.start === this.#declaredUsingStart;
 				this.#readingConstWithoutInitializer =
-					kind === 'const' && !allowMissingInitializer && !this.isAmbientContext;
+					(kind === 'const' || kind === 'using' || kind === 'await using') &&
+					!allowMissingInitializer &&
+					!this.isAmbientContext &&
+					!declared;
 				try {
-					return parse(!!allowMissingInitializer || this.#readingConstWithoutInitializer);
+					return parse(
+						!!allowMissingInitializer || declared || this.#readingConstWithoutInitializer,
+					);
 				} finally {
 					this.#readingConstWithoutInitializer = outer;
 				}
@@ -7356,7 +7512,7 @@ export function TSRXPlugin(config) {
 				if ((kind === 'const' || kind === 'var') && this.#isEmptyDeclarationList()) {
 					return this.#parseEmptyVarStatement(node, kind);
 				}
-				return this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
+				return this.#parseConstWithoutInitializer(node, kind, allowMissingInitializer, (allow) =>
 					super.parseVarStatement(node, kind, allow),
 				);
 			}
@@ -7445,7 +7601,7 @@ export function TSRXPlugin(config) {
 			 * @param {boolean} [allowMissingInitializer]
 			 */
 			parseVar(node, isFor, kind, allowMissingInitializer) {
-				return this.#parseConstWithoutInitializer(kind, allowMissingInitializer, (allow) =>
+				return this.#parseConstWithoutInitializer(node, kind, allowMissingInitializer, (allow) =>
 					super.parseVar(node, isFor, kind, allow),
 				);
 			}
@@ -7478,7 +7634,7 @@ export function TSRXPlugin(config) {
 				// (`await using / x`).
 				const next = this.#wordAt(using.end);
 				if (!next) return false;
-				if (isFor && !isAwaitUsing && next.word === 'of') {
+				if (isFor && !isAwaitUsing && next.name === 'of') {
 					// acorn reads `using of` as a declaration in a `for` head only before
 					// `=` on its line, and TypeScript before `=`, `:` or `;` on any line
 					// (`nextTokenIsBindingIdentifierOrStartOfDestructuringOnSameLine`).
@@ -7586,11 +7742,12 @@ export function TSRXPlugin(config) {
 				}
 				if (decl.id.type !== 'Identifier') this.unexpected();
 				const start = /** @type {number} */ (decl.id.start);
-				this.#recordCheckerLevelError(
-					start,
-					start + decl.id.name.length,
-					TS_ERRORS.DECLARATION_NOT_INITIALIZED('const'),
-				);
+				// The name as written, escapes and all, without its type.
+				regex_escaped_identifier.lastIndex = start;
+				const end = regex_escaped_identifier.test(this.input)
+					? regex_escaped_identifier.lastIndex
+					: start + 1;
+				this.#recordCheckerLevelError(start, end, TS_ERRORS.DECLARATION_NOT_INITIALIZED(kind));
 			}
 
 			/**
@@ -8329,8 +8486,12 @@ export function TSRXPlugin(config) {
 			 * @returns {CompileError[]}
 			 */
 			#withoutUncheckedDefaults(errors, params, return_type) {
-				const code = TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER.code;
-				if (!errors.some((error) => error.code === code)) return errors;
+				// The checker errors in a default it doesn't check.
+				const codes = new Set([
+					TS_ERRORS.RESERVED_ARROW_TYPE_PARAMETER.code,
+					TS_ERRORS.STATIC_BLOCK_RETURN.code,
+				]);
+				if (!errors.some((error) => codes.has(/** @type {string} */ (error.code)))) return errors;
 				const queried = type_query_names([...params, return_type]);
 				/** @type {Array<[number, number]>} */
 				const unchecked = [];
@@ -8352,7 +8513,7 @@ export function TSRXPlugin(config) {
 				}
 				return errors.filter(
 					(error) =>
-						error.code !== code ||
+						!codes.has(/** @type {string} */ (error.code)) ||
 						!unchecked.some(
 							([start, end]) => start <= (error.pos ?? -1) && (error.pos ?? -1) < end,
 						),
@@ -9569,11 +9730,15 @@ export function TSRXPlugin(config) {
 			 * declaration (`['declare', 'class']`), or `null` where TypeScript reads
 			 * no declaration, or another modifier (`public`) comes first.
 			 * @param {number} ahead
+			 * @param {Parse.LookaheadState} [token] That token, when the caller has it
+			 *   (see `#tokenAfter`)
 			 * @returns {string[] | null}
 			 */
-			#declarationAfterModifier(ahead) {
+			#declarationAfterModifier(
+				ahead,
+				token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead),
+			) {
 				const is_identifier = Parser.acornTypeScript.tokenIsIdentifier;
-				const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
 				switch (token.type) {
 					case tt._class:
 					case tt._function:
@@ -9582,7 +9747,7 @@ export function TSRXPlugin(config) {
 						return [/** @type {string} */ (token.type.keyword)];
 					case tt._import: {
 						// An import declaration, not `import(…)` or `import.meta`.
-						const after = this.lookahead(ahead + 1).type;
+						const after = this.#tokenAfter(token).type;
 						return after === tt.string ||
 							after === tt.star ||
 							after === tt.braceL ||
@@ -9594,7 +9759,7 @@ export function TSRXPlugin(config) {
 				}
 				if (!is_identifier(token.type)) return null;
 				const word = /** @type {string} */ (token.value);
-				const next = this.lookahead(ahead + 1);
+				const next = this.#tokenAfter(token);
 				const same_line = !regex_line_break.test(this.input.slice(token.end, next.start));
 				switch (word) {
 					case 'let':
@@ -9619,7 +9784,7 @@ export function TSRXPlugin(config) {
 						// `await using x = y;`, with `using` on the line or a later one (see
 						// `isUsingKeyword`).
 						if (next.type !== tt.name || next.value !== 'using') return null;
-						const after = this.lookahead(ahead + 2);
+						const after = this.#tokenAfter(next);
 						return !regex_line_break.test(this.input.slice(next.end, after.start)) &&
 							(is_identifier(after.type) || after.type === tt.braceL)
 							? ['await']
@@ -9630,7 +9795,7 @@ export function TSRXPlugin(config) {
 					case 'abstract':
 					case 'declare': {
 						if (!same_line) return null;
-						const declaration = this.#declarationAfterModifier(ahead + 1);
+						const declaration = this.#declarationAfterModifier(ahead + 1, next);
 						return declaration && [word, ...declaration];
 					}
 				}
@@ -9660,9 +9825,10 @@ export function TSRXPlugin(config) {
 				if (!words || (keyword !== 'namespace' && keyword !== 'module' && keyword !== 'global')) {
 					return null;
 				}
-				const tokens = words.map((_, i) =>
-					i === 0 ? this.getCurLookaheadState() : this.lookahead(i),
-				);
+				const tokens = [this.getCurLookaheadState()];
+				while (tokens.length < words.length) {
+					tokens.push(this.#tokenAfter(/** @type {Parse.LookaheadState} */ (tokens.at(-1))));
+				}
 				// An escape in a keyword but `global` is TS1260, which the parse throws
 				// as TypeScript's parser reports it, before anything else.
 				if (
@@ -9682,6 +9848,38 @@ export function TSRXPlugin(config) {
 					end: first.end,
 					error: ambient ? TS_ERRORS.NESTED_AMBIENT_MODULE : TS_ERRORS.NESTED_NAMESPACE,
 				};
+			}
+
+			/**
+			 * The token after `token`, which is the current token's lookahead state
+			 * or one this gave, read as `lookahead` reads the tokens after the
+			 * current one. A loop over the tokens ahead that steps with this reads
+			 * each token once, where `this.lookahead(ahead)` for each `ahead` reads
+			 * them all again every time, which is quadratic in a long run of words.
+			 * @param {Parse.LookaheadState} token
+			 * @returns {Parse.LookaheadState}
+			 */
+			#tokenAfter(token) {
+				const state = this.getCurLookaheadState();
+				const context = this.context;
+				const pre_value = this.preValue;
+				const pre_token = this.preToken;
+				const is_lookahead = this.isLookahead;
+				try {
+					this.setLookaheadTokenState(token);
+					// `lookahead`'s context from the current token, which it starts with
+					// the current context alone, and carries from token to token.
+					this.context = token.context === context ? [this.curContext()] : token.context.slice();
+					this.isLookahead = true;
+					this.nextToken();
+					return this.getCurLookaheadState();
+				} finally {
+					this.setLookaheadTokenState(state);
+					this.context = context;
+					this.preValue = pre_value;
+					this.preToken = pre_token;
+					this.isLookahead = is_lookahead;
+				}
 			}
 
 			// UPSTREAM(sveltejs/acorn-typescript#155): remove once a release includes the fix
@@ -9705,8 +9903,9 @@ export function TSRXPlugin(config) {
 				/** @type {Parse.LookaheadState[]} */
 				const modifiers = [];
 				let declaration_expected = -1;
+				// Each token read once (see `#tokenAfter`).
+				let token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
 				for (;;) {
-					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
 					const word = is_identifier(token.type) ? /** @type {string} */ (token.value) : '';
 					if (DECLARATION_MODIFIERS.has(word)) {
 						if (word === 'static') {
@@ -9719,17 +9918,18 @@ export function TSRXPlugin(config) {
 						}
 						if (declaration_expected === -1) modifiers.push(token);
 						ahead++;
+						token = this.#tokenAfter(token);
 						continue;
 					}
 					if (token.type === tt._export) {
-						const next = this.lookahead(ahead + 1);
+						const next = this.#tokenAfter(token);
 						if (next.type === tt._default) {
 							const exported = this.#defaultExportedDeclaration(ahead + 2);
 							if (exported === null) return null;
 							modifiers.push(token, next, ...exported.modifiers);
 							return { modifiers, declaration: exported.declaration, declaration_expected };
 						}
-						const after = next.type === tstt.type ? this.lookahead(ahead + 2) : next;
+						const after = next.type === tstt.type ? this.#tokenAfter(next) : next;
 						if (
 							after.type === tt.eq ||
 							after.type === tt.star ||
@@ -9741,10 +9941,11 @@ export function TSRXPlugin(config) {
 						}
 						if (declaration_expected === -1) modifiers.push(token);
 						ahead++;
+						token = next;
 						continue;
 					}
 					if (modifiers.length === 0) return null;
-					const declaration = this.#declarationAfterModifier(ahead);
+					const declaration = this.#declarationAfterModifier(ahead, token);
 					return declaration?.length === 1
 						? { modifiers, declaration: declaration[0], declaration_expected }
 						: null;
@@ -10081,6 +10282,19 @@ export function TSRXPlugin(config) {
 					/** @type {{ declare?: boolean }} */ (ambient).declare = true;
 					return /** @type {AST.Node} */ (ambient);
 				}
+				if (has('declare') && (declaration === 'using' || declaration === 'await')) {
+					// An ambient declaration to TypeScript, whose names need no
+					// initializer (see `#parseConstWithoutInitializer`), when the
+					// statement is one: not an escaped `using` read as a name, with a
+					// declaration inside it.
+					const outer = this.#declaredUsingStart;
+					this.#declaredUsingStart = this.start;
+					try {
+						return this.parseStatement(null, this.#atTopLevel());
+					} finally {
+						this.#declaredUsingStart = outer;
+					}
+				}
 				return this.parseStatement(null, this.#atTopLevel());
 			}
 
@@ -10381,6 +10595,16 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether `token` is a name TypeScript's parser reads as a binding's
+			 * (`isBindingIdentifier`): not `enum`, a reserved word, which
+			 * acorn-typescript's `tokenIsIdentifier` takes.
+			 * @param {Parse.LookaheadState} token
+			 */
+			#isBindingName(token) {
+				return Parser.acornTypeScript.tokenIsIdentifier(token.type) && token.value !== 'enum';
+			}
+
+			/**
 			 * Whether TypeScript's parser reads a declaration from the current token
 			 * (`isDeclaration`): a word or keyword that starts one there (see
 			 * `#declarationAfterModifier`), `export` before `=`, `*`, `{`, `default`,
@@ -10389,12 +10613,13 @@ export function TSRXPlugin(config) {
 			 */
 			#startsDeclaration() {
 				const is_identifier = Parser.acornTypeScript.tokenIsIdentifier;
-				for (let ahead = 0; ; ahead++) {
-					const token = ahead === 0 ? this.getCurLookaheadState() : this.lookahead(ahead);
+				// Each token read once (see `#tokenAfter`).
+				let token = this.getCurLookaheadState();
+				for (;;) {
 					if (!is_identifier(token.type)) {
 						if (token.type === tt._import) {
 							// An import declaration, not `import(…)` or `import.meta`.
-							const after = this.lookahead(ahead + 1).type;
+							const after = this.#tokenAfter(token).type;
 							return (
 								after === tt.string ||
 								after === tt.star ||
@@ -10404,8 +10629,8 @@ export function TSRXPlugin(config) {
 							);
 						}
 						if (token.type === tt._export) {
-							let after = this.lookahead(ahead + 1);
-							if (after.type === tstt.type) after = this.lookahead(ahead + 2);
+							const next = this.#tokenAfter(token);
+							const after = next.type === tstt.type ? this.#tokenAfter(next) : next;
 							if (
 								after.type === tt.eq ||
 								after.type === tt.star ||
@@ -10416,6 +10641,7 @@ export function TSRXPlugin(config) {
 							) {
 								return true;
 							}
+							token = next;
 							continue;
 						}
 						return (
@@ -10426,7 +10652,7 @@ export function TSRXPlugin(config) {
 						);
 					}
 					const word = /** @type {string} */ (token.value);
-					const next = this.lookahead(ahead + 1);
+					const next = this.#tokenAfter(token);
 					const same_line = !regex_line_break.test(this.input.slice(token.end, next.start));
 					switch (word) {
 						case 'let':
@@ -10437,7 +10663,7 @@ export function TSRXPlugin(config) {
 						case 'await': {
 							// `await using x = y;`, with `using` on the line or the next.
 							if (next.type !== tt.name || next.value !== 'using') return false;
-							const after = this.lookahead(ahead + 2);
+							const after = this.#tokenAfter(next);
 							return (
 								!regex_line_break.test(this.input.slice(next.end, after.start)) &&
 								(is_identifier(after.type) || after.type === tt.braceL)
@@ -10460,6 +10686,7 @@ export function TSRXPlugin(config) {
 									!TYPESCRIPT_KEYWORD_NAMES.has(/** @type {string} */ (next.value)))
 							);
 						case 'static':
+							token = next;
 							continue;
 						case 'abstract':
 						case 'accessor':
@@ -10472,6 +10699,7 @@ export function TSRXPlugin(config) {
 							if (!same_line) return false;
 							// `declare type` starts a type alias.
 							if (word === 'declare' && next.type === tstt.type) return true;
+							token = next;
 							continue;
 					}
 					return false;
@@ -12008,8 +12236,12 @@ export function TSRXPlugin(config) {
 				if (node.type === 'Identifier' || node.type === 'JSXIdentifier') {
 					return node.name;
 				} else if (node.type === 'MemberExpression' || node.type === 'JSXMemberExpression') {
-					// For components like <Foo.Bar>, return "Foo.Bar"
-					return this.getElementName(node.object) + '.' + this.getElementName(node.property);
+					// For components like <Foo.Bar>, return "Foo.Bar". TypeScript reads a
+					// part after a `.` up to a `-` (see `#parseJSXMemberProperty`), so
+					// the name ends there: `</X.A-b>` closes `<X.A>`.
+					const name = this.#writtenElementName(node);
+					const hyphen = name.indexOf('-', name.indexOf('.'));
+					return hyphen === -1 ? name : name.slice(0, hyphen);
 				} else if (this.#isDynamicJSXElementName(node)) {
 					// Dynamic tags (`<{Tag}>`) name by expression source. The braces keep
 					// them from colliding with static tag names ('style', 'head', ...) and
@@ -12018,6 +12250,17 @@ export function TSRXPlugin(config) {
 					return `{${this.input.slice(expression.start, expression.end).trim()}}`;
 				}
 				return null;
+			}
+
+			/**
+			 * A member name's parts as written, `Foo.Bar-baz`.
+			 * @param {any} node
+			 * @returns {string}
+			 */
+			#writtenElementName(node) {
+				return node.type === 'MemberExpression' || node.type === 'JSXMemberExpression'
+					? this.#writtenElementName(node.object) + '.' + this.#writtenElementName(node.property)
+					: String(this.getElementName(node));
 			}
 
 			/**
@@ -13136,12 +13379,16 @@ export function TSRXPlugin(config) {
 						// abandoned (see `#parseGenericArrowFunction`). Those an arrow
 						// function holds are kept with them (see `#abandonReservedArrow`)
 						// (#1327).
+						// A syntax error in its parameters stays too (`held_syntax_errors`),
+						// which TypeScript reports whatever follows.
 						const recorded = arrow.recorded;
 						if (recorded && !arrow.reserved) {
 							const at = /** @type {{ pos?: number }} */ (error).pos ?? Infinity;
-							arrow.kept = recorded.errors
-								.slice(recorded.length)
-								.filter((kept) => (kept.pos ?? 0) < at);
+							arrow.kept = recorded.errors.filter(
+								(kept, index) =>
+									(index >= recorded.length || held_syntax_errors.has(kept)) &&
+									(kept.pos ?? 0) < at,
+							);
 						}
 					}
 					throw error;
@@ -13573,7 +13820,8 @@ export function TSRXPlugin(config) {
 			 * error, see `#isSyntaxError`), which TypeScript reports alone, those it
 			 * reports only later go (`deferred_errors`, such as a method's TS2369,
 			 * after its body, or all of them, `deferred`, such as a signature's, once
-			 * it's read). In a generic arrow function that acorn-typescript abandons
+			 * it's read), but not a held syntax error (`held_syntax_errors`), which
+			 * came first. In a generic arrow function that acorn-typescript abandons
 			 * (`abandoned`), a collecting parse records them where the abandoned parse
 			 * doesn't drop them, and a strict parse throws one as it is, which
 			 * acorn-typescript doesn't take for a sign that the code isn't an arrow
@@ -13586,7 +13834,11 @@ export function TSRXPlugin(config) {
 			#abandonHeldErrors(held, thrown, abandoned = false, deferred = false) {
 				const syntax_error = this.#isSyntaxError(thrown);
 				const kept = held
-					.filter((error) => !(syntax_error && (deferred || deferred_errors.has(error))))
+					.filter(
+						(error) =>
+							held_syntax_errors.has(error) ||
+							!(syntax_error && (deferred || deferred_errors.has(error))),
+					)
 					.sort(compare_errors);
 				if (this.#collect) {
 					if (abandoned) {
@@ -13662,12 +13914,19 @@ export function TSRXPlugin(config) {
 				const sorted = held.slice().sort(compare_errors);
 				// A syntax error held for its position (`held_syntax_errors`), which
 				// TypeScript reports before the checker errors: a strict parse throws
-				// it first, rather than hold it among them.
+				// it first, rather than hold it among them, and a collecting one
+				// records the syntax errors first.
 				const syntax_error = this.#collect
 					? undefined
 					: sorted.find((error) => held_syntax_errors.has(error));
 				if (syntax_error) this.#throwHeldError(syntax_error);
-				for (const error of sorted) {
+				const ordered = this.#collect
+					? [
+							...sorted.filter((error) => held_syntax_errors.has(error)),
+							...sorted.filter((error) => !held_syntax_errors.has(error)),
+						]
+					: sorted;
+				for (const error of ordered) {
 					const outer = this.#hold.held;
 					const errors = outer ?? (this.#collect ? this.#errors : undefined);
 					if (!errors) this.#throwHeldError(error);
@@ -14045,7 +14304,8 @@ export function TSRXPlugin(config) {
 
 			/** @type {Parse.Parser['parseForStatement']} */
 			parseForStatement(node) {
-				if (this.#readingForDirective) {
+				const directive = this.#readingForDirective;
+				if (directive) {
 					this.#readingForDirective = false;
 					this.#forDirectiveLoops.add(node);
 				}
@@ -14055,6 +14315,7 @@ export function TSRXPlugin(config) {
 						? this.lastTokStart
 						: -1;
 				this.labels.push({ kind: 'loop' });
+				if (directive) this.#forDirectiveLabels.add(this.labels[this.labels.length - 1]);
 				this.enterScope(0);
 				this.expect(tt.parenL);
 
@@ -14319,8 +14580,12 @@ export function TSRXPlugin(config) {
 				}
 
 				this.expect(tt.parenR);
+				// A `@for`'s body is past its header. A loop in a directive's header,
+				// in a function there (`@if (xs.some((x) => { for (const y of x) … }))`),
+				// is code in that header, and so is its body.
+				const directive_body = this.#forDirectiveLoops.has(node);
 				const previous_reading_header = this.#readingJSXControlFlowHeader;
-				this.#readingJSXControlFlowHeader = false;
+				if (directive_body) this.#readingJSXControlFlowHeader = false;
 				try {
 					node.body = /** @type {AST.BlockStatement} */ (this.parseStatement('for'));
 				} finally {
@@ -14951,6 +15216,17 @@ export function TSRXPlugin(config) {
 			 * @type {Parse.Parser['jsx_parseIdentifier']}
 			 */
 			jsx_parseIdentifier() {
+				return this.#parseJSXIdentifier(null);
+			}
+
+			/**
+			 * `jsx_parseIdentifier`, which calls `before_next`, when given, once the
+			 * name is read and before the token after it is, so that an error
+			 * reported there comes before the scanner's at that token.
+			 * @param {(() => void) | null} before_next
+			 * @returns {ESTreeJSX.JSXIdentifier}
+			 */
+			#parseJSXIdentifier(before_next) {
 				const node = /** @type {ESTreeJSX.JSXIdentifier} */ (this.startNode());
 
 				if (this.type === tt.name || this.type.keyword || this.type === tstt.jsxName) {
@@ -14967,6 +15243,7 @@ export function TSRXPlugin(config) {
 							this.#reportJSXNameEscape(this.start, end);
 						}
 					}
+					before_next?.();
 					this.next();
 				} else {
 					return super.jsx_parseIdentifier();
@@ -15039,17 +15316,24 @@ export function TSRXPlugin(config) {
 				const start = this.start;
 				const hyphen =
 					this.type === tstt.jsxName ? this.input.slice(start, this.end).indexOf('-') : -1;
-				const property = this.jsx_parseIdentifier();
-				if (hyphen !== -1) {
-					// On the token TypeScript reads there: `-`, or `--` or `-=`.
-					const at = start + hyphen;
-					const after = this.input[at + 1];
+				if (hyphen === -1) return this.jsx_parseIdentifier();
+				// On the token TypeScript reads there: `-`, or `--` or `-=`. It's
+				// reported before the next token is read, which the scanner can fail
+				// at (`<X.A-b # />`), as TypeScript reports it first.
+				const at = start + hyphen;
+				const after = this.input[at + 1];
+				// The name ends at the `-` of a `-=`.
+				const assignment = after === '=' && at + 1 === this.end;
+				const property = this.#parseJSXIdentifier(() =>
 					this.#reportJSXNameError(
 						at,
 						at + (after === '-' || after === '=' ? 2 : 1),
 						closing ? TS_ERRORS.TOKEN_EXPECTED('>') : TS_ERRORS.IDENTIFIER_EXPECTED,
-					);
-				}
+					),
+				);
+				// TypeScript skips the `-=` in an opening tag, where it reads
+				// attributes, and reads on: so does a collecting parse, past the `=`.
+				if (assignment && !closing && this.#collect && this.type === tt.eq) this.next();
 				return property;
 			}
 
@@ -16121,14 +16405,15 @@ export function TSRXPlugin(config) {
 						this.#path.pop();
 						// In code: no template parent, none opened in the `{ … }` container
 						// the element is in, or code that started after the parent opened (a
-						// `@{ … }` body's setup statement).
+						// `@{ … }` body's setup statement, or a directive header).
 						const parent_index = this.#path.length - 1;
 						const parent = this.#path[parent_index];
 						if (
 							type_parameter === null &&
 							(parent_index < this.#containerPathBaseline() ||
 								!this.#isNativeTemplateNode(parent) ||
-								this.#templateScriptParsingDepth > this.#elementStart(parent).scriptDepth)
+								this.#templateScriptParsingDepth > this.#elementStart(parent).scriptDepth ||
+								this.#readingHeaderStartedAfter(parent))
 						) {
 							this.#rereadTrailingCodeOfUnclosedElement(
 								/** @type {AST.NativeTSRXTemplateNode} */ (node),
@@ -16144,8 +16429,12 @@ export function TSRXPlugin(config) {
 					// another context sat on top of it. In expression position,
 					// unwind back to the pre-element depth so the following JS token (e.g. a
 					// comma/brace closing an enclosing object) tokenizes as code, not text.
+					// So is the position in a directive header that started after the
+					// element on `#path`, such as after one that a closing tag naming an
+					// element around it closed (`<p><b><i></p>`; see `parseTemplateBody`).
 					const parent = this.#path.at(-1);
-					const insideTemplate = this.#isNativeTemplateNode(parent);
+					const insideTemplate =
+						this.#isNativeTemplateNode(parent) && !this.#readingHeaderStartedAfter(parent);
 
 					// The token after the closing tag is already read, so only the residue
 					// under the contexts it pushed goes (a sibling's `<`, a template
@@ -16195,7 +16484,13 @@ export function TSRXPlugin(config) {
 				// grows with the nesting of elements, not the number of children
 				while (true) {
 					const current_template_node = this.#currentNativeTemplateNode();
-					if (!current_template_node) return;
+					// Also done once a closing tag that names an element around this one
+					// closed both (`<p><b></p>`), where the element left on `#path` is
+					// one the directive header the code is in started after: the code
+					// goes on (`@if ((() => { const a = <p><b></p>; return a; })())`).
+					if (!current_template_node || this.#readingHeaderStartedAfter(current_template_node)) {
+						return;
+					}
 					current_template_node.metadata ??= { path: [] };
 					current_template_node.metadata.templateMode = 'template';
 					this.#readSkippedTemplateText(body);
@@ -16358,11 +16653,13 @@ export function TSRXPlugin(config) {
 								openingTagName = currentElement.openingElement?.name
 									? this.getElementName(currentElement.openingElement.name)
 									: null;
+								// A closing tag without a name is a fragment's (`</>`), which closes
+								// the innermost open fragment below, as a fragment's name is `''`.
 								closingTagName = closingElement.name
 									? closingElement.name?.type === 'JSXNamespacedName'
 										? closingElement.name.namespace.name + ':' + closingElement.name.name.name
 										: this.getElementName(closingElement.name)
-									: null;
+									: '';
 							}
 
 							if (openingTagName !== closingTagName) {
@@ -16907,34 +17204,85 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
-			 * A modifier where a statement in a list starts, before a name or keyword
-			 * on its line, where TypeScript's parser reads no declaration
-			 * (`accessor x;`): it doesn't start a statement there (`isStartOfStatement`),
-			 * and TypeScript reports TS1128 `Declaration or statement expected.` at
-			 * it, where acorn read a name and failed after it. So does `export`
-			 * before anything TypeScript's parser reads no declaration from
-			 * (`export foo;`, `export async foo;`), where acorn failed after it.
+			 * A token that starts no statement where a statement in a list starts
+			 * (`isStartOfStatement`), and an empty statement for it when collecting,
+			 * or `null`:
+			 *
+			 * - a modifier before a name or keyword on its line, where TypeScript's
+			 *   parser reads no declaration (`accessor x;`), where acorn read a name
+			 *   and failed after it;
+			 * - `export` before anything TypeScript's parser reads no declaration
+			 *   from (`export foo;`, `export declare @dec class A {}`), where acorn
+			 *   failed after it.
+			 *
+			 * TypeScript reports the list's error at the token
+			 * (`parsingContextErrors`), TS1129 `Statement expected.` in a `case`
+			 * clause and TS1128 `Declaration or statement expected.` elsewhere, skips
+			 * it, and reads on from the next token
+			 * (`abortParsingListOrMoveToNextToken`). A strict parse throws the
+			 * error. A collecting one records it over the token, as a syntax error,
+			 * and reads the token as an empty statement, so the list reads on from
+			 * the next token as TypeScript's does, and the editor keeps the file.
+			 * The declaration after `export` that `parseExportDeclaration` reads is
+			 * no item of a list, so a mistake there still throws.
+			 * @returns {AST.EmptyStatement | null}
 			 */
 			#checkStatementStart() {
-				if (this.type === tt._export && !this.#startsDeclaration()) {
-					this.raise(this.start, TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED);
+				if (!this.#startsNoStatement()) return null;
+				const error =
+					(this.currentScope().flags & SCOPE_SWITCH) !== 0
+						? TS_ERRORS.STATEMENT_EXPECTED
+						: TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED;
+				const errors = this.#errors;
+				if (
+					!errors ||
+					!this.#recoversStatementStart ||
+					this.start === this.#exportedDeclarationStart
+				) {
+					this.raise(this.start, error);
 				}
+				// Held with the checker errors around it, as a syntax error, which
+				// comes before them (see `#releaseErrors`), and stays when they go (see
+				// `#abandonHeldErrors`).
+				const record = this.#hold.held ?? errors;
+				const count = record.length;
+				this.#recordCheckerLevelError(this.start, this.end, error);
+				if (record.length > count) {
+					held_syntax_errors.add(record[record.length - 1]);
+					statement_start_errors.add(record[record.length - 1]);
+				}
+				const node = /** @type {AST.EmptyStatement} */ (this.startNode());
+				// The next token starts a statement, where an expression can start (a
+				// regular expression, an element), as after a `;`. An escaped `export`
+				// gets this error alone: TypeScript reports its escape at the same
+				// place, and so not at all.
+				this.exprAllowed = true;
+				this.next(true);
+				const statement = this.finishNode(node, 'EmptyStatement');
+				skipped_statement_starts.add(statement);
+				return statement;
+			}
+
+			/**
+			 * Whether the current token starts no statement in a list (see
+			 * `#checkStatementStart`).
+			 */
+			#startsNoStatement() {
+				if (this.type === tt._export) return !this.#startsDeclaration();
 				if (
 					!Parser.acornTypeScript.tokenIsIdentifier(this.type) ||
 					this.containsEsc ||
 					!STATEMENT_START_MODIFIERS.has(/** @type {string} */ (this.value))
 				) {
-					return;
+					return false;
 				}
 				const next = this.lookahead();
-				if (
+				return (
 					(Parser.acornTypeScript.tokenIsIdentifier(next.type) ||
 						next.type.keyword !== undefined) &&
 					!this.#lineBreakAfter(this.end) &&
 					this.#readDeclarationModifiers(0) === null
-				) {
-					this.raise(this.start, TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED);
-				}
+				);
 			}
 
 			/**
@@ -16972,6 +17320,11 @@ export function TSRXPlugin(config) {
 				this.#statementContext = context ?? null;
 				this.#statementContextDepth = this.context.length - this.#currentTokenContextCount();
 				this.#statementOpenBrackets = this.#openBrackets;
+				// A `@for`'s body is a directive body (see `parseBlock`). Its head is
+				// code: a block there, such as a function's body, is a block.
+				const for_directive_body =
+					context === 'for' && this.#forDirectiveLabels.has(this.labels[this.labels.length - 1]);
+				if (for_directive_body) this.#templateControlFlowBlockDepth++;
 				const read = () => {
 					const statement = this.#parseStatement(context, topLevel, exports);
 					const node = /** @type {AST.Node | undefined} */ (statement);
@@ -17006,6 +17359,7 @@ export function TSRXPlugin(config) {
 					else this.#releaseErrors(held);
 					return statement;
 				} finally {
+					if (for_directive_body) this.#templateControlFlowBlockDepth--;
 					this.#statementContext = outer;
 					this.#statementContextDepth = outer_context_depth;
 					this.#statementOpenBrackets = outer_open_brackets;
@@ -17068,10 +17422,30 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * Whether the var scope is a class `static` block's: acorn-typescript
+			 * gives a namespace's scope `SCOPE_CLASS_STATIC_BLOCK` too.
+			 */
+			#inClassStaticBlock() {
+				const { flags } = this.currentVarScope();
+				return (flags & SCOPE_CLASS_STATIC_BLOCK) !== 0 && (flags & TS_SCOPE_TS_MODULE) === 0;
+			}
+
+			/**
 			 * @type {Parse.Parser['parseReturnStatement']}
 			 */
 			parseReturnStatement(node) {
-				const statement = super.parseReturnStatement(node);
+				const reading_static_block_return = this.#readingStaticBlockReturn;
+				// TypeScript reports a `return` outside a function, which TSRX allows
+				// at the top level (TS1108), and doesn't check its operand either.
+				if (!this.inFunction && !this.#inClassStaticBlock()) {
+					this.#readingStaticBlockReturn = true;
+				}
+				let statement;
+				try {
+					statement = super.parseReturnStatement(node);
+				} finally {
+					this.#readingStaticBlockReturn = reading_static_block_return;
+				}
 				this.#checkInlinedCodeBlockLabels(/** @type {AST.ReturnStatement} */ (statement).argument);
 				return statement;
 			}
@@ -17244,7 +17618,8 @@ export function TSRXPlugin(config) {
 					this.#raiseClosingBraceExpected();
 				}
 				if (context == null) {
-					this.#checkStatementStart();
+					const skipped = this.#checkStatementStart();
+					if (skipped) return /** @type {AST.Statement} */ (/** @type {unknown} */ (skipped));
 				} else {
 					const kind = this.#blockScopedDeclarationKind();
 					if (kind !== null) {
@@ -17439,8 +17814,10 @@ export function TSRXPlugin(config) {
 				// `undefined` and that check would skip this redirect, dropping the
 				// `@for`'s body into plain statement parsing (nested directives then
 				// land in expression position instead of template position). The
-				// depth counter is set only around a `@for`'s own header+body and
-				// `@empty` clause, so plain JS `for` loops can't false-positive.
+				// depth counter is set only around a `@for`'s own body and `@empty`
+				// clause, not its head, so plain JS `for` loops and the blocks in the
+				// head (`@for (const x of xs.filter((x) => { … }))`) can't
+				// false-positive.
 				if (this.#templateControlFlowBlockDepth > 0) {
 					this.#templateControlFlowBlockDepth--;
 					try {
@@ -17596,6 +17973,24 @@ export function TSRXPlugin(config) {
 				// except a keyword that starts another statement there.
 				const raw = this.input.slice(this.lastTokStart, this.lastTokEnd);
 				const decoded = raw.includes('\\') ? decode_identifier_name(raw) : null;
+				let keyword_error = null;
+				if (decoded && this.lastTokStart === this.#statementExpressionStart) {
+					try {
+						keyword_error = this.#escapedKeywordError(decoded);
+					} catch {
+						// A scanner error ahead, which the statement's own error comes
+						// before.
+					}
+				}
+				if (keyword_error) {
+					// On the word, as TypeScript reports it.
+					try {
+						this.raise(this.lastTokStart, keyword_error);
+					} catch (thrown) {
+						/** @type {{ end?: number }} */ (thrown).end = this.lastTokEnd;
+						throw thrown;
+					}
+				}
 				const name = decoded && !this.#escapedKeywordStartsStatement(decoded) ? decoded : raw;
 				if (
 					this.lastTokStart === this.#statementExpressionStart &&
@@ -17624,6 +18019,95 @@ export function TSRXPlugin(config) {
 			}
 
 			/**
+			 * TypeScript's error for `word`, the name a statement starts with,
+			 * written with an escape and followed by the current token, where its
+			 * parser reads the escaped keyword as the keyword, or `null`: TS1260
+			 * `Keywords cannot contain escape characters.` for a modifier before a
+			 * declaration on its line (`isDeclaration`: `async function f() {}`,
+			 * `if (x) accessor class C {}`), `async` before a name and `=>` on its
+			 * line (`isUnParenthesizedAsyncArrowFunctionWorker`), and `let`, `using`
+			 * or `yield` where they start a declaration or a `yield`; and TS1128
+			 * for a class member's modifier that starts no statement in a list (see
+			 * `#checkStatementStart`). A `global` before a name starts a global
+			 * augmentation, whose missing `{` TypeScript reports (TS1005), as here.
+			 * @param {string} word
+			 * @returns {Diagnostic | null}
+			 */
+			#escapedKeywordError(word) {
+				if (this.lastTokStart === this.#throwArgumentStart) return null;
+				if (word === 'let' || word === 'using') {
+					return this.#escapedKeywordStartsStatement(word) ? TS_ERRORS.KEYWORD_ESCAPE : null;
+				}
+				if (word === 'yield') {
+					// Before a name, keyword or literal on its line, which a `yield`
+					// expression is outside a generator too (`isYieldExpression`).
+					return (Parser.acornTypeScript.tokenIsIdentifier(this.type) ||
+						this.type.keyword !== undefined ||
+						this.type === tt.num ||
+						this.type === tt.string) &&
+						!this.hasPrecedingLineBreak()
+						? TS_ERRORS.KEYWORD_ESCAPE
+						: null;
+				}
+				if (!DECLARATION_MODIFIERS.has(word) || this.hasPrecedingLineBreak()) return null;
+				// Not before `await` or `yield`, which TypeScript reads as no name, and
+				// so as no arrow function's parameter, in its await or yield context.
+				if (
+					word === 'async' &&
+					this.#isBindingName(this.getCurLookaheadState()) &&
+					this.value !== 'await' &&
+					this.value !== 'yield' &&
+					this.lookahead().type === tt.arrow &&
+					!this.#lineBreakAfter(this.end)
+				) {
+					return TS_ERRORS.KEYWORD_ESCAPE;
+				}
+				if (this.#escapedModifierStartsDeclaration()) return TS_ERRORS.KEYWORD_ESCAPE;
+				// Not in a `case` clause, where TypeScript reports TS1129.
+				return STATEMENT_START_MODIFIERS.has(word) &&
+					this.#escapedKeywordStartsStatement(word) &&
+					(this.currentScope().flags & SCOPE_SWITCH) === 0
+					? TS_ERRORS.DECLARATION_OR_STATEMENT_EXPECTED
+					: null;
+			}
+
+			/**
+			 * Whether TypeScript reads a declaration after an escaped modifier from
+			 * the current token (`#startsDeclaration`), leaving out what it can't
+			 * tell: a declaration named `await` or `yield`, after its modifiers and
+			 * keywords, which TypeScript reads as no name in its await or yield
+			 * context.
+			 */
+			#escapedModifierStartsDeclaration() {
+				// The modifiers and keywords before the declaration's name, and the
+				// name, which TypeScript doesn't read as one when it's `await` or
+				// `yield`, or `enum` after a keyword that a name follows (not after
+				// `const`, where it's the keyword of `const enum`). A string's value
+				// isn't a name (`module "await"`). Each token read once (see
+				// `#tokenAfter`).
+				let previous = '';
+				for (let token = this.getCurLookaheadState(); ; token = this.#tokenAfter(token)) {
+					const word =
+						Parser.acornTypeScript.tokenIsIdentifier(token.type) || token.type.keyword
+							? /** @type {string} */ (token.value)
+							: '';
+					if (word === 'await' || word === 'yield') return false;
+					if (word === 'enum' && previous !== 'const' && NAMED_AFTER_WORDS.has(previous)) {
+						return false;
+					}
+					if (
+						token.type === tt.eof ||
+						(!(token.type === tt._export || token.type === tt._default) &&
+							!DECLARATION_PREFIX_WORDS.has(word))
+					) {
+						break;
+					}
+					previous = word;
+				}
+				return this.#startsDeclaration();
+			}
+
+			/**
 			 * Whether `word`, the name a statement starts with, written with an
 			 * escape and followed by the current token, is a keyword that starts
 			 * something other than an expression statement in TypeScript, which
@@ -17639,6 +18123,7 @@ export function TSRXPlugin(config) {
 			#escapedKeywordStartsStatement(word) {
 				if (this.lastTokStart === this.#throwArgumentStart) return false;
 				const name = Parser.acornTypeScript.tokenIsIdentifier(this.type);
+				const binding = this.#isBindingName(this.getCurLookaheadState());
 				switch (word) {
 					case 'global':
 						// Not before a keyword's name, as in `#startsDeclaration`.
@@ -17649,9 +18134,9 @@ export function TSRXPlugin(config) {
 							this.type === tt._export
 						);
 					case 'let':
-						return name || this.type === tt.braceL || this.type === tt.bracketL;
+						return binding || this.type === tt.braceL || this.type === tt.bracketL;
 					case 'using':
-						return name || this.type === tt.braceL;
+						return binding || this.type === tt.braceL;
 					case 'yield':
 						return true;
 				}
