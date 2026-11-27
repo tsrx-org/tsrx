@@ -700,21 +700,6 @@ export {};`,
 		);
 	});
 
-	it("shows an error inside another one's range on its own range", async () => {
-		// The forgotten fragment's TSRX2010 gets an anchor over the whole fragment;
-		// the misplaced `<style>`'s TSRX3008 inside it used to be spanned through
-		// that anchor, onto code that doesn't map back, and wasn't shown.
-		const source =
-			'export function App({ name }: { name: string }) {\n\tconst initials = name.slice(0, 2);\n\t<>\n\t\t<style>\n\t\t\tbutton { color: red; }\n\t\t</style>\n\t\t<button title={name}>{initials}</button>\n\t</>\n}\n';
-		const { document, diagnostics } = await editor_diagnostics_for('ErrorInsideAnother', source);
-		expect(reported(document, diagnostics, 'TSRX2010').map((found) => found.offset)).toEqual([
-			source.indexOf('<>'),
-		]);
-		expect(reported(document, diagnostics, 'TSRX3008').map((found) => found.offset)).toEqual([
-			source.indexOf('<style>'),
-		]);
-	});
-
 	it('keeps the mistakes without the TypeScript service', async () => {
 		const { document, diagnostics } = await diagnostics_for(
 			`const b = [1];

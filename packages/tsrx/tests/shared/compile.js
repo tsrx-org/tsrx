@@ -615,16 +615,18 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 				[TSRX_ERRORS.SWITCH_CASE_BREAK_STATEMENT.code, start, start + 'break'.length],
 			]);
 			expect(result.code).toContain('export const after = 1;');
-			// Left out of the output: in a function, such as Solid's case function,
-			// TypeScript would report it again.
-			expect(result.code).not.toMatch(/\bbreak\b/);
+			// In a loop of its own, without its label: in a function, such as
+			// Solid's case function, TypeScript would report it again, and in a
+			// `switch` statement it would end the case.
+			expect(result.code).toContain('do break; while (false);');
+			expect(result.code.match(/\bbreak\b/g)).toHaveLength(1);
 		});
 
 		it('gets a mapping that reports diagnostics, also on a line of its own', () => {
 			// The editor shows an error where a mapping that reports diagnostics maps
-			// it back. The `break` is left out of the output, so one alone on its
+			// it back. The `break` was left out of the output, so one alone on its
 			// line, where nothing is printed, had none, and the editor showed no
-			// TSRX2008.
+			// TSRX2008. It is now printed in a loop of its own, and mapped.
 			for (const body of [
 				'{ break; }',
 				'{\n\t\t\tbreak;\n\t\t}',
@@ -663,10 +665,10 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			}
 		});
 
-		it('gives each of several an anchor of its own', () => {
+		it('gives each of several a mapping of its own', () => {
 			// The editor maps a diagnostic back through the first mapping at its
-			// character, so two errors on one anchor would show as one (Solid
-			// prints the cases on one line).
+			// character, so two errors on one would show as one (Solid prints the
+			// cases on one line).
 			for (const cases of [
 				'@case 1: {\n\t\t\tbreak;\n\t\t\tbreak;\n\t\t}',
 				'@case 1: {\n\t\t\tbreak;\n\t\t}\n\t\t@case 2: {\n\t\t\tbreak;\n\t\t}',
@@ -705,7 +707,7 @@ export function runSharedCompileDiagnosticsTests({ compile_to_volar_mappings, na
 			]);
 			expect(result.code).toContain('const bad: number = 1;');
 			expect(result.code).toContain('<b>{bad}</b>');
-			expect(result.code).not.toMatch(/\bbreak\b/);
+			expect(result.code).toContain('do break; while (false);');
 		});
 
 		it('leaves TypeScript nothing to report on it in the virtual code', () => {

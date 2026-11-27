@@ -4268,30 +4268,7 @@ function add_diagnostic_mappings(
 					mappings,
 					generated_code,
 				);
-			if (anchor) {
-				diagnostic_mappings.push(anchor);
-				continue;
-			}
-			// Nothing on its line is printed, as for a `break` right in an
-			// `@switch` case on a line of its own, which the editor's code leaves
-			// out: an anchor at the end of the generated line of the code printed
-			// last before it, as for one after that code on its line.
-			const preceding = loc
-				? get_preceding_source_line_generated_position(source_line_generated_map, loc.line)
-				: null;
-			if (preceding) {
-				const line_end = (gen_line_offsets[preceding.line] ?? generated_code.length) - 1;
-				diagnostic_mappings.push({
-					sourceOffsets: [start],
-					generatedOffsets: [Math.max(0, Math.min(line_end, generated_code.length - 1))],
-					lengths: [length],
-					generatedLengths: [generated_code.length === 0 ? 0 : 1],
-					data: {
-						...mapping_data_verify_only,
-						customData: { diagnosticAnchor: true },
-					},
-				});
-			}
+			if (anchor) diagnostic_mappings.push(anchor);
 			continue;
 		}
 
@@ -4358,29 +4335,6 @@ function add_diagnostic_mappings(
 		const line_end = generated_code.indexOf('\n', generated);
 		const room = (line_end === -1 ? generated_code.length : line_end) - generated;
 		anchor.generatedLengths = [Math.max(1, Math.min(anchor.lengths[0], room))];
-	}
-
-	// An anchor on whitespace where an anchor of another error's range already
-	// is moves to a free whitespace character before it: the editor maps a
-	// diagnostic back through the first mapping at its character, so the two
-	// errors would show as one (two `break`s right in a case on lines of their
-	// own, or in cases that Solid prints on one line).
-	/** @type {Map<number, string>} */
-	const anchored = new Map();
-	for (const anchor of diagnostic_mappings) {
-		const generated = anchor.generatedOffsets[0];
-		const range = `${anchor.sourceOffsets[0]}:${anchor.lengths[0]}`;
-		const other = anchored.get(generated);
-		if (
-			other !== undefined &&
-			other !== range &&
-			anchor.generatedLengths?.[0] === 1 &&
-			regex_whitespace.test(generated_code[generated] ?? '')
-		) {
-			const free = free_whitespace_before(generated - 1, anchored, mappings, generated_code);
-			if (free !== -1) anchor.generatedOffsets = [free];
-		}
-		if (!anchored.has(anchor.generatedOffsets[0])) anchored.set(anchor.generatedOffsets[0], range);
 	}
 
 	mappings.unshift(...diagnostic_mappings);
@@ -4677,64 +4631,6 @@ function get_nearest_source_line_generated_position(source_line_generated_map, l
 	const entry = line_positions[best];
 	const position = entry.position;
 	return { line: position.line, column: position.column, sourceColumn: entry.column };
-}
-
-/**
- * The nearest offset at or before `from` in `generated_code` that is
- * whitespace, where no anchor in `anchored` is and no mapping that reports
- * diagnostics covers, or -1. One between two whitespace characters comes
- * first: no TypeScript diagnostic starts or ends there.
- * @param {number} from
- * @param {Map<number, string>} anchored
- * @param {CodeMapping[]} mappings
- * @param {string} generated_code
- * @returns {number}
- */
-function free_whitespace_before(from, anchored, mappings, generated_code) {
-	/** @param {number} at */
-	const is_whitespace = (at) => regex_whitespace.test(generated_code[at] ?? '');
-	/** @param {number} at */
-	const free = (at) =>
-		is_whitespace(at) &&
-		!anchored.has(at) &&
-		!mappings.some(
-			(mapping) =>
-				mapping.data?.verification &&
-				mapping.generatedOffsets.some(
-					(offset, i) =>
-						offset <= at && at < offset + (mapping.generatedLengths ?? mapping.lengths)[i],
-				),
-		);
-	for (let at = from; at >= 0; at--) {
-		if (is_whitespace(at - 1) && is_whitespace(at + 1) && free(at)) return at;
-	}
-	for (let at = from; at >= 0; at--) {
-		if (free(at)) return at;
-	}
-	return -1;
-}
-
-/**
- * The generated position of the last code printed on the nearest source line
- * before `line` that has any, or `null`.
- * @param {Map<number, Array<{ column: number, position: { line: number, column: number } }>>} source_line_generated_map
- * @param {number} line
- * @returns {{ line: number, column: number } | null}
- */
-function get_preceding_source_line_generated_position(source_line_generated_map, line) {
-	/** @type {number | null} */
-	let nearest = null;
-	for (const [other, entries] of source_line_generated_map) {
-		if (other < line && entries.length && (nearest === null || other > nearest)) nearest = other;
-	}
-	if (nearest === null) return null;
-	let found = null;
-	for (const entry of /** @type {Array<{ column: number, position: { line: number, column: number } }>} */ (
-		source_line_generated_map.get(nearest)
-	)) {
-		if (!found || entry.column > found.column) found = entry;
-	}
-	return found?.position ?? null;
 }
 
 /**

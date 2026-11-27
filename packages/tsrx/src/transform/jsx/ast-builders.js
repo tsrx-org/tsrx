@@ -428,9 +428,18 @@ export function summarize_switch_case(switch_case) {
 	const own_body = [];
 	let has_terminator = false;
 	for (const child of flatten_switch_consequent(switch_case.consequent || [])) {
-		// A `break` the parser reported (TSRX2008) is left out, and the code after
-		// it kept: in Solid's case function TypeScript would report it again.
+		// A `break` the parser reported (TSRX2008) gets a loop of its own,
+		// `do break; while (false);`, which it ends and nothing else, as a
+		// reported jump that nothing in the output can take does (see
+		// `contain_reported_jumps_without_target`): its keyword keeps the error
+		// in the editor, where nothing else may be printed on its line, and the
+		// code after it is kept and still runs. Left as written, it would end a
+		// case that a target compiles to a `switch` statement, and in Solid's
+		// case function TypeScript would report it again.
 		if (child.type === 'BreakStatement' && child.metadata?.invalid_tsrx_switch_case_break) {
+			const contained = b.do_while(b.literal(false), { ...child, label: null });
+			contained.metadata = { ...contained.metadata, contained_jump: true };
+			own_body.push(has_location(child) ? b.set_location(contained, child) : contained);
 			continue;
 		}
 		// A `return` the parser reported (TSRX2009) stays a statement, so the
