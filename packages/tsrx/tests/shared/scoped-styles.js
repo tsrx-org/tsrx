@@ -2205,6 +2205,37 @@ export function runSharedScopedStyleTests({
 			}
 		});
 
+		it('reads a comment inside a simple selector as CSS does', () => {
+			const { css, cssHash } = compile(
+				`export function App() @{
+					<>
+						<style>
+							.wrap [x=y/* c */] { color: red; }
+							.wrap [x /* c */ = /* c */ "Y" /* c */ i] { color: blue; }
+							.wrap ./* c */icon { color: green; }
+							.wrap:/* c */is(.on) { color: gray; }
+							.wrap :nth-child(2n /* c */ + 1 /* c */ of /* c */ .icon) { color: teal; }
+						</style>
+						<div ${attr}="wrap on"><i ${attr}="icon" x="y" /></div>
+					</>
+				}`,
+				'App.tsrx',
+			);
+			const hash = hashes_of(cssHash)[0];
+
+			// Each was TSRX3013, or the comment was read into the attribute's value,
+			// so the rule matched nothing.
+			expect(css).toContain(`.wrap.${hash} [x=y/* c */]:where(.${hash}) { color: red; }`);
+			expect(css).toContain(
+				`.wrap.${hash} [x /* c */ = /* c */ "Y" /* c */ i]:where(.${hash}) { color: blue; }`,
+			);
+			expect(css).toContain(`.wrap.${hash} ./* c */icon:where(.${hash}) { color: green; }`);
+			expect(css).toContain(`.wrap.${hash}:/* c */is(.on:where(.${hash})) { color: gray; }`);
+			expect(css).toContain(
+				`:where(.${hash}):nth-child(2n /* c */ + 1 /* c */ of /* c */ .icon) { color: teal; }`,
+			);
+		});
+
 		it('reads a comment inside a selector as CSS does', () => {
 			const { css, cssHash } = compile(
 				`export function App() @{

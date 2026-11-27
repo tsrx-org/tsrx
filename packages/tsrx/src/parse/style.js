@@ -5,7 +5,6 @@ import { strong_hash } from '../utils/hashing.js';
 import { DIAGNOSTIC_CODES } from '../diagnostics.js';
 
 const REGEX_MATCHER = /^[~^$*|]?=/;
-const REGEX_ATTRIBUTE_FLAGS = /^[a-zA-Z]+/;
 const REGEX_COMMENT_CLOSE = /\*\//;
 const REGEX_HTML_COMMENT_CLOSE = /-->/;
 const REGEX_PERCENTAGE = /^\d+(\.\d+)?%/;
@@ -34,6 +33,12 @@ const REGEX_BLOCK_VALUE_START =
 	/^-?(?:[a-zA-Z_]|[^\x00-\x7f\s])(?:[\w-]|[^\x00-\x7f\s])*[ \t\n\r\f]*:[ \t\n\r\f]*(?=\{)/;
 const REGEX_NTH_OF =
 	/^(even|odd|\+?(\d+|\d*n(\s*[+-]\s*\d+)?)|-\d*n(\s*\+\s*\d+))((?=\s*[,)])|\s+of\s+)/;
+// Whitespace or a comment, where An+B takes whitespace (`2n /* c */ + 1`).
+const NTH_SPACE = String.raw`(?:\s|\/\*(?:[^*]|\*(?!\/))*\*\/)`;
+// The same in the argument of an `:nth-child()` and the like, with comments.
+const REGEX_NTH_OF_COMMENTS = new RegExp(
+	String.raw`^(even|odd|\+?(\d+|\d*n(${NTH_SPACE}*[+-]${NTH_SPACE}*\d+)?)|-\d*n(${NTH_SPACE}*\+${NTH_SPACE}*\d+))((?=${NTH_SPACE}*[,)])|${NTH_SPACE}+of${NTH_SPACE}+)`,
+);
 // Up to six hex digits, then one optional whitespace that ends the escape
 // https://www.w3.org/TR/css-syntax-3/#consume-escaped-code-point
 const REGEX_HEX_ESCAPE = /^[0-9a-fA-F]{1,6}(\r\n|[ \t\n\r\f])?/;
@@ -48,6 +53,9 @@ const regex_whitespace = /\s/;
 
 class Parser {
 	index = 0;
+	// Whether the selector being read is the argument of an `:nth-child()` or
+	// the like, whose An+B may hold comments.
+	nth = false;
 	// Whether, in loose mode, an at-rule's prelude has left a `(` or `[` open,
 	// so its read ran to the end of the sheet.
 	unclosed_prelude = false;
@@ -1201,13 +1209,16 @@ function read_selector(parser, inside_pseudo_class = false) {
 				end: parser.index,
 			});
 		} else if (parser.eat('.')) {
+			// A comment there is nothing, as whitespace isn't: `./* c */a` is `.a`.
+			skip_comments(parser);
 			relative_selector.selectors.push({
 				type: 'ClassSelector',
 				name: read_identifier(parser),
 				start,
 				end: parser.index,
 			});
-		} else if (parser.eat('::')) {
+		} else if (eat_double_colon(parser)) {
+			skip_comments(parser);
 			relative_selector.selectors.push({
 				type: 'PseudoElementSelector',
 				name: read_identifier(parser),
@@ -1227,10 +1238,20 @@ function read_selector(parser, inside_pseudo_class = false) {
 				parser.eat(')', true);
 			}
 		} else if (parser.eat(':')) {
+			const after_colon = parser.index;
+			skip_comments(parser);
 			const name = pseudo_class_name(read_identifier(parser));
+			// `:global` is TSRX's, written whole, as the output drops it.
+			if (name === 'global' && parser.index - after_colon > 'global'.length) {
+				parser.index = after_colon;
+				throw new Error('Expected identifier');
+			}
 
 			/** @type {null | AST.CSS.SelectorList} */
 			let args = null;
+
+			const nth = parser.nth;
+			parser.nth = /^nth-/i.test(name);
 
 			if (parser.eat('(')) {
 				const selector = parser.selector;
@@ -1245,6 +1266,8 @@ function read_selector(parser, inside_pseudo_class = false) {
 				parser.eat(')', true);
 			}
 
+			parser.nth = nth;
+
 			relative_selector.selectors.push({
 				type: 'PseudoClassSelector',
 				name,
@@ -1253,9 +1276,10 @@ function read_selector(parser, inside_pseudo_class = false) {
 				end: parser.index,
 			});
 		} else if (parser.eat('[')) {
-			parser.allow_whitespace();
+			// Whitespace and comments may go between its parts.
+			allow_selector_comments(parser);
 			const name = read_identifier(parser);
-			parser.allow_whitespace();
+			allow_selector_comments(parser);
 
 			/** @type {string | null} */
 			let value = null;
@@ -1263,15 +1287,18 @@ function read_selector(parser, inside_pseudo_class = false) {
 			const matcher = parser.read(REGEX_MATCHER);
 
 			if (matcher) {
-				parser.allow_whitespace();
+				allow_selector_comments(parser);
 				value = read_attribute_value(parser);
 			}
 
-			parser.allow_whitespace();
+			allow_selector_comments(parser);
 
-			const flags = parser.read(REGEX_ATTRIBUTE_FLAGS);
+			// A flag is an identifier (`i`, or `\69`), read as CSS does.
+			const flags = /[a-zA-Z\\]/.test(parser.template[parser.index] ?? '')
+				? unescape_css(read_identifier(parser))
+				: null;
 
-			parser.allow_whitespace();
+			allow_selector_comments(parser);
 			parser.eat(']', true);
 
 			relative_selector.selectors.push({
@@ -1283,10 +1310,10 @@ function read_selector(parser, inside_pseudo_class = false) {
 				value,
 				flags,
 			});
-		} else if (inside_pseudo_class && parser.match_regex(REGEX_NTH_OF)) {
+		} else if (inside_pseudo_class && parser.match_regex(nth_pattern(parser))) {
 			// nth of matcher must come before combinator matcher to prevent collision else the '+' in '+2n-1' would be parsed as a combinator
 
-			const value = /**@type {string} */ (parser.read(REGEX_NTH_OF));
+			const value = /**@type {string} */ (parser.read(nth_pattern(parser)));
 			// One that is a name (`odd`, `n-1`) after another selector is a type
 			// selector (`[x]odd`).
 			if (REGEX_NAME.test(value)) {
@@ -1322,6 +1349,9 @@ function read_selector(parser, inside_pseudo_class = false) {
 				end: parser.index,
 			});
 		}
+
+		// Only the argument's first part may be its An+B.
+		parser.nth = false;
 
 		const index = parser.index;
 		allow_comment_or_whitespace(parser);
@@ -1369,6 +1399,50 @@ function read_selector(parser, inside_pseudo_class = false) {
 }
 
 /**
+ * Skip the comments at the parser's index, and no whitespace: inside a simple
+ * selector a comment is nothing (`./* c *\/a` is `.a`), where whitespace
+ * would end it.
+ *
+ * @param {Parser} parser
+ */
+function skip_comments(parser) {
+	while (parser.eat('/*')) {
+		parser.read_until(REGEX_COMMENT_CLOSE);
+		parser.eat('*/', true);
+	}
+}
+
+/**
+ * The pattern for an An+B at the parser's index: with comments in the
+ * argument of an `:nth-child()` and the like; elsewhere, where the parser
+ * reads one too (`:is(odd)`), without, so that `n/* c *\/ of` stays the
+ * type selectors CSS reads.
+ *
+ * @param {Parser} parser
+ * @returns {RegExp}
+ */
+function nth_pattern(parser) {
+	return parser.nth ? REGEX_NTH_OF_COMMENTS : REGEX_NTH_OF;
+}
+
+/**
+ * Eat the `::` of a pseudo-element, with any comments between its colons
+ * (`:/* c *\/:before`).
+ *
+ * @param {Parser} parser
+ * @returns {boolean}
+ */
+function eat_double_colon(parser) {
+	if (!parser.match(':')) return false;
+	const start = parser.index;
+	parser.index++;
+	skip_comments(parser);
+	if (parser.eat(':')) return true;
+	parser.index = start;
+	return false;
+}
+
+/**
  * Read a property that may or may not be quoted, e.g.
  * `foo` or `'foo bar'` or `"foo bar"`
  * @param {Parser} parser
@@ -1382,7 +1456,11 @@ function read_attribute_value(parser) {
 		if (char === '\\') {
 			value += read_escape(parser);
 			continue;
-		} else if (quote_mark ? char === quote_mark : /[\s\]]/.test(char)) {
+		} else if (
+			quote_mark
+				? char === quote_mark
+				: /[\s\]]/.test(char) || parser.template.startsWith('/*', parser.index)
+		) {
 			if (quote_mark) {
 				parser.eat(quote_mark, true);
 			}

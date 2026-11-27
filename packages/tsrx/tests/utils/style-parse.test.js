@@ -811,6 +811,112 @@ describe('parseStyle comments in selectors', function () {
 			parseStyle('.a /* c { color: red; }', LOCATION, {});
 		}).toThrow();
 	});
+
+	/**
+	 * The simple selectors of the first selector of `css`'s first rule, with
+	 * what the parser read of each.
+	 *
+	 * @param {string} css
+	 */
+	function simple_selectors(css) {
+		const rule = /** @type {any} */ (parseStyle(css, LOCATION, { loose: false }).children[0]);
+		return rule.prelude.children[0].children.flatMap((/** @type {any} */ relative) =>
+			relative.selectors.map((/** @type {any} */ simple) =>
+				simple.type === 'AttributeSelector'
+					? [simple.type, simple.name, simple.matcher, simple.value, simple.flags]
+					: [simple.type, simple.name ?? simple.value],
+			),
+		);
+	}
+
+	it.each([
+		// Inside a simple selector, CSS reads a comment as nothing: between the
+		// parts of an attribute selector, after `.`, `:` and `::`, and in an An+B
+		// wherever it takes whitespace.
+		['[/* c */x/* c */=/* c */y/* c */] {}', [['AttributeSelector', 'x', '=', 'y', null]]],
+		[
+			'[x /* c */ |= /* c */ "y" /* c */ i /* c */] {}',
+			[['AttributeSelector', 'x', '|=', 'y', 'i']],
+		],
+		['[x=y/* c */i] {}', [['AttributeSelector', 'x', '=', 'y', 'i']]],
+		// A flag is an identifier, escapes and all.
+		['[x=y/* c */\\69 ] {}', [['AttributeSelector', 'x', '=', 'y', 'i']]],
+		['./* c */a {}', [['ClassSelector', 'a']]],
+		[
+			'a:/* c */hover {}',
+			[
+				['TypeSelector', 'a'],
+				['PseudoClassSelector', 'hover'],
+			],
+		],
+		[
+			'a::/* c */before, a:/* c */:after {}',
+			[
+				['TypeSelector', 'a'],
+				['PseudoElementSelector', 'before'],
+			],
+		],
+		[':/* c */is(.a) {}', [['PseudoClassSelector', 'is']]],
+	])('reads %j', function (css, expected) {
+		expect(simple_selectors(css)).toEqual(expected);
+	});
+
+	it.each([
+		['2n/* c */+1', '2n/* c */+1'],
+		['2n + /* c */ 1', '2n + /* c */ 1'],
+		['2n+1/* c */', '2n+1'],
+		['odd/* c */', 'odd'],
+		['n/* c */of div', 'n/* c */of '],
+		['2n/* c */of/* c */.a', '2n/* c */of/* c */'],
+	])('reads the An+B in :nth-child(%s)', function (argument, nth) {
+		const [pseudo] = simple_selectors(`:nth-child(${argument}) {}`);
+		expect(pseudo).toEqual(['PseudoClassSelector', 'nth-child']);
+		const rule = /** @type {any} */ (
+			parseStyle(`:nth-child(${argument}) {}`, LOCATION, {}).children[0]
+		);
+		expect(
+			rule.prelude.children[0].children[0].selectors[0].args.children[0].children[0].selectors[0],
+		).toMatchObject({
+			type: 'Nth',
+			value: nth,
+		});
+	});
+
+	it('reads an An+B with comments only at the start of the argument', function () {
+		// After `of`, and in the next selector of the list, `n` is a type selector.
+		const rule = /** @type {any} */ (
+			parseStyle(':nth-child(1 of .a, n/* c */ of .b) {}', LOCATION, {}).children[0]
+		);
+		const [, second] = rule.prelude.children[0].children[0].selectors[0].args.children;
+		expect(
+			second.children.map((/** @type {any} */ relative) => relative.selectors[0].type),
+		).toEqual(['TypeSelector', 'TypeSelector', 'ClassSelector']);
+	});
+
+	it('reads no An+B with comments outside an :nth-child() and the like', function () {
+		// In an :is(), `n /* c */ of .a` is type selectors and descendant combinators.
+		const rule = /** @type {any} */ (
+			parseStyle(':is(n/* c */ of .a) {}', LOCATION, {}).children[0]
+		);
+		const argument = rule.prelude.children[0].children[0].selectors[0].args.children[0];
+		expect(
+			argument.children.map((/** @type {any} */ relative) => relative.selectors[0].type),
+		).toEqual(['TypeSelector', 'TypeSelector', 'ClassSelector']);
+	});
+
+	it.each([
+		// Not where CSS reads none either: whitespace with it ends the selector,
+		// and a hash, a function's `(` and `:global` are written whole.
+		'./* c */ a {}',
+		'#/* c */a {}',
+		':is/* c */(.a) {}',
+		'[x|/* c */=y] {}',
+		':/* c */global(.a) {}',
+	])('reports %j', function (css) {
+		expect(function () {
+			parseStyle(css, LOCATION, {});
+		}).toThrow(expect.objectContaining({ code: 'TSRX3013' }));
+	});
 });
 
 describe('parseStyle type selectors', function () {
