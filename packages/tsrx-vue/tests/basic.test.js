@@ -4517,6 +4517,28 @@ describe("@tsrx/vue an element's @switch", () => {
 		expect(code.match(/return null;/g)).toHaveLength(1);
 	});
 
+	it('keeps the shared lowering for one a later v-else would join past a v-if with an argument', () => {
+		// vue-jsx-vapor takes \`v-if:arg\` as part of the chain before it.
+		const { code } = compile(
+			`export function App(props: { kind: string; on: boolean }) @{
+				<div>
+					<b v-if={props.on}>{'before'}</b>
+					@switch (props.kind) {
+						@case 'a': {
+							<i>{'switch'}</i>
+						}
+					}
+					<u v-if:arg={props.on}>{'separator'}</u>
+					<s v-else>{'else'}</s>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('_$_case');
+		expect(code.match(/return null;/g)).toHaveLength(1);
+	});
+
 	it('keeps the shared lowering for one a later v-else would join past a choice', () => {
 		// vue-jsx-vapor's client build joins the \`v-else\` to the choice, but
 		// its server build passes over the choice and would join the cases.
@@ -4794,6 +4816,8 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		['createSlot', "createSlot('default')"],
 		['createTemplateRefSetter', 'createTemplateRefSetter()'],
 		['setStaticTemplateRef', "setStaticTemplateRef(null, 'field')"],
+		['setTemplateRefBinding', "setTemplateRefBinding(null, () => 'field')"],
+		['setCurrentInstance', 'setCurrentInstance(null)'],
 		['h', "h('Local')"],
 		['useProps', 'useProps()'],
 		['useFullProps', 'useFullProps()'],
@@ -4807,6 +4831,7 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		['a cast computed member useAttrs', "Vue[('useAttrs' as const)]()"],
 		['a sequence useAttrs', '(0, Vue.useAttrs)()'],
 		['a read of currentInstance', 'Vue.currentInstance'],
+		['a computed read of currentInstance', "Vue['currentInstance']"],
 	])('keeps the shared lowering for a branch that calls %s', (_name, call) => {
 		// It acts on the component calling it, which a scope would replace.
 		const { code } = compile(

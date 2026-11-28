@@ -2393,6 +2393,9 @@ const OWNER_CALLS = new Set([
 	'createSlot',
 	'createTemplateRefSetter',
 	'setStaticTemplateRef',
+	'setTemplateRefBinding',
+	// returns the instance it replaces
+	'setCurrentInstance',
 	// vue-jsx-vapor
 	'useProps',
 	'useFullProps',
@@ -2433,6 +2436,7 @@ function reads_owner(node) {
 		if (name && OWNER_CALLS.has(name)) return true;
 	}
 	if (value.type === 'Identifier' && value.name === 'currentInstance') return true;
+	if (value.type === 'MemberExpression' && member_name(value) === 'currentInstance') return true;
 	if (value.type === 'JSXAttribute') {
 		const attribute = /** @type {ESTreeJSX.JSXAttribute} */ (/** @type {unknown} */ (value));
 		if (attribute.name.type === 'JSXIdentifier' && attribute.name.name === 'ref') {
@@ -2489,11 +2493,21 @@ function unwrap_expression(node) {
 function callee_name(node) {
 	const callee = unwrap_expression(/** @type {AST.Node} */ (node));
 	if (callee.type === 'Identifier') return callee.name;
-	if (callee.type !== 'MemberExpression') return null;
-	if (!callee.computed) {
-		return callee.property.type === 'Identifier' ? callee.property.name : null;
+	return callee.type === 'MemberExpression' ? member_name(callee) : null;
+}
+
+/**
+ * The property name a member expression reads, when it is written out:
+ * `object.name` or `object['name']` (`unwrap_expression` around a computed key).
+ *
+ * @param {AST.MemberExpression} member
+ * @returns {string | null}
+ */
+function member_name(member) {
+	if (!member.computed) {
+		return member.property.type === 'Identifier' ? member.property.name : null;
 	}
-	const property = unwrap_expression(/** @type {AST.Node} */ (callee.property));
+	const property = unwrap_expression(/** @type {AST.Node} */ (member.property));
 	if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
 	if (property.type === 'TemplateLiteral' && property.expressions.length === 0) {
 		return property.quasis[0]?.value.cooked ?? null;
@@ -2736,16 +2750,23 @@ function continues_directive_chain(siblings) {
 function joins_later_else(siblings) {
 	for (const sibling of siblings) {
 		if (sibling.type !== 'JSXElement') continue;
-		// vue-jsx-vapor takes `v-else-if:arg` as `v-else-if`.
-		const names = sibling.openingElement.attributes.map((attribute) =>
-			attribute.type !== 'JSXAttribute'
-				? null
-				: attribute.name.type === 'JSXNamespacedName'
-					? attribute.name.namespace.name
-					: attribute.name.name,
+		const attributes = sibling.openingElement.attributes.flatMap((attribute) =>
+			attribute.type === 'JSXAttribute' ? [attribute.name] : [],
 		);
-		if (names.includes('v-else') || names.includes('v-else-if')) return true;
-		if (names.includes('v-if')) return false;
+		// vue-jsx-vapor takes `v-else-if:arg` as `v-else-if`, and `v-if:arg` as
+		// part of the chain before it, not a new one.
+		if (
+			attributes.some((name) =>
+				['v-else', 'v-else-if'].includes(
+					name.type === 'JSXNamespacedName' ? name.namespace.name : name.name,
+				),
+			)
+		) {
+			return true;
+		}
+		if (attributes.some((name) => name.type === 'JSXIdentifier' && name.name === 'v-if')) {
+			return false;
+		}
 	}
 	return false;
 }

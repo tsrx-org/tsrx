@@ -13,8 +13,13 @@ import {
 	useInstanceOption,
 	useVaporCssVars,
 	onErrorCaptured,
+	nextTick,
 	resolveComponent,
 	resolveDirective,
+	resolveDynamicComponent,
+	restoreCurrentInstance,
+	setCurrentInstance,
+	setTemplateRefBinding,
 } from 'vue';
 import * as Vue from 'vue';
 import { defineVaporComponent, getCurrentInstance, h, useFullProps, useProps } from 'vue-jsx-vapor';
@@ -206,6 +211,41 @@ function RendersRegistered() @{
 
 Object.assign(RendersRegistered, { components: { Registered } });
 
+function ResolvesDynamicOwner() @{
+	<div class="owner-resolves-dynamic">
+		@if (on.value) {
+			const component = resolveDynamicComponent('Registered');
+			<b>{String(component === Registered)}</b>
+		}
+	</div>
+}
+
+Object.assign(ResolvesDynamicOwner, { components: { Registered } });
+
+let bound_ref: { value: unknown } | null = null;
+
+function BindsTemplateRef() @{
+	const field = useTemplateRef('field');
+	bound_ref = field;
+	<div class="owner-binds">
+		@if (on.value) {
+			const element = document.createElement('input');
+			setTemplateRefBinding(element, () => 'field');
+			<b>{'bound'}</b>
+		}
+	</div>
+}
+
+function SetsCurrentInstance() @{
+	<div class="owner-sets">
+		@if (on.value) {
+			const previous = setCurrentInstance(null) as unknown as [{ type: { name?: string } }];
+			restoreCurrentInstance(previous as never);
+			<b>{String(previous[0].type.name)}</b>
+		}
+	</div>
+}
+
 function ReadsCurrentInstance() @{
 	<div class="owner-current">
 		@if (on.value) {
@@ -331,6 +371,27 @@ describe('tsrx-vue a branch that calls a composable acting on its component', ()
 		const { app, warnings } = await mount(RendersRegistered);
 		expect(container.querySelector('.owner-renders b')?.innerHTML).toBe('<i>registered</i>');
 		expect(warnings).toEqual([]);
+		app.unmount();
+	});
+
+	it('resolves its component’s registration with resolveDynamicComponent', async () => {
+		const { app, warnings } = await mount(ResolvesDynamicOwner);
+		expect(container.querySelector('.owner-resolves-dynamic b')?.textContent).toBe('true');
+		expect(warnings).toEqual([]);
+		app.unmount();
+	});
+
+	it('registers a template ref with its component through setTemplateRefBinding', async () => {
+		bound_ref = null;
+		const { app } = await mount(BindsTemplateRef);
+		await nextTick();
+		expect(bound_ref?.value).toBeInstanceOf(HTMLInputElement);
+		app.unmount();
+	});
+
+	it('gets its component back from setCurrentInstance', async () => {
+		const { app } = await mount(SetsCurrentInstance);
+		expect(container.querySelector('.owner-sets b')?.textContent).toBe('SetsCurrentInstance');
 		app.unmount();
 	});
 
