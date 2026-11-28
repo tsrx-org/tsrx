@@ -4638,6 +4638,7 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 	it('keeps the shared lowering for a branch of a KeepAlive that filters by name', () => {
 		const { code } = compile(
 			`import { KeepAlive as Keep, VaporKeepAlive } from 'vue';
+			import * as Vue from 'vue';
 			function A() @{
 				<b>{'a'}</b>
 			}
@@ -4657,6 +4658,18 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 							}
 						}
 					</VaporKeepAlive>
+					<Vue.VaporKeepAlive exclude="A">
+						@if (props.on) {
+							const label = 'member';
+							<A key={label} />
+						}
+					</Vue.VaporKeepAlive>
+					<Vue.KeepAlive {...{ max: 2 }}>
+						@if (props.on) {
+							const label = 'spread';
+							<A key={label} />
+						}
+					</Vue.KeepAlive>
 					<VaporKeepAlive>
 						@if (props.on) {
 							const label = 'cached';

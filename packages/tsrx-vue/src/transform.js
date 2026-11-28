@@ -2439,12 +2439,15 @@ function scope_element(content, source, transform_context) {
 }
 
 /**
- * A `KeepAlive` with `include` or `exclude` (or a spread, which can hold
- * them) picks what it caches by its child component's name. As a
- * `TsrxScope`, a branch or a case with setup statements would be matched by
- * the scope's name instead, so a child of such a `KeepAlive` keeps the
- * shared lowering. `KeepAlive` and `VaporKeepAlive` are found by those
- * names and by what an import from `vue` calls them.
+ * A `KeepAlive` with `include` or `exclude` picks what it caches by its
+ * child component's name. As a `TsrxScope`, a branch or a case with setup
+ * statements would be matched by the scope's name instead, so the child of
+ * any component with `include` or `exclude` keeps the shared lowering, and
+ * so does the child of a `KeepAlive` with a spread, which can hold them. A
+ * `KeepAlive` is `KeepAlive` or `VaporKeepAlive` by name, as a member
+ * (`Vue.KeepAlive`) or as an import from `vue` calls it; a binding that
+ * shadows one of those names is taken for it too, which only keeps the
+ * shared lowering.
  *
  * @param {AST.Program} program
  * @returns {void}
@@ -2455,11 +2458,13 @@ function unscope_filtered_keep_alive_children(program) {
 	for (const statement of program.body) {
 		if (statement.type !== 'ImportDeclaration' || statement.source.value !== 'vue') continue;
 		for (const specifier of statement.specifiers) {
-			if (
-				specifier.type === 'ImportSpecifier' &&
-				specifier.imported.type === 'Identifier' &&
-				(specifier.imported.name === 'KeepAlive' || specifier.imported.name === 'VaporKeepAlive')
-			) {
+			const imported =
+				specifier.type !== 'ImportSpecifier'
+					? null
+					: specifier.imported.type === 'Identifier'
+						? specifier.imported.name
+						: specifier.imported.value;
+			if (imported === 'KeepAlive' || imported === 'VaporKeepAlive') {
 				names.add(specifier.local.name);
 			}
 		}
@@ -2471,13 +2476,26 @@ function unscope_filtered_keep_alive_children(program) {
 					/** @type {unknown} */ (next() ?? node)
 				);
 				const name = element.openingElement.name;
-				const filters = element.openingElement.attributes.some(
-					(attribute) =>
-						attribute.type === 'JSXSpreadAttribute' ||
-						(attribute.name.type === 'JSXIdentifier' &&
-							(attribute.name.name === 'include' || attribute.name.name === 'exclude')),
-				);
-				if (name.type !== 'JSXIdentifier' || !names.has(name.name) || !filters) {
+				const attributes = element.openingElement.attributes;
+				const keep_alive =
+					name.type === 'JSXIdentifier'
+						? names.has(name.name)
+						: name.type === 'JSXMemberExpression' &&
+							(name.property.name === 'KeepAlive' || name.property.name === 'VaporKeepAlive');
+				const filters =
+					attributes.some(
+						(attribute) =>
+							attribute.type === 'JSXAttribute' &&
+							attribute.name.type === 'JSXIdentifier' &&
+							(attribute.name.name === 'include' || attribute.name.name === 'exclude'),
+					) ||
+					(keep_alive && attributes.some((attribute) => attribute.type === 'JSXSpreadAttribute'));
+				if (
+					!filters ||
+					!is_component_like_element(
+						/** @type {AST.TSRXJSXElement} */ (/** @type {unknown} */ (element)),
+					)
+				) {
 					return element === /** @type {unknown} */ (node)
 						? undefined
 						: /** @type {AST.Node} */ (/** @type {unknown} */ (element));
