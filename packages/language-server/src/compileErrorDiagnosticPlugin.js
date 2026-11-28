@@ -328,16 +328,21 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 		}
 
 		// A range found for the error's own source range that the editor shows
-		// only on other code is no better than one it drops: a span clamped into
-		// an `@switch`'s own mapping can land on another case's code, and an
-		// error's anchor can share its generated character with another
-		// error's.
+		// only on other code may be no better than one it drops: a span clamped
+		// into an `@switch`'s own mapping can land on another case's code. Code
+		// on the error, or on a line nearer it, is a place for it then.
 		const shown_first =
 			generated && sourceMap && shown_range(generated, reports, document, sourceMap);
 		const off_range =
-			!!shown_first &&
-			!nearest_placement &&
-			(shown_first[0] > end_offset || shown_first[1] < start_offset);
+			!!shown_first && !nearest_placement && distance(shown_first, start_offset, end_offset) > 0;
+		const lines_off = off_range
+			? line_gap(virtualCode.originalCode, shown_first, start_offset, end_offset)
+			: 0;
+		/** Whether a range is nearer the error than the one the editor shows. */
+		const nearer = (/** @type {readonly [number, number, ...unknown[]]} */ range) =>
+			!off_range ||
+			distance(range, start_offset, end_offset) === 0 ||
+			line_gap(virtualCode.originalCode, range, start_offset, end_offset) < lines_off;
 		if (generated && sourceMap && (!shown_first || off_range)) {
 			// The editor would leave the error out, or show it on other code: its
 			// range is on code whose mappings don't report it, such as an
@@ -369,12 +374,14 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 				if (mapping) yield virtualCode.findGeneratedRangeBySourceRange(start_offset, end_offset);
 				// Every pair of places the ends map to, as `toGeneratedRange` stops
 				// at the first end for each start. Each distinct place once.
-				const froms = new Set(
-					Array.from(map.toGeneratedLocation(start_offset, reaches), ([o]) => o),
-				);
-				const tos = new Set(Array.from(map.toGeneratedLocation(end_offset, reaches), ([o]) => o));
-				for (const from of froms) {
-					for (const to of tos) {
+				const froms = new Set();
+				for (const [from] of map.toGeneratedLocation(start_offset, reaches)) {
+					if (froms.has(from)) continue;
+					froms.add(from);
+					const tos = new Set();
+					for (const [to] of map.toGeneratedLocation(end_offset, reaches)) {
+						if (tos.has(to)) continue;
+						tos.add(to);
 						if (to >= from) yield /** @type {[number, number]} */ ([from, to]);
 					}
 				}
@@ -396,11 +403,13 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 				start_offset,
 				error.raisedAt,
 				// On the token itself, not on code another mapping of the same
-				// generated code (another error's anchor) maps it to.
+				// generated code (another error's anchor) maps it to, and nearer
+				// the error than the range the editor would show it on.
 				(range, token) => {
 					const shown = shown_on_code(range);
-					return !!shown && shown[0] >= token[0] && shown[1] <= token[1];
+					return !!shown && shown[0] >= token[0] && shown[1] <= token[1] && nearer(shown);
 				},
+				nearer,
 			);
 			if (found) generated = found;
 		}
@@ -429,6 +438,32 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 		// to the generic marker.
 		code: error.code ?? 'tsrx-usage-error',
 	};
+}
+
+/**
+ * How many characters `range` is from `[start, end)`: 0 where they overlap or
+ * touch.
+ * @param {readonly [number, number, ...unknown[]]} range
+ * @param {number} start
+ * @param {number} end
+ */
+function distance(range, start, end) {
+	return range[0] > end ? range[0] - end : range[1] < start ? start - range[1] : 0;
+}
+
+/**
+ * How many line breaks of `code` lie between `range` and `[start, end)`.
+ * @param {string} code
+ * @param {readonly [number, number, ...unknown[]]} range
+ * @param {number} start
+ * @param {number} end
+ */
+function line_gap(code, range, start, end) {
+	const [from, to] =
+		range[0] > end ? [end, range[0]] : range[1] < start ? [range[1], start] : [0, 0];
+	let lines = 0;
+	for (let i = from; i < to; i++) if (code.charCodeAt(i) === 10) lines++;
+	return lines;
 }
 
 /**
@@ -521,9 +556,17 @@ function first_at(tokens, at, offset) {
  * @param {number} offset
  * @param {number} [reach] Where the error's parser stopped, such as the token that ended a template
  * @param {(range: [number, number], token: [number, number]) => boolean} [shows] Whether the editor shows the error on a token's generated `range` and where its source `token` is
+ * @param {(token: [number, number]) => boolean} [near] Whether a source token is near enough: once one isn't, none farther the same way is
  * @returns {[number, number] | null}
  */
-function nearest_reported_range(virtualCode, reports, offset, reach = offset, shows = () => true) {
+function nearest_reported_range(
+	virtualCode,
+	reports,
+	offset,
+	reach = offset,
+	shows = () => true,
+	near = () => true,
+) {
 	const { by_end, by_start } = get_source_tokens(virtualCode);
 	/** @param {SourceToken} token */
 	const takes = (token) => reports(token.data) && shows(token.range, token.token);
@@ -531,14 +574,15 @@ function nearest_reported_range(virtualCode, reports, offset, reach = offset, sh
 	// start before `reach` come first of all.
 	const after = first_at(by_start, (token) => token.token[0], offset);
 	let i = after;
-	for (; i < by_start.length && by_start[i].token[0] < reach; i++) {
+	for (; i < by_start.length && by_start[i].token[0] < reach && near(by_start[i].token); i++) {
 		if (takes(by_start[i])) return by_start[i].range;
 	}
 	// Then the tokens that end at or before it, nearest first.
 	for (let j = first_at(by_end, (token) => token.token[1], offset + 1) - 1; j >= 0; j--) {
+		if (!near(by_end[j].token)) break;
 		if (takes(by_end[j])) return by_end[j].range;
 	}
-	for (; i < by_start.length; i++) {
+	for (; i < by_start.length && near(by_start[i].token); i++) {
 		if (takes(by_start[i])) return by_start[i].range;
 	}
 	return null;

@@ -866,6 +866,31 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		},
 	);
 
+	// Main shows these errors on other code than their own, on their own line:
+	// code no nearer them is no better place, so they stay, two errors apart
+	// and the `,` error on the `;` rather than on another parameter.
+	it.each(['react', 'preact', 'solid', 'vue', 'hono', 'hono-dom'])(
+		'keeps errors the editor shows beside them on their own line on %s',
+		async (target) => {
+			const duplicate = 'class A { m(x, public ...x) {} }\n';
+			const comma = 'const f = (a, public ...r,) => a;\n';
+			for (const [name, source, code, expected] of /** @type {const} */ ([
+				['DuplicateParameter', duplicate, 'TS2300', [12, 18]],
+				['RestParameterComma', comma, 'TS1013', [32]],
+			])) {
+				const { document, service, uri } = create_service_harness(
+					source,
+					[createCompileErrorDiagnosticPlugin()],
+					`${target}/${name}.tsrx`,
+				);
+				const diagnostics = await service.getDiagnostics(uri);
+				expect(reported(document, diagnostics, code).map((found) => found.offset)).toEqual(
+					expected,
+				);
+			}
+		},
+	);
+
 	// An `@switch` used as a statement where no template is, whose own mapping
 	// spans the error's range exactly, shows it on its code, as `@if` does.
 	it('shows TSRX2010 on an @switch statement outside a template', async () => {
@@ -1078,18 +1103,37 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		).toEqual([{ source: 'TSRX', text: 'st', offset: 30 }]);
 	});
 
-	// A range the editor shows only on other code is no place for the error
-	// either: it goes on the nearest code instead.
+	// A range the editor shows only on other code, on another line, is no
+	// place for the error either when code on its own line is: it goes there.
 	it('moves an error the editor shows only outside it, across a CRLF line break', async () => {
 		expect(
 			await diagnostics_with_mappings(
 				'CrlfEndOutside',
-				[mapping(10, 1, 2, true), mapping(17, 20, 1, true), mapping(30, 1, 3, false)],
+				[
+					mapping(10, 1, 2, true),
+					mapping(17, 20, 1, true),
+					mapping(20, 30, 6, true),
+					mapping(30, 1, 3, false),
+				],
 				30,
 				33,
 				`abc${String.fromCharCode(13, 10)}${'z'.repeat(115)}`,
 			),
-		).toEqual([{ source: 'TSRX', text: '1', offset: 17 }]);
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 20 }]);
+	});
+
+	// Code no nearer the error than the range the editor shows is no better
+	// place: the error stays there.
+	it('keeps an error the editor shows outside it when no code is nearer', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'OutsideNoNearer',
+				[mapping(7, 1, 3, true), mapping(17, 20, 1, true), mapping(30, 1, 3, false)],
+				30,
+				33,
+				'z'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'con', offset: 7 }]);
 	});
 
 	// Each place the error's ends map to through the mappings that report it
