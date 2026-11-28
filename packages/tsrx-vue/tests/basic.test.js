@@ -4598,6 +4598,18 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 							</li>
 						}
 					</ul>
+					@switch (props.kind) {
+						@case 'b': {
+							const text = 'case statements';
+							<section class={text}>
+								@switch (props.kind) {
+									@case 'b': {
+										<b>{'case switch'}</b>
+									}
+								}
+							</section>
+						}
+					}
 					@if (props.on) {
 						<section>
 							@if (props.kind) {
@@ -4617,6 +4629,10 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		);
 
 		expect(code).not.toMatch(/\{\(\(\) => \{\s*switch/);
+		// A case's scope declares the \`computed\` of a \`@switch\` it renders.
+		expect(flat(code)).toMatch(
+			/__content=\{_\$_scope_content\(\(\) =>\{const text = 'case statements'; const _\$_case_\d+ = _\$_vapor_computed\(/,
+		);
 		// Only the inner branch of two needs a scope.
 		expect(flat(code)).toMatch(
 			/<section v-if=\{props\.on\}><__TsrxScope v-if=\{props\.kind\} __content=/,
@@ -4636,6 +4652,30 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		expect(flat(code)).toMatch(
 			/\{\(row\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*switch \(row\.value\.kind\)[^]*return <li><b v-if=/,
 		);
+	});
+
+	it('renders a statement branch through TsrxScope in a keyed host element or one with v-if', () => {
+		const { code } = compile(
+			`export function App(props: { on: boolean; name: string }) @{
+				<div>
+					<p key="fixed">
+						@if (props.on) {
+							const label = props.name;
+							<b>{label}</b>
+						}
+					</p>
+					<p v-if={props.on}>
+						@if (props.on) {
+							const label = props.name;
+							<i>{label}</i>
+						}
+					</p>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.match(/<__TsrxScope v-if=\{props\.on\}/g)).toHaveLength(2);
 	});
 
 	it("keeps the shared lowering for what a component's slot renders", () => {

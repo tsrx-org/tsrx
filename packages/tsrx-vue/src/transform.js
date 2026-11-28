@@ -2474,7 +2474,15 @@ function render_element_ifs_as_directives(program, transform_context) {
 				// be a `KeepAlive`, whose `include` / `exclude` match its child's
 				// name, which a scope would replace; so does a `<template>`'s, whose
 				// child is a slot's.
-				const host = renders_children_once(element);
+				const opening = element.openingElement;
+				const host =
+					!is_component_like_element(
+						/** @type {AST.TSRXJSXElement} */ (/** @type {unknown} */ (element)),
+					) &&
+					!(
+						opening.name.type === 'JSXIdentifier' &&
+						['template', 'slot', 'component'].includes(opening.name.name)
+					);
 				/** @type {ESTreeJSX.JSXElement['children']} */
 				const children = [];
 				element.children.forEach((original, index) => {
@@ -3489,7 +3497,13 @@ function switch_directive_elements(node, declarations, transform_context) {
 function case_output(switch_case, transform_context) {
 	const output = switch_case.consequent[0];
 	if (output.type === 'BlockStatement') {
-		return scope_element(b.arrow([], output), output, transform_context);
+		// A `@switch` the case renders lowers in the scope, which can be made
+		// after the pass that lowers the ones in other scopes.
+		const content = b.arrow([], output);
+		const lowered = /** @type {AST.ArrowFunctionExpression | null} */ (
+			lower_setup_switches(content, transform_context)
+		);
+		return scope_element(lowered ?? content, output, transform_context);
 	}
 	return /** @type {AST.ReturnStatement} */ (output).argument ?? null;
 }
