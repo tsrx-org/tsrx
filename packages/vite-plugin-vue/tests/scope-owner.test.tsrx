@@ -16,7 +16,8 @@ import {
 	resolveComponent,
 	resolveDirective,
 } from 'vue';
-import { defineVaporComponent, getCurrentInstance, useFullProps, useProps } from 'vue-jsx-vapor';
+import * as Vue from 'vue';
+import { defineVaporComponent, getCurrentInstance, h, useFullProps, useProps } from 'vue-jsx-vapor';
 
 // A branch with setup statements that calls a composable acting on the
 // component calling it keeps the shared lowering: in a `TsrxScope`, the
@@ -194,6 +195,27 @@ Object.assign(ResolvesOwner, {
 	directives: { registered: registered_directive },
 });
 
+function RendersRegistered() @{
+	<div class="owner-renders">
+		@if (on.value) {
+			const child = h('Registered');
+			<b>{child}</b>
+		}
+	</div>
+}
+
+Object.assign(RendersRegistered, { components: { Registered } });
+
+function ReadsCurrentInstance() @{
+	<div class="owner-current">
+		@if (on.value) {
+			const owner = (Vue as unknown as { currentInstance: { type: { name?: string } } })
+				.currentInstance;
+			<b>{String(owner.type.name)}</b>
+		}
+	</div>
+}
+
 const captured: string[] = [];
 
 function Throws() @{
@@ -302,6 +324,19 @@ describe('tsrx-vue a branch that calls a composable acting on its component', ()
 		const { app, warnings } = await mount(ResolvesOwner);
 		expect(container.querySelector('.owner-resolves b')?.textContent).toBe('true,true');
 		expect(warnings).toEqual([]);
+		app.unmount();
+	});
+
+	it('renders its component’s registered component by name with h', async () => {
+		const { app, warnings } = await mount(RendersRegistered);
+		expect(container.querySelector('.owner-renders b')?.innerHTML).toBe('<i>registered</i>');
+		expect(warnings).toEqual([]);
+		app.unmount();
+	});
+
+	it('reads its component through currentInstance', async () => {
+		const { app } = await mount(ReadsCurrentInstance);
+		expect(container.querySelector('.owner-current b')?.textContent).toBe('ReadsCurrentInstance');
 		app.unmount();
 	});
 

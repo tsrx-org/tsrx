@@ -177,6 +177,17 @@ export function Choice() @{
 		{false ? <em>{'choice'}</em> : null}
 		<s v-else>{'else'}</s>
 	</div>
+}
+export function ElseIfArg() @{
+	<div>
+		<b v-if={false}>{'before'}</b>
+		@switch (1) {
+			@case 1: {
+				<i>{'switch'}</i>
+			}
+		}
+		<s v-else-if:arg={true}>{'else'}</s>
+	</div>
 }`,
 
 	'element-switch.tsrx': `import { ref } from 'vue';
@@ -714,16 +725,19 @@ describe("[vue] an element's @switch on the server", () => {
 	});
 
 	it('leaves a later authored v-else to the v-if before it', async () => {
-		const { Plain, Shown, Choice } = await server.ssrLoadModule('/element-switch-else.tsrx');
+		const { Plain, Shown, Choice, ElseIfArg } = await server.ssrLoadModule(
+			'/element-switch-else.tsrx',
+		);
 		/** @type {string[]} */
 		const rendered = [];
-		for (const component of [Plain, Shown, Choice]) {
+		for (const component of [Plain, Shown, Choice, ElseIfArg]) {
 			rendered.push((await renderToString(createSSRApp(component))).replace(/<!--.*?-->/g, ''));
 		}
 		// The server passes over the choice; the client joins the `v-else` to it.
 		expect(rendered).toEqual([
 			'<div><s>else</s><i>switch</i><u>separator</u></div>',
 			'<div><s>else</s><i>switch</i><u>separator</u></div>',
+			'<div><s>else</s><i>switch</i></div>',
 			'<div><s>else</s><i>switch</i></div>',
 		]);
 	});

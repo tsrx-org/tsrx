@@ -2384,10 +2384,20 @@ const OWNER_CALLS = new Set([
 	'resolveDynamicComponent',
 	'resolveDirective',
 	'onErrorCaptured',
+	// vue's render helpers, which resolve a name or a slot, or register a
+	// template ref, against the current instance
+	'createComponent',
+	'createComponentWithFallback',
+	'createAssetComponent',
+	'createDynamicComponent',
+	'createSlot',
+	'createTemplateRefSetter',
+	'setStaticTemplateRef',
 	// vue-jsx-vapor
 	'useProps',
 	'useFullProps',
 	'defineExpose',
+	'h',
 ]);
 
 /**
@@ -2396,9 +2406,10 @@ const OWNER_CALLS = new Set([
  * or a `ref` that is a string, which registers in that component's template
  * refs (`useTemplateRef`); or calls one of `OWNER_CALLS`, by name or as a
  * member (`Vue.useAttrs()`, `Vue['useAttrs']()`, through TypeScript's `as` and
- * the like). In a `TsrxScope` they would resolve against the scope, which has
- * none of these. An aliased import, or a function that calls one of them,
- * isn't seen.
+ * the like), or reads Vue's `currentInstance`. In a `TsrxScope` they would
+ * resolve against the scope, which has none of these. A name reached any
+ * other way (an aliased import, a destructured or stored function, a
+ * function that calls one of them) isn't seen.
  *
  * @param {unknown} node
  * @returns {boolean}
@@ -2421,6 +2432,7 @@ function reads_owner(node) {
 		const name = callee_name(value.callee);
 		if (name && OWNER_CALLS.has(name)) return true;
 	}
+	if (value.type === 'Identifier' && value.name === 'currentInstance') return true;
 	if (value.type === 'JSXAttribute') {
 		const attribute = /** @type {ESTreeJSX.JSXAttribute} */ (/** @type {unknown} */ (value));
 		if (attribute.name.type === 'JSXIdentifier' && attribute.name.name === 'ref') {
@@ -2439,30 +2451,49 @@ function reads_owner(node) {
 }
 
 /**
+ * `node` without the parentheses and TypeScript `as`, `satisfies`, `!` and
+ * `<T>` wrappers around it, and, for `(0, f)`, the expression a sequence ends
+ * with.
+ *
+ * @param {AST.Node} node
+ * @returns {AST.Node}
+ */
+function unwrap_expression(node) {
+	let expression = node;
+	while (
+		expression.type === 'TSAsExpression' ||
+		expression.type === 'TSSatisfiesExpression' ||
+		expression.type === 'TSNonNullExpression' ||
+		expression.type === 'TSTypeAssertion' ||
+		expression.type === 'TSInstantiationExpression' ||
+		/** @type {{ type: string }} */ (expression).type === 'ParenthesizedExpression' ||
+		expression.type === 'ChainExpression' ||
+		expression.type === 'SequenceExpression'
+	) {
+		expression =
+			expression.type === 'SequenceExpression'
+				? /** @type {AST.Node} */ (expression.expressions[expression.expressions.length - 1])
+				: /** @type {AST.Node} */ (/** @type {{ expression: unknown }} */ (expression).expression);
+	}
+	return expression;
+}
+
+/**
  * The name a call's callee reads, when it is written out: `name`,
- * `object.name` or `object['name']`, through parentheses and TypeScript's
- * `as`, `satisfies`, `!` and `<T>` wrappers.
+ * `object.name` or `object['name']` (`unwrap_expression` around the callee and
+ * a computed key).
  *
  * @param {unknown} node
  * @returns {string | null}
  */
 function callee_name(node) {
-	let callee = /** @type {AST.Node} */ (node);
-	while (
-		callee.type === 'TSAsExpression' ||
-		callee.type === 'TSSatisfiesExpression' ||
-		callee.type === 'TSNonNullExpression' ||
-		callee.type === 'TSTypeAssertion' ||
-		callee.type === 'TSInstantiationExpression' ||
-		/** @type {{ type: string }} */ (callee).type === 'ParenthesizedExpression' ||
-		callee.type === 'ChainExpression'
-	) {
-		callee = /** @type {AST.Node} */ (/** @type {{ expression: unknown }} */ (callee).expression);
-	}
+	const callee = unwrap_expression(/** @type {AST.Node} */ (node));
 	if (callee.type === 'Identifier') return callee.name;
 	if (callee.type !== 'MemberExpression') return null;
-	const property = callee.property;
-	if (!callee.computed) return property.type === 'Identifier' ? property.name : null;
+	if (!callee.computed) {
+		return callee.property.type === 'Identifier' ? callee.property.name : null;
+	}
+	const property = unwrap_expression(/** @type {AST.Node} */ (callee.property));
 	if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
 	if (property.type === 'TemplateLiteral' && property.expressions.length === 0) {
 		return property.quasis[0]?.value.cooked ?? null;
@@ -2705,10 +2736,13 @@ function continues_directive_chain(siblings) {
 function joins_later_else(siblings) {
 	for (const sibling of siblings) {
 		if (sibling.type !== 'JSXElement') continue;
+		// vue-jsx-vapor takes `v-else-if:arg` as `v-else-if`.
 		const names = sibling.openingElement.attributes.map((attribute) =>
-			attribute.type === 'JSXAttribute' && attribute.name.type === 'JSXIdentifier'
-				? attribute.name.name
-				: null,
+			attribute.type !== 'JSXAttribute'
+				? null
+				: attribute.name.type === 'JSXNamespacedName'
+					? attribute.name.namespace.name
+					: attribute.name.name,
 		);
 		if (names.includes('v-else') || names.includes('v-else-if')) return true;
 		if (names.includes('v-if')) return false;

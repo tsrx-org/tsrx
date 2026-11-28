@@ -4496,6 +4496,27 @@ describe("@tsrx/vue an element's @switch", () => {
 		expect(code).toContain('<i v-if=');
 	});
 
+	it('keeps the shared lowering for one a later v-else-if with an argument would join', () => {
+		// vue-jsx-vapor takes \`v-else-if:arg\` as \`v-else-if\`.
+		const { code } = compile(
+			`export function App(props: { kind: string; on: boolean }) @{
+				<div>
+					<b v-if={props.on}>{'before'}</b>
+					@switch (props.kind) {
+						@case 'a': {
+							<i>{'switch'}</i>
+						}
+					}
+					<s v-else-if:arg={props.on}>{'else if'}</s>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('_$_case');
+		expect(code.match(/return null;/g)).toHaveLength(1);
+	});
+
 	it('keeps the shared lowering for one a later v-else would join past a choice', () => {
 		// vue-jsx-vapor's client build joins the \`v-else\` to the choice, but
 		// its server build passes over the choice and would join the cases.
@@ -4768,6 +4789,12 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		['resolveDynamicComponent', "resolveDynamicComponent('Local')"],
 		['resolveDirective', "resolveDirective('mark')"],
 		['onErrorCaptured', 'onErrorCaptured(() => false)'],
+		['createComponent', "createComponent('Local')"],
+		['createDynamicComponent', "createDynamicComponent(() => 'Local')"],
+		['createSlot', "createSlot('default')"],
+		['createTemplateRefSetter', 'createTemplateRefSetter()'],
+		['setStaticTemplateRef', "setStaticTemplateRef(null, 'field')"],
+		['h', "h('Local')"],
 		['useProps', 'useProps()'],
 		['useFullProps', 'useFullProps()'],
 		['defineExpose', 'defineExpose({ focus() {} })'],
@@ -4777,6 +4804,9 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		['a cast useAttrs', '(Vue.useAttrs as () => unknown)()'],
 		['a non-null useAttrs', 'useAttrs!()'],
 		['an optional useAttrs', 'Vue.useAttrs?.()'],
+		['a cast computed member useAttrs', "Vue[('useAttrs' as const)]()"],
+		['a sequence useAttrs', '(0, Vue.useAttrs)()'],
+		['a read of currentInstance', 'Vue.currentInstance'],
 	])('keeps the shared lowering for a branch that calls %s', (_name, call) => {
 		// It acts on the component calling it, which a scope would replace.
 		const { code } = compile(
