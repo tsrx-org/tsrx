@@ -17,6 +17,7 @@ import {
 	watch,
 	VaporKeepAlive,
 	VaporTeleport,
+	useTemplateRef,
 	watchEffect,
 } from 'vue';
 import { defineVaporComponent } from 'vue-jsx-vapor';
@@ -3872,6 +3873,48 @@ function ElementSwitchKeyed() @{
 	</div>
 }
 
+// An authored \`v-else\` past another element joins the \`v-if\` before the
+// \`@switch\`, which keeps its lowering; \`vapor-for-ssr.test.js\` renders the
+// same on the server.
+function ElementSwitchBeforeElse() @{
+	<div class="element-switch-before-else">
+		<b v-if={false}>{'before'}</b>
+		@switch (element_switch.value) {
+			@case 1: {
+				<i>{'switch'}</i>
+			}
+		}
+		<u>{'separator'}</u>
+		<s v-else>{'else'}</s>
+	</div>
+}
+
+function ElementSwitchShowBeforeElse() @{
+	<div class="element-switch-before-else">
+		<b v-if={false}>{'before'}</b>
+		@switch (element_switch.value) {
+			@case 1: {
+				<i v-show={true}>{'switch'}</i>
+			}
+		}
+		<u>{'separator'}</u>
+		<s v-else>{'else'}</s>
+	</div>
+}
+
+function ElementSwitchChoiceBeforeElse() @{
+	<div class="element-switch-before-else">
+		<b v-if={false}>{'before'}</b>
+		@switch (element_switch.value) {
+			@case 1: {
+				<i>{'switch'}</i>
+			}
+		}
+		{false ? <em>{'choice'}</em> : null}
+		<s v-else>{'else'}</s>
+	</div>
+}
+
 describe("tsrx-vue an element's @switch (#1403)", () => {
 	beforeEach(() => {
 		element_switch.value = 1;
@@ -3904,6 +3947,23 @@ describe("tsrx-vue an element's @switch (#1403)", () => {
 		await flush();
 		expect(text('.element-switch')).toBe('one:0n=1');
 	});
+
+	it.each([
+		['', ElementSwitchBeforeElse, '<s>else</s><i>switch</i><u>separator</u>'],
+		[' with v-show', ElementSwitchShowBeforeElse, '<s>else</s><i>switch</i><u>separator</u>'],
+		// The client joins it to the choice instead, as it did before.
+		[' past a choice', ElementSwitchChoiceBeforeElse, '<i>switch</i><s>else</s>'],
+	])(
+		'leaves a later authored v-else to the v-if before it, for a case%s',
+		async (_name, component, html) => {
+			await render(component);
+			expect(
+				container
+					.querySelector('.element-switch-before-else')
+					?.innerHTML.replace(/<!--.*?-->/g, ''),
+			).toBe(html);
+		},
+	);
 
 	it('runs its discriminant once per change, as before', async () => {
 		await render(ElementSwitchRuns);
@@ -6386,6 +6446,368 @@ describe("tsrx-vue an element's @else if chain or v-show branch (#1402)", () => 
 			expect(container.querySelector('.chain-counter')).toBeNull();
 		},
 	);
+});
+
+type ScopeTodo = { id: string; title: string; editing: boolean; synced: number };
+
+const scope_todos = ref<ScopeTodo[]>([]);
+const scope_user = ref({ name: 'Ann', online: true });
+const scope_attrs = { 'data-x': '1' };
+const scope_log: string[] = [];
+
+function scope_todos_initial(): ScopeTodo[] {
+	return [
+		{ id: 'a', title: 'Alpha', editing: true, synced: 0 },
+		{ id: 'b', title: 'Beta', editing: true, synced: 0 },
+	];
+}
+
+function update_scope_todo(id: string, patch: Partial<ScopeTodo>) {
+	scope_todos.value = scope_todos.value.map((todo) =>
+		todo.id === id ? { ...todo, ...patch } : todo,
+	);
+}
+
+function ScopeEditor(props: { title: string }) @{
+	const draft = ref(props.title);
+	<input
+		class="scope-editor"
+		value={draft.value}
+		onInput={(event: Event) => (draft.value = (event.target as HTMLInputElement).value)}
+	/>
+}
+
+function ScopeCounter(props: { label: string }) @{
+	const count = ref(0);
+	<button class="scope-counter" onClick={() => count.value++}>
+		{props.label + ':' + count.value}
+	</button>
+}
+
+function ScopeRows() @{
+	<ul class="scope-rows">
+		@for (const todo of scope_todos.value; key todo.id) {
+			@if (todo.editing) {
+				const label = todo.title + '!';
+				<li>
+					<ScopeEditor title={label} />
+					<ScopeCounter {label} />
+				</li>
+			} @else {
+				<li>{todo.title}</li>
+			}
+		}
+	</ul>
+}
+
+function ScopeSwitchRows() @{
+	<ul class="scope-switch-rows">
+		@for (const todo of scope_todos.value; key todo.id) {
+			@switch (todo.editing) {
+				@case true: {
+					const label = todo.title + '!';
+					<li>
+						<ScopeCounter {label} />
+					</li>
+				}
+				@default: {
+					<li>{todo.title}</li>
+				}
+			}
+		}
+	</ul>
+}
+
+function ScopeRowSwitch() @{
+	<ul class="scope-row-switch">
+		@for (const todo of scope_todos.value; key todo.id) {
+			<li>
+				@switch (todo.editing) {
+					@case true: {
+						<ScopeCounter label={todo.title} />
+					}
+					@default: {
+						<i>{todo.title}</i>
+					}
+				}
+			</li>
+		}
+	</ul>
+}
+
+function ScopeUser() @{
+	<div class="scope-user">
+		@if (scope_user.value.online) {
+			const label = scope_user.value.name + '!';
+			<ScopeCounter {label} />
+		}
+		{scope_user.value.name}
+	</div>
+}
+
+function ScopeSpread() @{
+	<div class="scope-spread">
+		@if (scope_user.value.online) {
+			<p {...scope_attrs}>
+				<ScopeCounter label="spread" />
+			</p>
+		}
+		{scope_user.value.name}
+	</div>
+}
+
+function ScopeChild() @{
+	const value = inject('scope-key', 'none');
+	<b class="scope-child">{value}</b>
+}
+
+function ScopeHooks() @{
+	provide('scope-key', 'host');
+	<div class="scope-hooks">
+		@if (scope_user.value.online) {
+			scope_log.push('run ' + inject('scope-key', 'none'));
+			onMounted(() => scope_log.push('mounted'));
+			onUnmounted(() => scope_log.push('unmounted'));
+			provide('scope-key', 'branch');
+			<p>
+				<ScopeChild />
+			</p>
+		}
+		{scope_user.value.name}
+	</div>
+}
+
+function ScopeSlotChild() @{
+	<div class="scope-slot">
+		@if (scope_user.value.online) {
+			<section {...scope_attrs}>
+				<slot>
+					<i>{'fallback'}</i>
+				</slot>
+			</section>
+		}
+	</div>
+}
+
+function ScopeSlotApp() @{
+	<ScopeSlotChild>
+		<b>{'provided'}</b>
+	</ScopeSlotChild>
+}
+
+let scope_field: unknown = null;
+
+function ScopeTemplateRef() @{
+	const field = useTemplateRef('field');
+	onMounted(() => {
+		scope_field = field.value;
+	});
+	<div class="scope-ref">
+		@if (scope_user.value.online) {
+			<input {...scope_attrs} ref="field" />
+		}
+	</div>
+}
+
+const scope_fails = ref(false);
+
+function ScopeThrows() @{
+	<div class="scope-throws">
+		@try {
+			<p>
+				@if (scope_user.value.online) {
+					if (scope_fails.value) throw new Error('scope boom');
+					const label = 'fine';
+					<b>{label}</b>
+				}
+			</p>
+		} @catch (error) {
+			<em>{(error as Error).message}</em>
+		}
+	</div>
+}
+
+function ScopeRoot() @{
+	@if (scope_user.value.online) {
+		const label = 'root';
+		<b class="scope-root">{label}</b>
+	}
+}
+
+function ScopeRootHost() @{
+	<ScopeRoot content="description" class="extra" />
+}
+
+function ScopeKept() @{
+	const count = ref(0);
+	<button class="scope-kept" onClick={() => count.value++}>
+		{'kept:' + count.value}
+	</button>
+}
+
+function ScopeOther() @{
+	<i class="scope-other">{'other'}</i>
+}
+
+function ScopeKeepAliveExcluding() @{
+	<div class="scope-keep-alive">
+		<VaporKeepAlive exclude="ScopeKept">
+			@if (scope_user.value.online) {
+				const label = 'kept';
+				<ScopeKept key={label} />
+			} @else {
+				<ScopeOther />
+			}
+		</VaporKeepAlive>
+	</div>
+}
+
+function scope_rows(selector: string) {
+	return Array.from(container.querySelectorAll(`${selector} li`), (row) => {
+		const counter = row.querySelector('.scope-counter')?.textContent;
+		const editor = row.querySelector('input');
+		return (counter ?? row.textContent) + (editor ? ' ' + editor.value : '');
+	});
+}
+
+describe('tsrx-vue setup statements in a branch or a case run once per mount', () => {
+	beforeEach(() => {
+		scope_todos.value = scope_todos_initial();
+		scope_user.value = { name: 'Ann', online: true };
+		scope_log.length = 0;
+	});
+
+	it('keeps a keyed row’s @if branch, and what its statements derived, while it stays (#1401)', async () => {
+		await render(ScopeRows);
+		const editor = container.querySelector('.scope-rows input') as HTMLInputElement;
+		editor.value = 'Alpha draft';
+		editor.dispatchEvent(new Event('input'));
+		await click('.scope-rows .scope-counter');
+		expect(scope_rows('.scope-rows')).toEqual(['Alpha!:1 Alpha draft', 'Beta!:0 Beta!']);
+
+		update_scope_todo('a', { synced: 1 });
+		await flush();
+		expect(scope_rows('.scope-rows')).toEqual(['Alpha!:1 Alpha draft', 'Beta!:0 Beta!']);
+
+		// The statements ran when the branch mounted: the label they derived
+		// stays until it mounts again.
+		update_scope_todo('a', { title: 'Alpha2' });
+		await flush();
+		expect(scope_rows('.scope-rows')).toEqual(['Alpha!:1 Alpha draft', 'Beta!:0 Beta!']);
+
+		update_scope_todo('a', { editing: false });
+		await flush();
+		expect(scope_rows('.scope-rows')).toEqual(['Alpha2', 'Beta!:0 Beta!']);
+		update_scope_todo('a', { editing: true });
+		await flush();
+		expect(scope_rows('.scope-rows')).toEqual(['Alpha2!:0 Alpha2!', 'Beta!:0 Beta!']);
+	});
+
+	it('follows a keyed @switch row whose case has setup statements', async () => {
+		await render(ScopeSwitchRows);
+		await click('.scope-switch-rows .scope-counter');
+		update_scope_todo('a', { synced: 1 });
+		await flush();
+		expect(scope_rows('.scope-switch-rows')).toEqual(['Alpha!:1', 'Beta!:0']);
+		update_scope_todo('a', { editing: false });
+		await flush();
+		expect(scope_rows('.scope-switch-rows')).toEqual(['Alpha', 'Beta!:0']);
+	});
+
+	it('keeps the case of a @switch in a keyed row’s element when its item is replaced', async () => {
+		await render(ScopeRowSwitch);
+		await click('.scope-row-switch .scope-counter');
+		update_scope_todo('a', { synced: 1 });
+		await flush();
+		expect(scope_rows('.scope-row-switch')).toEqual(['Alpha:1', 'Beta:0']);
+		update_scope_todo('a', { title: 'Alpha2' });
+		await flush();
+		expect(scope_rows('.scope-row-switch')).toEqual(['Alpha2:1', 'Beta:0']);
+	});
+
+	it.each([
+		['with setup statements', ScopeUser, '.scope-user', 'Ann!:1Bo'],
+		['with a spread host element', ScopeSpread, '.scope-spread', 'spread:1Bo'],
+	] as const)(
+		'keeps an @if branch %s beside an expression (#1402)',
+		async (_name, component, selector, renamed) => {
+			await render(component);
+			await click('.scope-counter');
+			scope_user.value = { ...scope_user.value };
+			await flush();
+			scope_user.value = { ...scope_user.value, name: 'Bo' };
+			await flush();
+			expect(text(selector)).toBe(renamed);
+			scope_user.value = { ...scope_user.value, online: false };
+			await flush();
+			scope_user.value = { ...scope_user.value, online: true };
+			await flush();
+			expect(text(selector)).toBe(renamed.replace(':1', ':0').replace('Ann!', 'Bo!'));
+		},
+	);
+
+	// A \`<slot>\` and a string \`ref\` resolve against the component that
+	// renders them, so a branch with one keeps the shared lowering.
+	it('renders the slot a branch’s <slot> names', async () => {
+		await render(ScopeSlotApp);
+		expect(text('.scope-slot')).toBe('provided');
+	});
+
+	it('registers a branch’s string ref with its component', async () => {
+		scope_field = null;
+		await render(ScopeTemplateRef);
+		expect(scope_field).toBe(container.querySelector('.scope-ref input'));
+	});
+
+	it('sends a throw from a branch’s statements to the @catch around it, without a warning', async () => {
+		const warnings: string[] = [];
+		const warn_spy = vi.spyOn(console, 'warn').mockImplementation((...args) => {
+			warnings.push(args.map(String).join(' '));
+		});
+		try {
+			scope_fails.value = true;
+			await render(ScopeThrows);
+			expect(text('.scope-throws')).toBe('scope boom');
+			expect(warnings).toEqual([]);
+		} finally {
+			warn_spy.mockRestore();
+			scope_fails.value = false;
+		}
+	});
+
+	it('passes a component’s fallthrough attributes to a scope that is its whole output', async () => {
+		// Its own prop is \`__content\`, so an attribute named \`content\` falls through.
+		await render(ScopeRootHost);
+		const root = container.querySelector('.scope-root') as HTMLElement;
+		expect(root.className).toBe('scope-root extra');
+		expect(root.getAttribute('content')).toBe('description');
+		expect(root.textContent).toBe('root');
+	});
+
+	it('lets a KeepAlive with exclude match the component a statement branch renders', async () => {
+		// A slot's output keeps the shared lowering: as a scope, the branch would
+		// be matched by the scope's name, and cached.
+		await render(ScopeKeepAliveExcluding);
+		await click('.scope-kept');
+		expect(text('.scope-keep-alive')).toBe('kept:1');
+		scope_user.value = { ...scope_user.value, online: false };
+		await flush();
+		scope_user.value = { ...scope_user.value, online: true };
+		await flush();
+		expect(text('.scope-keep-alive')).toBe('kept:0');
+	});
+
+	it('runs a branch’s statements as the setup of a component of its own', async () => {
+		await render(ScopeHooks);
+		expect(text('.scope-child')).toBe('branch');
+		expect(scope_log).toEqual(['run host', 'mounted']);
+		scope_user.value = { ...scope_user.value, name: 'Bo' };
+		await flush();
+		expect(scope_log).toEqual(['run host', 'mounted']);
+		scope_user.value = { ...scope_user.value, online: false };
+		await flush();
+		expect(scope_log).toEqual(['run host', 'mounted', 'unmounted']);
+	});
 });
 
 describe('tsrx-vue for_items', () => {

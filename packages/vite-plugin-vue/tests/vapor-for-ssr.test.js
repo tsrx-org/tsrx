@@ -140,6 +140,68 @@ export function App({ n }: { n: number }) @{
 }`,
 
 	// element-switch-hydration.test.tsrx hydrates what these render.
+	// An authored \`v-else\` past another element joins the \`v-if\` before the
+	// \`@switch\`; runtime.test.tsrx renders the same on the client.
+	'element-switch-else.tsrx': `export function Plain() @{
+	<div>
+		<b v-if={false}>{'before'}</b>
+		@switch (1) {
+			@case 1: {
+				<i>{'switch'}</i>
+			}
+		}
+		<u>{'separator'}</u>
+		<s v-else>{'else'}</s>
+	</div>
+}
+export function Shown() @{
+	<div>
+		<b v-if={false}>{'before'}</b>
+		@switch (1) {
+			@case 1: {
+				<i v-show={true}>{'switch'}</i>
+			}
+		}
+		<u>{'separator'}</u>
+		<s v-else>{'else'}</s>
+	</div>
+}
+export function Choice() @{
+	<div>
+		<b v-if={false}>{'before'}</b>
+		@switch (1) {
+			@case 1: {
+				<i>{'switch'}</i>
+			}
+		}
+		{false ? <em>{'choice'}</em> : null}
+		<s v-else>{'else'}</s>
+	</div>
+}
+export function ElseIfArg() @{
+	<div>
+		<b v-if={false}>{'before'}</b>
+		@switch (1) {
+			@case 1: {
+				<i>{'switch'}</i>
+			}
+		}
+		<s v-else-if:arg={true}>{'else'}</s>
+	</div>
+}
+export function IfArg() @{
+	<div>
+		<b v-if={false}>{'before'}</b>
+		@switch (1) {
+			@case 1: {
+				<i>{'switch'}</i>
+			}
+		}
+		<u v-if:arg={false}>{'separator'}</u>
+		<s v-else>{'else'}</s>
+	</div>
+}`,
+
 	'element-switch.tsrx': `import { ref } from 'vue';
 
 function CaseCounter(props: { label: string }) @{
@@ -324,6 +386,216 @@ export function ShownComponent({ state }: { state: State }) @{
 	'v-show.tsrx': `export function App({ shown }: { shown: boolean }) @{
 	<p v-show={shown}>{'x'}</p>
 }`,
+
+	// The server runs a scope's statements where the branch is rendered.
+	'scope-setup.tsrx': `import { inject, provide } from 'vue';
+function Child() @{
+	const value = inject('key', 'none');
+	<b>{value}</b>
+}
+export function Provides() @{
+	<div>
+		@if (true) {
+			provide('key', 'branch');
+			<p>
+				<Child />
+			</p>
+		}
+	</div>
+}
+export function Throws() @{
+	<div>
+		@try {
+			<p>
+				@if (true) {
+					throw new Error('boom');
+					<b>{'fine'}</b>
+				}
+			</p>
+		} @catch (error) {
+			<i>{(error as Error).message}</i>
+		}
+	</div>
+}`,
+
+	// A branch that calls a composable acting on its component keeps the
+	// shared lowering; scope-owner.test.tsrx hydrates what these render.
+	'scope-owner.tsrx': `import { useAttrs, useModel, useSlots } from 'vue';
+import { defineVaporComponent } from 'vue-jsx-vapor';
+function SlotsChild() @{
+	<div class="owner-slots">
+		@if (true) {
+			const slots = useSlots();
+			<b>{Object.keys(slots).join(',')}</b>
+		}
+	</div>
+}
+export function Slots() @{
+	<SlotsChild>
+		<i>{'given'}</i>
+	</SlotsChild>
+}
+function AttrsChild() @{
+	<div class="owner-attrs">
+		@if (true) {
+			const attrs = useAttrs();
+			<b>{String(attrs.title)}</b>
+		}
+	</div>
+}
+export function Attrs() @{
+	<AttrsChild title="hello" />
+}
+const ModelChild = defineVaporComponent(
+	(props: { modelValue?: string }) => @{
+		<div class="owner-model">
+			@if (true) {
+				const model = useModel(props, 'modelValue');
+				<button>{String(model.value)}</button>
+			}
+		</div>
+	},
+	{ props: ['modelValue'], emits: ['update:modelValue'] },
+);
+export function Model() @{
+	<ModelChild modelValue="initial" />
+}`,
+
+	// scope-hydration.test.tsrx hydrates what these render.
+	'scope.tsrx': `import { ref } from 'vue';
+
+type State = { on: boolean; away: boolean; n: number; name: string };
+
+const attrs = { 'data-x': '1' };
+
+function ScopeCounter(props: { label: string }) @{
+	const count = ref(0);
+	<button class="counter" onClick={() => count.value++}>{props.label + ':' + count.value}</button>
+}
+
+export function Beside({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			const label = state.name + '!';
+			<ScopeCounter {label} />
+		}
+		{state.name}
+	</p>
+}
+
+export function Spread({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			<span {...attrs}>
+				<ScopeCounter label="on" />
+			</span>
+		}
+		{state.name}
+	</p>
+}
+
+export function ElseStatements({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			<ScopeCounter label="on" />
+		} @else if (state.away) {
+			const label = 'away';
+			<i>{label}</i>
+		} @else {
+			const label = 'off';
+			<b>{label}</b>
+		}
+		{state.name}
+	</p>
+}
+
+export function InBranch({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			<span>
+				@switch (state.n) {
+					@case 1: {
+						<ScopeCounter label="one" />
+					}
+					@default: {
+						<i>{'other'}</i>
+					}
+				}
+			</span>
+		}
+		{state.name}
+	</p>
+}
+
+export function InScope({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			const label = 'scope';
+			<span class={label}>
+				@switch (state.n) {
+					@case 1: {
+						<ScopeCounter label="one" />
+					}
+					@default: {
+						<i>{'other'}</i>
+					}
+				}
+			</span>
+		}
+	</p>
+}
+
+export function InCase({ state }: { state: State }) @{
+	<p>
+		@switch (state.on) {
+			@case true: {
+				<span>
+					@switch (state.n) {
+						@case 1: {
+							<ScopeCounter label="one" />
+						}
+					}
+				</span>
+			}
+		}
+	</p>
+}
+
+export function CaseStatements({ state }: { state: State }) @{
+	<p>
+		@switch (state.n) {
+			@case 1: {
+				const label = 'one';
+				<ScopeCounter {label} />
+			}
+			@default: {
+				<i>{'other'}</i>
+			}
+		}
+		{state.name}
+	</p>
+}
+
+export function TwoBranches({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			<span>
+				@if (!state.away) {
+					<em>
+						@switch (state.n) {
+							@case 1: {
+								<ScopeCounter label="one" />
+							}
+							@default: {
+								<i>{'other'}</i>
+							}
+						}
+					</em>
+				}
+			</span>
+		}
+	</p>
+}`,
 };
 
 /** @type {string} */
@@ -464,6 +736,25 @@ describe("[vue] an element's @switch on the server", () => {
 		});
 	});
 
+	it('leaves a later authored v-else to the v-if before it', async () => {
+		const { Plain, Shown, Choice, ElseIfArg, IfArg } = await server.ssrLoadModule(
+			'/element-switch-else.tsrx',
+		);
+		/** @type {string[]} */
+		const rendered = [];
+		for (const component of [Plain, Shown, Choice, ElseIfArg, IfArg]) {
+			rendered.push((await renderToString(createSSRApp(component))).replace(/<!--.*?-->/g, ''));
+		}
+		// The server passes over the choice; the client joins the `v-else` to it.
+		expect(rendered).toEqual([
+			'<div><s>else</s><i>switch</i><u>separator</u></div>',
+			'<div><s>else</s><i>switch</i><u>separator</u></div>',
+			'<div><s>else</s><i>switch</i></div>',
+			'<div><s>else</s><i>switch</i></div>',
+			'<div><s>else</s><i>switch</i></div>',
+		]);
+	});
+
 	it("gives a component case none of its parent component's fallthrough attributes", async () => {
 		// runtime.test.tsrx checks the same on the client.
 		const { App } = await server.ssrLoadModule('/element-switch-attrs.tsrx');
@@ -558,5 +849,142 @@ describe("[vue] an element's @else if chain or v-show branch on the server", () 
 		expect(await renderToString(branch)).toBe(
 			'<p><span><button class="counter">on:0</button></span>Ann</p>',
 		);
+	});
+});
+
+// A branch or a case with setup statements renders through `TsrxScope`,
+// which renders its element on the server without the fragment an IIFE
+// branch had; scope-hydration.test.tsrx hydrates this markup.
+describe('[vue] a branch or a case that renders through TsrxScope on the server', () => {
+	it('renders the picked branch, or a comment', async () => {
+		const shapes = await server.ssrLoadModule('/scope.tsrx');
+		const states = {
+			one: { on: true, away: false, n: 1, name: 'Ann' },
+			two: { on: true, away: false, n: 2, name: 'Ann' },
+			away: { on: false, away: true, n: 1, name: 'Ann' },
+			off: { on: false, away: false, n: 1, name: 'Ann' },
+		};
+		/** @type {Record<string, Record<string, string>>} */
+		const rendered = {};
+		for (const shape of [
+			'Beside',
+			'Spread',
+			'ElseStatements',
+			'InBranch',
+			'InScope',
+			'InCase',
+			'CaseStatements',
+			'TwoBranches',
+		]) {
+			rendered[shape] = {};
+			for (const [name, state] of Object.entries(states)) {
+				rendered[shape][name] = await renderToString(createSSRApp(shapes[shape], { state }));
+			}
+		}
+		expect(rendered).toEqual({
+			Beside: {
+				one: '<p><button class="counter">Ann!:0</button>Ann</p>',
+				two: '<p><button class="counter">Ann!:0</button>Ann</p>',
+				away: '<p><!---->Ann</p>',
+				off: '<p><!---->Ann</p>',
+			},
+			Spread: {
+				one: '<p><span data-x="1"><button class="counter">on:0</button></span>Ann</p>',
+				two: '<p><span data-x="1"><button class="counter">on:0</button></span>Ann</p>',
+				away: '<p><!---->Ann</p>',
+				off: '<p><!---->Ann</p>',
+			},
+			ElseStatements: {
+				one: '<p><button class="counter">on:0</button>Ann</p>',
+				two: '<p><button class="counter">on:0</button>Ann</p>',
+				away: '<p><i>away</i>Ann</p>',
+				off: '<p><b>off</b>Ann</p>',
+			},
+			InBranch: {
+				one: '<p><span><button class="counter">one:0</button></span>Ann</p>',
+				two: '<p><span><i>other</i></span>Ann</p>',
+				away: '<p><!---->Ann</p>',
+				off: '<p><!---->Ann</p>',
+			},
+			InScope: {
+				one: '<p><span class="scope"><button class="counter">one:0</button></span></p>',
+				two: '<p><span class="scope"><i>other</i></span></p>',
+				away: '<p><!----></p>',
+				off: '<p><!----></p>',
+			},
+			InCase: {
+				one: '<p><span><button class="counter">one:0</button></span></p>',
+				two: '<p><span><!----></span></p>',
+				away: '<p><!----></p>',
+				off: '<p><!----></p>',
+			},
+			CaseStatements: {
+				one: '<p><button class="counter">one:0</button>Ann</p>',
+				two: '<p><i>other</i>Ann</p>',
+				away: '<p><button class="counter">one:0</button>Ann</p>',
+				off: '<p><button class="counter">one:0</button>Ann</p>',
+			},
+			TwoBranches: {
+				one: '<p><span><em><button class="counter">one:0</button></em></span></p>',
+				two: '<p><span><em><i>other</i></em></span></p>',
+				away: '<p><!----></p>',
+				off: '<p><!----></p>',
+			},
+		});
+	});
+});
+
+describe('[vue] a branch that calls a composable acting on its component, on the server', () => {
+	// It renders as an IIFE branch did, in its fragment, with the component's
+	// slots, attributes and model; on the client it does the same, so the
+	// two sides agree.
+	it('renders with its component’s slots, attributes and model', async () => {
+		const shapes = await server.ssrLoadModule('/scope-owner.tsrx');
+		/** @type {Record<string, string>} */
+		const rendered = {};
+		/** @type {string[]} */
+		const warnings = [];
+		for (const shape of ['Slots', 'Attrs', 'Model']) {
+			const app = createSSRApp(shapes[shape]);
+			app.config.warnHandler = (message) => {
+				warnings.push(message);
+			};
+			rendered[shape] = await renderToString(app);
+		}
+		expect(rendered).toEqual({
+			Slots: '<div class="owner-slots"><!--[--><b>default</b><!--]--></div>',
+			Attrs: '<div class="owner-attrs" title="hello"><!--[--><b>hello</b><!--]--></div>',
+			Model: '<div class="owner-model"><!--[--><button>initial</button><!--]--></div>',
+		});
+		expect(warnings).toEqual([]);
+	});
+});
+
+describe("[vue] a TsrxScope's statements on the server", () => {
+	// On the server Vue renders the scope after the content around it has
+	// returned: \`scope_content\` runs the statements where the branch is
+	// rendered instead, as the IIFE they replace ran.
+	it('run in the setup of the component that renders the branch', async () => {
+		const { Provides } = await server.ssrLoadModule('/scope-setup.tsrx');
+		const app = createSSRApp(Provides);
+		/** @type {string[]} */
+		const warnings = [];
+		app.config.warnHandler = (message) => {
+			warnings.push(message);
+		};
+		expect(await renderToString(app)).toBe('<div><p><b>branch</b></p></div>');
+		expect(warnings).toEqual([]);
+	});
+
+	it('send a throw to the @catch around them', async () => {
+		const { Throws } = await server.ssrLoadModule('/scope-setup.tsrx');
+		const app = createSSRApp(Throws);
+		/** @type {unknown[]} */
+		const errors = [];
+		app.config.errorHandler = (error) => {
+			errors.push(error);
+		};
+		expect(await renderToString(app)).toBe('<div><i>boom</i></div>');
+		expect(errors).toEqual([]);
 	});
 });

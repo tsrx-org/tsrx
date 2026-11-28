@@ -2,7 +2,7 @@
 '@tsrx/vue': patch
 ---
 
-On the Vue target, a host element's child `@switch` whose cases each render one element or component, or nothing, now renders as `v-if` / `v-else-if` elements, in the JSX a component returns or a declaration outside a loop in its setup holds. A `computed` in the component's setup runs the `switch` and picks the case. The shared lowering put the `switch` in an expression child, which vue-jsx-vapor renders with `setNodes`. That caused these problems, now fixed:
+On the Vue target, a host element's child `@switch` whose cases each render one element or component, or nothing, now renders as `v-if` / `v-else-if` elements, in the JSX a component function returns or a declaration outside a loop in its setup holds. A `computed` in the component's setup runs the `switch` and picks the case. The shared lowering put the `switch` in an expression child, which vue-jsx-vapor renders with `setNodes`. That caused these problems, now fixed:
 
 - **Hydration** (#1403). Hydrating server markup there threw `Cannot read properties of null (reading 'nodeType')`, or `No current hydration node was found` for a component case, and the page stopped updating. When the server had rendered a case and the client then matched none, the case's element was emptied instead of removed (`<p></p>`). The server's case, or its `<!---->`, now hydrates and follows the value. The server markup is unchanged.
 - **State loss.** The case rendered again, components and all, whenever what the `switch` read changed, even when it picked the same case. The case now stays mounted while it stays picked.
@@ -13,7 +13,9 @@ The `switch` still runs once for each change it reads, and a throw in it still g
 
 These keep the shared lowering, as before:
 
-- a `@switch` inside an `@if` branch, a loop row, a `@try` or `@pending` body, a component's children, a keyed element, or an element with a `v-` directive other than `v-show`;
-- one whose case has setup statements or renders a fragment, a choice, a `<template>`, `<slot>` or `<component>`, or an element with a `v-` attribute;
-- one whose next element has its own `v-else` or `v-else-if`;
-- one that is a fragment's own child, or a component's whole output (#1400).
+- a `@switch` inside a `@try` or `@pending` body, a component's children, a keyed element, or an element with a `v-` directive other than `v-show`;
+- a `@switch` inside an `@if` branch or a loop row, except one in an element of a host element's branch or of a row that renders through `VaporFor`, which the `TsrxScope` entry lowers too;
+- one whose case renders a fragment, a choice, a `<template>`, `<slot>` or `<component>`, or an element with a `v-` attribute other than a plain `v-show`, and one whose case has setup statements that `TsrxScope` doesn't take (see its entry);
+- one followed by an element with `v-else` or `v-else-if` that would join its cases: vue-jsx-vapor passes over other elements, text and expressions to join it, up to an element with `v-if`;
+- one that is a fragment's own child, or a component's whole output (#1400);
+- one in a component written as an object, `defineVaporComponent({ setup() { … } })`.

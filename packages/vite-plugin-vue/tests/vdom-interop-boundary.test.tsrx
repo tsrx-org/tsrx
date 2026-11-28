@@ -1,5 +1,10 @@
 import { createApp, h, vaporInteropPlugin } from 'vue';
-import { TsrxErrorBoundary, TsrxPendingBody } from '@tsrx/vue/error-boundary';
+import {
+	scope_content,
+	TsrxErrorBoundary,
+	TsrxPendingBody,
+	TsrxScope,
+} from '@tsrx/vue/error-boundary';
 
 // In its own file, so no Vapor app has rendered the boundaries yet: a realm
 // that can render Vapor flags them as Vapor components when it loads them, so
@@ -17,6 +22,10 @@ describe('tsrx-vue a boundary a VDOM app renders', () => {
 		[
 			'TsrxPendingBody',
 			() => h(TsrxPendingBody as never, { content: () => document.createElement('button') }),
+		],
+		[
+			'TsrxScope',
+			() => h(TsrxScope as never, { __content: () => document.createElement('button') }),
 		],
 	])('mounts %s as a Vapor component with the interop', async (_name, render) => {
 		const host = document.createElement('div');
@@ -36,6 +45,7 @@ describe('tsrx-vue a boundary a VDOM app renders', () => {
 		const copy = Object.assign((...args: unknown[]) => args, TsrxErrorBoundary);
 		expect(copy.__vapor).toBe(true);
 		expect({ ...TsrxPendingBody }.__vapor).toBe(true);
+		expect({ ...TsrxScope }.__vapor).toBe(true);
 		const written = (() => {}) as unknown as { __vapor: boolean };
 		Object.defineProperty(
 			written,
@@ -44,5 +54,10 @@ describe('tsrx-vue a boundary a VDOM app renders', () => {
 		);
 		Object.assign(written, { __vapor: false });
 		expect(written.__vapor).toBe(false);
+	});
+
+	it('leaves a scope its content to run in a realm that renders Vapor', () => {
+		const content = () => document.createElement('button');
+		expect(scope_content(content)).toBe(content);
 	});
 });

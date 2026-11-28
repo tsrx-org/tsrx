@@ -2662,12 +2662,6 @@ export function Card(${params}: any) @{
 					@if (on) {
 						<b>{'on'}</b>
 					} @else if (away) {
-						const label = 'away';
-						<i>{label}</i>
-					}
-					@if (on) {
-						<b>{'on'}</b>
-					} @else if (away) {
 						<i>{'away'}</i>
 					}
 					<i v-else>{'authored else'}</i>
@@ -2680,8 +2674,6 @@ export function Card(${params}: any) @{
 		// as separate children.
 		expect(code).toContain("<Wrap>{on ? <b>{'on'}</b> : away ? <i>{'away'}</i> : null}</Wrap>");
 		expect(code).toContain("<Wrap>{on ? <p v-show={shown}>{'shown'}</p> : null}</Wrap>");
-		// A branch with setup statements can't take \`v-else-if\`.
-		expect(code).toMatch(/\{on\s*\? <b>\{'on'\}<\/b>\s*: away\s*\? \(\(\) => \{/);
 		// An authored \`v-else\` after the chain would join it.
 		expect(code).toContain("{on ? <b>{'on'}</b> : away ? <i>{'away'}</i> : null}<i v-else>");
 		expect(code).not.toContain('v-else-if');
@@ -2828,17 +2820,24 @@ export function Card(${params}: any) @{
 		expect(code).toContain('{on ? <Item v-slot={{ x }}><b>{x}</b></Item> : null}');
 		expect(code).toContain('{on ? <Item v-slot:header={{ x }}><b>{x}</b></Item> : null}');
 		expect(code).toContain('{on ? <input v-focus /> : null}');
-		// An \`@else\` branch with setup statements can't take \`v-else\`.
-		expect(code).toMatch(/\{on\s*\? <b>\{'on'\}<\/b>\s*: \(\(\) => \{/);
-		// A branch with setup statements, and a \`<template>\`, can't take \`v-if\`.
-		expect(code).toMatch(/\{on\s*\? \(\(\) => \{/);
+		// A branch with setup statements renders through \`TsrxScope\`, which
+		// takes \`v-if\` and \`v-else\`; a \`<template>\` can't.
+		expect(flat(code)).toContain(
+			flat(`<b v-if={on}>{'on'}</b><__TsrxScope v-else __content={_$_scope_content(() => {
+				const off = 'off';
+				return <i>{off}</i>;
+			})} /><__TsrxScope v-if={on} __content={_$_scope_content(() => {
+				const label = 'setup';
+				return <b>{label}</b>;
+			})} />`),
+		);
 		expect(code).toContain("{on ? <template><b>{'tpl'}</b></template> : null}");
 		// An authored \`v-else\` or \`v-else-if\` after the choice, past \`{null}\`,
 		// \`{false}\` or \`{''}\`, would join a new chain.
 		expect(code).toContain("{on ? <b>{'before else'}</b> : null}");
 		expect(code).toContain("{on ? <b>{'before null'}</b> : null}");
-		// Only the two authored \`v-if\`s.
-		expect(code.match(/v-if/g)).toHaveLength(2);
+		// The two authored \`v-if\`s and the two scopes'.
+		expect(code.match(/v-if/g)).toHaveLength(4);
 	});
 
 	it('marks the boundary inside a @pending Suspense as sharing its @catch', () => {
@@ -3982,7 +3981,9 @@ describe('@tsrx/vue @switch rows', () => {
 		expect(fallback_only).not.toContain('_$_vapor_computed');
 	});
 
-	it('keeps the shared lowering for a @switch row whose case has setup statements or a nested @switch, or that has many cases', () => {
+	it('keeps the shared lowering for a @switch row whose case is a nested @switch, or that has many cases', () => {
+		// A case with setup statements renders through \`TsrxScope\`, so the row
+		// takes the \`computed\`.
 		const setup = compile(
 			`export function List(props: { rows: { id: string; kind: string; title: string }[] }) @{
 				<ul>
@@ -3998,8 +3999,13 @@ describe('@tsrx/vue @switch rows', () => {
 			}`,
 			'List.tsrx',
 		).code;
-		expect(setup).not.toContain('_$_case');
-		expect(setup).toContain('switch (row.value.kind) {');
+		expect(flat(setup)).toContain(
+			flat(`? <__TsrxScope __content={_$_scope_content(() => {
+				const label = row.value.title + '!';
+				return <li>{label}</li>;
+			})} />`),
+		);
+		expect(setup).toContain('const _$_case_1 = _$_vapor_computed(');
 
 		// A case whose output is a nested `@switch` would run it in an effect.
 		const nested = compile(
@@ -4325,24 +4331,6 @@ describe("@tsrx/vue an element's @switch", () => {
 				};
 				<div>
 					{later()}
-					@if (props.on) {
-						<section>
-							@switch (props.kind) {
-								@case 'a': {
-									<b>{'branch'}</b>
-								}
-							}
-						</section>
-					}
-					@for (const row of props.rows; key row) {
-						<li>
-							@switch (row) {
-								@case 'a': {
-									<b>{'row'}</b>
-								}
-							}
-						</li>
-					}
 					@try {
 						<p>
 							@switch (props.kind) {
@@ -4385,12 +4373,6 @@ describe("@tsrx/vue an element's @switch", () => {
 						}
 					</p>
 					<p>
-						@switch (props.kind) {
-							@case 'a': {
-								const text = 'setup';
-								<b>{text}</b>
-							}
-						}
 						@switch (props.kind) {
 							@case 'a': {
 								<>
@@ -4459,6 +4441,620 @@ describe("@tsrx/vue an element's @switch", () => {
 		expect(code).not.toContain('_$_vapor_computed');
 		expect(code).not.toContain('_$_case');
 		// Each \`@switch\` keeps its IIFE.
-		expect(code.match(/return null;/g)).toHaveLength(20);
+		expect(code.match(/return null;/g)).toHaveLength(17);
+	});
+
+	it('keeps the shared lowering for one a later authored v-else would join', () => {
+		// vue-jsx-vapor joins a \`v-else\` to the \`v-if\` before it past other
+		// elements, text and expressions, so it would join the cases.
+		const { code } = compile(
+			`export function App(props: { kind: string; on: boolean }) @{
+				<div>
+					<b v-if={props.on}>{'before'}</b>
+					@switch (props.kind) {
+						@case 'a': {
+							<i>{'switch'}</i>
+						}
+					}
+					<u>{'separator'}</u>
+					{props.kind}
+					<s v-else>{'else'}</s>
+					@switch (props.kind) {
+						@case 'a': {
+							<i v-show={props.on}>{'shown'}</i>
+						}
+					}
+					<u>{'separator'}</u>
+					<s v-else-if={props.on}>{'else if'}</s>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('_$_case');
+		expect(code.match(/return null;/g)).toHaveLength(2);
+	});
+
+	it('lowers one whose later authored v-else has a v-if of its own first', () => {
+		const { code } = compile(
+			`export function App(props: { kind: string; on: boolean }) @{
+				<div>
+					@switch (props.kind) {
+						@case 'a': {
+							<i>{'switch'}</i>
+						}
+					}
+					<u>{'separator'}</u>
+					<b v-if={props.on}>{'own if'}</b>
+					<s v-else>{'else'}</s>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('return null;');
+		expect(code).toContain('<i v-if=');
+	});
+
+	it('keeps the shared lowering for one a later v-else-if with an argument would join', () => {
+		// vue-jsx-vapor takes \`v-else-if:arg\` as \`v-else-if\`.
+		const { code } = compile(
+			`export function App(props: { kind: string; on: boolean }) @{
+				<div>
+					<b v-if={props.on}>{'before'}</b>
+					@switch (props.kind) {
+						@case 'a': {
+							<i>{'switch'}</i>
+						}
+					}
+					<s v-else-if:arg={props.on}>{'else if'}</s>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('_$_case');
+		expect(code.match(/return null;/g)).toHaveLength(1);
+	});
+
+	it('keeps the shared lowering for one a later v-else would join past a v-if with an argument', () => {
+		// vue-jsx-vapor takes \`v-if:arg\` as part of the chain before it.
+		const { code } = compile(
+			`export function App(props: { kind: string; on: boolean }) @{
+				<div>
+					<b v-if={props.on}>{'before'}</b>
+					@switch (props.kind) {
+						@case 'a': {
+							<i>{'switch'}</i>
+						}
+					}
+					<u v-if:arg={props.on}>{'separator'}</u>
+					<s v-else>{'else'}</s>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('_$_case');
+		expect(code.match(/return null;/g)).toHaveLength(1);
+	});
+
+	it('keeps the shared lowering for one a later v-else would join past a choice', () => {
+		// vue-jsx-vapor's client build joins the \`v-else\` to the choice, but
+		// its server build passes over the choice and would join the cases.
+		const { code } = compile(
+			`export function App(props: { kind: string; on: boolean }) @{
+				<div>
+					<b v-if={props.on}>{'before'}</b>
+					@switch (props.kind) {
+						@case 'a': {
+							<i>{'switch'}</i>
+						}
+					}
+					{props.on ? <em>{'choice'}</em> : null}
+					<s v-else>{'else'}</s>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('_$_case');
+		expect(code.match(/return null;/g)).toHaveLength(1);
+	});
+});
+
+describe('@tsrx/vue setup statements in a branch or a case', () => {
+	it('renders an @if branch with setup statements through TsrxScope', () => {
+		const source = `function Wrap(props: { children?: any }) @{
+			<div>{props.children}</div>
+		}
+		export function App(props: { on: boolean; away: boolean; name: string; attrs: object; rows: { id: string; on: boolean; title: string }[] }) @{
+			<div>
+				@if (props.on) {
+					const label = props.name + '!';
+					<b>{label}</b>
+				} @else if (props.away) {
+					<i>{'away'}</i>
+				} @else {
+					const off = 'off';
+					<u>{off}</u>
+				}
+				{props.name}
+				@if (props.on) {
+					<p {...props.attrs}>{'spread'}</p>
+				}
+				<Wrap>
+					@if (props.on) {
+						const label = 'slot';
+						<b>{label}</b>
+					}
+				</Wrap>
+				<ul>
+					@for (const row of props.rows; key row.id) {
+						@if (row.on) {
+							const label = row.title + '!';
+							<li>{label}</li>
+						} @else {
+							<li>{row.title}</li>
+						}
+					}
+				</ul>
+			</div>
+		}`;
+		const { code, errors } = compile(source, 'App.tsrx');
+
+		// The branch is a component, whose setup runs its statements once each
+		// time it mounts; \`v-if\` / \`v-else-if\` / \`v-else\` take it.
+		expect(errors).toEqual([]);
+		expect(code).toContain(
+			"import { TsrxScope as __TsrxScope, scope_content as _$_scope_content } from '@tsrx/vue/error-boundary';",
+		);
+		expect(flat(code)).toContain(
+			flat(`<__TsrxScope v-if={props.on} __content={_$_scope_content(() => {
+				const label = props.name + '!';
+				return <b>{label}</b>;
+			})} /><i v-else-if={props.away}>{'away'}</i><__TsrxScope v-else __content={_$_scope_content(() => {
+				const off = 'off';
+				return <u>{off}</u>;
+			})} />{props.name}`),
+		);
+		// The ref a spread host element reads is a statement of its branch.
+		expect(flat(code)).toMatch(
+			/<__TsrxScope v-if=\{props\.on\} __content=\{_\$_scope_content\(\(\) =>\{let App__spread_props\d+; return <p \{\.\.\./,
+		);
+		// A component's slot output keeps the shared lowering: the component
+		// could be a \`KeepAlive\`, which would match the scope's name.
+		expect(flat(code)).toContain(
+			flat(`<Wrap>{props.on
+				? (() => {
+					const label = 'slot';
+					return <b>{label}</b>;
+				})()
+				: null}</Wrap>`),
+		);
+		// So does a \`VaporFor\` row, in its fragment.
+		expect(flat(code)).toContain(
+			flat(`{(row) => <>{row.value.on ? <__TsrxScope __content={_$_scope_content(() => {
+				const label = row.value.title + '!';
+				return <li>{label}</li>;
+			})} /> : <li>{row.value.title}</li>}</>}`),
+		);
+
+		const direct = compile(source, 'App.tsrx', { runtimeImports: 'direct' }).code;
+		expect(direct).toContain(
+			"import { TsrxScope as __TsrxScope, scope_content as _$_scope_content } from '@tsrx/vue-runtime/error-boundary';",
+		);
+		expect(compile_to_volar_mappings(source, 'App.tsrx').code).not.toContain('TsrxScope');
+	});
+
+	it('renders a @switch case with setup statements through TsrxScope', () => {
+		const { code } = compile(
+			`export function App(props: { kind: string }) @{
+				<div>
+					@switch (props.kind) {
+						@case 'a': {
+							const label = props.kind + '!';
+							<b>{label}</b>
+						}
+						@default: {
+							<i>{'other'}</i>
+						}
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		// The case takes \`v-if\` like any element case.
+		expect(flat(code)).toMatch(
+			/<__TsrxScope v-if=\{\(typeof _\$_case_1\.value[^]*=== 0\} __content=\{_\$_scope_content\(\(\) =>\{const label = props\.kind \+ '!'; return <b>\{label\}<\/b>;\}\)\} \/><i v-else-if=/,
+		);
+	});
+
+	it('lowers a @switch in a branch, a case or a row in a setup of its own', () => {
+		const { code } = compile(
+			`export function App(props: { on: boolean; kind: string; rows: { id: string; kind: string }[] }) @{
+				<div>
+					@if (props.on) {
+						<section>
+							@switch (props.kind) {
+								@case 'a': {
+									<b>{'branch'}</b>
+								}
+							}
+						</section>
+					}
+					@if (props.on) {
+						const label = 'statements';
+						<section class={label}>
+							@switch (props.kind) {
+								@case 'a': {
+									<b>{'scope'}</b>
+								}
+							}
+						</section>
+					}
+					@switch (props.on) {
+						@case true: {
+							<section>
+								@switch (props.kind) {
+									@case 'a': {
+										<b>{'case'}</b>
+									}
+								}
+							</section>
+						}
+					}
+					<ul>
+						@for (const row of props.rows; key row.id) {
+							<li>
+								@switch (row.kind) {
+									@case 'a': {
+										<b>{'row'}</b>
+									}
+								}
+							</li>
+						}
+					</ul>
+					@switch (props.kind) {
+						@case 'b': {
+							const text = 'case statements';
+							<section class={text}>
+								@switch (props.kind) {
+									@case 'b': {
+										<b>{'case switch'}</b>
+									}
+								}
+							</section>
+						}
+					}
+					@if (props.on) {
+						<section>
+							@if (props.kind) {
+								<em>
+									@switch (props.kind) {
+										@case 'a': {
+											<b>{'inner branch'}</b>
+										}
+									}
+								</em>
+							}
+						</section>
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toMatch(/\{\(\(\) => \{\s*switch/);
+		// A case's scope declares the \`computed\` of a \`@switch\` it renders.
+		expect(flat(code)).toMatch(
+			/__content=\{_\$_scope_content\(\(\) =>\{const text = 'case statements'; const _\$_case_\d+ = _\$_vapor_computed\(/,
+		);
+		// Only the inner branch of two needs a scope.
+		expect(flat(code)).toMatch(
+			/<section v-if=\{props\.on\}><__TsrxScope v-if=\{props\.kind\} __content=/,
+		);
+		// A branch element becomes a scope that declares the \`computed\`.
+		expect(flat(code)).toMatch(
+			/<__TsrxScope v-if=\{props\.on\} __content=\{_\$_scope_content\(\(\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*\}\); return <section><b v-if=/,
+		);
+		// So does a scope's content, and a case element.
+		expect(flat(code)).toMatch(
+			/__content=\{_\$_scope_content\(\(\) =>\{const label = 'statements'; const _\$_case_\d+ = _\$_vapor_computed\(/,
+		);
+		expect(flat(code)).toMatch(
+			/=== 0\} __content=\{_\$_scope_content\(\(\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*\}\); return <section><b v-if=/,
+		);
+		// A \`VaporFor\` row's slot runs once per row.
+		expect(flat(code)).toMatch(
+			/\{\(row\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*switch \(row\.value\.kind\)[^]*return <li><b v-if=/,
+		);
+	});
+
+	it('renders a statement branch through TsrxScope in a keyed host element or one with v-if', () => {
+		const { code } = compile(
+			`export function App(props: { on: boolean; name: string }) @{
+				<div>
+					<p key="fixed">
+						@if (props.on) {
+							const label = props.name;
+							<b>{label}</b>
+						}
+					</p>
+					<p v-if={props.on}>
+						@if (props.on) {
+							const label = props.name;
+							<i>{label}</i>
+						}
+					</p>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code.match(/<__TsrxScope v-if=\{props\.on\}/g)).toHaveLength(2);
+	});
+
+	it.each([
+		['useSlots', 'useSlots()'],
+		['useAttrs', 'useAttrs()'],
+		['useModel', "useModel(props, 'modelValue')"],
+		['useTemplateRef', "useTemplateRef('field')"],
+		['useCssModule', 'useCssModule()'],
+		['useVaporCssVars', "useVaporCssVars(() => ({ shade: 'red' }))"],
+		['useHost', 'useHost()'],
+		['useShadowRoot', 'useShadowRoot()'],
+		['useInstanceOption', "useInstanceOption('type')"],
+		['getCurrentInstance', 'getCurrentInstance()'],
+		['resolveComponent', "resolveComponent('Local')"],
+		['resolveDynamicComponent', "resolveDynamicComponent('Local')"],
+		['resolveDirective', "resolveDirective('mark')"],
+		['onErrorCaptured', 'onErrorCaptured(() => false)'],
+		['createComponent', "createComponent('Local')"],
+		['createDynamicComponent', "createDynamicComponent(() => 'Local')"],
+		['createSlot', "createSlot('default')"],
+		['createTemplateRefSetter', 'createTemplateRefSetter()'],
+		['setStaticTemplateRef', "setStaticTemplateRef(null, 'field')"],
+		['setTemplateRefBinding', "setTemplateRefBinding(null, () => 'field')"],
+		['setCurrentInstance', 'setCurrentInstance(null)'],
+		['createPlainElement', "createPlainElement('b')"],
+		['h', "h('Local')"],
+		['useProps', 'useProps()'],
+		['useFullProps', 'useFullProps()'],
+		['defineExpose', 'defineExpose({ focus() {} })'],
+		['a member useAttrs', 'Vue.useAttrs()'],
+		['a computed member useAttrs', "Vue['useAttrs']()"],
+		['a template literal member useAttrs', 'Vue[`useAttrs`]()'],
+		['a cast useAttrs', '(Vue.useAttrs as () => unknown)()'],
+		['a non-null useAttrs', 'useAttrs!()'],
+		['an optional useAttrs', 'Vue.useAttrs?.()'],
+		['a cast computed member useAttrs', "Vue[('useAttrs' as const)]()"],
+		['a sequence useAttrs', '(0, Vue.useAttrs)()'],
+		['a read of currentInstance', 'Vue.currentInstance'],
+		['a computed read of currentInstance', "Vue['currentInstance']"],
+		['a tagged template useAttrs', 'useAttrs``'],
+		['a member tagged template useAttrs', 'Vue.useAttrs``'],
+		['a new useAttrs', 'new (useAttrs as any)()'],
+	])('keeps the shared lowering for a branch that calls %s', (_name, call) => {
+		// It acts on the component calling it, which a scope would replace.
+		const { code } = compile(
+			`import * as Vue from 'vue';
+			export function App(props: { on: boolean; modelValue: string }) @{
+				<div>
+					@if (props.on) {
+						const value = ${call};
+						<b>{String(value)}</b>
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('<__TsrxScope ');
+		expect(code).toMatch(/\{props\.on\s*\? \(\(\) => \{/);
+	});
+
+	it("leaves no trace of a branch's @switch lowering that it drops for a <slot>", () => {
+		// The branch element's \`@switch\` lowers first; the \`<slot>\` then keeps
+		// the branch, and its \`@switch\`, as before.
+		const branch = `@if (props.on) {
+			<p>
+				@switch (props.k) {
+					@case 1: {
+						<b>{'one'}</b>
+					}
+					@default: {
+						<i>{'other'}</i>
+					}
+				}
+				<slot />
+			</p>
+		}`;
+		const alone = compile(
+			`export function App(props: { on: boolean; k: number }) @{
+				<div>
+					${branch}
+				</div>
+			}`,
+			'App.tsrx',
+		).code;
+		expect(alone).not.toContain('_$_vapor_computed');
+		expect(alone).not.toContain('TsrxScope');
+		expect(alone.match(/return null;/g)).toHaveLength(1);
+
+		const beside = compile(
+			`export function App(props: { on: boolean; k: number }) @{
+				<div>
+					${branch}
+					<section>
+						@switch (props.k) {
+							@case 1: {
+								<b>{'one'}</b>
+							}
+						}
+					</section>
+				</div>
+			}`,
+			'App.tsrx',
+		).code;
+		expect(beside).toContain('const _$_case_1 = _$_vapor_computed(');
+		expect(beside).not.toContain('_$_case_2');
+	});
+
+	it('keeps the shared lowering for a case or a row branch that calls useAttrs', () => {
+		const { code } = compile(
+			`import { useAttrs } from 'vue';
+			export function App(props: { items: { id: string; on: boolean }[]; kind: number }) @{
+				<div>
+					<ul>
+						@for (const item of props.items; key item.id) {
+							@if (item.on) {
+								const attrs = useAttrs();
+								<li>{String(attrs.title)}</li>
+							}
+						}
+					</ul>
+					<p>
+						@switch (props.kind) {
+							@case 1: {
+								const attrs = useAttrs();
+								<b>{String(attrs.title)}</b>
+							}
+							@default: {
+								<i>{'other'}</i>
+							}
+						}
+					</p>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('<__TsrxScope ');
+		expect(code).not.toContain('_$_case');
+		expect(code).toMatch(/\{item\.value\.on\s*\? \(\(\) => \{/);
+	});
+
+	it.each([
+		['useId', 'useId()'],
+		['inject', "inject('key')"],
+		['onMounted', 'onMounted(() => {})'],
+	])('renders a branch that calls %s through TsrxScope', (_name, call) => {
+		const { code } = compile(
+			`export function App(props: { on: boolean }) @{
+				<div>
+					@if (props.on) {
+						const value = ${call};
+						<b>{String(value)}</b>
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('<__TsrxScope v-if={props.on} ');
+	});
+
+	it("keeps the shared lowering for what a component's slot renders", () => {
+		const { code } = compile(
+			`import { VaporKeepAlive } from 'vue';
+			function A() @{
+				<b>{'a'}</b>
+			}
+			export function App(props: { on: boolean; kind: string; Cache: any }) @{
+				const Cache = props.Cache;
+				<div>
+					<VaporKeepAlive exclude="A">
+						@if (props.on) {
+							const label = 'children';
+							<A key={label} />
+						}
+					</VaporKeepAlive>
+					<Cache {...{ exclude: 'A' }}>
+						@switch (props.kind) {
+							@case 'a': {
+								const label = 'case';
+								<A key={label} />
+							}
+						}
+					</Cache>
+					<VaporKeepAlive
+						include="A"
+						v-slots={{
+							default: () => @{
+								@if (props.on) {
+									const label = 'v-slots';
+									<A key={label} />
+								}
+							},
+						}}
+					/>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		// A \`KeepAlive\`, under any name, matches its child component's name,
+		// which a scope would replace.
+		expect(code).not.toContain('<__TsrxScope ');
+		expect(code).toMatch(/<VaporKeepAlive exclude="A">\{props\.on\s*\? \(\(\) => \{/);
+		expect(code).toMatch(
+			/<Cache \{\.\.\.\{ exclude: 'A' \}\}>\{\(\(\) => \{\s*switch[^]*case 'a':\s*\{/,
+		);
+	});
+
+	it('keeps the shared lowering for a branch that renders no one element', () => {
+		const { code } = compile(
+			`export function App(props: { on: boolean; tag: string; items: string[] }) @{
+				<div>
+					@if (props.on) {
+						const label = 'choice';
+						@if (props.tag) {
+							<b>{label}</b>
+						}
+					}
+					@if (props.on) {
+						const label = 'fragment';
+						<>
+							<b>{label}</b>
+							<i>{label}</i>
+						</>
+					}
+					@if (props.on) {
+						<{props.tag}>{'dynamic'}</{props.tag}>
+					}
+					{props.tag}
+					@if (props.on) {
+						const label = 'slot';
+						<section class={label}>
+							<slot />
+						</section>
+					}
+					@if (props.on) {
+						const label = 'ref';
+						<input class={label} ref="field" />
+					}
+					@if (props.on) {
+						<p ref={'field'}>
+							@switch (props.tag) {
+								@case 'a': {
+									<b>{'ref'}</b>
+								}
+							}
+						</p>
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		// A scope's content runs untracked: a choice there would render once. A
+		// \`<slot>\` and a string \`ref\` resolve against the component rendering
+		// them, which a scope would replace.
+		expect(code).not.toContain('__TsrxScope');
+		expect(code).not.toContain('_$_case');
+		// A dynamic tag reads its tag in an effect of its own, so it follows it.
+		expect(code).toContain('const TsrxDynamic_1 = props.tag;');
 	});
 });

@@ -1,5 +1,5 @@
 /** @import { ComponentInternalInstance, ShallowRef } from 'vue' */
-/** @import { TsrxErrorBoundaryProps, TsrxPendingBodyProps } from '../types/error-boundary' */
+/** @import { TsrxErrorBoundaryProps, TsrxPendingBodyProps, TsrxScopeProps } from '../types/error-boundary' */
 /** @import { VaporBlock, VaporFragment, VaporRenderedBlock, VaporRuntime } from '../types/vapor-runtime' */
 
 import * as Vue from 'vue';
@@ -1180,3 +1180,55 @@ export function TsrxPendingBody(props, ctx) {
 TsrxPendingBody.props = ['content'];
 // A Vapor component in every app (see `TsrxErrorBoundary.__vapor`).
 define_vapor_flag(TsrxPendingBody);
+
+/**
+ * Renders what `__content` returns, as its setup. Used by the `@tsrx/vue`
+ * compiler for an `@if` branch or a `@switch` case with setup statements,
+ * and for a branch that holds a `@switch`'s `computed`: Vue runs a
+ * component's setup once per mount, untracked, so those statements run once
+ * each time the branch mounts, as a component's own do, rather than again
+ * whenever what they read changes, which renders the branch again. A
+ * `computed` made there lives as long as the branch.
+ *
+ * What `__content` throws goes to Vue's error handling as the scope's own
+ * setup error, so the nearest `@catch` shows it, and the scope renders an
+ * empty text node, as `TsrxPendingBody` does.
+ *
+ * @param {TsrxScopeProps} props
+ * @param {unknown} [ctx] the instance, when Vapor renders it as a component
+ * @returns {unknown}
+ */
+export function TsrxScope(props, ctx) {
+	const instance = own_instance(ctx);
+	if (!instance) return props.__content();
+	try {
+		return props.__content();
+	} catch (error) {
+		handleError(error, instance, ErrorCodes.SETUP_FUNCTION);
+		return normalize_block(null, undefined);
+	}
+}
+
+// Not `content`: a scope that is its component's whole output takes the
+// component's fallthrough attributes, which can have one of that name.
+TsrxScope.props = ['__content'];
+// A Vapor component in every app (see `TsrxErrorBoundary.__vapor`).
+define_vapor_flag(TsrxScope);
+
+/**
+ * The `__content` the `@tsrx/vue` compiler passes `TsrxScope`. On the server,
+ * Vue renders the scope as a functional component after the content around
+ * it has returned, outside any setup, so this runs `content` right away, as
+ * the branch's IIFE ran before `TsrxScope`: its statements run in the setup
+ * of the component that renders the branch, where `provide` and
+ * `onServerPrefetch` work, and a throw reaches the `@catch` around it.
+ * Elsewhere it returns `content`, for `TsrxScope` to run as its setup.
+ *
+ * @param {() => unknown} content
+ * @returns {() => unknown}
+ */
+export function scope_content(content) {
+	if (!renders_on_server()) return content;
+	const rendered = content();
+	return () => rendered;
+}
