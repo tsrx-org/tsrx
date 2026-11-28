@@ -4635,6 +4635,46 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		);
 	});
 
+	it('keeps the shared lowering for a branch of a KeepAlive that filters by name', () => {
+		const { code } = compile(
+			`import { KeepAlive as Keep, VaporKeepAlive } from 'vue';
+			function A() @{
+				<b>{'a'}</b>
+			}
+			export function App(props: { on: boolean; kind: string; only: string }) @{
+				<div>
+					<Keep include={props.only}>
+						@if (props.on) {
+							const label = 'include';
+							<A key={label} />
+						}
+					</Keep>
+					<VaporKeepAlive exclude="A">
+						@switch (props.kind) {
+							@case 'a': {
+								const label = 'exclude';
+								<A key={label} />
+							}
+						}
+					</VaporKeepAlive>
+					<VaporKeepAlive>
+						@if (props.on) {
+							const label = 'cached';
+							<A key={label} />
+						}
+					</VaporKeepAlive>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		// \`include\` and \`exclude\` match the child component's name, which a
+		// scope would replace; without them, the scope is what's cached.
+		expect(code).toMatch(/<Keep include=\{props\.only\}>\{props\.on\s*\? \(\(\) => \{/);
+		expect(code).toMatch(/<VaporKeepAlive exclude="A">\{\(\(\) => \{\s*switch[^]*case 'a':\s*\{/);
+		expect(code.match(/<__TsrxScope /g)).toHaveLength(1);
+	});
+
 	it('keeps the shared lowering for a branch that renders no one element', () => {
 		const { code } = compile(
 			`export function App(props: { on: boolean; tag: string; items: string[] }) @{

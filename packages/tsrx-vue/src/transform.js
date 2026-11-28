@@ -236,6 +236,7 @@ const vue_platform = {
 		},
 		injectImports(program, ctx) {
 			if (!ctx.typeOnly) {
+				unscope_filtered_keep_alive_children(program);
 				render_element_ifs_as_directives(program);
 				place_boundaries_as_children(program);
 			}
@@ -2435,6 +2436,134 @@ function scope_element(content, source, transform_context) {
 			)
 		)
 	);
+}
+
+/**
+ * A `KeepAlive` with `include` or `exclude` (or a spread, which can hold
+ * them) picks what it caches by its child component's name. As a
+ * `TsrxScope`, a branch or a case with setup statements would be matched by
+ * the scope's name instead, so a child of such a `KeepAlive` keeps the
+ * shared lowering. `KeepAlive` and `VaporKeepAlive` are found by those
+ * names and by what an import from `vue` calls them.
+ *
+ * @param {AST.Program} program
+ * @returns {void}
+ */
+function unscope_filtered_keep_alive_children(program) {
+	/** @type {Set<string>} */
+	const names = new Set(['KeepAlive', 'VaporKeepAlive']);
+	for (const statement of program.body) {
+		if (statement.type !== 'ImportDeclaration' || statement.source.value !== 'vue') continue;
+		for (const specifier of statement.specifiers) {
+			if (
+				specifier.type === 'ImportSpecifier' &&
+				specifier.imported.type === 'Identifier' &&
+				(specifier.imported.name === 'KeepAlive' || specifier.imported.name === 'VaporKeepAlive')
+			) {
+				names.add(specifier.local.name);
+			}
+		}
+	}
+	const walked = /** @type {AST.Program} */ (
+		walk(/** @type {AST.Node} */ (program), null, {
+			JSXElement(node, { next }) {
+				const element = /** @type {ESTreeJSX.JSXElement} */ (
+					/** @type {unknown} */ (next() ?? node)
+				);
+				const name = element.openingElement.name;
+				const filters = element.openingElement.attributes.some(
+					(attribute) =>
+						attribute.type === 'JSXSpreadAttribute' ||
+						(attribute.name.type === 'JSXIdentifier' &&
+							(attribute.name.name === 'include' || attribute.name.name === 'exclude')),
+				);
+				if (name.type !== 'JSXIdentifier' || !names.has(name.name) || !filters) {
+					return element === /** @type {unknown} */ (node)
+						? undefined
+						: /** @type {AST.Node} */ (/** @type {unknown} */ (element));
+				}
+				return /** @type {AST.Node} */ (
+					/** @type {unknown} */ ({
+						...element,
+						children: element.children.map((child) =>
+							child.type === 'JSXExpressionContainer' &&
+							child.expression.type !== 'JSXEmptyExpression'
+								? {
+										...child,
+										expression: unscope(/** @type {AST.Expression} */ (child.expression)),
+									}
+								: child,
+						),
+					})
+				);
+			},
+		})
+	);
+	program.body = walked.body;
+}
+
+/**
+ * `node`, a choice or a `@switch`, with each `TsrxScope` its branches or
+ * cases became back as the shared lowering had it.
+ *
+ * @param {AST.Expression} node
+ * @returns {AST.Expression}
+ */
+function unscope(node) {
+	if (node.type === 'ConditionalExpression') {
+		return { ...node, consequent: unscope(node.consequent), alternate: unscope(node.alternate) };
+	}
+	const content = scope_content_function(node);
+	if (content) return b.call(content);
+	if (
+		node.type === 'CallExpression' &&
+		node.callee.type === 'ArrowFunctionExpression' &&
+		node.callee.body.type === 'BlockStatement' &&
+		node.callee.body.body[0]?.type === 'SwitchStatement'
+	) {
+		for (const switch_case of node.callee.body.body[0].cases) {
+			const output = switch_case.consequent.length === 1 ? switch_case.consequent[0] : null;
+			const scoped =
+				output?.type === 'ReturnStatement' && output.argument
+					? scope_content_function(output.argument)
+					: null;
+			if (scoped?.body.type === 'BlockStatement') switch_case.consequent = [scoped.body];
+		}
+	}
+	return node;
+}
+
+/**
+ * The function a `<__TsrxScope __content={scope_content(…)} />` element runs,
+ * or `null` for anything else.
+ *
+ * @param {AST.Node} node
+ * @returns {AST.ArrowFunctionExpression | null}
+ */
+function scope_content_function(node) {
+	const element = /** @type {ESTreeJSX.JSXElement} */ (/** @type {unknown} */ (node));
+	if (
+		element.type !== 'JSXElement' ||
+		element.openingElement.name.type !== 'JSXIdentifier' ||
+		element.openingElement.name.name !== SCOPE_INTERNAL_NAME
+	) {
+		return null;
+	}
+	for (const attribute of element.openingElement.attributes) {
+		if (
+			attribute.type === 'JSXAttribute' &&
+			attribute.name.type === 'JSXIdentifier' &&
+			attribute.name.name === '__content' &&
+			attribute.value?.type === 'JSXExpressionContainer' &&
+			attribute.value.expression.type === 'CallExpression'
+		) {
+			const content = attribute.value.expression.arguments[0];
+			return content?.type === 'ArrowFunctionExpression'
+				? /** @type {AST.ArrowFunctionExpression} */ (/** @type {unknown} */ (content))
+				: null;
+		}
+	}
+	return null;
 }
 
 /**
