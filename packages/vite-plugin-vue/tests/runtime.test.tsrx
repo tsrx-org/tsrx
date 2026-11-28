@@ -16,6 +16,7 @@ import {
 	Suspense,
 	watch,
 	VaporKeepAlive,
+	VaporTeleport,
 	watchEffect,
 } from 'vue';
 import { defineVaporComponent } from 'vue-jsx-vapor';
@@ -3756,6 +3757,231 @@ describe('tsrx-vue keyed @switch rows', () => {
 		switch_fails.value = true;
 		await flush();
 		expect(texts('.switch-try p')).toEqual(['switch boom']);
+	});
+});
+
+const element_switch = ref(1);
+const element_switch_fails = ref(false);
+let element_switch_runs = 0;
+
+function element_switch_value(): number {
+	element_switch_runs++;
+	if (element_switch_fails.value) throw new Error('element switch boom');
+	return element_switch.value;
+}
+
+function ElementSwitchCounter(props: { label: string }) @{
+	const count = ref(0);
+	<button class="element-switch-counter" onClick={() => count.value++}>
+		{props.label + ':' + count.value}
+	</button>
+}
+
+function ElementSwitch({ n }: { n: number }) @{
+	<div class="element-switch">
+		@switch (n) {
+			@case 1: {
+				<ElementSwitchCounter label="one" />
+			}
+			@case 2: {
+			}
+			@default: {
+				<ElementSwitchCounter label="other" />
+			}
+		}
+		{'n=' + n}
+	</div>
+}
+
+function ElementSwitchHost() @{
+	<ElementSwitch n={element_switch.value} />
+}
+
+function ElementSwitchRuns() @{
+	<p class="element-switch-runs">
+		@switch (element_switch_value()) {
+			@case 1: {
+				<ElementSwitchCounter label="one" />
+			}
+			@default: {
+				<i>{'other'}</i>
+			}
+		}
+	</p>
+}
+
+function ElementSwitchTry() @{
+	<div class="element-switch-try">
+		@try {
+			<ElementSwitchRuns />
+		} @catch (error) {
+			<b>{(error as Error).message}</b>
+		}
+	</div>
+}
+
+function ElementSwitchInner() @{
+	<span class="element-switch-inner">{'inner'}</span>
+}
+
+function ElementSwitchChild() @{
+	<div class="element-switch-child">
+		@switch (element_switch.value) {
+			@case 1: {
+				<ElementSwitchInner />
+			}
+			@default: {
+				<i>{'other'}</i>
+			}
+		}
+	</div>
+}
+
+function ElementSwitchAttrs() @{
+	<ElementSwitchChild class="extra" data-x="1" />
+}
+
+function ElementSwitchTeleport() @{
+	<p class="element-switch-teleport">
+		@switch (element_switch.value) {
+			@case 1: {
+				<VaporTeleport to="body">
+					<b class="element-switch-teleported">{'one'}</b>
+				</VaporTeleport>
+			}
+			@default: {
+				<i>{'other'}</i>
+			}
+		}
+	</p>
+}
+
+const element_switch_key = ref(0);
+let element_switch_calls = 0;
+
+function ElementSwitchKeyed() @{
+	<div class="element-switch-keyed" key={element_switch_key.value}>
+		@switch (++element_switch_calls) {
+			@case 1: {
+				<b>{'first'}</b>
+			}
+			@default: {
+				<i>{'later'}</i>
+			}
+		}
+	</div>
+}
+
+describe("tsrx-vue an element's @switch (#1403)", () => {
+	beforeEach(() => {
+		element_switch.value = 1;
+		element_switch_fails.value = false;
+		element_switch_runs = 0;
+	});
+
+	it('follows its value, and keeps its case mounted while the case stays picked', async () => {
+		await render(ElementSwitchHost);
+		expect(text('.element-switch')).toBe('one:0n=1');
+		await click('.element-switch-counter');
+
+		element_switch.value = 3;
+		await flush();
+		expect(text('.element-switch')).toBe('other:0n=3');
+		await click('.element-switch-counter');
+
+		// The default case stays picked: its component keeps its state.
+		element_switch.value = 4;
+		await flush();
+		expect(text('.element-switch')).toBe('other:1n=4');
+
+		// A case that renders nothing.
+		element_switch.value = 2;
+		await flush();
+		expect(text('.element-switch')).toBe('n=2');
+		expect(container.querySelector('.element-switch-counter')).toBeNull();
+
+		element_switch.value = 1;
+		await flush();
+		expect(text('.element-switch')).toBe('one:0n=1');
+	});
+
+	it('runs its discriminant once per change, as before', async () => {
+		await render(ElementSwitchRuns);
+		expect(element_switch_runs).toBe(1);
+		element_switch.value = 2;
+		await flush();
+		expect(text('.element-switch-runs')).toBe('other');
+		expect(element_switch_runs).toBe(2);
+		element_switch.value = 3;
+		await flush();
+		expect(element_switch_runs).toBe(3);
+	});
+
+	it('keeps the case it showed while its discriminant throws, then follows, as before', async () => {
+		const errors: string[] = [];
+		const app = createVaporApp(ElementSwitchRuns);
+		app.config.errorHandler = (error) => {
+			errors.push(String(error));
+		};
+		try {
+			app.mount(container);
+			await flush();
+			await click('.element-switch-counter');
+			element_switch_fails.value = true;
+			await flush();
+			expect(text('.element-switch-runs')).toBe('one:1');
+			element_switch_fails.value = false;
+			element_switch.value = 2;
+			await flush();
+			expect(text('.element-switch-runs')).toBe('other');
+			element_switch.value = 1;
+			await flush();
+			expect(text('.element-switch-runs')).toBe('one:0');
+			expect(errors).toEqual(['Error: element switch boom']);
+		} finally {
+			app.unmount();
+		}
+	});
+
+	it("gives a component case none of its parent component's fallthrough attributes", async () => {
+		// The server renders it without them too.
+		await render(ElementSwitchAttrs);
+		expect(container.querySelector('.element-switch-child')?.className).toBe(
+			'element-switch-child extra',
+		);
+		const inner = container.querySelector('.element-switch-inner') as HTMLElement;
+		expect(inner.className).toBe('element-switch-inner');
+		expect(inner.hasAttribute('data-x')).toBe(false);
+	});
+
+	it('leaves no comments behind when a VaporTeleport case comes and goes', async () => {
+		await render(ElementSwitchTeleport);
+		for (const value of [2, 1, 2, 1]) {
+			element_switch.value = value;
+			await flush();
+		}
+		const host = container.querySelector('.element-switch-teleport') as HTMLElement;
+		expect(host.innerHTML.match(/<!--teleport start-->/g)).toHaveLength(1);
+		expect(document.body.querySelectorAll('.element-switch-teleported')).toHaveLength(1);
+	});
+
+	it('runs it again when a keyed element around it renders again, as before', async () => {
+		// The keyed element renders its children again, so the \`@switch\` keeps
+		// the shared lowering there.
+		element_switch_calls = 0;
+		await render(ElementSwitchKeyed);
+		expect(text('.element-switch-keyed')).toBe('first');
+		element_switch_key.value++;
+		await flush();
+		expect(text('.element-switch-keyed')).toBe('later');
+	});
+
+	it('sends a throw from its discriminant to the @catch around its component, as before', async () => {
+		await render(ElementSwitchTry);
+		expect(text('.element-switch-try')).toBe('one:0');
+		element_switch_fails.value = true;
+		await flush();
+		expect(text('.element-switch-try')).toBe('element switch boom');
 	});
 });
 

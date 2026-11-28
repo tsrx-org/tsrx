@@ -5628,11 +5628,8 @@ export function App() @{
 				component('{c && <p>@if (d) { <b>a > b</b> }</p>}'),
 				'>a &gt; b</b>',
 			],
-			[
-				'an @switch body',
-				component('@switch (c) { @case 1: { <b>a > b</b> } }'),
-				'<b>a &gt; b</b>',
-			],
+			// And its `@switch` `v-if` / `v-else-if` elements.
+			['an @switch body', component('@switch (c) { @case 1: { <b>a > b</b> } }'), '>a &gt; b</b>'],
 			['an @for body', component('@for (const i of c) { <b>a > b</b> }'), '<b>a &gt; b</b>'],
 			[
 				'a setup statement',
