@@ -335,14 +335,12 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			generated && sourceMap && shown_range(generated, reports, document, sourceMap);
 		const off_range =
 			!!shown_first && !nearest_placement && distance(shown_first, start_offset, end_offset) > 0;
-		const lines_off = off_range
-			? line_gap(virtualCode.originalCode, shown_first, start_offset, end_offset)
-			: 0;
+		const lines_off = off_range ? line_gap(virtualCode, shown_first, start_offset, end_offset) : 0;
 		/** Whether a range is nearer the error than the one the editor shows. */
 		const nearer = (/** @type {readonly [number, number, ...unknown[]]} */ range) =>
 			!off_range ||
 			distance(range, start_offset, end_offset) === 0 ||
-			line_gap(virtualCode.originalCode, range, start_offset, end_offset) < lines_off;
+			line_gap(virtualCode, range, start_offset, end_offset) < lines_off;
 		if (generated && sourceMap && (!shown_first || off_range)) {
 			// The editor would leave the error out, or show it on other code: its
 			// range is on code whose mappings don't report it, such as an
@@ -452,18 +450,18 @@ function distance(range, start, end) {
 }
 
 /**
- * How many line breaks of `code` lie between `range` and `[start, end)`.
- * @param {string} code
+ * How many line breaks of `virtualCode`'s source lie between `range` and
+ * `[start, end)`: a `\r\n`, a `\r` or a `\n`, as the editor counts lines.
+ * @param {TSRXVirtualCodeInstance} virtualCode
  * @param {readonly [number, number, ...unknown[]]} range
  * @param {number} start
  * @param {number} end
  */
-function line_gap(code, range, start, end) {
+function line_gap(virtualCode, range, start, end) {
 	const [from, to] =
 		range[0] > end ? [end, range[0]] : range[1] < start ? [range[1], start] : [0, 0];
-	let lines = 0;
-	for (let i = from; i < to; i++) if (code.charCodeAt(i) === 10) lines++;
-	return lines;
+	const { breaks } = get_source_tokens(virtualCode);
+	return first_at(breaks, (offset) => offset, to) - first_at(breaks, (offset) => offset, from);
 }
 
 /**
@@ -471,13 +469,14 @@ function line_gap(code, range, start, end) {
  */
 
 /**
- * The tokens of `virtualCode`'s mappings that code can show an error on, in
- * mapping order: one per mapped range that isn't empty or whitespace only,
- * sorted by where they end (`by_end`: ascending, and of those ending together
- * the longest and last first) and by where they start (`by_start`: ascending,
- * and of those starting together the shortest and first first). Built once
- * for each version of the mappings.
- * @type {WeakMap<object, { code: string, by_end: SourceToken[], by_start: SourceToken[] }>}
+ * The tokens of `virtualCode`'s mappings that report diagnostics that code
+ * can show an error on, in mapping order: one per mapped range that isn't
+ * empty or whitespace only, sorted by where they end (`by_end`: ascending,
+ * and of those ending together the longest and last first) and by where they
+ * start (`by_start`: ascending, and of those starting together the shortest
+ * and first first); and the offsets of the source's line breaks (`breaks`,
+ * the `\r` of a `\r\n`). Built once for each version of the mappings.
+ * @type {WeakMap<object, { code: string, by_end: SourceToken[], by_start: SourceToken[], breaks: number[] }>}
  */
 const source_tokens = new WeakMap();
 
@@ -491,7 +490,7 @@ function get_source_tokens(virtualCode) {
 	/** @type {(SourceToken & { order: number })[]} */
 	const tokens = [];
 	for (const mapping of mappings) {
-		if (!mapping.data) continue;
+		if (!mapping.data?.verification) continue;
 		for (let i = 0; i < mapping.sourceOffsets.length; i++) {
 			const source_start = mapping.sourceOffsets[i];
 			const length = mapping.lengths[i];
@@ -512,8 +511,17 @@ function get_source_tokens(virtualCode) {
 			});
 		}
 	}
+	const code = virtualCode.originalCode;
+	/** @type {number[]} */
+	const breaks = [];
+	for (let i = 0; i < code.length; i++) {
+		const char = code.charCodeAt(i);
+		if (char === 10 || (char === 13 && code.charCodeAt(i + 1) !== 10)) breaks.push(i);
+		else if (char === 13) breaks.push(i++);
+	}
 	const index = {
-		code: virtualCode.originalCode,
+		code,
+		breaks,
 		by_end: [...tokens].sort(
 			(a, b) => a.token[1] - b.token[1] || b.length - a.length || b.order - a.order,
 		),
@@ -528,8 +536,9 @@ function get_source_tokens(virtualCode) {
 /**
  * The first index in `tokens` whose `at` value is at least `offset`, as
  * `tokens` is sorted by it.
- * @param {SourceToken[]} tokens
- * @param {(token: SourceToken) => number} at
+ * @template T
+ * @param {T[]} tokens
+ * @param {(token: T) => number} at
  * @param {number} offset
  */
 function first_at(tokens, at, offset) {

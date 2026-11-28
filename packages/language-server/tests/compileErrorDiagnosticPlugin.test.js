@@ -891,6 +891,29 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		},
 	);
 
+	// A lone `\r` is a line break too: code ten of them above the error is no
+	// nearer than the output on the line below it, where main shows it.
+	it.each(['react', 'preact', 'solid', 'vue', 'hono', 'hono-dom'])(
+		'counts a lone CR as a line between an error and its places on %s',
+		async (target) => {
+			const source =
+				'export function App(x: number) @{\n @switch (x) {\n' +
+				`  @case 0: {    const q0 = 0;${' '.repeat(14)}<b>{q0}</b>${' '.repeat(36)}}\n` +
+				`  @case 2: {\n   const q2 = 2;${String.fromCharCode(13).repeat(10)}   break;\n` +
+				`   <b>{q2}</b>   }   @case 3: {\n   const q3 = 3;${' '.repeat(14)}<b>{q3}</b>   }  }\n}\n`;
+			const { document, service, uri } = create_service_harness(
+				source,
+				[createCompileErrorDiagnosticPlugin()],
+				`${target}/LoneCarriageReturnLines.tsrx`,
+			);
+			const diagnostics = await service.getDiagnostics(uri);
+			// Solid shows it on the `;` before, as on main.
+			expect(reported(document, diagnostics, 'TSRX2008').map((found) => found.offset)).toEqual([
+				target === 'solid' ? source.indexOf('2;') + 1 : source.indexOf('<b>{q2}'),
+			]);
+		},
+	);
+
 	// An `@switch` used as a statement where no template is, whose own mapping
 	// spans the error's range exactly, shows it on its code, as `@if` does.
 	it('shows TSRX2010 on an @switch statement outside a template', async () => {
