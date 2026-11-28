@@ -4833,6 +4833,9 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		['a sequence useAttrs', '(0, Vue.useAttrs)()'],
 		['a read of currentInstance', 'Vue.currentInstance'],
 		['a computed read of currentInstance', "Vue['currentInstance']"],
+		['a tagged template useAttrs', 'useAttrs``'],
+		['a member tagged template useAttrs', 'Vue.useAttrs``'],
+		['a new useAttrs', 'new (useAttrs as any)()'],
 	])('keeps the shared lowering for a branch that calls %s', (_name, call) => {
 		// It acts on the component calling it, which a scope would replace.
 		const { code } = compile(

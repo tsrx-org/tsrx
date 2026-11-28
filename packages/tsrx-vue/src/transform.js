@@ -2437,8 +2437,15 @@ function reads_owner(node) {
 	) {
 		return true;
 	}
-	if (value.type === 'CallExpression') {
-		const name = callee_name(value.callee);
+	// A call, a `new` and a tagged template each invoke what they name.
+	const invoked =
+		value.type === 'CallExpression' || value.type === 'NewExpression'
+			? value.callee
+			: value.type === 'TaggedTemplateExpression'
+				? value.tag
+				: null;
+	if (invoked) {
+		const name = callee_name(invoked);
 		if (name && OWNER_CALLS.has(name)) return true;
 	}
 	if (value.type === 'Identifier' && value.name === 'currentInstance') return true;
