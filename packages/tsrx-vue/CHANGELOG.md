@@ -1,5 +1,232 @@
 # @tsrx/vue
 
+## 0.5.0
+
+### Minor Changes
+
+- [#1547](https://github.com/tsrx-org/tsrx/pull/1547)
+  [`0c6435a`](https://github.com/tsrx-org/tsrx/commit/0c6435aa7b72adc952819125d2d3c4b09386e1c3)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, an
+  `@if` branch or a `@switch` case whose body has setup statements now renders
+  through a new `TsrxScope` component from `@tsrx/vue-runtime` when it is in a
+  host element or in a `@for` row that renders through `VaporFor`, keyed or not.
+  `TsrxScope` runs the statements as its setup: once each time the branch mounts,
+  as a component's own setup does. A branch that renders a spread host element,
+  whose ref the compiler keeps in such a statement, does too. The shared lowering
+  ran the statements in an effect of their own, so these problems are fixed:
+
+  - **State loss** ([#1401](https://github.com/tsrx-org/tsrx/issues/1401),
+    [#1402](https://github.com/tsrx-org/tsrx/issues/1402)). Whenever anything the
+    statements read changed, such as a `@for` row's item or a `ref` the branch
+    reads, the branch rendered again, components and all: inputs lost what was
+    typed and counters reset. The branch now stays while its condition does.
+  - **A keyed `@for` row that is a `@switch` whose case has setup statements**
+    stayed on the case it picked first. It now follows its value.
+  - **Hydration.** The server rendered such a branch inside a fragment
+    (`<!--[-->…<!--]-->`), and hydrating it threw
+    `No current hydration node was found` or
+    `Cannot read properties of null (reading 'nodeType')`, reported a mismatch,
+    or, for a branch alone in its element, rendered it a second time. The server
+    now renders the branch's element as it is, and it hydrates.
+  - **A `@switch` nested in an `@if` branch's element, a `@switch` case's element,
+    or a branch or case with setup statements** didn't hydrate either
+    ([#1403](https://github.com/tsrx-org/tsrx/issues/1403)), and in a keyed `@for`
+    row's element it rendered its case again whenever the row's item was replaced.
+    Its cases are now `v-if` / `v-else-if` elements, with the `computed` that
+    picks the case in the branch's `TsrxScope` or the row's slot.
+  - **Hooks.** Lifecycle hooks and watchers in the statements now belong to the
+    branch on the client: `onMounted` runs each time it mounts, `onUnmounted` runs
+    and a `watch` stops when it goes away, and `onUpdated` follows the branch's
+    updates. `inject` reads what the components around it provide, and `provide`
+    no longer warns. On the server the statements still run where the branch is
+    rendered, in the setup of the component around it, so `provide`,
+    `onServerPrefetch` and a `@catch` around them work as before. There, unlike on
+    the client, `inject` doesn't see what that component itself provides,
+    `provide` reaches the rest of that component, and a throw in the statements
+    doesn't reach that component's `onErrorCaptured`. Keep `provide` and `inject`
+    of a component's own keys in its own setup statements, or the server and the
+    client render different values.
+
+  Migration: when the statements run now depends on where the branch is. In a host
+  element or a `VaporFor` row they run once each time the branch mounts. In a
+  component's children or slot function, a `<template>` or a fragment, they still
+  run again whenever what they read changes. As a component's whole output they
+  still run once and the branch keeps its first value
+  ([#1400](https://github.com/tsrx-org/tsrx/issues/1400)). Moving a branch from
+  one of these places to another changes when its statements run.
+
+  So a value the statements compute in a host element keeps the value it had when
+  the branch mounted. Before, it followed what it read, at the cost of rendering
+  the branch again. For example, in
+
+  ```tsrx
+  <div>
+    @if (user.online) {
+      const label = user.name + '!';
+      <Badge {label} />
+    }
+  </div>
+  ```
+
+  renaming the user no longer changes the label while the branch stays. To follow
+  it, compute it where it's read (`<Badge label={user.name + '!'} />`) or in a
+  `computed` (`const label = computed(() => user.name + '!');`, then
+  `label.value`).
+
+  A branch whose statements call something that reads or acts on their component
+  keeps rendering as before, so it gets that component on the server and on the
+  client alike: `useSlots`, `useAttrs`, `useModel`, `useTemplateRef`,
+  `useCssModule`, `useVaporCssVars`, `useHost`, `useShadowRoot`,
+  `useInstanceOption`, `getCurrentInstance`, `resolveComponent`,
+  `resolveDynamicComponent`, `resolveDirective`, `onErrorCaptured`, Vue's render
+  helpers that resolve a name or a slot, register a template ref or set a scope id
+  (`createComponent`, `createSlot`, `setTemplateRefBinding`, `createPlainElement`
+  and the like), `setCurrentInstance` and a read of `currentInstance`, and
+  vue-jsx-vapor's `h`, `useProps`, `useFullProps` and `defineExpose`. The compiler
+  finds these by name, called directly or as a member (`Vue.useAttrs()`,
+  `Vue['useAttrs']()`). Reached any other way (an aliased import, a destructured
+  or stored function, a function of your own), one gets the scope instead, which
+  has no slots, attributes, props or template refs of its own: call it in the
+  component's own setup statements and read the result in the branch. A `ref`
+  given as a string through a binding or a spread (`ref={name}`,
+  `{...{ ref: 'field' }}`) in such a branch registers with the scope, so the
+  component's `useTemplateRef` doesn't see it; write the name as a literal
+  (`ref="field"`), which keeps the branch in its component, or pass a `ref()`
+  object.
+
+  These keep the shared lowering, as before:
+
+  - a branch or case anywhere but in a host element or a `VaporFor` row: in a
+    component's children or slot function (the component could be a `KeepAlive`,
+    whose `include` and `exclude` match its child component's name, which a scope
+    would replace), a `<template>`, a fragment, or as a component's whole output,
+    which still keeps its first branch
+    ([#1400](https://github.com/tsrx-org/tsrx/issues/1400));
+  - a branch whose output after the statements is not one element (a choice, a
+    fragment of several nodes, a loop, a nested `@{ }` block), a dynamic tag
+    branch, and a branch that awaits or yields;
+  - a branch that renders a `<slot>`, has a string literal `ref`, or calls one of
+    the functions above;
+  - a `@for` body with setup statements of its own, outside a branch, which still
+    renders through `map_iterable` and, keyed, still loses state on reorder
+    ([#1401](https://github.com/tsrx-org/tsrx/issues/1401)).
+
+### Patch Changes
+
+- [#1545](https://github.com/tsrx-org/tsrx/pull/1545)
+  [`16cab6d`](https://github.com/tsrx-org/tsrx/commit/16cab6dd126fad920bb8b236c7003e07117a879f)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, a
+  host element's child `@if` with `@else if` branches now renders as `v-if` /
+  `v-else-if` / `v-else` elements when each branch is one element or component, as
+  `@if` / `@else` already did. So does an `@else` whose only output is an `@if`. A
+  branch element can now also have `v-show`, in an `@if` and in a `@switch` case.
+  The shared lowering was a nested ternary, which caused these problems, now
+  fixed:
+
+  - **State loss** ([#1402](https://github.com/tsrx-org/tsrx/issues/1402)). Beside
+    another expression child, vue-jsx-vapor evaluated the ternary inside that
+    child's `setNodes` effect, so the branch rendered again, components and all,
+    whenever what the conditions read changed. The branch now stays while its
+    condition does.
+  - **Hydration.** Beside an expression child, hydrating threw
+    `No current hydration node was found` or
+    `Cannot read properties of null (reading 'nodeType')`, or left the page
+    frozen. Alone, the server rendered a later branch inside a fragment
+    (`<!--[-->…<!--]-->`) that the client's inner `createIf` didn't expect, so Vue
+    reported a mismatch and rendered the branch again. A `v-show` branch alone
+    threw `Cannot read properties of null (reading 'insertBefore')` when its
+    condition was false on the server. The server now renders the branch without
+    the fragment, and each element branch, and each component branch with one
+    root, hydrates.
+  - **Fallthrough.** Beside an expression child, a component branch was created as
+    its parent's single root, so on the client it took the parent component's
+    fallthrough `class` and `data-*` attributes, which the server didn't give it.
+    It no longer does.
+
+  Beside an expression child, the conditions now run where an `@if` / `@else`
+  evaluates its condition, after the attribute expressions of the elements before
+  them rather than before them, as the server already did. That only shows if one
+  of those expressions has a side effect a condition reads.
+
+  These keep the shared lowering, as before:
+
+  - a component's child (such as `KeepAlive`'s), whose branches vue-jsx-vapor's
+    server build would pass as separate children;
+  - a chain with a branch that has a dynamic tag, a `<template>`, `<slot>` or
+    `<component>`, or a `v-` attribute other than a plain `v-show` (`v-show:arg`
+    included), and one with a branch that has setup statements or a spread host
+    element that `TsrxScope` doesn't take (see its entry);
+  - a chain whose next element has its own `v-else` or `v-else-if`.
+
+  vue-jsx-vapor's server build still renders a `v-show` element shown when its
+  value is false, in a branch or not, so hydrating it logs a style mismatch before
+  the client hides it. A component branch whose root is a fragment still hydrates
+  with a mismatch, as it does outside a branch.
+
+  The server markup changes for a chain's later branch, which loses its fragment.
+  While servers and clients from before and after this change are both deployed,
+  the new client hydrating a page the old server rendered logs
+  `Hydration node mismatch` for a chain whose server picked a later branch or
+  none, and renders the chain again. The page keeps working, and it is never worse
+  than before this change, where these chains already mismatched or threw.
+
+- [#1544](https://github.com/tsrx-org/tsrx/pull/1544)
+  [`50c2ecf`](https://github.com/tsrx-org/tsrx/commit/50c2ecf6de886fe8ec3b89991f17cb522df1bb60)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - On the Vue target, a
+  host element's child `@switch` whose cases each render one element or component,
+  or nothing, now renders as `v-if` / `v-else-if` elements, in the JSX a component
+  function returns or a declaration outside a loop in its setup holds. A
+  `computed` in the component's setup runs the `switch` and picks the case. The
+  shared lowering put the `switch` in an expression child, which vue-jsx-vapor
+  renders with `setNodes`. That caused these problems, now fixed:
+
+  - **Hydration** ([#1403](https://github.com/tsrx-org/tsrx/issues/1403)).
+    Hydrating server markup there threw
+    `Cannot read properties of null (reading 'nodeType')`, or
+    `No current hydration node was found` for a component case, and the page
+    stopped updating. When the server had rendered a case and the client then
+    matched none, the case's element was emptied instead of removed (`<p></p>`).
+    The server's case, or its `<!---->`, now hydrates and follows the value. The
+    server markup is unchanged.
+  - **State loss.** The case rendered again, components and all, whenever what the
+    `switch` read changed, even when it picked the same case. The case now stays
+    mounted while it stays picked.
+  - **Fallthrough.** A component case was created as its parent's single root, so
+    on the client it took the parent component's fallthrough `class` and `data-*`
+    attributes, which the server didn't give it. It no longer does.
+  - **Teleport.** A `VaporTeleport` case left a `<!--teleport start-->` comment
+    behind each time it was replaced. It no longer does.
+
+  The `switch` still runs once for each change it reads, and a throw in it still
+  goes to the nearest `@catch` or the app's error handler. While it throws, the
+  element keeps the case it showed. It now runs where an `@if` in the same place
+  evaluates its condition, after the attribute expressions of the elements before
+  it rather than before them, which only shows if one of those expressions has a
+  side effect the `switch` reads. `v-if` anchor comments now mark the cases.
+
+  These keep the shared lowering, as before:
+
+  - a `@switch` inside a `@try` or `@pending` body, a component's children, a
+    keyed element, or an element with a `v-` directive other than `v-show`;
+  - a `@switch` inside an `@if` branch or a loop row, except one in an element of
+    a host element's branch or of a row that renders through `VaporFor`, which the
+    `TsrxScope` entry lowers too;
+  - one whose case renders a fragment, a choice, a `<template>`, `<slot>` or
+    `<component>`, or an element with a `v-` attribute other than a plain
+    `v-show`, and one whose case has setup statements that `TsrxScope` doesn't
+    take (see its entry);
+  - one followed by an element with `v-else` or `v-else-if` that would join its
+    cases: vue-jsx-vapor passes over other elements, text and expressions to join
+    it, up to an element with `v-if`;
+  - one that is a fragment's own child, or a component's whole output
+    ([#1400](https://github.com/tsrx-org/tsrx/issues/1400));
+  - one in a component written as an object,
+    `defineVaporComponent({ setup() { … } })`.
+
+- Updated dependencies
+  [[`0c6435a`](https://github.com/tsrx-org/tsrx/commit/0c6435aa7b72adc952819125d2d3c4b09386e1c3)]:
+  - @tsrx/vue-runtime@0.2.7
+
 ## 0.4.17
 
 ### Patch Changes

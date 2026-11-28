@@ -1,5 +1,9 @@
 # @tsrx/prettier-plugin
 
+## 0.7.18
+
+No changes in this release.
+
 ## 0.7.17
 
 ### Patch Changes
