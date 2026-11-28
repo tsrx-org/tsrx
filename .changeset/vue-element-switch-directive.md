@@ -15,7 +15,7 @@ These keep the shared lowering, as before:
 
 - a `@switch` inside a `@try` or `@pending` body, a component's children, a keyed element, or an element with a `v-` directive other than `v-show`;
 - a `@switch` inside an `@if` branch or a loop row, except one in an element of a host element's branch or of a row that renders through `VaporFor`, which the `TsrxScope` entry lowers too;
-- one whose case renders a fragment, a choice, a `<template>`, `<slot>` or `<component>`, or an element with a `v-` attribute, and one whose case has setup statements that `TsrxScope` doesn't take (see its entry);
-- one followed by an element with `v-else` or `v-else-if` that would join its cases: vue-jsx-vapor passes over other elements, text and expressions to join it, up to an element with `v-if` or a choice;
+- one whose case renders a fragment, a choice, a `<template>`, `<slot>` or `<component>`, or an element with a `v-` attribute other than a plain `v-show`, and one whose case has setup statements that `TsrxScope` doesn't take (see its entry);
+- one followed by an element with `v-else` or `v-else-if` that would join its cases: vue-jsx-vapor passes over other elements, text and expressions to join it, up to an element with `v-if`;
 - one that is a fragment's own child, or a component's whole output (#1400);
 - one in a component written as an object, `defineVaporComponent({ setup() { … } })`.

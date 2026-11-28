@@ -3902,6 +3902,19 @@ function ElementSwitchShowBeforeElse() @{
 	</div>
 }
 
+function ElementSwitchChoiceBeforeElse() @{
+	<div class="element-switch-before-else">
+		<b v-if={false}>{'before'}</b>
+		@switch (element_switch.value) {
+			@case 1: {
+				<i>{'switch'}</i>
+			}
+		}
+		{false ? <em>{'choice'}</em> : null}
+		<s v-else>{'else'}</s>
+	</div>
+}
+
 describe("tsrx-vue an element's @switch (#1403)", () => {
 	beforeEach(() => {
 		element_switch.value = 1;
@@ -3936,17 +3949,19 @@ describe("tsrx-vue an element's @switch (#1403)", () => {
 	});
 
 	it.each([
-		['', ElementSwitchBeforeElse],
-		[' with v-show', ElementSwitchShowBeforeElse],
+		['', ElementSwitchBeforeElse, '<s>else</s><i>switch</i><u>separator</u>'],
+		[' with v-show', ElementSwitchShowBeforeElse, '<s>else</s><i>switch</i><u>separator</u>'],
+		// The client joins it to the choice instead, as it did before.
+		[' past a choice', ElementSwitchChoiceBeforeElse, '<i>switch</i><s>else</s>'],
 	])(
 		'leaves a later authored v-else to the v-if before it, for a case%s',
-		async (_name, component) => {
+		async (_name, component, html) => {
 			await render(component);
 			expect(
 				container
 					.querySelector('.element-switch-before-else')
 					?.innerHTML.replace(/<!--.*?-->/g, ''),
-			).toBe('<s>else</s><i>switch</i><u>separator</u>');
+			).toBe(html);
 		},
 	);
 

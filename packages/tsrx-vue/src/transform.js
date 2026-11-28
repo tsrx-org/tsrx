@@ -2357,10 +2357,11 @@ function renders_in_scope(block) {
 /**
  * Calls that read or act on the component calling them: its slots,
  * attributes, props and model, template refs, CSS modules, CSS variables (set
- * on its root, from its props), custom-element host, instance, and exposed
- * value (vue-jsx-vapor's `defineExpose` macro sets it on the current
- * instance), and `onErrorCaptured`, which would stop seeing errors from the
- * component's other content. In a `TsrxScope` they would get the scope,
+ * on its root, from its props), custom-element host, instance, registered
+ * components and directives, and exposed value (vue-jsx-vapor's
+ * `defineExpose` macro sets it on the current instance), and
+ * `onErrorCaptured`, which would stop seeing errors from the component's
+ * other content. In a `TsrxScope` they would get the scope,
  * which has none of these, while on the server, where the statements run in
  * the component's setup, they still get the component. A scope doesn't change
  * `useId` (it shares the component's ids), `useCssVars` (a Vapor component
@@ -2379,6 +2380,9 @@ const OWNER_CALLS = new Set([
 	'useShadowRoot',
 	'useInstanceOption',
 	'getCurrentInstance',
+	'resolveComponent',
+	'resolveDynamicComponent',
+	'resolveDirective',
 	'onErrorCaptured',
 	// vue-jsx-vapor
 	'useProps',
@@ -2391,9 +2395,10 @@ const OWNER_CALLS = new Set([
  * component rendering it: a `<slot>`, which renders that component's slot,
  * or a `ref` that is a string, which registers in that component's template
  * refs (`useTemplateRef`); or calls one of `OWNER_CALLS`, by name or as a
- * member (`Vue.useAttrs()`). In a `TsrxScope` they would resolve against
- * the scope, which has none of these. An aliased import, or a function that
- * calls one of them, isn't seen.
+ * member (`Vue.useAttrs()`, `Vue['useAttrs']()`, through TypeScript's `as` and
+ * the like). In a `TsrxScope` they would resolve against the scope, which has
+ * none of these. An aliased import, or a function that calls one of them,
+ * isn't seen.
  *
  * @param {unknown} node
  * @returns {boolean}
@@ -2413,15 +2418,7 @@ function reads_owner(node) {
 		return true;
 	}
 	if (value.type === 'CallExpression') {
-		const callee = value.callee;
-		const name =
-			callee.type === 'Identifier'
-				? callee.name
-				: callee.type === 'MemberExpression' &&
-					  !callee.computed &&
-					  callee.property.type === 'Identifier'
-					? callee.property.name
-					: null;
+		const name = callee_name(value.callee);
 		if (name && OWNER_CALLS.has(name)) return true;
 	}
 	if (value.type === 'JSXAttribute') {
@@ -2439,6 +2436,38 @@ function reads_owner(node) {
 	return Object.entries(value).some(
 		([key, child]) => key !== 'loc' && key !== 'metadata' && reads_owner(child),
 	);
+}
+
+/**
+ * The name a call's callee reads, when it is written out: `name`,
+ * `object.name` or `object['name']`, through parentheses and TypeScript's
+ * `as`, `satisfies`, `!` and `<T>` wrappers.
+ *
+ * @param {unknown} node
+ * @returns {string | null}
+ */
+function callee_name(node) {
+	let callee = /** @type {AST.Node} */ (node);
+	while (
+		callee.type === 'TSAsExpression' ||
+		callee.type === 'TSSatisfiesExpression' ||
+		callee.type === 'TSNonNullExpression' ||
+		callee.type === 'TSTypeAssertion' ||
+		callee.type === 'TSInstantiationExpression' ||
+		/** @type {{ type: string }} */ (callee).type === 'ParenthesizedExpression' ||
+		callee.type === 'ChainExpression'
+	) {
+		callee = /** @type {AST.Node} */ (/** @type {{ expression: unknown }} */ (callee).expression);
+	}
+	if (callee.type === 'Identifier') return callee.name;
+	if (callee.type !== 'MemberExpression') return null;
+	const property = callee.property;
+	if (!callee.computed) return property.type === 'Identifier' ? property.name : null;
+	if (property.type === 'Literal' && typeof property.value === 'string') return property.value;
+	if (property.type === 'TemplateLiteral' && property.expressions.length === 0) {
+		return property.quasis[0]?.value.cooked ?? null;
+	}
+	return null;
 }
 
 /**
@@ -2665,20 +2694,16 @@ function continues_directive_chain(siblings) {
  * after a `@switch`, to the `@switch`'s cases once they are `v-if` /
  * `v-else-if` elements: the first element with `v-else` or `v-else-if`,
  * passing over other elements, text and expressions as vue-jsx-vapor does, up
- * to an element with `v-if` or a conditional expression child, which it
- * would join instead. Kept, the `@switch` is a call that vue-jsx-vapor
- * passes over on the client and the server alike, so the `v-else` stays
- * with the `v-if` before it.
+ * to an element with `v-if`, which it would join instead. A conditional
+ * expression child doesn't stop it: vue-jsx-vapor's client build joins a
+ * `v-else` to one, but its server build passes over it. Kept, the `@switch`
+ * is a call that both builds pass over, so the `v-else` stays where it was.
  *
  * @param {ESTreeJSX.JSXElement['children']} siblings
  * @returns {boolean}
  */
 function joins_later_else(siblings) {
 	for (const sibling of siblings) {
-		if (sibling.type === 'JSXExpressionContainer') {
-			if (sibling.expression.type === 'ConditionalExpression') return false;
-			continue;
-		}
 		if (sibling.type !== 'JSXElement') continue;
 		const names = sibling.openingElement.attributes.map((attribute) =>
 			attribute.type === 'JSXAttribute' && attribute.name.type === 'JSXIdentifier'

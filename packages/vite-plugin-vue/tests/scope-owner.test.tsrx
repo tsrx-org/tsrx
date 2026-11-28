@@ -13,13 +13,16 @@ import {
 	useInstanceOption,
 	useVaporCssVars,
 	onErrorCaptured,
+	resolveComponent,
+	resolveDirective,
 } from 'vue';
 import { defineVaporComponent, getCurrentInstance, useFullProps, useProps } from 'vue-jsx-vapor';
 
 // A branch with setup statements that calls a composable acting on the
 // component calling it keeps the shared lowering: in a `TsrxScope`, the
 // composable would act on the scope, which has no slots, attributes, declared
-// props, template refs, CSS modules, root or custom-element host of its own.
+// props, template refs, CSS modules, registered components or directives, root
+// or custom-element host of its own.
 
 const on = ref(true);
 
@@ -170,6 +173,27 @@ function ExposeHost() @{
 	<ExposeChild ref={(value: { hello?: string } | null) => (exposed = value)} />
 }
 
+function Registered() @{
+	<i>{'registered'}</i>
+}
+
+const registered_directive = {};
+
+function ResolvesOwner() @{
+	<div class="owner-resolves">
+		@if (on.value) {
+			const component = resolveComponent('Registered');
+			const directive = resolveDirective('registered');
+			<b>{String(component === Registered) + ',' + String(directive === registered_directive)}</b>
+		}
+	</div>
+}
+
+Object.assign(ResolvesOwner, {
+	components: { Registered },
+	directives: { registered: registered_directive },
+});
+
 const captured: string[] = [];
 
 function Throws() @{
@@ -271,6 +295,13 @@ describe('tsrx-vue a branch that calls a composable acting on its component', ()
 	it('reads its component’s props with useProps and useFullProps', async () => {
 		const { app } = await mount(PropsHost);
 		expect(container.querySelector('.owner-props b')?.textContent).toBe('t,t,e');
+		app.unmount();
+	});
+
+	it('resolves its component’s registrations with resolveComponent and resolveDirective', async () => {
+		const { app, warnings } = await mount(ResolvesOwner);
+		expect(container.querySelector('.owner-resolves b')?.textContent).toBe('true,true');
+		expect(warnings).toEqual([]);
 		app.unmount();
 	});
 

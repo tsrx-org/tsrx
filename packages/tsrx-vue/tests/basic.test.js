@@ -4475,7 +4475,7 @@ describe("@tsrx/vue an element's @switch", () => {
 		expect(code.match(/return null;/g)).toHaveLength(2);
 	});
 
-	it('lowers one whose later authored v-else has a v-if or a choice of its own first', () => {
+	it('lowers one whose later authored v-else has a v-if of its own first', () => {
 		const { code } = compile(
 			`export function App(props: { kind: string; on: boolean }) @{
 				<div>
@@ -4487,20 +4487,36 @@ describe("@tsrx/vue an element's @switch", () => {
 					<u>{'separator'}</u>
 					<b v-if={props.on}>{'own if'}</b>
 					<s v-else>{'else'}</s>
-					@switch (props.kind) {
-						@case 'a': {
-							<i>{'switch'}</i>
-						}
-					}
-					{props.on ? <b>{'own choice'}</b> : null}
-					<s v-else>{'else'}</s>
 				</div>
 			}`,
 			'App.tsrx',
 		);
 
 		expect(code).not.toContain('return null;');
-		expect(code.match(/<i v-if=/g)).toHaveLength(2);
+		expect(code).toContain('<i v-if=');
+	});
+
+	it('keeps the shared lowering for one a later v-else would join past a choice', () => {
+		// vue-jsx-vapor's client build joins the \`v-else\` to the choice, but
+		// its server build passes over the choice and would join the cases.
+		const { code } = compile(
+			`export function App(props: { kind: string; on: boolean }) @{
+				<div>
+					<b v-if={props.on}>{'before'}</b>
+					@switch (props.kind) {
+						@case 'a': {
+							<i>{'switch'}</i>
+						}
+					}
+					{props.on ? <em>{'choice'}</em> : null}
+					<s v-else>{'else'}</s>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('_$_case');
+		expect(code.match(/return null;/g)).toHaveLength(1);
 	});
 });
 
@@ -4748,11 +4764,19 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		['useShadowRoot', 'useShadowRoot()'],
 		['useInstanceOption', "useInstanceOption('type')"],
 		['getCurrentInstance', 'getCurrentInstance()'],
+		['resolveComponent', "resolveComponent('Local')"],
+		['resolveDynamicComponent', "resolveDynamicComponent('Local')"],
+		['resolveDirective', "resolveDirective('mark')"],
 		['onErrorCaptured', 'onErrorCaptured(() => false)'],
 		['useProps', 'useProps()'],
 		['useFullProps', 'useFullProps()'],
 		['defineExpose', 'defineExpose({ focus() {} })'],
 		['a member useAttrs', 'Vue.useAttrs()'],
+		['a computed member useAttrs', "Vue['useAttrs']()"],
+		['a template literal member useAttrs', 'Vue[`useAttrs`]()'],
+		['a cast useAttrs', '(Vue.useAttrs as () => unknown)()'],
+		['a non-null useAttrs', 'useAttrs!()'],
+		['an optional useAttrs', 'Vue.useAttrs?.()'],
 	])('keeps the shared lowering for a branch that calls %s', (_name, call) => {
 		// It acts on the component calling it, which a scope would replace.
 		const { code } = compile(
