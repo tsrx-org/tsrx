@@ -1691,6 +1691,14 @@ A `@pending` body renders through a `TsrxPendingBody` component in the
 `Suspense` fallback, so it runs only while the `@try` body suspends, and a
 throw in it reaches the nearest `@catch`.
 
+An `@if` branch or a `@switch` case whose body has setup statements renders
+through a `TsrxScope` component, whose setup runs them: they run once each time
+the branch mounts, as a component's own setup does, and the branch keeps its
+state while it stays. A value the statements compute keeps the value it had
+when the branch mounted; to follow a value that changes, read it in the
+template or in a `computed`. Lifecycle hooks, `provide` and `inject` there act
+for the branch.
+
 ### Octane
 
 Octane compiles TSRX directly to DOM operations without a virtual DOM while

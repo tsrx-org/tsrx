@@ -153,6 +153,7 @@ const vue_platform = {
 			needs_vapor_for: false,
 			needs_use_slots: false,
 			needs_pending_body: false,
+			needs_scope: false,
 		}),
 		wrapHelperComponent(helper_fn, helper_id, ctx, source_node) {
 			ctx.needs_define_vapor_component = true;
@@ -251,6 +252,9 @@ export const transform = createJsxTransform(vue_platform);
 
 /** Local name for the `TsrxPendingBody` that renders a `@pending` body. */
 const PENDING_BODY_INTERNAL_NAME = '__TsrxPendingBody';
+
+/** Local name for the `TsrxScope` a branch with setup statements renders in. */
+const SCOPE_INTERNAL_NAME = '__TsrxScope';
 
 /**
  * @param {ESTreeJSX.JSXRenderNode} try_content
@@ -2230,6 +2234,16 @@ function render_switch_statement(node, transform_context) {
 		container.expression.callee.body.type === 'BlockStatement'
 			? container.expression.callee.body.body[0]
 			: null;
+	if (!transform_context.typeOnly && statement?.type === 'SwitchStatement') {
+		for (const switch_case of statement.cases) {
+			const block = switch_case.consequent.length === 1 ? switch_case.consequent[0] : null;
+			if (block?.type === 'BlockStatement' && renders_in_scope(block)) {
+				switch_case.consequent = [
+					b.return(scope_element(b.arrow([], block), block, transform_context)),
+				];
+			}
+		}
+	}
 	if (
 		!transform_context.typeOnly &&
 		statement?.type === 'SwitchStatement' &&
@@ -2261,12 +2275,115 @@ function render_switch_statement(node, transform_context) {
  */
 function render_if_statement(node, transform_context) {
 	const container = ifStatementToJsxChild(node, transform_context);
+	if (
+		!transform_context.typeOnly &&
+		container.type === 'JSXExpressionContainer' &&
+		container.expression.type === 'ConditionalExpression'
+	) {
+		container.expression = scope_statement_branches(container.expression, transform_context);
+	}
 	if (!transform_context.typeOnly && container.type === 'JSXExpressionContainer') {
 		/** @type {Record<string, unknown>} */ (
 			/** @type {unknown} */ (container.expression.metadata ??= { path: [] })
 		)[VAPOR_IF_METADATA] = true;
 	}
 	return container;
+}
+
+/**
+ * A choice whose branches with setup statements, the shared lowering's
+ * `(() => { …statements; return <p /> })()`, render through `TsrxScope`
+ * (`scope_element`), so the statements run once each time the branch
+ * mounts. As an IIFE, vue-jsx-vapor evaluates the branch in an effect of its
+ * own, which reads what the statements read: whenever that changes, the
+ * branch renders again, components and all (#1401, #1402).
+ *
+ * @param {AST.ConditionalExpression} node
+ * @param {TransformContext} transform_context
+ * @returns {AST.ConditionalExpression}
+ */
+function scope_statement_branches(node, transform_context) {
+	/** @param {AST.Expression} branch */
+	const scoped = (branch) =>
+		branch.type === 'ConditionalExpression'
+			? scope_statement_branches(branch, transform_context)
+			: is_statement_branch(branch)
+				? scope_element(
+						/** @type {AST.ArrowFunctionExpression} */ (
+							/** @type {AST.CallExpression} */ (branch).callee
+						),
+						branch,
+						transform_context,
+					)
+				: branch;
+	const consequent = scoped(node.consequent);
+	const alternate = scoped(node.alternate);
+	return consequent === node.consequent && alternate === node.alternate
+		? node
+		: { ...node, consequent, alternate };
+}
+
+/**
+ * Whether `node` is a branch with setup statements, an IIFE whose body ends
+ * by returning one element (`renders_in_scope`).
+ *
+ * @param {AST.Expression} node
+ * @returns {boolean}
+ */
+function is_statement_branch(node) {
+	return (
+		node.type === 'CallExpression' &&
+		node.arguments.length === 0 &&
+		node.callee.type === 'ArrowFunctionExpression' &&
+		!node.callee.async &&
+		node.callee.body.type === 'BlockStatement' &&
+		renders_in_scope(node.callee.body)
+	);
+}
+
+/**
+ * Whether a branch or case body can render through `TsrxScope`: statements,
+ * then a `return` of one element, and nothing that awaits or yields. A
+ * scope's content runs untracked, so it must return an element, whose
+ * effects follow what it reads; a choice or a list there would render once.
+ *
+ * @param {AST.BlockStatement} block
+ * @returns {boolean}
+ */
+function renders_in_scope(block) {
+	const last = block.body.at(-1);
+	return (
+		block.body.length > 1 &&
+		last?.type === 'ReturnStatement' &&
+		last.argument?.type === 'JSXElement' &&
+		!suspends(block)
+	);
+}
+
+/**
+ * `<__TsrxScope content={content} />`: `TsrxScope` runs `content` as its setup.
+ *
+ * @param {AST.ArrowFunctionExpression} content
+ * @param {AST.Node} source
+ * @param {TransformContext} transform_context
+ * @returns {AST.Expression}
+ */
+function scope_element(content, source, transform_context) {
+	transform_context.needs_scope = true;
+	return /** @type {AST.Expression} */ (
+		/** @type {unknown} */ (
+			b.jsx_element_fresh(
+				b.jsx_opening_element(
+					b.jsx_id(SCOPE_INTERNAL_NAME),
+					[b.jsx_attribute(b.jsx_id('content'), to_jsx_expression_container(content))],
+					true,
+				),
+				null,
+				[],
+				has_location(source) ? source : undefined,
+			)
+		)
+	);
 }
 
 /**
@@ -2822,9 +2939,75 @@ function render_element_switches_as_directives(program, transform_context) {
 				}
 				return call === node ? undefined : call;
 			},
+			// A scope's content runs once per mount of its branch, and a
+			// `VaporFor` row's slot once per row.
+			JSXElement(node, { next }) {
+				const element = /** @type {ESTreeJSX.JSXElement} */ (
+					/** @type {unknown} */ (next() ?? node)
+				);
+				const lowered = lower_scope_switches(element, transform_context);
+				return lowered === node
+					? undefined
+					: /** @type {AST.Node} */ (/** @type {unknown} */ (lowered));
+			},
 		})
 	);
 	program.body = walked.body;
+}
+
+/**
+ * `element`, a `TsrxScope` or a `VaporFor`, with the `@switch`es that its
+ * content or row slot returns lowered (`lower_setup_switches`).
+ *
+ * @param {ESTreeJSX.JSXElement} element
+ * @param {TransformContext} transform_context
+ * @returns {ESTreeJSX.JSXElement}
+ */
+function lower_scope_switches(element, transform_context) {
+	const name = element.openingElement.name;
+	if (name.type !== 'JSXIdentifier') return element;
+	if (name.name === SCOPE_INTERNAL_NAME) {
+		const attributes = element.openingElement.attributes.map((attribute) => {
+			if (
+				attribute.type !== 'JSXAttribute' ||
+				attribute.name.type !== 'JSXIdentifier' ||
+				attribute.name.name !== 'content' ||
+				attribute.value?.type !== 'JSXExpressionContainer' ||
+				attribute.value.expression.type !== 'ArrowFunctionExpression'
+			) {
+				return attribute;
+			}
+			const content = lower_setup_switches(
+				/** @type {AST.ArrowFunctionExpression} */ (
+					/** @type {unknown} */ (attribute.value.expression)
+				),
+				transform_context,
+			);
+			return content ? { ...attribute, value: to_jsx_expression_container(content) } : attribute;
+		});
+		return attributes.some(
+			(attribute, index) => attribute !== element.openingElement.attributes[index],
+		)
+			? { ...element, openingElement: { ...element.openingElement, attributes } }
+			: element;
+	}
+	if (name.name === VAPOR_FOR_INTERNAL_NAME) {
+		const slot = element.children[0];
+		if (
+			slot?.type !== 'JSXExpressionContainer' ||
+			slot.expression.type !== 'ArrowFunctionExpression'
+		) {
+			return element;
+		}
+		const row = lower_setup_switches(
+			/** @type {AST.ArrowFunctionExpression} */ (/** @type {unknown} */ (slot.expression)),
+			transform_context,
+		);
+		return row
+			? { ...element, children: [to_jsx_expression_container(row), ...element.children.slice(1)] }
+			: element;
+	}
+	return element;
 }
 
 /**
@@ -2842,13 +3025,15 @@ function lower_setup_switches(fn, transform_context) {
 		/** @type {AST.Statement[]} */
 		const declarations = [];
 		const output = lower_output_switches(fn.body, declarations, transform_context);
-		return declarations.length
-			? /** @type {AST.ArrowFunctionExpression} */ ({
-					...fn,
-					expression: false,
-					body: b.block([...declarations, b.return(output)]),
-				})
-			: null;
+		if (!declarations.length) {
+			// A branch in it became a scope (`scope_branch_switches`).
+			return output === fn.body ? null : { ...fn, body: output };
+		}
+		return /** @type {AST.ArrowFunctionExpression} */ ({
+			...fn,
+			expression: false,
+			body: b.block([...declarations, b.return(output)]),
+		});
 	}
 
 	/** Leaves a nested function or class alone: its `return` isn't the component's. */
@@ -2865,7 +3050,8 @@ function lower_setup_switches(fn, transform_context) {
 				/** @type {AST.Statement[]} */
 				const declarations = [];
 				const argument = lower_output_switches(node.argument, declarations, transform_context);
-				if (!declarations.length) return;
+				if (!declarations.length)
+					return argument === node.argument ? undefined : { ...node, argument };
 				return setup_switches_block([...declarations, { ...node, argument }]);
 			},
 			// JSX that a declaration holds, such as one the component returns
@@ -2883,7 +3069,11 @@ function lower_setup_switches(fn, transform_context) {
 							}
 						: declarator,
 				);
-				if (!declarations.length) return;
+				if (!declarations.length) {
+					return declarators.some((declarator, index) => declarator !== node.declarations[index])
+						? { ...node, declarations: declarators }
+						: undefined;
+				}
 				return setup_switches_block([...declarations, { ...node, declarations: declarators }]);
 			},
 			// The `computed`s join the statements before the `return` or the
@@ -2987,11 +3177,68 @@ function lower_output_switches(node, declarations, transform_context) {
 			? /** @type {AST.Expression} */ (/** @type {unknown} */ ({ ...jsx, children }))
 			: node;
 	}
-	if (jsx.type !== 'JSXElement' || !renders_children_once(jsx)) return node;
+	if (jsx.type !== 'JSXElement') return node;
+	if (!renders_children_once(jsx)) return scope_branch_switches(jsx, transform_context) ?? node;
 	const children = lower_child_switches(jsx.children, true, declarations, transform_context);
 	return children
 		? /** @type {AST.Expression} */ (/** @type {unknown} */ ({ ...jsx, children }))
 		: node;
+}
+
+/**
+ * A `v-if`, `v-else-if` or `v-else` host element, a branch, whose
+ * `@switch`es would lower but for the branch: it mounts again each time its
+ * condition turns true, so their `computed`s need a setup that runs with
+ * it. The branch becomes a `TsrxScope` with the directive, whose content
+ * declares them and returns the element; `null` when nothing lowers.
+ *
+ * @param {ESTreeJSX.JSXElement} element
+ * @param {TransformContext} transform_context
+ * @returns {AST.Expression | null}
+ */
+function scope_branch_switches(element, transform_context) {
+	const attributes = element.openingElement.attributes;
+	const directive = attributes.find(
+		(attribute) =>
+			attribute.type === 'JSXAttribute' &&
+			attribute.name.type === 'JSXIdentifier' &&
+			['v-if', 'v-else-if', 'v-else'].includes(attribute.name.name),
+	);
+	if (!directive) return null;
+	const branch = {
+		...element,
+		openingElement: {
+			...element.openingElement,
+			attributes: attributes.filter((attribute) => attribute !== directive),
+		},
+	};
+	if (!renders_children_once(branch)) return null;
+	/** @type {AST.Statement[]} */
+	const declarations = [];
+	const lowered = lower_output_switches(
+		/** @type {AST.Expression} */ (/** @type {unknown} */ (branch)),
+		declarations,
+		transform_context,
+	);
+	if (!declarations.length) return null;
+	const scope = /** @type {ESTreeJSX.JSXElement} */ (
+		/** @type {unknown} */ (
+			scope_element(
+				b.arrow([], b.block([...declarations, b.return(lowered)])),
+				element,
+				transform_context,
+			)
+		)
+	);
+	return /** @type {AST.Expression} */ (
+		/** @type {unknown} */ ({
+			...scope,
+			openingElement: {
+				...scope.openingElement,
+				attributes: [directive, ...scope.openingElement.attributes],
+			},
+		})
+	);
 }
 
 /**
@@ -3040,7 +3287,20 @@ function lower_child_switches(children, host, declarations, transform_context) {
 			return;
 		}
 		changed = true;
-		lowered.push(...elements);
+		// A case element is a branch: a `@switch` in it lowers in a scope.
+		for (const element of elements) {
+			lowered.push(
+				/** @type {ESTreeJSX.JSXElement} */ (
+					/** @type {unknown} */ (
+						lower_output_switches(
+							/** @type {AST.Expression} */ (/** @type {unknown} */ (element)),
+							declarations,
+							transform_context,
+						)
+					)
+				),
+			);
+		}
 	});
 	return changed ? lowered : null;
 }
@@ -4469,6 +4729,15 @@ function inject_vue_imports(program, transform_context) {
 			transform_context.platform.imports.errorBoundary,
 			'TsrxPendingBody',
 			PENDING_BODY_INTERNAL_NAME,
+		);
+	}
+
+	if (transform_context.needs_scope) {
+		ensure_named_import(
+			program,
+			transform_context.platform.imports.errorBoundary,
+			'TsrxScope',
+			SCOPE_INTERNAL_NAME,
 		);
 	}
 

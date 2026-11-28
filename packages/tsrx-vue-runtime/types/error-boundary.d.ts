@@ -55,3 +55,21 @@ export interface TsrxPendingBodyComponent {
 }
 
 export const TsrxPendingBody: TsrxPendingBodyComponent;
+
+export interface TsrxScopeProps {
+	/** Runs a branch's setup statements and returns what it renders. */
+	content: () => unknown;
+}
+
+export interface TsrxScopeComponent {
+	/** Returns what `content` rendered; `content` runs once per mount. */
+	(props: TsrxScopeProps, ctx?: unknown): Block;
+	props: string[];
+	/**
+	 * Marks it a Vapor component, also to an app with Vue's VDOM interop:
+	 * `true` where Vue's Vapor renderer and a DOM are present, not on a server.
+	 */
+	__vapor?: boolean;
+}
+
+export const TsrxScope: TsrxScopeComponent;

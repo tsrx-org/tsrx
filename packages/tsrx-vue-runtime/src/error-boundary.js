@@ -1,5 +1,5 @@
 /** @import { ComponentInternalInstance, ShallowRef } from 'vue' */
-/** @import { TsrxErrorBoundaryProps, TsrxPendingBodyProps } from '../types/error-boundary' */
+/** @import { TsrxErrorBoundaryProps, TsrxPendingBodyProps, TsrxScopeProps } from '../types/error-boundary' */
 /** @import { VaporBlock, VaporFragment, VaporRenderedBlock, VaporRuntime } from '../types/vapor-runtime' */
 
 import * as Vue from 'vue';
@@ -1180,3 +1180,23 @@ export function TsrxPendingBody(props, ctx) {
 TsrxPendingBody.props = ['content'];
 // A Vapor component in every app (see `TsrxErrorBoundary.__vapor`).
 define_vapor_flag(TsrxPendingBody);
+
+/**
+ * Renders what `content` returns, as its setup. Used by the `@tsrx/vue`
+ * compiler for an `@if` branch or a `@switch` case with setup statements,
+ * and for a branch that holds a `@switch`'s `computed`: Vue runs a
+ * component's setup once per mount, untracked, so those statements run once
+ * each time the branch mounts, as a component's own do, rather than again
+ * whenever what they read changes, which renders the branch again. A
+ * `computed` made there lives as long as the branch.
+ *
+ * @param {TsrxScopeProps} props
+ * @returns {unknown}
+ */
+export function TsrxScope(props) {
+	return props.content();
+}
+
+TsrxScope.props = ['content'];
+// A Vapor component in every app (see `TsrxErrorBoundary.__vapor`).
+define_vapor_flag(TsrxScope);
