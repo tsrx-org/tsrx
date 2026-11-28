@@ -1,4 +1,4 @@
-import { createVaporSSRApp, ref } from 'vue';
+import { createVaporSSRApp, inject, provide, ref } from 'vue';
 
 // In its own file, as element-switch-hydration.test.tsrx is. The components
 // are the ones `vapor-for-ssr.test.js` renders on the server, and
@@ -257,6 +257,22 @@ function shown(html: string = container.innerHTML) {
 	return host.textContent?.replace(/:\d+/g, ':');
 }
 
+function ProvidedChild() @{
+	const value = inject('key', 'none');
+	<b>{value}</b>
+}
+
+function Provides() @{
+	<div>
+		@if (true) {
+			provide('key', 'branch');
+			<p>
+				<ProvidedChild />
+			</p>
+		}
+	</div>
+}
+
 describe('tsrx-vue hydrating a branch or a case that renders through TsrxScope', () => {
 	it.each(cases)(
 		'hydrates %s rendered for %s, keeps its state, then follows',
@@ -310,4 +326,24 @@ describe('tsrx-vue hydrating a branch or a case that renders through TsrxScope',
 			}
 		},
 	);
+
+	it('hydrates what a scope provides, as the server rendered it', async () => {
+		// vapor-for-ssr.test.js renders `Provides` the same way.
+		container.innerHTML = '<div><p><b>branch</b></p></div>';
+		const server_node = container.querySelector('b');
+		const warnings: string[] = [];
+		const app = createVaporSSRApp(Provides);
+		app.config.warnHandler = (message) => {
+			warnings.push(message);
+		};
+		try {
+			app.mount(container);
+			await flush();
+			expect(warnings).toEqual([]);
+			expect(container.querySelector('b')).toBe(server_node);
+			expect(container.textContent).toBe('branch');
+		} finally {
+			app.unmount();
+		}
+	});
 });

@@ -325,6 +325,37 @@ export function ShownComponent({ state }: { state: State }) @{
 	<p v-show={shown}>{'x'}</p>
 }`,
 
+	// The server runs a scope's statements where the branch is rendered.
+	'scope-setup.tsrx': `import { inject, provide } from 'vue';
+function Child() @{
+	const value = inject('key', 'none');
+	<b>{value}</b>
+}
+export function Provides() @{
+	<div>
+		@if (true) {
+			provide('key', 'branch');
+			<p>
+				<Child />
+			</p>
+		}
+	</div>
+}
+export function Throws() @{
+	<div>
+		@try {
+			<p>
+				@if (true) {
+					throw new Error('boom');
+					<b>{'fine'}</b>
+				}
+			</p>
+		} @catch (error) {
+			<i>{(error as Error).message}</i>
+		}
+	</div>
+}`,
+
 	// scope-hydration.test.tsrx hydrates what these render.
 	'scope.tsrx': `import { ref } from 'vue';
 
@@ -776,5 +807,34 @@ describe('[vue] a branch or a case that renders through TsrxScope on the server'
 				off: '<p><!----></p>',
 			},
 		});
+	});
+});
+
+describe("[vue] a TsrxScope's statements on the server", () => {
+	// On the server Vue renders the scope after the content around it has
+	// returned: \`scope_content\` runs the statements where the branch is
+	// rendered instead, as the IIFE they replace ran.
+	it('run in the setup of the component that renders the branch', async () => {
+		const { Provides } = await server.ssrLoadModule('/scope-setup.tsrx');
+		const app = createSSRApp(Provides);
+		/** @type {string[]} */
+		const warnings = [];
+		app.config.warnHandler = (message) => {
+			warnings.push(message);
+		};
+		expect(await renderToString(app)).toBe('<div><p><b>branch</b></p></div>');
+		expect(warnings).toEqual([]);
+	});
+
+	it('send a throw to the @catch around them', async () => {
+		const { Throws } = await server.ssrLoadModule('/scope-setup.tsrx');
+		const app = createSSRApp(Throws);
+		/** @type {unknown[]} */
+		const errors = [];
+		app.config.errorHandler = (error) => {
+			errors.push(error);
+		};
+		expect(await renderToString(app)).toBe('<div><i>boom</i></div>');
+		expect(errors).toEqual([]);
 	});
 });

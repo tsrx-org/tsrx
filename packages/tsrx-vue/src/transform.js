@@ -255,6 +255,8 @@ const PENDING_BODY_INTERNAL_NAME = '__TsrxPendingBody';
 
 /** Local name for the `TsrxScope` a branch with setup statements renders in. */
 const SCOPE_INTERNAL_NAME = '__TsrxScope';
+/** Local name for the `scope_content` that wraps a scope's `content`. */
+const SCOPE_CONTENT_INTERNAL_NAME = IDENTIFIER_OBFUSCATION_PREFIX + 'scope_content';
 
 /**
  * @param {ESTreeJSX.JSXRenderNode} try_content
@@ -2403,7 +2405,9 @@ function reads_owner(node) {
 }
 
 /**
- * `<__TsrxScope content={content} />`: `TsrxScope` runs `content` as its setup.
+ * `<__TsrxScope content={scope_content(content)} />`: `TsrxScope` runs
+ * `content` as its setup, and on the server `scope_content` runs it where
+ * the branch is rendered.
  *
  * @param {AST.ArrowFunctionExpression} content
  * @param {AST.Node} source
@@ -2417,7 +2421,12 @@ function scope_element(content, source, transform_context) {
 			b.jsx_element_fresh(
 				b.jsx_opening_element(
 					b.jsx_id(SCOPE_INTERNAL_NAME),
-					[b.jsx_attribute(b.jsx_id('content'), to_jsx_expression_container(content))],
+					[
+						b.jsx_attribute(
+							b.jsx_id('content'),
+							to_jsx_expression_container(b.call(SCOPE_CONTENT_INTERNAL_NAME, content)),
+						),
+					],
 					true,
 				),
 				null,
@@ -3010,22 +3019,23 @@ function lower_scope_switches(element, transform_context) {
 	if (name.type !== 'JSXIdentifier') return element;
 	if (name.name === SCOPE_INTERNAL_NAME) {
 		const attributes = element.openingElement.attributes.map((attribute) => {
-			if (
-				attribute.type !== 'JSXAttribute' ||
-				attribute.name.type !== 'JSXIdentifier' ||
-				attribute.name.name !== 'content' ||
-				attribute.value?.type !== 'JSXExpressionContainer' ||
-				attribute.value.expression.type !== 'ArrowFunctionExpression'
-			) {
-				return attribute;
-			}
-			const content = lower_setup_switches(
-				/** @type {AST.ArrowFunctionExpression} */ (
-					/** @type {unknown} */ (attribute.value.expression)
-				),
-				transform_context,
-			);
-			return content ? { ...attribute, value: to_jsx_expression_container(content) } : attribute;
+			const call =
+				attribute.type === 'JSXAttribute' &&
+				attribute.name.type === 'JSXIdentifier' &&
+				attribute.name.name === 'content' &&
+				attribute.value?.type === 'JSXExpressionContainer' &&
+				attribute.value.expression.type === 'CallExpression'
+					? /** @type {AST.CallExpression} */ (/** @type {unknown} */ (attribute.value.expression))
+					: null;
+			const arrow = call?.arguments[0];
+			if (!call || arrow?.type !== 'ArrowFunctionExpression') return attribute;
+			const content = lower_setup_switches(arrow, transform_context);
+			return content
+				? {
+						...attribute,
+						value: to_jsx_expression_container({ ...call, arguments: [content] }),
+					}
+				: attribute;
 		});
 		return attributes.some(
 			(attribute, index) => attribute !== element.openingElement.attributes[index],
@@ -4797,6 +4807,12 @@ function inject_vue_imports(program, transform_context) {
 			transform_context.platform.imports.errorBoundary,
 			'TsrxScope',
 			SCOPE_INTERNAL_NAME,
+		);
+		ensure_named_import(
+			program,
+			transform_context.platform.imports.errorBoundary,
+			'scope_content',
+			SCOPE_CONTENT_INTERNAL_NAME,
 		);
 	}
 

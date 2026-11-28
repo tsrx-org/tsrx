@@ -73,3 +73,9 @@ export interface TsrxScopeComponent {
 }
 
 export const TsrxScope: TsrxScopeComponent;
+
+/**
+ * What the compiler passes `TsrxScope` as `content`: on the server, runs
+ * `content` now and returns what it rendered; elsewhere returns `content`.
+ */
+export function scope_content(content: () => unknown): () => unknown;

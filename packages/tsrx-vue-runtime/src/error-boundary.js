@@ -1212,3 +1212,21 @@ export function TsrxScope(props, ctx) {
 TsrxScope.props = ['content'];
 // A Vapor component in every app (see `TsrxErrorBoundary.__vapor`).
 define_vapor_flag(TsrxScope);
+
+/**
+ * The `content` the `@tsrx/vue` compiler passes `TsrxScope`. On the server,
+ * Vue renders the scope as a functional component after the content around
+ * it has returned, outside any setup, so this runs `content` right away, as
+ * the branch's IIFE ran before `TsrxScope`: its statements run in the setup
+ * of the component that renders the branch, where `provide` and
+ * `onServerPrefetch` work, and a throw reaches the `@catch` around it.
+ * Elsewhere it returns `content`, for `TsrxScope` to run as its setup.
+ *
+ * @param {() => unknown} content
+ * @returns {() => unknown}
+ */
+export function scope_content(content) {
+	if (!renders_on_server()) return content;
+	const rendered = content();
+	return () => rendered;
+}

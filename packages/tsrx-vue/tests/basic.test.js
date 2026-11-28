@@ -2823,13 +2823,13 @@ export function Card(${params}: any) @{
 		// A branch with setup statements renders through \`TsrxScope\`, which
 		// takes \`v-if\` and \`v-else\`; a \`<template>\` can't.
 		expect(flat(code)).toContain(
-			flat(`<b v-if={on}>{'on'}</b><__TsrxScope v-else content={() => {
+			flat(`<b v-if={on}>{'on'}</b><__TsrxScope v-else content={_$_scope_content(() => {
 				const off = 'off';
 				return <i>{off}</i>;
-			}} /><__TsrxScope v-if={on} content={() => {
+			})} /><__TsrxScope v-if={on} content={_$_scope_content(() => {
 				const label = 'setup';
 				return <b>{label}</b>;
-			}} />`),
+			})} />`),
 		);
 		expect(code).toContain("{on ? <template><b>{'tpl'}</b></template> : null}");
 		// An authored \`v-else\` or \`v-else-if\` after the choice, past \`{null}\`,
@@ -4000,10 +4000,10 @@ describe('@tsrx/vue @switch rows', () => {
 			'List.tsrx',
 		).code;
 		expect(flat(setup)).toContain(
-			flat(`? <__TsrxScope content={() => {
+			flat(`? <__TsrxScope content={_$_scope_content(() => {
 				const label = row.value.title + '!';
 				return <li>{label}</li>;
-			}} />`),
+			})} />`),
 		);
 		expect(setup).toContain('const _$_case_1 = _$_vapor_computed(');
 
@@ -4488,38 +4488,40 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		// The branch is a component, whose setup runs its statements once each
 		// time it mounts; \`v-if\` / \`v-else-if\` / \`v-else\` take it.
 		expect(errors).toEqual([]);
-		expect(code).toContain("import { TsrxScope as __TsrxScope } from '@tsrx/vue/error-boundary';");
+		expect(code).toContain(
+			"import { TsrxScope as __TsrxScope, scope_content as _$_scope_content } from '@tsrx/vue/error-boundary';",
+		);
 		expect(flat(code)).toContain(
-			flat(`<__TsrxScope v-if={props.on} content={() => {
+			flat(`<__TsrxScope v-if={props.on} content={_$_scope_content(() => {
 				const label = props.name + '!';
 				return <b>{label}</b>;
-			}} /><i v-else-if={props.away}>{'away'}</i><__TsrxScope v-else content={() => {
+			})} /><i v-else-if={props.away}>{'away'}</i><__TsrxScope v-else content={_$_scope_content(() => {
 				const off = 'off';
 				return <u>{off}</u>;
-			}} />{props.name}`),
+			})} />{props.name}`),
 		);
 		// The ref a spread host element reads is a statement of its branch.
 		expect(flat(code)).toMatch(
-			/<__TsrxScope v-if=\{props\.on\} content=\{\(\) =>\{let App__spread_props\d+; return <p \{\.\.\./,
+			/<__TsrxScope v-if=\{props\.on\} content=\{_\$_scope_content\(\(\) =>\{let App__spread_props\d+; return <p \{\.\.\./,
 		);
 		// A component's child too, as \`@if\` without \`@else\` takes \`v-if\` there.
 		expect(flat(code)).toContain(
-			flat(`<Wrap><__TsrxScope v-if={props.on} content={() => {
+			flat(`<Wrap><__TsrxScope v-if={props.on} content={_$_scope_content(() => {
 				const label = 'slot';
 				return <b>{label}</b>;
-			}} /></Wrap>`),
+			})} /></Wrap>`),
 		);
 		// So does a \`VaporFor\` row, in its fragment.
 		expect(flat(code)).toContain(
-			flat(`{(row) => <>{row.value.on ? <__TsrxScope content={() => {
+			flat(`{(row) => <>{row.value.on ? <__TsrxScope content={_$_scope_content(() => {
 				const label = row.value.title + '!';
 				return <li>{label}</li>;
-			}} /> : <li>{row.value.title}</li>}</>}`),
+			})} /> : <li>{row.value.title}</li>}</>}`),
 		);
 
 		const direct = compile(source, 'App.tsrx', { runtimeImports: 'direct' }).code;
 		expect(direct).toContain(
-			"import { TsrxScope as __TsrxScope } from '@tsrx/vue-runtime/error-boundary';",
+			"import { TsrxScope as __TsrxScope, scope_content as _$_scope_content } from '@tsrx/vue-runtime/error-boundary';",
 		);
 		expect(compile_to_volar_mappings(source, 'App.tsrx').code).not.toContain('TsrxScope');
 	});
@@ -4544,7 +4546,7 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 
 		// The case takes \`v-if\` like any element case.
 		expect(flat(code)).toMatch(
-			/<__TsrxScope v-if=\{\(typeof _\$_case_1\.value[^]*=== 0\} content=\{\(\) =>\{const label = props\.kind \+ '!'; return <b>\{label\}<\/b>;\}\} \/><i v-else-if=/,
+			/<__TsrxScope v-if=\{\(typeof _\$_case_1\.value[^]*=== 0\} content=\{_\$_scope_content\(\(\) =>\{const label = props\.kind \+ '!'; return <b>\{label\}<\/b>;\}\)\} \/><i v-else-if=/,
 		);
 	});
 
@@ -4618,14 +4620,14 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		);
 		// A branch element becomes a scope that declares the \`computed\`.
 		expect(flat(code)).toMatch(
-			/<__TsrxScope v-if=\{props\.on\} content=\{\(\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*\}\); return <section><b v-if=/,
+			/<__TsrxScope v-if=\{props\.on\} content=\{_\$_scope_content\(\(\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*\}\); return <section><b v-if=/,
 		);
 		// So does a scope's content, and a case element.
 		expect(flat(code)).toMatch(
-			/content=\{\(\) =>\{const label = 'statements'; const _\$_case_\d+ = _\$_vapor_computed\(/,
+			/content=\{_\$_scope_content\(\(\) =>\{const label = 'statements'; const _\$_case_\d+ = _\$_vapor_computed\(/,
 		);
 		expect(flat(code)).toMatch(
-			/=== 0\} content=\{\(\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*\}\); return <section><b v-if=/,
+			/=== 0\} content=\{_\$_scope_content\(\(\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*\}\); return <section><b v-if=/,
 		);
 		// A \`VaporFor\` row's slot runs once per row.
 		expect(flat(code)).toMatch(
