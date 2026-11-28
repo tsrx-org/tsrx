@@ -475,7 +475,7 @@ function line_gap(virtualCode, range, start, end) {
  * and of those ending together the longest and last first) and by where they
  * start (`by_start`: ascending, and of those starting together the shortest
  * and first first); and the offsets of the source's line breaks (`breaks`,
- * the `\r` of a `\r\n`). Built once for each version of the mappings.
+ * the `\n` of a `\r\n`). Built once for each version of the mappings.
  * @type {WeakMap<object, { code: string, by_end: SourceToken[], by_start: SourceToken[], breaks: number[] }>}
  */
 const source_tokens = new WeakMap();
@@ -516,8 +516,9 @@ function get_source_tokens(virtualCode) {
 	const breaks = [];
 	for (let i = 0; i < code.length; i++) {
 		const char = code.charCodeAt(i);
+		// A `\r\n` counts at its `\n`: an offset between the two is a position
+		// before the `\r`, on the line it ends.
 		if (char === 10 || (char === 13 && code.charCodeAt(i + 1) !== 10)) breaks.push(i);
-		else if (char === 13) breaks.push(i++);
 	}
 	const index = {
 		code,

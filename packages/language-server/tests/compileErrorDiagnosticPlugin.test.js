@@ -1145,6 +1145,26 @@ describe('compile error diagnostic plugin — an error on code with no mapping t
 		).toEqual([{ source: 'TSRX', text: 'export', offset: 20 }]);
 	});
 
+	// A CRLF line break counts at its `\n`: the range the editor shows, which
+	// ends between the `\r` and the `\n`, is on the error's line, and so is
+	// the code a new place would have, so the error stays.
+	it('keeps an error shown on its own line across the end of a CRLF line break', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'CrlfSourceBoundary',
+				[
+					{ ...mapping(20, 50, 7, true), generatedLengths: [6] },
+					mapping(7, 20, 5, true),
+					mapping(0, 50, 6, false),
+				],
+				0,
+				6,
+				'z'.repeat(100),
+				`export const a = 1;${String.fromCharCode(13, 10)}export const b = 2;\nexport const c = 3;\n`,
+			),
+		).toEqual([{ source: 'TSRX', text: `${String.fromCharCode(13, 10)}export`, offset: 19 }]);
+	});
+
 	// Code no nearer the error than the range the editor shows is no better
 	// place: the error stays there.
 	it('keeps an error the editor shows outside it when no code is nearer', async () => {
