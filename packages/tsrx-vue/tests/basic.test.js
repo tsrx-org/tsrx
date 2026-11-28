@@ -4796,6 +4796,53 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		expect(code).toMatch(/\{props\.on\s*\? \(\(\) => \{/);
 	});
 
+	it("leaves no trace of a branch's @switch lowering that it drops for a <slot>", () => {
+		// The branch element's \`@switch\` lowers first; the \`<slot>\` then keeps
+		// the branch, and its \`@switch\`, as before.
+		const branch = `@if (props.on) {
+			<p>
+				@switch (props.k) {
+					@case 1: {
+						<b>{'one'}</b>
+					}
+					@default: {
+						<i>{'other'}</i>
+					}
+				}
+				<slot />
+			</p>
+		}`;
+		const alone = compile(
+			`export function App(props: { on: boolean; k: number }) @{
+				<div>
+					${branch}
+				</div>
+			}`,
+			'App.tsrx',
+		).code;
+		expect(alone).not.toContain('_$_vapor_computed');
+		expect(alone).not.toContain('TsrxScope');
+		expect(alone.match(/return null;/g)).toHaveLength(1);
+
+		const beside = compile(
+			`export function App(props: { on: boolean; k: number }) @{
+				<div>
+					${branch}
+					<section>
+						@switch (props.k) {
+							@case 1: {
+								<b>{'one'}</b>
+							}
+						}
+					</section>
+				</div>
+			}`,
+			'App.tsrx',
+		).code;
+		expect(beside).toContain('const _$_case_1 = _$_vapor_computed(');
+		expect(beside).not.toContain('_$_case_2');
+	});
+
 	it('keeps the shared lowering for a case or a row branch that calls useAttrs', () => {
 		const { code } = compile(
 			`import { useAttrs } from 'vue';

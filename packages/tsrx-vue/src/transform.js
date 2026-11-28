@@ -3395,6 +3395,13 @@ function scope_branch_switches(element, transform_context) {
 		},
 	};
 	if (!renders_children_once(branch)) return null;
+	// Dropping the lowering below puts back what it recorded: the imports it
+	// asked for and the `_$_case` numbers it took.
+	const recorded = {
+		needs_scope: transform_context.needs_scope,
+		needs_vapor_computed: transform_context.needs_vapor_computed,
+		switches: switch_counts.get(transform_context),
+	};
 	/** @type {AST.Statement[]} */
 	const declarations = [];
 	const lowered = lower_output_switches(
@@ -3417,7 +3424,13 @@ function scope_branch_switches(element, transform_context) {
 					})
 				);
 	}
-	if (reads_owner(branch)) return null;
+	if (reads_owner(branch)) {
+		transform_context.needs_scope = recorded.needs_scope;
+		transform_context.needs_vapor_computed = recorded.needs_vapor_computed;
+		if (recorded.switches === undefined) switch_counts.delete(transform_context);
+		else switch_counts.set(transform_context, recorded.switches);
+		return null;
+	}
 	const scope = /** @type {ESTreeJSX.JSXElement} */ (
 		/** @type {unknown} */ (
 			scope_element(
