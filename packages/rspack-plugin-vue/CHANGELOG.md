@@ -1,5 +1,15 @@
 # @tsrx/rspack-plugin-vue
 
+## 0.1.18
+
+### Patch Changes
+
+- Updated dependencies
+  [[`16cab6d`](https://github.com/tsrx-org/tsrx/commit/16cab6dd126fad920bb8b236c7003e07117a879f),
+  [`50c2ecf`](https://github.com/tsrx-org/tsrx/commit/50c2ecf6de886fe8ec3b89991f17cb522df1bb60),
+  [`0c6435a`](https://github.com/tsrx-org/tsrx/commit/0c6435aa7b72adc952819125d2d3c4b09386e1c3)]:
+  - @tsrx/vue@0.5.0
+
 ## 0.1.17
 
 ### Patch Changes

@@ -1,5 +1,30 @@
 # @tsrx/language-server
 
+## 0.7.18
+
+### Patch Changes
+
+- [#1543](https://github.com/tsrx-org/tsrx/pull/1543)
+  [`828f628`](https://github.com/tsrx-org/tsrx/commit/828f628d7006d03cea8cc7e0512dfe503574bf6e)
+  Thanks [@jonkwheeler](https://github.com/jonkwheeler)! - The editor now shows
+  `TSRX2008` for a `break` right in an `@switch` case on a line of its own on
+  React, Preact, Vue and Hono, with TypeScript validation on or off: on the code
+  before the `break`, such as the case's test, where Solid already showed it, also
+  in an `@switch` with many cases. The editor's code leaves such a `break` out,
+  and the `@switch`'s own mapping over it doesn't report diagnostics, so the
+  language server put the error on code that doesn't map back to the source, and
+  the editor dropped it, or in a larger `@switch` showed it on another case's
+  code. When the editor would drop a compile error's range, or show it only on
+  other code, the language server now looks for a place the editor shows it on:
+  the tokens in the range that report it, its ends, or else the nearest code that
+  reports it. A range the editor already showed on the error stays where it was.
+  This also shows `TSRX2010` on an `@switch` used as a statement outside a
+  template, as on the other directives, and moves a few errors the editor showed
+  beside their code onto it, such as a rest parameter's `TS1014` onto its `...`,
+  where TypeScript's own `TS1014` then stands for both.
+- Updated dependencies []:
+  - @tsrx/typescript-plugin@0.7.18
+
 ## 0.7.17
 
 ### Patch Changes
