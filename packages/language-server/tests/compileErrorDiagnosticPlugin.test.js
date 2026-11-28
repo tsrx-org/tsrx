@@ -712,6 +712,694 @@ export {};`,
 	});
 });
 
+// The editor shows a compile error only where the mappings that report it map
+// its range back to the source. One whose range lands on other mappings gets
+// the nearest code that does.
+describe('compile error diagnostic plugin — an error on code with no mapping that reports it', () => {
+	const off = /** @type {Partial<LanguageServiceEnvironment>} */ ({
+		async getConfiguration(/** @type {string} */ section) {
+			return /** @type {any} */ (section === 'tsrx.validate.enable' ? false : undefined);
+		},
+	});
+
+	// The editor's code leaves out a `break` right in an `@switch` case, and the
+	// directive's own mapping over it doesn't report diagnostics, so its TSRX2008
+	// goes on the code before it, the case's test, as Solid's code always had it.
+	it.each(['react', 'preact', 'solid', 'vue', 'hono', 'hono-dom'])(
+		"shows a direct case `break`'s TSRX2008 on the case's test on %s, with validation on and off",
+		async (target) => {
+			const source =
+				'export function App({ x }: { x: number }) @{\n\t<div>\n\t\t@switch (x) {\n\t\t\t@case 1: {\n\t\t\t\tbreak;\n\t\t\t\t<b />\n\t\t\t}\n\t\t}\n\t</div>\n}\n';
+			const expected = [{ source: 'TSRX', text: '1', offset: source.indexOf('1: {') }];
+			for (const [name, env] of /** @type {const} */ ([
+				['DirectCaseBreak', undefined],
+				['DirectCaseBreakOff', off],
+			])) {
+				const { document, service, uri } = create_typescript_harness(
+					source,
+					[createCompileErrorDiagnosticPlugin(), createTypeScriptDiagnosticFilterPlugin()],
+					`${target}/${name}.tsrx`,
+					env,
+				);
+				const diagnostics = await service.getDiagnostics(uri);
+				expect(reported(document, diagnostics, 'TSRX2008')).toEqual(expected);
+			}
+		},
+	);
+
+	it.each(['react', 'preact', 'solid', 'vue', 'hono', 'hono-dom'])(
+		"shows each direct case `break`'s TSRX2008 on the code before it on %s",
+		async (target) => {
+			const source = `export function App({ x }: { x: number }) @{
+	@switch (x) {
+		@case 1: {
+			const q = 1;
+			break;
+			<b>{q}</b>
+		}
+		@case 2: {
+			break;
+			<i />
+		}
+	}
+}
+`;
+			const { document, service, uri } = create_service_harness(
+				source,
+				[createCompileErrorDiagnosticPlugin()],
+				`${target}/DirectCaseBreaks.tsrx`,
+			);
+			const diagnostics = await service.getDiagnostics(uri);
+			expect(reported(document, diagnostics, 'TSRX2008')).toEqual([
+				{ source: 'TSRX', text: ';', offset: source.indexOf('1;') + 1 },
+				{ source: 'TSRX', text: '2', offset: source.indexOf('2: {') },
+			]);
+		},
+	);
+
+	// In a larger `@switch`, a span clamped into the directive's own mapping
+	// can land on another case's code, which the editor shows: such a range is
+	// no place for the error either, so each `break` gets the code before it.
+	it.each(
+		['react', 'preact', 'solid', 'vue', 'hono', 'hono-dom'].flatMap((target) => [
+			[target, 8],
+			[target, 40],
+		]),
+	)(
+		"shows each direct case `break`'s TSRX2008 in its own case on %s, with %i cases",
+		async (target, count) => {
+			const cases = Array.from(
+				{ length: count },
+				(_, i) =>
+					`\t\t@case ${i}: {\n\t\t\tconst q${i} = ${i};\n\t\t\tbreak;\n\t\t\t<b>{q${i}}</b>\n\t\t}\n`,
+			).join('');
+			const source = `export function App(x: number) @{\n\t@switch (x) {\n${cases}\t}\n}\n`;
+			const { document, service, uri } = create_service_harness(
+				source,
+				[createCompileErrorDiagnosticPlugin()],
+				`${target}/DirectCaseBreaksLargeSwitch${count}.tsrx`,
+			);
+			const diagnostics = await service.getDiagnostics(uri);
+			expect(reported(document, diagnostics, 'TSRX2008')).toEqual(
+				Array.from({ length: count }, (_, i) => ({
+					source: 'TSRX',
+					text: ';',
+					offset: source.indexOf(`q${i} = ${i};`) + `q${i} = ${i}`.length,
+				})),
+			);
+		},
+	);
+
+	// A `break` right after the case's `{` gets an anchor of its own; the next
+	// one, on a line of its own, isn't shown on that anchor too.
+	it.each(['react', 'preact', 'vue', 'hono', 'hono-dom'])(
+		"shows a direct case `break`'s TSRX2008 apart from another `break`'s anchor on %s",
+		async (target) => {
+			const source = `export function App(x: number) @{
+	@switch (x) {
+		@case 1: { break;
+			break;
+			<b />
+		}
+	}
+}
+`;
+			const { document, service, uri } = create_service_harness(
+				source,
+				[createCompileErrorDiagnosticPlugin()],
+				`${target}/DirectCaseBreakAfterAnchor.tsrx`,
+			);
+			const diagnostics = await service.getDiagnostics(uri);
+			expect(reported(document, diagnostics, 'TSRX2008')).toEqual([
+				{ source: 'TSRX', text: '1', offset: source.indexOf('1: {') },
+				{ source: 'TSRX', text: 'break', offset: source.indexOf('break') },
+			]);
+		},
+	);
+
+	// The code before the `break` here shares its generated code with the
+	// repeated modifier's anchor, so the editor would show the error on that
+	// modifier's TS1028: it goes on the code before, which the editor shows it
+	// on.
+	it.each(['react', 'preact', 'vue', 'hono', 'hono-dom'])(
+		"keeps a direct case `break`'s TSRX2008 off another error's place on %s",
+		async (target) => {
+			const source = `export function App(x: number) @{
+	@switch (x) {
+		@case 1: {
+			class Q { public public x; }
+			break;
+			<b />
+		}
+	}
+}
+`;
+			const { document, service, uri } = create_service_harness(
+				source,
+				[createCompileErrorDiagnosticPlugin()],
+				`${target}/DirectCaseBreakAfterModifier.tsrx`,
+			);
+			const diagnostics = await service.getDiagnostics(uri);
+			expect(reported(document, diagnostics, 'TSRX2008')).toEqual([
+				{ source: 'TSRX', text: 'public', offset: source.indexOf('public public') },
+			]);
+		},
+	);
+
+	// Main shows these errors on other code than their own, on their own line:
+	// code no nearer them is no better place, so they stay, two errors apart
+	// and the `,` error on the `;` rather than on another parameter.
+	it.each(['react', 'preact', 'solid', 'vue', 'hono', 'hono-dom'])(
+		'keeps errors the editor shows beside them on their own line on %s',
+		async (target) => {
+			const duplicate = 'class A { m(x, public ...x) {} }\n';
+			const comma = 'const f = (a, public ...r,) => a;\n';
+			for (const [name, source, code, expected] of /** @type {const} */ ([
+				['DuplicateParameter', duplicate, 'TS2300', [12, 18]],
+				['RestParameterComma', comma, 'TS1013', [32]],
+			])) {
+				const { document, service, uri } = create_service_harness(
+					source,
+					[createCompileErrorDiagnosticPlugin()],
+					`${target}/${name}.tsrx`,
+				);
+				const diagnostics = await service.getDiagnostics(uri);
+				expect(reported(document, diagnostics, code).map((found) => found.offset)).toEqual(
+					expected,
+				);
+			}
+		},
+	);
+
+	// A lone `\r` is a line break too: code ten of them above the error is no
+	// nearer than the output on the line below it, where main shows it.
+	it.each(['react', 'preact', 'solid', 'vue', 'hono', 'hono-dom'])(
+		'counts a lone CR as a line between an error and its places on %s',
+		async (target) => {
+			const source =
+				'export function App(x: number) @{\n @switch (x) {\n' +
+				`  @case 0: {    const q0 = 0;${' '.repeat(14)}<b>{q0}</b>${' '.repeat(36)}}\n` +
+				`  @case 2: {\n   const q2 = 2;${String.fromCharCode(13).repeat(10)}   break;\n` +
+				`   <b>{q2}</b>   }   @case 3: {\n   const q3 = 3;${' '.repeat(14)}<b>{q3}</b>   }  }\n}\n`;
+			const { document, service, uri } = create_service_harness(
+				source,
+				[createCompileErrorDiagnosticPlugin()],
+				`${target}/LoneCarriageReturnLines.tsrx`,
+			);
+			const diagnostics = await service.getDiagnostics(uri);
+			// Solid shows it on the `;` before, as on main.
+			expect(reported(document, diagnostics, 'TSRX2008').map((found) => found.offset)).toEqual([
+				target === 'solid' ? source.indexOf('2;') + 1 : source.indexOf('<b>{q2}'),
+			]);
+		},
+	);
+
+	// An `@switch` used as a statement where no template is, whose own mapping
+	// spans the error's range exactly, shows it on its code, as `@if` does.
+	it('shows TSRX2010 on an @switch statement outside a template', async () => {
+		const source =
+			'export function Test(ok: boolean, value: number) {\n\t@if (ok) { <div /> } @else { <span /> };\n\t@switch (value) { @case 1: { <div /> } @default: { <span /> } };\n}\n';
+		const { document, diagnostics } = await diagnostics_for(source);
+		expect(reported(document, diagnostics, 'TSRX2010')).toEqual([
+			{
+				source: 'TSRX',
+				text: 'ok) { <div /> } @else { <span />',
+				offset: source.indexOf('ok) {'),
+			},
+			{
+				source: 'TSRX',
+				text: 'value) { @case 1: { <div /> } @default: { <span />',
+				offset: source.indexOf('value) {'),
+			},
+		]);
+	});
+
+	/**
+	 * A mapping of one source range.
+	 * @param {number} source_offset
+	 * @param {number} generated_offset
+	 * @param {number} length
+	 * @param {import('@volar/language-service').CodeInformation['verification']} verification
+	 */
+	function mapping(source_offset, generated_offset, length, verification) {
+		return {
+			sourceOffsets: [source_offset],
+			generatedOffsets: [generated_offset],
+			lengths: [length],
+			generatedLengths: [length],
+			data: { verification, customData: {} },
+		};
+	}
+
+	/**
+	 * The TSRX2008 diagnostics for one over `[pos, end)` when the virtual code
+	 * has only `mappings`, as a compiler may make them, and, if given, the
+	 * `generated` code.
+	 * @param {string} name
+	 * @param {ReturnType<typeof mapping>[]} mappings
+	 * @param {number} pos
+	 * @param {number} end
+	 * @param {string} [generated]
+	 * @param {string} [source]
+	 */
+	async function diagnostics_with_mappings(
+		name,
+		mappings,
+		pos,
+		end,
+		generated,
+		source = 'export const a = 1;\nexport const b = 2;\nexport const c = 3;\n',
+	) {
+		const { document, service, uri, language } = create_service_harness(
+			source,
+			[createCompileErrorDiagnosticPlugin()],
+			`react/${name}.tsrx`,
+		);
+		const virtual_code = /** @type {any} */ (language.scripts.get(uri)?.generated?.root);
+		virtual_code.mappings = mappings;
+		if (generated !== undefined) {
+			virtual_code.snapshot = {
+				getText: (/** @type {number} */ start, /** @type {number} */ end) =>
+					generated.substring(start, end),
+				getLength: () => generated.length,
+				getChangeRange: () => undefined,
+			};
+		}
+		virtual_code.usageErrors = [
+			Object.assign(new Error('Invalid jump'), { code: 'TSRX2008', type: 'usage', pos, end }),
+		];
+		const diagnostics = await service.getDiagnostics(uri);
+		return reported(document, diagnostics, 'TSRX2008');
+	}
+
+	// A token whose `verification` object rejects the error is no place for it,
+	// though it reports other diagnostics, while the error's ends map back.
+	it("maps an error through the mappings that report it, not a token whose 'shouldReport' rejects it", async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'RejectingToken',
+				[
+					mapping(0, 0, 30, false),
+					mapping(7, 7, 0, true),
+					mapping(18, 18, 0, true),
+					mapping(13, 40, 1, { shouldReport: (source) => source !== DIAGNOSTIC_SOURCE }),
+				],
+				7,
+				18,
+			),
+		).toEqual([{ source: 'TSRX', text: 'const a = 1', offset: 7 }]);
+	});
+
+	it("shows an error with no mapping on the nearest code that reports it, not code whose 'shouldReport' rejects it", async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'RejectingNearest',
+				[
+					mapping(0, 0, 6, true),
+					mapping(7, 7, 5, { shouldReport: (_source, code) => code !== 'TSRX2008' }),
+				],
+				14,
+				16,
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
+	});
+
+	// Where the editor would drop the error's own range, the nearest code that
+	// reports it is the place for it, not code whose `verification` object
+	// rejects it, though the editor shows that through another mapping.
+	it("shows a dropped error on the nearest code that reports it, past code whose 'shouldReport' rejects it", async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'RejectingNearestDropped',
+				[
+					mapping(14, 50, 2, false),
+					mapping(0, 0, 6, true),
+					mapping(7, 40, 5, { shouldReport: () => false }),
+					mapping(27, 40, 5, true),
+				],
+				14,
+				16,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
+	});
+
+	// The nearest code before reported any diagnostic. When the editor shows the
+	// error through another mapping of the same generated code, it stays there.
+	it("keeps an error with no mapping where the editor shows it through code whose 'shouldReport' rejects it", async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'RejectingNearestShown',
+				[
+					mapping(0, 0, 6, true),
+					mapping(7, 40, 5, { shouldReport: () => false }),
+					mapping(27, 40, 5, true),
+				],
+				14,
+				16,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
+	});
+
+	// An error whose ends both map to one generated character maps back to an
+	// empty range, which is no code to show it on.
+	it('shows an error whose ends map to one point on the nearest code instead', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'EmptyEnds',
+				[
+					mapping(27, 50, 5, false),
+					mapping(20, 20, 6, true),
+					mapping(27, 40, 0, true),
+					mapping(32, 40, 0, true),
+				],
+				27,
+				32,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 20 }]);
+	});
+
+	// A source range over only a `\r` is empty in the editor, as a position
+	// between it and its `\n` is one before it, so it is no code to show the
+	// error on, though it is in the error's range.
+	it('shows an error whose range maps to a lone CR in it on the nearest code instead', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'LoneCarriageReturn',
+				[
+					mapping(30, 50, 4, false),
+					mapping(31, 10, 1, true),
+					mapping(30, 10, 0, true),
+					mapping(34, 11, 0, true),
+					mapping(0, 20, 3, true),
+				],
+				30,
+				34,
+				'x'.repeat(80),
+				`${'x'.repeat(31)}${String.fromCharCode(13, 10)}${'x'.repeat(80)}`,
+			),
+		).toEqual([{ source: 'TSRX', text: 'xxx', offset: 0 }]);
+	});
+
+	// The editor maps the range as positions, and one inside a CRLF line break
+	// moves to before it: an error whose range the editor shows that way, on
+	// the error, stays (here through another error's anchor, which the
+	// fallback would leave out).
+	it('keeps an error on the range the editor shows it on, across a CRLF line break', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'CrlfEnd',
+				[
+					{
+						...mapping(30, 1, 2, true),
+						data: { verification: true, customData: { diagnosticAnchor: true } },
+					},
+					mapping(17, 20, 1, true),
+					mapping(30, 1, 3, false),
+				],
+				30,
+				33,
+				`abc${String.fromCharCode(13, 10)}${'z'.repeat(115)}`,
+			),
+		).toEqual([{ source: 'TSRX', text: 'st', offset: 30 }]);
+	});
+
+	// A range the editor shows only on other code, on another line, is no
+	// place for the error either when code on its own line is: it goes there.
+	it('moves an error the editor shows only outside it, across a CRLF line break', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'CrlfEndOutside',
+				[
+					mapping(10, 1, 2, true),
+					mapping(17, 20, 1, true),
+					mapping(20, 30, 6, true),
+					mapping(30, 1, 3, false),
+				],
+				30,
+				33,
+				`abc${String.fromCharCode(13, 10)}${'z'.repeat(115)}`,
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 20 }]);
+	});
+
+	// A CRLF line break counts at its `\n`: the range the editor shows, which
+	// ends between the `\r` and the `\n`, is on the error's line, and so is
+	// the code a new place would have, so the error stays.
+	it('keeps an error shown on its own line across the end of a CRLF line break', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'CrlfSourceBoundary',
+				[
+					{ ...mapping(20, 50, 7, true), generatedLengths: [6] },
+					mapping(7, 20, 5, true),
+					mapping(0, 50, 6, false),
+				],
+				0,
+				6,
+				'z'.repeat(100),
+				`export const a = 1;${String.fromCharCode(13, 10)}export const b = 2;\nexport const c = 3;\n`,
+			),
+		).toEqual([{ source: 'TSRX', text: `${String.fromCharCode(13, 10)}export`, offset: 19 }]);
+	});
+
+	// Code no nearer the error than the range the editor shows is no better
+	// place: the error stays there.
+	it('keeps an error the editor shows outside it when no code is nearer', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'OutsideNoNearer',
+				[mapping(7, 1, 3, true), mapping(17, 20, 1, true), mapping(30, 1, 3, false)],
+				30,
+				33,
+				'z'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'con', offset: 7 }]);
+	});
+
+	// Each place the error's ends map to through the mappings that report it
+	// is tried, not only the first.
+	it('maps an error through the ends that show it on code, past ones that map to one point', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'LaterEnds',
+				[
+					mapping(27, 50, 5, false),
+					mapping(20, 20, 6, true),
+					mapping(27, 40, 0, true),
+					mapping(32, 40, 0, true),
+					mapping(27, 60, 0, true),
+					mapping(32, 65, 0, true),
+				],
+				27,
+				32,
+				'x'.repeat(100),
+			),
+		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
+	});
+
+	// The nearest code is only a place for the error where the editor shows it
+	// there: otherwise the next nearest is.
+	it.each([
+		[
+			// A token whose generated code starts inside a CRLF line break.
+			'NearestInLineBreak',
+			[mapping(30, 50, 3, false), mapping(20, 4, 1, true), mapping(0, 20, 6, true)],
+			`abc${String.fromCharCode(13, 10)}${'x'.repeat(75)}`,
+			undefined,
+			{ source: 'TSRX', text: 'export', offset: 0 },
+		],
+		[
+			// A token whose generated code another mapping maps to a lone CR first.
+			'NearestOnLoneCarriageReturn',
+			[
+				mapping(30, 50, 3, false),
+				mapping(3, 10, 1, true),
+				mapping(20, 10, 1, true),
+				mapping(0, 20, 3, true),
+			],
+			'x'.repeat(80),
+			`abc${String.fromCharCode(13, 10)}${'x'.repeat(115)}`,
+			{ source: 'TSRX', text: 'abc', offset: 0 },
+		],
+		[
+			// A token in a mapping of several ranges whose generated code touches
+			// the next one's.
+			'NearestInMultiRangeMapping',
+			[
+				mapping(30, 50, 3, false),
+				{
+					sourceOffsets: [20, 0, 40],
+					generatedOffsets: [10, 11, 12],
+					lengths: [2, 1, 1],
+					generatedLengths: [2, 1, 1],
+					data: { verification: true, customData: {} },
+				},
+				mapping(7, 20, 5, true),
+			],
+			'x'.repeat(100),
+			undefined,
+			{ source: 'TSRX', text: 'const', offset: 7 },
+		],
+	])(
+		'skips a nearest token the editor shows nowhere or on no code: %s',
+		async (name, mappings, generated, source, expected) => {
+			expect(await diagnostics_with_mappings(name, mappings, 30, 33, generated, source)).toEqual([
+				expected,
+			]);
+		},
+	);
+
+	// Each place the error's start maps to is tried with each place its end
+	// maps to, not only the first end for each start.
+	it('maps an error through a later place its end maps to', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'LaterEnd',
+				[
+					mapping(27, 50, 5, false),
+					mapping(27, 40, 0, true),
+					mapping(32, 40, 0, true),
+					mapping(32, 45, 0, true),
+				],
+				27,
+				32,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
+	});
+
+	// A token whose generated code the editor maps through another error's
+	// anchor first shows the error on that error's place, though inside the
+	// token: the next token is the place.
+	it("skips a nearest token the editor shows through another error's anchor", async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'NearestThroughAnchor',
+				[
+					mapping(30, 70, 5, false),
+					{
+						sourceOffsets: [22],
+						generatedOffsets: [40],
+						lengths: [3],
+						generatedLengths: [1],
+						data: { verification: true, customData: { diagnosticAnchor: true } },
+					},
+					{
+						sourceOffsets: [20],
+						generatedOffsets: [40],
+						lengths: [9],
+						generatedLengths: [1],
+						data: { verification: true, customData: {} },
+					},
+					mapping(0, 20, 6, true),
+				],
+				30,
+				35,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
+	});
+
+	// A token the editor shows on other code, through another mapping of the
+	// same generated code, isn't the place either.
+	it('skips a nearest token the editor shows on other code', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'NearestShownElsewhere',
+				[
+					mapping(14, 50, 2, false),
+					mapping(27, 40, 5, true),
+					mapping(7, 40, 5, true),
+					mapping(0, 0, 6, true),
+				],
+				14,
+				16,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 0 }]);
+	});
+
+	// With no place the editor shows on code, the error keeps the range it
+	// had, which the editor drops, not one at the start of the file.
+	it('leaves an error with no place to show it on as before', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'NoPlace',
+				[mapping(30, 50, 3, false), mapping(0, 0, 1, true)],
+				30,
+				33,
+				'x'.repeat(80),
+				` ${'x'.repeat(80)}`,
+			),
+		).toEqual([]);
+	});
+
+	// A later place the start maps to is tried when the first is past every
+	// place the end maps to.
+	it('maps an error through a later place its start maps to', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'LaterStart',
+				[
+					mapping(27, 50, 5, false),
+					mapping(27, 70, 0, true),
+					mapping(27, 40, 0, true),
+					mapping(32, 45, 0, true),
+					mapping(20, 20, 6, true),
+				],
+				27,
+				32,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
+	});
+
+	// A place its ends map to that the editor shows on other code, through
+	// another mapping of the same generated code, isn't the error's place.
+	it('maps an error through the ends the editor shows on its own range', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'EndsOnOtherCode',
+				[
+					mapping(27, 50, 5, false),
+					mapping(0, 40, 5, true),
+					mapping(27, 40, 0, true),
+					mapping(32, 45, 0, true),
+					mapping(27, 60, 0, true),
+					mapping(32, 65, 0, true),
+					mapping(20, 20, 6, true),
+				],
+				27,
+				32,
+				'x'.repeat(100),
+			),
+		).toEqual([{ source: 'TSRX', text: 'const', offset: 27 }]);
+	});
+
+	// A place in the error's range that the editor shows on whitespace only is
+	// no code to show the error on.
+	it('shows an error whose range maps to whitespace in it on the nearest code instead', async () => {
+		expect(
+			await diagnostics_with_mappings(
+				'WhitespaceInRange',
+				[
+					mapping(27, 50, 7, false),
+					mapping(32, 10, 1, true),
+					mapping(27, 10, 0, true),
+					mapping(34, 11, 0, true),
+					mapping(20, 20, 6, true),
+				],
+				27,
+				34,
+				'x'.repeat(80),
+			),
+		).toEqual([{ source: 'TSRX', text: 'export', offset: 20 }]);
+	});
+});
+
 // The editor's compile is loose: it recovers unclosed and mismatched markup,
 // so the rest of the file keeps working, and reports it as a collecting
 // compile does (#978).

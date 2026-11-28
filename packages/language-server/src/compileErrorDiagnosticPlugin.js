@@ -225,10 +225,27 @@ function shown_at(diagnostic, code, document, sourceMap) {
 }
 
 /**
+ * The source range the editor shows a diagnostic on the generated `range` at,
+ * with the mappings of its ends, or `undefined` when it leaves it out. Volar
+ * maps the diagnostic's range, as positions, back through the mappings that
+ * report it (`transformDiagnostic` in `@volar/language-service`), and a
+ * position can't fall between a `\r` and its `\n`.
+ * @param {[number, number]} range
+ * @param {(data: CodeInformation) => boolean} reports Whether a mapping reports the diagnostic
+ * @param {TextDocument} document
+ * @param {Mapper} sourceMap
+ */
+function shown_range(range, reports, document, sourceMap) {
+	const start = document.offsetAt(document.positionAt(range[0]));
+	const end = document.offsetAt(document.positionAt(range[1]));
+	return sourceMap.toSourceRange(start, end, true, reports).next().value;
+}
+
+/**
  * Whether a mapping reports `diagnostic`, as Volar's `shouldReportDiagnostics`
  * decides it.
  * @param {CodeInformation} data
- * @param {Diagnostic} diagnostic
+ * @param {Pick<Diagnostic, 'source' | 'code'>} diagnostic
  * @returns {boolean}
  */
 function reports_diagnostic(data, diagnostic) {
@@ -263,13 +280,21 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 	if (error.pos !== undefined) {
 		const start_offset = get_start_offset_from_error(error);
 		const end_offset = get_end_offset_from_error(error, start_offset);
+		const diagnostic_id = { source: DIAGNOSTIC_SOURCE, code: error.code ?? 'tsrx-usage-error' };
+		/** @param {CodeInformation} data */
+		const reports = (data) => reports_diagnostic(data, diagnostic_id);
+
 		// try to find exact mapping
 		// TODO: perhaps it's best to just switch to sourceMap entirely?
 		const mapping = virtualCode.findMappingBySourceRange(start_offset, end_offset);
+		/** @type {[number, number] | null | undefined} */
+		let generated;
 
 		if (mapping) {
-			start = document.positionAt(mapping.generatedOffsets[0]);
-			end = document.positionAt(mapping.generatedOffsets[0] + mapping.generatedLengths[0]);
+			generated = [
+				mapping.generatedOffsets[0],
+				mapping.generatedOffsets[0] + mapping.generatedLengths[0],
+			];
 		} else {
 			// No single mapping spans the whole range: statements and elements are
 			// only covered by granular token mappings (e.g. `const test = 5;` maps
@@ -277,35 +302,119 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 			// an exact range lookup never matches them. Span the generated range
 			// from the tokens that overlap the range so the diagnostic lands on its
 			// source range instead of collapsing to the start of the file.
-			const generated = virtualCode.findGeneratedRangeBySourceRange(start_offset, end_offset);
+			generated = virtualCode.findGeneratedRangeBySourceRange(start_offset, end_offset);
 
-			if (generated) {
-				start = document.positionAt(generated[0]);
-				end = document.positionAt(generated[1]);
-			} else if (sourceMap) {
+			if (!generated && sourceMap) {
 				// try to find the match even across multiple mappings
-				const result = sourceMap.toGeneratedRange(start_offset, end_offset, true).next().value;
-
-				if (result) {
-					const [gen_start_offset, gen_end_offset] = result;
-					start = document.positionAt(gen_start_offset);
-					end = document.positionAt(gen_end_offset);
-				}
+				generated = sourceMap.toGeneratedRange(start_offset, end_offset, true).next().value;
 			}
 		}
 
-		if (!start || !end) {
+		// The nearest code is other code than the error's by design.
+		const nearest_placement = !generated;
+		if (!generated) {
 			// No mapping covers the error, such as a repeated modifier the
 			// editor's code leaves out (`public public`), or a `<>` left open,
 			// which has none in a template. The editor shows a diagnostic only
 			// where the generated code maps back, so show it on the code the error
 			// reaches, such as a `<>`'s first child, or else the nearest code before
 			// it that does, not at the start of the file.
-			const nearest = nearest_reported_range(virtualCode, start_offset, error.raisedAt);
-			if (nearest) {
-				start = document.positionAt(nearest[0]);
-				end = document.positionAt(nearest[1]);
+			generated = nearest_reported_range(
+				virtualCode,
+				(data) => !!data.verification,
+				start_offset,
+				error.raisedAt,
+			);
+		}
+
+		// A range found for the error's own source range that the editor shows
+		// only on other code may be no better than one it drops: a span clamped
+		// into an `@switch`'s own mapping can land on another case's code. Code
+		// on the error, or on a line nearer it, is a place for it then.
+		const shown_first =
+			generated && sourceMap && shown_range(generated, reports, document, sourceMap);
+		const off_range =
+			!!shown_first && !nearest_placement && distance(shown_first, start_offset, end_offset) > 0;
+		const lines_off = off_range ? line_gap(virtualCode, shown_first, start_offset, end_offset) : 0;
+		/** Whether a range is nearer the error than the one the editor shows. */
+		const nearer = (/** @type {readonly [number, number, ...unknown[]]} */ range) =>
+			!off_range ||
+			distance(range, start_offset, end_offset) === 0 ||
+			line_gap(virtualCode, range, start_offset, end_offset) < lines_off;
+		if (generated && sourceMap && (!shown_first || off_range)) {
+			// The editor would leave the error out, or show it on other code: its
+			// range is on code whose mappings don't report it, such as an
+			// `@switch`'s own mapping over a `break` right in a case, which the
+			// editor's code leaves out, or over the whole directive used as a
+			// statement outside a template. Show it
+			// on the tokens in the range that report it, or on its ends mapped
+			// through the mappings that do, where the editor shows that within the
+			// range, or else on the nearest code that reports it, such as the
+			// case's test: the first the editor shows on some code, not only
+			// whitespace. With none, the range stays, as before.
+			const map = sourceMap;
+			// Another error's anchor is that error's place (see
+			// `findGeneratedRangeBySourceRange`), so not this one's, neither to
+			// look for a place through nor for the editor to show it through.
+			const reaches = (/** @type {CodeInformation} */ data) =>
+				reports(data) && !(/** @type {any} */ (data).customData?.diagnosticAnchor);
+			/** @param {[number, number] | null | undefined} range */
+			const shown_on_code = (range) => {
+				const shown = range && shown_range(range, reports, document, map);
+				return shown &&
+					reaches(shown[2].data) &&
+					reaches(shown[3].data) &&
+					/\S/.test(virtualCode.originalCode.slice(shown[0], shown[1]))
+					? shown
+					: null;
+			};
+			const in_range = (function* () {
+				if (mapping) yield virtualCode.findGeneratedRangeBySourceRange(start_offset, end_offset);
+				// Every pair of places the ends map to, as `toGeneratedRange` stops
+				// at the first end for each start. Each distinct place once.
+				const froms = new Set();
+				for (const [from] of map.toGeneratedLocation(start_offset, reaches)) {
+					if (froms.has(from)) continue;
+					froms.add(from);
+					const tos = new Set();
+					for (const [to] of map.toGeneratedLocation(end_offset, reaches)) {
+						if (tos.has(to)) continue;
+						tos.add(to);
+						if (to >= from) yield /** @type {[number, number]} */ ([from, to]);
+					}
+				}
+			})();
+			/** @type {[number, number] | null | undefined} */
+			let found;
+			for (const range of in_range) {
+				// These are for the error's own range, so where the editor shows them
+				// on code outside it, they aren't.
+				const shown = shown_on_code(range);
+				if (shown && shown[0] >= start_offset && shown[1] <= end_offset) {
+					found = range;
+					break;
+				}
 			}
+			found ??= nearest_reported_range(
+				virtualCode,
+				reaches,
+				start_offset,
+				error.raisedAt,
+				// On the token itself, not on code another mapping of the same
+				// generated code (another error's anchor) maps it to, and nearer
+				// the error than the range the editor would show it on.
+				(range, token) => {
+					const shown = shown_on_code(range);
+					return !!shown && shown[0] >= token[0] && shown[1] <= token[1] && nearer(shown);
+				},
+				nearer,
+			);
+			if (found) generated = found;
+		}
+
+		if (generated) {
+			start = document.positionAt(generated[0]);
+			end = document.positionAt(generated[1]);
 		}
 	}
 
@@ -330,23 +439,57 @@ function parseCompilationErrorWithDocument(error, virtualCode, sourceMap, docume
 }
 
 /**
- * The generated range of the source token that reports diagnostics and starts
- * nearest after `offset`, when it starts before `reach`. Otherwise the one that
- * ends nearest before `offset`, or starts nearest after it when none ends
- * before it. Of tokens the same distance away, the shortest. A mapping over
- * whitespace only, such as the indentation before a template's output, is not
- * code to show the error on.
- * @param {TSRXVirtualCodeInstance} virtualCode
- * @param {number} offset
- * @param {number} [reach] Where the error's parser stopped, such as the token that ended a template
- * @returns {[number, number] | null}
+ * How many characters `range` is from `[start, end)`: 0 where they overlap or
+ * touch.
+ * @param {readonly [number, number, ...unknown[]]} range
+ * @param {number} start
+ * @param {number} end
  */
-function nearest_reported_range(virtualCode, offset, reach = offset) {
-	/** @type {{ range: [number, number], distance: number, length: number } | null} */
-	let before = null;
-	/** @type {{ range: [number, number], distance: number, length: number, start: number } | null} */
-	let after = null;
-	for (const mapping of virtualCode.mappings ?? []) {
+function distance(range, start, end) {
+	return range[0] > end ? range[0] - end : range[1] < start ? start - range[1] : 0;
+}
+
+/**
+ * How many line breaks of `virtualCode`'s source lie between `range` and
+ * `[start, end)`: a `\r\n`, a `\r` or a `\n`, as the editor counts lines.
+ * @param {TSRXVirtualCodeInstance} virtualCode
+ * @param {readonly [number, number, ...unknown[]]} range
+ * @param {number} start
+ * @param {number} end
+ */
+function line_gap(virtualCode, range, start, end) {
+	const [from, to] =
+		range[0] > end ? [end, range[0]] : range[1] < start ? [range[1], start] : [0, 0];
+	const { breaks } = get_source_tokens(virtualCode);
+	return first_at(breaks, (offset) => offset, to) - first_at(breaks, (offset) => offset, from);
+}
+
+/**
+ * @typedef {{ range: [number, number], token: [number, number], length: number, data: CodeInformation }} SourceToken
+ */
+
+/**
+ * The tokens of `virtualCode`'s mappings that report diagnostics that code
+ * can show an error on, in mapping order: one per mapped range that isn't
+ * empty or whitespace only, sorted by where they end (`by_end`: ascending,
+ * and of those ending together the longest and last first) and by where they
+ * start (`by_start`: ascending, and of those starting together the shortest
+ * and first first); and the offsets of the source's line breaks (`breaks`,
+ * the `\n` of a `\r\n`). Built once for each version of the mappings.
+ * @type {WeakMap<object, { code: string, by_end: SourceToken[], by_start: SourceToken[], breaks: number[] }>}
+ */
+const source_tokens = new WeakMap();
+
+/**
+ * @param {TSRXVirtualCodeInstance} virtualCode
+ */
+function get_source_tokens(virtualCode) {
+	const mappings = virtualCode.mappings ?? [];
+	const cached = source_tokens.get(mappings);
+	if (cached && cached.code === virtualCode.originalCode) return cached;
+	/** @type {(SourceToken & { order: number })[]} */
+	const tokens = [];
+	for (const mapping of mappings) {
 		if (!mapping.data?.verification) continue;
 		for (let i = 0; i < mapping.sourceOffsets.length; i++) {
 			const source_start = mapping.sourceOffsets[i];
@@ -359,36 +502,100 @@ function nearest_reported_range(virtualCode, offset, reach = offset) {
 				continue;
 			}
 			const generated_start = mapping.generatedOffsets[i];
-			const ends_before = source_start + length <= offset;
-			if (!ends_before && source_start < offset) continue;
-			const candidate = {
-				/** @type {[number, number]} */
+			tokens.push({
 				range: [generated_start, generated_start + generated_length],
-				distance: ends_before ? offset - (source_start + length) : source_start - offset,
+				token: [source_start, source_start + length],
 				length,
-				start: source_start,
-			};
-			if (ends_before) {
-				if (is_nearer(candidate, before)) before = candidate;
-			} else if (is_nearer(candidate, after)) {
-				after = candidate;
-			}
+				data: mapping.data,
+				order: tokens.length,
+			});
 		}
 	}
-	if (after && after.start < reach) return after.range;
-	return (before ?? after)?.range ?? null;
+	const code = virtualCode.originalCode;
+	/** @type {number[]} */
+	const breaks = [];
+	for (let i = 0; i < code.length; i++) {
+		const char = code.charCodeAt(i);
+		// A `\r\n` counts at its `\n`: an offset between the two is a position
+		// before the `\r`, on the line it ends.
+		if (char === 10 || (char === 13 && code.charCodeAt(i + 1) !== 10)) breaks.push(i);
+	}
+	const index = {
+		code,
+		breaks,
+		by_end: [...tokens].sort(
+			(a, b) => a.token[1] - b.token[1] || b.length - a.length || b.order - a.order,
+		),
+		by_start: [...tokens].sort(
+			(a, b) => a.token[0] - b.token[0] || a.length - b.length || a.order - b.order,
+		),
+	};
+	source_tokens.set(mappings, index);
+	return index;
 }
 
 /**
- * @param {{ distance: number, length: number }} candidate
- * @param {{ distance: number, length: number } | null} best
+ * The first index in `tokens` whose `at` value is at least `offset`, as
+ * `tokens` is sorted by it.
+ * @template T
+ * @param {T[]} tokens
+ * @param {(token: T) => number} at
+ * @param {number} offset
  */
-function is_nearer(candidate, best) {
-	return (
-		!best ||
-		candidate.distance < best.distance ||
-		(candidate.distance === best.distance && candidate.length < best.length)
-	);
+function first_at(tokens, at, offset) {
+	let low = 0;
+	let high = tokens.length;
+	while (low < high) {
+		const middle = (low + high) >> 1;
+		if (at(tokens[middle]) < offset) low = middle + 1;
+		else high = middle;
+	}
+	return low;
+}
+
+/**
+ * The generated range of the source token that reports the error and starts
+ * nearest after `offset`, when it starts before `reach`. Otherwise the one that
+ * ends nearest before `offset`, or starts nearest after it when none ends
+ * before it. Of tokens the same distance away, the shortest. A mapping over
+ * whitespace only, such as the indentation before a template's output, is not
+ * code to show the error on, and neither is a token whose ranges `shows`
+ * rejects: the next one in that order is.
+ * @param {TSRXVirtualCodeInstance} virtualCode
+ * @param {(data: CodeInformation) => boolean} reports Whether a mapping reports the error
+ * @param {number} offset
+ * @param {number} [reach] Where the error's parser stopped, such as the token that ended a template
+ * @param {(range: [number, number], token: [number, number]) => boolean} [shows] Whether the editor shows the error on a token's generated `range` and where its source `token` is
+ * @param {(token: [number, number]) => boolean} [near] Whether a source token is near enough: once one isn't, none farther the same way is
+ * @returns {[number, number] | null}
+ */
+function nearest_reported_range(
+	virtualCode,
+	reports,
+	offset,
+	reach = offset,
+	shows = () => true,
+	near = () => true,
+) {
+	const { by_end, by_start } = get_source_tokens(virtualCode);
+	/** @param {SourceToken} token */
+	const takes = (token) => reports(token.data) && shows(token.range, token.token);
+	// The tokens that start at or after the offset, nearest first; those that
+	// start before `reach` come first of all.
+	const after = first_at(by_start, (token) => token.token[0], offset);
+	let i = after;
+	for (; i < by_start.length && by_start[i].token[0] < reach && near(by_start[i].token); i++) {
+		if (takes(by_start[i])) return by_start[i].range;
+	}
+	// Then the tokens that end at or before it, nearest first.
+	for (let j = first_at(by_end, (token) => token.token[1], offset + 1) - 1; j >= 0; j--) {
+		if (!near(by_end[j].token)) break;
+		if (takes(by_end[j])) return by_end[j].range;
+	}
+	for (; i < by_start.length && near(by_start[i].token); i++) {
+		if (takes(by_start[i])) return by_start[i].range;
+	}
+	return null;
 }
 
 /**
