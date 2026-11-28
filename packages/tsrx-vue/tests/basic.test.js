@@ -4504,12 +4504,15 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		expect(flat(code)).toMatch(
 			/<__TsrxScope v-if=\{props\.on\} __content=\{_\$_scope_content\(\(\) =>\{let App__spread_props\d+; return <p \{\.\.\./,
 		);
-		// A component's child too, as \`@if\` without \`@else\` takes \`v-if\` there.
+		// A component's slot output keeps the shared lowering: the component
+		// could be a \`KeepAlive\`, which would match the scope's name.
 		expect(flat(code)).toContain(
-			flat(`<Wrap><__TsrxScope v-if={props.on} __content={_$_scope_content(() => {
-				const label = 'slot';
-				return <b>{label}</b>;
-			})} /></Wrap>`),
+			flat(`<Wrap>{props.on
+				? (() => {
+					const label = 'slot';
+					return <b>{label}</b>;
+				})()
+				: null}</Wrap>`),
 		);
 		// So does a \`VaporFor\` row, in its fragment.
 		expect(flat(code)).toContain(
@@ -4635,57 +4638,52 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		);
 	});
 
-	it('keeps the shared lowering for a branch of a KeepAlive that filters by name', () => {
+	it("keeps the shared lowering for what a component's slot renders", () => {
 		const { code } = compile(
-			`import { KeepAlive as Keep, VaporKeepAlive } from 'vue';
-			import * as Vue from 'vue';
+			`import { VaporKeepAlive } from 'vue';
 			function A() @{
 				<b>{'a'}</b>
 			}
-			export function App(props: { on: boolean; kind: string; only: string }) @{
+			export function App(props: { on: boolean; kind: string; Cache: any }) @{
+				const Cache = props.Cache;
 				<div>
-					<Keep include={props.only}>
+					<VaporKeepAlive exclude="A">
 						@if (props.on) {
-							const label = 'include';
+							const label = 'children';
 							<A key={label} />
 						}
-					</Keep>
-					<VaporKeepAlive exclude="A">
+					</VaporKeepAlive>
+					<Cache {...{ exclude: 'A' }}>
 						@switch (props.kind) {
 							@case 'a': {
-								const label = 'exclude';
+								const label = 'case';
 								<A key={label} />
 							}
 						}
-					</VaporKeepAlive>
-					<Vue.VaporKeepAlive exclude="A">
-						@if (props.on) {
-							const label = 'member';
-							<A key={label} />
-						}
-					</Vue.VaporKeepAlive>
-					<Vue.KeepAlive {...{ max: 2 }}>
-						@if (props.on) {
-							const label = 'spread';
-							<A key={label} />
-						}
-					</Vue.KeepAlive>
-					<VaporKeepAlive>
-						@if (props.on) {
-							const label = 'cached';
-							<A key={label} />
-						}
-					</VaporKeepAlive>
+					</Cache>
+					<VaporKeepAlive
+						include="A"
+						v-slots={{
+							default: () => @{
+								@if (props.on) {
+									const label = 'v-slots';
+									<A key={label} />
+								}
+							},
+						}}
+					/>
 				</div>
 			}`,
 			'App.tsrx',
 		);
 
-		// \`include\` and \`exclude\` match the child component's name, which a
-		// scope would replace; without them, the scope is what's cached.
-		expect(code).toMatch(/<Keep include=\{props\.only\}>\{props\.on\s*\? \(\(\) => \{/);
-		expect(code).toMatch(/<VaporKeepAlive exclude="A">\{\(\(\) => \{\s*switch[^]*case 'a':\s*\{/);
-		expect(code.match(/<__TsrxScope /g)).toHaveLength(1);
+		// A \`KeepAlive\`, under any name, matches its child component's name,
+		// which a scope would replace.
+		expect(code).not.toContain('<__TsrxScope ');
+		expect(code).toMatch(/<VaporKeepAlive exclude="A">\{props\.on\s*\? \(\(\) => \{/);
+		expect(code).toMatch(
+			/<Cache \{\.\.\.\{ exclude: 'A' \}\}>\{\(\(\) => \{\s*switch[^]*case 'a':\s*\{/,
+		);
 	});
 
 	it('keeps the shared lowering for a branch that renders no one element', () => {

@@ -236,7 +236,7 @@ const vue_platform = {
 		},
 		injectImports(program, ctx) {
 			if (!ctx.typeOnly) {
-				unscope_filtered_keep_alive_children(program);
+				unscope_slot_outputs(program);
 				render_element_ifs_as_directives(program);
 				place_boundaries_as_children(program);
 			}
@@ -2439,36 +2439,39 @@ function scope_element(content, source, transform_context) {
 }
 
 /**
- * A `KeepAlive` with `include` or `exclude` picks what it caches by its
- * child component's name. As a `TsrxScope`, a branch or a case with setup
- * statements would be matched by the scope's name instead, so the child of
- * any component with `include` or `exclude` keeps the shared lowering, and
- * so does the child of a `KeepAlive` with a spread, which can hold them. A
- * `KeepAlive` is `KeepAlive` or `VaporKeepAlive` by name, as a member
- * (`Vue.KeepAlive`) or as an import from `vue` calls it; a binding that
- * shadows one of those names is taken for it too, which only keeps the
- * shared lowering.
+ * A branch or a case that a component's slot renders as its output (the
+ * component's children, a function child, or a `v-slots` function) keeps
+ * the shared lowering: the component may be a `KeepAlive`, under any name,
+ * which picks what it caches with `include` and `exclude` by its child
+ * component's name, and as a `TsrxScope` the branch would be matched by the
+ * scope's name instead. A `VaporFor` row is TSRX's own, and renders its
+ * choice in a fragment.
  *
  * @param {AST.Program} program
  * @returns {void}
  */
-function unscope_filtered_keep_alive_children(program) {
-	/** @type {Set<string>} */
-	const names = new Set(['KeepAlive', 'VaporKeepAlive']);
-	for (const statement of program.body) {
-		if (statement.type !== 'ImportDeclaration' || statement.source.value !== 'vue') continue;
-		for (const specifier of statement.specifiers) {
-			const imported =
-				specifier.type !== 'ImportSpecifier'
-					? null
-					: specifier.imported.type === 'Identifier'
-						? specifier.imported.name
-						: specifier.imported.value;
-			if (imported === 'KeepAlive' || imported === 'VaporKeepAlive') {
-				names.add(specifier.local.name);
+function unscope_slot_outputs(program) {
+	/** @param {unknown} output */
+	const unscope_output = (output) => {
+		const node = /** @type {AST.Expression} */ (output);
+		if (node.type === 'ArrowFunctionExpression' || node.type === 'FunctionExpression') {
+			if (node.body.type !== 'BlockStatement') {
+				return { ...node, body: unscope(/** @type {AST.Expression} */ (node.body)) };
 			}
+			return {
+				...node,
+				body: {
+					...node.body,
+					body: node.body.body.map((statement) =>
+						statement.type === 'ReturnStatement' && statement.argument
+							? { ...statement, argument: unscope(statement.argument) }
+							: statement,
+					),
+				},
+			};
 		}
-	}
+		return unscope(node);
+	};
 	const walked = /** @type {AST.Program} */ (
 		walk(/** @type {AST.Node} */ (program), null, {
 			JSXElement(node, { next }) {
@@ -2476,40 +2479,50 @@ function unscope_filtered_keep_alive_children(program) {
 					/** @type {unknown} */ (next() ?? node)
 				);
 				const name = element.openingElement.name;
-				const attributes = element.openingElement.attributes;
-				const keep_alive =
-					name.type === 'JSXIdentifier'
-						? names.has(name.name)
-						: name.type === 'JSXMemberExpression' &&
-							(name.property.name === 'KeepAlive' || name.property.name === 'VaporKeepAlive');
-				const filters =
-					attributes.some(
-						(attribute) =>
-							attribute.type === 'JSXAttribute' &&
-							attribute.name.type === 'JSXIdentifier' &&
-							(attribute.name.name === 'include' || attribute.name.name === 'exclude'),
-					) ||
-					(keep_alive && attributes.some((attribute) => attribute.type === 'JSXSpreadAttribute'));
 				if (
-					!filters ||
 					!is_component_like_element(
 						/** @type {AST.TSRXJSXElement} */ (/** @type {unknown} */ (element)),
-					)
+					) ||
+					(name.type === 'JSXIdentifier' && name.name === VAPOR_FOR_INTERNAL_NAME)
 				) {
 					return element === /** @type {unknown} */ (node)
 						? undefined
 						: /** @type {AST.Node} */ (/** @type {unknown} */ (element));
 				}
+				const attributes = element.openingElement.attributes.map((attribute) => {
+					if (
+						attribute.type !== 'JSXAttribute' ||
+						attribute.name.type !== 'JSXIdentifier' ||
+						attribute.name.name !== 'v-slots' ||
+						attribute.value?.type !== 'JSXExpressionContainer' ||
+						attribute.value.expression.type !== 'ObjectExpression'
+					) {
+						return attribute;
+					}
+					const slots = attribute.value.expression;
+					return {
+						...attribute,
+						value: {
+							...attribute.value,
+							expression: {
+								...slots,
+								properties: slots.properties.map((property) =>
+									property.type === 'Property'
+										? { ...property, value: unscope_output(property.value) }
+										: property,
+								),
+							},
+						},
+					};
+				});
 				return /** @type {AST.Node} */ (
 					/** @type {unknown} */ ({
 						...element,
+						openingElement: { ...element.openingElement, attributes },
 						children: element.children.map((child) =>
 							child.type === 'JSXExpressionContainer' &&
 							child.expression.type !== 'JSXEmptyExpression'
-								? {
-										...child,
-										expression: unscope(/** @type {AST.Expression} */ (child.expression)),
-									}
+								? { ...child, expression: unscope_output(child.expression) }
 								: child,
 						),
 					})

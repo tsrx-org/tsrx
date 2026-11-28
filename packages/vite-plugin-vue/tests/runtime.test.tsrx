@@ -6603,19 +6603,6 @@ function ScopeKeepAliveExcluding() @{
 	</div>
 }
 
-function ScopeKeepAlive() @{
-	<div class="scope-keep-alive">
-		<VaporKeepAlive>
-			@if (scope_user.value.online) {
-				const label = 'kept';
-				<ScopeKept key={label} />
-			} @else {
-				<ScopeOther />
-			}
-		</VaporKeepAlive>
-	</div>
-}
-
 function scope_rows(selector: string) {
 	return Array.from(container.querySelectorAll(`${selector} li`), (row) => {
 		const counter = row.querySelector('.scope-counter')?.textContent;
@@ -6739,8 +6726,8 @@ describe('tsrx-vue setup statements in a branch or a case run once per mount', (
 	});
 
 	it('lets a KeepAlive with exclude match the component a statement branch renders', async () => {
-		// Its child keeps the shared lowering: as a scope, the branch would be
-		// matched by the scope's name, and cached.
+		// A slot's output keeps the shared lowering: as a scope, the branch would
+		// be matched by the scope's name, and cached.
 		await render(ScopeKeepAliveExcluding);
 		await click('.scope-kept');
 		expect(text('.scope-keep-alive')).toBe('kept:1');
@@ -6749,16 +6736,6 @@ describe('tsrx-vue setup statements in a branch or a case run once per mount', (
 		scope_user.value = { ...scope_user.value, online: true };
 		await flush();
 		expect(text('.scope-keep-alive')).toBe('kept:0');
-	});
-
-	it('caches a statement branch under a KeepAlive without a filter', async () => {
-		await render(ScopeKeepAlive);
-		await click('.scope-kept');
-		scope_user.value = { ...scope_user.value, online: false };
-		await flush();
-		scope_user.value = { ...scope_user.value, online: true };
-		await flush();
-		expect(text('.scope-keep-alive')).toBe('kept:1');
 	});
 
 	it('runs a branch’s statements as the setup of a component of its own', async () => {

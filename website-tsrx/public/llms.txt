@@ -1701,7 +1701,8 @@ for the branch on the client (on the server the statements run in the
 component's setup, so keep `provide` / `inject` of the component's own keys in
 its own setup), and `useSlots()` / `useAttrs()` there see the scope's own
 ones: call them in the component's own setup. A branch with a `<slot>` or a
-string literal `ref` keeps rendering in its component; a string `ref` passed
+string literal `ref`, and one that a component's slot renders as its output
+(which could be a `KeepAlive`'s child), keeps rendering as before; a string `ref` passed
 through a binding or a spread there registers with the scope.
 
 ### Octane
