@@ -140,6 +140,33 @@ export function App({ n }: { n: number }) @{
 }`,
 
 	// element-switch-hydration.test.tsrx hydrates what these render.
+	// An authored \`v-else\` past another element joins the \`v-if\` before the
+	// \`@switch\`; runtime.test.tsrx renders the same on the client.
+	'element-switch-else.tsrx': `export function Plain() @{
+	<div>
+		<b v-if={false}>{'before'}</b>
+		@switch (1) {
+			@case 1: {
+				<i>{'switch'}</i>
+			}
+		}
+		<u>{'separator'}</u>
+		<s v-else>{'else'}</s>
+	</div>
+}
+export function Shown() @{
+	<div>
+		<b v-if={false}>{'before'}</b>
+		@switch (1) {
+			@case 1: {
+				<i v-show={true}>{'switch'}</i>
+			}
+		}
+		<u>{'separator'}</u>
+		<s v-else>{'else'}</s>
+	</div>
+}`,
+
 	'element-switch.tsrx': `import { ref } from 'vue';
 
 function CaseCounter(props: { label: string }) @{
@@ -672,6 +699,16 @@ describe("[vue] an element's @switch on the server", () => {
 			BesideIf: ['<p><b>if</b><i>mode a</i></p>', '<p><!----><!----></p>', '<p><!----><!----></p>'],
 			Local: ['<p><b>one</b></p>', '<p><i>other</i></p>', '<p><i>other</i></p>'],
 		});
+	});
+
+	it('leaves a later authored v-else to the v-if before it', async () => {
+		const { Plain, Shown } = await server.ssrLoadModule('/element-switch-else.tsrx');
+		for (const component of [Plain, Shown]) {
+			const html = await renderToString(createSSRApp(component));
+			expect(html.replace(/<!--.*?-->/g, '')).toBe(
+				'<div><s>else</s><i>switch</i><u>separator</u></div>',
+			);
+		}
 	});
 
 	it("gives a component case none of its parent component's fallthrough attributes", async () => {

@@ -3873,6 +3873,35 @@ function ElementSwitchKeyed() @{
 	</div>
 }
 
+// An authored \`v-else\` past another element joins the \`v-if\` before the
+// \`@switch\`, which keeps its lowering; \`vapor-for-ssr.test.js\` renders the
+// same on the server.
+function ElementSwitchBeforeElse() @{
+	<div class="element-switch-before-else">
+		<b v-if={false}>{'before'}</b>
+		@switch (element_switch.value) {
+			@case 1: {
+				<i>{'switch'}</i>
+			}
+		}
+		<u>{'separator'}</u>
+		<s v-else>{'else'}</s>
+	</div>
+}
+
+function ElementSwitchShowBeforeElse() @{
+	<div class="element-switch-before-else">
+		<b v-if={false}>{'before'}</b>
+		@switch (element_switch.value) {
+			@case 1: {
+				<i v-show={true}>{'switch'}</i>
+			}
+		}
+		<u>{'separator'}</u>
+		<s v-else>{'else'}</s>
+	</div>
+}
+
 describe("tsrx-vue an element's @switch (#1403)", () => {
 	beforeEach(() => {
 		element_switch.value = 1;
@@ -3905,6 +3934,21 @@ describe("tsrx-vue an element's @switch (#1403)", () => {
 		await flush();
 		expect(text('.element-switch')).toBe('one:0n=1');
 	});
+
+	it.each([
+		['', ElementSwitchBeforeElse],
+		[' with v-show', ElementSwitchShowBeforeElse],
+	])(
+		'leaves a later authored v-else to the v-if before it, for a case%s',
+		async (_name, component) => {
+			await render(component);
+			expect(
+				container
+					.querySelector('.element-switch-before-else')
+					?.innerHTML.replace(/<!--.*?-->/g, ''),
+			).toBe('<s>else</s><i>switch</i><u>separator</u>');
+		},
+	);
 
 	it('runs its discriminant once per change, as before', async () => {
 		await render(ElementSwitchRuns);

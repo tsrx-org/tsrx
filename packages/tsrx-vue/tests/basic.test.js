@@ -4443,6 +4443,65 @@ describe("@tsrx/vue an element's @switch", () => {
 		// Each \`@switch\` keeps its IIFE.
 		expect(code.match(/return null;/g)).toHaveLength(17);
 	});
+
+	it('keeps the shared lowering for one a later authored v-else would join', () => {
+		// vue-jsx-vapor joins a \`v-else\` to the \`v-if\` before it past other
+		// elements, text and expressions, so it would join the cases.
+		const { code } = compile(
+			`export function App(props: { kind: string; on: boolean }) @{
+				<div>
+					<b v-if={props.on}>{'before'}</b>
+					@switch (props.kind) {
+						@case 'a': {
+							<i>{'switch'}</i>
+						}
+					}
+					<u>{'separator'}</u>
+					{props.kind}
+					<s v-else>{'else'}</s>
+					@switch (props.kind) {
+						@case 'a': {
+							<i v-show={props.on}>{'shown'}</i>
+						}
+					}
+					<u>{'separator'}</u>
+					<s v-else-if={props.on}>{'else if'}</s>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('_$_case');
+		expect(code.match(/return null;/g)).toHaveLength(2);
+	});
+
+	it('lowers one whose later authored v-else has a v-if or a choice of its own first', () => {
+		const { code } = compile(
+			`export function App(props: { kind: string; on: boolean }) @{
+				<div>
+					@switch (props.kind) {
+						@case 'a': {
+							<i>{'switch'}</i>
+						}
+					}
+					<u>{'separator'}</u>
+					<b v-if={props.on}>{'own if'}</b>
+					<s v-else>{'else'}</s>
+					@switch (props.kind) {
+						@case 'a': {
+							<i>{'switch'}</i>
+						}
+					}
+					{props.on ? <b>{'own choice'}</b> : null}
+					<s v-else>{'else'}</s>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('return null;');
+		expect(code.match(/<i v-if=/g)).toHaveLength(2);
+	});
 });
 
 describe('@tsrx/vue setup statements in a branch or a case', () => {

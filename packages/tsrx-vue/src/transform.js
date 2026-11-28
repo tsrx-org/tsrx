@@ -2638,6 +2638,12 @@ function place_boundaries_as_children(program) {
  * `{null}` or text included, is passed over: the choice then keeps its
  * lowering even where vue-jsx-vapor wouldn't join that element to it.
  *
+ * It stops at the first element, where `joins_later_else` doesn't: kept
+ * for a later `v-else`, the choice would be a conditional expression child,
+ * which vue-jsx-vapor's client build joins that `v-else` to and its server
+ * build passes over, so the two would render different elements. As `v-if`
+ * elements, both builds join it to the choice.
+ *
  * @param {ESTreeJSX.JSXElement['children']} siblings
  * @returns {boolean}
  */
@@ -2652,6 +2658,37 @@ function continues_directive_chain(siblings) {
 				(attribute.name.name === 'v-else' || attribute.name.name === 'v-else-if'),
 		)
 	);
+}
+
+/**
+ * Whether vue-jsx-vapor would join an element in `siblings`, the children
+ * after a `@switch`, to the `@switch`'s cases once they are `v-if` /
+ * `v-else-if` elements: the first element with `v-else` or `v-else-if`,
+ * passing over other elements, text and expressions as vue-jsx-vapor does, up
+ * to an element with `v-if` or a conditional expression child, which it
+ * would join instead. Kept, the `@switch` is a call that vue-jsx-vapor
+ * passes over on the client and the server alike, so the `v-else` stays
+ * with the `v-if` before it.
+ *
+ * @param {ESTreeJSX.JSXElement['children']} siblings
+ * @returns {boolean}
+ */
+function joins_later_else(siblings) {
+	for (const sibling of siblings) {
+		if (sibling.type === 'JSXExpressionContainer') {
+			if (sibling.expression.type === 'ConditionalExpression') return false;
+			continue;
+		}
+		if (sibling.type !== 'JSXElement') continue;
+		const names = sibling.openingElement.attributes.map((attribute) =>
+			attribute.type === 'JSXAttribute' && attribute.name.type === 'JSXIdentifier'
+				? attribute.name.name
+				: null,
+		);
+		if (names.includes('v-else') || names.includes('v-else-if')) return true;
+		if (names.includes('v-if')) return false;
+	}
+	return false;
 }
 
 /**
@@ -3022,8 +3059,9 @@ const SETUP_SWITCHES_METADATA = 'vapor_setup_switches';
  * component's children (a slot), a keyed element or an element with a `v-`
  * directive other than `v-show` keeps the shared lowering, since that scope
  * can render it again or declare what its discriminant reads. So does one
- * whose next sibling element has `v-else` or `v-else-if`, which would join
- * the chain, a fragment's own child, and a function that isn't a component.
+ * followed by an element with `v-else` or `v-else-if` that would join the
+ * chain (`joins_later_else`), a fragment's own child, and a function that
+ * isn't a component.
  *
  * The `switch` now runs where an `@if` in the same place evaluates its
  * condition: in its `createIf`, after the effects of the attributes before
@@ -3409,7 +3447,7 @@ function lower_child_switches(children, host, declarations, transform_context) {
 			host &&
 			child.type === 'JSXExpressionContainer' &&
 			child.expression.type !== 'JSXEmptyExpression' &&
-			!continues_directive_chain(children.slice(index + 1))
+			!joins_later_else(children.slice(index + 1))
 				? switch_directive_elements(
 						/** @type {AST.Expression} */ (child.expression),
 						declarations,
