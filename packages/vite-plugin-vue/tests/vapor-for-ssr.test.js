@@ -438,6 +438,27 @@ export function CaseStatements({ state }: { state: State }) @{
 		}
 		{state.name}
 	</p>
+}
+
+export function TwoBranches({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			<span>
+				@if (!state.away) {
+					<em>
+						@switch (state.n) {
+							@case 1: {
+								<ScopeCounter label="one" />
+							}
+							@default: {
+								<i>{'other'}</i>
+							}
+						}
+					</em>
+				}
+			</span>
+		}
+	</p>
 }`,
 };
 
@@ -698,6 +719,7 @@ describe('[vue] a branch or a case that renders through TsrxScope on the server'
 			'InScope',
 			'InCase',
 			'CaseStatements',
+			'TwoBranches',
 		]) {
 			rendered[shape] = {};
 			for (const [name, state] of Object.entries(states)) {
@@ -746,6 +768,12 @@ describe('[vue] a branch or a case that renders through TsrxScope on the server'
 				two: '<p><i>other</i>Ann</p>',
 				away: '<p><button class="counter">one:0</button>Ann</p>',
 				off: '<p><button class="counter">one:0</button>Ann</p>',
+			},
+			TwoBranches: {
+				one: '<p><span><em><button class="counter">one:0</button></em></span></p>',
+				two: '<p><span><em><i>other</i></em></span></p>',
+				away: '<p><!----></p>',
+				off: '<p><!----></p>',
 			},
 		});
 	});

@@ -118,6 +118,27 @@ function CaseStatements({ state }: { state: State }) @{
 	</p>
 }
 
+function TwoBranches({ state }: { state: State }) @{
+	<p>
+		@if (state.on) {
+			<span>
+				@if (!state.away) {
+					<em>
+						@switch (state.n) {
+							@case 1: {
+								<ScopeCounter label="one" />
+							}
+							@default: {
+								<i>{'other'}</i>
+							}
+						}
+					</em>
+				}
+			</span>
+		}
+	</p>
+}
+
 const state = ref<State>({ on: true, away: false, n: 1, name: 'Ann' });
 
 const states = {
@@ -157,6 +178,10 @@ function CaseStatementsHost() @{
 	<CaseStatements state={state.value} />
 }
 
+function TwoBranchesHost() @{
+	<TwoBranches state={state.value} />
+}
+
 const hosts = {
 	Beside: BesideHost,
 	Spread: SpreadHost,
@@ -165,6 +190,7 @@ const hosts = {
 	InScope: InScopeHost,
 	InCase: InCaseHost,
 	CaseStatements: CaseStatementsHost,
+	TwoBranches: TwoBranchesHost,
 } as const;
 
 type Shape = keyof typeof hosts;
@@ -211,6 +237,12 @@ const server_markup: Record<Shape, Record<StateName, string>> = {
 		two: '<p><i>other</i>Ann</p>',
 		away: '<p><button class="counter">one:0</button>Ann</p>',
 		off: '<p><button class="counter">one:0</button>Ann</p>',
+	},
+	TwoBranches: {
+		one: '<p><span><em><button class="counter">one:0</button></em></span></p>',
+		two: '<p><span><em><i>other</i></em></span></p>',
+		away: '<p><!----></p>',
+		off: '<p><!----></p>',
 	},
 };
 

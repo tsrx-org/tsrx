@@ -17,6 +17,7 @@ import {
 	watch,
 	VaporKeepAlive,
 	VaporTeleport,
+	useTemplateRef,
 	watchEffect,
 } from 'vue';
 import { defineVaporComponent } from 'vue-jsx-vapor';
@@ -6517,6 +6518,56 @@ function ScopeHooks() @{
 	</div>
 }
 
+function ScopeSlotChild() @{
+	<div class="scope-slot">
+		@if (scope_user.value.online) {
+			<section {...scope_attrs}>
+				<slot>
+					<i>{'fallback'}</i>
+				</slot>
+			</section>
+		}
+	</div>
+}
+
+function ScopeSlotApp() @{
+	<ScopeSlotChild>
+		<b>{'provided'}</b>
+	</ScopeSlotChild>
+}
+
+let scope_field: unknown = null;
+
+function ScopeTemplateRef() @{
+	const field = useTemplateRef('field');
+	onMounted(() => {
+		scope_field = field.value;
+	});
+	<div class="scope-ref">
+		@if (scope_user.value.online) {
+			<input {...scope_attrs} ref="field" />
+		}
+	</div>
+}
+
+const scope_fails = ref(false);
+
+function ScopeThrows() @{
+	<div class="scope-throws">
+		@try {
+			<p>
+				@if (scope_user.value.online) {
+					if (scope_fails.value) throw new Error('scope boom');
+					const label = 'fine';
+					<b>{label}</b>
+				}
+			</p>
+		} @catch (error) {
+			<em>{(error as Error).message}</em>
+		}
+	</div>
+}
+
 function scope_rows(selector: string) {
 	return Array.from(container.querySelectorAll(`${selector} li`), (row) => {
 		const counter = row.querySelector('.scope-counter')?.textContent;
@@ -6600,6 +6651,35 @@ describe('tsrx-vue setup statements in a branch or a case run once per mount', (
 			expect(text(selector)).toBe(renamed.replace(':1', ':0').replace('Ann!', 'Bo!'));
 		},
 	);
+
+	// A \`<slot>\` and a string \`ref\` resolve against the component that
+	// renders them, so a branch with one keeps the shared lowering.
+	it('renders the slot a branch’s <slot> names', async () => {
+		await render(ScopeSlotApp);
+		expect(text('.scope-slot')).toBe('provided');
+	});
+
+	it('registers a branch’s string ref with its component', async () => {
+		scope_field = null;
+		await render(ScopeTemplateRef);
+		expect(scope_field).toBe(container.querySelector('.scope-ref input'));
+	});
+
+	it('sends a throw from a branch’s statements to the @catch around it, without a warning', async () => {
+		const warnings: string[] = [];
+		const warn_spy = vi.spyOn(console, 'warn').mockImplementation((...args) => {
+			warnings.push(args.map(String).join(' '));
+		});
+		try {
+			scope_fails.value = true;
+			await render(ScopeThrows);
+			expect(text('.scope-throws')).toBe('scope boom');
+			expect(warnings).toEqual([]);
+		} finally {
+			warn_spy.mockRestore();
+			scope_fails.value = false;
+		}
+	});
 
 	it('runs a branch’s statements as the setup of a component of its own', async () => {
 		await render(ScopeHooks);

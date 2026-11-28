@@ -22,4 +22,6 @@ Migration: a value the statements compute now keeps the value it had when the br
 
 renaming the user no longer changes the label while the branch stays. To follow it, compute it where it's read (`<Badge label={user.name + '!'} />`) or in a `computed` (`const label = computed(() => user.name + '!');`, then `label.value`).
 
-These keep the shared lowering: a branch whose output after the statements is not one element (a choice, a fragment of several nodes, a loop), a dynamic tag branch, a branch that awaits or yields, and keyed `@for` bodies with setup statements that render through `map_iterable`, which still lose state on reorder (#1401). An `@if` that is a component's whole output still keeps its first branch (#1400).
+`useSlots()` and `useAttrs()` called in those statements now return the scope's slots and attributes, which are empty. Call them in the component's own setup statements and read the result in the branch.
+
+These keep the shared lowering: a branch whose output after the statements is not one element (a choice, a fragment of several nodes, a loop), a dynamic tag branch, a branch that awaits or yields, a branch that renders a `<slot>` or has a string `ref` (both resolve against the component rendering them, so a scope would change what they find), and keyed `@for` bodies with setup statements that render through `map_iterable`, which still lose state on reorder (#1401). An `@if` that is a component's whole output still keeps its first branch (#1400).

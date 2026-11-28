@@ -1190,11 +1190,23 @@ define_vapor_flag(TsrxPendingBody);
  * whenever what they read changes, which renders the branch again. A
  * `computed` made there lives as long as the branch.
  *
+ * What `content` throws goes to Vue's error handling as the scope's own
+ * setup error, so the nearest `@catch` shows it, and the scope renders an
+ * empty text node, as `TsrxPendingBody` does.
+ *
  * @param {TsrxScopeProps} props
+ * @param {unknown} [ctx] the instance, when Vapor renders it as a component
  * @returns {unknown}
  */
-export function TsrxScope(props) {
-	return props.content();
+export function TsrxScope(props, ctx) {
+	const instance = own_instance(ctx);
+	if (!instance) return props.content();
+	try {
+		return props.content();
+	} catch (error) {
+		handleError(error, instance, ErrorCodes.SETUP_FUNCTION);
+		return normalize_block(null, undefined);
+	}
 }
 
 TsrxScope.props = ['content'];

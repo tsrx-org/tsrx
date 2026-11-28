@@ -2356,7 +2356,49 @@ function renders_in_scope(block) {
 		block.body.length > 1 &&
 		last?.type === 'ReturnStatement' &&
 		last.argument?.type === 'JSXElement' &&
-		!suspends(block)
+		!suspends(block) &&
+		!reads_owner(block)
+	);
+}
+
+/**
+ * Whether `node` renders something that vue-jsx-vapor resolves against the
+ * component rendering it: a `<slot>`, which renders that component's slot,
+ * or a `ref` that is a string, which registers in that component's template
+ * refs (`useTemplateRef`). In a `TsrxScope` they would resolve against the
+ * scope, which has neither.
+ *
+ * @param {unknown} node
+ * @returns {boolean}
+ */
+function reads_owner(node) {
+	if (Array.isArray(node)) return node.some(reads_owner);
+	if (!node || typeof node !== 'object') return false;
+	const value = /** @type {AST.Node} */ (node);
+	if (
+		value.type === 'JSXOpeningElement' &&
+		/** @type {ESTreeJSX.JSXOpeningElement} */ (/** @type {unknown} */ (value)).name.type ===
+			'JSXIdentifier' &&
+		/** @type {ESTreeJSX.JSXIdentifier} */ (
+			/** @type {ESTreeJSX.JSXOpeningElement} */ (/** @type {unknown} */ (value)).name
+		).name === 'slot'
+	) {
+		return true;
+	}
+	if (value.type === 'JSXAttribute') {
+		const attribute = /** @type {ESTreeJSX.JSXAttribute} */ (/** @type {unknown} */ (value));
+		if (attribute.name.type === 'JSXIdentifier' && attribute.name.name === 'ref') {
+			const ref =
+				attribute.value?.type === 'JSXExpressionContainer'
+					? attribute.value.expression
+					: attribute.value;
+			if (ref?.type === 'Literal' || ref?.type === 'TemplateLiteral') {
+				return true;
+			}
+		}
+	}
+	return Object.entries(value).some(
+		([key, child]) => key !== 'loc' && key !== 'metadata' && reads_owner(child),
 	);
 }
 
@@ -3027,7 +3069,9 @@ function lower_setup_switches(fn, transform_context) {
 		const output = lower_output_switches(fn.body, declarations, transform_context);
 		if (!declarations.length) {
 			// A branch in it became a scope (`scope_branch_switches`).
-			return output === fn.body ? null : { ...fn, body: output };
+			return output === fn.body
+				? null
+				: /** @type {AST.ArrowFunctionExpression} */ ({ ...fn, body: output });
 		}
 		return /** @type {AST.ArrowFunctionExpression} */ ({
 			...fn,
@@ -3220,7 +3264,22 @@ function scope_branch_switches(element, transform_context) {
 		declarations,
 		transform_context,
 	);
-	if (!declarations.length) return null;
+	if (!declarations.length) {
+		// A branch inside it became a scope of its own.
+		return lowered === branch
+			? null
+			: /** @type {AST.Expression} */ (
+					/** @type {unknown} */ ({
+						...lowered,
+						openingElement: {
+							.../** @type {ESTreeJSX.JSXElement} */ (/** @type {unknown} */ (lowered))
+								.openingElement,
+							attributes: attributes,
+						},
+					})
+				);
+	}
+	if (reads_owner(branch)) return null;
 	const scope = /** @type {ESTreeJSX.JSXElement} */ (
 		/** @type {unknown} */ (
 			scope_element(

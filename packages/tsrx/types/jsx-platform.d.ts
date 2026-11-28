@@ -68,6 +68,8 @@ export interface JsxTransformContext {
 	needs_use_slots?: boolean;
 	/** Vue: a `@pending` body renders through `TsrxPendingBody`. */
 	needs_pending_body?: boolean;
+	/** Vue: a branch or a case with setup statements renders through `TsrxScope`. */
+	needs_scope?: boolean;
 	stylesheets: AST.CSS.StyleSheet[];
 	type_only_style_anchors: AST.Statement[];
 	helper_state: JsxHelperState | null;

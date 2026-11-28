@@ -4593,12 +4593,29 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 							</li>
 						}
 					</ul>
+					@if (props.on) {
+						<section>
+							@if (props.kind) {
+								<em>
+									@switch (props.kind) {
+										@case 'a': {
+											<b>{'inner branch'}</b>
+										}
+									}
+								</em>
+							}
+						</section>
+					}
 				</div>
 			}`,
 			'App.tsrx',
 		);
 
 		expect(code).not.toMatch(/\{\(\(\) => \{\s*switch/);
+		// Only the inner branch of two needs a scope.
+		expect(flat(code)).toMatch(
+			/<section v-if=\{props\.on\}><__TsrxScope v-if=\{props\.kind\} content=/,
+		);
 		// A branch element becomes a scope that declares the \`computed\`.
 		expect(flat(code)).toMatch(
 			/<__TsrxScope v-if=\{props\.on\} content=\{\(\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*\}\); return <section><b v-if=/,
@@ -4637,13 +4654,35 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 						<{props.tag}>{'dynamic'}</{props.tag}>
 					}
 					{props.tag}
+					@if (props.on) {
+						const label = 'slot';
+						<section class={label}>
+							<slot />
+						</section>
+					}
+					@if (props.on) {
+						const label = 'ref';
+						<input class={label} ref="field" />
+					}
+					@if (props.on) {
+						<p ref={'field'}>
+							@switch (props.tag) {
+								@case 'a': {
+									<b>{'ref'}</b>
+								}
+							}
+						</p>
+					}
 				</div>
 			}`,
 			'App.tsrx',
 		);
 
-		// A scope's content runs untracked: a choice there would render once.
+		// A scope's content runs untracked: a choice there would render once. A
+		// \`<slot>\` and a string \`ref\` resolve against the component rendering
+		// them, which a scope would replace.
 		expect(code).not.toContain('__TsrxScope');
+		expect(code).not.toContain('_$_case');
 		// A dynamic tag reads its tag in an effect of its own, so it follows it.
 		expect(code).toContain('const TsrxDynamic_1 = props.tag;');
 	});
