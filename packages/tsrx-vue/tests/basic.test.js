@@ -4818,6 +4818,7 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		['setStaticTemplateRef', "setStaticTemplateRef(null, 'field')"],
 		['setTemplateRefBinding', "setTemplateRefBinding(null, () => 'field')"],
 		['setCurrentInstance', 'setCurrentInstance(null)'],
+		['createPlainElement', "createPlainElement('b')"],
 		['h', "h('Local')"],
 		['useProps', 'useProps()'],
 		['useFullProps', 'useFullProps()'],

@@ -1707,15 +1707,15 @@ its own setup). A branch that calls `useSlots`, `useAttrs`, `useModel`,
 `useTemplateRef`, `useCssModule`, `useVaporCssVars`, `useHost`, `useShadowRoot`,
 `useInstanceOption`, `getCurrentInstance`, `resolveComponent`,
 `resolveDynamicComponent`, `resolveDirective`, `onErrorCaptured`, Vue's render
-helpers that resolve a name or a slot or register a template ref
-(`createComponent`, `createSlot`, `setTemplateRefBinding` and the like),
-`setCurrentInstance`, or vue-jsx-vapor's `h`, `useProps`, `useFullProps` or
-`defineExpose` (by name, or as a member such as `Vue.useAttrs()`), reads
-`currentInstance`, renders a `<slot>`, or has a string literal `ref` keeps
-rendering as before, in its component; one of these reached any other way (an
-alias, a stored function, a helper of your own) gets the scope, so call it in
-the component's own setup. A string `ref` passed through a binding or a spread
-in a scope registers with the scope.
+helpers that resolve a name or a slot, register a template ref or set a scope id
+(`createComponent`, `createSlot`, `setTemplateRefBinding`, `createPlainElement`
+and the like), `setCurrentInstance`, or vue-jsx-vapor's `h`, `useProps`,
+`useFullProps` or `defineExpose` (by name, or as a member such as
+`Vue.useAttrs()`), reads `currentInstance`, renders a `<slot>`, or has a string
+literal `ref` keeps rendering as before, in its component; one of these reached
+any other way (an alias, a stored function, a helper of your own) gets the
+scope, so call it in the component's own setup. A string `ref` passed through a
+binding or a spread in a scope registers with the scope.
 
 ### Octane
 

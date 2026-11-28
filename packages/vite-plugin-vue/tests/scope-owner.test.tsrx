@@ -1,4 +1,5 @@
 import {
+	createPlainElement,
 	createVaporApp,
 	createVaporSSRApp,
 	defineVaporCustomElement,
@@ -246,6 +247,18 @@ function SetsCurrentInstance() @{
 	</div>
 }
 
+function CreatesPlainElement() @{
+	<main class="owner-plain">
+		@if (on.value) {
+			const node = createPlainElement('b');
+			node.textContent = 'plain';
+			<span>{node}</span>
+		}
+	</main>
+}
+
+Object.assign(CreatesPlainElement, { __scopeId: 'data-v-owner' });
+
 function ReadsCurrentInstance() @{
 	<div class="owner-current">
 		@if (on.value) {
@@ -392,6 +405,12 @@ describe('tsrx-vue a branch that calls a composable acting on its component', ()
 	it('gets its component back from setCurrentInstance', async () => {
 		const { app } = await mount(SetsCurrentInstance);
 		expect(container.querySelector('.owner-sets b')?.textContent).toBe('SetsCurrentInstance');
+		app.unmount();
+	});
+
+	it('gives an element its component’s scope id with createPlainElement', async () => {
+		const { app } = await mount(CreatesPlainElement);
+		expect(container.querySelector('.owner-plain b')?.hasAttribute('data-v-owner')).toBe(true);
 		app.unmount();
 	});
 

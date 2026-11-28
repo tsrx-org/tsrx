@@ -2367,6 +2367,10 @@ function renders_in_scope(block) {
  * `useId` (it shares the component's ids), `useCssVars` (a Vapor component
  * doesn't run it), or what runs only on the server (`onServerPrefetch`,
  * `useSSRContext`). Other lifecycle hooks and watchers follow the branch.
+ * The DOM and event helpers vue-jsx-vapor's own output calls (`setProp`,
+ * `on`, `delegate` and the like) read the current instance only for
+ * hydration checks, warnings and the instance an error starts from, whose
+ * parent chain still reaches the component.
  */
 const OWNER_CALLS = new Set([
 	// vue
@@ -2394,6 +2398,8 @@ const OWNER_CALLS = new Set([
 	'createTemplateRefSetter',
 	'setStaticTemplateRef',
 	'setTemplateRefBinding',
+	// sets the current owner's scope id on the element
+	'createPlainElement',
 	// returns the instance it replaces
 	'setCurrentInstance',
 	// vue-jsx-vapor
