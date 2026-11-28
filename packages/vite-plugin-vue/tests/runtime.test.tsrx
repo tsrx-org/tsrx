@@ -6568,6 +6568,17 @@ function ScopeThrows() @{
 	</div>
 }
 
+function ScopeRoot() @{
+	@if (scope_user.value.online) {
+		const label = 'root';
+		<b class="scope-root">{label}</b>
+	}
+}
+
+function ScopeRootHost() @{
+	<ScopeRoot content="description" class="extra" />
+}
+
 function scope_rows(selector: string) {
 	return Array.from(container.querySelectorAll(`${selector} li`), (row) => {
 		const counter = row.querySelector('.scope-counter')?.textContent;
@@ -6679,6 +6690,15 @@ describe('tsrx-vue setup statements in a branch or a case run once per mount', (
 			warn_spy.mockRestore();
 			scope_fails.value = false;
 		}
+	});
+
+	it('passes a component’s fallthrough attributes to a scope that is its whole output', async () => {
+		// Its own prop is \`__content\`, so an attribute named \`content\` falls through.
+		await render(ScopeRootHost);
+		const root = container.querySelector('.scope-root') as HTMLElement;
+		expect(root.className).toBe('scope-root extra');
+		expect(root.getAttribute('content')).toBe('description');
+		expect(root.textContent).toBe('root');
 	});
 
 	it('runs a branch’s statements as the setup of a component of its own', async () => {

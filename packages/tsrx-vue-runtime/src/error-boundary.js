@@ -1182,7 +1182,7 @@ TsrxPendingBody.props = ['content'];
 define_vapor_flag(TsrxPendingBody);
 
 /**
- * Renders what `content` returns, as its setup. Used by the `@tsrx/vue`
+ * Renders what `__content` returns, as its setup. Used by the `@tsrx/vue`
  * compiler for an `@if` branch or a `@switch` case with setup statements,
  * and for a branch that holds a `@switch`'s `computed`: Vue runs a
  * component's setup once per mount, untracked, so those statements run once
@@ -1190,7 +1190,7 @@ define_vapor_flag(TsrxPendingBody);
  * whenever what they read changes, which renders the branch again. A
  * `computed` made there lives as long as the branch.
  *
- * What `content` throws goes to Vue's error handling as the scope's own
+ * What `__content` throws goes to Vue's error handling as the scope's own
  * setup error, so the nearest `@catch` shows it, and the scope renders an
  * empty text node, as `TsrxPendingBody` does.
  *
@@ -1200,21 +1200,23 @@ define_vapor_flag(TsrxPendingBody);
  */
 export function TsrxScope(props, ctx) {
 	const instance = own_instance(ctx);
-	if (!instance) return props.content();
+	if (!instance) return props.__content();
 	try {
-		return props.content();
+		return props.__content();
 	} catch (error) {
 		handleError(error, instance, ErrorCodes.SETUP_FUNCTION);
 		return normalize_block(null, undefined);
 	}
 }
 
-TsrxScope.props = ['content'];
+// Not `content`: a scope that is its component's whole output takes the
+// component's fallthrough attributes, which can have one of that name.
+TsrxScope.props = ['__content'];
 // A Vapor component in every app (see `TsrxErrorBoundary.__vapor`).
 define_vapor_flag(TsrxScope);
 
 /**
- * The `content` the `@tsrx/vue` compiler passes `TsrxScope`. On the server,
+ * The `__content` the `@tsrx/vue` compiler passes `TsrxScope`. On the server,
  * Vue renders the scope as a functional component after the content around
  * it has returned, outside any setup, so this runs `content` right away, as
  * the branch's IIFE ran before `TsrxScope`: its statements run in the setup

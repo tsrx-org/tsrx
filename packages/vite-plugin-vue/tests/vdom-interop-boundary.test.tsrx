@@ -23,7 +23,10 @@ describe('tsrx-vue a boundary a VDOM app renders', () => {
 			'TsrxPendingBody',
 			() => h(TsrxPendingBody as never, { content: () => document.createElement('button') }),
 		],
-		['TsrxScope', () => h(TsrxScope as never, { content: () => document.createElement('button') })],
+		[
+			'TsrxScope',
+			() => h(TsrxScope as never, { __content: () => document.createElement('button') }),
+		],
 	])('mounts %s as a Vapor component with the interop', async (_name, render) => {
 		const host = document.createElement('div');
 		document.body.append(host);

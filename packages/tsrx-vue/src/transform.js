@@ -2405,7 +2405,7 @@ function reads_owner(node) {
 }
 
 /**
- * `<__TsrxScope content={scope_content(content)} />`: `TsrxScope` runs
+ * `<__TsrxScope __content={scope_content(content)} />`: `TsrxScope` runs
  * `content` as its setup, and on the server `scope_content` runs it where
  * the branch is rendered.
  *
@@ -2423,7 +2423,7 @@ function scope_element(content, source, transform_context) {
 					b.jsx_id(SCOPE_INTERNAL_NAME),
 					[
 						b.jsx_attribute(
-							b.jsx_id('content'),
+							b.jsx_id('__content'),
 							to_jsx_expression_container(b.call(SCOPE_CONTENT_INTERNAL_NAME, content)),
 						),
 					],
@@ -3022,7 +3022,7 @@ function lower_scope_switches(element, transform_context) {
 			const call =
 				attribute.type === 'JSXAttribute' &&
 				attribute.name.type === 'JSXIdentifier' &&
-				attribute.name.name === 'content' &&
+				attribute.name.name === '__content' &&
 				attribute.value?.type === 'JSXExpressionContainer' &&
 				attribute.value.expression.type === 'CallExpression'
 					? /** @type {AST.CallExpression} */ (/** @type {unknown} */ (attribute.value.expression))

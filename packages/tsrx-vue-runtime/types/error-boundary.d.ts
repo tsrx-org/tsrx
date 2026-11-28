@@ -58,11 +58,11 @@ export const TsrxPendingBody: TsrxPendingBodyComponent;
 
 export interface TsrxScopeProps {
 	/** Runs a branch's setup statements and returns what it renders. */
-	content: () => unknown;
+	__content: () => unknown;
 }
 
 export interface TsrxScopeComponent {
-	/** Returns what `content` rendered; `content` runs once per mount. */
+	/** Returns what `__content` rendered; it runs once per mount. */
 	(props: TsrxScopeProps, ctx?: unknown): Block;
 	props: string[];
 	/**
@@ -75,7 +75,7 @@ export interface TsrxScopeComponent {
 export const TsrxScope: TsrxScopeComponent;
 
 /**
- * What the compiler passes `TsrxScope` as `content`: on the server, runs
+ * What the compiler passes `TsrxScope` as `__content`: on the server, runs
  * `content` now and returns what it rendered; elsewhere returns `content`.
  */
 export function scope_content(content: () => unknown): () => unknown;

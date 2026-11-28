@@ -2823,10 +2823,10 @@ export function Card(${params}: any) @{
 		// A branch with setup statements renders through \`TsrxScope\`, which
 		// takes \`v-if\` and \`v-else\`; a \`<template>\` can't.
 		expect(flat(code)).toContain(
-			flat(`<b v-if={on}>{'on'}</b><__TsrxScope v-else content={_$_scope_content(() => {
+			flat(`<b v-if={on}>{'on'}</b><__TsrxScope v-else __content={_$_scope_content(() => {
 				const off = 'off';
 				return <i>{off}</i>;
-			})} /><__TsrxScope v-if={on} content={_$_scope_content(() => {
+			})} /><__TsrxScope v-if={on} __content={_$_scope_content(() => {
 				const label = 'setup';
 				return <b>{label}</b>;
 			})} />`),
@@ -4000,7 +4000,7 @@ describe('@tsrx/vue @switch rows', () => {
 			'List.tsrx',
 		).code;
 		expect(flat(setup)).toContain(
-			flat(`? <__TsrxScope content={_$_scope_content(() => {
+			flat(`? <__TsrxScope __content={_$_scope_content(() => {
 				const label = row.value.title + '!';
 				return <li>{label}</li>;
 			})} />`),
@@ -4492,28 +4492,28 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 			"import { TsrxScope as __TsrxScope, scope_content as _$_scope_content } from '@tsrx/vue/error-boundary';",
 		);
 		expect(flat(code)).toContain(
-			flat(`<__TsrxScope v-if={props.on} content={_$_scope_content(() => {
+			flat(`<__TsrxScope v-if={props.on} __content={_$_scope_content(() => {
 				const label = props.name + '!';
 				return <b>{label}</b>;
-			})} /><i v-else-if={props.away}>{'away'}</i><__TsrxScope v-else content={_$_scope_content(() => {
+			})} /><i v-else-if={props.away}>{'away'}</i><__TsrxScope v-else __content={_$_scope_content(() => {
 				const off = 'off';
 				return <u>{off}</u>;
 			})} />{props.name}`),
 		);
 		// The ref a spread host element reads is a statement of its branch.
 		expect(flat(code)).toMatch(
-			/<__TsrxScope v-if=\{props\.on\} content=\{_\$_scope_content\(\(\) =>\{let App__spread_props\d+; return <p \{\.\.\./,
+			/<__TsrxScope v-if=\{props\.on\} __content=\{_\$_scope_content\(\(\) =>\{let App__spread_props\d+; return <p \{\.\.\./,
 		);
 		// A component's child too, as \`@if\` without \`@else\` takes \`v-if\` there.
 		expect(flat(code)).toContain(
-			flat(`<Wrap><__TsrxScope v-if={props.on} content={_$_scope_content(() => {
+			flat(`<Wrap><__TsrxScope v-if={props.on} __content={_$_scope_content(() => {
 				const label = 'slot';
 				return <b>{label}</b>;
 			})} /></Wrap>`),
 		);
 		// So does a \`VaporFor\` row, in its fragment.
 		expect(flat(code)).toContain(
-			flat(`{(row) => <>{row.value.on ? <__TsrxScope content={_$_scope_content(() => {
+			flat(`{(row) => <>{row.value.on ? <__TsrxScope __content={_$_scope_content(() => {
 				const label = row.value.title + '!';
 				return <li>{label}</li>;
 			})} /> : <li>{row.value.title}</li>}</>}`),
@@ -4546,7 +4546,7 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 
 		// The case takes \`v-if\` like any element case.
 		expect(flat(code)).toMatch(
-			/<__TsrxScope v-if=\{\(typeof _\$_case_1\.value[^]*=== 0\} content=\{_\$_scope_content\(\(\) =>\{const label = props\.kind \+ '!'; return <b>\{label\}<\/b>;\}\)\} \/><i v-else-if=/,
+			/<__TsrxScope v-if=\{\(typeof _\$_case_1\.value[^]*=== 0\} __content=\{_\$_scope_content\(\(\) =>\{const label = props\.kind \+ '!'; return <b>\{label\}<\/b>;\}\)\} \/><i v-else-if=/,
 		);
 	});
 
@@ -4616,18 +4616,18 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		expect(code).not.toMatch(/\{\(\(\) => \{\s*switch/);
 		// Only the inner branch of two needs a scope.
 		expect(flat(code)).toMatch(
-			/<section v-if=\{props\.on\}><__TsrxScope v-if=\{props\.kind\} content=/,
+			/<section v-if=\{props\.on\}><__TsrxScope v-if=\{props\.kind\} __content=/,
 		);
 		// A branch element becomes a scope that declares the \`computed\`.
 		expect(flat(code)).toMatch(
-			/<__TsrxScope v-if=\{props\.on\} content=\{_\$_scope_content\(\(\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*\}\); return <section><b v-if=/,
+			/<__TsrxScope v-if=\{props\.on\} __content=\{_\$_scope_content\(\(\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*\}\); return <section><b v-if=/,
 		);
 		// So does a scope's content, and a case element.
 		expect(flat(code)).toMatch(
-			/content=\{_\$_scope_content\(\(\) =>\{const label = 'statements'; const _\$_case_\d+ = _\$_vapor_computed\(/,
+			/__content=\{_\$_scope_content\(\(\) =>\{const label = 'statements'; const _\$_case_\d+ = _\$_vapor_computed\(/,
 		);
 		expect(flat(code)).toMatch(
-			/=== 0\} content=\{_\$_scope_content\(\(\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*\}\); return <section><b v-if=/,
+			/=== 0\} __content=\{_\$_scope_content\(\(\) =>\{const _\$_case_\d+ = _\$_vapor_computed\([^]*\}\); return <section><b v-if=/,
 		);
 		// A \`VaporFor\` row's slot runs once per row.
 		expect(flat(code)).toMatch(
