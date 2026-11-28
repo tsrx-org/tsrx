@@ -2355,11 +2355,45 @@ function renders_in_scope(block) {
 }
 
 /**
+ * Calls that read or act on the component calling them: its slots,
+ * attributes, props and model, template refs, CSS modules, CSS variables (set
+ * on its root, from its props), custom-element host, instance, and exposed
+ * value (vue-jsx-vapor's `defineExpose` macro sets it on the current
+ * instance), and `onErrorCaptured`, which would stop seeing errors from the
+ * component's other content. In a `TsrxScope` they would get the scope,
+ * which has none of these, while on the server, where the statements run in
+ * the component's setup, they still get the component. A scope doesn't change
+ * `useId` (it shares the component's ids), `useCssVars` (a Vapor component
+ * doesn't run it), or what runs only on the server (`onServerPrefetch`,
+ * `useSSRContext`). Other lifecycle hooks and watchers follow the branch.
+ */
+const OWNER_CALLS = new Set([
+	// vue
+	'useSlots',
+	'useAttrs',
+	'useModel',
+	'useTemplateRef',
+	'useCssModule',
+	'useVaporCssVars',
+	'useHost',
+	'useShadowRoot',
+	'useInstanceOption',
+	'getCurrentInstance',
+	'onErrorCaptured',
+	// vue-jsx-vapor
+	'useProps',
+	'useFullProps',
+	'defineExpose',
+]);
+
+/**
  * Whether `node` renders something that vue-jsx-vapor resolves against the
  * component rendering it: a `<slot>`, which renders that component's slot,
  * or a `ref` that is a string, which registers in that component's template
- * refs (`useTemplateRef`). In a `TsrxScope` they would resolve against the
- * scope, which has neither.
+ * refs (`useTemplateRef`); or calls one of `OWNER_CALLS`, by name or as a
+ * member (`Vue.useAttrs()`). In a `TsrxScope` they would resolve against
+ * the scope, which has none of these. An aliased import, or a function that
+ * calls one of them, isn't seen.
  *
  * @param {unknown} node
  * @returns {boolean}
@@ -2377,6 +2411,18 @@ function reads_owner(node) {
 		).name === 'slot'
 	) {
 		return true;
+	}
+	if (value.type === 'CallExpression') {
+		const callee = value.callee;
+		const name =
+			callee.type === 'Identifier'
+				? callee.name
+				: callee.type === 'MemberExpression' &&
+					  !callee.computed &&
+					  callee.property.type === 'Identifier'
+					? callee.property.name
+					: null;
+		if (name && OWNER_CALLS.has(name)) return true;
 	}
 	if (value.type === 'JSXAttribute') {
 		const attribute = /** @type {ESTreeJSX.JSXAttribute} */ (/** @type {unknown} */ (value));

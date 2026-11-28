@@ -1692,19 +1692,26 @@ A `@pending` body renders through a `TsrxPendingBody` component in the
 throw in it reaches the nearest `@catch`.
 
 An `@if` branch or a `@switch` case whose body has setup statements, in a host
-element or a keyed `@for` row, renders through a `TsrxScope` component, whose
-setup runs them: they run once each time
-the branch mounts, as a component's own setup does, and the branch keeps its
-state while it stays. A value the statements compute keeps the value it had
-when the branch mounted; to follow a value that changes, read it in the
-template or in a `computed`. Lifecycle hooks, `provide` and `inject` there act
-for the branch on the client (on the server the statements run in the
-component's setup, so keep `provide` / `inject` of the component's own keys in
-its own setup), and `useSlots()` / `useAttrs()` there see the scope's own
-ones: call them in the component's own setup. A branch with a `<slot>` or a
-string literal `ref`, and one in a component's children (which could be a
-`KeepAlive`'s), keeps rendering as before; a string `ref` passed
-through a binding or a spread there registers with the scope.
+element or a `@for` row that renders through `VaporFor` (keyed or not),
+renders through a `TsrxScope` component, whose setup runs them: they run once
+each time the branch mounts, as a component's own setup does, and the branch
+keeps its state while it stays. A value the statements compute keeps the
+value it had when the branch mounted; to follow a value that changes, read it
+in the template or in a `computed`. Elsewhere (a component's children or slot,
+a `<template>`, a fragment, or a component's whole output) the statements still
+run again whenever what they read changes, so moving a branch between these
+places changes when they run. Lifecycle hooks, watchers, `provide` and
+`inject` in a scope act for the branch on the client (on the server the
+statements run in the component's setup, so keep `provide` / `inject` of the
+component's own keys in its own setup). A branch that calls `useSlots`,
+`useAttrs`, `useModel`, `useTemplateRef`, `useCssModule`, `useVaporCssVars`,
+`useHost`, `useShadowRoot`, `useInstanceOption`, `getCurrentInstance`,
+`onErrorCaptured`, or vue-jsx-vapor's `useProps`, `useFullProps` or
+`defineExpose` (by name, or as a member such as `Vue.useAttrs()`), renders a
+`<slot>`, or has a string literal `ref` keeps rendering as before, in its
+component; one of these called through an alias or a helper of your own gets
+the scope, so call it in the component's own setup. A string `ref` passed
+through a binding or a spread in a scope registers with the scope.
 
 ### Octane
 

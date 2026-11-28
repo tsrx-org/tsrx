@@ -4678,6 +4678,95 @@ describe('@tsrx/vue setup statements in a branch or a case', () => {
 		expect(code.match(/<__TsrxScope v-if=\{props\.on\}/g)).toHaveLength(2);
 	});
 
+	it.each([
+		['useSlots', 'useSlots()'],
+		['useAttrs', 'useAttrs()'],
+		['useModel', "useModel(props, 'modelValue')"],
+		['useTemplateRef', "useTemplateRef('field')"],
+		['useCssModule', 'useCssModule()'],
+		['useVaporCssVars', "useVaporCssVars(() => ({ shade: 'red' }))"],
+		['useHost', 'useHost()'],
+		['useShadowRoot', 'useShadowRoot()'],
+		['useInstanceOption', "useInstanceOption('type')"],
+		['getCurrentInstance', 'getCurrentInstance()'],
+		['onErrorCaptured', 'onErrorCaptured(() => false)'],
+		['useProps', 'useProps()'],
+		['useFullProps', 'useFullProps()'],
+		['defineExpose', 'defineExpose({ focus() {} })'],
+		['a member useAttrs', 'Vue.useAttrs()'],
+	])('keeps the shared lowering for a branch that calls %s', (_name, call) => {
+		// It acts on the component calling it, which a scope would replace.
+		const { code } = compile(
+			`import * as Vue from 'vue';
+			export function App(props: { on: boolean; modelValue: string }) @{
+				<div>
+					@if (props.on) {
+						const value = ${call};
+						<b>{String(value)}</b>
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('<__TsrxScope ');
+		expect(code).toMatch(/\{props\.on\s*\? \(\(\) => \{/);
+	});
+
+	it('keeps the shared lowering for a case or a row branch that calls useAttrs', () => {
+		const { code } = compile(
+			`import { useAttrs } from 'vue';
+			export function App(props: { items: { id: string; on: boolean }[]; kind: number }) @{
+				<div>
+					<ul>
+						@for (const item of props.items; key item.id) {
+							@if (item.on) {
+								const attrs = useAttrs();
+								<li>{String(attrs.title)}</li>
+							}
+						}
+					</ul>
+					<p>
+						@switch (props.kind) {
+							@case 1: {
+								const attrs = useAttrs();
+								<b>{String(attrs.title)}</b>
+							}
+							@default: {
+								<i>{'other'}</i>
+							}
+						}
+					</p>
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).not.toContain('<__TsrxScope ');
+		expect(code).not.toContain('_$_case');
+		expect(code).toMatch(/\{item\.value\.on\s*\? \(\(\) => \{/);
+	});
+
+	it.each([
+		['useId', 'useId()'],
+		['inject', "inject('key')"],
+		['onMounted', 'onMounted(() => {})'],
+	])('renders a branch that calls %s through TsrxScope', (_name, call) => {
+		const { code } = compile(
+			`export function App(props: { on: boolean }) @{
+				<div>
+					@if (props.on) {
+						const value = ${call};
+						<b>{String(value)}</b>
+					}
+				</div>
+			}`,
+			'App.tsrx',
+		);
+
+		expect(code).toContain('<__TsrxScope v-if={props.on} ');
+	});
+
 	it("keeps the shared lowering for what a component's slot renders", () => {
 		const { code } = compile(
 			`import { VaporKeepAlive } from 'vue';

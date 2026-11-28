@@ -356,6 +356,49 @@ export function Throws() @{
 	</div>
 }`,
 
+	// A branch that calls a composable acting on its component keeps the
+	// shared lowering; scope-owner.test.tsrx hydrates what these render.
+	'scope-owner.tsrx': `import { useAttrs, useModel, useSlots } from 'vue';
+import { defineVaporComponent } from 'vue-jsx-vapor';
+function SlotsChild() @{
+	<div class="owner-slots">
+		@if (true) {
+			const slots = useSlots();
+			<b>{Object.keys(slots).join(',')}</b>
+		}
+	</div>
+}
+export function Slots() @{
+	<SlotsChild>
+		<i>{'given'}</i>
+	</SlotsChild>
+}
+function AttrsChild() @{
+	<div class="owner-attrs">
+		@if (true) {
+			const attrs = useAttrs();
+			<b>{String(attrs.title)}</b>
+		}
+	</div>
+}
+export function Attrs() @{
+	<AttrsChild title="hello" />
+}
+const ModelChild = defineVaporComponent(
+	(props: { modelValue?: string }) => @{
+		<div class="owner-model">
+			@if (true) {
+				const model = useModel(props, 'modelValue');
+				<button>{String(model.value)}</button>
+			}
+		</div>
+	},
+	{ props: ['modelValue'], emits: ['update:modelValue'] },
+);
+export function Model() @{
+	<ModelChild modelValue="initial" />
+}`,
+
 	// scope-hydration.test.tsrx hydrates what these render.
 	'scope.tsrx': `import { ref } from 'vue';
 
@@ -807,6 +850,32 @@ describe('[vue] a branch or a case that renders through TsrxScope on the server'
 				off: '<p><!----></p>',
 			},
 		});
+	});
+});
+
+describe('[vue] a branch that calls a composable acting on its component, on the server', () => {
+	// It renders as an IIFE branch did, in its fragment, with the component's
+	// slots, attributes and model; on the client it does the same, so the
+	// two sides agree.
+	it('renders with its component’s slots, attributes and model', async () => {
+		const shapes = await server.ssrLoadModule('/scope-owner.tsrx');
+		/** @type {Record<string, string>} */
+		const rendered = {};
+		/** @type {string[]} */
+		const warnings = [];
+		for (const shape of ['Slots', 'Attrs', 'Model']) {
+			const app = createSSRApp(shapes[shape]);
+			app.config.warnHandler = (message) => {
+				warnings.push(message);
+			};
+			rendered[shape] = await renderToString(app);
+		}
+		expect(rendered).toEqual({
+			Slots: '<div class="owner-slots"><!--[--><b>default</b><!--]--></div>',
+			Attrs: '<div class="owner-attrs" title="hello"><!--[--><b>hello</b><!--]--></div>',
+			Model: '<div class="owner-model"><!--[--><button>initial</button><!--]--></div>',
+		});
+		expect(warnings).toEqual([]);
 	});
 });
 
